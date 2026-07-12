@@ -5,12 +5,14 @@
 # MIT OR Apache-2.0 and every dependency is a permissive OSS crate, but pinning
 # an exhaustive license allow-list is churn we track separately — advisories,
 # bans, and source provenance are the checks that catch supply-chain problems.
+#
+# Only version-stable lint-level keys are set here so the config parses across
+# cargo-deny releases; `cargo audit` (a separate CI step) is the primary
+# advisory gate, and defaults already fail the build on a known vulnerability.
 
 [advisories]
-# A known vulnerability fails the build. (cargo-audit gates advisories too; this
-# is the belt to that suspenders and also covers unmaintained/yanked signals.)
+# A yanked dependency is a warning, not a hard failure.
 yanked = "warn"
-unmaintained = "workspace"
 
 [bans]
 # Multiple versions of the same crate is a warning, not a failure — the bundled
