@@ -15,6 +15,6 @@ pub mod sse;
 pub mod vertex;
 pub mod zai;
 
-pub use catalog::{Catalog, CatalogEntry, Pricing, ToolDialect};
+pub use catalog::{Catalog, CatalogEntry, ToolDialect};
 pub use credential::{ApiKey, CredentialError};
 pub use provider::Provider;

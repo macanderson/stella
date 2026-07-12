@@ -15,12 +15,12 @@
 //! Vertex is the enterprise path).
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use stella_protocol::{
     CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, MessageRole,
     ProviderError, ReasoningEffort, ToolCall,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::credential::ApiKey;
 use crate::provider::Provider;
@@ -709,7 +709,7 @@ mod tests {
                 name: "read_file".into(),
                 description: "Read a file".into(),
                 input_schema: serde_json::json!({"type":"object"}),
-                read_only: true,
+                read_only: false,
             }],
         };
 

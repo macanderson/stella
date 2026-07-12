@@ -45,7 +45,7 @@
 //!   1. The whole input object is written to the child's **stdin** as one JSON
 //!      document, then stdin is closed (the child sees EOF).
 //!   2. Each top-level **scalar** property (string / number / bool) is exported
-//!      as `OXAGEN_INPUT_<UPPER_SNAKE_KEY>` — e.g. `path` → `OXAGEN_INPUT_PATH`.
+//!      as `STELLA_INPUT_<UPPER_SNAKE_KEY>` — e.g. `path` → `STELLA_INPUT_PATH`.
 //!      Nested objects and arrays are delivered on stdin only.
 //! - Applies the manifest's optional `[env]` table on top of the inherited
 //!   environment.
@@ -76,10 +76,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use stella_core::ports::ToolExecutor;
-use stella_protocol::tool::{ToolOutput, ToolSchema};
 use serde::Deserialize;
 use serde_json::Value;
+use stella_core::ports::ToolExecutor;
+use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -133,8 +133,6 @@ impl CustomTool {
             name: self.name.clone(),
             description: self.description.clone(),
             input_schema: self.input_schema.clone(),
-            // Custom tools shell out to an arbitrary command, so they must be
-            // treated as mutating — never eligible for read-only concurrency.
             read_only: false,
         }
     }
@@ -318,11 +316,11 @@ fn load_dir(
     }
 }
 
-/// Map a JSON input key to its `OXAGEN_INPUT_*` env var name: uppercased, with
+/// Map a JSON input key to its `STELLA_INPUT_*` env var name: uppercased, with
 /// any non-`[A-Z0-9_]` byte replaced by `_`.
 fn env_var_name(key: &str) -> String {
-    let mut out = String::with_capacity("OXAGEN_INPUT_".len() + key.len());
-    out.push_str("OXAGEN_INPUT_");
+    let mut out = String::with_capacity("STELLA_INPUT_".len() + key.len());
+    out.push_str("STELLA_INPUT_");
     for c in key.chars() {
         if c.is_ascii_alphanumeric() {
             out.extend(c.to_uppercase());
@@ -333,7 +331,7 @@ fn env_var_name(key: &str) -> String {
     out
 }
 
-/// Render a scalar JSON value as the string form exported to `OXAGEN_INPUT_*`.
+/// Render a scalar JSON value as the string form exported to `STELLA_INPUT_*`.
 /// Returns `None` for arrays, objects and null (delivered on stdin only).
 fn scalar_env_value(value: &Value) -> Option<String> {
     match value {
@@ -397,8 +395,8 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     for (k, v) in &tool.env {
         cmd.env(k, v);
     }
-    // … then each scalar input property as OXAGEN_INPUT_*. Keys come from the
-    // model but are namespaced under OXAGEN_INPUT_, so they cannot clobber PATH
+    // … then each scalar input property as STELLA_INPUT_*. Keys come from the
+    // model but are namespaced under STELLA_INPUT_, so they cannot clobber PATH
     // or any inherited variable.
     if let Some(obj) = input.as_object() {
         for (key, value) in obj {
@@ -853,7 +851,7 @@ command = []"#;
         let tool = script_tool(
             dir.path(),
             "env.sh",
-            "#!/bin/sh\necho \"path=$OXAGEN_INPUT_PATH dry=$OXAGEN_INPUT_DRY_RUN n=$OXAGEN_INPUT_COUNT\"\n",
+            "#!/bin/sh\necho \"path=$STELLA_INPUT_PATH dry=$STELLA_INPUT_DRY_RUN n=$STELLA_INPUT_COUNT\"\n",
             5000,
         );
         let input = serde_json::json!({ "path": "hello", "dry_run": true, "count": 7 });
@@ -874,7 +872,7 @@ command = []"#;
         let tool = script_tool(
             dir.path(),
             "nested.sh",
-            "#!/bin/sh\necho \"nested=[$OXAGEN_INPUT_NESTED]\"\ncat\n",
+            "#!/bin/sh\necho \"nested=[$STELLA_INPUT_NESTED]\"\ncat\n",
             5000,
         );
         let input = serde_json::json!({ "nested": { "a": 1 } });
@@ -1058,8 +1056,8 @@ command = []"#;
 
     #[test]
     fn env_var_name_uppercases_and_sanitizes() {
-        assert_eq!(env_var_name("path"), "OXAGEN_INPUT_PATH");
-        assert_eq!(env_var_name("dry_run"), "OXAGEN_INPUT_DRY_RUN");
-        assert_eq!(env_var_name("weird-key.x"), "OXAGEN_INPUT_WEIRD_KEY_X");
+        assert_eq!(env_var_name("path"), "STELLA_INPUT_PATH");
+        assert_eq!(env_var_name("dry_run"), "STELLA_INPUT_DRY_RUN");
+        assert_eq!(env_var_name("weird-key.x"), "STELLA_INPUT_WEIRD_KEY_X");
     }
 }

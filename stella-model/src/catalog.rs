@@ -81,8 +81,8 @@ pub enum ToolDialect {
 ///
 /// `Eq` is intentionally *not* derived: [`Pricing`] carries `f64` fields, and
 /// exact float equality is not a meaningful identity for a catalog row (rows
-/// are keyed by `id`, deduped by the seed test). `PartialEq` is kept for
-/// tests that compare whole entries.
+/// are keyed by `(provider, id)`, deduped by the seed test). `PartialEq` is
+/// kept for tests that compare whole entries.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogEntry {
     pub id: &'static str,
@@ -181,12 +181,11 @@ impl Catalog {
                     provider: "gemini",
                     family: "gemini",
                     context_window: 1_000_000,
-                    // Routed through Google's OpenAI-compatibility shim
-                    // today (config.rs base_url has the `/openai` suffix);
-                    // a native Gemini adapter would use its own
-                    // GeminiFunctions dialect once built (deferred — see
-                    // config.rs and the Phase 2 PR description).
-                    tool_dialect: ToolDialect::OpenaiJson,
+                    // The native Gemini-direct adapter
+                    // (stella_model::gemini) — this row used to be
+                    // OpenaiJson while requests routed through Google's
+                    // OpenAI-compatibility shim as a stand-in.
+                    tool_dialect: ToolDialect::GeminiFunctions,
                     pricing: Pricing {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
@@ -197,8 +196,8 @@ impl Catalog {
                     // The same Google model surfaced through Vertex AI —
                     // one model genuinely existing on two providers is why
                     // uniqueness (and `resolve_for`) is keyed on
-                    // (provider, id), not id alone. Native generateContent
-                    // via `stella_model::vertex::VertexProvider`.
+                    // (provider, id), not id alone. Same list price as the
+                    // Gemini-direct row above.
                     id: "gemini-3-pro",
                     provider: "vertex",
                     family: "gemini",
@@ -213,8 +212,8 @@ impl Catalog {
                 CatalogEntry {
                     // A cross-region inference profile, not a bare model id
                     // — Bedrock rejects on-demand invocation of newer
-                    // Anthropic models without one. Converse via
-                    // `stella_model::bedrock::BedrockProvider`.
+                    // Anthropic models without one. Priced as Claude Sonnet
+                    // 4.5 (Bedrock on-demand list price).
                     id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
                     provider: "bedrock",
                     family: "claude",
@@ -273,8 +272,9 @@ impl Catalog {
 
     /// Resolve a slug for a specific provider — the form `build_provider`
     /// uses, since the same model genuinely exists on more than one
-    /// provider (Gemini on `gemini` and `vertex`) and a slug that exists on
-    /// provider A must still be a hard error when requested from provider B.
+    /// provider (Gemini on `gemini` and `vertex`; most things on
+    /// `openrouter`) and a slug that exists on provider A must still be a
+    /// hard error when requested from provider B.
     pub fn resolve_for(&self, provider: &str, slug: &str) -> Result<&CatalogEntry, ProviderError> {
         self.entries
             .iter()
@@ -413,11 +413,11 @@ mod tests {
 
     #[test]
     fn seed_covers_every_provider_stella_cli_can_select() {
-        // stella-cli/src/config.rs::PROVIDERS lists 9 providers; this test
-        // doesn't import that crate (stella-cli depends on stella-model,
-        // not the reverse) but pins the provider id set here so the two
-        // can't silently drift apart again — the actual cross-check lives
-        // in stella-cli's own test suite (config::tests).
+        // stella-cli/src/config.rs::PROVIDERS lists these providers; this
+        // test doesn't import that crate (stella-cli depends on
+        // stella-model, not the reverse) but pins the provider id set here
+        // so the two can't silently drift apart again — the actual
+        // cross-check lives in stella-cli's own test suite (config::tests).
         let catalog = Catalog::seed();
         for provider in [
             "zai",
