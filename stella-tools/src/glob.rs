@@ -66,7 +66,7 @@ impl Tool for Glob {
         fd.arg("--type").arg("f");
         fd.arg("--color").arg("never");
         fd.arg("--max-results").arg(MAX_RESULTS.to_string());
-        fd.arg(pattern).arg(&search_dir);
+        fd.arg("--").arg(pattern).arg(&search_dir);
         fd.stdout(std::process::Stdio::piped());
         fd.stderr(std::process::Stdio::piped());
 
