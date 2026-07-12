@@ -166,6 +166,22 @@ fn classify_anthropic_stream_error(err: &AnthropicStreamError) -> ProviderError 
     }
 }
 
+/// Parse a `Retry-After` response header into milliseconds. Anthropic (like
+/// the OpenAI-compatible gateways) sends it as an integer number of seconds
+/// on a 429; the alternative HTTP-date form is tolerated by being ignored —
+/// the caller falls back to computed backoff. `None` when the header is
+/// absent or not a bare integer. Mirrors `zai.rs::parse_retry_after_ms`.
+fn parse_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|secs| secs.saturating_mul(1_000))
+}
+
 #[derive(Deserialize, Debug, Default)]
 struct AnthropicMessageStart {
     #[serde(default)]
@@ -324,9 +340,10 @@ impl Provider for AnthropicProvider {
             return Err(ProviderError::Auth("Anthropic rejected the API key".into()));
         }
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after_ms = parse_retry_after_ms(response.headers());
             return Err(ProviderError::RateLimited {
                 message: "Anthropic rate limit".into(),
-                retry_after_ms: None,
+                retry_after_ms,
             });
         }
         // 5xx (incl. 529 overloaded, which Anthropic uses for load shedding)
@@ -642,6 +659,44 @@ mod tests {
         let err = provider.complete(req).await.unwrap_err();
         assert!(matches!(err, ProviderError::Auth(_)));
         assert!(!err.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn complete_honors_retry_after_header_on_a_429() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "3")
+                    .set_body_string("rate limited"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("test-key"), "claude-fable-5")
+            .with_base_url(server.uri());
+
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage {
+                role: MessageRole::User,
+                content: "hi".into(),
+                tool_calls: vec![],
+                tool_results: vec![],
+            }],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let err = provider.complete(req).await.unwrap_err();
+        match err {
+            ProviderError::RateLimited { retry_after_ms, .. } => {
+                assert_eq!(retry_after_ms, Some(3_000), "Retry-After: 3s → 3000ms");
+            }
+            other => panic!("expected RateLimited with a retry hint, got {other:?}"),
+        }
     }
 
     #[tokio::test]

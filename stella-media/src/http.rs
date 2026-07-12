@@ -98,10 +98,27 @@ fn first_line(body: &str) -> String {
     let line = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
     let trimmed = line.trim();
     if trimmed.len() > 300 {
-        format!("{}…", &trimmed[..300])
+        // Truncate on a UTF-8 char boundary: the body is provider-supplied and
+        // may be non-ASCII, so byte 300 can land mid-codepoint — a `&s[..300]`
+        // slice there panics, which wire data must never do.
+        format!("{}…", &trimmed[..floor_char_boundary(trimmed, 300)])
     } else {
         trimmed.to_string()
     }
+}
+
+/// The largest byte index `<= max` that is a UTF-8 char boundary of `s`. Lets
+/// us bound a string without slicing through a multibyte codepoint. (`std`'s
+/// `str::floor_char_boundary` is still unstable, so we spell it out.)
+fn floor_char_boundary(s: &str, max: usize) -> usize {
+    if max >= s.len() {
+        return s.len();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
 }
 
 #[cfg(test)]
@@ -182,5 +199,22 @@ mod tests {
             HeaderValue::from_static("Wed, 21 Oct 2099 07:28:00 GMT"),
         );
         assert_eq!(parse_retry_after_ms(&bad), None);
+    }
+
+    #[test]
+    fn first_line_truncates_on_a_char_boundary_for_multibyte_bodies() {
+        // 299 ASCII bytes then a run of 3-byte codepoints: byte 300 lands in the
+        // middle of the first `€`, so a naive `&s[..300]` slice would panic.
+        // `first_line` must instead truncate at the boundary before it.
+        let body = format!("{}{}", "a".repeat(299), "€".repeat(10));
+        assert!(
+            !body.is_char_boundary(300),
+            "test setup: byte 300 is mid-char"
+        );
+
+        let out = first_line(&body);
+
+        assert!(out.ends_with('…'));
+        assert_eq!(out, format!("{}…", "a".repeat(299)));
     }
 }

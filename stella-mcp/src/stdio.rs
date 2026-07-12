@@ -77,6 +77,11 @@ impl StdioTransport {
             .stdout(Stdio::piped())
             .stderr(Stdio::null()) // keep server logs off the JSON-RPC stream.
             .kill_on_drop(true);
+        // The environment is fully scrubbed by design (§8) — PATH included, so
+        // nothing ambient (credentials or otherwise) leaks into a server. A
+        // server invoked by a bare command name (`npx`, `node`, `uvx`, …) will
+        // therefore fail to resolve unless the config either gives an absolute
+        // `cmd` path or passes `PATH` explicitly through its `env` map below.
         for (key, value) in env {
             command.env(key, value);
         }

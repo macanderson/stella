@@ -1,6 +1,9 @@
-//! `read_file` — read a file with optional line range and a size cap.
+//! `read_file` — read a file with optional line range and a line cap.
 //! Mirrors the TS `read_file` tool: 1-based line numbers, `offset`/`limit`
-//! params, and a hard size cap to prevent dumping huge files into context.
+//! params, and a cap on the number of lines *returned* (`MAX_LINES`) so a huge
+//! file can't flood the context. Note this bounds displayed lines, not bytes:
+//! the file is read into memory first, so a single pathologically long line is
+//! still read in full.
 
 use async_trait::async_trait;
 use serde_json::Value;

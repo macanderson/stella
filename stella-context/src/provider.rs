@@ -1,10 +1,12 @@
 //! The provider registry seam (`02-architecture.md` §7, `06-context-protocol.md`
-//! §2). One interface — [`ContextProvider`] — behind which every source
-//! registers: the built-in [`ContextStore`], the code graph and git-history
-//! providers (`stella-graph`), and external OCP providers spoken to over stdio
-//! or HTTP (adapted onto this trait by the integration glue; this crate does
-//! not depend on `ocp-host`). The store itself implements the trait, so it is
-//! both the primary backend and a first-class provider.
+//! §2). One interface — [`ContextProvider`] — behind which context sources are
+//! intended to register: the built-in [`ContextStore`] implements it today (so
+//! the store is both the primary backend and a first-class provider). Wiring
+//! additional sources through this seam — a `stella-graph` code-graph provider,
+//! a git-history provider, and external OCP providers adapted from `ocp-host` —
+//! is designed here but not yet built; this crate does not depend on `ocp-host`,
+//! and the shipping CLI queries the store directly rather than via this
+//! registry.
 
 use std::collections::HashSet;
 use std::sync::Arc;

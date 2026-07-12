@@ -18,6 +18,7 @@
 //! never arrive.
 
 use std::io::{BufRead, IsTerminal, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use colored::Colorize;
@@ -28,6 +29,13 @@ use tokio::sync::mpsc::UnboundedSender;
 
 /// The label the runtime appends as the always-present free-text option.
 pub const FREE_TEXT_LABEL: &str = "Type your own answer";
+
+/// Monotonic source of per-invocation `ask_user` ids. The model's real tool
+/// call_id never reaches `ToolExecutor::execute` (its signature is only
+/// name+input), so the `AskUser` event can't reuse it — a process-unique id
+/// per ask is minted here instead of a constant, keeping successive/concurrent
+/// asks individually addressable for any consumer that keys on the id.
+static NEXT_ASK_ID: AtomicU64 = AtomicU64::new(0);
 
 /// How the `ask_user` tool actually reaches the human. Injectable so the
 /// tool's selection/parsing logic is unit-testable without a TTY.
@@ -425,10 +433,12 @@ impl ToolExecutor for InteractiveToolSet<'_> {
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if name == "ask_user" {
-            // The call_id isn't threaded through ToolExecutor::execute; use
-            // a per-question counter-free surrogate (the engine's ToolStart
-            // event already carries the real call_id for correlation).
-            return self.execute_ask_user("ask_user", input).await;
+            // `ToolExecutor::execute` doesn't carry the model's tool call_id,
+            // so mint a process-unique id per invocation rather than emitting
+            // a constant that would collide across every ask in a session
+            // (the TUI keys its pending-ask card by this id).
+            let id = format!("ask_user-{}", NEXT_ASK_ID.fetch_add(1, Ordering::Relaxed));
+            return self.execute_ask_user(&id, input).await;
         }
         if let Some(registry) = &self.skills {
             if name == "search_skills" {
@@ -606,6 +616,24 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn each_ask_user_invocation_gets_a_distinct_event_id() {
+        // Regression: the id was a hard-coded constant, so every ask in a
+        // session collided. Two invocations must now carry different ids.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let inner = FakeInner;
+        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec!["1", "1"])));
+        let _ = set.execute("ask_user", &ask_input()).await;
+        let _ = set.execute("ask_user", &ask_input()).await;
+        let id_of = |e: AgentEvent| match e {
+            AgentEvent::AskUser { id, .. } => id,
+            other => panic!("expected AskUser, got {other:?}"),
+        };
+        let first = id_of(rx.try_recv().expect("first AskUser event"));
+        let second = id_of(rx.try_recv().expect("second AskUser event"));
+        assert_ne!(first, second, "ask_user ids must be unique per invocation");
     }
 
     #[tokio::test]

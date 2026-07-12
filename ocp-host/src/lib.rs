@@ -4,9 +4,13 @@
 //! discovers providers, negotiates capabilities, routes a
 //! [`ContextQuery`](ocp_types::ContextQuery) to the ones that can answer,
 //! budgets and cites what comes back, and gates what may leave the machine.
-//! `stella-context` embeds this crate to serve every source — built-in or
-//! external — through one interface, and it is deliberately usable by *any*
-//! Rust agent that wants OCP support (`02-architecture.md` §2).
+//! This crate is that host runtime: today it is exercised by the OCP
+//! conformance suite and drives the `ocp-inspect` tool, and it is usable by
+//! any Rust agent that wants OCP support (`02-architecture.md` §2). Note that
+//! the in-tree context providers do **not** yet route through this host —
+//! they share `ocp-types` values via in-process calls — so this is the host
+//! runtime and conformance harness for the protocol, not (yet) the path every
+//! built-in source is served through.
 //! `docs/specs/stella-rust-cli/06-context-protocol.md` is the normative
 //! specification; every module cites the section it implements.
 //!
@@ -27,12 +31,23 @@
 //!
 //! # Isolation invariants (`06-context-protocol.md` §3.5)
 //!
-//! Providers are quarantined: child processes inherit no credentials and no
-//! ambient workspace filesystem access — a provider sees exactly the query
-//! payload and what it indexed through its own declared inputs. An `egress`
-//! provider is never auto-enabled. Frame content is untrusted data; this
-//! crate only ever *transports* it — it never executes frame content, and a
-//! host composing frames into a prompt must delimit them as quoted material.
+//! What is enforced today: a stdio child is spawned with a **scrubbed
+//! environment** (`env_clear` plus a `PATH`/`HOME` allowlist), so it inherits
+//! no credentials or secrets the host holds via environment variables; each
+//! call is bounded by a timeout, and on Unix the child leads its own process
+//! group so a crash or hang is contained and reaped without touching its
+//! siblings. An `egress` provider is never auto-enabled. Frame content is
+//! untrusted data; this crate only ever *transports* it — it never executes
+//! frame content, and a host composing frames into a prompt must delimit them
+//! as quoted material.
+//!
+//! **Not yet enforced — filesystem confinement.** A child runs with the
+//! host's working directory and ordinary filesystem access; there is no cwd
+//! jail, chroot, mount namespace, or seccomp sandbox. Environment scrubbing
+//! blocks credentials passed *via env vars*, but a provider can still read
+//! files the host user can read. Treat a stdio provider as trusted code you
+//! chose to run, not as a sandboxed principal — real filesystem isolation is
+//! future work.
 
 pub mod consent;
 pub mod error;

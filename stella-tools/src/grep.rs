@@ -43,6 +43,18 @@ impl Tool for Grep {
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let glob_filter = input.get("glob").and_then(|v| v.as_str());
 
+        // Confine `path` to the workspace root — `Path::join` would otherwise
+        // let an absolute or `../..` path escape it. `.`/empty resolve to the
+        // root itself, so existing default-scoped calls keep working.
+        let search_dir = match crate::resolve_within_root(root, search_path) {
+            Some(p) => p,
+            None => {
+                return ToolOutput::Error {
+                    message: format!("path `{search_path}` escapes workspace root"),
+                };
+            }
+        };
+
         // Try ripgrep first — it's the fast path.
         let mut rg = Command::new("rg");
         rg.arg("--line-number")
@@ -53,7 +65,7 @@ impl Tool for Grep {
         if let Some(g) = glob_filter {
             rg.arg("--glob").arg(g);
         }
-        rg.arg(pattern).arg(root.join(search_path));
+        rg.arg(pattern).arg(&search_dir);
         rg.stdout(std::process::Stdio::piped());
         rg.stderr(std::process::Stdio::piped());
 
@@ -82,7 +94,7 @@ impl Tool for Grep {
                 if let Some(g) = glob_filter {
                     grep.arg("--include").arg(g);
                 }
-                grep.arg(pattern).arg(root.join(search_path));
+                grep.arg(pattern).arg(&search_dir);
                 grep.stdout(std::process::Stdio::piped());
                 grep.stderr(std::process::Stdio::piped());
 

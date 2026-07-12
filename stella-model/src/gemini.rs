@@ -570,10 +570,22 @@ pub(crate) async fn aggregate_gemini_stream(
                             Some(sig) => format!("call_{ordinal}{SIGNATURE_SEPARATOR}{sig}"),
                             None => format!("call_{ordinal}"),
                         };
+                        // A no-argument call omits `args` on the wire, which
+                        // deserializes to `Value::Null` (the field is
+                        // `#[serde(default)]`). That is an empty object, not
+                        // the malformed-call sentinel — a downstream tool
+                        // deserializing its input as an object must not be
+                        // handed `null`, and `driver.rs::execute_with_repair`
+                        // must not mistake a valid no-arg call for broken JSON.
+                        let input = if call.args.is_null() {
+                            serde_json::json!({})
+                        } else {
+                            call.args
+                        };
                         tool_calls.push(ToolCall {
                             call_id,
                             name: call.name,
-                            input: call.args,
+                            input,
                         });
                     } else if let Some(t) = part.text
                         && !part.thought
@@ -792,6 +804,48 @@ mod tests {
         );
         assert_eq!(result.tool_calls[1].call_id, "call_1");
         assert_eq!(result.tool_calls[1].name, "bash");
+    }
+
+    #[tokio::test]
+    async fn complete_normalizes_a_no_arg_call_to_an_empty_object_not_null() {
+        let server = MockServer::start().await;
+        // A no-argument Gemini/Vertex tool call omits `args` on the wire, so
+        // the `#[serde(default)]` field deserializes to `Value::Null`. It must
+        // surface as an empty object, not null — `Value::Null` is the
+        // malformed-call sentinel `driver.rs::execute_with_repair` checks, so a
+        // valid no-arg call reported as null would be wrongly "repaired".
+        let sse_body = concat!(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[",
+            "{\"functionCall\":{\"name\":\"now\"}}",
+            "]}}],\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":2}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/models/gemini-3-pro:streamGenerateContent"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = GeminiProvider::new(ApiKey::new("test-key"), "gemini-3-pro")
+            .with_base_url(server.uri());
+
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("what time is it")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![ToolSchema {
+                name: "now".into(),
+                description: "Current time".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+                read_only: false,
+            }],
+        };
+
+        let result = provider.complete(req).await.expect("should succeed");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "now");
+        assert_eq!(result.tool_calls[0].input, serde_json::json!({}));
+        assert!(!result.tool_calls[0].input.is_null());
     }
 
     #[tokio::test]

@@ -201,8 +201,10 @@ impl CodeGraph {
     }
 
     /// The OCP-provider query entrypoint: budgeted, provenance-carrying frames
-    /// (`06-context-protocol.md` §3.3). In-process shape; `stella-context`
-    /// adapts it into the async `ContextPlane`.
+    /// (`06-context-protocol.md` §3.3), in-process shape. Built and tested as
+    /// the retrieval surface a context plane would call; not yet consumed at
+    /// runtime — the index is written on `stella init` but the CLI does not yet
+    /// query it.
     pub fn query(&self, q: &ContextQuery) -> Result<Vec<ContextFrame>, GraphError> {
         frames::query(&self.inner.read_guard(), &self.inner.root, q)
     }

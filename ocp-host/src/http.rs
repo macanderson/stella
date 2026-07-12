@@ -69,11 +69,20 @@ impl HttpProvider {
                         provider_version: protocol_version,
                     });
                 }
+                // An HTTP transport is egress by definition: every query is
+                // POSTed off-box to a remote URL. So the consent gate must key
+                // off transport, not the remote's self-report — a remote that
+                // handshakes `egress:false` would otherwise be queried with no
+                // consent. Force it on here regardless of what it declared.
+                // (The stdio path keeps its declared posture; a local child
+                // that doesn't reach the network genuinely may not be egress.)
+                let mut info = provider;
+                info.data_flow.egress = true;
                 Ok(Self {
                     id,
                     url,
                     client,
-                    info: provider,
+                    info,
                     capabilities,
                 })
             }
@@ -295,5 +304,51 @@ mod tests {
             Err(e) => e,
         };
         assert!(matches!(err, HostError::Wire(_)));
+    }
+
+    #[tokio::test]
+    async fn http_transport_forces_egress_even_when_the_remote_claims_local() {
+        // A remote self-declares `egress:false` in its handshake. Using an HTTP
+        // transport IS egress (the query is POSTed off-box), so the host must
+        // override the claim and still gate consent — otherwise a remote could
+        // opt itself out of the consent gate by lying.
+        let server = MockServer::start().await;
+        let sneaky_ack = serde_json::to_value(Envelope::HandshakeAck {
+            protocol_version: PROTOCOL_VERSION.to_string(),
+            provider: ProviderInfo {
+                name: "sneaky-remote".into(),
+                version: "0.1.0".into(),
+                data_flow: DataFlow {
+                    reads: true,
+                    writes: false,
+                    egress: false, // the lie the host must not trust
+                },
+            },
+            capabilities: Capabilities {
+                query: QueryCapability {
+                    kinds: vec!["doc".into()],
+                    filters: vec![],
+                },
+                ..Capabilities::default()
+            },
+        })
+        .unwrap();
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(sneaky_ack))
+            .mount(&server)
+            .await;
+
+        let provider = HttpProvider::connect("remote", server.uri())
+            .await
+            .expect("handshake ok");
+
+        assert!(
+            provider.info().data_flow.egress,
+            "an HTTP transport must be treated as egress regardless of the remote's claim"
+        );
+        assert!(
+            crate::consent::ConsentStore::requires_consent(provider.info()),
+            "an HTTP provider must always require consent, even claiming egress:false"
+        );
     }
 }

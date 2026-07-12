@@ -1,13 +1,18 @@
 //! Workspace rules engine (`03-plan.md` Phase 2 item 5; ported from
 //! `apps/cli/src/rules/{types,loader,enforce,promote}.ts`).
 //!
-//! A rule is a binding instruction for the agent, always injected into the
-//! system prompt — **Tier 1**, soft adherence ([`render_rules_section`]).
-//! When it carries a [`RuleGuard`] it is additionally hard-enforced at the
-//! tool boundary — **Tier 2** ([`evaluate_guards`]) — blocking a violating
-//! tool call before it runs and returning the rule text so the model can
+//! A rule is a binding instruction for the agent. The engine models two tiers:
+//! **Tier 1** soft adherence, a rule rendered into the system prompt
+//! ([`render_rules_section`]); and **Tier 2** hard enforcement, a rule carrying
+//! a [`RuleGuard`] checked at the tool boundary ([`evaluate_guards`]) to block a
+//! violating tool call before it runs and return the rule text so the model can
 //! self-correct. Rules are authored as markdown under `.stella/rules/*.md`
 //! (`02-architecture.md` §6, ADR-008 filesystem-first).
+//!
+//! Status: this engine is implemented and tested here, but is **not yet wired
+//! into the shipping CLI** — there is no production [`RuleSource`] and the
+//! agent loop does not yet load rules or call [`evaluate_guards`]. Wiring it in
+//! is tracked as a contribution target.
 //!
 //! # No I/O in this module (`02-architecture.md` §1.3)
 //!
