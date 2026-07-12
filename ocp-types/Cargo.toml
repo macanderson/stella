@@ -6,7 +6,14 @@ edition.workspace = true
 rust-version.workspace = true
 license = "MIT"
 repository.workspace = true
-publish.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/ocp-types"
+readme = "README.md"
+keywords = ["ocp", "context", "protocol", "agents", "llm"]
+categories = ["encoding", "api-bindings"]
+# Overrides the workspace default (publish = false) — this crate is the
+# industry-facing artifact meant to be published on its own (issue #19).
+publish = true
 
 [dependencies]
 serde.workspace = true
