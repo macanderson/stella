@@ -229,4 +229,4 @@ jobs:
             exit 0
           fi
           git commit -m "stella ${version}"
-          git push origin HEAD:main
+          git push origin HEAD
