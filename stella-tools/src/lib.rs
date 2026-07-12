@@ -8,6 +8,7 @@
 
 pub mod bash;
 pub mod ci;
+pub mod custom;
 pub mod delete;
 pub mod edit;
 mod exec;

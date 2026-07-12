@@ -2344,8 +2344,10 @@ dependencies = [
  "serde_json",
  "stella-core",
  "stella-protocol",
+ "tempfile",
  "thiserror",
  "tokio",
+ "toml",
 ]
 
 [[package]]

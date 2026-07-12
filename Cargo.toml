@@ -36,6 +36,7 @@ toml = "0.9"
 rpassword = "7"
 hmac = "0.12"
 sha2 = "0.10"
+tempfile = "3"
 
 [profile.release]
 lto = true
