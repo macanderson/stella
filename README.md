@@ -16,14 +16,26 @@ A fast, BYOK, model-agnostic terminal coding agent built in Rust, from the maker
 
 ## Install
 
-Requires Rust 1.90+ (via [rustup](https://rustup.rs)) and git. Prebuilt binaries, Homebrew, and a curl|sh installer are on the roadmap (Phase 7); today Stella installs with cargo:
+**Prebuilt binary (curl | sh)** — installs the latest tagged release for your
+platform (macOS/Linux, x86_64/arm64), verifying its SHA-256, and falls back to
+`cargo install` where no prebuilt binary is published:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oxageninc/stella-cli/main/install.sh | sh
+stella --version
+```
+
+**Homebrew** — the formula in `packaging/homebrew/stella.rb` builds from source
+(`brew install --build-from-source ./packaging/homebrew/stella.rb`).
+
+**From cargo** (requires Rust 1.90+ via [rustup](https://rustup.rs) and git):
 
 ```bash
 cargo install --locked --git https://github.com/oxageninc/stella-cli stella-cli
 stella --version
 ```
 
-Or build from source:
+**From source:**
 
 ```bash
 git clone https://github.com/oxageninc/stella-cli.git
@@ -31,6 +43,10 @@ cd stella-cli
 cargo build --release
 ./target/release/stella --version
 ```
+
+> The `curl | sh` and Homebrew paths fetch binaries published by the release
+> workflow (`.github/workflows/release.yml`), which runs on `v*` tags. Until the
+> first tagged release, use the cargo or from-source path above.
 
 ## Set your API key
 
@@ -221,16 +237,49 @@ cargo run -p stella-cli -- models
 MIT OR Apache-2.0
 
 ## Roadmap
-- Phase 0: Workspace skeleton + provider spike (done)
-- Phase 1: Built-in tools (done)
-- CLI binary: stella with agent loop, REPL, TUI (done)
-- Phase 2: Step-driver, role router, budget, model matrix, goal loop,
-  parallel tools, witness verification, DuckDB telemetry (done — Bedrock/
-  Vertex/native-Gemini/GGUF adapters and wiring the router+hooks into the
-  turn path are the tracked follow-ups)
-- Phase 3: Local context plane — embeddings for md/mdx/txt/doc/docx into
-  the DuckDB graph tables, code graph, OCP host + conformance
-- Phase 5: Fleet, TUI polish, media generation (vision-grade judge
-  evidence: screenshots attached to judge calls)
-- Phase 6: Benchmark proof (SWE-bench Verified)
-- Phase 7: OSS release (cargo-dist, Homebrew, curl|sh)
+
+**Shipped**
+- Phase 0–1: Workspace skeleton, provider spike, built-in tools.
+- CLI binary: `stella` with the agent loop and an interactive REPL.
+- Phase 2: Step-driver engine, budget enforcement, model matrix/catalog,
+  goal loop with an independent LLM judge, parallel tools, witness
+  verification, DuckDB telemetry. Provider adapters: Z.ai, Anthropic,
+  OpenAI, xAI, DeepSeek, native Gemini, OpenRouter, **Bedrock**
+  (Converse/SigV4), **Vertex**, and a `local` OpenAI-compatible endpoint
+  (Ollama / vLLM / LM Studio / llama.cpp server). Hooks
+  (SessionStart/PreToolUse/PostToolUse) are wired into the turn path, and
+  the role router selects a cross-family **judge** when more than one
+  provider is configured.
+- Phase 3 — OCP host + conformance: a working Open Context Protocol host
+  (stdio + HTTP transports, consent gating, per-provider timeouts,
+  budget-honesty auditing) with an adversarial conformance suite.
+- Phase 6 — a SWE-bench Verified **harness** (`bench/`) that drives Stella
+  over instances and emits predictions in the official format (a runnable
+  harness, not a completed validated run).
+- Phase 7 — OSS release: cross-platform release workflow, a `curl | sh`
+  installer, a Homebrew formula, and a cargo-dist-ready manifest.
+
+**Built and tested, not yet wired into the `stella` binary**
+- Role router into the *worker* turn (cross-family judge is done; per-step
+  worker/triage routing is the remaining piece).
+- Code graph (`stella-graph`): tree-sitter indexer (Rust/Py/JS/TS/TSX),
+  symbol + import edges, incremental watcher. Persists to SQLite today.
+- Local context plane (`stella-context`): offline recall index for the
+  self-improvement loop. Embeddings are a hashing baseline over
+  caller-supplied text — a real embedder plus file (md/mdx/txt/doc/docx)
+  ingestion into the DuckDB graph tables are the tracked follow-ups.
+- Fleet (`stella-fleet`): DAG planner, git-worktree isolation, commit
+  ledger, PR/CI monitor, budget-metered dispatch. Needs a production
+  worker and a `stella fleet` subcommand.
+- Interactive TUI (`stella-tui`): full ratatui/crossterm shell. Needs
+  `stella chat` to drive it off the `AgentEvent` stream.
+- Media generation (`stella-media`): image/SVG/video adapters, artifact
+  store, cost gate. Generation-only today.
+
+**Planned**
+- Native in-process GGUF loader (today: point the `local` provider at a
+  llama.cpp/Ollama server).
+- Vision-grade judge evidence — attaching screenshots to judge calls.
+  Requires a multimodal message type (the completion envelope is text-only
+  today) plus a media→judge path.
+- A validated end-to-end SWE-bench Verified run.
