@@ -35,6 +35,8 @@ pub struct ZaiProvider {
     /// slug isn't in the catalog — `build_provider` (`agent.rs`) rejects that
     /// case up front, so in practice this is always `Some` for a live call.
     pricing: Option<Pricing>,
+    id: String,
+    label: String,
 }
 
 impl ZaiProvider {
@@ -47,11 +49,26 @@ impl ZaiProvider {
             base_url: DEFAULT_BASE_URL.to_string(),
             model,
             pricing,
+            id: "zai".to_string(),
+            label: "Z.ai".to_string(),
         }
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// Re-identify this adapter for another OpenAI-*compatible* provider it
+    /// is serving (xAI, DeepSeek, OpenRouter, a local endpoint): `id` is
+    /// what `Provider::id()` reports and `label` is the human name used in
+    /// error messages. Without this, every gateway routed through the
+    /// shared Chat Completions adapter misreported itself as Z.ai — an
+    /// xAI 401 read "Z.ai rejected the API key", pointing the user at the
+    /// wrong credential.
+    pub fn with_identity(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.id = id.into();
+        self.label = label.into();
         self
     }
 }
@@ -291,7 +308,7 @@ fn to_zai_tools(tools: &[stella_protocol::tool::ToolSchema]) -> Vec<ZaiToolSchem
 #[async_trait]
 impl Provider for ZaiProvider {
     fn id(&self) -> &str {
-        "zai"
+        &self.id
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
@@ -314,11 +331,14 @@ impl Provider for ZaiProvider {
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ProviderError::Auth("Z.ai rejected the API key".into()));
+            return Err(ProviderError::Auth(format!(
+                "{} rejected the API key",
+                self.label
+            )));
         }
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(ProviderError::RateLimited {
-                message: "Z.ai rate limit".into(),
+                message: format!("{} rate limit", self.label),
                 retry_after_ms: None,
             });
         }
@@ -335,7 +355,8 @@ impl Provider for ZaiProvider {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(ProviderError::Terminal(format!(
-                "Z.ai HTTP {status}: {text}"
+                "{} HTTP {status}: {text}",
+                self.label
             )));
         }
 
@@ -580,6 +601,38 @@ mod tests {
         assert_eq!(call.call_id, "call_1");
         assert_eq!(call.name, "read_file");
         assert_eq!(call.input, serde_json::json!({"path": "src/lib.rs"}));
+    }
+
+    #[tokio::test]
+    async fn with_identity_renames_the_provider_in_id_and_error_messages() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+            .mount(&server)
+            .await;
+
+        let provider = ZaiProvider::new(ApiKey::new("bad-key"), "grok-4")
+            .with_base_url(server.uri())
+            .with_identity("xai", "xAI");
+        assert_eq!(provider.id(), "xai");
+
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let err = provider.complete(req).await.unwrap_err();
+        match &err {
+            ProviderError::Auth(message) => {
+                assert!(message.contains("xAI"), "{message}");
+                assert!(!message.contains("Z.ai"), "{message}");
+            }
+            other => panic!("expected Auth, got {other:?}"),
+        }
     }
 
     #[tokio::test]

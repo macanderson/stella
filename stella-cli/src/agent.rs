@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use colored::Colorize;
 use stella_core::{BudgetGuard, Engine, EngineConfig, TurnOutcome};
+use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
 use stella_protocol::event::BudgetMode;
 use stella_protocol::{AgentEvent, CompletionMessage, ToolOutput};
@@ -211,12 +212,22 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
 
     loop {
-        // Read user input
+        // The rocket-vs-UFO duel animates one line above the prompt while
+        // the REPL waits for input (TTY only; STELLA_FUN=0 opts out), and is
+        // stopped the moment a line arrives so nothing ever animates while a
+        // turn's event stream is printing — see tui.rs's module doc for why
+        // that boundary matters.
+        let duel = tui::PromptDuel::start();
+
         print!("{} ", ">".bright_cyan().bold());
         std::io::stdout().flush().map_err(|e| e.to_string())?;
 
         let mut input = String::new();
-        match std::io::stdin().read_line(&mut input) {
+        let read = std::io::stdin().read_line(&mut input);
+        if let Some(duel) = duel {
+            duel.stop();
+        }
+        match read {
             Ok(0) => break, // EOF (Ctrl+D)
             Ok(_) => {}
             Err(e) => return Err(format!("read error: {e}")),
@@ -603,45 +614,128 @@ fn spawn_renderer(
     })
 }
 
-/// Build the provider adapter from config. Consults the catalog first so an
+/// Build the provider adapter from config. Consults the catalog first
+/// (provider-scoped, since the same slug legitimately exists on several
+/// providers — `gemini-3-pro` on both `gemini` and `vertex`) so an
 /// unrecognized model slug is a hard, immediate, named error — never a
 /// silent construction of a provider that will simply fail its first live
-/// call (`07-model-matrix.md` §3, L-M1/L-M2: this hard-error rule existed in
-/// `stella_model::catalog` since Phase 0 but was never actually called from
-/// the request path, so it was unenforced in practice).
+/// call (`07-model-matrix.md` §3, L-M1/L-M2). The one exemption is `local`:
+/// a local server's models are whatever the user pulled into it — there is
+/// no curated catalog to check against, and the anti-phantom-slug rule
+/// exists to catch drift in OUR seed data, not to veto the user's own
+/// endpoint.
 ///
-/// OpenAI gets its own arm ahead of the `openai_compatible` bool: real
-/// OpenAI speaks the Responses API (`stella_model::openai`), a wire shape
-/// (and tool-call dialect, see `catalog.rs`'s `ToolDialect::OpenaiResponses`)
-/// genuinely distinct from the Chat Completions shape every other
-/// `openai_compatible` row (Z.ai, xAI, DeepSeek, Gemini's OpenAI-compat
-/// shim, OpenRouter) actually speaks — see `openai.rs`'s module doc for why
-/// reusing `ZaiProvider` for OpenAI was wrong even though it happened to
-/// work.
+/// Each wire dialect gets its own arm: OpenAI (Responses API), Anthropic
+/// (Messages), Gemini direct + Vertex (generateContent), Bedrock (Converse,
+/// SigV4). Everything else — Z.ai, xAI, DeepSeek, OpenRouter, local — is
+/// genuinely the same Chat Completions shape behind different base URLs,
+/// served by the shared adapter re-identified per provider so its
+/// `Provider::id()` and error messages name the surface actually being
+/// called (an xAI 401 must never read "Z.ai rejected the API key").
 fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> {
-    stella_model::catalog::Catalog::seed()
-        .resolve(&cfg.model_id)
-        .map_err(|e| e.to_string())?;
+    if cfg.provider.id != "local" {
+        stella_model::catalog::Catalog::seed()
+            .resolve_for(cfg.provider.id, &cfg.model_id)
+            .map_err(|e| e.to_string())?;
+    }
 
     let api_key = cfg.api_key.clone();
+    let base_url = cfg.effective_base_url().to_string();
 
-    if cfg.provider.id == "openai" {
-        let provider = stella_model::openai::OpenAiProvider::new(api_key, cfg.model_id.clone())
-            .with_base_url(cfg.provider.base_url.to_string());
-        Ok(Box::new(provider))
-    } else if cfg.provider.openai_compatible {
-        // Z.ai, xAI, DeepSeek, Gemini (OpenAI-compat shim), OpenRouter all
-        // use the same Chat Completions adapter shape — only the base URL
-        // differs.
-        let provider = stella_model::zai::ZaiProvider::new(api_key, cfg.model_id.clone())
-            .with_base_url(cfg.provider.base_url.to_string());
-        Ok(Box::new(provider))
-    } else {
-        // Anthropic Messages API
-        let provider =
-            stella_model::anthropic::AnthropicProvider::new(api_key, cfg.model_id.clone())
-                .with_base_url(cfg.provider.base_url.to_string());
-        Ok(Box::new(provider))
+    match cfg.provider.id {
+        "openai" => {
+            let provider = stella_model::openai::OpenAiProvider::new(api_key, cfg.model_id.clone())
+                .with_base_url(base_url);
+            Ok(Box::new(provider))
+        }
+        "anthropic" => {
+            let provider =
+                stella_model::anthropic::AnthropicProvider::new(api_key, cfg.model_id.clone())
+                    .with_base_url(base_url);
+            Ok(Box::new(provider))
+        }
+        "gemini" => {
+            let provider = stella_model::gemini::GeminiProvider::new(api_key, cfg.model_id.clone())
+                .with_base_url(base_url);
+            Ok(Box::new(provider))
+        }
+        "vertex" => {
+            // The access token is cfg.api_key (VERTEX_ACCESS_TOKEN via the
+            // credential chain); project and location are Vertex-specific
+            // addressing, resolved here with named errors rather than
+            // burying a doomed request.
+            let project = std::env::var("VERTEX_PROJECT_ID")
+                .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
+                .ok()
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    "Vertex AI needs a project id — set VERTEX_PROJECT_ID (or \
+                     GOOGLE_CLOUD_PROJECT)"
+                        .to_string()
+                })?;
+            let location = std::env::var("VERTEX_LOCATION")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "global".to_string());
+            let mut provider = stella_model::vertex::VertexProvider::new(
+                api_key,
+                cfg.model_id.clone(),
+                project,
+                location,
+            );
+            if let Some(override_url) = &cfg.base_url_override {
+                provider = provider.with_base_url(override_url.clone());
+            }
+            Ok(Box::new(provider))
+        }
+        "bedrock" => {
+            // cfg.api_key is AWS_ACCESS_KEY_ID via the credential chain;
+            // the rest of the standard AWS env set is read here. Secret
+            // resolution failure is a named error pointing at the exact
+            // var, not a doomed unsigned request.
+            let secret = std::env::var("AWS_SECRET_ACCESS_KEY")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    "Bedrock needs AWS_SECRET_ACCESS_KEY alongside AWS_ACCESS_KEY_ID".to_string()
+                })?;
+            let session_token = std::env::var("AWS_SESSION_TOKEN")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(ApiKey::new);
+            let region = std::env::var("AWS_REGION")
+                .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "us-east-1".to_string());
+            let mut provider = stella_model::bedrock::BedrockProvider::new(
+                api_key,
+                ApiKey::new(secret),
+                session_token,
+                region,
+                cfg.model_id.clone(),
+            );
+            if let Some(override_url) = &cfg.base_url_override {
+                provider = provider.with_base_url(override_url.clone());
+            }
+            Ok(Box::new(provider))
+        }
+        // Z.ai, xAI, DeepSeek, OpenRouter, local — the shared Chat
+        // Completions adapter, re-identified per provider.
+        other => {
+            let label = match other {
+                "zai" => "Z.ai",
+                "xai" => "xAI",
+                "deepseek" => "DeepSeek",
+                "openrouter" => "OpenRouter",
+                "local" => "the local endpoint",
+                _ => cfg.provider.display_name,
+            };
+            let provider = stella_model::zai::ZaiProvider::new(api_key, cfg.model_id.clone())
+                .with_base_url(base_url)
+                .with_identity(other, label);
+            Ok(Box::new(provider))
+        }
     }
 }
 

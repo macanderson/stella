@@ -60,6 +60,20 @@ pub enum ToolDialect {
     /// adapter exists; `OpenaiJson` stays the dialect name for everything
     /// that actually speaks the Chat Completions wire shape.
     OpenaiResponses,
+    /// Google's native `generateContent` dialect
+    /// (`stella_model::gemini::GeminiProvider` and
+    /// `stella_model::vertex::VertexProvider` — identical wire shape,
+    /// different auth/addressing): `functionCall`/`functionResponse` parts
+    /// correlated by function *name* (no wire call ids), args arriving as
+    /// complete JSON objects rather than streamed string fragments, and
+    /// Gemini 3 thought signatures riding on call parts
+    /// (`07-model-matrix.md` §4 `gemini-functions`).
+    GeminiFunctions,
+    /// Amazon Bedrock's Converse dialect
+    /// (`stella_model::bedrock::BedrockProvider`): `toolUse`/`toolResult`
+    /// content blocks correlated by `toolUseId`, tool results framed on a
+    /// user-role message with an explicit `status` field for failures.
+    BedrockConverse,
 }
 
 /// One catalog row — provider-native slug, verified against the provider's
@@ -167,16 +181,46 @@ impl Catalog {
                     provider: "gemini",
                     family: "gemini",
                     context_window: 1_000_000,
-                    // Routed through Google's OpenAI-compatibility shim
-                    // today (config.rs base_url has the `/openai` suffix);
-                    // a native Gemini adapter would use its own
-                    // GeminiFunctions dialect once built (deferred — see
-                    // config.rs and the Phase 2 PR description).
-                    tool_dialect: ToolDialect::OpenaiJson,
+                    // The native Gemini-direct adapter
+                    // (stella_model::gemini) — this row used to be
+                    // OpenaiJson while requests routed through Google's
+                    // OpenAI-compatibility shim as a stand-in.
+                    tool_dialect: ToolDialect::GeminiFunctions,
                     pricing: Pricing {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
                         cached_input_usd_per_mtok: 0.31,
+                    },
+                },
+                CatalogEntry {
+                    // The same Google model surfaced through Vertex AI —
+                    // one model genuinely existing on two providers is why
+                    // uniqueness (and `resolve_for`) is keyed on
+                    // (provider, id), not id alone.
+                    id: "gemini-3-pro",
+                    provider: "vertex",
+                    family: "gemini",
+                    context_window: 1_000_000,
+                    tool_dialect: ToolDialect::GeminiFunctions,
+                    pricing: Pricing {
+                        input_usd_per_mtok: 1.25,
+                        output_usd_per_mtok: 10.00,
+                        cached_input_usd_per_mtok: 0.31,
+                    },
+                },
+                CatalogEntry {
+                    // A cross-region inference profile, not a bare model id
+                    // — Bedrock rejects on-demand invocation of newer
+                    // Anthropic models without one.
+                    id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    provider: "bedrock",
+                    family: "claude",
+                    context_window: 200_000,
+                    tool_dialect: ToolDialect::BedrockConverse,
+                    pricing: Pricing {
+                        input_usd_per_mtok: 3.00,
+                        output_usd_per_mtok: 15.00,
+                        cached_input_usd_per_mtok: 0.30,
                     },
                 },
                 CatalogEntry {
@@ -211,13 +255,30 @@ impl Catalog {
 
     /// Resolve a slug against the catalog. Returns `ProviderError::UnknownModel`
     /// (never a fallback to a default model) when the slug isn't present —
-    /// the loud, named error the spec requires.
+    /// the loud, named error the spec requires. When the same slug exists on
+    /// several providers (e.g. `gemini-3-pro` on both `gemini` and
+    /// `vertex`), the first row wins; use [`Catalog::resolve_for`] when the
+    /// provider is known.
     pub fn resolve(&self, slug: &str) -> Result<&CatalogEntry, ProviderError> {
         self.entries
             .iter()
             .find(|entry| entry.id == slug)
             .ok_or_else(|| ProviderError::UnknownModel {
                 slug: slug.to_string(),
+            })
+    }
+
+    /// Resolve a slug for a specific provider — the form `build_provider`
+    /// uses, since the same model genuinely exists on more than one
+    /// provider (Gemini on `gemini` and `vertex`; most things on
+    /// `openrouter`) and a slug that exists on provider A must still be a
+    /// hard error when requested from provider B.
+    pub fn resolve_for(&self, provider: &str, slug: &str) -> Result<&CatalogEntry, ProviderError> {
+        self.entries
+            .iter()
+            .find(|entry| entry.provider == provider && entry.id == slug)
+            .ok_or_else(|| ProviderError::UnknownModel {
+                slug: format!("{provider}/{slug}"),
             })
     }
 
@@ -249,16 +310,23 @@ mod tests {
     }
 
     #[test]
-    fn seed_catalog_has_no_duplicate_ids() {
+    fn seed_catalog_has_no_duplicate_provider_id_pairs() {
+        // Keyed on (provider, id), not id alone: the same model genuinely
+        // exists on more than one provider (gemini-3-pro on gemini and
+        // vertex), which is exactly why resolve_for exists.
         let catalog = Catalog::seed();
-        let mut ids: Vec<&str> = catalog.entries().iter().map(|e| e.id).collect();
-        let before = ids.len();
-        ids.sort_unstable();
-        ids.dedup();
+        let mut pairs: Vec<(&str, &str)> = catalog
+            .entries()
+            .iter()
+            .map(|e| (e.provider, e.id))
+            .collect();
+        let before = pairs.len();
+        pairs.sort_unstable();
+        pairs.dedup();
         assert_eq!(
-            ids.len(),
+            pairs.len(),
             before,
-            "catalog seed must not contain duplicate slugs"
+            "catalog seed must not contain duplicate (provider, slug) pairs"
         );
     }
 
@@ -322,12 +390,32 @@ mod tests {
     }
 
     #[test]
+    fn resolve_for_scopes_the_slug_to_the_named_provider() {
+        let catalog = Catalog::seed();
+        let entry = catalog
+            .resolve_for("vertex", "gemini-3-pro")
+            .expect("vertex row is seeded");
+        assert_eq!(entry.provider, "vertex");
+        assert_eq!(entry.tool_dialect, ToolDialect::GeminiFunctions);
+
+        // A slug that exists — but on a different provider — is still a
+        // hard error for the provider actually requested.
+        let err = catalog.resolve_for("bedrock", "gemini-3-pro").unwrap_err();
+        match err {
+            ProviderError::UnknownModel { slug } => {
+                assert_eq!(slug, "bedrock/gemini-3-pro")
+            }
+            other => panic!("expected UnknownModel, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn seed_covers_every_provider_stella_cli_can_select() {
-        // stella-cli/src/config.rs::PROVIDERS lists 7 providers; this test
-        // doesn't import that crate (stella-cli depends on stella-model,
-        // not the reverse) but pins the provider id set here so the two
-        // can't silently drift apart again — the actual cross-check lives
-        // in stella-cli's own test suite (config::tests).
+        // stella-cli/src/config.rs::PROVIDERS lists these providers; this
+        // test doesn't import that crate (stella-cli depends on
+        // stella-model, not the reverse) but pins the provider id set here
+        // so the two can't silently drift apart again — the actual
+        // cross-check lives in stella-cli's own test suite (config::tests).
         let catalog = Catalog::seed();
         for provider in [
             "zai",
@@ -337,6 +425,8 @@ mod tests {
             "deepseek",
             "gemini",
             "openrouter",
+            "vertex",
+            "bedrock",
         ] {
             assert!(
                 catalog.entries().iter().any(|e| e.provider == provider),

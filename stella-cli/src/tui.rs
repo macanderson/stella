@@ -16,8 +16,18 @@
 //! concurrent task racing the event-draining task below, both writing to the
 //! terminal — real interleaving risk for a cosmetic win. `Stage::Execute`
 //! below gives one clean, immediate "thinking" line instead.
+//!
+//! The [`PromptDuel`] animation (a rocket dueling a UFO one line above the
+//! prompt, ported from the TS CLI's `SpaceInvaders` rail) does NOT violate
+//! that rationale: it runs only while the REPL is blocked on `read_line` —
+//! no turn in flight, no event stream to race — and is stopped before the
+//! turn starts. The only concurrent writer while it animates is the
+//! terminal's own echo of the user's keystrokes, which lives on a different
+//! row than the one the animator repaints.
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use colored::Colorize;
@@ -283,16 +293,22 @@ pub fn cost_summary(cost_usd: f64, model: &str, elapsed: Duration) {
     );
 }
 
-/// Print the welcome banner.
+/// Print the welcome banner: the STELLA block-letter logomark swept with the
+/// stellar gradient, then the session info line. (The previous banner was a
+/// hand-pasted figlet that had drifted into garbage — it did not actually
+/// spell "Stella" — which is exactly why the wordmark below is *composed*
+/// from per-letter glyph data, the same defense the TS CLI's `banner.tsx`
+/// uses: composition can't misspell.)
 pub fn welcome_banner(provider: &str, model: &str, workspace: &str) {
-    let stella = r#"
-   ____  _     _     _ __        __
-  / ___|| |__ (_)___| |\ \      / /_ _ _ __ ___
-  \___ \| '_ \| / __| __\ \ /\ / / _` | '__/ _ \
-   ___) | | | | \__ \ |_ \ V  V / (_| | | |  __/
-  |____/|_| |_|_|___/_|__\_/\_/ \__,_|_|  \___|
-"#;
-    println!("{}", stella.color(accent()));
+    println!();
+    for line in wordmark_lines() {
+        println!("  {line}");
+    }
+    println!(
+        "\n  {} {}",
+        "✦".bright_magenta(),
+        "a fast, BYOK, model-agnostic coding agent".dimmed()
+    );
     println!(
         "  {} {} · {} · {}",
         "◆".cyan(),
@@ -439,6 +455,299 @@ pub fn render_event(event: &AgentEvent) {
     }
 }
 
+// ── STELLA logomark ─────────────────────────────────────────────────────────
+//
+// 5-row block glyphs, kept as literals so the wordmark renders identically
+// across terminals (no figlet dependency) — the same composition scheme as
+// the TS CLI's `apps/cli/src/tui/banner.tsx`. Each glyph is a fixed-width
+// column of 5 rows; the word is composed by joining glyph rows with one
+// space so letters never touch.
+
+const GLYPH_ROWS: usize = 5;
+
+fn glyph(ch: char) -> Option<[&'static str; GLYPH_ROWS]> {
+    match ch {
+        'S' => Some(["███████", "██     ", "███████", "     ██", "███████"]),
+        'T' => Some(["███████", "   ██  ", "   ██  ", "   ██  ", "   ██  "]),
+        'E' => Some(["███████", "██     ", "█████  ", "██     ", "███████"]),
+        'L' => Some(["██     ", "██     ", "██     ", "██     ", "███████"]),
+        'A' => Some([" █████ ", "██   ██", "███████", "██   ██", "██   ██"]),
+        _ => None,
+    }
+}
+
+/// Compose a word into its 5-row block-letter form. Unknown chars are
+/// skipped, so the output can never contain a garbled letter.
+fn compose_wordmark(text: &str) -> Vec<String> {
+    let letters: Vec<[&'static str; GLYPH_ROWS]> = text
+        .chars()
+        .flat_map(|c| glyph(c.to_ascii_uppercase()))
+        .collect();
+    (0..GLYPH_ROWS)
+        .map(|row| letters.iter().map(|g| g[row]).collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+// Stellar gradient — violet → magenta → pink → cyan, swept left-to-right
+// across the wordmark (the night-sky counterpart of the TS banner's sunset).
+const STELLAR_STOPS: [(u8, u8, u8); 4] = [
+    (0x8B, 0x5C, 0xF6), // violet
+    (0xD9, 0x46, 0xEF), // magenta
+    (0xEC, 0x48, 0x99), // pink
+    (0x22, 0xD3, 0xEE), // cyan
+];
+
+/// Color at horizontal position `t` ∈ [0,1] along the stellar gradient.
+fn stellar_color_at(t: f64) -> (u8, u8, u8) {
+    let clamped = t.clamp(0.0, 1.0);
+    let segments = (STELLAR_STOPS.len() - 1) as f64;
+    let scaled = clamped * segments;
+    let idx = (scaled.floor() as usize).min(STELLAR_STOPS.len() - 2);
+    let local = scaled - idx as f64;
+    let from = STELLAR_STOPS[idx];
+    let to = STELLAR_STOPS[idx + 1];
+    let mix = |a: u8, b: u8| -> u8 { (a as f64 + (b as f64 - a as f64) * local).round() as u8 };
+    (mix(from.0, to.0), mix(from.1, to.1), mix(from.2, to.2))
+}
+
+/// The STELLA wordmark, each row colored column-by-column along the
+/// gradient. Returns display-ready strings (ANSI truecolor when the terminal
+/// supports it — `colored` handles the no-color fallback itself).
+fn wordmark_lines() -> Vec<String> {
+    let rows = compose_wordmark("STELLA");
+    let width = rows.first().map(|r| r.chars().count()).unwrap_or(1).max(2);
+    rows.iter()
+        .map(|row| {
+            row.chars()
+                .enumerate()
+                .map(|(i, ch)| {
+                    if ch == ' ' {
+                        ch.to_string()
+                    } else {
+                        let (r, g, b) = stellar_color_at(i as f64 / (width - 1) as f64);
+                        ch.to_string().truecolor(r, g, b).to_string()
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect()
+}
+
+// ── Fun: a rocket duels a UFO one line above the prompt ─────────────────────
+//
+// A straight port of the TS CLI's `renderInvadersLane` (apps/cli/src/repl/
+// components.tsx) — same sprites, same constants, same deterministic
+// physics, so the two CLIs share one signature animation. Sprites are
+// monochrome geometric glyphs (no color emoji) so they read the same in any
+// terminal theme. The rocket idles on a flickering thrust flame and snaps
+// into a recoil frame the instant it fires; the UFO patrols a weaving beat
+// and pulses its running light, mostly taking the hit and blooming into a
+// brief explosion, occasionally weaving clear for a near-miss flyby.
+
+const ROCKET: [&str; 2] = ["}=>", "-=>"];
+const ROCKET_RECOIL: &str = "{=>";
+const ROCKET_IDLE: &str = "|=>";
+const ROCKET_LEN: usize = 3;
+const UFO: [&str; 2] = ["<●>", "<○>"];
+const UFO_LEN: usize = 3;
+const EXPLOSION: [&str; 2] = ["✳✳✳", " ✸ "]; // flash, then dissipate to a spark
+const BOLT_HEAD: char = '•';
+const BOLT_TRAIL: char = '·';
+const BOLT_SPEED: usize = 3; // cells advanced per tick — a snappy tracer
+
+/// Write `sprite` into the fixed-width lane at `at`, clipping at both edges.
+fn place_sprite(lane: &mut [char], at: isize, sprite: &str) {
+    for (i, ch) in sprite.chars().enumerate() {
+        let idx = at + i as isize;
+        if idx >= 0 && (idx as usize) < lane.len() {
+            lane[idx as usize] = ch;
+        }
+    }
+}
+
+/// Bounces `n` back and forth across [0, span] — the UFO's weaving patrol.
+fn triangle_wave(n: u64, span: usize) -> usize {
+    if span == 0 {
+        return 0;
+    }
+    let period = (span * 2) as u64;
+    let m = (n % period) as usize;
+    if m <= span { m } else { period as usize - m }
+}
+
+/// Whether half-open ranges [a, a+a_len) and [b, b+b_len) intersect.
+fn overlaps(a: usize, a_len: usize, b: usize, b_len: usize) -> bool {
+    a < b + b_len && b < a + a_len
+}
+
+/// Pure renderer for one row of the rocket-vs-UFO duel, at a fixed `width`.
+/// When `active` the rocket fires on a steady cadence while the UFO weaves a
+/// patrol near the far end of the lane; most bolts land and bloom into a
+/// brief explosion before the UFO reforms, but the weave occasionally
+/// carries it clear of the shot for a near-miss flyby instead. Kept pure
+/// (no timers, no I/O) so every frame is deterministic and unit-testable.
+pub fn render_invaders_lane(tick: u64, width: usize, active: bool) -> String {
+    let w = width.clamp(14, 30);
+    let mut lane: Vec<char> = vec![' '; w];
+    let muzzle = ROCKET_LEN; // column right after the rocket's nose
+
+    if !active {
+        place_sprite(&mut lane, 0, ROCKET_IDLE);
+        place_sprite(&mut lane, (w - UFO_LEN) as isize, UFO[0]);
+        return lane.into_iter().collect();
+    }
+
+    // The UFO patrols a weave zone near the far end, well clear of the rocket.
+    let ufo_right = w - UFO_LEN;
+    let ufo_left = (muzzle + 3).max(ufo_right.saturating_sub(5));
+    let weave_span = (ufo_right - ufo_left).max(1);
+    let ufo_at = |t: u64| -> usize { ufo_left + triangle_wave(t, weave_span) };
+
+    // The rocket fires every `cycle` ticks: a recoil/muzzle-flash tick spawns
+    // the bolt, which streaks out at BOLT_SPEED cells/tick until it lands a
+    // hit or clears the lane, followed by a short beat before it reloads.
+    let flight_ticks = (w - muzzle).div_ceil(BOLT_SPEED) as u64;
+    let cycle = flight_ticks + 2;
+    let cycle_pos = tick % cycle;
+    let volley_start = tick - cycle_pos;
+
+    // Whether (and when) this volley's bolt connects is a pure function of
+    // the volley's start tick, so hits and near-misses fall out of the
+    // rocket/UFO phase relationship instead of a coin flip.
+    let mut hit_frame: Option<u64> = None;
+    for f in 0..flight_ticks {
+        let bolt_at = muzzle + f as usize * BOLT_SPEED;
+        if overlaps(bolt_at, 1, ufo_at(volley_start + f), UFO_LEN) {
+            hit_frame = Some(f);
+            break;
+        }
+    }
+
+    place_sprite(
+        &mut lane,
+        0,
+        if cycle_pos == 0 {
+            ROCKET_RECOIL
+        } else {
+            ROCKET[(tick % 2) as usize]
+        },
+    );
+
+    if let Some(hit) = hit_frame
+        && cycle_pos >= hit
+    {
+        // The bolt has landed — flash the impact, then let the UFO reform
+        // and resume its patrol for the rest of the beat before the next
+        // volley.
+        let since_hit = (cycle_pos - hit) as usize;
+        if since_hit < EXPLOSION.len() {
+            place_sprite(
+                &mut lane,
+                ufo_at(volley_start + hit) as isize,
+                EXPLOSION[since_hit],
+            );
+        } else {
+            place_sprite(&mut lane, ufo_at(tick) as isize, UFO[(tick % 2) as usize]);
+        }
+        return lane.into_iter().collect();
+    }
+
+    if cycle_pos < flight_ticks {
+        // Still in flight (a miss this volley, or a hit not yet reached) —
+        // the bolt leaves a fading trail behind its head as it streaks.
+        let bolt_at = muzzle + cycle_pos as usize * BOLT_SPEED;
+        if bolt_at > muzzle {
+            lane[bolt_at - 1] = BOLT_TRAIL;
+        }
+        if bolt_at < w {
+            lane[bolt_at] = BOLT_HEAD;
+        }
+    }
+    place_sprite(&mut lane, ufo_at(tick) as isize, UFO[(tick % 2) as usize]);
+    lane.into_iter().collect()
+}
+
+/// Default lane width — matches the TS `SpaceInvaders` component.
+const DUEL_WIDTH: usize = 24;
+/// Frame period — matches the TS component's 140ms interval.
+const DUEL_FRAME: Duration = Duration::from_millis(140);
+
+/// The animated duel one line above the prompt input. `start()` prints the
+/// opening frame on its own line (call it right before printing the prompt
+/// marker, so the lane sits exactly one row above the input), then a
+/// background thread repaints that row in place every ~140ms while the REPL
+/// is blocked reading input. `stop()` freezes the duel on its last frame —
+/// it stays behind in scrollback, the same way the TS rail goes still the
+/// moment its turn ends.
+///
+/// Repainting uses save-cursor / up-one-row / clear-line / restore in a
+/// single buffered write, so the user's in-progress typing on the row below
+/// is never touched. The only race is the beat between the user pressing
+/// Enter (which scrolls the prompt row up) and the caller invoking `stop()`;
+/// callers keep that window sub-millisecond by stopping immediately after
+/// `read_line` returns, against a 140ms frame period.
+pub struct PromptDuel {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl PromptDuel {
+    /// Start the duel if this session wants it: stdout must be a real
+    /// terminal (cursor-movement escapes would corrupt a pipe), and the fun
+    /// switch must not be off (`STELLA_FUN=0`, or the TS CLI's legacy
+    /// `STELLA_CLI_FUN=0`). Returns `None` — and prints nothing — otherwise.
+    pub fn start() -> Option<Self> {
+        let fun_off = |var: &str| std::env::var(var).map(|v| v == "0").unwrap_or(false);
+        if !io::stdout().is_terminal() || fun_off("STELLA_FUN") || fun_off("STELLA_CLI_FUN") {
+            return None;
+        }
+
+        println!(
+            "  {} {}",
+            "▸".dimmed(),
+            render_invaders_lane(0, DUEL_WIDTH, true).cyan()
+        );
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            let mut tick: u64 = 0;
+            loop {
+                std::thread::sleep(DUEL_FRAME);
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                tick += 1;
+                let frame = format!(
+                    // save cursor → up one row → col 1 → clear row → lane →
+                    // restore cursor, as one write so a keystroke echo can't
+                    // interleave mid-escape.
+                    "\x1b7\x1b[1A\r\x1b[2K  {} {}\x1b8",
+                    "▸".dimmed(),
+                    render_invaders_lane(tick, DUEL_WIDTH, true).cyan()
+                );
+                let mut out = io::stdout();
+                let _ = out.write_all(frame.as_bytes());
+                let _ = out.flush();
+            }
+        });
+
+        Some(Self {
+            stop,
+            handle: Some(handle),
+        })
+    }
+
+    /// Stop animating and wait for the painter thread to exit, leaving the
+    /// last frame in scrollback.
+    pub fn stop(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +792,139 @@ mod tests {
             false,
             Duration::from_millis(3),
         );
+    }
+
+    // ── wordmark ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn wordmark_composes_six_letters_into_five_equal_width_rows() {
+        let rows = compose_wordmark("STELLA");
+        assert_eq!(rows.len(), GLYPH_ROWS);
+        let width = rows[0].chars().count();
+        // 6 glyphs × 7 columns + 5 separator spaces.
+        assert_eq!(width, 6 * 7 + 5);
+        for row in &rows {
+            assert_eq!(row.chars().count(), width, "ragged wordmark row");
+            assert!(row.chars().all(|c| c == '█' || c == ' '));
+        }
+    }
+
+    #[test]
+    fn wordmark_skips_unknown_characters_instead_of_garbling() {
+        // The old banner shipped a hand-pasted figlet that silently drifted
+        // into not spelling "Stella" — composition skips anything it has no
+        // glyph for, so a typo shrinks the mark instead of corrupting it.
+        assert_eq!(compose_wordmark("S?T"), compose_wordmark("ST"));
+    }
+
+    #[test]
+    fn stellar_gradient_hits_its_endpoint_stops_exactly() {
+        assert_eq!(stellar_color_at(0.0), STELLAR_STOPS[0]);
+        assert_eq!(stellar_color_at(1.0), STELLAR_STOPS[3]);
+        // Out-of-range positions clamp instead of extrapolating.
+        assert_eq!(stellar_color_at(-1.0), STELLAR_STOPS[0]);
+        assert_eq!(stellar_color_at(2.0), STELLAR_STOPS[3]);
+    }
+
+    // ── invaders lane ──────────────────────────────────────────────────────
+    //
+    // Fixtures are ported verbatim from the TS suite
+    // (apps/cli/src/repl/__tests__/components.test.tsx) so the two CLIs'
+    // animations can never drift apart silently: at W=24 the first volley's
+    // bolt connects on tick 6, and the 9th volley (ticks 72–80) is the
+    // deterministic near-miss.
+
+    const W: usize = 24;
+
+    #[test]
+    fn stands_down_when_idle_rocket_parked_ufo_calm() {
+        let lane = render_invaders_lane(0, W, false);
+        assert_eq!(lane.chars().count(), W); // fixed width — no layout jitter
+        assert!(lane.starts_with("|=>")); // powered-down rocket, thrust off
+        assert!(lane.trim_end().ends_with("<●>")); // UFO holding position
+        assert!(!lane.contains('•')); // no bolt in flight while still
+    }
+
+    #[test]
+    fn fires_when_active_bolt_streaks_toward_the_ufo() {
+        // Tick 2 is mid-flight (well before the tick-6 hit for this width),
+        // so rocket, bolt, and UFO are all on the lane at once.
+        let lane = render_invaders_lane(2, W, true);
+        assert_eq!(lane.chars().count(), W);
+        let chars: Vec<char> = lane.chars().collect();
+        assert!(matches!(chars[0], '{' | '}' | '-')); // a rocket frame at the nose
+        let nose = 2; // first char after the rocket sprite
+        let bolt = chars
+            .iter()
+            .position(|&c| c == '•')
+            .expect("bolt in flight");
+        let ufo = chars
+            .iter()
+            .position(|&c| c == '●' || c == '○')
+            .expect("ufo on lane");
+        assert!(bolt > nose);
+        assert!(ufo > bolt); // the UFO is still further out ahead of the bolt
+    }
+
+    #[test]
+    fn advances_the_bolt_frame_over_frame() {
+        let bolt_at = |tick: u64| -> usize {
+            render_invaders_lane(tick, W, true)
+                .chars()
+                .position(|c| c == '•')
+                .expect("bolt in flight")
+        };
+        // Ticks 0-2 are the opening flight of the first volley at this width
+        // — the bolt moves BOLT_SPEED (3) cells closer to the UFO each tick.
+        assert_eq!(bolt_at(0), 3);
+        assert_eq!(bolt_at(1), 6);
+        assert_eq!(bolt_at(2), 9);
+    }
+
+    #[test]
+    fn blooms_into_an_explosion_on_a_hit_then_reforms_the_ufo() {
+        // Verified fixture: at W=24 the first volley's bolt connects on tick 6.
+        let impact = render_invaders_lane(6, W, true);
+        assert!(impact.contains('✳') || impact.contains('✸'));
+        assert!(!impact.contains('•')); // the bolt is spent on impact
+        assert!(!impact.contains('●') && !impact.contains('○')); // explosion replaces the UFO
+
+        let dissipating = render_invaders_lane(7, W, true);
+        assert!(dissipating.contains('✳') || dissipating.contains('✸'));
+
+        // Later in the same beat (before the next volley reloads) the UFO reforms.
+        let reformed = render_invaders_lane(8, W, true);
+        assert!(reformed.contains('●') || reformed.contains('○'));
+        assert!(!reformed.contains('✳') && !reformed.contains('✸'));
+    }
+
+    #[test]
+    fn occasionally_the_weave_carries_the_ufo_clear_for_a_near_miss() {
+        // Verified fixture: at W=24 (fire cycle 9, weave period 10 — coprime,
+        // so the phase drifts volley to volley) the 9th volley (ticks 72-80)
+        // never lines up — the bolt streaks past and the UFO is untouched.
+        let frames: Vec<String> = (72..81).map(|t| render_invaders_lane(t, W, true)).collect();
+        assert!(!frames.iter().any(|f| f.contains('✳') || f.contains('✸')));
+        assert!(frames.iter().any(|f| f.contains('•'))); // the rocket still fired
+        assert!(
+            frames.iter().all(|f| f.contains('●') || f.contains('○')) // the UFO survives throughout
+        );
+    }
+
+    #[test]
+    fn is_deterministic_and_fixed_width_across_a_long_run() {
+        for tick in 0..200 {
+            let a = render_invaders_lane(tick, W, true);
+            let b = render_invaders_lane(tick, W, true);
+            assert_eq!(a, b, "tick {tick} not deterministic");
+            assert_eq!(a.chars().count(), W, "tick {tick} broke the lane width");
+        }
+    }
+
+    #[test]
+    fn clamps_degenerate_widths_instead_of_panicking() {
+        // Below the 14-cell minimum and above the 30-cell maximum both clamp.
+        assert_eq!(render_invaders_lane(5, 1, true).chars().count(), 14);
+        assert_eq!(render_invaders_lane(5, 500, true).chars().count(), 30);
     }
 }
