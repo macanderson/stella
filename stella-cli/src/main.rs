@@ -1,27 +1,44 @@
 //! `stella` — a fast, BYOK, model-agnostic terminal coding agent.
 //!
 //! Built on the `stella-*` crate stack: `stella-model` for provider
-//! abstraction (Z.ai/GLM 5.2, Anthropic, OpenAI, xAI, DeepSeek, Gemini —
-//! any OpenAI-compatible endpoint), `stella-tools` for the built-in tool
-//! set, and `stella-protocol` for the shared types.
+//! abstraction (Z.ai/GLM 5.2, Anthropic, OpenAI, xAI, DeepSeek, Gemini
+//! direct, Vertex AI, Amazon Bedrock, OpenRouter — plus any local
+//! OpenAI-compatible endpoint via `--base-url`), `stella-core` for the
+//! step-driver engine, `stella-tools` for the built-in tool set, and
+//! `stella-protocol` for the shared types.
 //!
-//! Design goals (per docs/specs/oxagen-rust-cli/01-product-spec.md):
+//! Design goals (per docs/specs/stella-rust-cli/01-product-spec.md):
 //! - No phone-home requirement — works with zero network calls other than
 //!   the user's configured model provider.
 //! - BYOK: any provider key, any combination, no account.
 //! - Speed: streaming first, prompt-cache-aware system prefix, minimal
 //!   overhead between model turns.
-//! - Engaging TUI: live spinner, streaming text, tool-call cards, cost
-//!   tracking.
+//! - Headless-capable throughout: `--output-format text|json|stream-json`.
 
 mod agent;
 mod config;
+mod domains;
+mod interactive;
+mod memory;
 mod tui;
 
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
+
+/// How turn output reaches the caller (`01-product-spec.md`,
+/// `02-architecture.md` §4: stream-json is a line-per-`AgentEvent`
+/// serialization of the exact protocol enum — a stable machine interface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    /// Human-oriented interactive rendering (default).
+    Text,
+    /// One final JSON object summarizing the turn (headless).
+    Json,
+    /// One JSON line per AgentEvent as it happens (headless streaming).
+    StreamJson,
+}
 
 #[derive(Parser)]
 #[command(
@@ -43,9 +60,17 @@ struct Cli {
     #[arg(long)]
     api_key: Option<String>,
 
-    /// Output format: text (default, interactive) or json (headless)
-    #[arg(long, env = "STELLA_OUTPUT_FORMAT", default_value = "text")]
-    output_format: String,
+    /// Base URL override. Required with --model local/<model> to point at a
+    /// local OpenAI-compatible server (Ollama, vLLM, LM Studio, llama.cpp
+    /// server — e.g. http://localhost:11434/v1); optional for every other
+    /// provider to route through a proxy.
+    #[arg(long, env = "STELLA_BASE_URL")]
+    base_url: Option<String>,
+
+    /// Output format: text (interactive), json (one final object), or
+    /// stream-json (one line per agent event)
+    #[arg(long, env = "STELLA_OUTPUT_FORMAT", value_enum, default_value = "text")]
+    output_format: OutputFormat,
 
     /// Hard USD spend limit for the whole run/session — enforced mode
     /// (07-model-matrix.md §6): work aborts cleanly (never mid-tool) once
@@ -80,6 +105,15 @@ enum Command {
 
     /// Start an interactive REPL session
     Chat,
+
+    /// Analyze this workspace and infer its domain taxonomy
+    /// (.stella/domains.toml) — the tagging vocabulary for memories,
+    /// reflections, and every code-graph node/edge
+    Init,
+
+    /// List every tool available to the agent this session — built-ins,
+    /// developer custom tools (.stella/tools/), and manifest diagnostics
+    Tools,
 
     /// List configured providers and available models
     Models,
@@ -125,6 +159,9 @@ fn run(cli: Cli) -> Result<(), String> {
             config::Config::print_available_models();
             return Ok(());
         }
+        Some(Command::Tools) => {
+            return agent::run_tools_listing();
+        }
         Some(Command::Version) => {
             println!("stella v{}", env!("CARGO_PKG_VERSION"));
             return Ok(());
@@ -132,16 +169,38 @@ fn run(cli: Cli) -> Result<(), String> {
         _ => {}
     }
 
+    let rt = || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to start runtime: {e}"))
+    };
+
+    // `init` works offline (heuristic fallback), so config resolution
+    // failure downgrades rather than aborting.
+    if let Some(Command::Init) = cli.command {
+        return rt()?.block_on(agent::run_init(
+            cli.model.as_deref(),
+            cli.api_key.as_deref(),
+            cli.base_url.as_deref(),
+        ));
+    }
+
     // Run/Chat/Config need a resolved config (which requires an API key).
-    let cfg = config::Config::load(cli.model.as_deref(), cli.api_key.as_deref())?;
+    let cfg = config::Config::load(
+        cli.model.as_deref(),
+        cli.api_key.as_deref(),
+        cli.base_url.as_deref(),
+    )?;
 
     match cli.command.unwrap_or(Command::Chat) {
         Command::Run { prompt } => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| format!("failed to start runtime: {e}"))?;
-            rt.block_on(agent::run_one_shot(&cfg, &prompt, cli.budget))?;
+            rt()?.block_on(agent::run_one_shot(
+                &cfg,
+                &prompt,
+                cli.budget,
+                cli.output_format,
+            ))?;
         }
         Command::Goal { goal } => {
             let rt = tokio::runtime::Builder::new_multi_thread()
@@ -167,12 +226,9 @@ fn run(cli: Cli) -> Result<(), String> {
             rt.block_on(agent::run_goal_cmd(&cfg, &goal, cli.budget))?;
         }
         Command::Chat => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| format!("failed to start runtime: {e}"))?;
-            rt.block_on(agent::run_interactive(&cfg, cli.budget))?;
+            rt()?.block_on(agent::run_interactive(&cfg, cli.budget))?;
         }
+        Command::Init | Command::Tools => unreachable!("handled above"),
         Command::Models => {
             cfg.print_models();
         }

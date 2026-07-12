@@ -2,7 +2,7 @@
 //! whichever renderer (TUI or the JSON serializer) is listening.
 //! `--output-format stream-json` is a `serde_json` serialization of this
 //! exact enum, one line per event: a stable, versioned machine interface
-//! (`docs/specs/oxagen-rust-cli/02-architecture.md` §4).
+//! (`docs/specs/stella-rust-cli/02-architecture.md` §4).
 //!
 //! This is deliberately a *subset* at Phase 0 (only what a bare
 //! provider-streaming spike needs); later phases append variants as the
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::tool::{ToolCall, ToolOutput};
 
 /// A named point in the turn's data flow
-/// (`docs/specs/oxagen-rust-cli/02-architecture.md` §5). Exactly one stage
+/// (`docs/specs/stella-rust-cli/02-architecture.md` §5). Exactly one stage
 /// vocabulary exists in this workspace — never duplicated per-crate (the
 /// TS-era `StageKind` duplication this structurally forbids, L-E1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,13 +94,9 @@ pub enum AgentEvent {
         mode: BudgetMode,
     },
     /// One committed model call — the metering record. Emitted exactly once
-    /// per step that lands (a step whose retries all fail emits `Error`,
-    /// never a `StepUsage`), carrying the normalized usage envelope from
-    /// `CompletionUsage` plus everything a metering/billing pipeline needs
-    /// to price and audit the call without reconstructing state:
-    /// aggregate a turn by summing its `StepUsage` events.
-    /// `duration_ms` is wall-clock for the committed call *including* any
-    /// retry backoff that preceded it (`retries` says how many).
+    /// per step that lands, carrying the normalized usage envelope plus
+    /// everything a metering/billing pipeline needs to price and audit the
+    /// call; aggregate a turn by summing its `StepUsage` events.
     StepUsage {
         step: usize,
         model: String,
@@ -112,11 +108,10 @@ pub enum AgentEvent {
         retries: u32,
         tool_calls: usize,
     },
-    /// A judge model's assessment of a goal-driven loop
-    /// (`stella-core::goal`) after one working round. `met == true` ends
-    /// the loop; `met == false` feeds `reasoning` back to the worker as
-    /// course-correction. `cost_usd` is the judge call's own spend (already
-    /// recorded against the budget when this event fires).
+    /// A judge model's assessment of a goal-driven loop after one working
+    /// round. `met == true` ends the loop; `met == false` feeds `reasoning`
+    /// back to the worker as course-correction. `cost_usd` is the judge
+    /// call's own spend.
     GoalVerdict {
         round: usize,
         met: bool,
@@ -400,63 +395,113 @@ mod tests {
     }
 
     #[test]
-    fn step_usage_roundtrips_as_a_complete_metering_record() {
-        let event = AgentEvent::StepUsage {
-            step: 3,
-            model: "glm-5.2".into(),
-            input_tokens: 12_000,
-            output_tokens: 450,
-            cached_input_tokens: 9_000,
-            cost_usd: 0.0042,
-            duration_ms: 1_830,
-            retries: 1,
-            tool_calls: 4,
+    fn file_change_carries_the_diff_on_the_single_event_path() {
+        let event = AgentEvent::FileChange {
+            path: "src/lib.rs".into(),
+            kind: FileChangeKind::Modified,
+            diff: Some("@@ -1 +1 @@\n-old\n+new".into()),
         };
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"step_usage\""), "{json}");
+        assert!(json.contains("\"type\":\"file_change\""), "{json}");
         let back: AgentEvent = serde_json::from_str(&json).unwrap();
         match back {
-            AgentEvent::StepUsage {
-                step,
-                input_tokens,
-                cached_input_tokens,
-                retries,
-                tool_calls,
-                ..
-            } => {
-                assert_eq!(step, 3);
-                assert_eq!(input_tokens, 12_000);
-                assert_eq!(cached_input_tokens, 9_000);
-                assert_eq!(retries, 1);
-                assert_eq!(tool_calls, 4);
+            AgentEvent::FileChange { kind, diff, .. } => {
+                assert_eq!(kind, FileChangeKind::Modified);
+                assert!(diff.is_some());
             }
             other => panic!("unexpected variant: {other:?}"),
         }
     }
 
     #[test]
-    fn goal_verdict_roundtrips_both_outcomes() {
-        for met in [true, false] {
-            let event = AgentEvent::GoalVerdict {
-                round: 2,
-                met,
-                reasoning: "tests now pass".into(),
-                cost_usd: 0.001,
-            };
+    fn context_recall_frames_always_carry_a_citation_label() {
+        let event = AgentEvent::ContextRecall {
+            frames: vec![ContextFrameRef {
+                id: None, // not-yet-materialized frames carry no id (L-C4)
+                citation_label: "engine step-driver (driver.rs)".into(),
+                source: "code-graph".into(),
+                token_cost: 120,
+            }],
+            provider_mix: vec![ProviderShare {
+                provider: "code-graph".into(),
+                frames: 1,
+            }],
+            tokens: 120,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("citation_label"), "{json}");
+        assert!(
+            !json.contains("\"id\""),
+            "absent id must be omitted: {json}"
+        );
+    }
+
+    #[test]
+    fn media_job_failure_carries_its_reason_inline() {
+        let state = MediaJobState::Failed {
+            reason: "provider rejected the prompt".into(),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: MediaJobState = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, state);
+    }
+
+    #[test]
+    fn judge_verdict_distinguishes_deterministic_from_model_evidence() {
+        let event = AgentEvent::JudgeVerdict {
+            passed: true,
+            evidence: JudgeEvidence {
+                summary: "flip oracle: fail→pass on `cargo test -p x`".into(),
+                deterministic: true,
+                evidence_refs: vec!["trace:t1#verify".into()],
+            },
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentEvent::JudgeVerdict { evidence, .. } => assert!(evidence.deterministic),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ask_user_roundtrips_and_carries_structured_options() {
+        let event = AgentEvent::AskUser {
+            id: "call_q1".into(),
+            question: "Which database should the migration target?".into(),
+            options: vec!["local (5433)".into(), "staging".into()],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"ask_user\""), "{json}");
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentEvent::AskUser { options, .. } => assert_eq!(options.len(), 2),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scope_review_and_pr_events_roundtrip() {
+        for event in [
+            AgentEvent::ScopeReview {
+                proposal: ScopeProposal {
+                    summary: "refactor the auth module".into(),
+                    steps: vec!["step 1".into(), "step 2".into()],
+                    estimated_files: 12,
+                    estimated_cost_usd: Some(1.25),
+                },
+            },
+            AgentEvent::Pr {
+                url: "https://github.com/x/y/pull/1".into(),
+                status: PrStatus::Open,
+            },
+            AgentEvent::Commit {
+                sha: "abc123".into(),
+                message: "feat: x".into(),
+            },
+        ] {
             let json = serde_json::to_string(&event).unwrap();
-            assert!(json.contains("\"type\":\"goal_verdict\""), "{json}");
-            let back: AgentEvent = serde_json::from_str(&json).unwrap();
-            match back {
-                AgentEvent::GoalVerdict {
-                    met: back_met,
-                    round,
-                    ..
-                } => {
-                    assert_eq!(back_met, met);
-                    assert_eq!(round, 2);
-                }
-                other => panic!("unexpected variant: {other:?}"),
-            }
+            let _back: AgentEvent = serde_json::from_str(&json).unwrap();
         }
     }
 
@@ -479,6 +524,61 @@ mod tests {
         assert_eq!(lines.len(), 3);
         for line in &lines {
             assert!(!line.contains('\n'));
+        }
+    }
+
+    #[test]
+    fn step_usage_roundtrips_as_a_complete_metering_record() {
+        let event = AgentEvent::StepUsage {
+            step: 3,
+            model: "glm-5.2".into(),
+            input_tokens: 12_000,
+            output_tokens: 450,
+            cached_input_tokens: 9_000,
+            cost_usd: 0.0042,
+            duration_ms: 1_830,
+            retries: 1,
+            tool_calls: 4,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"step_usage\""), "{json}");
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentEvent::StepUsage {
+                step,
+                cached_input_tokens,
+                retries,
+                tool_calls,
+                ..
+            } => {
+                assert_eq!(step, 3);
+                assert_eq!(cached_input_tokens, 9_000);
+                assert_eq!(retries, 1);
+                assert_eq!(tool_calls, 4);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn goal_verdict_roundtrips_both_outcomes() {
+        for met in [true, false] {
+            let event = AgentEvent::GoalVerdict {
+                round: 2,
+                met,
+                reasoning: "tests now pass".into(),
+                cost_usd: 0.001,
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            assert!(json.contains("\"type\":\"goal_verdict\""), "{json}");
+            let back: AgentEvent = serde_json::from_str(&json).unwrap();
+            match back {
+                AgentEvent::GoalVerdict { met: b, round, .. } => {
+                    assert_eq!(b, met);
+                    assert_eq!(round, 2);
+                }
+                other => panic!("unexpected variant: {other:?}"),
+            }
         }
     }
 }

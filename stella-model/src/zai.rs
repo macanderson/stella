@@ -35,6 +35,8 @@ pub struct ZaiProvider {
     /// slug isn't in the catalog — `build_provider` (`agent.rs`) rejects that
     /// case up front, so in practice this is always `Some` for a live call.
     pricing: Option<Pricing>,
+    id: String,
+    label: String,
 }
 
 impl ZaiProvider {
@@ -47,11 +49,26 @@ impl ZaiProvider {
             base_url: DEFAULT_BASE_URL.to_string(),
             model,
             pricing,
+            id: "zai".to_string(),
+            label: "Z.ai".to_string(),
         }
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// Re-identify this adapter for another OpenAI-*compatible* provider it
+    /// is serving (xAI, DeepSeek, OpenRouter, a local endpoint): `id` is
+    /// what `Provider::id()` reports and `label` is the human name used in
+    /// error messages. Without this, every gateway routed through the
+    /// shared Chat Completions adapter misreported itself as Z.ai — an
+    /// xAI 401 read "Z.ai rejected the API key", pointing the user at the
+    /// wrong credential.
+    pub fn with_identity(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.id = id.into();
+        self.label = label.into();
         self
     }
 }
@@ -148,13 +165,15 @@ struct ZaiStreamError {
 /// limit is `RateLimited`; everything else is `Terminal`. The gateways don't
 /// share a stable machine code, so this matches on the human-readable
 /// `type`/`message` text — deliberately conservative: unknown ⇒ terminal, so
-/// a genuine failure is never retried into an infinite loop.
-fn classify_zai_stream_error(err: &ZaiStreamError) -> ProviderError {
+/// a genuine failure is never retried into an infinite loop. `label` names
+/// the concrete provider (Z.ai / xAI / DeepSeek / …) so the surfaced message
+/// points at the right credential and endpoint.
+fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError {
     let haystack = format!("{} {}", err.kind, err.message).to_lowercase();
     let detail = if err.message.is_empty() {
-        format!("Z.ai stream error ({})", err.kind)
+        format!("{label} stream error ({})", err.kind)
     } else {
-        format!("Z.ai stream error: {}", err.message)
+        format!("{label} stream error: {}", err.message)
     };
     if haystack.contains("overload")
         || haystack.contains("server_error")
@@ -174,6 +193,78 @@ fn classify_zai_stream_error(err: &ZaiStreamError) -> ProviderError {
     } else {
         ProviderError::Terminal(detail)
     }
+}
+
+/// The `error` object Z.ai returns in a *non-streamed* HTTP error body:
+/// `{"error":{"code":"1113","message":"Insufficient balance ..."}}`. Distinct
+/// from [`ZaiStreamError`] (the in-band SSE frame) — this is the top-level
+/// envelope on a plain JSON 4xx response.
+#[derive(Deserialize, Debug)]
+struct ZaiErrorEnvelope {
+    error: ZaiErrorBody,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct ZaiErrorBody {
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    code: Option<Value>,
+}
+
+/// Classify an HTTP 429 by its body. Z.ai returns 429 both for real rate
+/// limiting AND for account-balance/quota exhaustion (code 1113,
+/// "Insufficient balance or no resource package. Please recharge") — the
+/// latter is **terminal**: no amount of backoff refills an empty account, so
+/// retrying it just delays a clear error and, worse, reports it as a rate
+/// limit. Billing/quota text ⇒ [`ProviderError::Terminal`]; anything else ⇒
+/// retryable [`ProviderError::RateLimited`], honoring a `Retry-After` hint
+/// when the server sent one. The provider's own message is always carried
+/// through so the real reason is visible instead of a hard-coded string.
+fn classify_zai_429(body: &str, retry_after_ms: Option<u64>) -> ProviderError {
+    let detail = serde_json::from_str::<ZaiErrorEnvelope>(body)
+        .ok()
+        .map(|e| e.error.message)
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| body.trim().to_string());
+    let haystack = detail.to_lowercase();
+    let message = if detail.is_empty() {
+        "Z.ai HTTP 429".to_string()
+    } else {
+        format!("Z.ai HTTP 429: {detail}")
+    };
+    // Balance/quota exhaustion — never self-clears, so terminal not retryable.
+    if haystack.contains("balance")
+        || haystack.contains("recharge")
+        || haystack.contains("resource package")
+        || haystack.contains("insufficient")
+        || haystack.contains("quota")
+        || haystack.contains("arrears")
+    {
+        ProviderError::Terminal(message)
+    } else {
+        ProviderError::RateLimited {
+            message,
+            retry_after_ms,
+        }
+    }
+}
+
+/// Parse a `Retry-After` response header into milliseconds. Z.ai (like most
+/// OpenAI-compatible gateways) sends it as an integer number of seconds; the
+/// alternative HTTP-date form is tolerated by being ignored — the caller
+/// falls back to computed backoff. `None` when the header is absent or not a
+/// bare integer.
+fn parse_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|secs| secs.saturating_mul(1_000))
 }
 
 #[derive(Deserialize, Debug)]
@@ -291,7 +382,7 @@ fn to_zai_tools(tools: &[stella_protocol::tool::ToolSchema]) -> Vec<ZaiToolSchem
 #[async_trait]
 impl Provider for ZaiProvider {
     fn id(&self) -> &str {
-        "zai"
+        &self.id
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
@@ -314,13 +405,26 @@ impl Provider for ZaiProvider {
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ProviderError::Auth("Z.ai rejected the API key".into()));
+            return Err(ProviderError::Auth(format!(
+                "{} rejected the API key",
+                self.label
+            )));
         }
         if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(ProviderError::RateLimited {
-                message: "Z.ai rate limit".into(),
-                retry_after_ms: None,
-            });
+            // Z.ai overloads HTTP 429: besides genuine throttling it also
+            // returns 429 for BILLING problems — an account with no credit
+            // answers with `{"error":{"code":"1113","message":"Insufficient
+            // balance or no resource package. Please recharge."}}`. Blindly
+            // mapping every 429 to a retryable `RateLimited` both mislabels
+            // that as a rate limit (the user sees "provider rate limited" on
+            // their very first call, which can't be a real throttle) AND burns
+            // three pointless retries on a condition backoff will never clear.
+            // Read the body and classify: a real throttle stays retryable, a
+            // billing/quota failure is terminal, and either way Z.ai's own
+            // message is surfaced instead of a hard-coded string.
+            let retry_after_ms = parse_retry_after_ms(response.headers());
+            let body = response.text().await.unwrap_or_default();
+            return Err(classify_zai_429(&body, retry_after_ms));
         }
         // 5xx (incl. 529 overloaded) is a transient server-side failure — map
         // to a retryable Transport error, not the terminal bucket below.
@@ -328,18 +432,20 @@ impl Provider for ZaiProvider {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(ProviderError::Transport(format!(
-                "Z.ai HTTP {status}: {text}"
+                "{} HTTP {status}: {text}",
+                self.label
             )));
         }
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(ProviderError::Terminal(format!(
-                "Z.ai HTTP {status}: {text}"
+                "{} HTTP {status}: {text}",
+                self.label
             )));
         }
 
-        let (text, tool_calls, usage) = aggregate_zai_stream(response).await?;
+        let (text, tool_calls, usage) = aggregate_zai_stream(response, &self.label).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -362,6 +468,7 @@ struct ToolCallAccumulator {
 
 async fn aggregate_zai_stream(
     response: reqwest::Response,
+    label: &str,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage), ProviderError> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
@@ -385,7 +492,7 @@ async fn aggregate_zai_stream(
             // A mid-stream error frame aborts the turn with a typed error —
             // never a truncated Ok with the partial text seen so far.
             if let Some(err) = &parsed.error {
-                return Err(classify_zai_stream_error(err));
+                return Err(classify_zai_stream_error(err, label));
             }
             if let Some(u) = parsed.usage {
                 usage.input_tokens = u.prompt_tokens;
@@ -583,11 +690,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_maps_429_to_rate_limited_and_it_is_retryable() {
+    async fn complete_maps_a_real_throttle_429_to_retryable_rate_limited() {
         let server = MockServer::start().await;
+        // A genuine throttle body (no billing/quota keywords) stays a
+        // retryable RateLimited — the normal, correct 429 path.
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
-            .respond_with(ResponseTemplate::new(429).set_body_string("rate limited"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_string(r#"{"error":{"code":"1302","message":"API rate limit reached"}}"#),
+            )
             .mount(&server)
             .await;
 
@@ -605,6 +717,81 @@ mod tests {
         let err = provider.complete(req).await.unwrap_err();
         assert!(matches!(err, ProviderError::RateLimited { .. }));
         assert!(err.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn complete_maps_insufficient_balance_429_to_terminal_not_rate_limited() {
+        let server = MockServer::start().await;
+        // The exact body a live, empty-balance Z.ai account returns for its
+        // very first request. HTTP 429, but NOT a rate limit — a billing
+        // failure that no retry can clear. It must classify as terminal, be
+        // NON-retryable, and surface Z.ai's own message rather than a
+        // hard-coded "rate limit" string.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(429).set_body_string(
+                r#"{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let provider =
+            ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let err = provider.complete(req).await.unwrap_err();
+        assert!(
+            matches!(err, ProviderError::Terminal(_)),
+            "insufficient-balance 429 must be terminal, got {err:?}"
+        );
+        assert!(
+            !err.is_retryable(),
+            "a billing failure must never be retried"
+        );
+        assert!(
+            err.to_string().contains("Insufficient balance"),
+            "the real Z.ai message must be surfaced, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_honors_retry_after_header_on_a_throttle_429() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "2")
+                    .set_body_string("too many requests"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider =
+            ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let err = provider.complete(req).await.unwrap_err();
+        match err {
+            ProviderError::RateLimited { retry_after_ms, .. } => {
+                assert_eq!(retry_after_ms, Some(2_000), "Retry-After: 2s → 2000ms");
+            }
+            other => panic!("expected RateLimited with a retry hint, got {other:?}"),
+        }
     }
 
     #[tokio::test]

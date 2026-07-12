@@ -8,9 +8,10 @@
 
 pub mod bash;
 pub mod ci;
+pub mod custom;
 pub mod delete;
 pub mod edit;
-mod exec;
+pub mod exec;
 pub mod exploration;
 pub mod glob;
 pub mod grep;

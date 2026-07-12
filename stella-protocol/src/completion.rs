@@ -2,7 +2,7 @@
 //! every provider adapter (Z.ai, Anthropic, OpenAI, Gemini, xAI, Bedrock,
 //! Vertex, OpenRouter, local). Mirrors the TS runtime's
 //! `apps/cli/src/runtime/types.ts` `CompletionRequest`/`CompletionResult`,
-//! per `docs/specs/oxagen-rust-cli/02-architecture.md` §3 port map.
+//! per `docs/specs/stella-rust-cli/02-architecture.md` §3 port map.
 
 use serde::{Deserialize, Serialize};
 
@@ -82,7 +82,7 @@ pub struct CompletionRequest {
     pub effort: Option<ReasoningEffort>,
     /// Tool schemas the model may call, in the engine's one internal shape
     /// (`crate::tool::ToolSchema`); each adapter translates to its own
-    /// dialect (`docs/specs/oxagen-rust-cli/07-model-matrix.md` §4).
+    /// dialect (`docs/specs/stella-rust-cli/07-model-matrix.md` §4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<crate::tool::ToolSchema>,
 }

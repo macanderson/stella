@@ -1,5 +1,5 @@
 //! Role → model resolver + per-provider circuit breaker
-//! (`docs/specs/oxagen-rust-cli/03-plan.md` Phase 2 item 2;
+//! (`docs/specs/stella-rust-cli/03-plan.md` Phase 2 item 2;
 //! `07-model-matrix.md` §1 roles, §2 provider adapters, §5 default role
 //! assignments by scenario — the authoritative precedence this module
 //! implements).
@@ -11,12 +11,10 @@
 //! over a caller-supplied abstraction (`ProviderProfile`) instead of any
 //! concrete catalog type, and has no I/O of its own: `resolve` is a plain
 //! synchronous function over owned data. It returns *data* describing what
-//! happened (a `ModelRef` plus an optional `FallbackInfo`). NOT YET WIRED:
-//! no production caller consumes the router today — `driver.rs` runs a
-//! single provider, and `AgentEvent::ProviderFallback` is emitted nowhere.
-//! Wiring the router (and its fallback events) into the turn path is the
-//! multi-provider follow-up; until then this module is a tested port, not
-//! live behavior.
+//! happened (a `ModelRef` plus an optional `FallbackInfo`); the future
+//! `driver.rs` is the one place that turns a `FallbackInfo` into an
+//! `AgentEvent::ProviderFallback` and pushes it onto the event channel —
+//! there is no event channel here.
 //!
 //! Binding lessons this module exists to satisfy: L-M3 (no `"auto"` string
 //! sentinel anywhere — absence of a pin is `Option::None`), L-M6 (role-based
@@ -352,7 +350,7 @@ pub enum RouterError {
     /// phases (`03-plan.md` Phases 3/5). Never invent a fake default; pin
     /// explicitly via `RoleTable::pin` if you need one before then.
     #[error(
-        "no default model available yet for role `{role:?}` — its backend hasn't landed (docs/specs/oxagen-rust-cli/03-plan.md Phases 3/5); pin one explicitly with RoleTable::pin"
+        "no default model available yet for role `{role:?}` — its backend hasn't landed (docs/specs/stella-rust-cli/03-plan.md Phases 3/5); pin one explicitly with RoleTable::pin"
     )]
     NoDefaultForRole { role: Role },
 }
