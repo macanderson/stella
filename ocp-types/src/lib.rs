@@ -3,7 +3,7 @@
 //! This crate is the industry-facing artifact: **MIT licensed, zero
 //! dependencies beyond `serde`**, publishable to crates.io on its own so a
 //! third party can implement an OCP host or provider without pulling in any
-//! Oxagen code. See `docs/specs/oxagen-rust-cli/06-context-protocol.md` §3
+//! Stella code. See `docs/specs/stella-rust-cli/06-context-protocol.md` §3
 //! for the normative shape this crate binds to Rust types.
 //!
 //! Protocol version: `ocp/1.0-draft`.

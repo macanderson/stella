@@ -17,7 +17,9 @@ thiserror.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 libc.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true }
+toml.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
+tempfile.workspace = true

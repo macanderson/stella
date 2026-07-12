@@ -3,7 +3,7 @@
 //! request/response envelopes.
 //!
 //! Zero logic, zero I/O. This is the stability contract of the whole
-//! workspace (`docs/specs/oxagen-rust-cli/02-architecture.md` §1.4, §2) — any
+//! workspace (`docs/specs/stella-rust-cli/02-architecture.md` §1.4, §2) — any
 //! type here that crosses a process/protocol boundary must round-trip through
 //! `serde_json` byte-for-byte (see the `roundtrip` tests in each module).
 
@@ -19,7 +19,10 @@ pub use completion::{
     ReasoningEffort,
 };
 pub use error::ProviderError;
-pub use event::{AgentEvent, BudgetMode, StageKind};
+pub use event::{
+    AgentEvent, BudgetMode, ContextFrameRef, FileChangeKind, JudgeEvidence, MediaArtifactRef,
+    MediaJobState, MediaKind, PrStatus, ProviderShare, ScopeProposal, StageKind,
+};
 pub use provider::Provider;
 pub use role::{ModelRef, Role};
 pub use tool::{ToolCall, ToolOutput, ToolResult, ToolSchema};
