@@ -171,10 +171,19 @@ impl Config {
     /// otherwise the provider's default. (Vertex and Bedrock build
     /// region/project-scoped URLs in their adapters and only consume the
     /// override half of this.)
+    ///
+    /// For Z.ai, when the `ZAI_GLM_CODING_PLAN=1` environment variable is set,
+    /// the coding plan endpoint (`https://api.z.ai/api/coding/paas/v4`) is used
+    /// instead of the standard endpoint (`https://api.z.ai/api/paas/v4`).
     pub fn effective_base_url(&self) -> &str {
-        self.base_url_override
-            .as_deref()
-            .unwrap_or(self.provider.base_url)
+        if let Some(override_url) = &self.base_url_override {
+            return override_url;
+        }
+        // Check for ZAI_GLM_CODING_PLAN env var for Zai provider
+        if self.provider.id == "zai" && std::env::var("ZAI_GLM_CODING_PLAN").as_deref() == Ok("1") {
+            return "https://api.z.ai/api/coding/paas/v4";
+        }
+        self.provider.base_url
     }
 
     /// Load config: resolve provider from `--model` flag or the first one

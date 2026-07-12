@@ -68,6 +68,20 @@ export ZAI_API_KEY=your_key_here
 export ANTHROPIC_API_KEY=your_key_here
 ```
 
+#### Z.ai GLM Coding Plan
+
+If you have a Z.ai GLM Coding Plan subscription, set the `ZAI_GLM_CODING_PLAN=1`
+environment variable to use the dedicated coding plan endpoint:
+
+```bash
+export ZAI_API_KEY=your_glm_coding_plan_key
+export ZAI_GLM_CODING_PLAN=1  # Use https://api.z.ai/api/coding/paas/v4
+```
+
+When this variable is set, Stella routes requests to the coding plan endpoint
+(`https://api.z.ai/api/coding/paas/v4`) instead of the standard endpoint
+(`https://api.z.ai/api/paas/v4`).
+
 Stella auto-detects which provider to use based on which keys are set.
 To pin a specific provider/model, use --model:
 
