@@ -43,17 +43,23 @@ You have these tools available:
 - read_file: Read a file with line numbers (supports offset/limit for ranges)
 - write_file: Create or overwrite a file (creates parent dirs)
 - edit_file: Replace an exact substring in a file (use replace_all for multiple)
+- delete_file: Delete a file within the workspace
 - bash: Run a shell command in the workspace root (with timeout)
 - grep: Search file contents with regex (shells to ripgrep)
 - glob: Find files matching a glob pattern
+- build_project: Build with the workspace's own toolchain (cargo/npm/go/make)
+- run_tests: Run the workspace's test suite
+- verify_done: The definition of done — replays a new test against the previous code in a shadow worktree; it must fail there and pass on your change (WITNESS CONFIRMED). Use it to prove a change actually works, not just that the suite is green.
 - ask_user: Ask the user a multiple-choice question when a decision is genuinely theirs to make (2-6 options; the UI always adds a free-text option automatically — never add an "Other" option yourself)
 - search_skills: Search the public skills registry for reusable skills you don't have locally
 - install_skill: Install a registry skill into the project (always requires the user's confirmation)
 
+Some tools appear only when configured (issue tracking: create_issue/update_issue/close_issue/search_issues/start_work_on_issue; CI: ci_status) — use them when present.
+
 Rules:
 - Always read a file before editing it — never edit blind.
 - Make minimal, surgical edits. Use edit_file, not write_file, for changes to existing files.
-- Run tests after making changes to verify they pass.
+- After changing behavior, use run_tests to check the suite, and verify_done to prove the change with a witness test rather than trusting a green suite.
 - Be concise in your responses. Show the user what you changed and why.
 - If a task requires multiple steps, work through them systematically.
 - When a choice is ambiguous AND getting it wrong would be costly, use ask_user rather than guessing; otherwise proceed with your best judgment."#;
@@ -350,11 +356,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             continue;
         }
         if let Some(color) = input.strip_prefix("/color ") {
-            if tui::set_accent(color.trim()) {
-                tui::welcome_banner(
-                    cfg.provider.id,
-                    &cfg.model_id,
-                    &cfg.workspace_root.display().to_string(),
+            let name = color.trim();
+            if tui::set_accent(name) {
+                // Acknowledge in the newly-set accent itself — the welcome
+                // banner uses a fixed palette and can't reflect the accent,
+                // so re-printing it would silently ignore the change.
+                println!(
+                    "  {} {}\n",
+                    "◆".color(tui::accent()),
+                    format!("accent set to {name}").color(tui::accent()).bold()
                 );
             }
             continue;
@@ -637,9 +647,13 @@ fn discover_custom_tools(cfg: &Config, print_diagnostics: bool) -> Vec<CustomToo
     report.tools
 }
 
-/// `stella tools` — list every tool the agent would have this session:
-/// native built-ins, developer custom tools (with their source manifests),
-/// ask_user, and any discovery diagnostics for broken manifests.
+/// `stella tools` — list the tools the agent would have this session:
+/// native built-ins (including the issue tools when a tracker is detected),
+/// the interactive/session tools layered on top (ask_user, search_skills,
+/// install_skill), developer custom tools (with their source manifests), and
+/// any discovery diagnostics for broken manifests. MCP-server tools
+/// (.stella/mcp.toml) are merged in at session build time and are not
+/// enumerated here — connecting to the servers is out of scope for a listing.
 pub fn run_tools_listing() -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
@@ -656,10 +670,24 @@ pub fn run_tools_listing() -> Result<(), String> {
         println!("    {} {}", "·".dimmed(), name);
     }
     println!(
-        "    {} ask_user {}",
-        "·".dimmed(),
-        "(interactive sessions)".dimmed()
+        "\n  {}",
+        "interactive / session tools (added by the CLI each session):".dimmed()
     );
+    for (name, note) in [
+        (
+            "ask_user",
+            "ask the user a multiple-choice question (TTY only)",
+        ),
+        ("search_skills", "search the public skills registry"),
+        ("install_skill", "install a registry skill (asks first)"),
+    ] {
+        println!(
+            "    {} {} {}",
+            "·".dimmed(),
+            name,
+            format!("— {note}").dimmed()
+        );
+    }
 
     let report = custom::discover(&workspace_root);
     println!(
@@ -688,6 +716,13 @@ pub fn run_tools_listing() -> Result<(), String> {
             diagnostic.reason.red()
         );
     }
+
+    println!(
+        "\n  {}",
+        "MCP servers (.stella/mcp.toml) merge more tools at session start — \
+         not enumerated here."
+            .dimmed()
+    );
     Ok(())
 }
 

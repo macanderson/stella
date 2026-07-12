@@ -35,12 +35,22 @@ impl SseDecoder {
     }
 
     /// Drain every complete event currently buffered. An event terminates on
-    /// a blank line; anything after the last blank line stays buffered.
+    /// a blank line — `\n\n` (LF) or `\r\n\r\n` (CRLF, which the SSE spec
+    /// permits and proxies often produce); anything after the last blank line
+    /// stays buffered.
     pub fn poll(&mut self) -> Vec<SseEvent> {
         let mut events = Vec::new();
-        while let Some(boundary) = self.buf.find("\n\n") {
+        loop {
+            // Take whichever blank-line boundary appears first, and drain its
+            // own separator length (2 for LF-LF, 4 for CRLF-CRLF).
+            let (boundary, sep_len) = match (self.buf.find("\n\n"), self.buf.find("\r\n\r\n")) {
+                (Some(lf), Some(crlf)) if crlf < lf => (crlf, 4),
+                (Some(lf), _) => (lf, 2),
+                (None, Some(crlf)) => (crlf, 4),
+                (None, None) => break,
+            };
             let raw = self.buf[..boundary].to_string();
-            self.buf.drain(..boundary + 2);
+            self.buf.drain(..boundary + sep_len);
             if raw.trim().is_empty() {
                 continue;
             }
@@ -106,5 +116,19 @@ mod tests {
         decoder.push("data: a\ndata: b\n\n");
         let events = decoder.poll();
         assert_eq!(events[0].data, "a\nb");
+    }
+
+    #[test]
+    fn parses_crlf_framed_events() {
+        // The SSE spec permits CRLF line endings, and HTTP proxies often
+        // normalize to them — the boundary scan must match `\r\n\r\n`, not
+        // only `\n\n`, or a CRLF server would stall until timeout.
+        let mut decoder = SseDecoder::new();
+        decoder.push("event: message\r\ndata: {\"id\":1}\r\n\r\ndata: two\r\n\r\n");
+        let events = decoder.poll();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event.as_deref(), Some("message"));
+        assert_eq!(events[0].data, "{\"id\":1}");
+        assert_eq!(events[1].data, "two");
     }
 }

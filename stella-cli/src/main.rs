@@ -7,13 +7,15 @@
 //! step-driver engine, `stella-tools` for the built-in tool set, and
 //! `stella-protocol` for the shared types.
 //!
-//! Design goals (per docs/specs/stella-rust-cli/01-product-spec.md):
+//! Design goals:
 //! - No phone-home requirement — works with zero network calls other than
 //!   the user's configured model provider.
 //! - BYOK: any provider key, any combination, no account.
 //! - Speed: streaming first, prompt-cache-aware system prefix, minimal
 //!   overhead between model turns.
-//! - Headless-capable throughout: `--output-format text|json|stream-json`.
+//! - Headless one-shot: `stella run --output-format text|json|stream-json`
+//!   for scripting (the interactive `chat`/`goal`/`monitor` modes render
+//!   human-readable output).
 
 mod agent;
 mod config;

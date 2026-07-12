@@ -95,6 +95,12 @@ Sixteen crates sounds like a lot; the rule of thumb is one sentence each:
 | The Open Context Protocol (wire types / host / conformance) | `ocp-types` · `ocp-host` · `ocp-conformance` |
 | The SWE-bench / Arena harness | `bench/` (Python) |
 
+Some crates ship in the CLI today and some are complete-but-not-yet-wired
+library layers (`stella-pipeline`, `stella-fleet`, `stella-tui`, `stella-media`,
+and parts of the context/graph plane) — see the **status table** in the
+[README](README.md#workspace-layout). Wiring one of those into the CLI is a
+high-impact contribution; the design is already there and tested.
+
 ## The ground rules
 
 These are the architectural invariants the whole design hangs on. PRs that

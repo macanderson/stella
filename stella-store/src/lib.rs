@@ -14,9 +14,11 @@
 //!   writes, cost (computed from the model card's pricing × token counts
 //!   in the adapter), duration, retries, tool-call count.
 //! - **files_touched** — the CRUD ledger per execution.
-//! - **file_locks** — cooperative file claims for multi-agent work.
-//! - **graph_nodes / graph_edges** — the seam the Phase 3 context plane
-//!   (embeddings for md/mdx/txt/doc/docx, code graph) writes into.
+//! - **file_locks** — schema + API for cooperative file claims in multi-agent
+//!   work. Reserved: no shipping command acquires locks yet.
+//! - **graph_nodes / graph_edges** — schema reserved as a future seam for a
+//!   context plane; not written by any shipping command today (`stella-context`
+//!   and `stella-graph` currently use their own stores).
 //!
 //! # Concurrency
 //!

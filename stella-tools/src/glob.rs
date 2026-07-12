@@ -43,6 +43,21 @@ impl Tool for Glob {
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 
+        // Confine `path` to the workspace root — `Path::join` would otherwise
+        // let an absolute or `../..` path escape it. `.`/empty resolve to the
+        // root itself, so existing default-scoped calls keep working.
+        let search_dir = match crate::resolve_within_root(root, search_path) {
+            Some(p) => p,
+            None => {
+                return ToolOutput::Error {
+                    message: format!("path `{search_path}` escapes workspace root"),
+                };
+            }
+        };
+        // Results are rendered relative to the (canonical) workspace root, per
+        // this tool's advertised contract.
+        let canon_root = root.canonicalize().ok();
+
         // Try fd first — fast, respects .gitignore by default.
         // `--glob` tells fd to interpret the pattern as a glob, not a regex,
         // so `*.rs` matches the same way as `find -name "*.rs"`.
@@ -51,7 +66,7 @@ impl Tool for Glob {
         fd.arg("--type").arg("f");
         fd.arg("--color").arg("never");
         fd.arg("--max-results").arg(MAX_RESULTS.to_string());
-        fd.arg(pattern).arg(root.join(search_path));
+        fd.arg(pattern).arg(&search_dir);
         fd.stdout(std::process::Stdio::piped());
         fd.stderr(std::process::Stdio::piped());
 
@@ -63,15 +78,18 @@ impl Tool for Glob {
                         content: "(no files found)".into(),
                     };
                 }
-                let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
-                ToolOutput::Ok {
-                    content: lines.join("\n"),
-                }
+                let content = text
+                    .lines()
+                    .take(MAX_RESULTS)
+                    .map(|l| relativize(l, canon_root.as_deref()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                ToolOutput::Ok { content }
             }
             Err(_) => {
-                // fd not installed — fall back to find
+                // fd not installed — fall back to find (same pinned dir).
                 let mut find = Command::new("find");
-                find.arg(root.join(search_path));
+                find.arg(&search_dir);
                 find.arg("-type").arg("f");
                 find.arg("-name").arg(pattern);
                 find.stdout(std::process::Stdio::piped());
@@ -85,10 +103,13 @@ impl Tool for Glob {
                                 content: "(no files found)".into(),
                             }
                         } else {
-                            let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
-                            ToolOutput::Ok {
-                                content: lines.join("\n"),
-                            }
+                            let content = text
+                                .lines()
+                                .take(MAX_RESULTS)
+                                .map(|l| relativize(l, canon_root.as_deref()))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            ToolOutput::Ok { content }
                         }
                     }
                     Err(e) => ToolOutput::Error {
@@ -97,6 +118,19 @@ impl Tool for Glob {
                 }
             }
         }
+    }
+}
+
+/// Render an absolute match path relative to the workspace root, honoring the
+/// tool's advertised "relative paths from workspace root" contract. Falls back
+/// to the original string if the root is unknown or the path lies outside it.
+fn relativize(line: &str, canon_root: Option<&std::path::Path>) -> String {
+    match canon_root {
+        Some(root) => std::path::Path::new(line)
+            .strip_prefix(root)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| line.to_string()),
+        None => line.to_string(),
     }
 }
 

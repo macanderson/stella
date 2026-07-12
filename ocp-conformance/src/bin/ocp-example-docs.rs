@@ -5,8 +5,11 @@
 //! providers). It is also the child-process **test fixture** for the
 //! conformance suite: `--misbehave <mode>` deliberately breaks one protocol
 //! guarantee at a time so tests can prove the suite catches a broken
-//! provider (task deliverable). Kept dependency-light and line-oriented so
-//! it doubles as a copyable template for a real provider.
+//! provider (task deliverable). It reuses `ocp-host`'s `wire::Envelope` for
+//! (de)serialization since both live in this workspace; a real out-of-tree
+//! provider — in any language — would instead implement the line-oriented
+//! wire format directly against `ocp-types` (the frame/query types) plus a
+//! JSON codec, which is the only contract it must honor.
 
 use std::io::{BufRead, Write};
 

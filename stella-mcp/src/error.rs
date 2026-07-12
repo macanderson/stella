@@ -38,10 +38,6 @@ pub enum McpError {
         supported: Vec<String>,
     },
 
-    /// The operation exceeded its deadline.
-    #[error("timed out after {0}ms")]
-    Timeout(u64),
-
     /// The transport is closed — the child exited, or `close()` was already
     /// called. A subsequent request cannot be served.
     #[error("connection closed: {0}")]
