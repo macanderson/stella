@@ -243,20 +243,3 @@ cargo run -p stella-cli -- models
 ## License
 
 MIT OR Apache-2.0
-
-## Roadmap
-- Phase 0: Workspace skeleton + provider spike (done)
-- Phase 1: Built-in tools (done)
-- CLI binary: stella with agent loop, REPL, TUI (done)
-- Phase 2: Step-driver, role router, budget, model matrix, goal loop,
-  parallel tools, witness verification, DuckDB telemetry (done — Bedrock/
-  Vertex/native-Gemini/GGUF adapters and wiring the router+hooks into the
-  turn path are the tracked follow-ups)
-- Phase 3: Local context plane — embeddings for md/mdx/txt/doc/docx into
-  the DuckDB graph tables, code graph, OCP host + conformance
-- Phase 5: Fleet, TUI polish, media generation (vision-grade judge
-  evidence: screenshots attached to judge calls)
-- Phase 6: Benchmark proof (SWE-bench Verified)
-- Phase 7: OSS release — cargo-dist packaging with prebuilt binaries,
-  Homebrew, and a curl|sh installer (done — see
-  [RELEASING.md](RELEASING.md); flips on with the first `v*` tag)
