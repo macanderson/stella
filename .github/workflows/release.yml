@@ -147,3 +147,86 @@ jobs:
             artifacts/SHA256SUMS
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  # Renders .github/homebrew/stella.rb.tmpl with the real version + per-target
+  # SHA-256 sums and commits it as Formula/stella.rb to the tap repo
+  # (oxageninc/homebrew-stella). Runs only after the GitHub Release exists, so
+  # the formula's release-asset URLs resolve. Requires the HOMEBREW_TAP_TOKEN
+  # secret (see the one-time setup in RELEASING.md); skips gracefully without it
+  # so a release is never blocked on the tap being wired.
+  homebrew:
+    name: publish Homebrew formula
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout (for the formula template)
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: stella-*
+          merge-multiple: true
+
+      - name: Render formula and push to tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set — skipping Homebrew tap publish."
+            echo "One-time setup (create the tap repo + add the secret) is documented in RELEASING.md."
+            exit 0
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+
+          # SHA-256 of a given target's release tarball (same bytes uploaded to
+          # the GitHub Release in the `release` job).
+          sha_for() {
+            local target="$1"
+            local f="artifacts/stella-${version}-${target}.tar.gz"
+            if [ ! -f "$f" ]; then
+              echo "::error::expected release asset not found: ${f}" >&2
+              exit 1
+            fi
+            sha256sum "$f" | awk '{ print $1 }'
+          }
+
+          sha_aarch64_darwin="$(sha_for aarch64-apple-darwin)"
+          sha_x86_64_darwin="$(sha_for x86_64-apple-darwin)"
+          sha_aarch64_linux="$(sha_for aarch64-unknown-linux-gnu)"
+          sha_x86_64_linux="$(sha_for x86_64-unknown-linux-gnu)"
+
+          mkdir -p rendered
+          sed \
+            -e "s/@VERSION@/${version}/g" \
+            -e "s/@SHA_AARCH64_DARWIN@/${sha_aarch64_darwin}/g" \
+            -e "s/@SHA_X86_64_DARWIN@/${sha_x86_64_darwin}/g" \
+            -e "s/@SHA_AARCH64_LINUX@/${sha_aarch64_linux}/g" \
+            -e "s/@SHA_X86_64_LINUX@/${sha_x86_64_linux}/g" \
+            .github/homebrew/stella.rb.tmpl > rendered/stella.rb
+
+          echo "----- rendered Formula/stella.rb -----"
+          cat rendered/stella.rb
+
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/oxageninc/homebrew-stella.git" tap
+
+          mkdir -p tap/Formula
+          cp rendered/stella.rb tap/Formula/stella.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/stella.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date for ${version}; nothing to commit."
+            exit 0
+          fi
+          git commit -m "stella ${version}"
+          git push origin HEAD

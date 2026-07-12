@@ -25,8 +25,16 @@ curl -fsSL https://raw.githubusercontent.com/oxageninc/stella-cli/main/install.s
 stella --version
 ```
 
-**Homebrew** — the formula in `packaging/homebrew/stella.rb` builds from source
-(`brew install --build-from-source ./packaging/homebrew/stella.rb`).
+**Homebrew** — installs the prebuilt binary from the tap (no Rust toolchain
+needed); the release workflow keeps the formula in sync on every tag:
+
+```bash
+brew install oxageninc/stella/stella
+# equivalently: brew tap oxageninc/stella && brew install stella
+```
+
+To build from source instead, use the local formula in
+`packaging/homebrew/stella.rb` (`brew install --build-from-source ./packaging/homebrew/stella.rb`).
 
 **From cargo** (requires Rust 1.90+ via [rustup](https://rustup.rs) and git):
 

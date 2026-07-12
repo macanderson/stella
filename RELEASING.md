@@ -1,14 +1,14 @@
 # Releasing Stella
 
 Stella ships prebuilt binaries, a Homebrew formula, and a `curl | sh`
-installer via [`dist`](https://axodotdev.github.io/cargo-dist) (cargo-dist).
-Everything is driven by pushing a version tag — the
+installer. Everything is driven by pushing a version tag — the
 [`Release`](.github/workflows/release.yml) workflow does the rest.
 
-The `dist` configuration lives in the root `Cargo.toml` under
-`[workspace.metadata.dist]`; only the `stella` binary (from `stella-cli`) is
-distributed — the workspace's fixture binaries opt out with
-`[package.metadata.dist] dist = false`.
+The workflow is a **hand-rolled build matrix** (it does not require cargo-dist
+on the runner). The `[workspace.metadata.dist]` block in the root `Cargo.toml`
+is retained for a possible future migration to
+[`dist`](https://axodotdev.github.io/cargo-dist) but is **not** the active
+pipeline today; the source of truth is `.github/workflows/release.yml`.
 
 ## One-time setup
 
@@ -31,20 +31,15 @@ This has to exist and be writable before the first release:
 
 The prebuilt tarballs, checksums, and the `curl | sh` installer are published
 to this repo's GitHub Releases and need no extra secrets — only the Homebrew
-tap push does.
+tap push does. If `HOMEBREW_TAP_TOKEN` is absent, the release still succeeds and
+the `homebrew` job skips with a warning.
 
 ## Cut a release
 
 1. Bump the version if needed — `version` in `[workspace.package]` of the root
    `Cargo.toml` (all crates inherit it) — and commit.
 
-2. (Optional) Preview exactly what will be built without compiling anything:
-
-   ```bash
-   dist plan
-   ```
-
-3. Tag and push. The tag must be `v<major>.<minor>.<patch>` matching the
+2. Tag and push. The tag must be `v<major>.<minor>.<patch>` matching the
    workspace version:
 
    ```bash
@@ -56,14 +51,16 @@ That push starts the `Release` workflow, which:
 
 - builds `stella` for macOS (`aarch64`, `x86_64`) and Linux (`aarch64`,
   `x86_64`),
-- packs each as a `.tar.xz` with the licenses + README and a SHA-256 checksum,
-- creates a GitHub Release with those artifacts, a `sha256.sum`, and the
-  `stella-cli-installer.sh` shell installer,
-- generates `Formula/stella.rb` and commits it to the Homebrew tap.
+- packs each as a `stella-<version>-<target>.tar.gz` with the licenses +
+  README,
+- creates a GitHub Release with those tarballs and a `SHA256SUMS`,
+- renders `Formula/stella.rb` from `.github/homebrew/stella.rb.tmpl` (real
+  version + per-target SHA-256 sums) and commits it to the Homebrew tap
+  (skipped if `HOMEBREW_TAP_TOKEN` is not configured).
 
 ## After the release — how users install
 
-Homebrew (prebuilt bottle-style formula, no compile):
+Homebrew (prebuilt binary, no Rust toolchain):
 
 ```bash
 brew install oxageninc/stella/stella
@@ -73,21 +70,21 @@ brew install oxageninc/stella/stella
 Shell installer (macOS/Linux, no Homebrew):
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/oxageninc/stella-cli/releases/latest/download/stella-cli-installer.sh | sh
+curl -fsSL https://raw.githubusercontent.com/oxageninc/stella-cli/main/install.sh | sh
 ```
 
-Upgrades are `brew upgrade stella` or re-running the installer.
+The installer detects the platform, downloads the matching tarball from the
+GitHub Release, verifies it against `SHA256SUMS`, and falls back to
+`cargo install` where no prebuilt binary matches. Upgrades are
+`brew upgrade stella` or re-running the installer.
 
-## Updating the dist toolchain
+## Formula templates
 
-The pinned `dist` version is `cargo-dist-version` in
-`[workspace.metadata.dist]`. To move to a newer `dist`, install it and re-run
-init so the workflow is regenerated against the new version:
+Two formulas live in the repo, for two different purposes:
 
-```bash
-brew upgrade cargo-dist            # or: cargo install cargo-dist
-dist init --yes --hosting github   # regenerates .github/workflows/release.yml
-```
-
-Commit the regenerated workflow and the bumped `cargo-dist-version` together.
+- `.github/homebrew/stella.rb.tmpl` — the **template** the release workflow
+  renders and pushes to the tap as `Formula/stella.rb`. Installs the prebuilt
+  binary per platform. Edit this to change what lands in the tap.
+- `packaging/homebrew/stella.rb` — a **build-from-source** formula for local
+  use (`brew install --build-from-source ./packaging/homebrew/stella.rb`); it
+  compiles with cargo and needs no per-release sha maintenance.
