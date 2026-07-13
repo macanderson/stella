@@ -1,3 +1,3 @@
-# Auto-request review from the maintainer on every PR.
-# https://docs.github.com/articles/about-code-owners
-*       @macanderson
+# Default owner for everything in the repo. Routes review requests and, with
+# branch protection's "require review from Code Owners", gates merges.
+* @macanderson
