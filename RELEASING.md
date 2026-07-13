@@ -25,7 +25,7 @@ This has to exist and be writable before the first release:
    PAT with `repo`. The default `GITHUB_TOKEN` can't push to another repo, so a
    dedicated one is required.
 
-3. **Add it as a secret** on **this** repo (`oxageninc/stella-cli`):
+3. **Add it as a secret** on **this** repo (`oxageninc/stella`):
    Settings → Secrets and variables → Actions → New repository secret →
    name `HOMEBREW_TAP_TOKEN`, value the token from step 2.
 
@@ -58,6 +58,28 @@ That push starts the `Release` workflow, which:
   version + per-target SHA-256 sums) and commits it to the Homebrew tap
   (skipped if `HOMEBREW_TAP_TOKEN` is not configured).
 
+## Cut a release locally (no CI)
+
+When GitHub Actions is unavailable (e.g. an org billing hold) or you just want
+full local control, [`scripts/release.sh`](scripts/release.sh) does the entire
+pipeline from your Mac — build all four targets, publish the GitHub Release, and
+push the Homebrew formula — with the version auto-incremented:
+
+```bash
+git checkout main && git pull        # release exactly what's on origin/main
+scripts/release.sh patch             # 0.1.15 -> 0.1.16  (also: minor, major)
+```
+
+It refuses to run unless your checkout is clean and matches `origin/main`, and
+it never leaves your tree modified. macOS targets build natively; the Linux
+targets cross-compile via [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild)
+(Zig as the C/C++ cross-linker — no Docker, and it compiles DuckDB's bundled
+C++ cleanly, unlike the old `cross` image). `zig` and `cargo-zigbuild` are
+auto-installed if missing. All release assets are uploaded in one call, which
+matters because this repo has **immutable releases** enabled — a published
+release's assets can't be added or changed afterward, so an incomplete release
+means cutting a new version.
+
 ## After the release — how users install
 
 Homebrew (prebuilt binary, no Rust toolchain):
@@ -70,7 +92,7 @@ brew install oxageninc/stella/stella
 Shell installer (macOS/Linux, no Homebrew):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oxageninc/stella-cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/oxageninc/stella/main/install.sh | sh
 ```
 
 The installer detects the platform, downloads the matching tarball from the

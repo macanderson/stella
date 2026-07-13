@@ -7,19 +7,23 @@
 //! step-driver engine, `stella-tools` for the built-in tool set, and
 //! `stella-protocol` for the shared types.
 //!
-//! Design goals (per docs/specs/stella-rust-cli/01-product-spec.md):
+//! Design goals:
 //! - No phone-home requirement — works with zero network calls other than
 //!   the user's configured model provider.
 //! - BYOK: any provider key, any combination, no account.
 //! - Speed: streaming first, prompt-cache-aware system prefix, minimal
 //!   overhead between model turns.
-//! - Headless-capable throughout: `--output-format text|json|stream-json`.
+//! - Headless one-shot: `stella run --output-format text|json|stream-json`
+//!   for scripting (the interactive `chat`/`goal`/`monitor` modes render
+//!   human-readable output).
 
 mod agent;
 mod config;
 mod domains;
 mod interactive;
 mod memory;
+mod settings;
+mod stats;
 mod tui;
 
 use std::process::ExitCode;
@@ -113,10 +117,32 @@ enum Command {
 
     /// List every tool available to the agent this session — built-ins,
     /// developer custom tools (.stella/tools/), and manifest diagnostics
-    Tools,
+    Tools {
+        /// Validate custom tool manifests instead of listing: parse every
+        /// <name>.toml, check names, required fields, timeouts, and
+        /// collisions with built-ins and other manifests, then exit
+        /// non-zero if any manifest has errors. Pass a directory to check
+        /// (defaults to the dirs discovery scans: .stella/tools/ and
+        /// ~/.config/stella/tools/).
+        #[arg(long, value_name = "DIR")]
+        validate: Option<Option<std::path::PathBuf>>,
+    },
 
     /// List configured providers and available models
     Models,
+
+    /// Summarize cost, tokens, and resolve rate per provider/model from
+    /// local telemetry (.stella/stella.duckdb) — $/resolved-task receipts
+    Stats {
+        /// Output format: table (aligned, with TOTAL row), json, or csv
+        #[arg(long, value_enum, default_value = "table")]
+        format: stats::StatsFormat,
+
+        /// Only show executions for this provider id (e.g. zai, anthropic,
+        /// local)
+        #[arg(long)]
+        provider: Option<String>,
+    },
 
     /// Show current configuration
     Config,
@@ -154,13 +180,25 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<(), String> {
     // Models and Version don't need a configured provider/key.
-    match cli.command {
+    match &cli.command {
         Some(Command::Models) => {
             config::Config::print_available_models();
             return Ok(());
         }
-        Some(Command::Tools) => {
-            return agent::run_tools_listing();
+        Some(Command::Tools { validate }) => {
+            return match validate {
+                // `--validate` (dir optional) is the strict pre-flight path;
+                // a plain `stella tools` stays the lenient listing.
+                Some(dir) => agent::run_tools_validation(dir.as_deref()),
+                None => agent::run_tools_listing(),
+            };
+        }
+        Some(Command::Stats { format, provider }) => {
+            // Reads local telemetry only — works with zero API keys.
+            // `*format`: this match borrows `&cli.command` (the Tools arm
+            // needs `validate` by ref), so `format` binds as `&StatsFormat`;
+            // it is `Copy`, so deref rather than move.
+            return stats::run_stats(*format, provider.as_deref());
         }
         Some(Command::Version) => {
             println!("stella v{}", env!("CARGO_PKG_VERSION"));
@@ -223,7 +261,11 @@ fn run(cli: Cli) -> Result<(), String> {
         // Models/Version (and Tools) short-circuit in the first match at the
         // top of `run` before a provider is resolved; Init is handled by the
         // caller. Reaching any of them here is impossible.
-        Command::Init | Command::Tools | Command::Models | Command::Version => {
+        Command::Init
+        | Command::Tools { .. }
+        | Command::Stats { .. }
+        | Command::Models
+        | Command::Version => {
             unreachable!("handled before provider resolution")
         }
         Command::Config => {

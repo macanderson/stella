@@ -22,12 +22,15 @@
 <p align="center"><em>For everyone who is sick of token waste and average agent runners.</em></p>
 
 <p align="center">
+  <a href="https://github.com/oxageninc/stella/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/oxageninc/stella/ci.yml?branch=main&style=flat-square&logo=github&label=ci" alt="CI status"></a>
+  <a href="https://github.com/oxageninc/stella/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/oxageninc/stella/release.yml?style=flat-square&logo=github&label=release" alt="Release status"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-FFAC26?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.90%2B-FFAC26?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90+">
   <img src="https://img.shields.io/badge/providers-9%20%2B%20local-FFAC26?style=flat-square" alt="9 providers + local">
   <img src="https://img.shields.io/badge/phone--home-none-1f7a3d?style=flat-square" alt="No phone-home">
   <img src="https://img.shields.io/badge/telemetry-local%20DuckDB-1f7a3d?style=flat-square" alt="Local DuckDB telemetry">
   <a href="#the-arena"><img src="https://img.shields.io/badge/%E2%9A%94_arena-open_challenge-E5484D?style=flat-square" alt="Arena — open challenge"></a>
+  <a href="https://github.com/sponsors/macanderson"><img src="https://img.shields.io/badge/%E2%99%A5_sponsor-stella-EA4AAA?style=flat-square" alt="Sponsor Stella"></a>
 </p>
 
 <p align="center">
@@ -56,8 +59,8 @@
 ## Why Stella stands apart
 
 Most coding agents search, guess, and stop at *"the test suite is green."* Stella
-is engineered around a harder contract — and every one of these is a first-class,
-already-shipped feature, not a roadmap item:
+is engineered around a harder contract — and every row below is a working feature
+of the shipping `stella` CLI today, not a roadmap item:
 
 | | What most agents do | What Stella does | Manual |
 |---|---|---|---|
@@ -124,7 +127,7 @@ and the harness to prove it ships in this repo.
 |---|---|---|
 | 🥇 **Heavyweight** | Frontier model, $2/task cap | Highest resolve rate |
 | 🪶 **Featherweight** | Any model, any cap | Lowest **$ per resolved task** |
-| 🔌 **Off-grid** | Local models only (`--base-url`, zero API keys) | Resolve rate at $0 marginal cost |
+| 🔌 **Off-grid** | Local models only (`--base-url`, zero API keys) — [the guide](docs/off-grid.md) | Resolve rate at $0 marginal cost |
 | ⚔️ **Cross-harness** | Same model, Stella vs. any other agent CLI | Biggest head-to-head gap |
 
 ### Enter
@@ -151,6 +154,13 @@ The full harness docs live in [`bench/`](bench/README.md), and a
 [Harbor](https://www.harborframework.com/) adapter for containerized, at-scale,
 head-to-head runs against other agents lives in
 [`bench/harbor_adapter/`](bench/harbor_adapter/README.md).
+
+For the **Cross-harness** division, [`arena`](https://github.com/oxageninc/arena)
+is a standalone, open-source runner that pits Stella against Claude Code, Gemini
+CLI, Oxagen, and any agent you bolt on — same model, same budget, held-out tests
+the agent can't see or author, and paired statistics (Wilson intervals, exact
+McNemar, bootstrap CIs), with every run's manifest, transcripts, and diffs kept
+as receipts.
 
 ### The leaderboard
 
@@ -250,39 +260,62 @@ detection, budget — is plain synchronous functions over owned data, so a new v
 or tool is an adapter (never a rewrite), and the whole engine is trivially
 property-testable.
 
+This is the path the shipping `stella` binary actually runs today — the CLI
+drives `stella-core` directly, which fans out to the provider, tool, store, and
+context adapters through their ports:
+
 ```mermaid
 flowchart TD
-    subgraph SHELL["stella · binary + TUI"]
-      TUI["stella-tui — event-log REPL · panels · Files-Touched"]
-    end
-    SHELL --> PIPE["stella-pipeline<br/>triage → enhance → route → execute → verify → judge → revise"]
-    PIPE --> CORE
+    U(["stella · the CLI (stella-cli)<br/>REPL · run · goal · monitor"]) --> CORE
     subgraph CORE["stella-core · the engine (NO I/O)"]
-      ENG["step driver · goal loop · budget<br/>retry · compaction · loop-detection · router · hooks"]
+      ENG["step driver · goal loop · budget<br/>retry · compaction · loop-detection · router"]
     end
     CORE -->|Provider port| MODEL["stella-model — adapters<br/>anthropic · openai · gemini · vertex · bedrock · zai<br/>(+ any OpenAI-compatible: xai · deepseek · openrouter · local)"]
-    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>CRUD · bash · grep · glob · build · test · verify · issues · CI"]
+    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>CRUD · bash · grep · glob · build · test · verify_done · issues · CI"]
     MCP["stella-mcp<br/>external MCP servers"] -.->|merges tools into registry| TOOLS
-    CORE -->|emits AgentEvent stream| STORE["stella-store<br/>DuckDB: executions · events · telemetry · locks · graph"]
-    CORE -->|context queries via OCP| CTX["stella-context — context plane<br/>bi-temporal graph · embeddings · episodic memory"]
-    GRAPH["stella-graph<br/>tree-sitter code index"] -->|OCP provider| CTX
-    FLEET["stella-fleet — multi-agent fan-out<br/>DAG plan · worktree isolation · lineage ledger"] -.->|one engine per task| CORE
+    CORE -->|emits AgentEvent stream| STORE["stella-store<br/>DuckDB: executions · events · telemetry"]
+    U -->|reflection-memory recall| CTX["stella-context — context plane<br/>recall · embeddings · memory"]
+    GRAPH["stella-graph — tree-sitter code index"] -->|indexed on `stella init`| DB[("DuckDB code graph")]
     MODEL -.->|versioned serde| PROTO["stella-protocol — shared types + Provider/tool ports"]
     TOOLS -.-> PROTO
     STORE -.-> PROTO
-    CTX -.->|open wire types| OCP["ocp-types · ocp-host · ocp-conformance<br/>Open Context Protocol (MIT, zero-dep)"]
     classDef eng fill:#FFAC26,stroke:#8a5a00,color:#1a1200;
     class ENG eng;
 ```
 
-> **Bonus — the Open Context Protocol (OCP).** Stella's retrieval isn't a private
-> hack; it's an open, versioned wire protocol (`ocp/1.0-draft`) with an **MIT,
-> zero-dependency `ocp-types` crate** and a **public conformance suite** — anyone can
-> ship an OCP provider (in-process, stdio child, or remote HTTP) and prove it green
-> without a line of Stella code. Providers are quarantined (no inherited credentials,
-> no ambient filesystem), egress is consent-gated, and frame content is treated as
-> untrusted data. It's how "code is a graph, not text" (Field Manual Part 4) becomes
-> a standard instead of a feature.
+> **Status — what ships vs. what's next.** The diagram above is the live runtime
+> path. The workspace *also* carries several complete, property-tested library
+> crates that aren't wired into the CLI yet — they're the next layers, and some
+> of the best places to contribute:
+>
+> - **`stella-pipeline`** — the triage → enhance → route → execute → verify →
+>   judge → revise orchestration plane (the CLI currently drives the engine directly).
+> - **`stella-fleet`** — multi-agent fan-out: DAG planner, worktree isolation,
+>   lineage + spend ledger.
+> - **`stella-tui`** — a pure-fold ratatui REPL (HUD, panels, diff viewer). The
+>   shipping shell today is `stella-cli`'s simpler line REPL.
+> - **`stella-media`** — multimodal generation behind a `MediaProvider` port.
+> - **`stella-graph` retrieval & the fuller context plane** — the code graph is
+>   indexed on `stella init` but not yet queried at runtime; bi-temporal facts and
+>   episodic memory are implemented and tested but the CLI currently uses only the
+>   reflection-memory recall path.
+>
+> Wiring any of these into the CLI is tracked in the issues — grab one.
+
+> **The Open Context Protocol (OCP).** Retrieval in Stella is designed as an open,
+> versioned wire protocol (`ocp/1.0-draft`): the **`ocp-types` crate** (zero
+> dependencies beyond `serde`), a **host runtime** (`ocp-host`), and a **public
+> conformance suite** (`ocp-conformance`) — so anyone can ship an OCP provider
+> (in-process, stdio child, or remote HTTP) and prove it green against the suite
+> without a line of Stella code. What the host enforces today: providers are spawned
+> with a scrubbed environment (no credentials inherited via env vars), each call is
+> timeout-bounded and crash-isolated, an HTTP transport is always treated as egress
+> and consent-gated, and frame content is transported as untrusted data, never
+> executed. (Filesystem confinement of stdio providers is future work, and the
+> in-tree context sources currently share `ocp-types` values in-process rather than
+> routing through the host — the protocol and its conformance harness are the shipped
+> parts.) It's how "code is a graph, not text" (Field Manual Part 4) becomes a
+> standard instead of a feature.
 
 <div align="center">
 
@@ -306,7 +339,7 @@ platform, verifies its SHA-256, and falls back to `cargo install` where no prebu
 binary is published:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oxageninc/stella-cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/oxageninc/stella/main/install.sh | sh
 stella --version
 ```
 
@@ -324,15 +357,15 @@ To build from source instead, use the local formula in
 **From cargo** (requires Rust 1.90+ and git):
 
 ```bash
-cargo install --locked --git https://github.com/oxageninc/stella-cli stella-cli
+cargo install --locked --git https://github.com/oxageninc/stella stella-cli
 stella --version
 ```
 
 **From source:**
 
 ```bash
-git clone https://github.com/oxageninc/stella-cli.git
-cd stella-cli
+git clone https://github.com/oxageninc/stella.git
+cd stella
 cargo build --release
 ./target/release/stella --version
 ```
@@ -380,12 +413,50 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 chat
 > route through the dedicated coding endpoint (`https://api.z.ai/api/coding/paas/v4`).
 
 **The credential chain** (first hit wins): `--api-key` flag → provider env var →
-`~/.config/stella/credentials.toml` → interactive prompt.
+`settings.json` `api_key` → `~/.config/stella/credentials.toml` → interactive prompt.
 
 ```bash
 stella models    # every provider, its models, and key status
 stella config    # the fully resolved configuration
 ```
+
+### Custom providers via `settings.json`
+
+Point Stella at **any** OpenAI-compatible (or Anthropic/Gemini-dialect) endpoint —
+Together, Fireworks, Groq, a private gateway — without a code change, and override
+built-in provider defaults, from a `settings.json`:
+
+| Scope | Path | Wins over |
+|---|---|---|
+| Project | `<workspace>/.stella/settings.json` | org-managed, user |
+| Org-managed | `/Library/Application Support/stella/settings.json` (macOS) · `/etc/stella/settings.json` (Linux) · `$STELLA_MANAGED_SETTINGS` | user |
+| User | `~/.config/stella/settings.json` | — |
+
+```jsonc
+{
+  "providers": {
+    // A brand-new provider: base_url is required, dialect defaults to
+    // "openai-compatible" ("anthropic" and "gemini" also available).
+    "together": {
+      "name": "Together AI",
+      "base_url": "https://api.together.xyz/v1",
+      "api_key_env": "TOGETHER_API_KEY",
+      "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    },
+    // Overriding a built-in's defaults (e.g. the Z.ai coding plan):
+    "zai": {
+      "base_url": "https://api.z.ai/api/coding/paas/v4"
+    }
+  }
+}
+```
+
+Then: `stella --model together/meta-llama/Llama-3.3-70B-Instruct-Turbo run "…"`.
+Config-defined providers join auto-detection (after the built-ins) and judge
+routing, and show up in `stella models`. Prefer `api_key_env` over a literal
+`api_key` — settings files get committed, credentials should not. Entries merge
+per field across scopes, so an org-managed `base_url` and a user-scope
+`api_key_env` compose.
 
 <div align="center">
 
@@ -401,8 +472,9 @@ stella config    # the fully resolved configuration
 stella            # or: stella chat
 ```
 
-Opens a REPL. Type a prompt, press Enter — Stella thinks (live spinner), calls tools
-(read files, run commands, search code), responds, and prints a cost/token summary.
+Opens a REPL. Type a prompt, press Enter — Stella thinks (live status line), calls
+tools (read files, run commands, search code), responds, and prints a cost/token
+summary.
 
 **In-chat commands:**
 
@@ -434,12 +506,16 @@ stella monitor main          # drive a branch/PR's CI to green as a judged goal
 ```bash
 stella init      # infer this workspace's domain taxonomy (.stella/domains.toml)
 stella tools     # list every tool available to the agent this session
+stella stats     # cost, tokens, and $/resolved task per provider/model from
+                 # local telemetry (--format table|json|csv, --provider <id>)
 ```
 
 ### Global flags
 
 `--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
-`--output-format text|json|stream-json` (all also as `STELLA_*` env vars).
+`--output-format text|json|stream-json` (all also as `STELLA_*` env vars). The
+`json` / `stream-json` formats are for headless one-shot `stella run`; the
+interactive `chat` / `goal` / `monitor` modes always render human-readable output.
 
 <div align="center">
 
@@ -493,7 +569,7 @@ Stella produces is to the model provider you chose.
 
 ## Design principles
 
-From `docs/specs/oxagen-rust-cli/`:
+The invariants the whole design hangs on:
 
 - **Ports, not concretions** — `stella-core` never imports a provider SDK, a filesystem call, or a terminal library; it drives through traits.
 - **No I/O in the engine** — all decision logic is synchronous functions over owned data, so the whole engine is property-testable.
@@ -505,22 +581,26 @@ From `docs/specs/oxagen-rust-cli/`:
 
 ## Workspace layout
 
-| Crate | Role |
-|---|---|
-| `stella` (`stella-cli`) | CLI binary — clap surface + agent loop wiring |
-| `stella-core` | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router/hooks |
-| `stella-tools` | The built-in tools (CRUD, `bash`, `grep`/`glob`, build/test, `verify_done`, issues, CI) — workspace-root-pinned |
-| `stella-model` | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing) |
-| `stella-store` | DuckDB persistence — executions, events (full CoT), telemetry, files-touched, locks, graph |
-| `stella-context` | The context plane — bi-temporal property graph + embedding index + episodic memory; RRF retrieval with provenance/consent |
-| `stella-graph` | Tree-sitter symbol + import-edge indexer (Rust/TS/Python), exposed as an OCP provider feeding `stella-context` |
-| `stella-pipeline` | The orchestration plane above the engine: triage → enhance → route → execute → verify → judge → revise |
-| `stella-mcp` | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry; per-call timeouts isolate dead servers |
-| `stella-media` | Multimodal generation (image/SVG/video) behind one `MediaProvider` port — BYOK, artifact discipline, cost-gated |
-| `stella-fleet` | The multi-agent fleet: DAG planner + wave scheduling, git-worktree isolation per task, SQLite lineage + per-task spend ledger |
-| `stella-tui` | Event-log REPL — a pure `SessionModel` fold + a thin crossterm shell (renders deterministically from events) |
-| `stella-protocol` | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports |
-| `ocp-types` · `ocp-host` · `ocp-conformance` | Open Context Protocol — MIT zero-dep wire types, host runtime (discover/negotiate/route/gate), and the public conformance suite |
+Sixteen crates. **✅ = wired into the shipping CLI today · ◑ = partially wired ·
+🧪 = complete, property-tested library, not yet wired into the CLI** (contribution
+targets — see the architecture status note above).
+
+| Crate | Status | Role |
+|---|---|---|
+| `stella` (`stella-cli`) | ✅ | CLI binary — clap surface + agent loop wiring |
+| `stella-core` | ✅ | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router |
+| `stella-tools` | ✅ | The built-in tools (CRUD, `bash`, `grep`/`glob`, build/test, `verify_done`, issues, CI) — workspace-root-pinned |
+| `stella-model` | ✅ | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing) |
+| `stella-store` | ✅ | DuckDB persistence — executions, events (full CoT), telemetry, files-touched |
+| `stella-mcp` | ✅ | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry; per-call timeouts isolate dead servers |
+| `stella-protocol` | ✅ | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports |
+| `stella-context` | ◑ | The context plane. Reflection-memory recall + embedding index are wired; the bi-temporal property graph and episodic memory are built and tested but not yet consulted at runtime |
+| `stella-graph` | 🧪 | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python). Indexed on `stella init`; runtime retrieval not yet wired |
+| `stella-pipeline` | 🧪 | The orchestration plane above the engine: triage → enhance → route → execute → verify → judge → revise |
+| `stella-fleet` | 🧪 | The multi-agent fleet: DAG planner + wave scheduling, git-worktree isolation per task, SQLite lineage + per-task spend ledger |
+| `stella-media` | 🧪 | Multimodal generation (image/SVG/video) behind one `MediaProvider` port — BYOK, artifact discipline, cost-gated |
+| `stella-tui` | 🧪 | Event-log REPL — a pure `SessionModel` fold + a thin crossterm shell (renders deterministically from events) |
+| `ocp-types` · `ocp-host` · `ocp-conformance` | ✅ | Open Context Protocol — wire types (zero deps beyond `serde`), host runtime (discover/negotiate/route/gate), and the public conformance suite |
 
 ## Development
 
@@ -587,13 +667,37 @@ and meters usage. Stella is a standalone, open-source, BYOK coding agent with no
 platform attached. Want a terminal agent grounded in your org's graph? Use `oxagen`.
 Want a fast, self-contained agent in any repo? Use Stella.
 
-## Contributing
+## Contributing & community
 
-Issues and PRs welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). CI runs `fmt`,
-`clippy -D warnings`, tests, and a release build on every PR.
+```text
+   ·  .  ✦   ·   stella is built in the open — come build her with us   ·   ✦  .  ·
+```
 
-The single highest-value contribution right now is an **[arena run](#the-arena)** —
-an officially-scored, fully-receipted benchmark against another agent, win or lose.
+Stella is young, ambitious, and genuinely open — MIT OR Apache-2.0, DCO not CLA,
+no corporate gatekeeping. Every kind of contribution moves her forward:
+
+| You have… | Do this |
+|---|---|
+| ⏱ 10 seconds | **Star the repo** — stars are how other people find Stella |
+| 🐛 A bug | [File it with a repro](https://github.com/oxageninc/stella/issues/new?template=bug_report.yml) — reproducible bugs get fixed fast |
+| 💡 An idea | [Open a feature request](https://github.com/oxageninc/stella/issues/new?template=feature_request.yml) or start a [discussion](https://github.com/oxageninc/stella/discussions) |
+| 🌙 An evening | Grab a [`good first issue`](https://github.com/oxageninc/stella/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — [`CONTRIBUTING.md`](CONTRIBUTING.md) has the full map |
+| 🔑 An API budget | **The single highest-value contribution:** an [⚔ arena run](#the-arena) — officially scored, fully receipted, win or lose |
+
+New contributors: [`CONTRIBUTING.md`](CONTRIBUTING.md) walks you from
+`git clone` to merged PR — dev setup, a tour of all sixteen crates, the
+witness-test contract, and the style rules. CI runs `fmt`,
+`clippy -D warnings`, tests, and a release build on every PR; what you check
+locally is exactly what the gate checks.
+
+### Support Stella 💛
+
+Stella phones nothing home, sells nothing, and meters nothing — which also
+means she earns nothing. If she saves you tokens or time, consider
+[**sponsoring the project**](https://github.com/sponsors/macanderson):
+sponsorship pays for the arena runs, release infrastructure, and maintainer
+time that keep her sharp. Can't sponsor? A star, a receipted benchmark, or a
+war story in a bug report are worth just as much.
 
 ## License
 

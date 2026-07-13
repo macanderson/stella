@@ -100,7 +100,11 @@ impl Tool for Bash {
                 // Timeout — kill the process group.
                 #[cfg(unix)]
                 unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
+                    // Guard on a real pid: kill(-0, …) would SIGKILL Stella's
+                    // OWN process group.
+                    if pid > 0 {
+                        libc::kill(-pid, libc::SIGKILL);
+                    }
                 }
                 return ToolOutput::Error {
                     message: format!("command timed out after {timeout_secs}s"),
@@ -125,16 +129,21 @@ impl Tool for Bash {
         }
         combined.push_str(&format!("\n[exit code: {status}]"));
 
-        // Truncate from the middle if too long — keep head and tail.
+        // Truncate from the middle if too long — keep head and tail. Slice
+        // only on char boundaries so multibyte UTF-8 output can't panic.
         if combined.len() > MAX_OUTPUT_BYTES {
-            let head = MAX_OUTPUT_BYTES / 2;
-            let tail = MAX_OUTPUT_BYTES / 2;
+            let mut head = MAX_OUTPUT_BYTES / 2;
+            while !combined.is_char_boundary(head) {
+                head -= 1;
+            }
+            let mut tail_start = combined.len() - MAX_OUTPUT_BYTES / 2;
+            while !combined.is_char_boundary(tail_start) {
+                tail_start += 1;
+            }
+            let truncated = tail_start - head;
             let head_str = &combined[..head];
-            let tail_str = &combined[combined.len() - tail..];
-            combined = format!(
-                "{head_str}\n... [truncated {truncated} bytes] ...\n{tail_str}",
-                truncated = combined.len() - MAX_OUTPUT_BYTES
-            );
+            let tail_str = &combined[tail_start..];
+            combined = format!("{head_str}\n... [truncated {truncated} bytes] ...\n{tail_str}");
         }
 
         if output.status.success() {
@@ -197,6 +206,26 @@ mod tests {
         assert!(result.is_error());
         if let ToolOutput::Error { message } = result {
             assert!(message.contains("timed out"))
+        }
+    }
+
+    #[tokio::test]
+    async fn truncates_multibyte_output_without_panicking() {
+        let dir = std::env::temp_dir();
+        // Emit well over MAX_OUTPUT_BYTES of a 3-byte UTF-8 char, with no
+        // newlines, so the middle cut lands inside a char. A raw byte slice
+        // at that offset would panic; the boundary-safe path must not.
+        let result = Bash
+            .execute(
+                &serde_json::json!({"command": "yes '€' | tr -d '\\n' | head -c 200000"}),
+                &dir,
+            )
+            .await;
+        match result {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("truncated"), "expected truncation marker");
+            }
+            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
     }
 

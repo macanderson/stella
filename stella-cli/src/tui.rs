@@ -251,13 +251,6 @@ pub fn tool_result_card(_name: &str, output: &str, is_error: bool, duration: Dur
     );
 }
 
-/// Print streaming text delta (no newline — accumulates on one line).
-#[allow(dead_code)]
-pub fn print_delta(text: &str) {
-    print!("{}", text);
-    let _ = io::stdout().flush();
-}
-
 /// Print a section header.
 pub fn section_header(title: &str) {
     println!(
@@ -383,6 +376,9 @@ pub fn render_event(event: &AgentEvent) {
             duration_ms,
             retries,
             tool_calls,
+            // `estimated_input_tokens` is calibration feedback for the
+            // estimator (stella-core), not HUD material.
+            ..
         } => {
             // One dimmed telemetry line per committed model call: the live
             // HUD a metering consumer would reconstruct from this event.

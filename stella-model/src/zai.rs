@@ -546,17 +546,15 @@ async fn aggregate_zai_stream(
         // A no-argument tool call arrives as `arguments: ""`; that is an empty
         // object, not null — a downstream tool deserializing its input as an
         // object must not be handed `null`. A *non-empty* body that fails to
-        // parse is a genuine defect (truncated stream / bad provider output)
-        // and is surfaced rather than silently coerced to `null`.
+        // parse is the model's own broken JSON (GLM emits these): fall back to
+        // the `Value::Null` sentinel `driver.rs::execute_with_repair` checks
+        // for, so the repair loop — documented as tuned to GLM's failure shapes
+        // — can ask the model to retry, rather than erroring out the whole turn
+        // before any `ToolCall` is produced. Mirrors openai.rs / anthropic.rs.
         let input = if trimmed.is_empty() {
             Value::Object(serde_json::Map::new())
         } else {
-            serde_json::from_str(trimmed).map_err(|e| {
-                ProviderError::Malformed(format!(
-                    "tool call `{}` had unparseable arguments: {e}",
-                    acc.name
-                ))
-            })?
+            serde_json::from_str(trimmed).unwrap_or(Value::Null)
         };
         calls.push(ToolCall {
             call_id: acc.id,
@@ -720,6 +718,51 @@ mod tests {
         assert_eq!(call.call_id, "call_1");
         assert_eq!(call.name, "read_file");
         assert_eq!(call.input, serde_json::json!({"path": "src/lib.rs"}));
+    }
+
+    #[tokio::test]
+    async fn complete_falls_back_to_null_when_streamed_tool_arguments_never_parse() {
+        let server = MockServer::start().await;
+        // GLM streams a tool call whose argument fragments never form valid
+        // JSON. The adapter must fall back to `Value::Null` — the exact
+        // sentinel `driver.rs::execute_with_repair` checks for — so the repair
+        // loop (tuned to GLM's failure shapes) can ask the model to retry,
+        // rather than hard-erroring the whole turn before any `ToolCall` is
+        // produced.
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_7\",\"function\":{\"name\":\"bash\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{not valid json\"}}]}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider =
+            ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("run ls")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![ToolSchema {
+                name: "bash".into(),
+                description: "Run a command".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+                read_only: false,
+            }],
+        };
+
+        let result = provider
+            .complete(req)
+            .await
+            .expect("malformed args must not error the turn — they become the repair sentinel");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "bash");
+        assert_eq!(result.tool_calls[0].input, Value::Null);
     }
 
     #[tokio::test]

@@ -83,25 +83,52 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-/// Tool names that a custom manifest may not claim. Mirrors the built-ins
-/// registered in [`crate::registry::ToolRegistry::new`] plus `ask_user` from
-/// the CLI's `interactive` layer — a custom tool must never shadow one, or the
-/// decorator chain (native ← custom ← mcp ← ask_user) would route the wrong
-/// executor. Keep this in sync if either set changes.
+/// Tool names that a custom manifest may not claim. Mirrors every built-in
+/// registered in [`crate::registry::ToolRegistry`] (including the conditional
+/// issue tools) plus `ask_user`/`search_skills`/`install_skill` from the CLI's
+/// `interactive` layer — a custom tool must never shadow one, or the decorator
+/// chain (native ← custom ← mcp ← ask_user) would route the wrong executor and
+/// a manifest named e.g. `verify_done` or `delete_file` could silently replace
+/// a flagship built-in. Keep this in sync if either set changes.
 pub const RESERVED_NAMES: &[&str] = &[
+    // File CRUD
     "read_file",
     "write_file",
     "edit_file",
+    "delete_file",
+    // Exec & search
     "bash",
     "grep",
     "glob",
+    // Codebase maps & memory
+    "explorations",
+    "save_exploration",
+    "save_memory",
+    // The definition of done + build/test
+    "verify_done",
+    "build_project",
+    "run_tests",
+    // CI & evidence
+    "ci_status",
+    "screenshot",
+    // Issue tracking (registered only when a backend is configured)
+    "create_issue",
+    "update_issue",
+    "close_issue",
+    "search_issues",
+    "start_work_on_issue",
+    // CLI interactive layer
     "ask_user",
+    "search_skills",
+    "install_skill",
 ];
 
-/// Timeout applied when a manifest omits `timeout_ms`.
-const DEFAULT_TIMEOUT_MS: u64 = 30_000;
-/// Hard ceiling on `timeout_ms`; a manifest cannot ask for more.
-const MAX_TIMEOUT_MS: u64 = 600_000;
+/// Timeout applied when a manifest omits `timeout_ms`. Public so
+/// [`crate::validate`] can explain the defaulting it mirrors.
+pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+/// Hard ceiling on `timeout_ms`; a manifest cannot ask for more. Public so
+/// [`crate::validate`] can warn about the clamp it mirrors.
+pub const MAX_TIMEOUT_MS: u64 = 600_000;
 /// Byte cap on captured stdout/stderr before middle-out truncation kicks in.
 /// Matches [`crate::bash`] so custom and native exec behave the same.
 const MAX_OUTPUT_BYTES: usize = 100_000;

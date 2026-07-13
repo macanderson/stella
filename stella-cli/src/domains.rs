@@ -57,10 +57,8 @@ impl Domains {
 
     /// Load the workspace's domains, if `stella init` has run. `None` when
     /// the file is absent (callers treat "no domains yet" as an empty tag
-    /// vocabulary, never an error). Consumed by the reflection/recall
-    /// integration glue once stella-context lands; unit-tested below
-    /// meanwhile.
-    #[allow(dead_code)]
+    /// vocabulary, never an error). Consumed by `SessionMemory` (memory.rs)
+    /// to scope reflection tagging and recall to the workspace's domains.
     pub fn load(workspace_root: &Path) -> Result<Option<Self>, String> {
         let path = Self::path_for(workspace_root);
         match std::fs::read_to_string(&path) {
@@ -83,18 +81,16 @@ impl Domains {
     }
 
     /// The bare domain-name vocabulary (what reflection tagging and recall
-    /// filters consume). Consumed by the context/reflection integration
-    /// glue once stella-context lands; unit-tested below meanwhile (the
-    /// bin target can't see test usage, hence the allow).
-    #[allow(dead_code)]
+    /// filters consume). Consumed by `SessionMemory` (memory.rs) to scope
+    /// `recall_scoped` and per-turn reflection to the workspace's domains.
     pub fn names(&self) -> Vec<String> {
         self.domains.iter().map(|d| d.name.clone()).collect()
     }
 
     /// Resolve the domains a workspace-relative path belongs to, by prefix
     /// match. A path matching nothing gets an empty set — untagged is
-    /// valid, not an error. Consumed by the code-graph DomainMap glue once
-    /// stella-graph lands; unit-tested below meanwhile.
+    /// valid, not an error. Not yet consumed by the CLI (path-scoped
+    /// code-graph tagging is not wired up); kept and unit-tested for that use.
     #[allow(dead_code)]
     pub fn domains_for_path(&self, rel_path: &str) -> Vec<String> {
         let normalized = rel_path.trim_start_matches("./");

@@ -363,11 +363,10 @@ fn to_openai_tools(tools: &[stella_protocol::tool::ToolSchema]) -> Vec<OpenAiToo
 
 /// Parse the `retry-after` header (seconds, per RFC 9110 §10.2.3) into a
 /// millisecond hint for the retry policy — `stella-core/src/retry.rs`
-/// already honors `RateLimited.retry_after_ms` when present. Neither
-/// `zai.rs` nor `anthropic.rs` populate this field yet (both always send
-/// `None`); OpenAI reliably sends the header on its 429s, so this adapter
-/// fills it in rather than leaving a hint the retry policy already knows
-/// how to use sitting on the floor.
+/// already honors `RateLimited.retry_after_ms` when present. `zai.rs` and
+/// `anthropic.rs` populate this field the same way; OpenAI reliably sends the
+/// header on its 429s, so this adapter fills it in rather than leaving a hint
+/// the retry policy already knows how to use sitting on the floor.
 fn parse_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     let value = headers.get(reqwest::header::RETRY_AFTER)?;
     let seconds: u64 = value.to_str().ok()?.trim().parse().ok()?;
