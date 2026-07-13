@@ -56,7 +56,7 @@ jobs:
             os: ubuntu-latest
             cross: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -71,16 +71,33 @@ jobs:
         if: ${{ matrix.cross }}
         run: cargo install cross --locked
 
+      # Stamp the release version (from the tag) into the workspace manifest so
+      # the compiled binary reports it — `stella --version` == the release tag.
+      # No commit lands on main; this edit is ephemeral to the build runner.
+      # `--locked` is dropped because bumping the workspace-member version would
+      # otherwise be rejected as a stale lockfile; registry deps stay pinned by
+      # the existing Cargo.lock (cargo only rewrites the workspace entries).
+      - name: Stamp release version
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          sed -i.bak -E "0,/^version = \"[^\"]*\"/s//version = \"${version}\"/" Cargo.toml
+          rm -f Cargo.toml.bak
+          echo "workspace version set to ${version}"
+          grep -m1 '^version = ' Cargo.toml
+
       - name: Build stella
         shell: bash
         run: |
           set -euo pipefail
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --locked \
+            cross build --release \
               --target ${{ matrix.target }} \
               --package stella-cli --bin stella
           else
-            cargo build --release --locked \
+            cargo build --release \
               --target ${{ matrix.target }} \
               --package stella-cli --bin stella
           fi
@@ -108,7 +125,7 @@ jobs:
           echo "asset=${stem}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: stella-${{ matrix.target }}
           path: ${{ steps.package.outputs.asset }}
@@ -123,8 +140,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Full history + tags so the notes step can diff against the prior tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: stella-*
@@ -139,14 +162,59 @@ jobs:
           echo "----- SHA256SUMS -----"
           cat SHA256SUMS
 
+      # Draft the release notes from the diff since the previous tag using the
+      # AI Gateway. Falls back to a plain commit list if the key is unset or the
+      # call fails, so a release is never blocked on note generation.
+      - name: Generate release notes
+        shell: bash
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL || 'anthropic/claude-sonnet-5' }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          prev="$(git tag -l 'v*' --sort=-v:refname | grep -vx "${tag}" | head -n1 || true)"
+          echo "notes range: ${prev:-<start>}..${tag}"
+
+          commits="$(git log --no-merges --pretty='- %s' ${prev:+${prev}..HEAD} | head -n 300)"
+          {
+            echo "## Commits"; echo "$commits";
+            echo; echo "## Files changed";
+            git diff --stat ${prev:+${prev}..HEAD} | tail -n 80;
+          } > ctx.txt
+          git diff ${prev:+${prev}..HEAD} 2>/dev/null | head -c 120000 > diff.txt || true
+
+          notes=""
+          if [ -n "${AI_GATEWAY_API_KEY:-}" ]; then
+            prompt="$(printf 'Write the GitHub release notes for the "stella" coding-agent CLI %s, in clean Markdown. Start with a one-line summary, then grouped bullet sections (Features, Fixes, Performance, Docs, Internal) — omit any empty section. Be concrete and user-facing; no preamble, no headings above the summary. Base it strictly on the commits and diff below.\n\n%s\n\n## Diff (truncated)\n```diff\n%s\n```\n' "$version" "$(cat ctx.txt)" "$(cat diff.txt)")"
+            payload="$(jq -n --arg m "$RELEASE_NOTES_MODEL" --arg c "$prompt" '{model:$m,messages:[{role:"user",content:$c}],temperature:0.2}')"
+            resp="$(curl -sS --max-time 150 \
+              -H "Authorization: Bearer ${AI_GATEWAY_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$payload" \
+              https://ai-gateway.vercel.sh/v1/chat/completions || true)"
+            notes="$(printf '%s' "$resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)"
+            [ -z "$notes" ] && echo "::warning::AI note generation returned nothing; using the commit list."
+          else
+            echo "::warning::AI_GATEWAY_API_KEY not available; using the commit list."
+          fi
+          [ -z "$notes" ] && notes="$(printf '## What changed\n\n%s' "$commits")"
+
+          {
+            printf '%s\n\n' "$notes"
+            [ -n "$prev" ] && printf '**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$prev" "$tag"
+          } > notes.md
+          echo "----- notes.md -----"; cat notes.md
+
       - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/stella-*.tar.gz
             artifacts/SHA256SUMS
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          body_path: notes.md
 
   # Renders .github/homebrew/stella.rb.tmpl with the real version + per-target
   # SHA-256 sums and commits it as Formula/stella.rb to the tap repo
@@ -161,10 +229,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout (for the formula template)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           pattern: stella-*
