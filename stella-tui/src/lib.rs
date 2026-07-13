@@ -47,6 +47,7 @@ pub mod envelope;
 pub mod fx;
 pub mod graph;
 pub mod resource;
+pub mod scenario;
 pub mod splash;
 pub mod theme;
 pub mod views;
