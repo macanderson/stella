@@ -22,6 +22,8 @@ mod config;
 mod domains;
 mod interactive;
 mod memory;
+mod stats;
+mod settings;
 mod tui;
 
 use std::process::ExitCode;
@@ -129,6 +131,19 @@ enum Command {
     /// List configured providers and available models
     Models,
 
+    /// Summarize cost, tokens, and resolve rate per provider/model from
+    /// local telemetry (.stella/stella.duckdb) — $/resolved-task receipts
+    Stats {
+        /// Output format: table (aligned, with TOTAL row), json, or csv
+        #[arg(long, value_enum, default_value = "table")]
+        format: stats::StatsFormat,
+
+        /// Only show executions for this provider id (e.g. zai, anthropic,
+        /// local)
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
     /// Show current configuration
     Config,
 
@@ -177,6 +192,10 @@ fn run(cli: Cli) -> Result<(), String> {
                 Some(dir) => agent::run_tools_validation(dir.as_deref()),
                 None => agent::run_tools_listing(),
             };
+        }
+        Some(Command::Stats { format, provider }) => {
+            // Reads local telemetry only — works with zero API keys.
+            return stats::run_stats(format, provider.as_deref());
         }
         Some(Command::Version) => {
             println!("stella v{}", env!("CARGO_PKG_VERSION"));
