@@ -3546,6 +3546,7 @@ name = "stella-store"
 version = "0.1.17"
 dependencies = [
  "duckdb",
+ "serde",
  "serde_json",
  "stella-protocol",
 ]

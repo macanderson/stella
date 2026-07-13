@@ -123,10 +123,12 @@ pub const RESERVED_NAMES: &[&str] = &[
     "install_skill",
 ];
 
-/// Timeout applied when a manifest omits `timeout_ms`.
-const DEFAULT_TIMEOUT_MS: u64 = 30_000;
-/// Hard ceiling on `timeout_ms`; a manifest cannot ask for more.
-const MAX_TIMEOUT_MS: u64 = 600_000;
+/// Timeout applied when a manifest omits `timeout_ms`. Public so
+/// [`crate::validate`] can explain the defaulting it mirrors.
+pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+/// Hard ceiling on `timeout_ms`; a manifest cannot ask for more. Public so
+/// [`crate::validate`] can warn about the clamp it mirrors.
+pub const MAX_TIMEOUT_MS: u64 = 600_000;
 /// Byte cap on captured stdout/stderr before middle-out truncation kicks in.
 /// Matches [`crate::bash`] so custom and native exec behave the same.
 const MAX_OUTPUT_BYTES: usize = 100_000;
