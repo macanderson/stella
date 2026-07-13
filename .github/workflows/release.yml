@@ -41,20 +41,21 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-14
-            cross: false
           # Cross-compiled from the Apple Silicon runner: Apple's clang/ld is a
           # universal toolchain, so `rustup target add x86_64-apple-darwin`
           # (via the `targets:` input below) builds the x86_64 slice — bundled
           # C deps included — without needing a (now-retired) Intel runner.
           - target: x86_64-apple-darwin
             os: macos-14
-            cross: false
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            cross: false
+          # Built natively on GitHub's arm64 runner (free for public repos).
+          # Cross-compiling this target via `cross` fails: its default docker
+          # image ships g++ 5, far too old for libduckdb-sys's bundled C++.
+          # The native runner uses the same modern toolchain that already
+          # builds duckdb fine on x86_64 ubuntu-latest.
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: true
+            os: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
 
@@ -66,10 +67,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-
-      - name: Install cross
-        if: ${{ matrix.cross }}
-        run: cargo install cross --locked
 
       # Stamp the release version (from the tag) into the workspace manifest so
       # the compiled binary reports it — `stella --version` == the release tag.
@@ -92,15 +89,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release \
-              --target ${{ matrix.target }} \
-              --package stella-cli --bin stella
-          else
-            cargo build --release \
-              --target ${{ matrix.target }} \
-              --package stella-cli --bin stella
-          fi
+          cargo build --release \
+            --target ${{ matrix.target }} \
+            --package stella-cli --bin stella
 
       - name: Package tarball
         id: package
