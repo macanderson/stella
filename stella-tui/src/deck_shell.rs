@@ -56,19 +56,35 @@ pub struct DeckOptions {
 }
 
 /// Restores the terminal on drop, including during a panic unwind.
+///
+/// Each terminal state is flagged as it is acquired, and the guard exists
+/// BEFORE the first acquisition — so an error partway through `enter` (raw
+/// mode on, alternate screen failed) still drops the guard and rolls back
+/// exactly the states that were entered, never stranding the user's terminal
+/// in raw mode.
 struct TerminalGuard {
+    raw: bool,
+    alt: bool,
     mouse: bool,
 }
 
 impl TerminalGuard {
     fn enter(mouse: bool) -> io::Result<Self> {
-        enable_raw_mode()?;
+        let mut guard = Self {
+            raw: false,
+            alt: false,
+            mouse: false,
+        };
         let mut out = io::stdout();
+        enable_raw_mode()?;
+        guard.raw = true;
         execute!(out, EnterAlternateScreen)?;
+        guard.alt = true;
         if mouse {
             execute!(out, EnableMouseCapture)?;
+            guard.mouse = true;
         }
-        Ok(Self { mouse })
+        Ok(guard)
     }
 }
 
@@ -78,8 +94,12 @@ impl Drop for TerminalGuard {
         if self.mouse {
             let _ = execute!(out, DisableMouseCapture);
         }
-        let _ = execute!(out, LeaveAlternateScreen);
-        let _ = disable_raw_mode();
+        if self.alt {
+            let _ = execute!(out, LeaveAlternateScreen);
+        }
+        if self.raw {
+            let _ = disable_raw_mode();
+        }
     }
 }
 

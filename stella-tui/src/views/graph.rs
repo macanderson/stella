@@ -86,17 +86,34 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
 
 fn render_node_list(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
     let title = format!(" nodes · {} ", snapshot.nodes.len());
-    let lines: Vec<Line<'static>> = snapshot
-        .nodes
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    // Window the list around the cursor (centered when possible) so the
+    // selection can never walk below the viewport into invisible rows — the
+    // same keep-in-view slice the Files ledger uses. One row per node (no
+    // wrap), so nodes map 1:1 to visible lines and the arithmetic is exact.
+    let total = snapshot.nodes.len();
+    let visible = inner.height as usize;
+    let start = if total <= visible {
+        0
+    } else {
+        cursor
+            .saturating_sub(visible.saturating_sub(1) / 2)
+            .min(total - visible)
+    };
+    let end = (start + visible).min(total);
+
+    let lines: Vec<Line<'static>> = snapshot.nodes[start..end]
         .iter()
         .enumerate()
-        .map(|(i, node)| node_list_line(node, i == cursor))
+        .map(|(offset, node)| node_list_line(node, start + offset == cursor))
         .collect();
-    let block = Block::default().borders(Borders::ALL).title(title);
-    Paragraph::new(Text::from(lines))
-        .block(block)
-        .wrap(Wrap { trim: true })
-        .render(area, buf);
+    Paragraph::new(Text::from(lines)).render(inner, buf);
 }
 
 fn node_list_line(node: &GraphNode, selected: bool) -> Line<'static> {
@@ -451,6 +468,37 @@ mod tests {
         assert!(
             text.contains("no known relations"),
             "zero-degree node says so explicitly:\n{text}"
+        );
+    }
+
+    #[test]
+    fn node_list_windows_to_keep_the_cursor_visible() {
+        // Far more nodes than a short terminal can list, cursor on the last
+        // one: the window must slide so the selection stays on screen.
+        let n = 40;
+        let snapshot = GraphSnapshot {
+            focus: "big".into(),
+            nodes: (0..n)
+                .map(|i| GraphNode {
+                    label: format!("node_{i:02}"),
+                    kind: "function".into(),
+                    location: None,
+                })
+                .collect(),
+            edges: vec![],
+        };
+        let mut ui = DeckUi::default();
+        ui.graph = Some(snapshot);
+        ui.graph_cursor = n - 1;
+
+        let text = draw(&mut ui, 100, 12);
+        assert!(
+            text.contains("node_39"),
+            "the cursor node scrolled into view:\n{text}"
+        );
+        assert!(
+            !text.contains("node_00"),
+            "the head of the list scrolled out of the window:\n{text}"
         );
     }
 

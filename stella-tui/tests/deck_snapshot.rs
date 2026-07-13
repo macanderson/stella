@@ -51,6 +51,7 @@ fn deck_renders_every_tab_with_real_content() {
     let cases = [
         (DeckTab::Session, "lead"),
         (DeckTab::Agents, "sub:auth"),
+        (DeckTab::Traces, "Which auth guard"),
         (DeckTab::Graph, "run_turn"),
         (DeckTab::Files, "automations"),
     ];

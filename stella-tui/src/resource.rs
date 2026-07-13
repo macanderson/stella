@@ -7,17 +7,27 @@
 //!
 //! Backed by `sysinfo`. CPU usage is a diff over time: the first `sample()`
 //! call after construction reports 0% (there is no prior snapshot to diff
-//! against) and subsequent calls — driven by the periodic shell tick, which
-//! naturally spaces refreshes apart — report real utilization. This mirrors
-//! the sysinfo-recommended pattern without an artificial startup sleep.
+//! against) and later calls report real utilization. `sample()` self-throttles
+//! to [`SAMPLE_INTERVAL`]: the shell tick may call it at animation rate
+//! (~30 Hz), but real refreshes stay ~1 s apart — which is both the spacing
+//! sysinfo needs for an accurate CPU diff and what keeps a full process-table
+//! refresh (expensive, especially on Linux) off the per-frame budget.
+
+use std::time::{Duration, Instant};
 
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use crate::deck::{ResourceSample, WorkspaceModel};
 
+/// Minimum spacing between real refreshes; `sample()` calls inside the
+/// window are no-ops and the previously stamped values stay put.
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(1000);
+
 /// Samples system + per-process resource usage.
 pub struct ResourceMonitor {
     sys: System,
+    /// When the last real refresh ran; `None` until the first `sample()`.
+    last_refresh: Option<Instant>,
 }
 
 impl Default for ResourceMonitor {
@@ -31,12 +41,24 @@ impl ResourceMonitor {
         // `System::new()` starts with nothing loaded; the first `sample()`
         // populates the CPU list and process table and establishes the
         // baseline diff, so it reports zeroed usage by construction.
-        Self { sys: System::new() }
+        Self {
+            sys: System::new(),
+            last_refresh: None,
+        }
     }
 
     /// Refresh the sample and stamp it onto the model: set
     /// `model.global_cpu_pct` and each agent's `res` from its `meta.pid`.
+    /// Self-throttled to [`SAMPLE_INTERVAL`] — safe to call every UI tick.
     pub fn sample(&mut self, model: &mut WorkspaceModel) {
+        if self
+            .last_refresh
+            .is_some_and(|t| t.elapsed() < SAMPLE_INTERVAL)
+        {
+            return;
+        }
+        self.last_refresh = Some(Instant::now());
+
         self.sys.refresh_cpu_all();
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
 

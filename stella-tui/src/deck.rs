@@ -9,11 +9,15 @@
 //! ## Purity boundary (L-T1)
 //!
 //! Everything here is a deterministic fold of the `Inbound` stream **except**
-//! two labeled out-of-band fields stamped from outside the event log:
-//! [`AgentEntry::res`] (sampled from the OS by the resource monitor) and the
-//! code-graph snapshot (queried from `stella-graph`, held by the graph view).
-//! Those are the only exceptions; naming them is what keeps the boundary
-//! honest instead of quietly eroded.
+//! a small set of labeled out-of-band fields stamped from outside the event
+//! log: [`AgentEntry::res`] and [`WorkspaceModel::global_cpu_pct`] (sampled
+//! from the OS by the resource monitor), [`WorkspaceModel::now_ms`] (the
+//! deck's clock, stamped by the shell tick), [`WorkspaceModel::queue`]
+//! (mutated by the shell when the *user* submits and when the dispatcher
+//! drains — a fold of outbound input, not of `Inbound`), and the code-graph
+//! snapshot (queried from `stella-graph`, held by the graph view). Those are
+//! the only exceptions; naming them is what keeps the boundary honest instead
+//! of quietly eroded.
 
 use std::collections::VecDeque;
 
@@ -89,10 +93,15 @@ pub struct AgentEntry {
     pub status: AgentStatus,
     pub tokens_in: u64,
     pub tokens_out: u64,
-    /// Live spend, driven by `BudgetTick`/`Complete` (never double-counted
-    /// against `StepUsage`, which only feeds token counts — mirrors the
-    /// existing HUD accounting in `SessionModel`).
+    /// Live spend. Authoritative once a `BudgetTick` has been seen (its
+    /// `spent_usd` already covers step costs — mirrors the HUD accounting in
+    /// `SessionModel`); until then, `StepUsage.cost_usd` accumulates here as
+    /// a fallback so a stream without budget ticks still shows real spend.
     pub cost_usd: f64,
+    /// True once a `BudgetTick` arrived — from then on the budget stream owns
+    /// `cost_usd` and `StepUsage` no longer adds to it (that would
+    /// double-count).
+    pub budget_ticked: bool,
     pub last_activity_ms: u64,
     /// Sampled CPU/MEM — the out-of-band field.
     pub res: ResourceSample,
@@ -110,6 +119,7 @@ impl AgentEntry {
             tokens_in: 0,
             tokens_out: 0,
             cost_usd: 0.0,
+            budget_ticked: false,
             last_activity_ms: started,
             res: ResourceSample::default(),
             activity: ActivitySpark::new(ACTIVITY_WINDOW),
@@ -137,8 +147,6 @@ impl AgentEntry {
 pub struct WorkspaceModel {
     /// Agents in first-registered order; look up by `meta.id`.
     pub agents: Vec<AgentEntry>,
-    /// Index into [`Self::agents`] of the focused agent (Session tab target).
-    pub focused: usize,
     pub ledger: FileLedger,
     pub routes: RouteLog,
     pub queue: PromptQueue,
@@ -155,11 +163,6 @@ pub struct WorkspaceModel {
 impl WorkspaceModel {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// The focused agent, if any exist.
-    pub fn focused_agent(&self) -> Option<&AgentEntry> {
-        self.agents.get(self.focused)
     }
 
     /// Index of an agent by id.
@@ -188,12 +191,25 @@ impl WorkspaceModel {
             Inbound::Register(meta) => self.register(meta.clone()),
             Inbound::Event { agent, event } => self.apply_event(agent, event),
             Inbound::Status { agent, status } => {
-                if let Some(i) = self.index_of(agent) {
-                    // Killed is terminal-terminal; the supervisor owns it and
-                    // nothing walks it back.
-                    if self.agents[i].status != AgentStatus::Killed {
-                        self.agents[i].status = *status;
+                // Auto-register an unknown id, exactly like `Event`:
+                // supervisor states (`Paused`, `Killed`, …) are not
+                // recoverable from the event stream, so a status arriving
+                // before registration must never be dropped.
+                let i = match self.index_of(agent) {
+                    Some(i) => i,
+                    None => {
+                        self.agents.push(AgentEntry::new(AgentMeta::new(
+                            agent.clone(),
+                            agent.clone(),
+                            self.now_ms,
+                        )));
+                        self.agents.len() - 1
                     }
+                };
+                // Killed is terminal-terminal; the supervisor owns it and
+                // nothing walks it back.
+                if self.agents[i].status != AgentStatus::Killed {
+                    self.agents[i].status = *status;
                 }
             }
         }
@@ -238,13 +254,25 @@ impl WorkspaceModel {
                     input_tokens,
                     output_tokens,
                     model,
+                    cost_usd,
                     ..
                 } => {
                     entry.tokens_in += input_tokens;
                     entry.tokens_out += output_tokens;
                     entry.meta.model = Some(model.clone());
+                    // Fallback accounting: a stream that never emits
+                    // `BudgetTick` (scenario feeds, minimal drivers) still
+                    // shows real spend. Once a tick has been seen it owns
+                    // `cost_usd` outright — adding steps on top of it would
+                    // double-count.
+                    if !entry.budget_ticked {
+                        entry.cost_usd += cost_usd;
+                    }
                 }
-                AgentEvent::BudgetTick { spent_usd, .. } => entry.cost_usd = *spent_usd,
+                AgentEvent::BudgetTick { spent_usd, .. } => {
+                    entry.budget_ticked = true;
+                    entry.cost_usd = *spent_usd;
+                }
                 AgentEvent::Complete { model, cost_usd } => {
                     entry.meta.model = Some(model.clone());
                     entry.cost_usd = entry.cost_usd.max(*cost_usd);
@@ -330,15 +358,17 @@ impl FileLedger {
     }
 }
 
-/// Count added/removed source lines in a unified diff. Header lines (`+++`,
-/// `---`) and hunk markers (`@@`) are ignored; only real `+`/`-` body lines
-/// count. Robust to `None`/partial diffs — a malformed diff yields `(0, 0)`,
-/// never a panic.
+/// Count added/removed source lines in a unified diff. File headers (`+++ `,
+/// `--- `) and hunk markers (`@@`) are ignored; only real `+`/`-` body lines
+/// count. The header check requires the trailing space of real header syntax:
+/// an added body line whose content starts with `++` (e.g. `++i`) arrives as
+/// `+++i` and must count, not be skipped as a header. Robust to
+/// `None`/partial diffs — a malformed diff yields `(0, 0)`, never a panic.
 pub fn count_diff_lines(diff: &str) -> (u32, u32) {
     let mut added = 0u32;
     let mut removed = 0u32;
     for line in diff.lines() {
-        if line.starts_with("+++") || line.starts_with("---") {
+        if line.starts_with("+++ ") || line.starts_with("--- ") {
             continue;
         }
         match line.as_bytes().first() {
@@ -381,33 +411,29 @@ impl RouteLog {
 pub struct QueuedPrompt {
     pub text: String,
     pub ts: u64,
-    pub dispatched: bool,
 }
 
 /// The non-blocking prompt queue. Submitting a prompt always enqueues and
-/// returns; the deck never gates typing on a busy agent.
+/// returns; the deck never gates typing on a busy agent. Dispatch REMOVES
+/// the prompt (`take_next`), so the queue holds only the waiting backlog —
+/// no dispatched history is retained, keeping memory proportional to what is
+/// actually queued (the same discipline as the capped `RouteLog`/`TraceLog`).
 #[derive(Clone, Debug, Default)]
 pub struct PromptQueue {
-    pub items: Vec<QueuedPrompt>,
+    pub items: VecDeque<QueuedPrompt>,
 }
 
 impl PromptQueue {
     pub fn enqueue(&mut self, text: String, ts: u64) {
-        self.items.push(QueuedPrompt {
-            text,
-            ts,
-            dispatched: false,
-        });
+        self.items.push_back(QueuedPrompt { text, ts });
     }
     /// Number of not-yet-dispatched prompts.
     pub fn pending(&self) -> usize {
-        self.items.iter().filter(|p| !p.dispatched).count()
+        self.items.len()
     }
-    /// Mark the oldest pending prompt dispatched, returning its text.
+    /// Remove the oldest pending prompt for dispatch, returning its text.
     pub fn take_next(&mut self) -> Option<String> {
-        let idx = self.items.iter().position(|p| !p.dispatched)?;
-        self.items[idx].dispatched = true;
-        Some(self.items[idx].text.clone())
+        self.items.pop_front().map(|p| p.text)
     }
 }
 
@@ -551,7 +577,11 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
                 AgentStatus::Failed
             })
         }
-        AgentEvent::AskUser { .. } => Some(AgentStatus::WaitingInput),
+        // Both user-response gates block the agent until answered — a scope
+        // review is just as much "needs input" as an ask-user question.
+        AgentEvent::AskUser { .. } | AgentEvent::ScopeReview { .. } => {
+            Some(AgentStatus::WaitingInput)
+        }
         AgentEvent::Stage { .. }
         | AgentEvent::Text { .. }
         | AgentEvent::Reasoning { .. }
@@ -657,6 +687,15 @@ mod tests {
     }
 
     #[test]
+    fn diff_body_lines_starting_with_extra_plus_or_minus_still_count() {
+        // An added line whose content is `++i` arrives as `+++i`; a removed
+        // line whose content is `--config` arrives as `---config`. Only real
+        // file headers (`+++ b/…`, `--- a/…` — with the space) are skipped.
+        let diff = "--- a/x.c\n+++ b/x.c\n@@ -1,2 +1,2 @@\n---config\n+++i\n";
+        assert_eq!(count_diff_lines(diff), (1, 1));
+    }
+
+    #[test]
     fn register_then_events_route_to_the_right_agent() {
         let mut w = WorkspaceModel::new();
         w.now_ms = 10;
@@ -722,22 +761,23 @@ mod tests {
 
     #[test]
     fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
+        let step = |cost_usd: f64| AgentEvent::StepUsage {
+            step: 1,
+            model: "m".into(),
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_input_tokens: 0,
+            cost_usd,
+            duration_ms: 1,
+            retries: 0,
+            tool_calls: 0,
+        };
         let mut w = WorkspaceModel::new();
         w.apply_inbound(&reg("lead"));
-        w.apply_inbound(&ev(
-            "lead",
-            AgentEvent::StepUsage {
-                step: 1,
-                model: "m".into(),
-                input_tokens: 1,
-                output_tokens: 1,
-                cached_input_tokens: 0,
-                cost_usd: 5.0, // must NOT be added to cost_usd
-                duration_ms: 1,
-                retries: 0,
-                tool_calls: 0,
-            },
-        ));
+        w.apply_inbound(&ev("lead", step(0.10)));
+        // Before any tick, step costs are the fallback spend — a stream
+        // without BudgetTicks still shows real dollars.
+        assert_eq!(w.agents[0].cost_usd, 0.10);
         w.apply_inbound(&ev(
             "lead",
             AgentEvent::BudgetTick {
@@ -746,7 +786,40 @@ mod tests {
                 mode: stella_protocol::BudgetMode::Observed,
             },
         ));
+        assert_eq!(w.agents[0].cost_usd, 0.42, "the tick is authoritative");
+        // Once ticked, later step costs no longer add on top (that would
+        // double-count what the next tick already includes).
+        w.apply_inbound(&ev("lead", step(5.0)));
         assert_eq!(w.agents[0].cost_usd, 0.42);
+    }
+
+    #[test]
+    fn supervisor_status_for_an_unknown_agent_auto_registers_it() {
+        let mut w = WorkspaceModel::new();
+        w.apply_inbound(&Inbound::Status {
+            agent: "ghost".into(),
+            status: AgentStatus::Paused,
+        });
+        let i = w.index_of("ghost").expect("status auto-registers, like Event");
+        assert_eq!(w.agents[i].status, AgentStatus::Paused);
+    }
+
+    #[test]
+    fn scope_review_marks_the_agent_waiting_for_input() {
+        let mut w = WorkspaceModel::new();
+        w.apply_inbound(&reg("lead"));
+        w.apply_inbound(&ev(
+            "lead",
+            AgentEvent::ScopeReview {
+                proposal: stella_protocol::ScopeProposal {
+                    summary: "widen the refactor".into(),
+                    steps: vec![],
+                    estimated_files: 2,
+                    estimated_cost_usd: None,
+                },
+            },
+        ));
+        assert_eq!(w.agents[0].status, AgentStatus::WaitingInput);
     }
 
     #[test]

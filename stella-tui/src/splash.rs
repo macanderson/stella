@@ -23,7 +23,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use tachyonfx::{Duration as FxDuration, Effect, EffectTimer, Interpolation, fx};
+use tachyonfx::{Duration as FxDuration, Effect, EffectTimer, Interpolation, SimpleRng, fx};
 use tui_big_text::{BigText, PixelSize};
 
 use crate::theme;
@@ -101,6 +101,15 @@ pub fn render(state: &SplashState, area: Rect, buf: &mut Buffer) {
     crate::fx::apply(&mut effect, elapsed, area, buf);
 }
 
+/// Fixed RNG seed for the coalesce/dissolve cell pattern. `render` builds a
+/// FRESH effect every frame and scrubs it to `progress()`; tachyonfx's
+/// dissolve/coalesce pick which cells flip from their RNG, and the default
+/// RNG seeds from the wall clock — so an unseeded fresh effect would choose a
+/// different cell pattern every frame and the scrub would read as flicker,
+/// not an animation. One fixed seed makes every frame agree on the pattern,
+/// keeping the scrubbed playback identical to a continuously-driven effect.
+const FX_SEED: u32 = 0x57E11A;
+
 /// Picks the coalesce-in or dissolve-out effect for the current splash
 /// `progress`, paired with the synthetic elapsed duration that, applied to a
 /// *fresh* copy of that effect, lands it exactly where continuous real-time
@@ -111,11 +120,13 @@ fn timeline_effect(progress: f32) -> (Effect, Duration) {
 
     if progress < REVEAL_FRACTION {
         let local = (progress / REVEAL_FRACTION).clamp(0.0, 1.0);
-        let effect = fx::coalesce(EffectTimer::new(FxDuration::from(reveal_dur), Interpolation::QuadOut));
+        let effect = fx::coalesce(EffectTimer::new(FxDuration::from(reveal_dur), Interpolation::QuadOut))
+            .with_rng(SimpleRng::new(FX_SEED));
         (effect, reveal_dur.mul_f32(local))
     } else {
         let local = ((progress - REVEAL_FRACTION) / (1.0 - REVEAL_FRACTION)).clamp(0.0, 1.0);
-        let effect = fx::dissolve(EffectTimer::new(FxDuration::from(dissolve_dur), Interpolation::QuadIn));
+        let effect = fx::dissolve(EffectTimer::new(FxDuration::from(dissolve_dur), Interpolation::QuadIn))
+            .with_rng(SimpleRng::new(FX_SEED));
         (effect, dissolve_dur.mul_f32(local))
     }
 }

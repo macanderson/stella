@@ -149,10 +149,17 @@ fn render_footer(ledger: &FileLedger, area: Rect, buf: &mut Buffer) {
     Paragraph::new(line).render(area, buf);
 }
 
-/// The path column width given the row's total available width.
+/// The path column width given the row's total available width: the
+/// leftovers after the fixed columns, floored at [`MIN_PATH_W`] — but never
+/// wider than the row itself, so on a terminal narrower than the fixed
+/// columns the path (the row's most meaningful cell) still fits and only the
+/// tail columns clip, instead of the path column alone overflowing the pane.
 fn path_width(total_width: usize) -> usize {
     let fixed = AGENT_W + OP_W + ADD_W + REM_W + CHANGES_W;
-    total_width.saturating_sub(fixed).max(MIN_PATH_W)
+    total_width
+        .saturating_sub(fixed)
+        .max(MIN_PATH_W)
+        .min(total_width)
 }
 
 fn header_line(width: usize) -> Line<'static> {
@@ -427,6 +434,15 @@ mod tests {
         render(&model, &mut ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("no files touched yet"));
+    }
+
+    #[test]
+    fn path_width_never_exceeds_the_available_row_width() {
+        let fixed = AGENT_W + OP_W + ADD_W + REM_W + CHANGES_W;
+        assert_eq!(path_width(120), 120 - fixed, "wide rows: path fills the leftovers");
+        assert_eq!(path_width(fixed + 2), MIN_PATH_W, "floored at MIN_PATH_W");
+        assert_eq!(path_width(8), 8, "capped to the row on very narrow panes");
+        assert_eq!(path_width(0), 0);
     }
 
     #[test]

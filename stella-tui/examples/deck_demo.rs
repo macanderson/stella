@@ -18,7 +18,8 @@ use tokio::sync::mpsc;
 
 use stella_tui::scenario::{demo_graph, demo_inbound};
 use stella_tui::{
-    AgentControl, AgentMeta, AgentStatus, DeckOptions, Inbound, WorkspaceInput, run_deck,
+    AgentControl, AgentMeta, AgentStatus, DeckOptions, Inbound, ScopeDecision, UserInput,
+    WorkspaceInput, run_deck,
 };
 
 fn now_ms() -> u64 {
@@ -72,7 +73,46 @@ async fn main() -> std::io::Result<()> {
                     };
                     let _ = react_tx.send(Inbound::Status { agent, status });
                 }
-                WorkspaceInput::ToAgent { .. } => {}
+                // Gate answers (scope decisions, ask-user replies) loop back
+                // as the inbound events a real engine would emit, so the
+                // pending gate actually clears and the demo's advertised
+                // in-place answering works end to end.
+                WorkspaceInput::ToAgent { agent, input } => match input {
+                    UserInput::ScopeDecision(decision) => {
+                        let _ = react_tx.send(Inbound::Event {
+                            agent: agent.clone(),
+                            event: AgentEvent::Text {
+                                delta: format!("scope decision: {decision:?}\n"),
+                            },
+                        });
+                        // Any non-ScopeReview stage clears the pending gate;
+                        // an abort ends the run instead.
+                        let next = match decision {
+                            ScopeDecision::Approve | ScopeDecision::Trim => {
+                                AgentEvent::Stage { name: StageKind::Execute }
+                            }
+                            ScopeDecision::Abort => AgentEvent::Complete {
+                                model: "glm-5.2".into(),
+                                cost_usd: 0.0,
+                            },
+                        };
+                        let _ = react_tx.send(Inbound::Event { agent, event: next });
+                    }
+                    // The answer to ask_user returns as that call's
+                    // ToolResult, correlated by id — the documented path
+                    // that clears the pending question.
+                    UserInput::AskUserAnswer { id, answer } => {
+                        let _ = react_tx.send(Inbound::Event {
+                            agent,
+                            event: AgentEvent::ToolResult {
+                                call_id: id,
+                                output: ToolOutput::Ok { content: answer },
+                                duration_ms: 0,
+                            },
+                        });
+                    }
+                    UserInput::Prompt { .. } | UserInput::Cancel => {}
+                },
                 WorkspaceInput::Quit => break,
             }
         }

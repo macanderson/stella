@@ -82,25 +82,27 @@ pub struct AgentEntry {
     pub status: AgentStatus,
     pub tokens_in: u64,
     pub tokens_out: u64,
-    pub cost_usd: f64,
+    pub cost_usd: f64,            // BudgetTick-owned once ticked; StepUsage fallback before
+    pub budget_ticked: bool,      // true once a BudgetTick arrived (tick owns cost_usd)
     pub last_activity_ms: u64,
     pub res: ResourceSample,      // stamped by ResourceMonitor (out-of-band)
     pub activity: ActivitySpark,  // ring buffer of recent intensity for a sparkline
 }
 
+// The focused-agent index is EPHEMERAL VIEW STATE and lives in `DeckUi`
+// (deck_ui.rs), not here — L-T1 keeps it out of the model.
 pub struct WorkspaceModel {
     pub agents: Vec<AgentEntry>,  // insertion-ordered; find by meta.id
-    pub focused: usize,           // index into agents
     pub ledger: FileLedger,       // cross-agent file CRUD + line +/-
     pub routes: RouteLog,         // prompt→model decisions
-    pub queue: PromptQueue,       // pending prompts (non-blocking submit)
+    pub queue: PromptQueue,       // pending prompts (out-of-band; see purity boundary)
     pub trace: TraceLog,          // unified cross-agent event ring buffer
-    pub now_ms: u64,              // last tick time, for elapsed/$per-hr
+    pub now_ms: u64,              // deck clock (out-of-band; stamped by the shell tick)
+    pub global_cpu_pct: f32,      // out-of-band; stamped by ResourceMonitor
 }
 
 impl WorkspaceModel {
-    pub fn apply_inbound(&mut self, inbound: &Inbound);   // the sole event fold
-    pub fn focused_agent(&self) -> Option<&AgentEntry>;
+    pub fn apply_inbound(&mut self, inbound: &Inbound);   // the sole fold of Inbound
 }
 ```
 
@@ -111,10 +113,12 @@ impl WorkspaceModel {
   changes: u32 }`. `added`/`removed` are parsed from the `FileChange.diff`
   unified-diff string (count `+`/`-` lines, ignore `+++/---` headers and `@@`).
   Aggregates: total files, total +/-.
-- `RouteLog`: append a `RouteEntry { prompt_snippet, model, cost_usd, ts }` on
-  each `StepUsage`/`Complete`; surfaces which model handled what.
-- `PromptQueue`: `Vec<QueuedPrompt { text, ts, dispatched: bool }>`. Submitting
-  a prompt ALWAYS enqueues and returns — never blocks on a busy agent.
+- `RouteLog`: append a `RouteEntry { ts, agent, model }` on each `StepUsage`
+  (capped ring); surfaces which model handled what.
+- `PromptQueue`: `VecDeque<QueuedPrompt { text, ts }>`. Submitting a prompt
+  ALWAYS enqueues and returns — never blocks on a busy agent. Dispatch
+  (`take_next`) REMOVES the prompt, so the queue holds only the waiting
+  backlog and never accumulates dispatched history.
 - `TraceLog`: ring buffer of `TraceRow { ts, agent, kind, summary }` across all
   agents, filterable by agent.
 - `ActivitySpark`: fixed-size ring (e.g. 32) of `u8` intensity, one bar per
@@ -139,12 +143,22 @@ impl WorkspaceModel {
 ## The purity boundary (L-T1, honored explicitly)
 
 - **Event-pure (replayable):** every per-agent `SessionModel`, plus
-  `FileLedger`, `RouteLog`, `PromptQueue`, `TraceLog` — all a deterministic
-  fold of the `Inbound` stream.
-- **Out-of-band read-models (labeled, NOT from events):** `ResourceSample`
-  (sampled from the OS via sysinfo on the tick) and the code-graph snapshot
-  (queried from `stella-graph`). These are the only two exceptions and they are
-  named as such — no other view may read state that isn't in the event fold.
+  `FileLedger`, `RouteLog`, `TraceLog` — all a deterministic fold of the
+  `Inbound` stream via `apply_inbound`, the sole `Inbound` mutator.
+- **Out-of-band (labeled, NOT folded from `Inbound`):**
+  - `ResourceSample` / `global_cpu_pct` — sampled from the OS via sysinfo on
+    the shell tick (self-throttled to ~1 s).
+  - the code-graph snapshot — queried from `stella-graph`, held by the view.
+  - `now_ms` — the deck clock, stamped by the shell tick (time is not an
+    event; elapsed/$-per-hour read it from one place).
+  - `queue` — mutated by the shell when the *user* submits (`enqueue`, the
+    local echo) and when the dispatcher drains (`take_next`); it is a fold of
+    the **outbound** input stream, not of `Inbound`.
+
+  These are the only exceptions and they are named as such — no other state
+  may bypass the fold, and no view may read state that isn't one of the two
+  folds or a labeled exception. (The focused-agent index is ephemeral view
+  state in `DeckUi`, never in the model.)
 
 ## Backend seams (what's live vs. seam-fed today)
 
