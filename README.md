@@ -155,6 +155,13 @@ The full harness docs live in [`bench/`](bench/README.md), and a
 head-to-head runs against other agents lives in
 [`bench/harbor_adapter/`](bench/harbor_adapter/README.md).
 
+For the **Cross-harness** division, [`arena`](https://github.com/oxageninc/arena)
+is a standalone, open-source runner that pits Stella against Claude Code, Gemini
+CLI, Oxagen, and any agent you bolt on — same model, same budget, held-out tests
+the agent can't see or author, and paired statistics (Wilson intervals, exact
+McNemar, bootstrap CIs), with every run's manifest, transcripts, and diffs kept
+as receipts.
+
 ### The leaderboard
 
 | # | Pilot | Match-up | Model | Division | Resolved | $/resolved | Receipts |
