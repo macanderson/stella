@@ -18,7 +18,8 @@ use colored::Colorize;
 use stella_core::ports::{SystemClock, ToolExecutor};
 use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{
-    BudgetGuard, Engine, EngineConfig, GoalConfig, GoalOutcome, RoleTable, Router, TurnOutcome,
+    BudgetGuard, CalibrationMap, Engine, EngineConfig, GoalConfig, GoalOutcome, RoleTable, Router,
+    TurnOutcome,
 };
 use stella_mcp::{McpConfig, McpToolSet};
 use stella_model::credential::ApiKey;
@@ -28,6 +29,7 @@ use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput}
 use stella_store::{Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool, CustomToolSet};
+use stella_tools::validate;
 use tokio::sync::mpsc;
 
 use crate::OutputFormat;
@@ -155,6 +157,7 @@ pub async fn run_one_shot(
     let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text);
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
+    let calibration = seed_calibration(&store, cfg);
 
     if format == OutputFormat::Text {
         tui::section_header("Stella");
@@ -180,6 +183,7 @@ pub async fn run_one_shot(
         &registry,
         &mut messages,
         &mut budget,
+        &calibration,
         cfg,
         format,
         &store,
@@ -230,6 +234,7 @@ pub async fn run_goal_cmd(
     let custom_tools = discover_custom_tools(cfg, true);
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
+    let calibration = seed_calibration(&store, cfg);
 
     tui::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
@@ -249,6 +254,7 @@ pub async fn run_goal_cmd(
         &registry,
         &mut messages,
         &mut budget,
+        &calibration,
         cfg,
         &store,
         goal,
@@ -282,6 +288,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     let custom_tools = discover_custom_tools(cfg, true);
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
+    // Session-scoped like `budget`: seeded once from prior sessions'
+    // telemetry, then sharpened by every turn in this REPL.
+    let calibration = seed_calibration(&store, cfg);
 
     tui::welcome_banner(
         cfg.provider.id,
@@ -400,6 +409,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &registry,
                 &mut messages,
                 &mut budget,
+                &calibration,
                 cfg,
                 &store,
                 goal,
@@ -433,6 +443,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             &registry,
             &mut messages,
             &mut budget,
+            &calibration,
             cfg,
             OutputFormat::Text,
             &store,
@@ -643,6 +654,12 @@ fn discover_custom_tools(cfg: &Config, print_diagnostics: bool) -> Vec<CustomToo
                 diagnostic.reason
             );
         }
+        if !report.diagnostics.is_empty() {
+            eprintln!(
+                "  {}",
+                "run `stella tools --validate` to check every custom tool manifest".dimmed()
+            );
+        }
     }
     report.tools
 }
@@ -726,6 +743,92 @@ pub fn run_tools_listing() -> Result<(), String> {
     Ok(())
 }
 
+/// `stella tools --validate [DIR]` — the strict pre-flight for custom tool
+/// manifests. Where discovery (and the plain listing above) stays lenient,
+/// this checks every `*.toml` in `dir` (or, by default, the same directories
+/// discovery scans) and reports errors, warnings, and infos per file — see
+/// `stella_tools::validate`. Returns `Err` when any manifest has errors, so
+/// the process exits non-zero and a broken manifest is caught *before* a run
+/// consumes model budget.
+pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String> {
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    tui::section_header("Custom tool manifests — validation");
+
+    let report = match dir {
+        Some(dir) => {
+            if !dir.is_dir() {
+                return Err(format!(
+                    "`{}` is not a directory — pass a directory of *.toml manifests, or omit \
+                     the value to check .stella/tools/ and ~/.config/stella/tools/",
+                    dir.display()
+                ));
+            }
+            println!("  {} {}", "checking:".dimmed(), dir.display());
+            validate::validate_dir(dir, &workspace_root)
+        }
+        None => {
+            println!(
+                "  {} {}",
+                "checking:".dimmed(),
+                ".stella/tools/, ~/.config/stella/tools/".dimmed()
+            );
+            validate::validate_default(&workspace_root)
+        }
+    };
+
+    if report.manifests.is_empty() {
+        println!(
+            "  {}",
+            "no manifests found — drop a <name>.toml in .stella/tools/ to add a custom tool"
+                .dimmed()
+        );
+        return Ok(());
+    }
+
+    println!();
+    for manifest in &report.manifests {
+        let mark = if manifest.has_errors() {
+            "✗".red()
+        } else {
+            "✓".green()
+        };
+        let name = manifest
+            .name
+            .as_deref()
+            .map(|n| format!(" ({n})"))
+            .unwrap_or_default();
+        println!("  {mark} {}{}", manifest.path.display(), name.bright_blue());
+        for issue in &manifest.issues {
+            let (label, message) = match issue.severity {
+                validate::Severity::Error => ("error:".red().bold(), issue.message.red()),
+                validate::Severity::Warning => ("warning:".yellow().bold(), issue.message.normal()),
+                validate::Severity::Info => ("info:".dimmed(), issue.message.dimmed()),
+            };
+            println!("      {label} {message}");
+        }
+    }
+
+    let failed = report.manifests.iter().filter(|m| m.has_errors()).count();
+    let ok = report.manifests.len() - failed;
+    println!(
+        "\n  {} manifest(s) checked: {} ok, {} with errors, {} warning(s)",
+        report.manifests.len(),
+        ok,
+        failed,
+        report.warning_count()
+    );
+
+    if failed > 0 {
+        Err(format!(
+            "{failed} of {} custom tool manifest(s) failed validation",
+            report.manifests.len()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Construct the turn/session budget guard from `--budget`. No limit at
 /// all still meters spend (`BudgetMode::Observed`) so the cost summary and
 /// `BudgetTick` events stay meaningful even when nothing is enforced.
@@ -751,6 +854,27 @@ fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
             None
         }
     }
+}
+
+/// How many recent drift samples to replay into a fresh session's
+/// calibration. With the estimator's EWMA weight (0.3) anything past ~20
+/// samples has negligible influence, and 20 rows is a trivial query.
+const DRIFT_SEED_SAMPLES: usize = 20;
+
+/// Build the session's token-drift calibration, seeded from prior sessions'
+/// telemetry for the resolved provider/model (`Store::drift_samples`) so the
+/// estimator starts already corrected instead of re-learning each session.
+/// Best-effort like all persistence: no store (or a failed query) just means
+/// starting uncalibrated — factor 1.0, the pre-drift behavior.
+fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> CalibrationMap {
+    let calibration = CalibrationMap::new();
+    if let Some(store) = store
+        && let Ok(samples) = store.drift_samples(cfg.provider.id, &cfg.model_id, DRIFT_SEED_SAMPLES)
+        && !samples.is_empty()
+    {
+        calibration.seed(&cfg.model_id, &samples);
+    }
+    calibration
 }
 
 /// Begin an execution record; a failure degrades to "no persistence for this
@@ -787,6 +911,7 @@ async fn run_turn(
     registry: &ToolRegistry,
     messages: &mut Vec<CompletionMessage>,
     budget: &mut BudgetGuard,
+    calibration: &CalibrationMap,
     cfg: &Config,
     format: OutputFormat,
     store: &Option<Arc<Store>>,
@@ -821,7 +946,8 @@ async fn run_turn(
             default_ask_io(format == OutputFormat::Text),
         )
         .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let engine = Engine::new(provider, &tools, EngineConfig::default());
+        let engine =
+            Engine::new(provider, &tools, EngineConfig::default()).with_calibration(calibration);
         engine.run_turn(messages, budget, &tx).await
     };
     // Dropping the last sender closes the channel, ending the renderer's
@@ -925,6 +1051,7 @@ fn spawn_renderer(
                     input_tokens,
                     output_tokens,
                     cached_input_tokens,
+                    estimated_input_tokens,
                     cost_usd,
                     duration_ms,
                     retries,
@@ -938,6 +1065,7 @@ fn spawn_renderer(
                             provider: provider_id.clone(),
                             model: model.clone(),
                             input_tokens: *input_tokens,
+                            estimated_input_tokens: *estimated_input_tokens,
                             output_tokens: *output_tokens,
                             cache_read_tokens: *cached_input_tokens,
                             cache_miss_tokens: input_tokens.saturating_sub(*cached_input_tokens),
@@ -1021,6 +1149,7 @@ async fn run_goal_turn(
     registry: &ToolRegistry,
     messages: &mut Vec<CompletionMessage>,
     budget: &mut BudgetGuard,
+    calibration: &CalibrationMap,
     cfg: &Config,
     store: &Option<Arc<Store>>,
     goal: &str,
@@ -1064,7 +1193,8 @@ async fn run_goal_turn(
         );
         let tools = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let engine = Engine::new(provider, &tools, EngineConfig::default());
+        let engine =
+            Engine::new(provider, &tools, EngineConfig::default()).with_calibration(calibration);
         engine
             .run_goal(judge, goal, messages, budget, &tx, &GoalConfig::default())
             .await
@@ -1138,8 +1268,7 @@ async fn run_goal_turn(
 /// called (an xAI 401 must never read "Z.ai rejected the API key").
 fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> {
     build_provider_parts(
-        cfg.provider.id,
-        cfg.provider.display_name,
+        &cfg.provider,
         &cfg.model_id,
         // `cfg.api_key` is already an `ApiKey` (H3) — clone it rather than
         // reconstructing one from a revealed string.
@@ -1159,37 +1288,44 @@ fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> {
 /// region/project-scoped URLs themselves). See [`build_provider`]'s note on
 /// the catalog check and the shared Chat Completions arm.
 fn build_provider_parts(
-    provider_id: &str,
-    display_name: &str,
+    provider_config: &crate::config::ProviderConfig,
     model_id: &str,
     api_key: ApiKey,
     effective_base_url: String,
     base_url_override: Option<&str>,
 ) -> Result<Box<dyn Provider>, String> {
-    if provider_id != "local" {
+    use crate::config::Dialect;
+
+    let provider_id = provider_config.id;
+    let display_name = provider_config.display_name;
+    // `seeded` is false for `local` and for settings.json-defined providers
+    // (issue #44): their models are whatever the user's endpoint serves —
+    // the anti-phantom-slug rule exists to catch drift in OUR seed data,
+    // not to veto the user's own endpoint.
+    if provider_config.seeded {
         stella_model::catalog::Catalog::seed()
             .resolve_for(provider_id, model_id)
             .map_err(|e| e.to_string())?;
     }
 
-    match provider_id {
-        "openai" => {
+    match provider_config.dialect {
+        Dialect::OpenaiResponses => {
             let provider = stella_model::openai::OpenAiProvider::new(api_key, model_id.to_string())
                 .with_base_url(effective_base_url);
             Ok(Box::new(provider))
         }
-        "anthropic" => {
+        Dialect::Anthropic => {
             let provider =
                 stella_model::anthropic::AnthropicProvider::new(api_key, model_id.to_string())
                     .with_base_url(effective_base_url);
             Ok(Box::new(provider))
         }
-        "gemini" => {
+        Dialect::Gemini => {
             let provider = stella_model::gemini::GeminiProvider::new(api_key, model_id.to_string())
                 .with_base_url(effective_base_url);
             Ok(Box::new(provider))
         }
-        "vertex" => {
+        Dialect::Vertex => {
             // The access token is `api_key` (VERTEX_ACCESS_TOKEN via the
             // credential chain); project and location are Vertex-specific
             // addressing, resolved here with named errors rather than
@@ -1218,7 +1354,7 @@ fn build_provider_parts(
             }
             Ok(Box::new(provider))
         }
-        "bedrock" => {
+        Dialect::Bedrock => {
             // `api_key` is AWS_ACCESS_KEY_ID via the credential chain; the
             // rest of the standard AWS env set is read here. Secret
             // resolution failure is a named error pointing at the exact
@@ -1250,10 +1386,12 @@ fn build_provider_parts(
             }
             Ok(Box::new(provider))
         }
-        // Z.ai, xAI, DeepSeek, OpenRouter, local — the shared Chat
-        // Completions adapter, re-identified per provider.
-        other => {
-            let label = match other {
+        // Z.ai, xAI, DeepSeek, OpenRouter, local, and config-defined
+        // providers (settings.json) — the shared Chat Completions adapter,
+        // re-identified per provider so its `Provider::id()` and error
+        // messages name the surface actually being called.
+        Dialect::OpenaiCompatible => {
+            let label = match provider_id {
                 "zai" => "Z.ai",
                 "xai" => "xAI",
                 "deepseek" => "DeepSeek",
@@ -1263,7 +1401,7 @@ fn build_provider_parts(
             };
             let provider = stella_model::zai::ZaiProvider::new(api_key, model_id.to_string())
                 .with_base_url(effective_base_url)
-                .with_identity(other, label);
+                .with_identity(provider_id, label);
             Ok(Box::new(provider))
         }
     }
@@ -1347,8 +1485,7 @@ fn resolve_cross_family_judge(
         .iter()
         .find(|c| c.config.id == decision.model_ref.provider)?;
     let judge = build_provider_parts(
-        entry.config.id,
-        entry.config.display_name,
+        &entry.config,
         &decision.model_ref.model_id,
         entry.api_key.clone(),
         entry.config.base_url.to_string(),
@@ -1568,6 +1705,11 @@ mod tests {
                 display_name: "Faux (unbuildable)",
                 default_model: "faux-model-not-in-catalog",
                 base_url: "http://localhost:0",
+                dialect: crate::config::Dialect::OpenaiCompatible,
+                // Seeded on purpose: the catalog check must reject the
+                // phantom slug, which is exactly the build failure this
+                // test needs.
+                seeded: true,
             },
             api_key: ApiKey::new("dummy-key-unused-offline"),
         };

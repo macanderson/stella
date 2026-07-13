@@ -6,7 +6,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/ocp-conformance"
+readme = "README.md"
+keywords = ["ocp", "context", "protocol", "conformance", "testing"]
+categories = ["development-tools::testing", "command-line-utilities"]
+# Overrides the workspace default (publish = false) — this crate is the
+# industry-facing conformance suite meant to be published on its own
+# (issue #19).
+publish = true
 
 # Dev/fixture binaries (ocp-inspect debugger, ocp-example-docs test fixture) —
 # not part of the released product, so exclude them from dist artifacts.
@@ -14,8 +22,8 @@ publish.workspace = true
 dist = false
 
 [dependencies]
-ocp-types = { path = "../ocp-types" }
-ocp-host = { path = "../ocp-host" }
+ocp-types = { path = "../ocp-types", version = "0.1.0" }
+ocp-host = { path = "../ocp-host", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
