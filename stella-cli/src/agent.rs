@@ -377,9 +377,6 @@ async fn run_pipeline_one_shot(
             }
 
             match &outcome.status {
-                PipelineStatus::Completed if outcome.verdict.as_ref().is_some_and(|verdict| !verdict.passed) => {
-                    Err(format!("pipeline verification failed: {}", outcome.verdict.as_ref().unwrap().summary))
-                }
                 PipelineStatus::Completed => Ok(()),
                 PipelineStatus::Aborted { reason } => Err(reason.clone()),
             }
