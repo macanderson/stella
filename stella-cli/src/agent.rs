@@ -27,7 +27,7 @@ use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
 use stella_pipeline::{
     AutoApproveGate, CmdOutcome, CommandRunner, NoContextRecall, Pipeline, PipelineConfig,
-    PipelinePorts, PipelineStatus, ProviderResolver, RepoStructurePort,
+    PipelinePorts, PipelineStatus, ProviderResolver, RepoStructurePort, StdioApprovalGate,
 };
 use stella_protocol::event::BudgetMode;
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput};
@@ -277,13 +277,15 @@ async fn run_pipeline_one_shot(
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(RoleTable::new(), vec![profile], breaker);
 
+        let is_text = format == OutputFormat::Text;
         let pipeline_config = PipelineConfig {
             engine: EngineConfig::default(),
-            headless: format != OutputFormat::Text,
-            headless_bypass_scope_review: true,
+            headless: !is_text,
+            headless_bypass_scope_review: !is_text,
             ..Default::default()
         };
 
+        let stdio_gate = StdioApprovalGate;
         let no_recall = NoContextRecall;
         let ports = PipelinePorts {
             router: &router,
@@ -292,7 +294,7 @@ async fn run_pipeline_one_shot(
             recall: &no_recall,
             repo: &repo_structure,
             commands: &command_runner,
-            approvals: &AutoApproveGate,
+            approvals: if is_text { &stdio_gate } else { &AutoApproveGate },
             sleeper: &TokioSleeper,
         };
 
@@ -872,7 +874,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     Ok(())
 }
 
-/// Build the workspace code-graph index into `.stella/context.db` (the
+/// Build the workspace code-graph index into `.stella/codegraph.db` (the
 /// `stella-graph` tree-sitter indexer). This is the data side of `init`: the
 /// domain taxonomy tags graph nodes/edges, and the index makes the symbols +
 /// import edges queryable as `ContextFrame`s by the context plane.
