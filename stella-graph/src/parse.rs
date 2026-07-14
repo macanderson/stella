@@ -109,7 +109,17 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
     let root = tree.root_node();
     let src = source.as_bytes();
 
-    let symbols = extract_symbols(&pack.symbols, root, src);
+    let mut symbols = extract_symbols(&pack.symbols, root, src);
+
+    // ORM pattern detection: scan the AST for table-like definitions
+    // (Diesel `table!` macros, Django/SQLAlchemy model classes) and add
+    // them as Table symbols. SQL DDL is the ground truth; these are hints.
+    match lang {
+        Language::Rust => symbols.extend(extract_rust_orm_tables(root, src)),
+        Language::Python => symbols.extend(extract_python_orm_tables(root, src)),
+        _ => {}
+    }
+
     let imports = match lang {
         Language::Rust => extract_rust_imports(&pack.imports, root, src),
         Language::Python => extract_python_imports(&pack.imports, root, src),
@@ -335,6 +345,145 @@ fn py_module_name(node: Node, src: &[u8]) -> Option<String> {
         node
     };
     target.utf8_text(src).ok().map(|s| s.to_string())
+}
+
+/// Detect Diesel `table!` macro invocations and extract them as Table symbols.
+/// The macro looks like: `diesel::table! { users (id) { ... } }` or `table! { ... }`.
+/// We extract the first identifier inside the token_tree as the table name.
+fn extract_rust_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
+    let mut out = Vec::new();
+
+    fn walk(node: Node, src: &[u8], out: &mut Vec<Symbol>) {
+        if node.kind() == "macro_invocation"
+            && let Some(macro_id) = node.child_by_field_name("macro")
+            && let Ok(name) = macro_id.utf8_text(src)
+        {
+            let name_lower = name.to_ascii_lowercase();
+            if name_lower.ends_with("table") {
+                let mut tc = node.walk();
+                for child in node.children(&mut tc) {
+                    if child.kind() == "token_tree" {
+                        let mut inner_tc = child.walk();
+                        for inner in child.children(&mut inner_tc) {
+                            if inner.kind() == "identifier"
+                                && let Ok(table_name) = inner.utf8_text(src)
+                                && !table_name.is_empty()
+                            {
+                                out.push(Symbol {
+                                    name: table_name.to_string(),
+                                    kind: SymbolKind::Table,
+                                    start_line: node.start_position().row as u32 + 1,
+                                    end_line: node.end_position().row as u32 + 1,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, src, out);
+        }
+    }
+
+    walk(root, src, &mut out);
+    out
+}
+
+/// Detect Django/SQLAlchemy model classes and extract them as Table symbols.
+/// Django: `class Payment(models.Model):` — superclass contains `Model`.
+/// SQLAlchemy: `class Payment(Base):` with `__tablename__ = "payments"`.
+fn extract_python_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
+    let mut out = Vec::new();
+
+    fn walk(node: Node, src: &[u8], out: &mut Vec<Symbol>) {
+        if node.kind() == "class_definition" {
+            let is_model = check_python_orm_superclass(node, src)
+                || check_python_tablename(node, src);
+            if is_model
+                && let Some(name_node) = node.child_by_field_name("name")
+                && let Ok(name) = name_node.utf8_text(src)
+            {
+                let table_name = python_class_to_table_name(name);
+                out.push(Symbol {
+                    name: table_name,
+                    kind: SymbolKind::Table,
+                    start_line: node.start_position().row as u32 + 1,
+                    end_line: node.end_position().row as u32 + 1,
+                });
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, src, out);
+        }
+    }
+
+    walk(root, src, &mut out);
+    out
+}
+
+/// Check if a Python class inherits from a known ORM base class.
+fn check_python_orm_superclass(class_node: Node, src: &[u8]) -> bool {
+    let Some(superclasses) = class_node.child_by_field_name("superclasses") else {
+        return false;
+    };
+    let mut cursor = superclasses.walk();
+    for arg in superclasses.children(&mut cursor) {
+        if let Ok(text) = arg.utf8_text(src) {
+            let text = text.trim();
+            // Django: models.Model, db.Model
+            // SQLAlchemy: Base, declarative_base, Model
+            if text.ends_with("Model")
+                || text.ends_with(".Base")
+                || text == "Base"
+                || text.ends_with("declarative_base()")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Check if a Python class body contains `__tablename__ = "..."`.
+fn check_python_tablename(class_node: Node, src: &[u8]) -> bool {
+    let body = match class_node.child_by_field_name("body") {
+        Some(b) => b,
+        None => return false,
+    };
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.kind() == "assignment"
+            && let Some(left) = child.child_by_field_name("left")
+            && let Ok(text) = left.utf8_text(src)
+            && text == "__tablename__"
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Naive Django-style class→table conversion: CamelCase → snake_case + plural.
+/// `Payment` → `payments`, `UserProfile` → `user_profiles`.
+fn python_class_to_table_name(name: &str) -> String {
+    let mut snake = String::new();
+    for (i, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() && i > 0 {
+            snake.push('_');
+        }
+        snake.push(ch.to_ascii_lowercase());
+    }
+    // Naive pluralization
+    if snake.ends_with('s') {
+        format!("{snake}es")
+    } else {
+        format!("{snake}s")
+    }
 }
 
 #[cfg(test)]
@@ -594,6 +743,76 @@ CREATE TABLE warehouse.analytics.events (id BIGINT);
                 && s.name != "analytics"),
             "schema qualifiers leaked into the symbol index: {:?}",
             parsed.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn diesel_table_macro_detected_as_table() {
+        let src = "\
+diesel::table! {
+    users (id) {
+        id -> Int4,
+        email -> Varchar,
+        created_at -> Timestamptz,
+    }
+}
+
+pub struct User {
+    id: i32,
+    email: String,
+}
+";
+        let parsed = parse(Language::Rust, src);
+        assert!(
+            parsed.symbols.iter().any(|s| {
+                s.name == "users" && s.kind == SymbolKind::Table
+            }),
+            "Diesel table! not detected: {:?}",
+            parsed.symbols
+        );
+        assert_eq!(kinds(&parsed, "User"), vec![SymbolKind::Struct]);
+    }
+
+    #[test]
+    fn django_model_detected_as_table() {
+        let src = "\
+from django.db import models
+
+class Payment(models.Model):
+    amount = models.DecimalField()
+    status = models.CharField(max_length=20)
+
+class Helper:
+    pass
+";
+        let parsed = parse(Language::Python, src);
+        assert!(
+            parsed.symbols
+                .iter()
+                .any(|s| s.name == "payments" && s.kind == SymbolKind::Table),
+            "Django model not detected: {:?}",
+            parsed.symbols
+        );
+        assert_eq!(kinds(&parsed, "Helper"), vec![SymbolKind::Class]);
+    }
+
+    #[test]
+    fn sqlalchemy_tablename_detected_as_table() {
+        let src = "\
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+
+class Order(Base):
+    __tablename__ = \"orders\"
+    id = Column(Integer, primary_key=True)
+";
+        let parsed = parse(Language::Python, src);
+        assert!(
+            parsed.symbols
+                .iter()
+                .any(|s| s.kind == SymbolKind::Table),
+            "SQLAlchemy model not detected: {:?}",
+            parsed.symbols
         );
     }
 }
