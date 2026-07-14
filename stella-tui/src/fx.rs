@@ -23,6 +23,8 @@
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use tachyonfx::{
     Duration as FxDuration, Effect, EffectTimer, Interpolation, Motion, SimpleRng, fx,
 };
@@ -76,6 +78,47 @@ pub fn tab_switch(ms: u32) -> Effect {
 /// drive one effect forward a frame.
 pub fn apply(effect: &mut Effect, dt: std::time::Duration, area: Rect, buf: &mut Buffer) {
     effect.process(FxDuration::from(dt), buf, area);
+}
+
+// ── The working spinner: fast garbled text in the ember gradient ────────────
+
+/// The glyph pool the garble spinner draws from — dense, boxy, unreadable on
+/// purpose (reading as raw computation, not words).
+const GARBLE_CHARS: &[char] = &[
+    '░', '▒', '▓', '▖', '▘', '▝', '▗', '◆', '◇', '#', '%', '&', '$', '@', '?', '!', '*', '+', '=',
+    '<', '>', '/', '\\', '|', '~', '^', ';', ':',
+];
+
+/// One frame of the working spinner: `width` cells of pseudo-random glyphs
+/// colored across [`theme::EMBER_RAMP`]. Deterministic in `(phase, width)` —
+/// the caller derives `phase` from the deck clock (`now_ms / tick`), so the
+/// spinner churns every tick, renders identically on replay (L-T1), and
+/// asserts cleanly in buffer tests. No wall-clock, no RNG state.
+pub fn garble_line(phase: u64, width: usize) -> Line<'static> {
+    let ramp = theme::EMBER_RAMP;
+    let spans = (0..width)
+        .map(|col| {
+            let h = mix(phase, col as u64);
+            let ch = GARBLE_CHARS[(h as usize) % GARBLE_CHARS.len()];
+            // A gradient that ping-pongs dark→bright→dark across the width.
+            let steps = ramp.len() * 2 - 2;
+            let slot = (col * steps) / width.max(1);
+            let idx = if slot < ramp.len() { slot } else { steps - slot };
+            Span::styled(ch.to_string(), Style::default().fg(ramp[idx.min(ramp.len() - 1)]))
+        })
+        .collect::<Vec<_>>();
+    Line::from(spans)
+}
+
+/// splitmix64-style avalanche over `(phase, col)` — a tiny, allocation-free,
+/// deterministic hash so every cell re-rolls every phase step.
+fn mix(phase: u64, col: u64) -> u64 {
+    let mut z = phase
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(col.wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 #[cfg(test)]
@@ -159,5 +202,28 @@ mod tests {
         let mut buf = Buffer::empty(area);
         let mut effect = fade_in(100);
         apply(&mut effect, Duration::from_millis(10), area, &mut buf);
+    }
+
+    fn garble_text(phase: u64, width: usize) -> String {
+        garble_line(phase, width)
+            .spans
+            .iter()
+            .map(|s| s.content.clone())
+            .collect()
+    }
+
+    #[test]
+    fn garble_is_deterministic_per_phase_and_churns_across_phases() {
+        // Same phase → identical frame (replay-safe, testable)…
+        assert_eq!(garble_text(7, 24), garble_text(7, 24));
+        // …and consecutive phases visibly differ (the "fast movement" read).
+        assert_ne!(garble_text(7, 24), garble_text(8, 24));
+        assert_eq!(garble_text(7, 24).chars().count(), 24);
+    }
+
+    #[test]
+    fn garble_handles_degenerate_widths() {
+        assert_eq!(garble_text(1, 0), "");
+        assert_eq!(garble_text(1, 1).chars().count(), 1);
     }
 }

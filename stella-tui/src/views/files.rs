@@ -18,7 +18,7 @@ use stella_protocol::FileChangeKind;
 
 use crate::deck::{FileLedger, FileRecord, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::theme;
+use crate::{diff, theme};
 
 /// Column widths, in characters, for the fixed (non-path) columns — each
 /// includes its own trailing separator space.
@@ -258,34 +258,44 @@ fn render_diff_pane(
     area: Rect,
     buf: &mut Buffer,
 ) {
+    if area.height < 2 || area.width == 0 {
+        ui.metrics.files_diff_total = 0;
+        ui.metrics.files_diff_height = 0;
+        return;
+    }
+    // PR-style chrome from `crate::diff`: the path rides the top rule, the
+    // body carries a line-number gutter, and the bottom rule counts the +/−
+    // of the diff actually shown.
+    let bands = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    let w = area.width as usize;
     let record = records.get(ui.files_sel);
     let title = record
         .map(|r| r.path.clone())
         .unwrap_or_else(|| "diff".to_string());
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" diff · {title} "));
-    let inner = block.inner(area);
-    block.render(area, buf);
+    Paragraph::new(diff::header_line(&title, w)).render(bands[0], buf);
 
-    let inner_h = inner.height as usize;
-    if inner.width == 0 {
-        ui.metrics.files_diff_total = 0;
-        ui.metrics.files_diff_height = inner_h;
-        return;
-    }
-
+    let body = bands[1];
+    let inner_h = body.height as usize;
     let diff_text = record.and_then(|rec| find_diff(model, rec));
+    let (added, removed) = diff_text
+        .as_deref()
+        .map(diff::count_diff_lines)
+        .unwrap_or((0, 0));
     match diff_text {
         Some(text) if !text.is_empty() => {
-            let lines = diff_lines(&text);
+            let lines = diff::body_lines(&text);
             let total = lines.len();
             ui.metrics.files_diff_total = total;
             ui.metrics.files_diff_height = inner_h;
             let window = ui.files_diff_scroll.window(total, inner_h);
             let visible: Vec<Line<'static>> =
                 lines.get(window).map(<[Line]>::to_vec).unwrap_or_default();
-            Paragraph::new(Text::from(visible)).render(inner, buf);
+            Paragraph::new(Text::from(visible)).render(body, buf);
         }
         _ => {
             ui.metrics.files_diff_total = 0;
@@ -294,9 +304,10 @@ fn render_diff_pane(
                 "(no diff captured)",
                 theme::muted(),
             )))
-            .render(inner, buf);
+            .render(body, buf);
         }
     }
+    Paragraph::new(diff::footer_line(added, removed, w)).render(bands[2], buf);
 }
 
 /// The diff TEXT for a ledger record: found via the owning agent's
@@ -305,25 +316,6 @@ fn find_diff(model: &WorkspaceModel, rec: &FileRecord) -> Option<String> {
     let agent = model.agents.iter().find(|a| a.meta.id == rec.agent)?;
     let file = agent.model.files.iter().find(|f| f.path == rec.path)?;
     file.latest_diff.clone()
-}
-
-/// Split a unified diff into styled lines: `+` green, `-` red, `@@` hunk
-/// headers cyan, everything else (context, `+++`/`---` headers) muted.
-fn diff_lines(diff: &str) -> Vec<Line<'static>> {
-    diff.split('\n').map(diff_line).collect()
-}
-
-fn diff_line(line: &str) -> Line<'static> {
-    let color = if line.starts_with("@@") {
-        theme::RUN
-    } else if line.starts_with('+') {
-        theme::OK
-    } else if line.starts_with('-') {
-        theme::BAD
-    } else {
-        theme::MUTED
-    };
-    Line::from(Span::styled(line.to_string(), Style::default().fg(color)))
 }
 
 #[cfg(test)]

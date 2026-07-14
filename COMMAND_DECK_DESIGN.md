@@ -18,8 +18,12 @@ New:
   `Inbound`, `AgentStatus`, and the outbound `WorkspaceInput`, `AgentControl`.
 - `deck.rs` — `WorkspaceModel` (holds N per-agent `SessionModel`s + shared
   read-models), `AgentEntry`, `DeckTab`, and `apply_inbound()`.
+- `diff.rs` — the ONE diff presentation (shared by the Session pane and the
+  Files tab): full file path inline in a rule above the body, a line-number
+  gutter parsed from `@@` hunks, and a closing rule counting `+/-` lines.
 - `theme.rs` — color/style tokens. One source of truth for look (Stella amber
-  `#FFAC26` accent, semantic status colors, glyphs).
+  `#FFAC26` accent, semantic status colors, glyphs, diff add/del tints, the
+  ember spinner ramp).
 - `resource.rs` — `ResourceMonitor` (sysinfo): global CPU%, per-pid CPU%/MEM.
   `ResourceSample { cpu_pct, mem_bytes }`.
 - `fx.rs` — tachyonfx effect helpers (content fade-in, tab transition, sweep).
@@ -62,6 +66,8 @@ pub enum Inbound {
 pub enum WorkspaceInput {
     ToAgent { agent: AgentId, input: UserInput }, // route a UserInput to an agent
     Enqueue { text: String },                     // non-blocking new prompt
+    QueueRemove { index: usize },                 // delete / pull-to-edit one queued prompt
+    QueueClear,                                   // drop the whole backlog (ctrl+d ×2 confirmed)
     Control { agent: AgentId, control: AgentControl },
     Quit,
 }
@@ -118,7 +124,10 @@ impl WorkspaceModel {
 - `PromptQueue`: `VecDeque<QueuedPrompt { text, ts }>`. Submitting a prompt
   ALWAYS enqueues and returns — never blocks on a busy agent. Dispatch
   (`take_next`) REMOVES the prompt, so the queue holds only the waiting
-  backlog and never accumulates dispatched history.
+  backlog and never accumulates dispatched history. The queue is a **list the
+  user edits**, never a blob: `remove(index)` (ctrl+x / pull-back-to-edit) and
+  `clear()` (ctrl+d twice) exist alongside dispatch, mirrored outbound as
+  `QueueRemove` / `QueueClear` so the engine's backlog stays in sync.
 - `TraceLog`: ring buffer of `TraceRow { ts, agent, kind, summary }` across all
   agents, filterable by agent.
 - `ActivitySpark`: fixed-size ring (e.g. 32) of `u8` intensity, one bar per
@@ -136,8 +145,17 @@ impl WorkspaceModel {
 
 - Tab switch: `Tab`/`Shift-Tab` cycle; comfy-tabs also handles mouse click/scroll.
 - Global: `Ctrl-C` quit · composer is always focusable and **enqueues without blocking**.
+- Global: `!cmd` in the composer runs a shell command **immediately** (its own
+  synthetic `shell` agent lane; never enters the prompt queue) · `/` opens the
+  command popup (`↑/↓` choose · `Tab` complete · `Enter` run · `Esc` dismiss) ·
+  `Ctrl-T` (or `↑` from an empty composer on Session while prompts wait) opens
+  the queue editor (`Enter` pull-to-edit · `Ctrl-X` delete · `Ctrl-D` ×2 clear) ·
+  `Ctrl-R` expand/collapse thinking (collapsed = one line with a live tail).
 - Agents tab: `↑/↓` select · `p` pause · `s` stop · `r` restart · `Enter` focus that agent's Session.
 - Graph tab: `↑/↓/←/→` move cursor · `Enter` expand · `/` search symbol.
+- Activity strip (one line above the composer, only while working/queued): the
+  fast ember **garble spinner** (phase = `now_ms / tick`, replay-deterministic),
+  the focused agent's current stage, and `N queued · ctrl+t`.
 - Bottom status bar (always visible): routed model · **global CPU% gauge** · total spend + $/hr · active agents · queue depth.
 
 ## The purity boundary (L-T1, honored explicitly)

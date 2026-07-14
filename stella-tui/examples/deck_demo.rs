@@ -9,6 +9,10 @@
 //! short scripted turn, and the Agents-tab controls (`p`/`s`/`r`) flip an
 //! agent's status live. Agent pids are the demo process's own, so the CPU/MEM
 //! columns show real numbers. Ctrl-C quits.
+//!
+//! Also demoable here: `!ls` runs a real shell command immediately on its own
+//! `shell` lane; `/` opens the command popup; `ctrl+t` (or `↑` while prompts
+//! are queued) opens the queue editor; `ctrl+r` expands collapsed thinking.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,8 +22,8 @@ use tokio::sync::mpsc;
 
 use stella_tui::scenario::{demo_graph, demo_inbound};
 use stella_tui::{
-    AgentControl, AgentMeta, AgentStatus, DeckOptions, Inbound, ScopeDecision, UserInput,
-    WorkspaceInput, run_deck,
+    AgentControl, AgentMeta, AgentStatus, DeckOptions, Inbound, ScopeDecision, SlashCommand,
+    UserInput, WorkspaceInput, run_deck,
 };
 
 fn now_ms() -> u64 {
@@ -113,6 +117,10 @@ async fn main() -> std::io::Result<()> {
                     }
                     UserInput::Prompt { .. } | UserInput::Cancel => {}
                 },
+                // Queue edits are already reflected in the deck's local queue
+                // (the shell's out-of-band echo); a real engine would also
+                // drop the prompt from its own backlog here.
+                WorkspaceInput::QueueRemove { .. } | WorkspaceInput::QueueClear => {}
                 WorkspaceInput::Quit => break,
             }
         }
@@ -124,6 +132,13 @@ async fn main() -> std::io::Result<()> {
 
     let opts = DeckOptions {
         initial_graph: Some(demo_graph()),
+        slash_commands: vec![
+            SlashCommand::new("/help", "show the key legend"),
+            SlashCommand::new("/models", "list available models"),
+            SlashCommand::new("/diff", "open the diff for the selected file"),
+            SlashCommand::new("/files", "jump to the Files tab"),
+            SlashCommand::new("/clear", "clear the focused transcript"),
+        ],
         ..Default::default()
     };
     run_deck(opts, in_rx, sub_tx).await

@@ -43,6 +43,7 @@ pub mod deck;
 pub mod deck_render;
 pub mod deck_shell;
 pub mod deck_ui;
+pub mod diff;
 pub mod envelope;
 pub mod fx;
 pub mod graph;

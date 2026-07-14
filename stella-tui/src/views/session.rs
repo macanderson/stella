@@ -61,7 +61,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // the line-exact scrolling transcript renderer.
     let mut lines: Vec<Line<'static>> = Vec::new();
     for entry in &sm.transcript {
-        entry_lines(entry, &mut lines);
+        entry_lines(entry, ui.thinking_expanded, &mut lines);
     }
     let height = inner_height(bands[4]);
     ui.metrics.session_total = lines.len();
