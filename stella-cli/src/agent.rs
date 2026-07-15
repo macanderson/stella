@@ -16,13 +16,20 @@ use std::time::{Duration, Instant};
 
 use colored::Colorize;
 use stella_core::ports::{SystemClock, ToolExecutor};
+use stella_core::retry::TokioSleeper;
 use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{
-    BudgetGuard, Engine, EngineConfig, GoalConfig, GoalOutcome, RoleTable, Router, TurnOutcome,
+    BudgetGuard, CalibrationMap, Engine, EngineConfig, GoalConfig, GoalOutcome, RoleTable, Router,
+    TurnOutcome,
 };
 use stella_mcp::{McpConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
+use stella_pipeline::{
+    AutoApproveGate, CmdOutcome, CommandRunner, ContextRecallPort, NoContextRecall, Pipeline,
+    PipelineConfig, PipelinePorts, PipelineStatus, ProviderResolver, RepoStructurePort,
+    StdioApprovalGate,
+};
 use stella_protocol::event::BudgetMode;
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput};
 use stella_store::{Store, TelemetryRow};
@@ -65,14 +72,51 @@ Rules:
 - If a task requires multiple steps, work through them systematically.
 - When a choice is ambiguous AND getting it wrong would be costly, use ask_user rather than guessing; otherwise proceed with your best judgment."#;
 
+/// The pipeline-mode system prompt: encodes a reproduce, localize, minimal
+/// fix, verify methodology and rewards the fewest changed lines. Static
+/// text so it rides the prompt cache (L-E8).
+const PIPELINE_SYSTEM_PROMPT: &str = r#"You are Stella, a software engineering agent that fixes bugs and builds features with surgical precision.
+
+You have these tools available:
+- read_file: Read a file with line numbers (supports offset/limit for ranges)
+- write_file: Create or overwrite a file (creates parent dirs)
+- edit_file: Replace an exact substring in a file (use replace_all for multiple)
+- delete_file: Delete a file within the workspace
+- bash: Run a shell command in the workspace root (with timeout)
+- grep: Search file contents with regex (shells to ripgrep)
+- glob: Find files matching a glob pattern
+- build_project: Build with the workspace's own toolchain (cargo/npm/go/make)
+- run_tests: Run the workspace's test suite
+- verify_done: The definition of done, replays a new test against the previous code in a shadow worktree; it must fail there and pass on your change (WITNESS CONFIRMED). Use it to prove a change actually works, not just that the suite is green.
+- ask_user: Ask the user a multiple-choice question when a decision is genuinely theirs to make (2-6 options; the UI always adds a free-text option automatically, never add an "Other" option yourself)
+- search_skills: Search the public skills registry for reusable skills you don't have locally
+- install_skill: Install a registry skill into the project (always requires the user's confirmation)
+
+Some tools have prerequisites: issue tracking (create_issue/update_issue/close_issue/search_issues/start_work_on_issue) appears only when configured; ci_status requires the gh CLI. Use them when present.
+
+Methodology (always follow in order):
+1. REPRODUCE: Run the failing test or reproduce the bug before touching any file. Never edit blind, you must see the actual error first.
+2. LOCALIZE: Trace the error to its root cause. Read the failing code path. Use grep and glob to navigate precisely.
+3. MINIMAL FIX: Make the smallest change that resolves the issue. No refactoring. No style changes. No "while I'm here" edits. One logical change.
+4. VERIFY: Run the target test. If it passes, use verify_done to witness the change. If it fails, read the error and adjust.
+
+Rules:
+- Never change test files unless the task explicitly requires it.
+- Never create backup files, scratch files, or debug artifacts.
+- Prefer edit_file (surgical) over write_file (full rewrite).
+- Always read a file before editing it, never edit blind.
+- If you are editing more than 3 files for a single-task fix, you are overcomplicating it.
+- Be concise in your responses. Show the user what you changed and why.
+- When a choice is ambiguous AND getting it wrong would be costly, use ask_user rather than guessing; otherwise proceed with your best judgment."#;
+
 /// Cap on memory characters appended to the system prompt — memories ride
 /// the prompt cache on every call, so they must stay dense.
 const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
 
-/// Assemble the session's system prompt: the static instructions plus the
-/// workspace's saved memories (`.stella/memories/*.md`, the write side is
-/// the `save_memory` tool). Memories are loaded ONCE per session and
+/// Assemble the session's system prompt from a `base` instruction set plus
+/// the workspace's saved memories. Memories are loaded ONCE per session and
 /// concatenated in filename order so the resulting prefix is byte-stable
+<<<<<<< HEAD
 /// across every model call — that stability is what lets the whole prompt
 /// (instructions + memories) ride the provider's prompt cache instead of
 /// being re-billed. Memories saved mid-session deliberately do NOT appear
@@ -80,7 +124,11 @@ const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
 /// prefix on every save. This coexists with `SessionMemory`'s per-turn
 /// recall block (memory.rs) — the baked prefix carries durable lessons, the
 /// recall block carries turn-relevant memories and skills.
-fn build_system_prompt(workspace_root: &std::path::Path) -> String {
+pub(crate) fn build_system_prompt(workspace_root: &std::path::Path) -> String {
+=======
+/// across every model call — that stability preserves prompt-cache hits.
+fn assemble_system_prompt(base: &str, workspace_root: &std::path::Path) -> String {
+>>>>>>> 41325e9a4a9d778b2906cd2be26473dc260bd7b7
     let dir = workspace_root.join(".stella/memories");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
         .map(|entries| {
@@ -91,7 +139,7 @@ fn build_system_prompt(workspace_root: &std::path::Path) -> String {
         })
         .unwrap_or_default();
     if files.is_empty() {
-        return SYSTEM_PROMPT.to_string();
+        return base.to_string();
     }
     files.sort();
 
@@ -106,7 +154,13 @@ fn build_system_prompt(workspace_root: &std::path::Path) -> String {
             .file_stem()
             .and_then(|n| n.to_str())
             .unwrap_or("memory");
-        let entry = format!("\n### {name}\n{}\n", body.trim());
+        let entry = format!(
+            "
+### {name}
+{}
+",
+            body.trim()
+        );
         let cost = entry.chars().count();
         if used + cost > MEMORY_PROMPT_BUDGET_CHARS {
             dropped += 1;
@@ -116,27 +170,405 @@ fn build_system_prompt(workspace_root: &std::path::Path) -> String {
         memories.push_str(&entry);
     }
     if memories.is_empty() {
-        return SYSTEM_PROMPT.to_string();
+        return base.to_string();
     }
     let mut prompt = format!(
-        "{SYSTEM_PROMPT}\n\nWorkspace memories (lessons from previous sessions — apply them):\n{memories}"
+        "{base}
+
+Workspace memories (lessons from previous sessions — apply them):
+{memories}"
     );
     if dropped > 0 {
         prompt.push_str(&format!(
-            "\n({dropped} additional memories exceeded the prompt budget and were omitted — \
-             consolidate .stella/memories/ to bring them back)"
+            "
+({dropped} additional memories exceeded the prompt budget and were omitted —              consolidate .stella/memories/ to bring them back)"
         ));
     }
     prompt
 }
 
-/// Run a one-shot prompt. `budget_limit` is `--budget` (`main.rs`):
-/// `Some(n)` enforces a hard per-turn USD cap, `None` meters spend for the
-/// cost summary without ever blocking. `format` selects human rendering vs
-/// the two headless modes (json / stream-json) — headless runs also get the
-/// headless `ask_user` io, which fails the tool with a named error instead
-/// of waiting on stdin.
+/// Shortcut: the raw step-loop system prompt plus workspace memories.
+fn build_system_prompt(workspace_root: &std::path::Path) -> String {
+    assemble_system_prompt(SYSTEM_PROMPT, workspace_root)
+}
+
+/// Shortcut: the pipeline-mode system prompt plus workspace memories.
+fn build_pipeline_system_prompt(workspace_root: &std::path::Path) -> String {
+    assemble_system_prompt(PIPELINE_SYSTEM_PROMPT, workspace_root)
+}
+
+/// Run a one-shot prompt. `use_pipeline` selects the staged pipeline (the
+/// default) vs the raw step-loop (`--no-pipeline`).
 pub async fn run_one_shot(
+    cfg: &Config,
+    prompt: &str,
+    budget_limit: Option<f64>,
+    format: OutputFormat,
+    use_pipeline: bool,
+) -> Result<(), String> {
+    if use_pipeline {
+        run_pipeline_one_shot(cfg, prompt, budget_limit, format).await
+    } else {
+        run_raw_one_shot(cfg, prompt, budget_limit, format).await
+    }
+}
+
+/// Run a one-shot prompt through the staged pipeline: triage fast-paths,
+/// split-context planning, repo-structure injection, the deterministic
+/// verification ladder, and bounded revision.
+async fn run_pipeline_one_shot(
+    cfg: &Config,
+    prompt: &str,
+    budget_limit: Option<f64>,
+    format: OutputFormat,
+) -> Result<(), String> {
+    let provider = build_provider(cfg)?;
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+
+    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    populate_schema_index(&registry, &cfg.workspace_root);
+    let mcp = connect_mcp(cfg, registry.clone(), format == OutputFormat::Text).await;
+    let base_tools: &dyn ToolExecutor = match &mcp {
+        Some(set) => set,
+        None => &*registry,
+    };
+    let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text);
+    let store = open_store(&cfg.workspace_root);
+
+    if format == OutputFormat::Text {
+        tui::section_header("Stella (pipeline)");
+        println!(
+            "  {}
+",
+            prompt.dimmed()
+        );
+    }
+
+    let turn_start = Instant::now();
+    let execution = begin_execution(&store, "pipeline", prompt, cfg);
+
+    let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let renderer = spawn_renderer(rx, format, execution.clone(), cfg.provider.id.to_string());
+
+    let resolver = SingleProviderResolver {
+        provider,
+        model_ref: model_ref.clone(),
+    };
+
+    let mut messages = vec![CompletionMessage::system(build_pipeline_system_prompt(
+        &cfg.workspace_root,
+    ))];
+    let mut memory = SessionMemory::open(&cfg.workspace_root, format == OutputFormat::Text);
+    if let Some(m) = &memory {
+        inject_recall_block(&mut messages, m.recall_block(prompt).await);
+    }
+    let mut budget = build_budget_guard(budget_limit);
+    budget.begin_turn();
+
+    let result = {
+        let customs = CustomToolSet::new(base_tools, custom_tools, cfg.workspace_root.clone());
+        let tools = InteractiveToolSet::new(
+            &customs,
+            tx.clone(),
+            default_ask_io(format == OutputFormat::Text),
+        )
+        .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
+
+        let repo_structure = GitRepoStructure {
+            root: cfg.workspace_root.clone(),
+        };
+        let command_runner = ShellCommandRunner {
+            root: cfg.workspace_root.clone(),
+        };
+
+        let profile = ProviderProfile::new(
+            cfg.provider.id,
+            model_ref.clone(),
+            model_ref.clone(),
+            model_ref,
+        );
+        let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+        let router = Router::new(RoleTable::new(), vec![profile], breaker);
+
+        let is_text = format == OutputFormat::Text;
+        let pipeline_config = PipelineConfig {
+            engine: EngineConfig::default(),
+            headless: !is_text,
+            headless_bypass_scope_review: !is_text,
+            ..Default::default()
+        };
+
+        let stdio_gate = StdioApprovalGate;
+        let no_recall = NoContextRecall;
+        // The workspace memory doubles as the pipeline's recall port so the
+        // split-context planner sees the same durable lessons the worker's
+        // recall block carries; no open store -> no frames (L-C6).
+        let recall: &dyn ContextRecallPort = match &memory {
+            Some(m) => m,
+            None => &no_recall,
+        };
+        let ports = PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall,
+            repo: &repo_structure,
+            commands: &command_runner,
+            approvals: if is_text {
+                &stdio_gate
+            } else {
+                &AutoApproveGate
+            },
+            sleeper: &TokioSleeper,
+        };
+
+        let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
+        pipeline.run(prompt, &mut messages, &mut budget).await
+    };
+
+    drop(tx);
+    let collected = renderer.await.unwrap_or_default();
+
+    let files = registry.files_touched();
+    if let Some((store, id)) = &execution {
+        let _ = store.record_files_touched(*id, &files);
+        let (outcome_label, cost) = match &result {
+            Ok(outcome) => {
+                let label = match outcome.status {
+                    PipelineStatus::Completed => "completed",
+                    PipelineStatus::Aborted { .. } => "aborted",
+                };
+                (label, outcome.total_cost_usd)
+            }
+            Err(_) => ("error", 0.0),
+        };
+        let _ = store.finish_execution(*id, outcome_label, cost);
+    }
+
+    if result.is_ok()
+        && turn_warrants_reflection(&messages)
+        && let Some(m) = &mut memory
+    {
+        m.reflect_and_record(resolver.provider(), &messages, format != OutputFormat::Text)
+            .await;
+    }
+
+    if let Some(set) = &mcp {
+        set.close_all().await;
+    }
+
+    match &result {
+        Ok(outcome) => {
+            if format == OutputFormat::Json {
+                let status_str = match outcome.status {
+                    PipelineStatus::Completed => "completed",
+                    PipelineStatus::Aborted { .. } => "aborted",
+                };
+                let reason_str = match &outcome.status {
+                    PipelineStatus::Completed => None,
+                    PipelineStatus::Aborted { reason } => Some(reason.clone()),
+                };
+                let summary = serde_json::json!({
+                    "status": status_str,
+                    "text": outcome.final_text,
+                    "cost_usd": outcome.total_cost_usd,
+                    "reason": reason_str,
+                    "task_class": format!("{:?}", outcome.task_class),
+                    "verdict": outcome.verdict.as_ref().map(|v| serde_json::json!({
+                        "passed": v.passed,
+                        "deterministic": v.deterministic,
+                        "summary": v.summary,
+                    })),
+                    "revisions": outcome.revisions,
+                    "candidates_run": outcome.candidates_run,
+                    "model": format!("{}/{}", cfg.provider.id, cfg.model_id),
+                    "events": collected,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&summary).unwrap_or_else(|e| format!(
+                        "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
+                    ))
+                );
+            }
+
+            if format == OutputFormat::Text {
+                tui::files_touched_panel(&files);
+                tui::cost_summary(
+                    outcome.total_cost_usd,
+                    &format!("{}/{}", cfg.provider.id, cfg.model_id),
+                    turn_start.elapsed(),
+                );
+                println!();
+            }
+
+            match &outcome.status {
+                PipelineStatus::Completed => Ok(()),
+                PipelineStatus::Aborted { reason } => Err(reason.clone()),
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+// -----------------------------------------------------------------------
+// Pipeline port adapters
+// -----------------------------------------------------------------------
+
+/// Owns the boxed provider so the reference returned to the pipeline is
+/// valid for the pipeline's entire lifetime.
+struct SingleProviderResolver {
+    provider: Box<dyn Provider>,
+    model_ref: ModelRef,
+}
+
+impl SingleProviderResolver {
+    fn provider(&self) -> &dyn Provider {
+        &*self.provider
+    }
+}
+
+impl ProviderResolver for SingleProviderResolver {
+    fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider> {
+        if model == &self.model_ref {
+            Some(&*self.provider)
+        } else {
+            None
+        }
+    }
+}
+
+/// Repo-structure summary via `git ls-files` for the planner's split context.
+struct GitRepoStructure {
+    root: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl RepoStructurePort for GitRepoStructure {
+    async fn structure_summary(&self) -> String {
+        let output = tokio::process::Command::new("git")
+            .args(["ls-files"])
+            .current_dir(&self.root)
+            .output()
+            .await;
+        match output {
+            Ok(out) if out.status.success() => {
+                render_file_tree(&String::from_utf8_lossy(&out.stdout), 200)
+            }
+            _ => String::new(),
+        }
+    }
+}
+
+fn render_file_tree(files: &str, max_lines: usize) -> String {
+    let mut paths: Vec<&str> = files.lines().filter(|l| !l.is_empty()).collect();
+    paths.sort_unstable();
+    if paths.is_empty() {
+        return String::new();
+    }
+    let total = paths.len();
+    let mut out: String = paths
+        .iter()
+        .take(max_lines)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    if total > max_lines {
+        out.push_str(&format!(
+            "
+... ({} more files)",
+            total - max_lines
+        ));
+    }
+    out
+}
+
+/// Runs shell commands for the verification ladder (flip oracle tests, diff).
+struct ShellCommandRunner {
+    root: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for ShellCommandRunner {
+    async fn run(&self, command: &str) -> CmdOutcome {
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-c").arg(command);
+        cmd.current_dir(&self.root);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        #[cfg(unix)]
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        let child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                return CmdOutcome {
+                    exit_code: -1,
+                    stdout_tail: String::new(),
+                    stderr_tail: format!("failed to spawn: {e}"),
+                };
+            }
+        };
+        #[cfg(unix)]
+        let pid = child.id().unwrap_or(0) as i32;
+
+        let timeout = Duration::from_secs(300);
+        let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                return CmdOutcome {
+                    exit_code: -1,
+                    stdout_tail: String::new(),
+                    stderr_tail: format!("command failed: {e}"),
+                };
+            }
+            Err(_) => {
+                #[cfg(unix)]
+                unsafe {
+                    if pid > 0 {
+                        libc::kill(-pid, libc::SIGKILL);
+                    }
+                }
+                return CmdOutcome {
+                    exit_code: -1,
+                    stdout_tail: String::new(),
+                    stderr_tail: format!("command timed out after {}s", timeout.as_secs()),
+                };
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        CmdOutcome {
+            exit_code: output.status.code().unwrap_or(-1),
+            stdout_tail: truncate_tail(&stdout, 100_000),
+            stderr_tail: truncate_tail(&stderr, 20_000),
+        }
+    }
+}
+
+fn truncate_tail(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let start = s.len() - max_bytes;
+    let mut idx = start;
+    while !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    s[idx..].to_string()
+}
+
+/// Run a one-shot prompt through the raw step-loop (Engine::run_turn).
+/// Selected via `--no-pipeline`.
+async fn run_raw_one_shot(
     cfg: &Config,
     prompt: &str,
     budget_limit: Option<f64>,
@@ -148,6 +580,7 @@ pub async fn run_one_shot(
     // hides it. It still coerces to `&dyn ToolExecutor` for the engine.
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    populate_schema_index(&registry, &cfg.workspace_root);
     let mcp = connect_mcp(cfg, registry.clone(), format == OutputFormat::Text).await;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
@@ -156,6 +589,7 @@ pub async fn run_one_shot(
     let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text);
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
+    let calibration = seed_calibration(&store, cfg);
 
     if format == OutputFormat::Text {
         tui::section_header("Stella");
@@ -181,6 +615,7 @@ pub async fn run_one_shot(
         &registry,
         &mut messages,
         &mut budget,
+        &calibration,
         cfg,
         format,
         &store,
@@ -223,6 +658,7 @@ pub async fn run_goal_cmd(
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    populate_schema_index(&registry, &cfg.workspace_root);
     let mcp = connect_mcp(cfg, registry.clone(), true).await;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
@@ -231,6 +667,7 @@ pub async fn run_goal_cmd(
     let custom_tools = discover_custom_tools(cfg, true);
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
+    let calibration = seed_calibration(&store, cfg);
 
     tui::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
@@ -250,6 +687,7 @@ pub async fn run_goal_cmd(
         &registry,
         &mut messages,
         &mut budget,
+        &calibration,
         cfg,
         &store,
         goal,
@@ -276,6 +714,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
     let mcp = connect_mcp(cfg, registry.clone(), true).await;
+    populate_schema_index(&registry, &cfg.workspace_root);
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
@@ -283,6 +722,9 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     let custom_tools = discover_custom_tools(cfg, true);
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
+    // Session-scoped like `budget`: seeded once from prior sessions'
+    // telemetry, then sharpened by every turn in this REPL.
+    let calibration = seed_calibration(&store, cfg);
 
     tui::welcome_banner(
         cfg.provider.id,
@@ -401,6 +843,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &registry,
                 &mut messages,
                 &mut budget,
+                &calibration,
                 cfg,
                 &store,
                 goal,
@@ -434,6 +877,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             &registry,
             &mut messages,
             &mut budget,
+            &calibration,
             cfg,
             OutputFormat::Text,
             &store,
@@ -457,7 +901,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     Ok(())
 }
 
-/// Build the workspace code-graph index into `.stella/context.db` (the
+/// Build the workspace code-graph index into `.stella/codegraph.db` (the
 /// `stella-graph` tree-sitter indexer). This is the data side of `init`: the
 /// domain taxonomy tags graph nodes/edges, and the index makes the symbols +
 /// import edges queryable as `ContextFrame`s by the context plane.
@@ -474,7 +918,7 @@ fn build_code_graph(workspace_root: &std::path::Path) {
         );
         return;
     }
-    let db_path = dot_stella.join("context.db");
+    let db_path = dot_stella.join("codegraph.db");
     println!("  {} indexing code graph…", "◈".cyan());
     match stella_graph::CodeGraph::open(workspace_root, &db_path) {
         Ok(graph) => match graph.index_all() {
@@ -510,6 +954,24 @@ fn build_code_graph(workspace_root: &std::path::Path) {
             );
         }
     }
+}
+
+/// Open the code graph (read-only) and populate the tool registry's schema
+/// index with all known table/type/view names. Best-effort: if the graph
+/// can't open (no `.stella/codegraph.db`), the schema gate runs with an
+/// empty index — it just won't catch conflicts until `stella init` runs.
+fn populate_schema_index(registry: &ToolRegistry, workspace_root: &std::path::Path) {
+    let db_path = workspace_root.join(".stella").join("codegraph.db");
+    if !db_path.exists() {
+        return;
+    }
+    let graph = match stella_graph::CodeGraph::open(workspace_root, &db_path) {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    let (tables, types, views) = graph.schema_names();
+    registry.update_schema_index(tables, types, views);
+    graph.shutdown();
 }
 
 /// `stella init` — infer the workspace's domain taxonomy, build the code-graph
@@ -584,7 +1046,7 @@ pub async fn run_init(
 /// mcp__<server>__<tool> names. Absent config -> None (zero overhead).
 /// Connection is best-effort per server (stella-mcp isolates failures);
 /// failed servers are reported once in text mode, never fatal.
-async fn connect_mcp(
+pub(crate) async fn connect_mcp(
     cfg: &Config,
     native: std::sync::Arc<dyn ToolExecutor>,
     print_diagnostics: bool,
@@ -633,7 +1095,7 @@ async fn connect_mcp(
 /// then ~/.config/stella/tools/*.toml — workspace wins on collision; see
 /// stella_tools::custom). Broken manifests never abort a session: their
 /// diagnostics print once (text mode) and show up in `stella tools`.
-fn discover_custom_tools(cfg: &Config, print_diagnostics: bool) -> Vec<CustomTool> {
+pub(crate) fn discover_custom_tools(cfg: &Config, print_diagnostics: bool) -> Vec<CustomTool> {
     let report = custom::discover(&cfg.workspace_root);
     if print_diagnostics {
         for diagnostic in &report.diagnostics {
@@ -822,7 +1284,7 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
 /// Construct the turn/session budget guard from `--budget`. No limit at
 /// all still meters spend (`BudgetMode::Observed`) so the cost summary and
 /// `BudgetTick` events stay meaningful even when nothing is enforced.
-fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
+pub(crate) fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
     match budget_limit {
         Some(limit) => BudgetGuard::new(BudgetMode::Enforced, Some(limit), None),
         None => BudgetGuard::new(BudgetMode::Observed, None, None),
@@ -832,7 +1294,7 @@ fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
 /// Open the workspace DuckDB store (`.stella/stella.duckdb`). Persistence is
 /// observability, not a work dependency: a store that won't open warns once
 /// and the session runs on without it — never a startup failure.
-fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
+pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
     match Store::open(workspace_root) {
         Ok(store) => Some(Arc::new(store)),
         Err(e) => {
@@ -846,9 +1308,30 @@ fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
     }
 }
 
+/// How many recent drift samples to replay into a fresh session's
+/// calibration. With the estimator's EWMA weight (0.3) anything past ~20
+/// samples has negligible influence, and 20 rows is a trivial query.
+const DRIFT_SEED_SAMPLES: usize = 20;
+
+/// Build the session's token-drift calibration, seeded from prior sessions'
+/// telemetry for the resolved provider/model (`Store::drift_samples`) so the
+/// estimator starts already corrected instead of re-learning each session.
+/// Best-effort like all persistence: no store (or a failed query) just means
+/// starting uncalibrated — factor 1.0, the pre-drift behavior.
+pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> CalibrationMap {
+    let calibration = CalibrationMap::new();
+    if let Some(store) = store
+        && let Ok(samples) = store.drift_samples(cfg.provider.id, &cfg.model_id, DRIFT_SEED_SAMPLES)
+        && !samples.is_empty()
+    {
+        calibration.seed(&cfg.model_id, &samples);
+    }
+    calibration
+}
+
 /// Begin an execution record; a failure degrades to "no persistence for this
 /// execution" rather than blocking the work.
-fn begin_execution(
+pub(crate) fn begin_execution(
     store: &Option<Arc<Store>>,
     kind: &str,
     prompt: &str,
@@ -880,6 +1363,7 @@ async fn run_turn(
     registry: &ToolRegistry,
     messages: &mut Vec<CompletionMessage>,
     budget: &mut BudgetGuard,
+    calibration: &CalibrationMap,
     cfg: &Config,
     format: OutputFormat,
     store: &Option<Arc<Store>>,
@@ -914,7 +1398,8 @@ async fn run_turn(
             default_ask_io(format == OutputFormat::Text),
         )
         .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let engine = Engine::new(provider, &tools, EngineConfig::default());
+        let engine =
+            Engine::new(provider, &tools, EngineConfig::default()).with_calibration(calibration);
         engine.run_turn(messages, budget, &tx).await
     };
     // Dropping the last sender closes the channel, ending the renderer's
@@ -1004,7 +1489,7 @@ fn spawn_renderer(
         let mut store_warned = false;
         while let Some(event) = rx.recv().await {
             if let Some((store, id)) = &execution {
-                if store.record_event(*id, seq, &event).is_err() && !store_warned {
+                if !persist_event(store, *id, seq, &event, &provider_id) && !store_warned {
                     eprintln!(
                         "  {} store write failed — telemetry for this execution is incomplete",
                         "⚠".yellow()
@@ -1012,38 +1497,6 @@ fn spawn_renderer(
                     store_warned = true;
                 }
                 seq += 1;
-                if let AgentEvent::StepUsage {
-                    step,
-                    model,
-                    input_tokens,
-                    output_tokens,
-                    cached_input_tokens,
-                    cost_usd,
-                    duration_ms,
-                    retries,
-                    tool_calls,
-                } = &event
-                {
-                    let _ = store.record_telemetry(
-                        *id,
-                        &TelemetryRow {
-                            step: *step as u64,
-                            provider: provider_id.clone(),
-                            model: model.clone(),
-                            input_tokens: *input_tokens,
-                            output_tokens: *output_tokens,
-                            cache_read_tokens: *cached_input_tokens,
-                            cache_miss_tokens: input_tokens.saturating_sub(*cached_input_tokens),
-                            // Populated once the usage envelope carries
-                            // cache-write counts (staged follow-up).
-                            cache_write_tokens: 0,
-                            cost_usd: *cost_usd,
-                            duration_ms: *duration_ms,
-                            retries: *retries,
-                            tool_calls: *tool_calls as u64,
-                        },
-                    );
-                }
             }
             match format {
                 OutputFormat::StreamJson => {
@@ -1092,6 +1545,58 @@ fn spawn_renderer(
     })
 }
 
+/// Persist one drained event to an open execution record: append it to the
+/// event stream and, for `StepUsage`, add a telemetry row. Shared by
+/// [`spawn_renderer`] (one-shot/REPL rendering) and the command deck's event
+/// forwarder (`crate::command_deck`), so the store's write path lives in
+/// exactly one place. Returns `false` when the event-stream append failed so
+/// the caller can surface its once-only warning; the telemetry row stays
+/// silently best-effort, exactly as before this was extracted.
+pub(crate) fn persist_event(
+    store: &Store,
+    execution_id: i64,
+    seq: u64,
+    event: &AgentEvent,
+    provider_id: &str,
+) -> bool {
+    let recorded = store.record_event(execution_id, seq, event).is_ok();
+    if let AgentEvent::StepUsage {
+        step,
+        model,
+        input_tokens,
+        output_tokens,
+        cached_input_tokens,
+        estimated_input_tokens,
+        cost_usd,
+        duration_ms,
+        retries,
+        tool_calls,
+    } = event
+    {
+        let _ = store.record_telemetry(
+            execution_id,
+            &TelemetryRow {
+                step: *step as u64,
+                provider: provider_id.to_string(),
+                model: model.clone(),
+                input_tokens: *input_tokens,
+                estimated_input_tokens: *estimated_input_tokens,
+                output_tokens: *output_tokens,
+                cache_read_tokens: *cached_input_tokens,
+                cache_miss_tokens: input_tokens.saturating_sub(*cached_input_tokens),
+                // Populated once the usage envelope carries cache-write
+                // counts (staged follow-up).
+                cache_write_tokens: 0,
+                cost_usd: *cost_usd,
+                duration_ms: *duration_ms,
+                retries: *retries,
+                tool_calls: *tool_calls as u64,
+            },
+        );
+    }
+    recorded
+}
+
 /// Run one goal loop through `stella_core::Engine::run_goal`: working turns
 /// interleaved with judge assessments until the judge passes it (or a
 /// backstop — rounds, budget, abort — ends it with a named reason). The
@@ -1114,6 +1619,7 @@ async fn run_goal_turn(
     registry: &ToolRegistry,
     messages: &mut Vec<CompletionMessage>,
     budget: &mut BudgetGuard,
+    calibration: &CalibrationMap,
     cfg: &Config,
     store: &Option<Arc<Store>>,
     goal: &str,
@@ -1157,7 +1663,8 @@ async fn run_goal_turn(
         );
         let tools = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let engine = Engine::new(provider, &tools, EngineConfig::default());
+        let engine =
+            Engine::new(provider, &tools, EngineConfig::default()).with_calibration(calibration);
         engine
             .run_goal(judge, goal, messages, budget, &tx, &GoalConfig::default())
             .await
@@ -1229,7 +1736,7 @@ async fn run_goal_turn(
 /// served by the shared adapter re-identified per provider so its
 /// `Provider::id()` and error messages name the surface actually being
 /// called (an xAI 401 must never read "Z.ai rejected the API key").
-fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> {
+pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> {
     build_provider_parts(
         &cfg.provider,
         &cfg.model_id,

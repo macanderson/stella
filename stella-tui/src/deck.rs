@@ -212,6 +212,27 @@ impl WorkspaceModel {
                     self.agents[i].status = *status;
                 }
             }
+            Inbound::PromptStarted { agent, text } => {
+                // The dispatcher drained the oldest queued prompt. Both sides
+                // are FIFO over one ordered channel, so the front entry is the
+                // one that started; `text` is carried for the trace row (and
+                // as a guard against a front entry the shell never saw).
+                if self
+                    .queue
+                    .items
+                    .front()
+                    .is_none_or(|queued| queued.text == *text)
+                {
+                    let _ = self.queue.take_next();
+                }
+                let ts = self.now_ms;
+                self.trace.push(TraceRow {
+                    ts,
+                    agent: agent.clone(),
+                    kind: TraceKind::Stage,
+                    summary: format!("▶ {}", snip(text)),
+                });
+            }
         }
     }
 
@@ -358,27 +379,9 @@ impl FileLedger {
     }
 }
 
-/// Count added/removed source lines in a unified diff. File headers (`+++ `,
-/// `--- `) and hunk markers (`@@`) are ignored; only real `+`/`-` body lines
-/// count. The header check requires the trailing space of real header syntax:
-/// an added body line whose content starts with `++` (e.g. `++i`) arrives as
-/// `+++i` and must count, not be skipped as a header. Robust to
-/// `None`/partial diffs — a malformed diff yields `(0, 0)`, never a panic.
-pub fn count_diff_lines(diff: &str) -> (u32, u32) {
-    let mut added = 0u32;
-    let mut removed = 0u32;
-    for line in diff.lines() {
-        if line.starts_with("+++ ") || line.starts_with("--- ") {
-            continue;
-        }
-        match line.as_bytes().first() {
-            Some(b'+') => added += 1,
-            Some(b'-') => removed += 1,
-            _ => {}
-        }
-    }
-    (added, removed)
-}
+// The diff-counting fold moved to `crate::diff` (one module owns the whole
+// "how a diff reads" story); re-exported here so existing call sites hold.
+pub use crate::diff::count_diff_lines;
 
 // ── Route log: which model handled what ─────────────────────────────────────
 
@@ -434,6 +437,16 @@ impl PromptQueue {
     /// Remove the oldest pending prompt for dispatch, returning its text.
     pub fn take_next(&mut self) -> Option<String> {
         self.items.pop_front().map(|p| p.text)
+    }
+    /// Remove one queued prompt by position (0 = oldest), returning its text.
+    /// The queue is a *list* the user edits — deleting or pulling a prompt
+    /// back out for editing must never require dispatching it first.
+    pub fn remove(&mut self, index: usize) -> Option<String> {
+        self.items.remove(index).map(|p| p.text)
+    }
+    /// Drop every pending prompt (the deck gates this behind a confirm).
+    pub fn clear(&mut self) {
+        self.items.clear();
     }
 }
 
@@ -756,6 +769,7 @@ mod tests {
                 input_tokens: 1200,
                 output_tokens: 300,
                 cached_input_tokens: 0,
+                estimated_input_tokens: 1200,
                 cost_usd: 0.01,
                 duration_ms: 100,
                 retries: 0,
@@ -788,6 +802,7 @@ mod tests {
             input_tokens: 1,
             output_tokens: 1,
             cached_input_tokens: 0,
+            estimated_input_tokens: 1,
             cost_usd,
             duration_ms: 1,
             retries: 0,
@@ -936,6 +951,52 @@ mod tests {
         assert_eq!(q.take_next().as_deref(), Some("second"));
         assert_eq!(q.pending(), 0);
         assert_eq!(q.take_next(), None);
+    }
+
+    #[test]
+<<<<<<< HEAD
+    fn prompt_started_pops_the_front_of_the_queue_and_leaves_a_trace() {
+        let mut w = WorkspaceModel::new();
+        w.apply_inbound(&reg("lead"));
+        // The shell enqueues on submit (its labeled out-of-band mutation)…
+        w.queue.enqueue("first".into(), 1);
+        w.queue.enqueue("second".into(), 2);
+        // …and the dispatcher's PromptStarted drains it front-first.
+        w.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "first".into(),
+        });
+        assert_eq!(w.queue.pending(), 1);
+        assert_eq!(w.queue.items.front().map(|q| q.text.as_str()), Some("second"));
+        let row = w.trace.rows.back().expect("a trace row was recorded");
+        assert_eq!(row.agent, "lead");
+        assert!(row.summary.contains("first"), "{}", row.summary);
+    }
+
+    #[test]
+    fn prompt_started_with_an_unseen_text_never_drops_someone_elses_entry() {
+        let mut w = WorkspaceModel::new();
+        w.queue.enqueue("queued by the shell".into(), 1);
+        // A dispatch the shell never enqueued (e.g. a driver-side prompt)
+        // must not eat the front entry the user is still watching.
+        w.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "driver-side prompt".into(),
+        });
+        assert_eq!(w.queue.pending(), 1);
+=======
+    fn prompt_queue_edits_like_a_list() {
+        let mut q = PromptQueue::default();
+        q.enqueue("a".into(), 1);
+        q.enqueue("b".into(), 2);
+        q.enqueue("c".into(), 3);
+        // Remove by position, not just from the front.
+        assert_eq!(q.remove(1).as_deref(), Some("b"));
+        assert_eq!(q.pending(), 2);
+        assert_eq!(q.remove(9), None, "out of range is a no-op");
+        q.clear();
+        assert_eq!(q.pending(), 0);
+>>>>>>> 41325e9a4a9d778b2906cd2be26473dc260bd7b7
     }
 
     #[test]

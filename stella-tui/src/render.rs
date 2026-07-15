@@ -33,6 +33,7 @@ use stella_protocol::{BudgetMode, FileChangeKind, MediaKind, PrStatus, StageKind
 use crate::composer::SlashMenu;
 use crate::model::{AskUserPrompt, FileState, Hud, SessionModel, TranscriptEntry};
 use crate::ui::{PanelFocus, UiState, ViewportMetrics};
+use crate::{diff, theme};
 
 /// Draw the whole TUI for one frame. Records the panels' viewport sizes back
 /// into `ui.metrics` so the pure key handler can clamp scrolling on the next
@@ -41,10 +42,9 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     let root = frame.area();
     let has_scope = model.pending_scope_review.is_some();
     let has_ask = model.pending_ask_user.is_some();
-    let slash = ui.composer.slash_menu(&ui.slash_commands);
-    let show_slash = slash.as_ref().is_some_and(|m| !m.is_empty());
 
-    // Vertical bands: HUD, main, [scope], [ask], [slash], composer.
+    // Vertical bands: HUD, main, [scope], [ask], composer. The slash menu is
+    // no longer a band — it floats above the composer as a popup.
     let mut constraints = vec![Constraint::Length(3), Constraint::Min(1)];
     if has_scope {
         constraints.push(Constraint::Length(6));
@@ -54,10 +54,6 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
         constraints.push(Constraint::Length(
             (prompt.options.len() as u16 + 4).min(10),
         ));
-    }
-    if show_slash {
-        let rows = slash.as_ref().map(|m| m.matches.len()).unwrap_or(0);
-        constraints.push(Constraint::Length((rows as u16 + 2).min(8)));
     }
     constraints.push(Constraint::Length(3));
     let bands = Layout::vertical(constraints).split(root);
@@ -79,13 +75,6 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     } else {
         None
     };
-    let slash_area = if show_slash {
-        let a = bands[idx];
-        idx += 1;
-        Some(a)
-    } else {
-        None
-    };
     let composer_area = bands[idx];
 
     // ---- HUD.
@@ -99,7 +88,7 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     let transcript_area = cols[0];
     let right_area = cols[1];
 
-    let t_lines = transcript_lines(model);
+    let t_lines = transcript_lines(model, ui.thinking_expanded);
     let t_total = t_lines.len();
     let t_inner_h = inner_height(transcript_area);
     let t_window = ui.scroll.window(t_total, t_inner_h);
@@ -111,10 +100,9 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     // ---- Right pane: diff viewer when open, else the files-touched panel.
     let (diff_total, diff_inner_h) = if ui.diff_open {
         let file = model.files.get(ui.selected_file);
-        let d_lines = file
-            .and_then(|f| f.latest_diff.as_deref())
-            .map(diff_lines)
-            .unwrap_or_default();
+        let diff_text = file.and_then(|f| f.latest_diff.as_deref());
+        let d_lines = diff_text.map(diff::body_lines).unwrap_or_default();
+        let (added, removed) = diff_text.map(diff::count_diff_lines).unwrap_or((0, 0));
         let d_total = d_lines.len();
         let d_inner_h = inner_height(right_area);
         let d_window = ui.diff_scroll.window(d_total, d_inner_h);
@@ -122,7 +110,14 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
             .map(|f| f.path.clone())
             .unwrap_or_else(|| "diff".to_string());
         guarded_panel(frame, right_area, "diff", |buf| {
-            render_diff(&d_lines, d_window.clone(), &title, right_area, buf)
+            render_diff(
+                &d_lines,
+                d_window.clone(),
+                &title,
+                (added, removed),
+                right_area,
+                buf,
+            )
         });
         (d_total, d_inner_h)
     } else {
@@ -150,19 +145,23 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
         });
     }
 
-    // ---- Slash menu.
-    if let (Some(area), Some(menu)) = (slash_area, slash.as_ref()) {
-        guarded_panel(frame, area, "slash-menu", |buf| {
-            render_slash_menu(menu, area, buf)
-        });
-    }
-
     // ---- Composer.
     let composer_line = ui.composer.display_line();
     let composer_focused = ui.focus == PanelFocus::Composer;
     guarded_panel(frame, composer_area, "composer", |buf| {
         render_composer(&composer_line, composer_focused, composer_area, buf)
     });
+
+    // ---- Slash-command popup, floating just above the composer (drawn last
+    // so it sits over the transcript, Crush-style, instead of reflowing it).
+    let slash = ui.composer.slash_menu(&ui.slash_commands);
+    if let Some(menu) = slash.filter(|m| !m.is_empty()) {
+        let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
+        let area = slash_popup_area(root, composer_area, menu.matches.len());
+        guarded_panel(frame, area, "slash-menu", |buf| {
+            render_slash_popup(&menu, selected, area, buf)
+        });
+    }
 
     // Cache viewport sizes for the next keypress's scroll clamping.
     ui.metrics = ViewportMetrics {
@@ -336,23 +335,35 @@ fn render_files(
         .render(area, buf);
 }
 
+/// The diff viewer, PR-style: the full file path inline in a rule above the
+/// body, the numbered/styled body in the middle, and a closing rule below
+/// counting the additions/removals (`crate::diff` owns all three parts, so
+/// this pane and the deck's Files tab read identically).
 fn render_diff(
     lines: &[Line<'static>],
     window: Range<usize>,
-    title: &str,
+    path: &str,
+    (added, removed): (u32, u32),
     area: Rect,
     buf: &mut Buffer,
 ) {
+    if area.height < 2 {
+        return;
+    }
+    let bands = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    let w = area.width as usize;
+    Paragraph::new(diff::header_line(path, w)).render(bands[0], buf);
     let visible: Vec<Line<'static>> = lines
-        .get(window.clone())
+        .get(window)
         .map(<[Line]>::to_vec)
         .unwrap_or_default();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" diff · {title} "));
-    Paragraph::new(Text::from(visible))
-        .block(block)
-        .render(area, buf);
+    Paragraph::new(Text::from(visible)).render(bands[1], buf);
+    Paragraph::new(diff::footer_line(added, removed, w)).render(bands[2], buf);
 }
 
 pub(crate) fn render_scope_review(
@@ -460,24 +471,54 @@ pub(crate) fn render_ask_user(
         .render(area, buf);
 }
 
-fn render_slash_menu(menu: &SlashMenu, area: Rect, buf: &mut Buffer) {
-    let lines: Vec<Line<'static>> = menu
+/// Where the slash popup floats: anchored to the composer's left edge,
+/// opening upward, tall enough for the matches (capped) and clamped to the
+/// frame on small terminals.
+pub(crate) fn slash_popup_area(root: Rect, composer: Rect, matches: usize) -> Rect {
+    let h = ((matches.min(8) as u16) + 3).min(root.height);
+    let w = root.width.min(56);
+    Rect {
+        x: composer.x,
+        y: composer.y.saturating_sub(h),
+        width: w,
+        height: h,
+    }
+}
+
+/// The floating slash-command menu: an accent-bordered popup with the
+/// selected row highlighted and a one-line key legend. Shared by the
+/// single-session REPL and the deck (both anchor it above their composer).
+pub(crate) fn render_slash_popup(menu: &SlashMenu, selected: usize, area: Rect, buf: &mut Buffer) {
+    ratatui::widgets::Clear.render(area, buf);
+    let mut lines: Vec<Line<'static>> = menu
         .matches
         .iter()
-        .map(|c| {
+        .enumerate()
+        .map(|(i, c)| {
+            let is_sel = i == selected;
+            let marker = if is_sel { "▸ " } else { "  " };
+            let mut name_style = theme::accent();
+            let mut desc_style = theme::muted();
+            if is_sel {
+                name_style = name_style.add_modifier(Modifier::REVERSED);
+                desc_style = desc_style.add_modifier(Modifier::REVERSED);
+            }
             Line::from(vec![
-                Span::styled(
-                    c.name.clone(),
-                    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled(c.description.clone(), Style::new().fg(Color::DarkGray)),
+                Span::styled(marker.to_string(), name_style),
+                Span::styled(c.name.clone(), name_style),
+                Span::styled("  ", desc_style),
+                Span::styled(c.description.clone(), desc_style),
             ])
         })
         .collect();
+    lines.push(Line::from(Span::styled(
+        " ↑/↓ choose · tab complete · enter run · esc dismiss",
+        theme::muted(),
+    )));
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" commands · {} ", menu.matches.len()));
+        .border_style(theme::accent())
+        .title(format!(" / commands · {} ", menu.matches.len()));
     Paragraph::new(Text::from(lines))
         .block(block)
         .render(area, buf);
@@ -509,15 +550,21 @@ fn render_composer(line: &str, focused: bool, area: Rect, buf: &mut Buffer) {
 /// The full visual-line list for the transcript, one-or-more lines per entry.
 /// Text/reasoning entries split on newlines so the scroll math stays
 /// line-exact (L-T4); everything else is a single styled line.
-pub(crate) fn transcript_lines(model: &SessionModel) -> Vec<Line<'static>> {
+/// `expand_thinking` mirrors the `ctrl+r` toggle: collapsed (the default),
+/// each reasoning entry is one line whose live tail moves as deltas stream.
+pub(crate) fn transcript_lines(model: &SessionModel, expand_thinking: bool) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     for entry in &model.transcript {
-        entry_lines(entry, &mut out);
+        entry_lines(entry, expand_thinking, &mut out);
     }
     out
 }
 
-pub(crate) fn entry_lines(entry: &TranscriptEntry, out: &mut Vec<Line<'static>>) {
+pub(crate) fn entry_lines(
+    entry: &TranscriptEntry,
+    expand_thinking: bool,
+    out: &mut Vec<Line<'static>>,
+) {
     match entry {
         TranscriptEntry::Stage(name) => out.push(Line::from(Span::styled(
             format!("── {} ──", stage_label(*name)),
@@ -529,11 +576,15 @@ pub(crate) fn entry_lines(entry: &TranscriptEntry, out: &mut Vec<Line<'static>>)
             }
         }
         TranscriptEntry::Reasoning(text) => {
-            for l in text.split('\n') {
-                out.push(Line::from(Span::styled(
-                    l.to_string(),
-                    Style::new().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-                )));
+            if expand_thinking {
+                for l in text.split('\n') {
+                    out.push(Line::from(Span::styled(
+                        l.to_string(),
+                        Style::new().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                    )));
+                }
+            } else {
+                out.push(collapsed_thinking_line(text));
             }
         }
         TranscriptEntry::ToolStart { name, input, .. } => out.push(Line::from(vec![
@@ -684,26 +735,33 @@ pub(crate) fn entry_lines(entry: &TranscriptEntry, out: &mut Vec<Line<'static>>)
     }
 }
 
-/// Split a unified diff into styled lines (+ green, - red, @@ cyan header).
-pub(crate) fn diff_lines(diff: &str) -> Vec<Line<'static>> {
-    diff.split('\n').map(diff_line).collect()
-}
-
-fn diff_line(line: &str) -> Line<'static> {
-    let color = if line.starts_with("@@") {
-        Color::Cyan
-    } else if line.starts_with("+++") || line.starts_with("---") {
-        Color::DarkGray
-    } else if line.starts_with('+') {
-        Color::Green
-    } else if line.starts_with('-') {
-        Color::Red
-    } else if line.starts_with("diff ") || line.starts_with("index ") {
-        Color::DarkGray
+/// The collapsed one-line view of a reasoning entry: a brand-amber glyph, a
+/// line count, and the *live tail* of the stream — the tail changes with
+/// every delta, so a collapsed thought still visibly moves while the model
+/// thinks (the reassurance signal, without the wall of text).
+fn collapsed_thinking_line(text: &str) -> Line<'static> {
+    const TAIL: usize = 56;
+    let line_count = text.lines().count().max(1);
+    let flat = text.replace(['\n', '\r'], " ");
+    let trimmed = flat.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    let tail = if chars.len() <= TAIL {
+        trimmed.to_string()
     } else {
-        Color::Reset
+        let cut: String = chars[chars.len() - TAIL..].iter().collect();
+        format!("…{cut}")
     };
-    Line::from(Span::styled(line.to_string(), Style::new().fg(color)))
+    Line::from(vec![
+        Span::styled("✳ ", Style::new().fg(theme::AMBER)),
+        Span::styled(
+            format!("thinking · {line_count} lines · "),
+            Style::new().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            tail,
+            Style::new().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        ),
+    ])
 }
 
 fn file_line(file: &FileState, selected: bool) -> Line<'static> {
@@ -731,7 +789,7 @@ fn file_line(file: &FileState, selected: bool) -> Line<'static> {
 // Labels
 // ---------------------------------------------------------------------------
 
-fn stage_label(stage: StageKind) -> &'static str {
+pub(crate) fn stage_label(stage: StageKind) -> &'static str {
     match stage {
         StageKind::Triage => "triage",
         StageKind::ContextRecall => "context recall",
@@ -882,6 +940,71 @@ mod tests {
         let text = draw(&model, &mut ui, 100, 20);
         assert!(text.contains("removed"), "diff shows removals:\n{text}");
         assert!(text.contains("added"), "diff shows additions:\n{text}");
+        // The PR-style chrome: the path rides the top rule, the line counts
+        // ride the bottom rule.
+        assert!(text.contains("a.rs"), "path in the header rule:\n{text}");
+        assert!(
+            text.contains("+1 addition") && text.contains("-1 removal"),
+            "counts in the footer rule:\n{text}"
+        );
+    }
+
+    #[test]
+    fn thinking_is_collapsed_by_default_and_expands_with_the_toggle() {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::Reasoning {
+            delta: "alpha\nbeta\ngamma".into(),
+        });
+        let mut ui = UiState::default();
+        let collapsed = draw(&model, &mut ui, 100, 24);
+        assert!(
+            collapsed.contains("thinking · 3 lines"),
+            "collapsed summary line:\n{collapsed}"
+        );
+        // Collapsed = exactly one visual line for the whole entry.
+        assert_eq!(transcript_lines(&model, false).len(), 1);
+        ui.thinking_expanded = true;
+        let expanded = draw(&model, &mut ui, 100, 24);
+        assert!(
+            expanded.contains("alpha") && expanded.contains("gamma"),
+            "expanded shows the full reasoning:\n{expanded}"
+        );
+        assert_eq!(transcript_lines(&model, true).len(), 3);
+    }
+
+    #[test]
+    fn collapsed_thinking_elides_to_the_tail_of_a_long_stream() {
+        let mut model = SessionModel::new();
+        let long = format!("{}THE-TAIL", "reasoning noise ".repeat(20));
+        model.apply(&AgentEvent::Reasoning { delta: long });
+        let lines = transcript_lines(&model, false);
+        assert_eq!(lines.len(), 1);
+        let text: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.clone())
+            .collect();
+        assert!(text.ends_with("THE-TAIL"), "keeps the tail: {text}");
+        assert!(text.contains('…'), "marks the elision: {text}");
+    }
+
+    #[test]
+    fn collapsed_thinking_tail_moves_as_deltas_stream() {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::Reasoning {
+            delta: "planning the refactor".into(),
+        });
+        let before = transcript_lines(&model, false);
+        model.apply(&AgentEvent::Reasoning {
+            delta: " now checking tests".into(),
+        });
+        let after = transcript_lines(&model, false);
+        assert_eq!(before.len(), 1);
+        assert_eq!(after.len(), 1, "still one collapsed line");
+        assert_ne!(
+            before[0], after[0],
+            "the collapsed line visibly changes with each delta"
+        );
     }
 
     #[test]
@@ -942,6 +1065,30 @@ mod tests {
         let text = draw(&model, &mut ui, 100, 30);
         assert!(text.contains("/diff"), "slash menu lists /diff:\n{text}");
         assert!(!text.contains("/files"), "filtered out /files:\n{text}");
+    }
+
+    #[test]
+    fn slash_popup_marks_the_selected_command() {
+        let model = SessionModel::new();
+        let mut composer = Composer::new();
+        composer.insert_char('/');
+        let mut ui = UiState::new(
+            composer,
+            vec![
+                SlashCommand::new("/help", "show help"),
+                SlashCommand::new("/diff", "open the diff viewer"),
+            ],
+        );
+        ui.slash_selected = 1;
+        let text = draw(&model, &mut ui, 100, 30);
+        assert!(
+            text.contains("▸ /diff"),
+            "selection marker on the second row:\n{text}"
+        );
+        assert!(
+            text.contains("/ commands · 2"),
+            "popup title with the match count:\n{text}"
+        );
     }
 
     #[test]
@@ -1023,7 +1170,7 @@ mod tests {
             },
             duration_ms: 12,
         });
-        let lines = transcript_lines(&model);
+        let lines = transcript_lines(&model, false);
         let joined: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))

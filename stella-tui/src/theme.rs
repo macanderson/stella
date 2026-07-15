@@ -35,6 +35,25 @@ pub const RUN: Color = Color::Rgb(96, 191, 214);
 /// Paused / held (violet).
 pub const HELD: Color = Color::Rgb(180, 142, 214);
 
+// ── Diff panel ──────────────────────────────────────────────────────────────
+
+/// Subtle background tint behind added diff lines (the GitHub-PR reading —
+/// pair with [`OK`] foreground).
+pub const DIFF_ADD_BG: Color = Color::Rgb(20, 44, 26);
+/// Subtle background tint behind removed diff lines (pair with [`BAD`]).
+pub const DIFF_DEL_BG: Color = Color::Rgb(52, 24, 26);
+
+// ── Activity spinner ────────────────────────────────────────────────────────
+
+/// Burnt-sunset ember ramp, dark → bright, for the working-spinner gradient —
+/// the brand's amber answer to the pink/purple reference spinner.
+pub const EMBER_RAMP: [Color; 4] = [
+    Color::Rgb(178, 72, 20),
+    AMBER_DEEP,
+    AMBER,
+    Color::Rgb(255, 214, 130),
+];
+
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 /// Accent style for headings / the active tab.
