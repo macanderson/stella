@@ -87,11 +87,13 @@ pub async fn run_fleet(
 
     // Millisecond + pid: two runs in the same second (scripted/CI) must not
     // share a ledger run id — `record_run` is INSERT OR REPLACE, so a
-    // collision would merge both runs' accounting under one row.
+    // collision would merge both runs' accounting under one row. A pre-epoch
+    // clock is a hard error rather than a silent fallback to a constant (which
+    // would reintroduce the very collision this guards against).
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+        .map_err(|_| "system clock is before the Unix epoch — cannot mint a unique fleet run id")?
+        .as_millis();
     let run_id = format!("fleet-{now_ms}-{}", std::process::id());
     let worker = EngineWorker {
         cfg: cfg.clone(),

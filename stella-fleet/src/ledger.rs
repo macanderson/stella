@@ -1,5 +1,5 @@
 //! The commit ledger (`02-architecture.md` §2 "commit ledger (SQLite)", §6
-//! "`ledger.db` — SQLite: fleet commit ledger"). One embedded SQLite file
+//! "`fleet.db` — SQLite: fleet commit ledger"). One embedded SQLite file
 //! (`rusqlite`, bundled — `02-architecture.md` §1.6 "one storage engine")
 //! recording, for every fleet run: its tasks, each dispatch attempt, the
 //! commits an attempt produced, the parent→child lineage, and per-task USD

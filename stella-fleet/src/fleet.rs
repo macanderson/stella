@@ -373,6 +373,10 @@ where
             .filter(|t| !attempted.contains(&t.id))
             .map(|t| t.id.clone())
             .collect();
+        // Dispatch failures accrue in wave-completion order, which varies run
+        // to run; sort by task id so the report reads identically for the same
+        // plan (matching the deterministic `handles` ordering).
+        report.dispatch_failures.sort_by(|a, b| a.0.cmp(&b.0));
         report.completed = succeeded;
         Ok(report)
     }
@@ -467,6 +471,28 @@ mod tests {
                 success: true,
                 seen_roots: Arc::new(StdMutex::new(Vec::new())),
             }
+        }
+        /// A worker whose every task reports failure — for wave-scheduling
+        /// tests that a failed prerequisite must not unblock dependents.
+        fn failing(cost_usd: f64) -> Self {
+            Self {
+                success: false,
+                ..Self::new(cost_usd)
+            }
+        }
+    }
+
+    /// A `GitCli` that fails every `git worktree` invocation (add/remove) with
+    /// a non-zero exit — the shape of a real "worktree already exists" or
+    /// permission failure, so `WorktreeManager::create` returns an error.
+    struct FailGit;
+    #[async_trait]
+    impl GitCli for FailGit {
+        async fn run(&self, _repo: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
+            if args.first() == Some(&"worktree") {
+                return Ok(GitOutput::failed(128, "fatal: worktree add failed"));
+            }
+            Ok(GitOutput::ok(""))
         }
     }
     #[async_trait]
@@ -653,5 +679,64 @@ mod tests {
         let report = f.run_plan(&plan).await.unwrap();
         assert!(!report.budget_aborted);
         assert_eq!(report.completed.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_failed_prerequisite_skips_its_dependents() {
+        // a (fails) -> b -> c. a's failure must NOT unblock b, and c (behind
+        // b) is skipped in turn — dependents of a failure never run, so no
+        // budget is spent on doomed turns.
+        let plan = Plan::new(vec![
+            Task::new("a", "a", "p"),
+            Task::new("b", "b", "p").depends_on(["a"]),
+            Task::new("c", "c", "p").depends_on(["b"]),
+        ]);
+        let f = fleet(
+            FakeWorker::failing(0.10),
+            OkGit::new(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            FleetConfig::new("run1", "HEAD"),
+        );
+
+        let report = f.run_plan(&plan).await.unwrap();
+        assert!(!report.all_succeeded(), "a failed → the run did not succeed");
+        assert!(
+            !report.completed.contains("a"),
+            "a failed, so it is not in the succeeded set"
+        );
+        // Only a was ever dispatched; b and c were skipped, not attempted.
+        assert_eq!(report.handles.len(), 1);
+        assert_eq!(report.handles[0].task_id, "a");
+        let mut skipped = report.skipped.clone();
+        skipped.sort();
+        assert_eq!(skipped, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_git_worktree_failure_is_a_recorded_dispatch_failure() {
+        // Two independent isolated tasks in one wave; git worktree add fails
+        // for both. Each is a recorded dispatch failure (not an early return
+        // that discards the wave), the run did not succeed, and the failures
+        // are reported in deterministic task-id order.
+        let plan = Plan::new(vec![Task::new("t1", "t1", "p"), Task::new("t2", "t2", "p")]);
+        let f = Fleet::new(
+            FakeWorker::new(0.10),
+            WorktreeManager::new(FailGit, "/repo"),
+            Ledger::open_in_memory().unwrap(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            SeqClock::new(),
+            FleetConfig::new("run1", "HEAD").with_max_concurrency(2),
+        )
+        .unwrap();
+
+        let report = f.run_plan(&plan).await.unwrap();
+        assert!(!report.all_succeeded(), "dispatch failures fail the run");
+        assert!(report.handles.is_empty(), "no task produced a handle");
+        let failed: Vec<&str> = report
+            .dispatch_failures
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(failed, vec!["t1", "t2"], "both failures recorded, sorted");
     }
 }

@@ -97,17 +97,20 @@ pub struct CodeGraph {
 }
 
 /// One symbol in a [`FileNeighborhood`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NeighborhoodSymbol {
     pub name: String,
-    /// The stored kind tag (`"fn"`, `"struct"`, `"class"`, `"table"`, …).
-    pub kind: &'static str,
+    /// The stored kind tag as persisted by the index (`"function"`,
+    /// `"struct"`, `"class"`, `"table"`, …) — see [`SymbolKind::tag`]. An
+    /// owned `String` so this public type round-trips through serde without a
+    /// borrow lifetime.
+    pub kind: String,
     pub start_line: u32,
 }
 
 /// The structured neighborhood of one file: its symbols and its import
 /// edges in both directions. Root-relative forward-slash paths throughout.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileNeighborhood {
     pub file: String,
     pub symbols: Vec<NeighborhoodSymbol>,
@@ -262,7 +265,7 @@ impl CodeGraph {
             .into_iter()
             .map(|row| NeighborhoodSymbol {
                 name: row.name,
-                kind: row.kind.tag(),
+                kind: row.kind.tag().to_string(),
                 start_line: row.start_line,
             })
             .collect();

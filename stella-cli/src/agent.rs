@@ -894,9 +894,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             println!();
             let mut emit = |line: String| println!("  {line}");
             match init_workspace(Some(&*provider), &cfg.workspace_root, &mut emit).await {
-                // A fresh index may name tables/types the schema gate should
-                // know about this session, not just the next one.
-                Ok(_) => populate_schema_index(&registry, &cfg.workspace_root),
+                Ok(_) => {
+                    // A fresh index may name tables/types the schema gate
+                    // should know about this session, not just the next one.
+                    populate_schema_index(&registry, &cfg.workspace_root);
+                    // Re-open memory so recall/reflection use the taxonomy
+                    // `/init` just wrote — otherwise the cached domains stay
+                    // stale until the next launch.
+                    memory = SessionMemory::open(&cfg.workspace_root, true);
+                }
                 Err(e) => println!("  {} init failed: {e}", "✗".red()),
             }
             println!();
@@ -1192,7 +1198,7 @@ pub(crate) fn graph_snapshot(
         });
         nodes.push(GraphNode {
             label: symbol.name.clone(),
-            kind: symbol.kind.to_string(),
+            kind: symbol.kind.clone(),
             location: Some(format!("{}:{}", hood.file, symbol.start_line)),
         });
     }

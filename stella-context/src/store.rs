@@ -1082,47 +1082,43 @@ pub(crate) fn domains_for_node(
     Ok(out)
 }
 
-/// Live node ids tagged with ANY of the given domains — the domain-filter
-/// candidate set for `recall_scoped`. An empty `domains` slice returns `None`
-/// (meaning "no filter"), distinct from an empty set ("filter matched nothing").
-pub(crate) fn node_ids_in_domains(
-    conn: &Connection,
-    domains: &[String],
-) -> Result<Option<std::collections::HashSet<i64>>, ContextError> {
-    if domains.is_empty() {
-        return Ok(None);
-    }
-    let mut set = std::collections::HashSet::new();
-    let mut stmt = conn.prepare(
-        "SELECT nd.node_id FROM node_domains nd
-         JOIN domain d ON d.id = nd.domain_id
-         JOIN node n ON n.id = nd.node_id
-         WHERE d.name = ?1 AND n.superseded_at IS NULL",
-    )?;
-    for name in domains {
-        for r in stmt.query_map(params![name], |r| r.get::<_, i64>(0))? {
-            set.insert(r?);
-        }
-    }
-    Ok(Some(set))
-}
-
-/// Live node ids carrying ANY domain tag at all. `recall_scoped` needs this to
-/// tell "tagged with an out-of-scope domain" (excluded) apart from "never
-/// tagged" (kept): most memories — reflections whose lessons name no domain,
+/// Live node ids that carry a domain tag but NONE in `scope` — exactly the
+/// set a scoped recall must exclude. Untagged nodes are never returned (they
+/// stay candidates): most memories — reflections whose lessons name no domain,
 /// episodes from turns that touched no taxonomy-covered file — are untagged,
 /// and a scope filter that dropped them would silence recall entirely the
-/// moment `stella init` writes a taxonomy.
-pub(crate) fn node_ids_tagged(
+/// moment `stella init` writes a taxonomy. An empty `scope` returns an empty
+/// set (nothing is out of scope).
+///
+/// The out-of-scope test runs in one SQL statement (an anti-join against the
+/// in-scope tag set) rather than materializing every tagged id in memory and
+/// differencing in Rust — a large initialized workspace can carry many tags
+/// unrelated to the active scope.
+pub(crate) fn node_ids_excluded_by_scope(
     conn: &Connection,
+    scope: &[String],
 ) -> Result<std::collections::HashSet<i64>, ContextError> {
-    let mut set = std::collections::HashSet::new();
-    let mut stmt = conn.prepare(
+    if scope.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let placeholders = std::iter::repeat_n("?", scope.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
         "SELECT DISTINCT nd.node_id FROM node_domains nd
          JOIN node n ON n.id = nd.node_id
-         WHERE n.superseded_at IS NULL",
-    )?;
-    for r in stmt.query_map([], |r| r.get::<_, i64>(0))? {
+         WHERE n.superseded_at IS NULL
+           AND nd.node_id NOT IN (
+             SELECT nd2.node_id FROM node_domains nd2
+             JOIN domain d ON d.id = nd2.domain_id
+             WHERE d.name IN ({placeholders})
+           )"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut set = std::collections::HashSet::new();
+    for r in stmt.query_map(rusqlite::params_from_iter(scope.iter()), |r| {
+        r.get::<_, i64>(0)
+    })? {
         set.insert(r?);
     }
     Ok(set)

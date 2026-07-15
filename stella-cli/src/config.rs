@@ -735,16 +735,28 @@ impl Config {
 }
 
 impl Config {
-    /// The provider/model table as plain text (no ANSI): one line per
-    /// built-in provider with its key status. The Command Deck renders this
-    /// into the transcript for `/models` — stdout printing would corrupt the
-    /// alternate screen, so the deck needs a string, not a print.
+    /// The provider/model table as plain text (no ANSI): the built-in
+    /// providers with their key status, then any config-defined providers
+    /// from `.stella/settings.json` — the same two sections the ANSI
+    /// `print_available_models` renders, so `/models` in the deck lists
+    /// exactly what `stella models` does. The Command Deck renders this into
+    /// the transcript; stdout printing would corrupt the alternate screen, so
+    /// the deck needs a string, not a print.
     pub fn available_models_plain() -> String {
-        let settings = env::current_dir()
+        // Surface a settings load/parse failure rather than silently reporting
+        // built-in defaults (which would hide a malformed config and wrong key
+        // status), then continue with defaults so the listing still renders.
+        let (settings, load_error) = match env::current_dir()
             .map_err(|e| e.to_string())
             .and_then(|ws| crate::settings::Settings::load(&ws))
-            .unwrap_or_default();
+        {
+            Ok(s) => (s, None),
+            Err(e) => (crate::settings::Settings::default(), Some(e)),
+        };
         let mut lines = vec!["Available providers & models:".to_string()];
+        if let Some(e) = &load_error {
+            lines.push(format!("  ! settings could not be read: {e}"));
+        }
         for p in PROVIDERS {
             let p = effective_builtin(p, &settings);
             let settings_key = settings
@@ -761,6 +773,32 @@ impl Config {
                 if has_key { "✓" } else { "✗" },
                 p.id,
                 p.default_model,
+                p.display_name,
+            ));
+        }
+        // Config-defined (non-built-in) providers, mirroring the ANSI table.
+        let mut printed_header = false;
+        for (id, entry) in &settings.providers {
+            if PROVIDERS.iter().any(|p| p.id == id.as_str()) || id == LOCAL_PROVIDER.id {
+                continue;
+            }
+            let Ok(p) = custom_provider(id, entry) else {
+                continue;
+            };
+            if !printed_header {
+                lines.push("Config-defined providers (settings.json):".to_string());
+                printed_header = true;
+            }
+            let settings_key = entry.api_key.as_deref().is_some_and(|k| !k.is_empty());
+            lines.push(format!(
+                "  {} {}/{}  {}",
+                if settings_key { "✓" } else { "✗" },
+                p.id,
+                if p.default_model.is_empty() {
+                    "<model>"
+                } else {
+                    p.default_model
+                },
                 p.display_name,
             ));
         }

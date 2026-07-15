@@ -135,3 +135,16 @@ fn busiest_file_names_the_most_connected_file() {
     // The one-file fixture makes driver.rs the only (thus busiest) candidate.
     assert_eq!(graph.busiest_file().unwrap().as_deref(), Some("driver.rs"));
 }
+
+#[test]
+fn file_neighborhood_round_trips_through_serde() {
+    // The type crosses the crate boundary (the deck consumes it), so it must
+    // survive a serde round-trip like every other public wire type.
+    let (_ws, _db, graph) = fixture();
+    let hood = graph
+        .file_neighborhood(std::path::Path::new("driver.rs"))
+        .unwrap();
+    let json = serde_json::to_string(&hood).unwrap();
+    let back: stella_graph::FileNeighborhood = serde_json::from_str(&json).unwrap();
+    assert_eq!(hood, back);
+}

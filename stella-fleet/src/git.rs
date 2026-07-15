@@ -194,27 +194,31 @@ fn slugify(task_id: &str) -> String {
     }
 }
 
-/// A short, stable, deterministic hash of `s` as 8 lowercase hex chars.
+/// A stable, deterministic hash of `s` as 16 lowercase hex chars (the full
+/// 64-bit digest).
 ///
 /// [`slugify`] is lossy — `fix/the thing`, `fix the thing`, and `fix-the-thing`
 /// all map to `fix-the-thing`. `Plan::validate` guarantees unique task *ids*
 /// but not unique *slugs*, so two distinct tasks could otherwise collide on the
-/// same worktree directory and branch. Appending this hash of the full task id
-/// makes the slug injective. FNV-1a (not the stdlib's randomizable `Hasher`) so
-/// the result is identical across processes and Rust versions — a later wave
-/// must be able to recompute the exact branch name for the same task id.
+/// same worktree directory and branch. Appending this hash of the full
+/// `run_scope`+task id makes the slug **collision-resistant** (a 64-bit digest,
+/// not truncated to 32 bits as before — the birthday bound at 16 hex chars is
+/// far past any realistic per-run task count). FNV-1a (not the stdlib's
+/// randomizable `Hasher`) so the result is identical across processes and Rust
+/// versions — a later wave must recompute the exact branch name for the same
+/// scope+task id.
 fn short_hash(s: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.as_bytes() {
         hash ^= u64::from(*b);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    format!("{:08x}", hash as u32)
+    format!("{hash:016x}")
 }
 
 /// The worktree directory + branch slug for `task_id` within `run_scope`: a
 /// human-readable [`slugify`] stem plus a [`short_hash`] suffix that keeps it
-/// collision-free even when two task ids slugify to the same stem. The run
+/// collision-resistant even when two task ids slugify to the same stem. The run
 /// scope enters the hash so re-running a plan with the same task ids (`t1`,
 /// `t2`, … — every positional invocation) gets fresh directories/branches
 /// instead of colliding with last run's kept-for-review worktrees.
