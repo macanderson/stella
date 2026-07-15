@@ -64,16 +64,31 @@ pub struct SchemaIndex {
 }
 
 impl ToolRegistry {
-    /// Construct with auto-detected optional backends (issue tracker).
+    /// Construct with auto-detected optional backends (issue tracker, media
+    /// provider).
     pub fn new(root: PathBuf) -> Self {
-        Self::with_issue_backend(root, crate::issues::detect_issue_backend())
+        Self::with_backends(
+            root,
+            crate::issues::detect_issue_backend(),
+            crate::media::detect_media_backend(),
+        )
     }
 
-    /// Construct with an explicit issue backend (or none) — the seam unit
-    /// tests use so tool counts don't depend on the host's `gh` auth.
+    /// Construct with an explicit issue backend (or none) and no media
+    /// backend — the seam unit tests use so tool counts depend on neither
+    /// the host's `gh` auth nor its provider env keys.
     pub fn with_issue_backend(
         root: PathBuf,
         issue_backend: Option<crate::issues::IssueBackend>,
+    ) -> Self {
+        Self::with_backends(root, issue_backend, None)
+    }
+
+    /// Construct with every optional backend explicit — the full seam.
+    pub fn with_backends(
+        root: PathBuf,
+        issue_backend: Option<crate::issues::IssueBackend>,
+        media_backend: Option<crate::media::MediaBackend>,
     ) -> Self {
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
         let mut entries: Vec<Arc<dyn Tool>> = vec![
@@ -93,6 +108,17 @@ impl ToolRegistry {
             Arc::new(crate::ci::CiStatus),
             Arc::new(crate::screenshot::Screenshot),
         ];
+        // The code-graph query tool exists only when `stella init` has built
+        // an index — same conditional-registration discipline as the issue
+        // tools: no index, no dead schema entry.
+        if crate::graph::graph_available(&root) {
+            entries.push(Arc::new(crate::graph::CodeGraphQuery));
+        }
+        // Media generation exists only when an image-capable provider key is
+        // configured — BYOK end to end.
+        if let Some(media) = media_backend {
+            entries.push(Arc::new(crate::media::GenerateImage(media.provider)));
+        }
         // Issue tools exist only when a tracker is configured — no dead
         // schema entries burning tokens, no surface that errors on use.
         if let Some(backend) = issue_backend {

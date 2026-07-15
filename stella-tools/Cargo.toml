@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
 stella-core = { path = "../stella-core" }
+stella-graph = { path = "../stella-graph" }
+stella-media = { path = "../stella-media" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
