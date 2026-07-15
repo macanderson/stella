@@ -288,15 +288,14 @@ flowchart TD
 > crates that aren't wired into the CLI yet — they're the next layers, and some
 > of the best places to contribute:
 >
-> - **`stella-pipeline`** — the triage → enhance → route → execute → verify →
->   judge → revise orchestration plane (the CLI currently drives the engine directly).
 > - **`stella-fleet`** — multi-agent fan-out: DAG planner, worktree isolation,
 >   lineage + spend ledger.
 > - **`stella-tui`** — a pure-fold ratatui REPL (HUD, panels, diff viewer). The
 >   shipping shell today is `stella-cli`'s simpler line REPL.
 > - **`stella-media`** — multimodal generation behind a `MediaProvider` port.
 > - **`stella-graph` retrieval & the fuller context plane** — the code graph is
->   indexed on `stella init` but not yet queried at runtime; bi-temporal facts and
+>   indexed on `stella init` and feeds the schema conflict gate at session start,
+>   but broader runtime retrieval is not yet queried; bi-temporal facts and
 >   episodic memory are implemented and tested but the CLI currently uses only the
 >   reflection-memory recall path.
 >
@@ -513,9 +512,13 @@ stella stats     # cost, tokens, and $/resolved task per provider/model from
 ### Global flags
 
 `--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
-`--output-format text|json|stream-json` (all also as `STELLA_*` env vars). The
+`--output-format text|json|stream-json` (also as `STELLA_MODEL`,
+`STELLA_BASE_URL`, `STELLA_BUDGET`, and `STELLA_OUTPUT_FORMAT`; API keys come
+from provider-specific env vars or `~/.config/stella/credentials.toml`). The
 `json` / `stream-json` formats are for headless one-shot `stella run`; the
-interactive `chat` / `goal` / `monitor` modes always render human-readable output.
+interactive `chat` / `goal` / `monitor` modes always render human-readable
+output. `stella run` executes through the staged pipeline by default; pass
+`--no-pipeline` to fall back to the raw step-loop.
 
 <div align="center">
 
@@ -556,8 +559,9 @@ considers them at prompt-cache-hit prices (~0.1× input). New memories take effe
 
 Every execution is recorded in `.stella/stella.duckdb`: the full event stream
 (chain-of-thought deltas included), per-model-call telemetry (tokens in/out, cache
-read hit/miss, cost from the model card's pricing), the Files-Touched ledger, plus
-`file_locks` and `graph_nodes` / `graph_edges` tables for the context plane. Query it
+read hit/miss, cost from the model card's pricing), and the Files-Touched ledger
+(`file_locks` and `graph_nodes` / `graph_edges` tables exist in the schema as
+reserved seams for the context plane; no shipping command writes them yet). Query it
 with any DuckDB client. **Nothing leaves your machine** — the only network traffic
 Stella produces is to the model provider you chose.
 
@@ -595,12 +599,12 @@ targets — see the architecture status note above).
 | `stella-mcp` | ✅ | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry; per-call timeouts isolate dead servers |
 | `stella-protocol` | ✅ | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports |
 | `stella-context` | ◑ | The context plane. Reflection-memory recall + embedding index are wired; the bi-temporal property graph and episodic memory are built and tested but not yet consulted at runtime |
-| `stella-graph` | 🧪 | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python). Indexed on `stella init`; runtime retrieval not yet wired |
-| `stella-pipeline` | 🧪 | The orchestration plane above the engine: triage → enhance → route → execute → verify → judge → revise |
+| `stella-graph` | ◑ | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python/SQL). Indexed on `stella init`; the schema gate reads it at session start, broader runtime retrieval not yet wired |
+| `stella-pipeline` | ✅ | The orchestration plane above the engine — the default `stella run` path: triage → plan (split context) → scope review → execute → verify → judge, with bounded revision (`--no-pipeline` opts out) |
 | `stella-fleet` | 🧪 | The multi-agent fleet: DAG planner + wave scheduling, git-worktree isolation per task, SQLite lineage + per-task spend ledger |
 | `stella-media` | 🧪 | Multimodal generation (image/SVG/video) behind one `MediaProvider` port — BYOK, artifact discipline, cost-gated |
 | `stella-tui` | 🧪 | Event-log REPL — a pure `SessionModel` fold + a thin crossterm shell (renders deterministically from events) |
-| `ocp-types` · `ocp-host` · `ocp-conformance` | ✅ | Open Context Protocol — wire types (zero deps beyond `serde`), host runtime (discover/negotiate/route/gate), and the public conformance suite |
+| `ocp-types` · `ocp-host` · `ocp-conformance` | ◑ | Open Context Protocol — wire types (zero deps beyond `serde`, in the binary), host runtime (discover/negotiate/route/gate), and the public conformance suite; only `ocp-types` is wired into the shipping CLI today |
 
 ## Development
 
@@ -610,6 +614,26 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p stella-cli -- models
 ```
+
+### Dev mode — test a checkout from any workspace
+
+To try your working copy against real projects *before* baking a release,
+install it as `stella-dev` — it lives side by side with the released
+`stella` and never shadows it:
+
+```bash
+scripts/dev.sh install        # build (release) + link ~/.local/bin/stella-dev
+cd ~/any/other/repo
+stella-dev                    # the tabbed Command Deck, running your checkout
+stella-dev version            # e.g. 0.1.16-dev.3f2c9aa+dirty — sha of the build
+```
+
+The link points into this checkout's `target/`, so iterating is just a
+rebuild — `scripts/dev.sh build` (or plain `cargo build --release -p
+stella-cli`) and every open workspace immediately runs the fresh binary.
+`--debug` builds the debug profile for faster compiles;
+`scripts/dev.sh status` shows what both binaries resolve to, and
+`scripts/dev.sh uninstall` removes the link.
 
 <div align="center">
 

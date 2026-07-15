@@ -115,6 +115,12 @@ pub enum Inbound {
     Event { agent: AgentId, event: AgentEvent },
     /// A supervisor lifecycle transition not carried by the event stream.
     Status { agent: AgentId, status: AgentStatus },
+    /// The dispatcher took the oldest queued prompt and handed it to an
+    /// agent. The deck's [`PromptQueue`](crate::deck::PromptQueue) is FIFO on
+    /// both sides of the channel, so this pops the front entry — the status
+    /// bar's "queued" count goes down the moment work actually starts, and a
+    /// trace row records which agent picked the prompt up.
+    PromptStarted { agent: AgentId, text: String },
 }
 
 /// What the deck sends back to the caller / engine. The single-session
@@ -127,6 +133,13 @@ pub enum WorkspaceInput {
     /// Queue a brand-new prompt without blocking on any busy agent — the
     /// router picks the model/agent. The deck never gates input on agent state.
     Enqueue { text: String },
+    /// Remove one not-yet-dispatched prompt from the queue (0 = oldest). The
+    /// deck's queue editor sends this for `ctrl+x` delete and for pulling a
+    /// prompt back into the composer to edit it.
+    QueueRemove { index: usize },
+    /// Drop every not-yet-dispatched prompt (the deck confirms with a second
+    /// `ctrl+d` before sending this).
+    QueueClear,
     /// Pause / resume / stop / restart a specific agent.
     Control {
         agent: AgentId,
