@@ -127,6 +127,13 @@ pub enum WorkspaceInput {
     /// Queue a brand-new prompt without blocking on any busy agent — the
     /// router picks the model/agent. The deck never gates input on agent state.
     Enqueue { text: String },
+    /// Remove one not-yet-dispatched prompt from the queue (0 = oldest). The
+    /// deck's queue editor sends this for `ctrl+x` delete and for pulling a
+    /// prompt back into the composer to edit it.
+    QueueRemove { index: usize },
+    /// Drop every not-yet-dispatched prompt (the deck confirms with a second
+    /// `ctrl+d` before sending this).
+    QueueClear,
     /// Pause / resume / stop / restart a specific agent.
     Control {
         agent: AgentId,
