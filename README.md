@@ -288,12 +288,15 @@ flowchart TD
 > crates that aren't wired into the CLI yet — they're the next layers, and some
 > of the best places to contribute:
 >
+> - **`stella-pipeline`** — the triage → enhance → route → execute → verify →
+>   judge → revise orchestration plane (the CLI currently drives the engine directly).
 > - **`stella-fleet`** — multi-agent fan-out: DAG planner, worktree isolation,
 >   lineage + spend ledger.
 > - **`stella-tui`** — a pure-fold ratatui REPL (HUD, panels, diff viewer). The
 >   shipping shell today is `stella-cli`'s simpler line REPL.
 > - **`stella-media`** — multimodal generation behind a `MediaProvider` port.
 > - **`stella-graph` retrieval & the fuller context plane** — the code graph is
+>   indexed on `stella init` but not yet queried at runtime; bi-temporal facts and
 >   indexed on `stella init` and feeds the schema conflict gate at session start,
 >   but broader runtime retrieval is not yet queried; bi-temporal facts and
 >   episodic memory are implemented and tested but the CLI currently uses only the
@@ -512,6 +515,9 @@ stella stats     # cost, tokens, and $/resolved task per provider/model from
 ### Global flags
 
 `--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
+`--output-format text|json|stream-json` (all also as `STELLA_*` env vars). The
+`json` / `stream-json` formats are for headless one-shot `stella run`; the
+interactive `chat` / `goal` / `monitor` modes always render human-readable output.
 `--output-format text|json|stream-json` (also as `STELLA_MODEL`,
 `STELLA_BASE_URL`, `STELLA_BUDGET`, and `STELLA_OUTPUT_FORMAT`; API keys come
 from provider-specific env vars or `~/.config/stella/credentials.toml`). The
@@ -599,6 +605,12 @@ targets — see the architecture status note above).
 | `stella-mcp` | ✅ | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry; per-call timeouts isolate dead servers |
 | `stella-protocol` | ✅ | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports |
 | `stella-context` | ◑ | The context plane. Reflection-memory recall + embedding index are wired; the bi-temporal property graph and episodic memory are built and tested but not yet consulted at runtime |
+| `stella-graph` | 🧪 | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python). Indexed on `stella init`; runtime retrieval not yet wired |
+| `stella-pipeline` | 🧪 | The orchestration plane above the engine: triage → enhance → route → execute → verify → judge → revise |
+| `stella-fleet` | 🧪 | The multi-agent fleet: DAG planner + wave scheduling, git-worktree isolation per task, SQLite lineage + per-task spend ledger |
+| `stella-media` | 🧪 | Multimodal generation (image/SVG/video) behind one `MediaProvider` port — BYOK, artifact discipline, cost-gated |
+| `stella-tui` | 🧪 | Event-log REPL — a pure `SessionModel` fold + a thin crossterm shell (renders deterministically from events) |
+| `ocp-types` · `ocp-host` · `ocp-conformance` | ✅ | Open Context Protocol — wire types (zero deps beyond `serde`), host runtime (discover/negotiate/route/gate), and the public conformance suite |
 | `stella-graph` | ◑ | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python/SQL). Indexed on `stella init`; the schema gate reads it at session start, broader runtime retrieval not yet wired |
 | `stella-pipeline` | ✅ | The orchestration plane above the engine — the default `stella run` path: triage → plan (split context) → scope review → execute → verify → judge, with bounded revision (`--no-pipeline` opts out) |
 | `stella-fleet` | 🧪 | The multi-agent fleet: DAG planner + wave scheduling, git-worktree isolation per task, SQLite lineage + per-task spend ledger |
@@ -692,6 +704,14 @@ platform attached. Want a terminal agent grounded in your org's graph? Use `oxag
 Want a fast, self-contained agent in any repo? Use Stella.
 
 ## Contributing & community
+
+```text
+   ·  .  ✦   ·   stella is built in the open — come build her with us   ·   ✦  .  ·
+```
+
+Stella is young, ambitious, and genuinely open — MIT OR Apache-2.0, DCO not CLA,
+no corporate gatekeeping. Every kind of contribution moves her forward:
+
 
 ```text
    ·  .  ✦   ·   stella is built in the open — come build her with us   ·   ✦  .  ·
