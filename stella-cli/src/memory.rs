@@ -55,10 +55,13 @@ pub struct ReflectionLesson {
     pub occurred_at: u64,
 }
 
-/// Session-scoped memory state: the context store, the domain taxonomy,
-/// and the skills auto-creation accounting.
+/// Session-scoped memory state: the context store, the OCP host that
+/// routes every recall (workspace memory + code graph as in-process OCP
+/// providers — see `crate::ocp`), the domain taxonomy, and the skills
+/// auto-creation accounting.
 pub struct SessionMemory {
-    store: ContextStore,
+    store: std::sync::Arc<ContextStore>,
+    host: ocp_host::Host,
     domains: Domains,
     workspace_root: PathBuf,
     skills_created: usize,
@@ -118,8 +121,15 @@ impl SessionMemory {
                     .ok()
                     .flatten()
                     .unwrap_or_default();
+                let store = std::sync::Arc::new(store);
+                let host = crate::ocp::session_host(
+                    store.clone(),
+                    domains.names(),
+                    workspace_root.to_path_buf(),
+                );
                 Some(Self {
                     store,
+                    host,
                     domains,
                     workspace_root: workspace_root.to_path_buf(),
                     skills_created: 0,
@@ -185,23 +195,19 @@ impl SessionMemory {
             max_tokens: 1200,
             as_of: None,
         };
-        if let Ok(result) = self
-            .store
-            .recall_scoped(&query, &self.domains.names())
-            .await
-        {
-            let lines: Vec<String> = result
-                .frames
-                .iter()
-                .filter_map(|f| {
-                    f.citation_label
-                        .as_deref()
-                        .map(|label| format!("- {} — {}", label, f.content.trim()))
-                })
-                .collect();
-            if !lines.is_empty() {
-                sections.push(format!("Relevant memories:\n{}", lines.join("\n")));
-            }
+        // Routed through the session's OCP host: workspace memory + the
+        // code graph answer concurrently, isolated and budget-audited.
+        let frames = crate::ocp::recall_via_host(&self.host, &query).await;
+        let lines: Vec<String> = frames
+            .iter()
+            .filter_map(|f| {
+                f.citation_label
+                    .as_deref()
+                    .map(|label| format!("- {} — {}", label, f.content.trim()))
+            })
+            .collect();
+        if !lines.is_empty() {
+            sections.push(format!("Relevant context:\n{}", lines.join("\n")));
         }
 
         let all_skills = self.load_skills();
@@ -437,15 +443,8 @@ impl ContextRecallPort for SessionMemory {
             max_tokens: 1200,
             as_of: None,
         };
-        let Ok(result) = self
-            .store
-            .recall_scoped(&query, &self.domains.names())
+        crate::ocp::recall_via_host(&self.host, &query)
             .await
-        else {
-            return Vec::new();
-        };
-        result
-            .frames
             .into_iter()
             .filter_map(|f| {
                 let citation_label = f.citation_label.clone()?;

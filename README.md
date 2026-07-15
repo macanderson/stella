@@ -137,6 +137,11 @@ pip install swebench
 python -m swebench.harness.run_evaluation \
   --predictions_path bench/results/<run-id>/predictions.jsonl \
   --run_id <run-id> --dataset_name princeton-nlp/SWE-bench_Verified
+
+# 5 · submit — packages the receipts (sha-256 over predictions) and drafts
+#     the submission issue in the required title format
+stella arena submit bench/results/<run-id> --matchup "stella vs claude-code"
+stella arena leaderboard          # the standings, from bench/leaderboard.json
 ```
 
 The full harness docs live in [`bench/`](bench/README.md), and a
@@ -280,25 +285,17 @@ flowchart TD
 > `stella init` index and the session-start schema gate), the context plane
 > records an **episode** for every working turn and bi-temporal `covers_path`
 > **facts** at `init` alongside reflection recall, and `stella-media` exposes
-> BYOK image generation as the `generate_image` tool. The remaining partials —
-> and the best places to contribute — are:
+> BYOK image generation as the `generate_image` tool. Lifecycle **hooks**
+> from `settings.json` gate every tool call (`PreToolUse` can block), recall
+> routes through the **`ocp-host` runtime** (see the OCP note below), and
+> `stella arena` turns the README's challenge into a command. The remaining
+> partial — and a great place to contribute — is:
 >
 > - **`stella-media`'s SVG + video surfaces** — library-complete (the SVG
 >   sanitize/repair pipeline, cost-gated async video jobs) but not yet exposed
 >   as tools or commands.
-> - **OCP host routing** — the in-tree context sources still share `ocp-types`
->   values in-process rather than routing through `ocp-host` (see the OCP note
->   below).
-> - **`stella-fleet`** — multi-agent fan-out: DAG planner, worktree isolation,
->   lineage + spend ledger.
-> - **`stella-media`** — multimodal generation behind a `MediaProvider` port.
-> - **`stella-graph` retrieval & the fuller context plane** — the code graph is
->   indexed on `stella init` and feeds the schema conflict gate at session start,
->   but broader runtime retrieval is not yet queried; bi-temporal facts and
->   episodic memory are implemented and tested but the CLI currently uses only the
->   reflection-memory recall path.
 >
-> Both are tracked in the issues — grab one.
+> It's tracked in the issues — grab it.
 
 > **The Open Context Protocol (OCP).** Retrieval in Stella is designed as an open,
 > versioned wire protocol (`ocp/1.0-draft`): the **`ocp-types` crate** (zero
@@ -309,11 +306,13 @@ flowchart TD
 > with a scrubbed environment (no credentials inherited via env vars), each call is
 > timeout-bounded and crash-isolated, an HTTP transport is always treated as egress
 > and consent-gated, and frame content is transported as untrusted data, never
-> executed. (Filesystem confinement of stdio providers is future work, and the
-> in-tree context sources currently share `ocp-types` values in-process rather than
-> routing through the host — the protocol and its conformance harness are the shipped
-> parts.) It's how "code is a graph, not text" (Field Manual Part 4) becomes a
-> standard instead of a feature.
+> executed. The host is also the CLI's own runtime path now: every recall fans
+> out through `Host::query_all` to the in-tree sources — `workspace-memory`
+> (the bi-temporal store) and `code-graph` (the tree-sitter index) — as
+> in-process OCP providers, with the same timeouts, isolation, and
+> budget-honesty audit an external provider gets. (Filesystem confinement of
+> stdio providers is future work.) It's how "code is a graph, not text" (Field
+> Manual Part 4) becomes a standard instead of a feature.
 
 <div align="center">
 
@@ -576,6 +575,36 @@ or have `gh auth login` done for GitHub Issues. With neither, they aren't regist
 no dead schema, no wasted tokens. The same discipline gates `code_graph` (needs the
 `stella init` index) and `generate_image` (needs `ZAI_API_KEY` or `OPENAI_API_KEY`).
 
+## Lifecycle hooks — your own gates around the agent
+
+Declare shell-command hooks in any `settings.json` scope and they fire on
+agent lifecycle events, receiving the event payload as JSON on stdin:
+
+```jsonc
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "command": "echo \"on-call: $(cat .oncall 2>/dev/null)\"" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "bash", "hooks": [{ "command": "./scripts/guard-bash.sh", "timeoutMs": 5000 }] }
+    ]
+  }
+}
+```
+
+- **`SessionStart`** — stdout is appended to the system prompt as session
+  context (once per session, so the prompt stays byte-stable and cached).
+- **`PreToolUse`** — a non-zero exit **blocks the tool**; the model sees the
+  hook's message instead. `matcher` is a glob over the tool name.
+- **`PostToolUse`** — observation only, never blocks.
+
+Scopes **concatenate** (any scope can add a gate; none can remove
+another's). Hooks from a repo's own `.stella/settings.json` are a trust
+boundary — they load only with `STELLA_PROJECT_HOOKS=1`, so cloning an
+untrusted repo never auto-executes its commands. User and org-managed
+hooks always load.
+
 ## Self-improving & prompt-cache-native
 
 Lessons saved with `save_memory` (or written by you as markdown in `.stella/memories/`)
@@ -586,8 +615,10 @@ considers them at prompt-cache-hit prices (~0.1× input). New memories take effe
 Alongside those baked lessons, every turn that does real work is recorded as an
 **episode** (summary, files touched, outcome, time window) in `.stella/context.db`,
 and `stella init` writes the domain taxonomy as bi-temporal **facts** — corrections
-supersede, never delete, so "what did we believe then" still answers. Both feed the
-per-turn recall block by similarity + domain overlap + recency.
+supersede, never delete, so "what did we believe then" still answers. Every recall
+fans out through the **OCP host** to the memory store *and* the code graph, fused
+by score under one frame/token budget — the graph's symbols join "what do we
+remember" at prompt time.
 
 ## Local telemetry — DuckDB, on your disk
 
@@ -643,7 +674,7 @@ targets — see the architecture status note above).
 | `stella-fleet` | 🧪 | The multi-agent fleet: DAG planner + wave scheduling, git-worktree isolation per task, SQLite lineage + per-task spend ledger |
 | `stella-media` | 🧪 | Multimodal generation (image/SVG/video) behind one `MediaProvider` port — BYOK, artifact discipline, cost-gated |
 | `stella-tui` | ✅ | The Command Deck — a pure event-fold core (`SessionModel`/`WorkspaceModel`) + thin crossterm shell; the default `stella chat` surface on a TTY (`--plain` opts out) |
-| `ocp-types` · `ocp-host` · `ocp-conformance` | ◑ | Open Context Protocol — wire types (zero deps beyond `serde`, in the binary), host runtime (discover/negotiate/route/gate), and the public conformance suite; only `ocp-types` is wired into the shipping CLI today |
+| `ocp-types` · `ocp-host` · `ocp-conformance` | ✅ | Open Context Protocol — wire types, host runtime, and the public conformance suite; the CLI's recall now routes through `ocp-host` (`workspace-memory` + `code-graph` as in-process providers), and any external provider proves itself against the suite |
 
 ## Development
 

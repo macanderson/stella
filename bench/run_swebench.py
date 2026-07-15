@@ -610,6 +610,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         # The Arena results track: off-grid is auto-stamped for local/<model>
         # runs; heavyweight/featherweight are explicit claims (--division).
         "division": division,
+        # The per-task cap — `stella arena submit` stamps it into the
+        # submission title ("… @ $<budget>"), so the receipt names the cap.
+        "budget_usd": args.budget,
         "base_url": args.base_url,
         "dataset": args.instances or f"{args.dataset_name}:{args.split}",
         "total_selected": total,

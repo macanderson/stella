@@ -1,0 +1,5 @@
+{
+  "_comment": "The Arena registry. Starts empty ON PURPOSE — every entry lands here by PR after a community-submitted, officially-scored, fully-receipted run (see README → The Arena). `stella arena leaderboard` renders this file; `stella arena submit <run-dir>` packages a submission.",
+  "divisions": ["heavyweight", "featherweight", "off-grid", "cross-harness"],
+  "entries": []
+}

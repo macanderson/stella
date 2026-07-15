@@ -18,12 +18,14 @@
 //!   human-readable output).
 
 mod agent;
+mod arena;
 mod command_deck;
 mod config;
 mod domains;
 mod fleet_cmd;
 mod interactive;
 mod memory;
+mod ocp;
 mod settings;
 mod stats;
 mod tui;
@@ -143,6 +145,13 @@ enum Command {
         validate: Option<Option<std::path::PathBuf>>,
     },
 
+    /// The Arena (see README): view standings, package a receipted
+    /// SWE-bench submission. Offline-first: no API key needed.
+    Arena {
+        #[command(subcommand)]
+        cmd: ArenaCmd,
+    },
+
     /// Fan tasks out to a fleet of worker agents — one git worktree per
     /// isolated task, wave-scheduled by dependency, every attempt, commit,
     /// and dollar recorded in .stella/fleet.db. Worktrees and their
@@ -227,6 +236,33 @@ fn version_static() -> &'static str {
 fn use_deck(plain_flag: bool) -> bool {
     let plain_env = std::env::var_os("STELLA_PLAIN").is_some_and(|v| !v.is_empty() && v != "0");
     !plain_flag && !plain_env && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+/// `stella arena` subcommands (issue #16).
+#[derive(Subcommand)]
+enum ArenaCmd {
+    /// Render current standings from the registry (bench/leaderboard.json,
+    /// local checkout or fetched via `gh`)
+    Leaderboard {
+        /// Filter to one division: heavyweight, featherweight, off-grid,
+        /// cross-harness
+        #[arg(long)]
+        division: Option<String>,
+    },
+    /// Package an officially-scored run (summary.json + predictions.jsonl)
+    /// into a receipted submission and draft the submission issue
+    Submit {
+        /// A bench/results/<run-id> directory produced by run_swebench.py
+        run_dir: std::path::PathBuf,
+
+        /// "<agent A> vs <agent B>" for the submission title
+        #[arg(long)]
+        matchup: Option<String>,
+
+        /// Write submission.json and print the issue instead of opening it
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// The five code-graph queries, mirroring the `code_graph` agent tool's ops
@@ -318,6 +354,17 @@ fn run(cli: Cli) -> Result<(), String> {
         Some(Command::Graph { op, target }) => {
             // Reads the local index only — works with zero API keys.
             return run_graph(*op, target);
+        }
+        Some(Command::Arena { cmd }) => {
+            // Local files + optional `gh` — works with zero API keys.
+            return match cmd {
+                ArenaCmd::Leaderboard { division } => arena::run_leaderboard(division.as_deref()),
+                ArenaCmd::Submit {
+                    run_dir,
+                    matchup,
+                    dry_run,
+                } => arena::run_submit(run_dir, matchup.as_deref(), *dry_run),
+            };
         }
         Some(Command::Stats { format, provider }) => {
             // Reads local telemetry only — works with zero API keys.
@@ -416,6 +463,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Init
         | Command::Tools { .. }
         | Command::Graph { .. }
+        | Command::Arena { .. }
         | Command::Stats { .. }
         | Command::Models
         | Command::Version => {
