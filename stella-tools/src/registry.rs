@@ -65,11 +65,23 @@ pub struct SchemaIndex {
 
 impl ToolRegistry {
     /// Construct with auto-detected optional backends (issue tracker, media
-    /// provider).
+    /// provider). Prefer [`ToolRegistry::new_detected`] from async contexts —
+    /// this synchronous form probes `gh` inline, blocking the calling thread.
     pub fn new(root: PathBuf) -> Self {
         Self::with_backends(
             root,
             crate::issues::detect_issue_backend(),
+            crate::media::detect_media_backend(),
+        )
+    }
+
+    /// [`ToolRegistry::new`] with the process-spawning issue-backend probe
+    /// routed through the blocking pool (#64) — the constructor every async
+    /// session driver uses.
+    pub async fn new_detected(root: PathBuf) -> Self {
+        Self::with_backends(
+            root,
+            crate::issues::detect_issue_backend_async().await,
             crate::media::detect_media_backend(),
         )
     }

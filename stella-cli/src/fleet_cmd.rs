@@ -20,13 +20,14 @@ use std::path::Path;
 
 use colored::Colorize;
 use stella_core::ports::SystemClock;
-use stella_core::{Engine, EngineConfig, TurnOutcome};
+use stella_core::{Engine, TurnOutcome};
 use stella_fleet::{
     CommitRecord, Fleet, FleetConfig, FleetRunReport, FleetWorker, Ledger, Plan, SystemGitCli,
     Task, WorkerOutcome, WorktreeManager,
 };
 use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_tools::ToolRegistry;
+use stella_tools::hook_runner::ShellHookRunner;
 use tokio::sync::mpsc;
 
 use crate::agent;
@@ -210,10 +211,14 @@ async fn run_task(
     let mut cfg = cfg.clone();
     cfg.workspace_root = root.to_path_buf();
     let provider = agent::build_provider(&cfg)?;
-    let registry = ToolRegistry::new(root.to_path_buf());
+    let registry = ToolRegistry::new_detected(root.to_path_buf()).await;
 
     let mut messages = vec![
-        CompletionMessage::system(agent::build_system_prompt(root)),
+        CompletionMessage::system(
+            // Each worker is its own session in its own workspace, so its
+            // SessionStart hooks fire here, in the worktree.
+            agent::with_session_hook_context(agent::build_system_prompt(root), &cfg).await,
+        ),
         CompletionMessage::user(&task.prompt),
     ];
     // Each child runs under its own enforced guard at the full cap; the
@@ -224,7 +229,11 @@ async fn run_task(
     let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
     let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let outcome = {
-        let engine = Engine::new(&*provider, &registry, EngineConfig::default());
+        let hook_runner = ShellHookRunner;
+        let mut engine = Engine::new(&*provider, &registry, agent::engine_config_for(&cfg));
+        if let Some(hooks) = &cfg.hooks {
+            engine = engine.with_hooks(hooks, &hook_runner);
+        }
         engine.run_turn(&mut messages, &mut budget, &tx).await
     };
     drop(tx);

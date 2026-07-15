@@ -25,13 +25,31 @@ pub enum IssueBackend {
     Linear { api_key: String },
 }
 
+/// [`detect_issue_backend`] off the async executor: the `gh auth status`
+/// probe spawns a process (tens to hundreds of ms), which must not block a
+/// runtime worker thread (#64). The env-var fast path never reaches the
+/// blocking pool.
+pub async fn detect_issue_backend_async() -> Option<IssueBackend> {
+    if let Some(linear) = detect_linear_backend() {
+        return Some(linear);
+    }
+    tokio::task::spawn_blocking(detect_issue_backend)
+        .await
+        .unwrap_or(None)
+}
+
+fn detect_linear_backend() -> Option<IssueBackend> {
+    match std::env::var("LINEAR_API_KEY") {
+        Ok(key) if !key.trim().is_empty() => Some(IssueBackend::Linear { api_key: key }),
+        _ => None,
+    }
+}
+
 /// Detect the configured backend at startup: `LINEAR_API_KEY` beats an
 /// authenticated `gh`; neither → `None` and the tools stay unregistered.
 pub fn detect_issue_backend() -> Option<IssueBackend> {
-    if let Ok(key) = std::env::var("LINEAR_API_KEY")
-        && !key.trim().is_empty()
-    {
-        return Some(IssueBackend::Linear { api_key: key });
+    if let Some(linear) = detect_linear_backend() {
+        return Some(linear);
     }
     let gh_authed = std::process::Command::new("gh")
         .args(["auth", "status"])

@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use stella_core::hooks::Hooks;
 
 use crate::config::Dialect;
 
@@ -77,21 +78,68 @@ impl ProviderSettings {
 pub struct Settings {
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderSettings>,
+    /// Lifecycle hooks (`stella_core::hooks`): `SessionStart` context,
+    /// `PreToolUse` blocking, `PostToolUse` observation. Scopes CONCATENATE
+    /// per event (any scope can add a gate, none can remove another's) —
+    /// see [`Settings::load`] for the project-scope trust boundary.
+    #[serde(default)]
+    pub hooks: Option<Hooks>,
+}
+
+/// Append `extra`'s matchers onto `base`, per event. `None + None` stays
+/// `None` so a hook-free session carries no hooks handle at all.
+fn concat_hooks(base: &mut Option<Hooks>, extra: &Hooks) {
+    let target = base.get_or_insert_with(Hooks::default);
+    let join = |dst: &mut Option<Vec<_>>, src: &Option<Vec<_>>| {
+        if let Some(src) = src {
+            dst.get_or_insert_with(Vec::new).extend(src.iter().cloned());
+        }
+    };
+    join(&mut target.session_start, &extra.session_start);
+    join(&mut target.pre_tool_use, &extra.pre_tool_use);
+    join(&mut target.post_tool_use, &extra.post_tool_use);
 }
 
 impl Settings {
     /// Load and merge the standard scope chain for `workspace_root`.
     /// Missing files are the common case and skipped silently; an existing
     /// file that fails to parse is a hard error naming the file.
+    ///
+    /// **Project-scope hooks are a trust boundary.** Provider entries from a
+    /// repo's `.stella/settings.json` only shape where requests go, but a
+    /// hook is an arbitrary shell command that runs automatically — a cloned
+    /// repo must not execute code just because you opened a session in it.
+    /// Hooks from the user and org-managed scopes always load; hooks from
+    /// the project scope load only with `STELLA_PROJECT_HOOKS=1` (a one-line
+    /// notice names what was skipped).
     pub fn load(workspace_root: &Path) -> Result<Self, String> {
-        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut trusted: Vec<PathBuf> = Vec::new();
         // Ascending precedence: user, org-managed, project.
         if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-            paths.push(home.join(".config").join("stella").join("settings.json"));
+            trusted.push(home.join(".config").join("stella").join("settings.json"));
         }
-        paths.push(managed_settings_path());
-        paths.push(workspace_root.join(".stella").join("settings.json"));
-        Self::load_from(&paths)
+        trusted.push(managed_settings_path());
+        let project = workspace_root.join(".stella").join("settings.json");
+
+        let mut all = trusted.clone();
+        all.push(project.clone());
+        let mut merged = Self::load_from(&all)?;
+
+        let project_hooks_trusted =
+            std::env::var_os("STELLA_PROJECT_HOOKS").is_some_and(|v| !v.is_empty() && v != "0");
+        if !project_hooks_trusted {
+            let project_only = Self::load_from(std::slice::from_ref(&project))?;
+            if project_only.hooks.is_some() {
+                // Rebuild hooks from the trusted scopes alone.
+                merged.hooks = Self::load_from(&trusted)?.hooks;
+                eprintln!(
+                    "  ! project hooks in {} were NOT loaded — set STELLA_PROJECT_HOOKS=1 \
+                     to trust this repo's hooks",
+                    project.display()
+                );
+            }
+        }
+        Ok(merged)
     }
 
     /// Merge the files at `paths`, later paths taking precedence. Split out
@@ -122,6 +170,9 @@ impl Settings {
                     .entry(id.clone())
                     .or_default()
                     .overlay(entry);
+            }
+            if let Some(hooks) = &scope.hooks {
+                concat_hooks(&mut merged.hooks, hooks);
             }
         }
         Ok(merged)
@@ -189,6 +240,42 @@ mod tests {
         // …and user-scope fields it left unset survive.
         assert_eq!(entry.api_key_env.as_deref(), Some("TOGETHER_KEY"));
         assert_eq!(entry.default_model.as_deref(), Some("user-model"));
+    }
+
+    #[test]
+    fn hooks_concatenate_across_scopes_instead_of_replacing() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = write(
+            dir.path(),
+            "user.json",
+            r#"{"hooks": {"PreToolUse": [
+                {"matcher": "bash", "hooks": [{"command": "check-bash"}]}
+            ]}}"#,
+        );
+        let project = write(
+            dir.path(),
+            "project.json",
+            r#"{"hooks": {"PreToolUse": [
+                {"matcher": "write_file", "hooks": [{"command": "check-writes"}]}
+            ], "SessionStart": [
+                {"hooks": [{"command": "echo ctx"}]}
+            ]}}"#,
+        );
+        let merged = Settings::load_from(&[user, project]).unwrap();
+        let hooks = merged.hooks.expect("hooks merged");
+        let pre = hooks.pre_tool_use.expect("pre hooks");
+        assert_eq!(pre.len(), 2, "user gate survives the project's addition");
+        assert_eq!(pre[0].hooks[0].command, "check-bash");
+        assert_eq!(pre[1].hooks[0].command, "check-writes");
+        assert_eq!(hooks.session_start.expect("session hooks").len(), 1);
+    }
+
+    #[test]
+    fn settings_without_hooks_stay_hook_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = write(dir.path(), "user.json", r#"{"providers": {}}"#);
+        let merged = Settings::load_from(&[user]).unwrap();
+        assert!(merged.hooks.is_none(), "no hooks handle at all");
     }
 
     #[test]

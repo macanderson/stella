@@ -360,6 +360,10 @@ pub struct Config {
     /// `--base-url`: required for the `local` provider (it IS the server
     /// address), an optional proxy/override for every other provider.
     pub base_url_override: Option<String>,
+    /// Lifecycle hooks merged from the settings scope chain (see
+    /// `Settings::load` for the project-scope trust boundary). `None` means
+    /// no hooks configured anywhere — the engine runs the pre-hooks path.
+    pub hooks: Option<stella_core::hooks::Hooks>,
 }
 
 impl Config {
@@ -409,6 +413,27 @@ impl Config {
     /// seam tests use to exercise provider resolution without touching
     /// `$HOME`, `/etc`, or the real scope chain.
     fn load_with_settings(
+        model_override: Option<&str>,
+        api_key_override: Option<&str>,
+        base_url_override: Option<&str>,
+        settings: &crate::settings::Settings,
+        workspace_root: std::path::PathBuf,
+    ) -> Result<Self, String> {
+        let mut cfg = Self::resolve_provider_config(
+            model_override,
+            api_key_override,
+            base_url_override,
+            settings,
+            workspace_root,
+        )?;
+        cfg.hooks = settings.hooks.clone();
+        Ok(cfg)
+    }
+
+    /// The provider-resolution body of [`Config::load_with_settings`] —
+    /// everything except the hooks stamp, so its many early returns stay
+    /// exactly as they were.
+    fn resolve_provider_config(
         model_override: Option<&str>,
         api_key_override: Option<&str>,
         base_url_override: Option<&str>,
@@ -494,6 +519,7 @@ impl Config {
                     api_key: ApiKey::new(api_key),
                     workspace_root,
                     base_url_override: Some(base_url),
+                    hooks: None,
                 });
             }
 
@@ -678,6 +704,9 @@ impl Config {
             api_key: key,
             workspace_root: workspace_root.to_path_buf(),
             base_url_override: base_url_override.map(str::to_string),
+            // Hooks ride the settings chain, not credential resolution —
+            // `load_with_settings` stamps them after the provider resolves.
+            hooks: None,
         })
     }
 
@@ -1038,6 +1067,7 @@ mod tests {
             api_key: ApiKey::new(secret),
             workspace_root: std::path::PathBuf::from("/tmp/ws"),
             base_url_override: None,
+            hooks: None,
         };
         let dbg = format!("{cfg:?}");
         assert!(!dbg.contains(secret), "Config Debug leaked the key: {dbg}");

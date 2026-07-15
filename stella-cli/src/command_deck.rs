@@ -45,12 +45,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::ports::ToolExecutor;
-use stella_core::{BudgetGuard, CalibrationMap, Engine, EngineConfig, TurnOutcome};
+use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
 use stella_model::provider::Provider;
 use stella_protocol::{AgentEvent, CompletionMessage, FileChangeKind, ToolOutput, ToolSchema};
 use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{CustomTool, CustomToolSet};
+use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
     AgentMeta, AgentStatus, DeckOptions, Inbound, UserInput, WorkspaceInput, run_deck,
 };
@@ -113,19 +114,22 @@ enum TurnEnd {
 pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result<(), String> {
     // ── Session assembly (still on the normal screen — prints are fine) ────
     let provider = agent::build_provider(cfg)?;
-    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    let registry: Arc<ToolRegistry> =
+        Arc::new(ToolRegistry::new_detected(cfg.workspace_root.clone()).await);
     agent::populate_schema_index(&registry, &cfg.workspace_root);
     let mcp = agent::connect_mcp(cfg, registry.clone(), true).await;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
     };
-    let custom_tools = agent::discover_custom_tools(cfg, true);
+    let custom_tools = agent::discover_custom_tools(cfg, true).await;
     let mut budget = agent::build_budget_guard(budget_limit);
     let store = agent::open_store(&cfg.workspace_root);
     let calibration = agent::seed_calibration(&store, cfg);
 
-    let system_prompt = agent::build_system_prompt(&cfg.workspace_root);
+    let system_prompt =
+        agent::with_session_hook_context(agent::build_system_prompt(&cfg.workspace_root), cfg)
+            .await;
     let mut messages = vec![CompletionMessage::system(system_prompt)];
     // `warn: false`: past this point diagnostics would land on the alternate
     // screen; a memory-less session degrades silently here.
@@ -376,8 +380,12 @@ async fn run_lead_turn(
             events: tx.clone(),
             root: cfg.workspace_root.clone(),
         };
-        let engine =
-            Engine::new(provider, &tapped, EngineConfig::default()).with_calibration(calibration);
+        let hook_runner = ShellHookRunner;
+        let mut engine = Engine::new(provider, &tapped, agent::engine_config_for(cfg))
+            .with_calibration(calibration);
+        if let Some(hooks) = &cfg.hooks {
+            engine = engine.with_hooks(hooks, &hook_runner);
+        }
         engine.run_turn(messages, budget, &tx).await
     };
     drop(tx);

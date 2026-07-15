@@ -27,29 +27,38 @@ enum Toolchain {
     Make,
 }
 
-fn detect(root: &std::path::Path) -> Option<Toolchain> {
-    if root.join("Cargo.toml").exists() {
+/// Async so the marker-file stats and the `package.json` read never block a
+/// runtime worker thread (#64) — this runs inside the tools' async
+/// `execute()` methods.
+async fn detect(root: &std::path::Path) -> Option<Toolchain> {
+    let exists = |name: &'static str| async move {
+        tokio::fs::try_exists(root.join(name))
+            .await
+            .unwrap_or(false)
+    };
+    if exists("Cargo.toml").await {
         return Some(Toolchain::Cargo);
     }
-    if root.join("package.json").exists() {
-        let pm = if root.join("pnpm-lock.yaml").exists() {
+    if exists("package.json").await {
+        let pm = if exists("pnpm-lock.yaml").await {
             "pnpm"
-        } else if root.join("yarn.lock").exists() {
+        } else if exists("yarn.lock").await {
             "yarn"
         } else {
             "npm"
         };
-        let scripts = std::fs::read_to_string(root.join("package.json"))
+        let scripts = tokio::fs::read_to_string(root.join("package.json"))
+            .await
             .ok()
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
             .and_then(|pkg| pkg.get("scripts").and_then(|s| s.as_object()).cloned())
             .unwrap_or_default();
         return Some(Toolchain::Node { pm, scripts });
     }
-    if root.join("go.mod").exists() {
+    if exists("go.mod").await {
         return Some(Toolchain::Go);
     }
-    if root.join("Makefile").exists() {
+    if exists("Makefile").await {
         return Some(Toolchain::Make);
     }
     None
@@ -104,7 +113,7 @@ impl Tool for BuildProject {
         if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
             return run_and_report(command, root, timeout_secs).await;
         }
-        let command = match detect(root) {
+        let command = match detect(root).await {
             Some(Toolchain::Cargo) => "cargo build --workspace".to_string(),
             Some(Toolchain::Node { pm, scripts }) => {
                 if scripts.contains_key("build") {
@@ -157,7 +166,7 @@ impl Tool for RunTests {
         let kind = input.get("kind").and_then(|v| v.as_str()).unwrap_or("all");
         let filter = input.get("filter").and_then(|v| v.as_str()).unwrap_or("");
 
-        let command = match detect(root) {
+        let command = match detect(root).await {
             Some(Toolchain::Cargo) => match kind {
                 // Unit tests live beside the code; e2e = the integration
                 // test targets under tests/.

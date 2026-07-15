@@ -16,6 +16,7 @@ pub mod exploration;
 pub mod glob;
 pub mod graph;
 pub mod grep;
+pub mod hook_runner;
 pub mod issues;
 pub mod media;
 pub mod memory;

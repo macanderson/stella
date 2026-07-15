@@ -36,6 +36,7 @@
 
 use std::time::Duration;
 
+use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::retry::{RetryPolicy, Sleeper, retry_with_backoff};
 use stella_core::router::{FallbackInfo, RouterError};
 use stella_core::{BudgetGuard, BudgetOutcome, Engine, EngineConfig, Router, TurnOutcome};
@@ -91,6 +92,11 @@ pub struct PipelinePorts<'a> {
     /// The delay port for retry backoff — the same testability seam
     /// `stella-core` uses; production passes `&TokioSleeper`, tests a no-op.
     pub sleeper: &'a dyn Sleeper,
+    /// Lifecycle hooks for the execute engine — the parsed config plus the
+    /// runner that spawns hook commands (`stella_core::hooks`). `None` runs
+    /// the exact pre-hooks pipeline; the CLI passes its settings-chain hooks
+    /// so `PreToolUse` gating also covers the default `stella run` path.
+    pub hooks: Option<(&'a Hooks, &'a dyn HookRunner)>,
 }
 
 /// Tuning for the whole staged flow.
@@ -285,6 +291,7 @@ pub struct Pipeline<'a> {
     commands: &'a dyn CommandRunner,
     approvals: &'a dyn ApprovalGate,
     sleeper: &'a dyn Sleeper,
+    hooks: Option<(&'a Hooks, &'a dyn HookRunner)>,
     events: UnboundedSender<AgentEvent>,
     config: PipelineConfig,
 }
@@ -305,6 +312,7 @@ impl<'a> Pipeline<'a> {
             commands: ports.commands,
             approvals: ports.approvals,
             sleeper: ports.sleeper,
+            hooks: ports.hooks,
             events,
             config,
         }
@@ -377,12 +385,15 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fb);
         }
         let worker_model_label = worker.model_ref.to_string();
-        let engine = Engine::with_sleeper(
+        let mut engine = Engine::with_sleeper(
             worker.provider,
             self.tools,
             self.config.engine.clone(),
             self.sleeper,
         );
+        if let Some((hooks, runner)) = self.hooks {
+            engine = engine.with_hooks(hooks, runner);
+        }
 
         let n = self.config.candidate_count();
         let base_messages = messages.clone();
@@ -1350,6 +1361,7 @@ mod tests {
                 commands: &runner,
                 approvals: &approvals,
                 sleeper: &sleeper,
+                hooks: None,
             },
             tx,
             config,
@@ -1421,6 +1433,7 @@ mod tests {
                 commands: &runner,
                 approvals: &approvals,
                 sleeper: &sleeper,
+                hooks: None,
             },
             tx,
             config,
@@ -1475,6 +1488,7 @@ mod tests {
                 commands: &runner,
                 approvals: &approvals,
                 sleeper: &sleeper,
+                hooks: None,
             },
             tx,
             PipelineConfig::default(),
@@ -1535,6 +1549,7 @@ mod tests {
                 commands: &runner,
                 approvals: &approvals,
                 sleeper: &sleeper,
+                hooks: None,
             },
             tx,
             config,
@@ -1581,6 +1596,7 @@ mod tests {
                 commands: &runner,
                 approvals: &approvals,
                 sleeper: &sleeper,
+                hooks: None,
             },
             tx,
             PipelineConfig::default(),

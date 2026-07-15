@@ -35,6 +35,7 @@ use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput}
 use stella_store::{Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool, CustomToolSet};
+use stella_tools::hook_runner::ShellHookRunner;
 use stella_tools::validate;
 use tokio::sync::mpsc;
 
@@ -183,6 +184,41 @@ Workspace memories (lessons from previous sessions — apply them):
     prompt
 }
 
+/// EngineConfig for a session: defaults, with the workspace root as the
+/// `cwd` every lifecycle-hook payload reports (`stella_core::hooks`).
+pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
+    EngineConfig {
+        cwd: cfg.workspace_root.display().to_string(),
+        ..EngineConfig::default()
+    }
+}
+
+/// Fire `SessionStart` hooks once and return their stdout — the additional
+/// session context `stella_core::hooks` documents. `None` when no hooks are
+/// configured or they printed nothing. Called once per session by each
+/// driver, never per turn.
+pub(crate) async fn session_start_hook_context(cfg: &Config) -> Option<String> {
+    let hooks = cfg.hooks.as_ref()?;
+    let outcome = stella_core::hooks::run_hooks(
+        &ShellHookRunner,
+        Some(hooks),
+        &stella_core::hooks::HookPayload::session_start(cfg.workspace_root.display().to_string()),
+    )
+    .await;
+    (!outcome.output.is_empty()).then_some(outcome.output)
+}
+
+/// Append any `SessionStart` hook context to an assembled system prompt.
+/// The result is still byte-stable for the session: hooks fire once, here,
+/// and the prompt never changes afterwards.
+pub(crate) async fn with_session_hook_context(mut system_prompt: String, cfg: &Config) -> String {
+    if let Some(context) = session_start_hook_context(cfg).await {
+        system_prompt.push_str("\n\nSession context (from SessionStart hooks):\n");
+        system_prompt.push_str(&context);
+    }
+    system_prompt
+}
+
 /// Shortcut: the raw step-loop system prompt plus workspace memories
 /// (`pub(crate)`: the Command Deck session assembles the same prompt).
 pub(crate) fn build_system_prompt(workspace_root: &std::path::Path) -> String {
@@ -222,14 +258,15 @@ async fn run_pipeline_one_shot(
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 
-    let registry: Arc<ToolRegistry> = Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+    let registry: Arc<ToolRegistry> =
+        Arc::new(ToolRegistry::new_detected(cfg.workspace_root.clone()).await);
     populate_schema_index(&registry, &cfg.workspace_root);
     let mcp = connect_mcp(cfg, registry.clone(), format == OutputFormat::Text).await;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
     };
-    let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text);
+    let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text).await;
     let store = open_store(&cfg.workspace_root);
 
     if format == OutputFormat::Text {
@@ -253,9 +290,9 @@ async fn run_pipeline_one_shot(
         model_ref: model_ref.clone(),
     };
 
-    let mut messages = vec![CompletionMessage::system(build_pipeline_system_prompt(
-        &cfg.workspace_root,
-    ))];
+    let mut messages = vec![CompletionMessage::system(
+        with_session_hook_context(build_pipeline_system_prompt(&cfg.workspace_root), cfg).await,
+    )];
     let mut memory = SessionMemory::open(&cfg.workspace_root, format == OutputFormat::Text);
     if let Some(m) = &memory {
         inject_recall_block(&mut messages, m.recall_block(prompt).await);
@@ -290,7 +327,7 @@ async fn run_pipeline_one_shot(
 
         let is_text = format == OutputFormat::Text;
         let pipeline_config = PipelineConfig {
-            engine: EngineConfig::default(),
+            engine: engine_config_for(cfg),
             headless: !is_text,
             headless_bypass_scope_review: !is_text,
             ..Default::default()
@@ -305,6 +342,7 @@ async fn run_pipeline_one_shot(
             Some(m) => m,
             None => &no_recall,
         };
+        let hook_runner = ShellHookRunner;
         let ports = PipelinePorts {
             router: &router,
             providers: &resolver,
@@ -318,6 +356,10 @@ async fn run_pipeline_one_shot(
                 &AutoApproveGate
             },
             sleeper: &TokioSleeper,
+            hooks: cfg
+                .hooks
+                .as_ref()
+                .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
         };
 
         let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
@@ -593,14 +635,14 @@ async fn run_raw_one_shot(
     // files-touched ledger is reachable after the turn — the trait object
     // hides it. It still coerces to `&dyn ToolExecutor` for the engine.
     let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(ToolRegistry::new_detected(cfg.workspace_root.clone()).await);
     populate_schema_index(&registry, &cfg.workspace_root);
     let mcp = connect_mcp(cfg, registry.clone(), format == OutputFormat::Text).await;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
     };
-    let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text);
+    let custom_tools = discover_custom_tools(cfg, format == OutputFormat::Text).await;
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
     let calibration = seed_calibration(&store, cfg);
@@ -611,7 +653,9 @@ async fn run_raw_one_shot(
     }
 
     let mut messages = vec![
-        CompletionMessage::system(build_system_prompt(&cfg.workspace_root)),
+        CompletionMessage::system(
+            with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await,
+        ),
         CompletionMessage::user(prompt),
     ];
 
@@ -686,14 +730,14 @@ pub async fn run_goal_cmd(
 ) -> Result<(), String> {
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(ToolRegistry::new_detected(cfg.workspace_root.clone()).await);
     populate_schema_index(&registry, &cfg.workspace_root);
     let mcp = connect_mcp(cfg, registry.clone(), true).await;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
     };
-    let custom_tools = discover_custom_tools(cfg, true);
+    let custom_tools = discover_custom_tools(cfg, true).await;
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
     let calibration = seed_calibration(&store, cfg);
@@ -701,9 +745,9 @@ pub async fn run_goal_cmd(
     tui::section_header("Stella — goal mode");
     println!("  {}\n", goal.dimmed());
 
-    let mut messages = vec![CompletionMessage::system(build_system_prompt(
-        &cfg.workspace_root,
-    ))];
+    let mut messages = vec![CompletionMessage::system(
+        with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await,
+    )];
     let mut memory = SessionMemory::open(&cfg.workspace_root, true);
     if let Some(m) = &memory {
         inject_recall_block(&mut messages, m.recall_block(goal).await);
@@ -754,14 +798,14 @@ pub async fn run_goal_cmd(
 pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<(), String> {
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
-        std::sync::Arc::new(ToolRegistry::new(cfg.workspace_root.clone()));
+        std::sync::Arc::new(ToolRegistry::new_detected(cfg.workspace_root.clone()).await);
     let mcp = connect_mcp(cfg, registry.clone(), true).await;
     populate_schema_index(&registry, &cfg.workspace_root);
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
     };
-    let custom_tools = discover_custom_tools(cfg, true);
+    let custom_tools = discover_custom_tools(cfg, true).await;
     let mut budget = build_budget_guard(budget_limit);
     let store = open_store(&cfg.workspace_root);
     // Session-scoped like `budget`: seeded once from prior sessions'
@@ -775,9 +819,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     );
 
     // Built once per session and reused verbatim on /clear — the byte-stable
-    // prefix (instructions + baked memories) is the prompt-cache contract
-    // (see build_system_prompt).
-    let system_prompt = build_system_prompt(&cfg.workspace_root);
+    // prefix (instructions + baked memories + SessionStart hook context) is
+    // the prompt-cache contract (see build_system_prompt).
+    let system_prompt =
+        with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     let mut memory = SessionMemory::open(&cfg.workspace_root, true);
 
@@ -1202,8 +1247,16 @@ pub(crate) async fn connect_mcp(
 /// then ~/.config/stella/tools/*.toml — workspace wins on collision; see
 /// stella_tools::custom). Broken manifests never abort a session: their
 /// diagnostics print once (text mode) and show up in `stella tools`.
-pub(crate) fn discover_custom_tools(cfg: &Config, print_diagnostics: bool) -> Vec<CustomTool> {
-    let report = custom::discover(&cfg.workspace_root);
+pub(crate) async fn discover_custom_tools(
+    cfg: &Config,
+    print_diagnostics: bool,
+) -> Vec<CustomTool> {
+    // The manifest walk is synchronous directory I/O — off the runtime
+    // worker thread it goes (#64).
+    let root = cfg.workspace_root.clone();
+    let report = tokio::task::spawn_blocking(move || custom::discover(&root))
+        .await
+        .unwrap_or_else(|_| custom::discover(&cfg.workspace_root));
     if print_diagnostics {
         for diagnostic in &report.diagnostics {
             eprintln!(
@@ -1505,8 +1558,12 @@ async fn run_turn(
             default_ask_io(format == OutputFormat::Text),
         )
         .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let engine =
-            Engine::new(provider, &tools, EngineConfig::default()).with_calibration(calibration);
+        let hook_runner = ShellHookRunner;
+        let mut engine =
+            Engine::new(provider, &tools, engine_config_for(cfg)).with_calibration(calibration);
+        if let Some(hooks) = &cfg.hooks {
+            engine = engine.with_hooks(hooks, &hook_runner);
+        }
         engine.run_turn(messages, budget, &tx).await
     };
     // Dropping the last sender closes the channel, ending the renderer's
@@ -1770,8 +1827,12 @@ async fn run_goal_turn(
         );
         let tools = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let engine =
-            Engine::new(provider, &tools, EngineConfig::default()).with_calibration(calibration);
+        let hook_runner = ShellHookRunner;
+        let mut engine =
+            Engine::new(provider, &tools, engine_config_for(cfg)).with_calibration(calibration);
+        if let Some(hooks) = &cfg.hooks {
+            engine = engine.with_hooks(hooks, &hook_runner);
+        }
         engine
             .run_goal(judge, goal, messages, budget, &tx, &GoalConfig::default())
             .await
@@ -2131,6 +2192,7 @@ mod tests {
             api_key: ApiKey::new("dummy-key-unused-offline"),
             workspace_root: std::path::PathBuf::from("/tmp"),
             base_url_override: None,
+            hooks: None,
         }
     }
 
