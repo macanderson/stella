@@ -149,17 +149,36 @@ pub fn session_host(
     workspace_root: PathBuf,
 ) -> Host {
     let mut host = Host::with_timeout(std::time::Duration::from_millis(RECALL_TIMEOUT_MS));
+    // Both providers advertise the frame kinds they serve. Empty `kinds`
+    // passes only kind-UNfiltered queries through `capability_matches` — a
+    // caller that ever sets `ContextQuery.kinds` would silently route to
+    // zero providers if these stayed empty.
+    // The wire strings mirror each provider's `to_frame_kind` mapping (the
+    // memory store serves every kind it mints; the graph serves symbols,
+    // snippets, and graph frames).
     host.register(Box::new(MemoryProvider {
         store,
         domains,
         info: local_info("workspace-memory"),
-        caps: Capabilities::default(),
+        caps: Capabilities {
+            query: ocp_types::capability::QueryCapability {
+                kinds: ["memory", "episode", "fact", "snippet", "symbol", "doc"]
+                    .map(String::from)
+                    .to_vec(),
+                filters: Vec::new(),
+            },
+            ..Capabilities::default()
+        },
     }));
     host.register(Box::new(GraphProvider {
         workspace_root,
         info: local_info("code-graph"),
         caps: Capabilities {
             graph: true,
+            query: ocp_types::capability::QueryCapability {
+                kinds: ["symbol", "snippet", "graph"].map(String::from).to_vec(),
+                filters: Vec::new(),
+            },
             ..Capabilities::default()
         },
     }));

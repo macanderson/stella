@@ -130,7 +130,7 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
     let system_prompt =
         agent::with_session_hook_context(agent::build_system_prompt(&cfg.workspace_root), cfg)
             .await;
-    let mut messages = vec![CompletionMessage::system(system_prompt)];
+    let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     // `warn: false`: past this point diagnostics would land on the alternate
     // screen; a memory-less session degrades silently here.
     let mut memory = SessionMemory::open(&cfg.workspace_root, false);
@@ -166,12 +166,15 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
     let opts = DeckOptions {
         debug_log_path: debug_log_path(),
         slash_commands: vec![
-            SlashCommand::new("/help", "show help"),
-            SlashCommand::new("/clear", "clear the transcript"),
-            SlashCommand::new("/models", "list models"),
+            SlashCommand::new("/help", "show commands"),
+            SlashCommand::new("/clear", "reset the conversation"),
+            SlashCommand::new("/models", "list providers & models"),
+            SlashCommand::new("/init", "index the workspace: domains + code graph"),
+            SlashCommand::new("/files", "open the Files tab"),
             SlashCommand::new("/diff", "open the diff viewer"),
-            SlashCommand::new("/files", "focus the files panel"),
+            SlashCommand::new("/graph", "open the code-graph tab"),
         ],
+        initial_graph: agent::graph_snapshot(&cfg.workspace_root),
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
@@ -202,6 +205,13 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
             agent: LEAD.to_string(),
             text: prompt.clone(),
         });
+
+        // Session-level slash commands are the driver's, never the model's —
+        // the deck's popup enqueues them like any prompt (tab switches and
+        // the help overlay were already handled TUI-side and never reach us).
+        if run_deck_command(&prompt, &in_tx, &mut messages, &system_prompt, &*provider, &registry, cfg).await {
+            continue 'session;
+        }
 
         // Per-turn conversation bookkeeping, mirroring `run_interactive`:
         // refresh the volatile recall block, then append the user prompt.
@@ -338,6 +348,74 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
         Ok(Err(e)) => Err(format!("deck terminal error: {e}")),
         Err(e) => Err(format!("deck task failed: {e}")),
     }
+}
+
+/// Handle a session-level slash command, returning `true` when `prompt` was
+/// one (the caller skips the model turn). Output goes into the lead agent's
+/// transcript as `Text` events — the deck renders exclusively from events, so
+/// printing to stdout (which the alternate screen owns) is never an option.
+///
+/// Vocabulary: `/help`, `/clear`, `/models`, `/init`. `/files`, `/diff`,
+/// `/graph` are deck-local (tab switches) and consumed TUI-side; an unknown
+/// single-word `/command` gets a hint rather than a wasted model call.
+async fn run_deck_command(
+    prompt: &str,
+    in_tx: &UnboundedSender<Inbound>,
+    messages: &mut Vec<CompletionMessage>,
+    system_prompt: &str,
+    provider: &dyn Provider,
+    registry: &ToolRegistry,
+    cfg: &Config,
+) -> bool {
+    let word = prompt.split_whitespace().next().unwrap_or("");
+    if !word.starts_with('/') {
+        return false;
+    }
+    let say = |text: String| {
+        let _ = in_tx.send(Inbound::Event {
+            agent: LEAD.to_string(),
+            event: AgentEvent::Text { delta: text },
+        });
+    };
+    match word {
+        "/help" => {
+            say("commands: /help · /clear (reset conversation) · /models (list providers) · \
+                 /init (index the workspace: domains + code graph) · /files · /diff · /graph \
+                 (switch tabs) — anything else is a prompt. ctrl+t queue · ? overlay help"
+                .to_string());
+        }
+        "/clear" => {
+            messages.clear();
+            messages.push(CompletionMessage::system(system_prompt.to_string()));
+            say("conversation cleared".to_string());
+        }
+        "/models" => {
+            say(Config::available_models_plain());
+        }
+        "/init" => {
+            let mut emit = |line: String| say(line);
+            match agent::init_workspace(Some(provider), &cfg.workspace_root, &mut emit).await {
+                // A fresh index may name tables/types the schema gate should
+                // know about this session, not just the next one.
+                Ok(_) => agent::populate_schema_index(registry, &cfg.workspace_root),
+                Err(e) => say(format!("init failed: {e}")),
+            }
+        }
+        // Deck-local tab commands are normally consumed TUI-side, but a queued
+        // one reaches here — accept it as handled (a no-op) rather than
+        // calling it "unknown".
+        "/files" | "/diff" | "/graph" => {}
+        // A single unknown /word is a typo'd command, not a prompt — say so
+        // instead of spending a model call. Multi-word text starting with a
+        // path-like token (e.g. `/src/main.rs explain`) stays a prompt.
+        _ if prompt.split_whitespace().count() == 1 => {
+            say(format!(
+                "unknown command `{word}` — try /help, /clear, /models, /init, /files, /diff, /graph"
+            ));
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// One engine turn for the lead agent: the deck-mode analogue of

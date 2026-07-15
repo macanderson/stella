@@ -377,6 +377,25 @@ pub(crate) fn file_count(conn: &Connection) -> Result<usize, GraphError> {
     Ok(count as usize)
 }
 
+/// The best-connected file in the index: most symbols plus import edges in
+/// both directions. UI consumers use it as a default focus when the caller
+/// hasn't picked a file yet. `None` on an empty index.
+pub(crate) fn busiest_file(conn: &Connection) -> Result<Option<String>, GraphError> {
+    let path = conn
+        .query_row(
+            "SELECT f.path,
+                    (SELECT COUNT(*) FROM code_graph_symbols s WHERE s.file_id = f.id)
+                  + (SELECT COUNT(*) FROM code_graph_imports i WHERE i.from_file_id = f.id)
+                  + (SELECT COUNT(*) FROM code_graph_imports i2 WHERE i2.to_path = f.path)
+                    AS degree
+             FROM code_graph_files f ORDER BY degree DESC, f.path LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(path)
+}
+
 /// All distinct symbol names of the given kind tag (e.g. `"table"`,
 /// `"schema_enum"`, `"view"`). Used by the schema gate to populate the
 /// known-schema index at session start.

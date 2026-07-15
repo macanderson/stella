@@ -985,8 +985,10 @@ impl<'a> Pipeline<'a> {
         Ok(outcome.value)
     }
 
-    /// Run one engine turn on a private channel, then forward every event to
-    /// the consumer **except** the engine's `Stage`/`Complete` (the pipeline
+    /// Run one engine turn, forwarding every event to the consumer **live**
+    /// (a concurrent drain task, not a post-hoc flush — an execute turn can
+    /// run tool loops for minutes, and buffering froze the renderer for the
+    /// whole turn) **except** the engine's `Stage`/`Complete` (the pipeline
     /// owns those), tallying `FileChange`s into `file_changes` for the
     /// zero-diff guard.
     async fn run_engine_turn(
@@ -997,35 +999,62 @@ impl<'a> Pipeline<'a> {
         file_changes: &mut u32,
     ) -> TurnOutcome {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let outcome = engine.run_turn(messages, budget, &tx).await;
-        drop(tx); // close the channel so the drain below terminates
-        while let Ok(event) = rx.try_recv() {
-            let forward = match &event {
-                // The pipeline is the sole authority for stage boundaries and
-                // the terminal Complete — drop the engine's per-turn copies.
-                AgentEvent::Stage { .. } | AgentEvent::Complete { .. } => false,
-                AgentEvent::FileChange { .. } => {
-                    *file_changes += 1;
-                    true
+        let consumer = self.events.clone();
+        let forwarder = tokio::spawn(async move {
+            let mut seen_file_changes: u32 = 0;
+            while let Some(event) = rx.recv().await {
+                let forward = match &event {
+                    // The pipeline is the sole authority for stage boundaries
+                    // and the terminal Complete — drop the engine's per-turn
+                    // copies.
+                    AgentEvent::Stage { .. } | AgentEvent::Complete { .. } => false,
+                    AgentEvent::FileChange { .. } => {
+                        seen_file_changes += 1;
+                        true
+                    }
+                    _ => true,
+                };
+                if forward {
+                    let _ = consumer.send(event);
                 }
-                _ => true,
-            };
-            if forward {
-                let _ = self.events.send(event);
             }
-        }
+            seen_file_changes
+        });
+        let outcome = engine.run_turn(messages, budget, &tx).await;
+        drop(tx); // close the channel so the forwarder terminates
+        *file_changes += forwarder.await.unwrap_or(0);
         outcome
     }
 
     /// Run the diff command and return `(changed_line_count, raw_diff)`.
+    ///
+    /// `git diff` cannot see untracked files, so a turn whose entire change
+    /// is a NEW file would read as "no diff" — skipping verification via the
+    /// zero-diff guard and showing the judge an empty diff. When the
+    /// configured command is git's, untracked files are listed explicitly
+    /// and appended as named entries, each counting as a changed line.
     async fn gather_diff(&self) -> (u32, String) {
-        match &self.config.diff_command {
-            Some(cmd) => {
-                let out = self.commands.run(cmd).await;
-                (count_diff_lines(&out.stdout_tail), out.stdout_tail)
+        let Some(cmd) = &self.config.diff_command else {
+            return (0, String::new());
+        };
+        let out = self.commands.run(cmd).await;
+        let mut lines = count_diff_lines(&out.stdout_tail);
+        let mut text = out.stdout_tail;
+        if cmd.trim_start().starts_with("git diff") {
+            let untracked = self
+                .commands
+                .run("git ls-files --others --exclude-standard")
+                .await;
+            for path in untracked
+                .stdout_tail
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+            {
+                lines += 1;
+                text.push_str(&format!("\n+ new file (untracked): {path}"));
             }
-            None => (0, String::new()),
         }
+        (lines, text)
     }
 
     fn record_and_tick(&self, budget: &mut BudgetGuard, cost_usd: f64) -> BudgetOutcome {
@@ -1230,6 +1259,15 @@ mod tests {
                 return CmdOutcome {
                     exit_code: 0,
                     stdout_tail: self.diff.clone(),
+                    stderr_tail: String::new(),
+                };
+            }
+            // The untracked-files listing `gather_diff` issues alongside a
+            // git diff — an empty workspace answer, never a test result.
+            if cmd.contains("ls-files") {
+                return CmdOutcome {
+                    exit_code: 0,
+                    stdout_tail: String::new(),
                     stderr_tail: String::new(),
                 };
             }

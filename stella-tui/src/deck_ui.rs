@@ -291,10 +291,32 @@ fn slash_matches(ui: &DeckUi) -> Vec<String> {
 /// Returns `None` for keys the popup doesn't claim. Shared with the
 /// single-session REPL (`crate::ui`) via `crate::composer` so both surfaces
 /// stay consistent by construction.
+///
+/// Deck-local commands (tab switches, the help overlay) are intercepted here
+/// and act on the UI directly; everything else is enqueued for the driver,
+/// which owns the session-level vocabulary (`/clear`, `/models`, `/init`, …).
 fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Option<DeckAction> {
     match handle_slash_popup_key(key, matches, &mut ui.composer, &mut ui.slash_selected)? {
         SlashPopupOutcome::Handled => Some(DeckAction::Handled),
-        SlashPopupOutcome::Submit(text) => Some(DeckAction::Send(WorkspaceInput::Enqueue { text })),
+        SlashPopupOutcome::Submit(text) => Some(match text.as_str() {
+            // Views the deck itself owns: act locally, never round-trip.
+            "/files" | "/diff" => {
+                ui.set_tab(DeckTab::Files);
+                if text == "/diff" {
+                    ui.files_diff_open = true;
+                }
+                DeckAction::Handled
+            }
+            "/graph" => {
+                ui.set_tab(DeckTab::Graph);
+                DeckAction::Handled
+            }
+            "/help" => {
+                ui.help_open = true;
+                DeckAction::Handled
+            }
+            _ => DeckAction::Send(WorkspaceInput::Enqueue { text }),
+        }),
     }
 }
 

@@ -735,6 +735,39 @@ impl Config {
 }
 
 impl Config {
+    /// The provider/model table as plain text (no ANSI): one line per
+    /// built-in provider with its key status. The Command Deck renders this
+    /// into the transcript for `/models` — stdout printing would corrupt the
+    /// alternate screen, so the deck needs a string, not a print.
+    pub fn available_models_plain() -> String {
+        let settings = env::current_dir()
+            .map_err(|e| e.to_string())
+            .and_then(|ws| crate::settings::Settings::load(&ws))
+            .unwrap_or_default();
+        let mut lines = vec!["Available providers & models:".to_string()];
+        for p in PROVIDERS {
+            let p = effective_builtin(p, &settings);
+            let settings_key = settings
+                .providers
+                .get(p.id)
+                .and_then(|e| e.api_key.as_deref())
+                .is_some_and(|k| !k.is_empty());
+            let has_key = settings_key
+                || std::iter::once(&p.env_var)
+                    .chain(p.env_var_aliases)
+                    .any(|var| env::var(var).map(|v| !v.is_empty()).unwrap_or(false));
+            lines.push(format!(
+                "  {} {}/{}  {}",
+                if has_key { "✓" } else { "✗" },
+                p.id,
+                p.default_model,
+                p.display_name,
+            ));
+        }
+        lines.push("Pin one with --model provider/model_id on the next launch.".to_string());
+        lines.join("\n")
+    }
+
     /// Print all available providers/models without needing a resolved
     /// config: the built-in table (with any settings.json overrides
     /// applied), then the config-defined providers. A malformed settings

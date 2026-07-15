@@ -212,11 +212,18 @@ fn short_hash(s: &str) -> String {
     format!("{:08x}", hash as u32)
 }
 
-/// The worktree directory + branch slug for `task_id`: a human-readable
-/// [`slugify`] stem plus a [`short_hash`] suffix that keeps it collision-free
-/// even when two task ids slugify to the same stem.
-fn worktree_slug(task_id: &str) -> String {
-    format!("{}-{}", slugify(task_id), short_hash(task_id))
+/// The worktree directory + branch slug for `task_id` within `run_scope`: a
+/// human-readable [`slugify`] stem plus a [`short_hash`] suffix that keeps it
+/// collision-free even when two task ids slugify to the same stem. The run
+/// scope enters the hash so re-running a plan with the same task ids (`t1`,
+/// `t2`, … — every positional invocation) gets fresh directories/branches
+/// instead of colliding with last run's kept-for-review worktrees.
+fn worktree_slug(run_scope: &str, task_id: &str) -> String {
+    format!(
+        "{}-{}",
+        slugify(task_id),
+        short_hash(&format!("{run_scope}\u{1f}{task_id}"))
+    )
 }
 
 /// Manages the lifecycle of isolated task worktrees over a [`GitCli`].
@@ -225,12 +232,13 @@ pub struct WorktreeManager<G: GitCli> {
     repo_root: PathBuf,
     worktrees_root: PathBuf,
     branch_prefix: String,
+    run_scope: String,
 }
 
 impl<G: GitCli> WorktreeManager<G> {
     /// A manager rooted at `repo_root`, placing worktrees under
     /// `<repo_root>/.stella/worktrees/` (`02-architecture.md` §6, alongside
-    /// `ledger.db`) with branches named `fleet/<task-slug>`.
+    /// the fleet ledger) with branches named `fleet/<task-slug>`.
     pub fn new(git: G, repo_root: impl Into<PathBuf>) -> Self {
         let repo_root = repo_root.into();
         let worktrees_root = repo_root.join(".stella").join("worktrees");
@@ -239,12 +247,21 @@ impl<G: GitCli> WorktreeManager<G> {
             repo_root,
             worktrees_root,
             branch_prefix: "fleet/".to_string(),
+            run_scope: String::new(),
         }
     }
 
     /// Override where worktree checkouts are placed (builder style).
     pub fn with_worktrees_root(mut self, root: impl Into<PathBuf>) -> Self {
         self.worktrees_root = root.into();
+        self
+    }
+
+    /// Scope worktree/branch names to one run (builder style): the scope is
+    /// hashed into every slug, so two runs sharing task ids never collide on
+    /// a directory or branch left behind by the earlier run.
+    pub fn with_run_scope(mut self, scope: impl Into<String>) -> Self {
+        self.run_scope = scope.into();
         self
     }
 
@@ -261,7 +278,7 @@ impl<G: GitCli> WorktreeManager<G> {
     /// human-readable stem plus a stable hash suffix so two task ids that
     /// slugify to the same stem never collide on the same directory/branch.
     pub async fn create(&self, task_id: &str, base_ref: &str) -> Result<Worktree, WorktreeError> {
-        let slug = worktree_slug(task_id);
+        let slug = worktree_slug(&self.run_scope, task_id);
         let dir = self.worktrees_root.join(&slug);
         let branch = format!("{}{slug}", self.branch_prefix);
         let dir_str = path_arg(&dir)?;
@@ -527,15 +544,27 @@ mod tests {
         // `slugify` alone maps these three distinct task ids to the same stem;
         // the hash suffix must keep the full slugs distinct so their worktrees
         // and branches never collide.
-        let a = worktree_slug("fix/the thing");
-        let b = worktree_slug("fix the thing");
-        let c = worktree_slug("fix-the-thing");
+        let a = worktree_slug("run", "fix/the thing");
+        let b = worktree_slug("run", "fix the thing");
+        let c = worktree_slug("run", "fix-the-thing");
         assert!(a.starts_with("fix-the-thing-"));
         assert_ne!(a, b);
         assert_ne!(b, c);
         assert_ne!(a, c);
         // Deterministic across calls.
-        assert_eq!(a, worktree_slug("fix/the thing"));
+        assert_eq!(a, worktree_slug("run", "fix/the thing"));
+    }
+
+    #[test]
+    fn worktree_slug_differs_across_runs_for_the_same_task_id() {
+        // Re-running a plan reuses task ids (`t1`, `t2`, …) and the previous
+        // run's worktrees/branches are kept for review — the run scope must
+        // make the second run's slugs fresh, or `git worktree add` fails the
+        // whole run with "already exists".
+        let first = worktree_slug("fleet-1", "t1");
+        let second = worktree_slug("fleet-2", "t1");
+        assert_ne!(first, second);
+        assert!(first.starts_with("t1-") && second.starts_with("t1-"));
     }
 
     #[tokio::test]
