@@ -53,7 +53,7 @@ use stella_tools::ToolRegistry;
 use stella_tools::custom::{CustomTool, CustomToolSet};
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
-    AgentMeta, AgentStatus, DeckOptions, Inbound, UserInput, WorkspaceInput, run_deck,
+    AgentMeta, AgentStatus, DeckOptions, Inbound, SlashCommand, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -165,6 +165,13 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
 
     let opts = DeckOptions {
         debug_log_path: debug_log_path(),
+        slash_commands: vec![
+            SlashCommand::new("/help", "show help"),
+            SlashCommand::new("/clear", "clear the transcript"),
+            SlashCommand::new("/models", "list models"),
+            SlashCommand::new("/diff", "open the diff viewer"),
+            SlashCommand::new("/files", "focus the files panel"),
+        ],
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
