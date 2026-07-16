@@ -1,8 +1,8 @@
 //! `stella-pipeline` — the orchestration plane that sits *above*
 //! `stella-core::Engine` (`02-architecture.md` §5). It drives one prompt
-//! through the staged turn flow — **evaluate → enhance → route → execute →
-//! verify → judge → revise** — over injected ports, emitting an `AgentEvent`
-//! at every stage boundary.
+//! through the staged turn flow — **evaluate → enhance → route → witness →
+//! execute → verify → judge → revise** — over injected ports, emitting an
+//! `AgentEvent` at every stage boundary.
 //!
 //! # What lives here vs. the engine
 //!
@@ -27,9 +27,17 @@
 //! - **L-E11** — the deterministic verification ladder: the flip-oracle state
 //!   machine, the evidence ladder that skips the judge on strong evidence, and
 //!   a model judge (judge ≠ worker) only on inconclusive evidence with a
-//!   heuristic fallback. [`verify`].
+//!   heuristic fallback. [`verify`]. Its front half is **witness authoring**:
+//!   when the user armed no `--test-command`, an independent model (the
+//!   judge's resolution) writes the failing witness test that the flip oracle
+//!   tracks — visible to the worker, integrity-checked by tamper exclusion,
+//!   never hidden. [`witness`].
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
+//! - **Distress guidance** — on the second consecutive deterministic
+//!   verification failure, one judge call steers the next revision
+//!   (event-triggered course-correction, never a fixed mid-run checkpoint).
+//!   [`verify::guidance_prompt`], wired in [`pipeline`].
 //!
 //! # The port surface the CLI glue implements
 //!
@@ -54,6 +62,7 @@ pub mod replay;
 pub mod scope;
 pub mod triage;
 pub mod verify;
+pub mod witness;
 
 pub use pipeline::{
     Pipeline, PipelineConfig, PipelineError, PipelineOutcome, PipelinePorts, PipelineStatus,
@@ -66,3 +75,4 @@ pub use ports::{
 };
 pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};
+pub use witness::{Witness, parse_witness_command, tampered_paths, witness_watchlist};

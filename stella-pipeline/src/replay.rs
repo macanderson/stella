@@ -68,13 +68,16 @@ fn stage_rank(stage: StageKind) -> u8 {
         StageKind::ContextRecall => 1,
         StageKind::Plan => 2,
         StageKind::ScopeReview => 3,
-        StageKind::Execute => 4,
-        StageKind::Verify => 5,
-        StageKind::Judge => 6,
+        // Witness authoring precedes execution: the failing witness test is
+        // written before the worker starts (L-E11 front half).
+        StageKind::Witness => 4,
+        StageKind::Execute => 5,
+        StageKind::Verify => 6,
+        StageKind::Judge => 7,
         // Reflect is post-verdict self-reflection, before context write-back.
-        StageKind::Reflect => 7,
-        StageKind::ContextWrite => 8,
-        StageKind::Complete => 9,
+        StageKind::Reflect => 8,
+        StageKind::ContextWrite => 9,
+        StageKind::Complete => 10,
     }
 }
 

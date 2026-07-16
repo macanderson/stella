@@ -1,7 +1,8 @@
 //! The orchestrator: the staged turn flow (`02-architecture.md` §5) that sits
 //! *above* `stella-core::Engine`. It sequences evaluate → enhance → route →
-//! execute → verify → judge → revise over the injected ports, emitting a
-//! `Stage` event at every boundary and exactly one terminal `Complete`.
+//! witness → execute → verify → judge → revise over the injected ports,
+//! emitting a `Stage` event at every boundary and exactly one terminal
+//! `Complete`.
 //!
 //! Everything here is I/O sequencing; every *decision* it makes is delegated
 //! to a pure function in a sibling module (`triage`, `plan`, `scope`,
@@ -60,8 +61,12 @@ use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review
 use crate::triage::{TaskClass, classify_triage_response, resolve_task_class, triage_prompt};
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
-    deterministic_fail_evidence, deterministic_pass_evidence, heuristic_fallback, judge_prompt,
-    ladder_decision, model_verdict_evidence, parse_judge_response,
+    deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
+    judge_prompt, ladder_decision, model_verdict_evidence, parse_judge_response,
+};
+use crate::witness::{
+    Witness, parse_witness_command, tampered_paths, witness_prompt, witness_repair_prompt,
+    witness_watchlist,
 };
 
 /// A minimal default system prompt, used only when the caller hands `run` an
@@ -69,6 +74,13 @@ use crate::verify::{
 /// (which becomes the cached prompt prefix, L-E8).
 const DEFAULT_SYSTEM_PROMPT: &str =
     "You are a precise, careful software engineering agent. Make the smallest correct change.";
+
+/// The witness author's system prompt — small and fixed. The task prompt
+/// (goal + recall + repo structure, split context like the planner's) is
+/// [`witness_prompt`].
+const WITNESS_SYSTEM_PROMPT: &str =
+    "You are a precise test author. You write minimal failing tests that pin down intended \
+     behavior. You never modify production code and never fix the problem yourself.";
 
 /// The ports the pipeline orchestrates over. The `stella-cli` glue fills this
 /// with real subsystem adapters; tests fill it with scripted doubles. Grouped
@@ -121,9 +133,23 @@ pub struct PipelineConfig {
     /// otherwise the run is a named error rather than a silent auto-approve.
     pub headless_bypass_scope_review: bool,
     /// The test command the flip oracle tracks (run before and after execute).
-    /// `None` disables the flip oracle — verification then relies on the
-    /// diff-size budget and, if inconclusive, the model judge.
+    /// `None` hands the flip oracle to the witness author (when
+    /// `witness_writer` is on) — an explicit user command always wins over an
+    /// authored one.
     pub test_command: Option<String>,
+    /// Witness authoring (L-E11 front half): when no `test_command` is
+    /// configured and the task class verifies unconditionally, an independent
+    /// model authors a failing witness test whose command arms the flip
+    /// oracle, with tamper exclusion at verify time ([`crate::witness`]).
+    /// Costs one engine turn + up to two test runs per pipeline run.
+    pub witness_writer: bool,
+    /// Distress-triggered course-correction: on the *second consecutive*
+    /// deterministic verification failure, spend one judge call for guidance
+    /// that rides with the next revision prompt ([`crate::verify::guidance_prompt`]).
+    /// Event-triggered by design — never a fixed mid-run checkpoint. Bounded
+    /// by `max_revisions` (at most `max_revisions - 1` guidance calls per
+    /// candidate).
+    pub distress_guidance: bool,
     /// The command that reports what the turn changed (default `git diff`),
     /// used for the diff-size budget and the zero-diff guard. `None` skips it.
     pub diff_command: Option<String>,
@@ -147,6 +173,8 @@ impl Default for PipelineConfig {
             headless: false,
             headless_bypass_scope_review: false,
             test_command: None,
+            witness_writer: true,
+            distress_guidance: true,
             diff_command: Some("git diff".to_string()),
             diff_budget_lines: 400,
             max_revisions: 2,
@@ -444,6 +472,14 @@ impl<'a> Pipeline<'a> {
             None => None,
         };
 
+        // --- 4.5. Witness authoring (L-E11 front half). ---------------------
+        // After scope review (never author a witness for a plan the user may
+        // abort), before the candidate loop (one witness is the shared
+        // yardstick every candidate is measured by).
+        let witness = self
+            .witness_stage(goal, &frames, task_class, budget, &mut total_cost)
+            .await;
+
         // --- 5. Execute + verify (single-shot or best-of-N). ---------------
         let worker = match self.resolve_provider(Role::Worker) {
             Ok(w) => w,
@@ -473,6 +509,7 @@ impl<'a> Pipeline<'a> {
                     &base_messages,
                     plan.as_deref(),
                     task_class,
+                    witness.as_ref(),
                     &engine,
                     budget,
                     &mut total_cost,
@@ -690,6 +727,7 @@ impl<'a> Pipeline<'a> {
         base_messages: &[CompletionMessage],
         plan: Option<&[PlanStep]>,
         task_class: TaskClass,
+        witness: Option<&Witness>,
         engine: &Engine<'_>,
         budget: &mut BudgetGuard,
         total: &mut f64,
@@ -699,9 +737,13 @@ impl<'a> Pipeline<'a> {
         // fail→pass flip (L-E11). Simple lookups skip the baseline — they are
         // only verified at all if the zero-diff guard trips, and then the
         // absence of a baseline correctly leaves the oracle unflipped.
+        // The baseline is re-run per candidate even though the witness stage
+        // already saw its command fail once: a later candidate runs over the
+        // tree an earlier one modified, and a seeded observation would be a
+        // fabricated one.
         let mut oracle = FlipOracle::new();
         if task_class.verifies_unconditionally()
-            && let Some(cmd) = &self.config.test_command
+            && let Some(cmd) = effective_test_command(&self.config, witness)
         {
             let pre = self.commands.run(cmd).await;
             oracle.observe(cmd, pre.passed());
@@ -745,7 +787,7 @@ impl<'a> Pipeline<'a> {
             return state.into_unverified();
         }
 
-        self.verify_candidate(goal, engine, budget, total, state)
+        self.verify_candidate(goal, witness, engine, budget, total, state)
             .await
     }
 
@@ -808,6 +850,7 @@ impl<'a> Pipeline<'a> {
     async fn verify_candidate(
         &self,
         goal: &str,
+        witness: Option<&Witness>,
         engine: &Engine<'_>,
         budget: &mut BudgetGuard,
         total: &mut f64,
@@ -816,11 +859,26 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Verify,
         });
+        let effective_cmd = effective_test_command(&self.config, witness);
         loop {
-            let (touched_tests_passed, test_tail) =
-                self.observe_touched_tests(&mut state.oracle).await;
+            let (touched_tests_passed, test_tail) = self
+                .observe_touched_tests(effective_cmd, &mut state.oracle)
+                .await;
+            // Tamper exclusion: a flip is credited only while the witness
+            // files are byte-identical to what the witness author wrote. A
+            // tampered witness degrades the flip to inconclusive — the judge
+            // then decides, told exactly which paths were touched — it never
+            // silently passes and never hard-fails work that may still be
+            // correct.
+            let tampered = match witness {
+                Some(w) if !w.files.is_empty() => {
+                    let current = self.repo_status.untracked_fingerprints().await;
+                    tampered_paths(&w.files, &current)
+                }
+                _ => Vec::new(),
+            };
             let inputs = LadderInputs {
-                flip_achieved: state.oracle.is_flipped(),
+                flip_achieved: state.oracle.is_flipped() && tampered.is_empty(),
                 touched_tests_passed,
                 diff_lines: state.diff_lines,
                 diff_budget: self.config.diff_budget_lines,
@@ -845,7 +903,14 @@ impl<'a> Pipeline<'a> {
                 }
                 LadderDecision::Revise => {
                     // Deterministic failure (touched tests red) — no judge.
-                    let evidence = deterministic_fail_evidence(&test_tail);
+                    let mut evidence = deterministic_fail_evidence(&test_tail);
+                    if !tampered.is_empty() {
+                        evidence.summary.push_str(&format!(
+                            "; witness test file(s) were modified after authoring — restore \
+                             them, the flip is not credited while they differ: {}",
+                            tampered.join(", ")
+                        ));
+                    }
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: false,
                         evidence: evidence.clone(),
@@ -857,8 +922,22 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(false)),
                         );
                     }
+                    // Distress trigger: a SECOND consecutive deterministic
+                    // failure means the raw evidence alone didn't steer the
+                    // worker — spend one judge call on course-correction
+                    // (event-triggered, never a fixed midpoint checkpoint).
+                    let mut reason = evidence.summary.clone();
+                    if self.config.distress_guidance
+                        && state.revisions >= 1
+                        && let Some(guidance) = self
+                            .judge_guidance(goal, &state.diff_text, &evidence.summary, budget, total)
+                            .await
+                    {
+                        reason.push_str("\n\nIndependent reviewer course-correction:\n");
+                        reason.push_str(&guidance);
+                    }
                     if let Err(reason) = self
-                        .revise_candidate(engine, budget, &evidence.summary, total, &mut state)
+                        .revise_candidate(engine, budget, &reason, total, &mut state)
                         .await
                     {
                         return CandidateResult::aborted(state.messages, reason);
@@ -867,13 +946,20 @@ impl<'a> Pipeline<'a> {
                 LadderDecision::ModelJudge => {
                     // Inconclusive — escalate to the model judge (judge ≠
                     // worker; a judge-call failure falls back to a heuristic).
-                    let evidence_summary = format!(
+                    let mut evidence_summary = format!(
                         "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {})",
                         inputs.flip_achieved,
                         inputs.touched_tests_passed,
                         state.diff_lines,
                         self.config.diff_budget_lines,
                     );
+                    if !tampered.is_empty() {
+                        evidence_summary.push_str(&format!(
+                            "; witness test file(s) modified by the worker after authoring — \
+                             flip evidence EXCLUDED: {}",
+                            tampered.join(", ")
+                        ));
+                    }
                     let verdict = self
                         .judge(
                             goal,
@@ -915,10 +1001,15 @@ impl<'a> Pipeline<'a> {
     }
 
     /// Post-execute test observation for the flip oracle + the touched-tests
-    /// signal: `(Some(passed), stderr tail)` when a test command is
-    /// configured, `(None, "")` when there is nothing to run.
-    async fn observe_touched_tests(&self, oracle: &mut FlipOracle) -> (Option<bool>, String) {
-        match &self.config.test_command {
+    /// signal: `(Some(passed), stderr tail)` when a test command is available
+    /// (configured or witness-authored), `(None, "")` when there is nothing
+    /// to run.
+    async fn observe_touched_tests(
+        &self,
+        cmd: Option<&str>,
+        oracle: &mut FlipOracle,
+    ) -> (Option<bool>, String) {
+        match cmd {
             Some(cmd) => {
                 let post = self.commands.run(cmd).await;
                 let passed = post.passed();
@@ -996,8 +1087,172 @@ impl<'a> Pipeline<'a> {
     }
 
     // ------------------------------------------------------------------
+    // Stage: witness authoring (L-E11 front half)
+    // ------------------------------------------------------------------
+
+    /// Author the witness test when nothing else arms the flip oracle: one
+    /// engine turn (with tools — the author writes a real test file) whose
+    /// reply names a `TEST_COMMAND:`, checked to actually FAIL on the current
+    /// code (a passing "witness" witnesses nothing; one bounded repair retry,
+    /// then discard). Returns `None` — degrading verification to the model
+    /// judge, exactly as if no test command existed — whenever any part
+    /// doesn't hold; the witness stage can slow a run down but never fail it.
+    ///
+    /// Witness ≠ worker: the author rides the judge's resolution (the test
+    /// that defines "done" comes from the same independent role that enforces
+    /// it), falling back to the worker's model only when no judge resolves.
+    async fn witness_stage(
+        &self,
+        goal: &str,
+        frames: &[RecalledFrame],
+        task_class: TaskClass,
+        budget: &mut BudgetGuard,
+        total: &mut f64,
+    ) -> Option<Witness> {
+        if self.config.test_command.is_some()
+            || !self.config.witness_writer
+            || !task_class.verifies_unconditionally()
+        {
+            return None;
+        }
+        self.emit(AgentEvent::Stage {
+            name: StageKind::Witness,
+        });
+        let resolved = match self
+            .resolve_provider(Role::Judge)
+            .or_else(|_| self.resolve_provider(Role::Worker))
+        {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+        if let Some(fb) = &resolved.fallback {
+            self.emit_fallback(fb);
+        }
+
+        // Snapshot BEFORE the author runs: the fingerprint delta afterwards
+        // is the tamper watchlist (observed, never the author's own claims).
+        let before = self.repo_status.untracked_fingerprints().await;
+        let structure = self.repo.structure_summary().await;
+        let mut engine = Engine::with_sleeper(
+            resolved.provider,
+            self.tools,
+            self.config.engine.clone(),
+            self.sleeper,
+        );
+        if let Some((hooks, runner)) = self.hooks {
+            engine = engine.with_hooks(hooks, runner);
+        }
+
+        let mut messages = vec![
+            CompletionMessage::system(WITNESS_SYSTEM_PROMPT),
+            CompletionMessage::user(witness_prompt(goal, frames, &structure)),
+        ];
+        let mut file_changes = 0u32;
+        let text = match self
+            .run_engine_turn(&engine, &mut messages, budget, &mut file_changes)
+            .await
+        {
+            TurnOutcome::Completed { text, cost_usd } => {
+                *total += cost_usd;
+                text
+            }
+            TurnOutcome::Aborted { reason } => {
+                self.warn(format!(
+                    "witness author turn aborted ({reason}); verification falls back to the \
+                     model judge"
+                ));
+                return None;
+            }
+        };
+        let Some(mut command) = parse_witness_command(&text) else {
+            self.warn(
+                "witness author produced no TEST_COMMAND line; verification falls back to \
+                 the model judge"
+                    .to_string(),
+            );
+            return None;
+        };
+
+        // The witness must fail on the unmodified code — only a fail→pass
+        // flip of it will count (L-E11). One bounded repair retry (the L-V2
+        // pattern), then discard; never loop.
+        if self.commands.run(&command).await.passed() {
+            messages.push(CompletionMessage::user(witness_repair_prompt(&command)));
+            let repaired = match self
+                .run_engine_turn(&engine, &mut messages, budget, &mut file_changes)
+                .await
+            {
+                TurnOutcome::Completed { text, cost_usd } => {
+                    *total += cost_usd;
+                    text
+                }
+                TurnOutcome::Aborted { reason } => {
+                    self.warn(format!(
+                        "witness repair turn aborted ({reason}); verification falls back to \
+                         the model judge"
+                    ));
+                    return None;
+                }
+            };
+            command = parse_witness_command(&repaired).unwrap_or(command);
+            if self.commands.run(&command).await.passed() {
+                self.warn(
+                    "witness test still passes on the unmodified code after one repair — \
+                     discarded; verification falls back to the model judge"
+                        .to_string(),
+                );
+                return None;
+            }
+        }
+
+        let after = self.repo_status.untracked_fingerprints().await;
+        Some(Witness {
+            command,
+            files: witness_watchlist(&before, &after),
+        })
+    }
+
+    // ------------------------------------------------------------------
     // Stage: judge
     // ------------------------------------------------------------------
+
+    /// One distress-guidance call ([`guidance_prompt`]): best-effort and
+    /// never a verdict — the failure it reacts to is already deterministic,
+    /// so the judge's job here is *steering*, not re-judging. A failed call
+    /// (or an unresolvable judge) degrades to evidence-only revision.
+    async fn judge_guidance(
+        &self,
+        goal: &str,
+        diff: &str,
+        evidence_summary: &str,
+        budget: &mut BudgetGuard,
+        total: &mut f64,
+    ) -> Option<String> {
+        let resolved = self.resolve_provider(Role::Judge).ok()?;
+        if let Some(fb) = &resolved.fallback {
+            self.emit_fallback(fb);
+        }
+        self.emit(AgentEvent::Stage {
+            name: StageKind::Judge,
+        });
+        let prompt = guidance_prompt(goal, diff, evidence_summary);
+        match self
+            .complete_once(
+                resolved.provider,
+                vec![CompletionMessage::user(prompt)],
+                RetryPolicy::deterministic(),
+            )
+            .await
+        {
+            Ok(result) => {
+                *total += result.cost_usd;
+                self.record_and_tick(budget, result.cost_usd);
+                let text = result.text.trim().to_string();
+                if text.is_empty() { None } else { Some(text) }
+            }
+            Err(_) => None,
+        }
+    }
 
     async fn judge(
         &self,
@@ -1264,9 +1519,28 @@ impl<'a> Pipeline<'a> {
         }
     }
 
+    /// A non-fatal degradation the user should see (witness discarded,
+    /// guidance unavailable): a `retryable: true` error event — the deck
+    /// folds it as a warning, never a failed turn.
+    fn warn(&self, message: String) {
+        self.emit(AgentEvent::Error {
+            message,
+            retryable: true,
+        });
+    }
+
     fn emit(&self, event: AgentEvent) {
         let _ = self.events.send(event);
     }
+}
+
+/// The flip oracle's command for this run: an explicit `--test-command`
+/// always wins; otherwise the witness author's (when one was validated).
+fn effective_test_command<'c>(config: &'c PipelineConfig, witness: Option<&'c Witness>) -> Option<&'c str> {
+    config
+        .test_command
+        .as_deref()
+        .or(witness.map(|w| w.command.as_str()))
 }
 
 /// Assemble the volatile recall+goal user message that rides *after* the
