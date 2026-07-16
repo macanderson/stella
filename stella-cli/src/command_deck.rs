@@ -39,7 +39,12 @@
 //!   single Esc). A double-Esc `StopAndHold` is the same clean cancel plus
 //!   queue discipline: the interrupted prompt returns to the FRONT of the
 //!   backlog and dispatch parks until the user's next submission, which
-//!   arrives as `EnqueueFront` and runs ahead of it.
+//!   arrives as `EnqueueFront` and runs ahead of it. The pair reaches the
+//!   driver as two FIFO messages — the plain `Stop`, then the escalation —
+//!   so the first press has always dropped the turn (and would have
+//!   forgotten its prompt) before `StopAndHold` is read: [`HoldState`]
+//!   retains what that cancel dropped so the second press still has a
+//!   prompt to requeue and park.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -116,6 +121,91 @@ enum TurnEnd {
     Cancelled { hold: bool },
     /// The deck is going down; stop driving entirely.
     Quit,
+}
+
+/// Driver-side bookkeeping for the deck's Esc pair: single Esc cancels now,
+/// double-Esc escalates to "requeue what was interrupted and park dispatch".
+///
+/// The two presses arrive as two FIFO messages — `AgentControl::Stop`, then
+/// `WorkspaceInput::StopAndHold` — and the driver consumes the first by
+/// dropping the turn future. Without retention the escalation would always
+/// land after its target was already cancelled and forgotten: with an empty
+/// backlog it would be a silent no-op (no requeue, no hold — while the deck's
+/// own `dispatch_held` flag believes otherwise), and with a backlog it would
+/// cancel the freshly auto-dispatched NEXT prompt while the prompt the user
+/// actually interrupted stayed lost. So every plain cancel deposits its
+/// prompt here, and the escalation requeues it whenever it lands.
+struct HoldState {
+    /// While set, dispatch is parked: the loop waits for the user's next
+    /// submission instead of popping the backlog.
+    held: bool,
+    /// The prompt the last plain cancel dropped, kept until the pair's
+    /// escalation consumes it or the next plain cancel replaces it. Never
+    /// stale: every `StopAndHold` the deck can emit is preceded — same pair,
+    /// no keys in between — by a `Stop` that overwrites this slot.
+    cancelled: Option<String>,
+}
+
+impl HoldState {
+    fn new() -> Self {
+        Self {
+            held: false,
+            cancelled: None,
+        }
+    }
+
+    /// Whether dispatch is parked (the loop must not pop the backlog).
+    fn held(&self) -> bool {
+        self.held
+    }
+
+    /// A user submission releases the hold and runs immediately.
+    fn release(&mut self) {
+        self.held = false;
+    }
+
+    /// A plain cancel (single Esc / dashboard stop): retain the dropped
+    /// prompt so a following escalation can still requeue it.
+    fn cancelled(&mut self, submitted: &str) {
+        self.cancelled = Some(submitted.to_string());
+    }
+
+    /// The double-Esc escalation: park dispatch and return the prompts to
+    /// push to the FRONT of the backlog, in push order (front-most last).
+    /// `in_flight` is the auto-dispatched prompt this escalation itself
+    /// cancelled (if any); it lands BEHIND the retained one so the backlog
+    /// reads exactly as the user last saw it. With nothing in flight and
+    /// nothing retained there is nothing to hold — a stray escalation stays
+    /// a no-op.
+    fn stop_and_hold(&mut self, in_flight: Option<&str>) -> Vec<String> {
+        let requeue: Vec<String> = in_flight
+            .map(str::to_string)
+            .into_iter()
+            .chain(self.cancelled.take())
+            .collect();
+        if !requeue.is_empty() {
+            self.held = true;
+        }
+        requeue
+    }
+}
+
+/// Return cancelled prompts to the FRONT of the backlog (push order:
+/// front-most last) and mirror each front-insert into the deck's queue view
+/// (`Inbound::PromptRequeued` is the exact inverse of `PromptStarted`'s
+/// front-pop), so the two queues never drift.
+fn requeue_front(
+    queue: &mut VecDeque<String>,
+    in_tx: &UnboundedSender<Inbound>,
+    texts: Vec<String>,
+) {
+    for text in texts {
+        queue.push_front(text.clone());
+        let _ = in_tx.send(Inbound::PromptRequeued {
+            agent: LEAD.to_string(),
+            text,
+        });
+    }
 }
 
 /// Run a full deck session: the deck shell on its own task, the engine
@@ -246,13 +336,17 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
 
     // ── The driver loop ─────────────────────────────────────────────────────
     let mut queue: VecDeque<String> = VecDeque::new();
-    // Double-Esc hold: while set, the backlog stays parked and the loop
-    // waits for the user's next submission instead of popping the queue.
-    let mut held = false;
+    // Double-Esc bookkeeping: parks dispatch and retains what the pair's
+    // first press cancelled (see [`HoldState`]).
+    let mut dispatch = HoldState::new();
     'session: loop {
         // Take the next prompt: backlog first (unless held), else wait for
         // deck input.
-        let next = if held { None } else { queue.pop_front() };
+        let next = if dispatch.held() {
+            None
+        } else {
+            queue.pop_front()
+        };
         let prompt = match next {
             Some(text) => text,
             None => match sub_rx.recv().await {
@@ -269,7 +363,7 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
                     input: UserInput::Prompt { text },
                     ..
                 }) => {
-                    held = false;
+                    dispatch.release();
                     text
                 }
                 // While a hold parks a non-empty backlog at this recv, the
@@ -287,9 +381,19 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
                     queue.clear();
                     continue 'session;
                 }
+                // The double-Esc escalation, landing AFTER its pair's plain
+                // `Stop` already dropped the turn — with an empty backlog
+                // this recv is exactly where it lands (the channel is FIFO,
+                // so the escalation can never reach the turn the pair
+                // targeted). Requeue what that cancel dropped and park
+                // dispatch; with nothing retained there is nothing to hold
+                // and a stray escalation stays a no-op.
+                Some(WorkspaceInput::StopAndHold { .. }) => {
+                    requeue_front(&mut queue, &in_tx, dispatch.stop_and_hold(None));
+                    continue 'session;
+                }
                 // A stray answer/decision/control with no turn in flight has
-                // nothing to act on (StopAndHold included: with no turn
-                // there is nothing to cancel or return to the queue).
+                // nothing to act on.
                 Some(_) => continue 'session,
             },
         };
@@ -480,16 +584,19 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
                 // last committed conversation state.
                 messages.truncate(turn_base);
                 if hold {
-                    // Double-Esc: the interrupted prompt returns to the FRONT
-                    // of the backlog and dispatch parks until the user's next
-                    // submission, which will run ahead of it. PromptRequeued
-                    // mirrors the front-insert into the deck's queue view.
-                    held = true;
-                    queue.push_front(submitted.clone());
-                    let _ = in_tx.send(Inbound::PromptRequeued {
-                        agent: LEAD.to_string(),
-                        text: submitted.clone(),
-                    });
+                    // Double-Esc landing mid-turn: this turn is the NEXT
+                    // prompt, auto-dispatched in the gap between the pair's
+                    // two messages. Park dispatch and return both to the
+                    // FRONT of the backlog — the retained prompt (the one
+                    // the pair's first press cancelled) ahead of this one,
+                    // restoring the order the user last saw. The next
+                    // submission will run ahead of them all.
+                    requeue_front(&mut queue, &in_tx, dispatch.stop_and_hold(Some(&submitted)));
+                } else {
+                    // A plain cancel: retain the dropped prompt so the
+                    // pair's escalation — which always arrives after this
+                    // point (the channel is FIFO) — can still requeue it.
+                    dispatch.cancelled(&submitted);
                 }
                 if let Some((store, id)) = &execution
                     && store.finish_execution(*id, "cancelled", 0.0).is_err()
@@ -1293,5 +1400,92 @@ mod tests {
     async fn deck_ask_io_passes_free_text_through_verbatim() {
         let (result, _) = run_prompt(&["a", "b"], "actually do it my way").await;
         assert_eq!(result.unwrap(), "actually do it my way");
+    }
+
+    // ── Double-Esc hold ─────────────────────────────────────────────────────
+
+    /// Single Esc: the plain cancel retains the prompt but never parks
+    /// dispatch — "interrupt current, run next" is unchanged.
+    #[test]
+    fn plain_cancel_retains_without_holding() {
+        let mut dispatch = HoldState::new();
+        dispatch.cancelled("prompt a");
+        assert!(!dispatch.held(), "single Esc must not park dispatch");
+    }
+
+    /// The pair with an empty backlog: the escalation lands at the idle recv
+    /// (its `Stop` was consumed first — the channel is FIFO), and must still
+    /// requeue the prompt that cancel dropped and park dispatch. This is the
+    /// sequence that used to fall into the stray-input arm and vanish.
+    #[test]
+    fn stop_and_hold_requeues_the_prompt_the_first_esc_cancelled() {
+        let mut dispatch = HoldState::new();
+        dispatch.cancelled("prompt a");
+        assert_eq!(dispatch.stop_and_hold(None), vec!["prompt a".to_string()]);
+        assert!(dispatch.held(), "double Esc parks dispatch");
+        // The retention was consumed: a re-sent escalation has nothing more
+        // to requeue.
+        assert!(dispatch.stop_and_hold(None).is_empty());
+    }
+
+    /// The pair with a backlog: the gap between its two messages is where
+    /// the driver auto-dispatches the next queued prompt, so the escalation
+    /// cancels THAT turn. Both prompts return — the retained one in front of
+    /// the auto-dispatched one (push order is front-most last), the order
+    /// the user last saw.
+    #[test]
+    fn stop_and_hold_restores_the_backlog_order_the_user_saw() {
+        let mut dispatch = HoldState::new();
+        dispatch.cancelled("prompt a"); // first Esc: A dropped, B dispatched
+        assert_eq!(
+            dispatch.stop_and_hold(Some("prompt b")), // second Esc during B
+            vec!["prompt b".to_string(), "prompt a".to_string()],
+        );
+        assert!(dispatch.held());
+    }
+
+    /// A submission releases the hold, and each plain cancel replaces the
+    /// retention — the escalation only ever requeues its own pair's prompt.
+    #[test]
+    fn release_and_overwrite_scope_retention_to_the_latest_pair() {
+        let mut dispatch = HoldState::new();
+        dispatch.cancelled("stale");
+        dispatch.cancelled("fresh");
+        assert_eq!(dispatch.stop_and_hold(None), vec!["fresh".to_string()]);
+        dispatch.release();
+        assert!(!dispatch.held(), "the next submission releases the hold");
+    }
+
+    /// A stray escalation with nothing retained and nothing in flight stays
+    /// the documented no-op — nothing to requeue, nothing to hold.
+    #[test]
+    fn stray_stop_and_hold_is_a_no_op() {
+        let mut dispatch = HoldState::new();
+        assert!(dispatch.stop_and_hold(None).is_empty());
+        assert!(!dispatch.held());
+    }
+
+    /// `requeue_front` front-inserts in push order and mirrors every insert
+    /// to the deck as `PromptRequeued`, so the driver's backlog and the
+    /// deck's queue view (which front-inserts each mirror in turn) agree.
+    #[test]
+    fn requeue_front_mirrors_each_front_insert_to_the_deck() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut queue: VecDeque<String> = VecDeque::from(["c".to_string()]);
+        requeue_front(&mut queue, &tx, vec!["b".to_string(), "a".to_string()]);
+        assert_eq!(
+            queue,
+            VecDeque::from(["a".to_string(), "b".to_string(), "c".to_string()])
+        );
+        for expected in ["b", "a"] {
+            match rx.try_recv() {
+                Ok(Inbound::PromptRequeued { agent, text }) => {
+                    assert_eq!(agent, LEAD);
+                    assert_eq!(text, expected);
+                }
+                other => panic!("expected PromptRequeued({expected}), got {other:?}"),
+            }
+        }
+        assert!(rx.try_recv().is_err(), "exactly one mirror per insert");
     }
 }
