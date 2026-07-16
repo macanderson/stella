@@ -693,9 +693,7 @@ fn wrap_one_indent(
     let mut current: Vec<(char, Style)> = Vec::new();
     let mut current_w = 0usize;
 
-    let flush = |cur: &mut Vec<(char, Style)>,
-                 first: bool,
-                 out: &mut Vec<Line<'static>>| {
+    let flush = |cur: &mut Vec<(char, Style)>, first: bool, out: &mut Vec<Line<'static>>| {
         if !cur.is_empty() {
             let pairs = std::mem::take(cur);
             if first {

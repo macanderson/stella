@@ -29,10 +29,7 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
         }
 
         if in_code_block {
-            out.push(Line::from(Span::styled(
-                format!("  {raw}"),
-                code_style(),
-            )));
+            out.push(Line::from(Span::styled(format!("  {raw}"), code_style())));
             continue;
         }
 
@@ -54,8 +51,7 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
 
         // ── Blockquote (> ...) ─────────────────────────────────────────────
         if let Some(rest) = raw.strip_prefix("> ") {
-            let mut spans =
-                vec![Span::styled("▎ ", Style::new().fg(theme::MUTED))];
+            let mut spans = vec![Span::styled("▎ ", Style::new().fg(theme::MUTED))];
             spans.extend(parse_inline_spans(rest));
             out.push(Line::from(spans));
             continue;
@@ -64,7 +60,8 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
         // ── Bullet list (- / * / +) ────────────────────────────────────────
         let lead = raw.trim_start();
         let indent = raw.len() - lead.len();
-        if let Some(rest) = lead.strip_prefix("- ")
+        if let Some(rest) = lead
+            .strip_prefix("- ")
             .or_else(|| lead.strip_prefix("* "))
             .or_else(|| lead.strip_prefix("+ "))
         {
@@ -118,10 +115,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
 
     while i < chars.len() {
         // **bold** or __bold__
-        if (chars[i] == '*' || chars[i] == '_')
-            && i + 1 < chars.len()
-            && chars[i + 1] == chars[i]
-        {
+        if (chars[i] == '*' || chars[i] == '_') && i + 1 < chars.len() && chars[i + 1] == chars[i] {
             let delim: String = std::iter::repeat_n(chars[i], 2).collect();
             let Some(end) = find_str(&chars, i + 2, &delim) else {
                 buf.push(chars[i]);
@@ -173,10 +167,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
         }
 
         // ~~strike~~
-        if chars[i] == '~'
-            && i + 1 < chars.len()
-            && chars[i + 1] == '~'
-        {
+        if chars[i] == '~' && i + 1 < chars.len() && chars[i + 1] == '~' {
             let Some(end) = find_str(&chars, i + 2, "~~") else {
                 buf.push(chars[i]);
                 i += 1;
@@ -260,7 +251,9 @@ fn strip_numbered(lead: &str) -> Option<&str> {
     if digits_end == 0 || digits_end >= lead.len() {
         return None;
     }
-    lead.get(digits_end..)?.strip_prefix(". ").or_else(|| lead.get(digits_end..)?.strip_prefix(") "))
+    lead.get(digits_end..)?
+        .strip_prefix(". ")
+        .or_else(|| lead.get(digits_end..)?.strip_prefix(") "))
 }
 
 /// Build a heading line with level-appropriate styling.
@@ -304,7 +297,10 @@ fn find_str(chars: &[char], start: usize, needle: &str) -> Option<usize> {
 
 /// Find the index of `target` in `chars[start..]`, or `None`.
 fn find_char(chars: &[char], start: usize, target: char) -> Option<usize> {
-    chars[start..].iter().position(|&c| c == target).map(|p| start + p)
+    chars[start..]
+        .iter()
+        .position(|&c| c == target)
+        .map(|p| start + p)
 }
 
 /// Find a single delimiter (e.g. `*`) while skipping doubled pairs (`**`).
@@ -411,7 +407,10 @@ mod tests {
         let lines = render("```\nfn main() {}\n```");
         assert_eq!(lines.len(), 1);
         let text = collect_spans_text(&lines[0]);
-        assert!(text.contains("fn main"), "code block content visible: {text}");
+        assert!(
+            text.contains("fn main"),
+            "code block content visible: {text}"
+        );
     }
 
     #[test]

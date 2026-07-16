@@ -548,7 +548,10 @@ fn compact_json(value: &serde_json::Value) -> String {
 /// query for search tools, and so on.
 fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
     let str_field = |key: &str| -> Option<String> {
-        input.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+        input
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     };
 
     // Primary field per tool — the one the user cares about at a glance.
@@ -574,7 +577,8 @@ fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
         return truncate_field(&cmd, 120);
     }
 
-    if let Some(query) = str_field("query").or_else(|| str_field("pattern"))
+    if let Some(query) = str_field("query")
+        .or_else(|| str_field("pattern"))
         .or_else(|| str_field("symbol"))
     {
         return truncate_field(&query, 80);
