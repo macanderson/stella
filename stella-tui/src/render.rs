@@ -27,7 +27,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use stella_protocol::FileChangeKind;
 
@@ -671,10 +671,13 @@ fn render_composer(
 /// then `:` and one space. Content always begins at column 22.
 pub(crate) const LABEL_COL: usize = 22;
 
-/// Format a label as `[name]` right-aligned in 20 chars, followed by `: `.
+/// Format a label as `[name]` right-aligned so content starts at
+/// [`LABEL_COL`]. Padding is display-width aware — a wide glyph or emoji in
+/// the label must not shift the content column.
 fn label_tag(name: &str) -> String {
     let bracketed = format!("[{name}]");
-    format!("{:>20}: ", bracketed)
+    let pad = (LABEL_COL - 2).saturating_sub(UnicodeWidthStr::width(bracketed.as_str()));
+    format!("{}{bracketed}: ", " ".repeat(pad))
 }
 
 /// Indent string for wrapped continuation lines — exactly `LABEL_COL` spaces.
@@ -744,17 +747,42 @@ fn wrap_one_indent(
     flush(&mut current, is_first, out);
 }
 
-/// Wrap a vector of lines where the first line has a label prefix and
-/// continuation lines should indent to `LABEL_COL`.
-fn wrap_labeled(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
-    if width == 0 {
-        return lines;
+/// Emit one transcript row in the canonical two-column layout: a
+/// right-aligned `[label]: ` tag in the gutter, content starting at
+/// [`LABEL_COL`], wrap continuations indented to the content column.
+///
+/// Every `entry_lines` arm MUST route its rows through this (or
+/// [`push_labeled_block`] for multi-line content) — no transcript row
+/// renders at the left margin. The
+/// `every_transcript_entry_renders_in_the_label_gutter` test enforces it.
+fn push_labeled(
+    label: &str,
+    label_style: Style,
+    content: Vec<Span<'static>>,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    push_labeled_block(label, label_style, vec![Line::from(content)], width, out);
+}
+
+/// Multi-line form of [`push_labeled`]: the tag labels the first line and
+/// every following line indents to the content column.
+fn push_labeled_block(
+    label: &str,
+    label_style: Style,
+    lines: Vec<Line<'static>>,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    for (i, line) in lines.into_iter().enumerate() {
+        let mut spans = if i == 0 {
+            vec![Span::styled(label_tag(label), label_style)]
+        } else {
+            vec![Span::raw(cont_indent())]
+        };
+        spans.extend(line.spans);
+        wrap_one_indent(Line::from(spans), width, LABEL_COL, out);
     }
-    let mut out = Vec::with_capacity(lines.len());
-    for line in lines {
-        wrap_one_indent(line, width, LABEL_COL, &mut out);
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -790,58 +818,48 @@ pub(crate) fn entry_lines(
                 .add_modifier(Modifier::ITALIC),
         ))),
         TranscriptEntry::User(text) => {
-            let md = crate::markdown::render(text);
-            let mut entry_out: Vec<Line<'static>> = Vec::new();
-            for (i, line) in md.into_iter().enumerate() {
-                if i == 0 {
-                    let mut spans = vec![Span::styled(label_tag("user"), theme::accent())];
-                    spans.extend(line.spans);
-                    entry_out.push(Line::from(spans));
-                } else {
-                    let mut spans = vec![Span::raw(cont_indent())];
-                    spans.extend(line.spans);
-                    entry_out.push(Line::from(spans));
-                }
-            }
-            out.extend(wrap_labeled(entry_out, width));
+            push_labeled_block(
+                "user",
+                theme::accent(),
+                crate::markdown::render(text),
+                width,
+                out,
+            );
         }
-        TranscriptEntry::Stage(name) => out.push(Line::from(Span::styled(
-            format!("── {} ──", stage_label(*name)),
-            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ))),
+        TranscriptEntry::Stage(name) => {
+            let style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+            push_labeled(
+                "stage",
+                style,
+                vec![Span::styled(stage_label(*name), style)],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::Text(text) => {
-            let md = crate::markdown::render(text);
-            let mut entry_out: Vec<Line<'static>> = Vec::new();
-            for (i, line) in md.into_iter().enumerate() {
-                if i == 0 {
-                    let mut spans = vec![Span::styled(label_tag("agent"), theme::accent())];
-                    spans.extend(line.spans);
-                    entry_out.push(Line::from(spans));
-                } else {
-                    let mut spans = vec![Span::raw(cont_indent())];
-                    spans.extend(line.spans);
-                    entry_out.push(Line::from(spans));
-                }
-            }
-            out.extend(wrap_labeled(entry_out, width));
+            push_labeled_block(
+                "agent",
+                theme::accent(),
+                crate::markdown::render(text),
+                width,
+                out,
+            );
         }
         TranscriptEntry::Reasoning(text) => {
             let total_lines = text.lines().count().max(1);
             let show_all = expand_thinking || expanded;
             let chevron = if show_all { "⏶" } else { "⏵" };
-            out.push(Line::from(vec![
-                Span::styled(format!("{chevron} "), Style::new().fg(theme::AMBER)),
-                Span::styled(
-                    format!("thinking · {total_lines} lines"),
-                    Style::new().fg(theme::AMBER),
-                ),
-            ]));
+            let header_style = Style::new().fg(theme::AMBER);
             let reasoning_style = Style::new()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC);
+            let mut block = vec![Line::from(Span::styled(
+                format!("{total_lines} lines"),
+                header_style,
+            ))];
             if show_all {
                 for l in text.split('\n') {
-                    out.push(Line::from(Span::styled(format!("  {l}"), reasoning_style)));
+                    block.push(Line::from(Span::styled(l.to_owned(), reasoning_style)));
                 }
             } else {
                 let preview_count = 3;
@@ -851,29 +869,38 @@ pub(crate) fn entry_lines(
                         break;
                     }
                     if !l.trim().is_empty() {
-                        out.push(Line::from(Span::styled(format!("  {l}"), reasoning_style)));
+                        block.push(Line::from(Span::styled(l.to_owned(), reasoning_style)));
                         shown += 1;
                     }
                 }
                 if total_lines > preview_count {
-                    out.push(Line::from(Span::styled(
-                        "  ⋯ ctrl+o expands this thought · ctrl+r all",
+                    block.push(Line::from(Span::styled(
+                        "⋯ ctrl+o expands this thought · ctrl+r all",
                         Style::new().fg(Color::DarkGray),
                     )));
                 }
             }
+            push_labeled_block(
+                &format!("{chevron} thinking"),
+                header_style,
+                block,
+                width,
+                out,
+            );
         }
         TranscriptEntry::ToolStart {
             name, input, raw, ..
         } => {
-            let line = Line::from(vec![
-                Span::styled(
-                    label_tag(name),
-                    Style::new().fg(Color::Blue).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(input.clone(), Style::new().fg(Color::DarkGray)),
-            ]);
-            wrap_one_indent(line, width, LABEL_COL, out);
+            push_labeled(
+                name,
+                Style::new().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                vec![Span::styled(
+                    input.clone(),
+                    Style::new().fg(Color::DarkGray),
+                )],
+                width,
+                out,
+            );
             if expanded {
                 // ctrl+o: the full argument object, pretty-printed and dim.
                 // An over-budget argument may not parse (char-capped raw) —
@@ -909,17 +936,20 @@ pub(crate) fn entry_lines(
             };
             // The result labels itself with the tool it answers (resolved
             // from the start entry) so call/result rows read as a pair.
-            let label = label_tag(&format!("{glyph} {name}"));
+            let label = format!("{glyph} {name}");
+            let label_style = Style::new().fg(color).add_modifier(Modifier::BOLD);
             let extra = full.lines().count().saturating_sub(1);
             if expanded {
-                let line = Line::from(vec![
-                    Span::styled(label, Style::new().fg(color).add_modifier(Modifier::BOLD)),
-                    Span::styled(
+                push_labeled(
+                    &label,
+                    label_style,
+                    vec![Span::styled(
                         format!("({} lines · {duration_ms}ms)", extra + 1),
                         Style::new().fg(Color::DarkGray),
-                    ),
-                ]);
-                wrap_one_indent(line, width, LABEL_COL, out);
+                    )],
+                    width,
+                    out,
+                );
                 for l in full.lines() {
                     wrap_one_indent(
                         Line::from(Span::styled(
@@ -945,145 +975,248 @@ pub(crate) fn entry_lines(
                 } else {
                     format!("  ({duration_ms}ms)")
                 };
-                let line = Line::from(vec![
-                    Span::styled(label, Style::new().fg(color).add_modifier(Modifier::BOLD)),
-                    Span::raw(shown),
-                    Span::styled(hint, Style::new().fg(Color::DarkGray)),
-                ]);
-                wrap_one_indent(line, width, LABEL_COL, out);
+                push_labeled(
+                    &label,
+                    label_style,
+                    vec![
+                        Span::raw(shown),
+                        Span::styled(hint, Style::new().fg(Color::DarkGray)),
+                    ],
+                    width,
+                    out,
+                );
             }
         }
-        // Annotation rows: wording comes from the shared `textline` table
-        // (issue #66 — one lookup per `AgentEvent` variant, styled here).
         TranscriptEntry::Retry { attempt, reason } => {
-            out.push(note_line(textline::retry(*attempt, reason)));
+            let style = Style::new().fg(Color::Yellow);
+            push_labeled(
+                "↻ retry",
+                style,
+                vec![Span::styled(format!("#{attempt}: {reason}"), style)],
+                width,
+                out,
+            );
         }
         TranscriptEntry::Compaction {
             before_tokens,
             after_tokens,
             evicted,
             deduped,
-        } => out.push(note_line(textline::compaction(
-            *before_tokens,
-            *after_tokens,
-            *evicted,
-            *deduped,
-        ))),
+        } => {
+            let style = Style::new().fg(Color::Blue);
+            push_labeled(
+                "⇣ compacted",
+                style,
+                vec![Span::styled(
+                    format!(
+                        "{before_tokens}→{after_tokens} tok (evicted {evicted}, deduped {deduped})"
+                    ),
+                    style,
+                )],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::BudgetTick {
             spent_usd,
             limit_usd,
             mode,
         } => {
-            // The deck keeps the enforcement mode on the row (the plain
-            // surface suppresses `Off` ticks instead).
-            let mut line = textline::budget_tick(*spent_usd, *limit_usd);
-            line.detail = Some(format!("({})", budget_mode_label(*mode)));
-            out.push(note_line(line));
+            let limit = limit_usd.map(|l| format!("/${l:.2}")).unwrap_or_default();
+            let style = Style::new().fg(Color::DarkGray);
+            push_labeled(
+                "spend",
+                style,
+                vec![Span::styled(
+                    format!("${spent_usd:.4}{limit} ({})", budget_mode_label(*mode)),
+                    style,
+                )],
+                width,
+                out,
+            );
         }
         TranscriptEntry::ProviderFallback { from, to, reason } => {
-            out.push(note_line(textline::provider_fallback(from, to, reason)));
+            let style = Style::new().fg(Color::Magenta);
+            push_labeled(
+                "⚡ fallback",
+                style,
+                vec![Span::styled(format!("{from} → {to}: {reason}"), style)],
+                width,
+                out,
+            );
         }
         TranscriptEntry::ContextRecall {
             frames,
             tokens,
             labels,
         } => {
-            // Cited by human label, never raw id (L-C4); the plain surface
-            // cites the provider mix on the same shared line instead.
-            out.push(note_line(textline::context_recall(
-                *frames,
-                *tokens,
-                &labels.join(", "),
-            )));
+            let cited = labels.join(", ");
+            let style = Style::new().fg(Color::Blue);
+            push_labeled(
+                "◉ recalled",
+                style,
+                vec![Span::styled(
+                    format!("{frames} frames ({tokens} tok): {cited}"),
+                    style,
+                )],
+                width,
+                out,
+            );
         }
         TranscriptEntry::ContextWrite {
             provider,
             upserts,
             superseded,
-        } => out.push(note_line(textline::context_write(
-            provider,
-            *upserts,
-            *superseded,
-        ))),
+        } => {
+            let style = Style::new().fg(Color::Blue);
+            push_labeled(
+                "✎ memory",
+                style,
+                vec![Span::styled(
+                    format!("{upserts} facts ({superseded} superseded) → {provider}"),
+                    style,
+                )],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::MediaProgress {
             artifact_id,
             kind,
             state,
-        } => out.push(note_line(textline::media_progress(
-            *kind,
-            artifact_id,
-            state,
-        ))),
+        } => {
+            let style = Style::new().fg(Color::Magenta);
+            push_labeled(
+                "🎞 media",
+                style,
+                vec![Span::styled(
+                    format!("{} {artifact_id}: {state}", media_kind_label(*kind)),
+                    style,
+                )],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::MediaComplete { label, path, kind } => {
-            out.push(note_line(textline::media_complete(label, path, *kind)));
+            let style = Style::new().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+            push_labeled(
+                "🎨 media",
+                style,
+                vec![
+                    Span::styled(format!("{} {label} ", media_kind_label(*kind)), style),
+                    Span::styled(path.clone(), Style::new().fg(Color::DarkGray)),
+                ],
+                width,
+                out,
+            );
         }
         TranscriptEntry::JudgeVerdict {
             passed,
             summary,
             deterministic,
-        } => out.push(note_line(textline::judge_verdict(
-            *passed,
-            *deterministic,
-            summary,
-        ))),
+        } => {
+            let (glyph, color) = if *passed {
+                ("✓", Color::Green)
+            } else {
+                ("✗", Color::Red)
+            };
+            let tag = if *deterministic {
+                "deterministic"
+            } else {
+                "model-judge"
+            };
+            push_labeled(
+                &format!("{glyph} verdict"),
+                Style::new().fg(color).add_modifier(Modifier::BOLD),
+                vec![
+                    Span::styled(format!("[{tag}] "), Style::new().fg(Color::DarkGray)),
+                    Span::raw(summary.clone()),
+                ],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::ScopeReview {
             summary,
             steps,
             estimated_files,
-        } => out.push(note_line(textline::scope_review(
-            summary,
-            *steps,
-            *estimated_files,
-            // The entry retains no cost estimate; the pending card carries it.
-            None,
-        ))),
+        } => {
+            let style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+            push_labeled(
+                "⏸ scope",
+                style,
+                vec![Span::styled(
+                    format!("{summary} ({steps} steps, ~{estimated_files} files)"),
+                    style,
+                )],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::AskUser { question, options } => {
-            // The shared line is the question; the option count + free-text
-            // affordance is this surface's card cue.
-            let mut line = textline::ask_user(question);
-            line.detail = Some(format!("({options} options + free text)"));
-            out.push(note_line(line));
+            let style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+            push_labeled(
+                "? ask",
+                style,
+                vec![Span::styled(
+                    format!("{question} ({options} options + free text)"),
+                    style,
+                )],
+                width,
+                out,
+            );
         }
         TranscriptEntry::Commit { sha, message } => {
-            out.push(note_line(textline::commit(sha, message)));
+            let short = sha.chars().take(9).collect::<String>();
+            let style = Style::new().fg(Color::Cyan);
+            push_labeled(
+                "● commit",
+                style,
+                vec![
+                    Span::styled(format!("{short} "), style),
+                    Span::raw(message.clone()),
+                ],
+                width,
+                out,
+            );
         }
-        TranscriptEntry::Pr { url, status } => out.push(note_line(textline::pr(url, *status))),
+        TranscriptEntry::Pr { url, status } => {
+            let style = Style::new()
+                .fg(pr_status_color(*status))
+                .add_modifier(Modifier::BOLD);
+            push_labeled(
+                "⇢ pr",
+                style,
+                vec![
+                    Span::styled(format!("[{}] ", pr_status_label(*status)), style),
+                    Span::styled(url.clone(), Style::new().fg(Color::DarkGray)),
+                ],
+                width,
+                out,
+            );
+        }
         TranscriptEntry::Error { message, retryable } => {
-            out.push(note_line(textline::error(message, *retryable)));
+            let tag = if *retryable { " (retryable)" } else { "" };
+            let style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
+            push_labeled(
+                "✗ error",
+                style,
+                vec![Span::styled(format!("{message}{tag}"), style)],
+                width,
+                out,
+            );
         }
         TranscriptEntry::Complete { model, cost_usd } => {
-            out.push(note_line(textline::complete(model, *cost_usd)));
+            // Fully muted on purpose: completion is a footnote, not an event.
+            let style = Style::new().fg(theme::MUTED);
+            push_labeled(
+                "cost",
+                style,
+                vec![Span::styled(format!("${cost_usd:.4} · {model}"), style)],
+                width,
+                out,
+            );
         }
-    }
-}
-
-/// One shared [`EventLine`] as a styled transcript row: glyph+body carry the
-/// tone's theme color (bold when `strong`), the detail tail reads muted —
-/// this fn and the palette map below are the *entire* deck-side presentation
-/// of an annotation.
-fn note_line(note: EventLine) -> Line<'static> {
-    let mut style = Style::new().fg(tone_color(note.tone));
-    if note.strong {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-    let mut spans = vec![Span::styled(format!("{} {}", note.glyph, note.body), style)];
-    if let Some(detail) = note.detail {
-        spans.push(Span::styled(
-            format!(" {detail}"),
-            Style::new().fg(theme::MUTED),
-        ));
-    }
-    Line::from(spans)
-}
-
-/// Semantic tone → deck palette.
-fn tone_color(tone: Tone) -> Color {
-    match tone {
-        Tone::Info => theme::RUN,
-        Tone::Success => theme::OK,
-        Tone::Warn => theme::WARN,
-        Tone::Error => theme::BAD,
-        Tone::Muted => theme::MUTED,
     }
 }
 
@@ -1180,6 +1313,150 @@ mod tests {
         assert!(text.contains("complete"), "shows completion:\n{text}");
     }
 
+    /// Every transcript entry renders through the shared label gutter: its
+    /// first line starts with a right-aligned `[label]: ` tag whose display
+    /// width is exactly `LABEL_COL`. Nothing prints at the left margin.
+    #[test]
+    fn every_transcript_entry_renders_in_the_label_gutter() {
+        let samples = vec![
+            TranscriptEntry::User("hi".into()),
+            TranscriptEntry::Stage(StageKind::Execute),
+            TranscriptEntry::Text("ok".into()),
+            TranscriptEntry::Reasoning("hmm".into()),
+            TranscriptEntry::ToolStart {
+                call_id: "c1".into(),
+                name: "bash".into(),
+                input: "ls".into(),
+                raw: "{}".into(),
+                path: None,
+            },
+            TranscriptEntry::ToolResult {
+                call_id: "c1".into(),
+                name: "bash".into(),
+                ok: true,
+                summary: "done".into(),
+                full: "done".into(),
+                duration_ms: 3,
+                diff: None,
+            },
+            TranscriptEntry::Retry {
+                attempt: 1,
+                reason: "rate limit".into(),
+            },
+            TranscriptEntry::Compaction {
+                before_tokens: 10,
+                after_tokens: 5,
+                evicted: 1,
+                deduped: 2,
+            },
+            TranscriptEntry::BudgetTick {
+                spent_usd: 0.01,
+                limit_usd: Some(1.0),
+                mode: BudgetMode::Observed,
+            },
+            TranscriptEntry::ProviderFallback {
+                from: "a".into(),
+                to: "b".into(),
+                reason: "down".into(),
+            },
+            TranscriptEntry::ContextRecall {
+                frames: 2,
+                tokens: 120,
+                labels: vec!["adr".into()],
+            },
+            TranscriptEntry::ContextWrite {
+                provider: "mem".into(),
+                upserts: 2,
+                superseded: 1,
+            },
+            TranscriptEntry::MediaProgress {
+                artifact_id: "m1".into(),
+                kind: MediaKind::Image,
+                state: "queued".into(),
+            },
+            TranscriptEntry::MediaComplete {
+                label: "logo".into(),
+                path: "out.png".into(),
+                kind: MediaKind::Image,
+            },
+            TranscriptEntry::JudgeVerdict {
+                passed: true,
+                summary: "ok".into(),
+                deterministic: true,
+            },
+            TranscriptEntry::ScopeReview {
+                summary: "auth".into(),
+                steps: 2,
+                estimated_files: 3,
+            },
+            TranscriptEntry::AskUser {
+                question: "which db?".into(),
+                options: 2,
+            },
+            TranscriptEntry::Commit {
+                sha: "abc123def456".into(),
+                message: "fix".into(),
+            },
+            TranscriptEntry::Pr {
+                url: "https://example.test/pr/1".into(),
+                status: PrStatus::Open,
+            },
+            TranscriptEntry::Error {
+                message: "boom".into(),
+                retryable: false,
+            },
+            TranscriptEntry::Complete {
+                model: "glm-5.2".into(),
+                cost_usd: 0.1,
+            },
+        ];
+        for entry in &samples {
+            // Exhaustive on purpose: adding a `TranscriptEntry` variant fails
+            // to compile here — add a sample above and render the new arm
+            // through `push_labeled`/`push_labeled_block`.
+            match entry {
+                TranscriptEntry::User(_)
+                | TranscriptEntry::Stage(_)
+                | TranscriptEntry::Text(_)
+                | TranscriptEntry::Reasoning(_)
+                | TranscriptEntry::ToolStart { .. }
+                | TranscriptEntry::ToolResult { .. }
+                | TranscriptEntry::Retry { .. }
+                | TranscriptEntry::Compaction { .. }
+                | TranscriptEntry::BudgetTick { .. }
+                | TranscriptEntry::ProviderFallback { .. }
+                | TranscriptEntry::ContextRecall { .. }
+                | TranscriptEntry::ContextWrite { .. }
+                | TranscriptEntry::MediaProgress { .. }
+                | TranscriptEntry::MediaComplete { .. }
+                | TranscriptEntry::JudgeVerdict { .. }
+                | TranscriptEntry::ScopeReview { .. }
+                | TranscriptEntry::AskUser { .. }
+                | TranscriptEntry::Commit { .. }
+                | TranscriptEntry::Pr { .. }
+                | TranscriptEntry::Error { .. }
+                | TranscriptEntry::Complete { .. } => {}
+            }
+            let mut lines = Vec::new();
+            entry_lines(entry, false, false, 0, &mut lines);
+            let first = lines
+                .first()
+                .unwrap_or_else(|| panic!("{entry:?} renders no lines"));
+            let tag = first.spans.first().expect("first span is the label tag");
+            assert!(
+                tag.content.ends_with("]: "),
+                "{entry:?} must start with a `[label]: ` tag, got {:?}",
+                tag.content
+            );
+            assert_eq!(
+                UnicodeWidthStr::width(tag.content.as_ref()),
+                LABEL_COL,
+                "{entry:?} label tag must place content at LABEL_COL, got {:?}",
+                tag.content
+            );
+        }
+    }
+
     #[test]
     fn files_panel_lists_touched_files_by_label() {
         let mut model = SessionModel::new();
@@ -1225,7 +1502,7 @@ mod tests {
         let mut ui = UiState::default();
         let collapsed = draw(&model, &mut ui, 100, 24);
         assert!(
-            collapsed.contains("thinking · 3 lines"),
+            collapsed.contains("[⏵ thinking]: 3 lines"),
             "collapsed header:\n{collapsed}"
         );
         // Collapsed = header + 3 preview lines (all 3 fit within preview count).
