@@ -869,6 +869,15 @@ pub async fn run_goal_cmd(
     outcome
 }
 
+/// The REPL's productized command names — reserved: a custom definition can
+/// never run under one of these, argument-carrying forms included (the
+/// exact-match handlers in the loop only claim the bare forms). Must cover
+/// every `/`-command the loop below handles.
+const REPL_RESERVED: &[&str] = &[
+    "/exit", "/quit", "/models", "/config", "/help", "/clear", "/files", "/agents", "/init",
+    "/rename", "/color", "/goal",
+];
+
 /// Run an interactive REPL session. `budget_limit` is per-session: the
 /// `BudgetGuard`'s session-scoped total accumulates across every turn in
 /// the conversation, while `BudgetGuard::begin_turn` resets only the
@@ -903,6 +912,17 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     let mut memory = SessionMemory::open(&cfg.workspace_root, true);
+    // Custom extensions: ⚡ commands/skills invocable as `/name args`, custom
+    // agents behind `/agents`. Reloaded after `/init`, which may adopt new
+    // ones from `.claude/`/`.agents/`. Load problems print up front so a
+    // definition that failed to parse is visible, not silently absent.
+    let mut custom = crate::extensions::CustomExtensions::load(&cfg.workspace_root);
+    if let Some(report) = custom.problems_report() {
+        for line in report.lines() {
+            println!("  {line}");
+        }
+        println!();
+    }
 
     loop {
         // The rocket-vs-UFO duel animates one line above the prompt while
@@ -955,6 +975,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             println!();
             continue;
         }
+        if input == "/agents" {
+            println!("  {}\n", custom.render_agent_list().replace('\n', "\n  "));
+            continue;
+        }
         if input == "/init" {
             println!();
             let mut emit = |line: String| println!("  {line}");
@@ -972,6 +996,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                     // `/init` just wrote — otherwise the cached domains stay
                     // stale until the next launch.
                     memory = SessionMemory::open(&cfg.workspace_root, true);
+                    // `/init` may also have adopted new custom
+                    // commands/skills/agents — make them invocable now, and
+                    // report anything that failed to load.
+                    custom = crate::extensions::CustomExtensions::load(&cfg.workspace_root);
+                    if let Some(report) = custom.problems_report() {
+                        for line in report.lines() {
+                            println!("  {line}");
+                        }
+                    }
                 }
                 Err(e) => println!("  {} init failed: {e}", "✗".red()),
             }
@@ -1058,6 +1091,18 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             }
             continue;
         }
+
+        // A custom command/skill (⚡): expand the template — arguments and
+        // all — into the prompt the model turn runs. Reserved names never
+        // reach a custom definition, so the REPL vocabulary above cannot be
+        // shadowed even in argument-carrying forms the exact-match handlers
+        // let through (e.g. `/help topic`).
+        let expanded = if input.starts_with('/') {
+            custom.expand(input, REPL_RESERVED)
+        } else {
+            None
+        };
+        let input = expanded.as_deref().unwrap_or(input);
 
         messages.push(CompletionMessage::user(input));
         println!();
@@ -1231,6 +1276,11 @@ pub(crate) async fn init_workspace(
     // The code graph needs no provider — build it regardless of how the
     // domains were inferred, so the index exists even fully offline.
     build_code_graph(workspace_root, emit).await;
+
+    // Adopt commands/skills/agents other code agents keep in `.claude/` and
+    // `.agents/` (workspace + user scope) as symlinks into stella's own
+    // directories — idempotent, never clobbers, never fatal.
+    crate::extensions::sync_extensions(workspace_root, emit);
 
     let path = domains.save(workspace_root)?;
 
@@ -2391,6 +2441,10 @@ fn print_help() {
     println!(
         "  {}       Show files touched this session",
         "/files".bright_blue()
+    );
+    println!(
+        "  {}      List custom agents (⚡ from .stella/agents or ~/.config/stella/agents)",
+        "/agents".bright_blue()
     );
     println!(
         "  {} Rename this terminal tab",

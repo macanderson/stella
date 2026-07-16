@@ -68,7 +68,8 @@ pub struct SessionMemory {
 }
 
 /// Filesystem-backed [`SkillSource`] reading the workspace + user-global
-/// skill directories.
+/// skill directories. Private: outside consumers go through
+/// [`load_workspace_skills`] / [`load_workspace_skills_with_diagnostics`].
 struct FsSkillSource;
 
 impl SkillSource for FsSkillSource {
@@ -101,6 +102,53 @@ impl SkillSource for FsSkillSource {
         }
         files
     }
+}
+
+/// `<workspace>/.stella/skills` — the workspace-scope skills directory.
+pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
+    workspace_root
+        .join(".stella")
+        .join("skills")
+        .display()
+        .to_string()
+}
+
+/// `~/.config/stella/skills` — the user-global skills directory (empty
+/// string without a home, which the loader skips silently).
+pub(crate) fn user_skills_dir() -> String {
+    std::env::var_os("HOME")
+        .map(|home| {
+            PathBuf::from(home)
+                .join(".config")
+                .join("stella")
+                .join("skills")
+                .display()
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// Load every skill visible from `workspace_root` (user-global + workspace,
+/// workspace wins) — shared by [`SessionMemory::load_skills`] and the
+/// custom-extensions surface (`crate::extensions`), which offers the same
+/// files as ⚡ slash-menu entries.
+pub(crate) fn load_workspace_skills(workspace_root: &Path) -> Vec<Skill> {
+    load_workspace_skills_with_diagnostics(workspace_root).skills
+}
+
+/// Same load, keeping the per-file skip diagnostics — the custom-extensions
+/// surface reports these so a malformed `SKILL.md` is visible instead of
+/// silently absent from the slash menu.
+pub(crate) fn load_workspace_skills_with_diagnostics(
+    workspace_root: &Path,
+) -> skills::LoadedSkills {
+    skills::load_skills_with_diagnostics(
+        &FsSkillSource,
+        &LoadSkillsOptions {
+            workspace_skills_dir: workspace_skills_dir(workspace_root),
+            user_skills_dir: user_skills_dir(),
+        },
+    )
 }
 
 impl SessionMemory {
@@ -145,37 +193,14 @@ impl SessionMemory {
     }
 
     fn workspace_skills_dir(&self) -> String {
-        self.workspace_root
-            .join(".stella")
-            .join("skills")
-            .display()
-            .to_string()
-    }
-
-    fn user_skills_dir(&self) -> String {
-        std::env::var_os("HOME")
-            .map(|home| {
-                PathBuf::from(home)
-                    .join(".config")
-                    .join("stella")
-                    .join("skills")
-                    .display()
-                    .to_string()
-            })
-            .unwrap_or_default()
+        workspace_skills_dir(&self.workspace_root)
     }
 
     /// Load the workspace's skills fresh (cheap — a handful of file reads;
     /// fresh so a just-installed or just-auto-created skill is live on the
     /// very next turn).
     pub fn load_skills(&self) -> Vec<Skill> {
-        skills::load_skills(
-            &FsSkillSource,
-            &LoadSkillsOptions {
-                workspace_skills_dir: self.workspace_skills_dir(),
-                user_skills_dir: self.user_skills_dir(),
-            },
-        )
+        load_workspace_skills(&self.workspace_root)
     }
 
     /// Build the volatile recalled-context block for a prompt: relevant

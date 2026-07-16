@@ -56,19 +56,51 @@ impl ComposerEntry {
     }
 }
 
+/// Where a slash command comes from — decides the glyph the menu row shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SlashKind {
+    /// Productized: shipped by stella itself (🔒).
+    #[default]
+    Builtin,
+    /// Custom: a user-authored command/skill definition loaded from the
+    /// workspace or user-global extension directories (⚡).
+    Custom,
+}
+
+impl SlashKind {
+    /// The menu-row glyph: 🔒 for productized commands, ⚡ for custom ones.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            SlashKind::Builtin => "🔒",
+            SlashKind::Custom => "⚡",
+        }
+    }
+}
+
 /// A single slash command offered by the menu. The `name` includes the
 /// leading slash (e.g. `"/help"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashCommand {
     pub name: String,
     pub description: String,
+    pub kind: SlashKind,
 }
 
 impl SlashCommand {
+    /// A productized (built-in) command — the 🔒 rows.
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
+            kind: SlashKind::Builtin,
+        }
+    }
+
+    /// A custom command/skill loaded from a definition file — the ⚡ rows.
+    pub fn custom(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            kind: SlashKind::Custom,
+            ..Self::new(name, description)
         }
     }
 }
@@ -401,6 +433,12 @@ mod tests {
             c.insert_char(ch);
         }
         assert!(c.slash_menu(&cmds).is_none());
+    }
+
+    #[test]
+    fn slash_command_constructors_set_the_kind() {
+        assert_eq!(SlashCommand::new("/help", "d").kind, SlashKind::Builtin);
+        assert_eq!(SlashCommand::custom("/x", "d").kind, SlashKind::Custom);
     }
 
     #[test]
