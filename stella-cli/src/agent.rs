@@ -1319,8 +1319,26 @@ pub(crate) async fn init_workspace(
 /// best-connected file's neighborhood, converted to the deck's Graph-tab
 /// snapshot. `None` when there is no index, it is empty, or any read fails —
 /// the tab then shows its "run stella init" hint instead of an empty graph.
+///
+/// This is [`graph_snapshot_focus`] with no explicit focus, so the neighborhood
+/// centers on [`busiest_file`](stella_graph::CodeGraph::busiest_file) — the
+/// sensible default the deck opens on and can re-root away from via the picker.
 pub(crate) fn graph_snapshot(
     workspace_root: &std::path::Path,
+) -> Option<stella_tui::GraphSnapshot> {
+    graph_snapshot_focus(workspace_root, None)
+}
+
+/// Build the Graph-tab snapshot centered on `focus` (a root-relative file
+/// path), or on the busiest file when `focus` is `None`. The snapshot always
+/// carries the full [`files`](stella_tui::GraphSnapshot::files) list so the
+/// deck's picker can re-root onto any of them — the deck answers a
+/// `FocusGraphFile` request by calling this with `Some(file)` and shipping the
+/// result back as a fresh `Inbound::GraphSnapshot`. `None` when there is no
+/// index, it is empty, or any read fails.
+pub(crate) fn graph_snapshot_focus(
+    workspace_root: &std::path::Path,
+    focus: Option<&str>,
 ) -> Option<stella_tui::GraphSnapshot> {
     use stella_tui::{GraphEdge, GraphNode, GraphSnapshot};
 
@@ -1329,8 +1347,14 @@ pub(crate) fn graph_snapshot(
         return None;
     }
     let graph = stella_graph::CodeGraph::open(workspace_root, &db_path).ok()?;
-    let focus = graph.busiest_file().ok()??;
+    // An explicit pick roots there; otherwise fall back to the busiest file.
+    let focus = match focus {
+        Some(f) => f.to_string(),
+        None => graph.busiest_file().ok()??,
+    };
     let hood = graph.file_neighborhood(std::path::Path::new(&focus)).ok()?;
+    // The full file list backs the picker (a superset of this neighborhood).
+    let files = graph.all_files().unwrap_or_default();
     graph.shutdown();
 
     let mut nodes = vec![GraphNode {
@@ -1379,6 +1403,7 @@ pub(crate) fn graph_snapshot(
         focus: hood.file,
         nodes,
         edges,
+        files,
     })
 }
 
@@ -2638,6 +2663,61 @@ mod tests {
             row.cache_write_tokens, 640,
             "the event's cache-write count must reach the store, never a hard-coded 0"
         );
+    }
+
+    /// Build a real code-graph index in a tempdir: `hub.rs` (three symbols) is
+    /// busiest, `leaf.rs` (one) is not. Returns the workspace root tempdir.
+    fn graph_fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            root.path().join("hub.rs"),
+            "pub fn a() {}\npub fn b() {}\npub struct C;\n",
+        )
+        .unwrap();
+        std::fs::write(root.path().join("leaf.rs"), "pub fn d() {}\n").unwrap();
+        std::fs::create_dir_all(root.path().join(".stella")).unwrap();
+        let db = root.path().join(".stella").join("codegraph.db");
+        let graph = stella_graph::CodeGraph::open(root.path(), &db).expect("open graph");
+        graph.index_all().expect("index");
+        graph.shutdown();
+        root
+    }
+
+    /// The default snapshot roots on the busiest file and carries the full,
+    /// sorted file list the deck's picker browses — sourced straight from the
+    /// graph store, a superset of the rooted neighborhood.
+    #[test]
+    fn graph_snapshot_defaults_to_the_busiest_file_and_lists_all_files() {
+        let root = graph_fixture();
+        let snap = graph_snapshot(root.path()).expect("snapshot");
+        assert_eq!(snap.focus, "hub.rs", "default focus is the busiest file");
+        assert_eq!(
+            snap.files,
+            vec!["hub.rs".to_string(), "leaf.rs".to_string()],
+            "the picker's file list is every indexed file, sorted"
+        );
+    }
+
+    /// An explicit focus re-roots the neighborhood on that file — the picker's
+    /// selection path — while still shipping the same browsable file list.
+    #[test]
+    fn graph_snapshot_focus_re_roots_on_the_requested_file() {
+        let root = graph_fixture();
+        let snap = graph_snapshot_focus(root.path(), Some("leaf.rs")).expect("snapshot");
+        assert_eq!(snap.focus, "leaf.rs", "re-rooted on the requested file");
+        assert!(
+            snap.nodes.iter().any(|n| n.label == "leaf.rs"),
+            "the neighborhood is centered on leaf.rs, not the busiest file"
+        );
+        assert!(snap.files.contains(&"hub.rs".to_string()));
+    }
+
+    /// No index → no snapshot (the tab shows its "run stella init" hint).
+    #[test]
+    fn graph_snapshot_is_none_without_an_index() {
+        let root = tempfile::tempdir().expect("tempdir");
+        assert!(graph_snapshot(root.path()).is_none());
+        assert!(graph_snapshot_focus(root.path(), Some("x.rs")).is_none());
     }
 
     /// Tier-1 rule wiring (issue #103): a workspace rule renders into the

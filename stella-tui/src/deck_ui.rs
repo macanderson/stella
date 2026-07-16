@@ -177,6 +177,17 @@ pub struct DeckUi {
     pub graph_cursor: usize,
     /// The out-of-band code-graph snapshot (set by the caller/scenario).
     pub graph: Option<GraphSnapshot>,
+    /// Whether the Graph tab's file picker is open. While open it is modal
+    /// (like the queue editor): printable keys type into its filter, ↑/↓ move
+    /// the selection, Enter re-roots the neighborhood on the chosen file, Esc
+    /// closes. Opened with `/` (or `Enter`) on the Graph tab.
+    pub graph_picker_open: bool,
+    /// The picker's filter-as-you-type query — kept separate from the global
+    /// composer so opening the picker never disturbs a half-typed prompt.
+    pub graph_picker_query: String,
+    /// Selected row in the picker, indexing the *filtered* match list
+    /// ([`GraphSnapshot::matching_files`]). Reset to 0 on every query edit.
+    pub graph_picker_sel: usize,
     pub files_sel: usize,
     pub files_diff_open: bool,
     pub files_diff_scroll: ScrollState,
@@ -263,6 +274,9 @@ impl Default for DeckUi {
             trace_filter: None,
             graph_cursor: 0,
             graph: None,
+            graph_picker_open: false,
+            graph_picker_query: String::new(),
+            graph_picker_sel: 0,
             files_sel: 0,
             files_diff_open: false,
             files_diff_scroll: ScrollState::default(),
@@ -355,6 +369,11 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
     // folds into the model, then selections are re-clamped.
     if let Inbound::GraphSnapshot(snapshot) = inbound {
         ui.graph = Some(snapshot.clone());
+        // A refreshed snapshot re-roots the neighborhood (a file pick, or an
+        // `/init` rebuild): the node list is now a different file's, so land
+        // the cursor on the new focus (index 0) rather than leaving it on a
+        // stale row that render would merely clamp into range.
+        ui.graph_cursor = 0;
         return;
     }
     if let Inbound::SlashCommands(commands) = inbound {
@@ -546,6 +565,14 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     // delete · ctrl+d twice clear all · Esc close).
     if ui.queue_open {
         return handle_queue_key(key, model, ui);
+    }
+
+    // The Graph tab's file picker is modal exactly like the queue editor: while
+    // it is open every key drives the picker (type to filter, ↑/↓ select, Enter
+    // re-root, Esc close) — before the composer or any tab handler sees it, so a
+    // filter keystroke can never leak into a half-typed prompt.
+    if ui.graph_picker_open {
+        return handle_graph_picker_key(key, ui);
     }
 
     let composer_empty = ui.composer.buffer().is_empty();
@@ -1213,9 +1240,98 @@ fn handle_graph_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Opt
             }
             Some(DeckAction::Handled)
         }
-        // `/` search reserved (only when composer empty) — no-op stub for now.
-        KeyCode::Char('/') if composer_empty => Some(DeckAction::Handled),
+        // `/` (filter-as-you-type) or Enter opens the file picker so a user can
+        // re-root the neighborhood on any indexed file, not just the busiest
+        // one the tab seeds. Gated on an empty composer so both keys stay
+        // typeable as the first character of a prompt. Only meaningful once a
+        // graph with a file list has loaded.
+        KeyCode::Char('/') | KeyCode::Enter if composer_empty && graph_has_files(ui) => {
+            open_graph_picker(ui);
+            Some(DeckAction::Handled)
+        }
         _ => None,
+    }
+}
+
+/// Whether a graph snapshot with at least one listed file is loaded — the
+/// precondition for opening the file picker.
+fn graph_has_files(ui: &DeckUi) -> bool {
+    ui.graph.as_ref().is_some_and(|g| !g.files.is_empty())
+}
+
+/// Open the file picker, defaulting the selection to the file the neighborhood
+/// is currently rooted on (`focus`) — the busiest file on first load. That
+/// keeps the sensible default while making every other file reachable: the
+/// selection starts on "where you already are", not forced there.
+fn open_graph_picker(ui: &mut DeckUi) {
+    ui.graph_picker_query.clear();
+    ui.graph_picker_open = true;
+    ui.graph_picker_sel = ui
+        .graph
+        .as_ref()
+        .and_then(|g| g.files.iter().position(|f| *f == g.focus))
+        .unwrap_or(0);
+}
+
+/// The modal file picker's key map. Printable keys narrow the filter, ↑/↓ walk
+/// the filtered matches, Enter re-roots the neighborhood on the selected file
+/// (a [`WorkspaceInput::FocusGraphFile`] round-trip — see the envelope docs),
+/// and Esc / a cleared-then-Backspace closes it. Selection bounds and the
+/// selected path both come from [`GraphSnapshot::matching_files`] so they can
+/// never disagree with the rendered list.
+fn handle_graph_picker_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    // Snapshot the current match count/selection off the shared filter helper.
+    let match_count = ui
+        .graph
+        .as_ref()
+        .map(|g| g.matching_files(&ui.graph_picker_query).len())
+        .unwrap_or(0);
+
+    match key.code {
+        KeyCode::Esc => {
+            ui.graph_picker_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.graph_picker_sel = ui.graph_picker_sel.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            if match_count > 0 {
+                ui.graph_picker_sel = (ui.graph_picker_sel + 1).min(match_count - 1);
+            }
+            DeckAction::Handled
+        }
+        KeyCode::Enter => {
+            let picked = ui.graph.as_ref().and_then(|g| {
+                g.matching_files(&ui.graph_picker_query)
+                    .get(ui.graph_picker_sel)
+                    .map(|f| f.to_string())
+            });
+            ui.graph_picker_open = false;
+            match picked {
+                Some(file) => DeckAction::Send(WorkspaceInput::FocusGraphFile { file }),
+                None => DeckAction::Handled, // filter matched nothing — just close
+            }
+        }
+        KeyCode::Backspace => {
+            ui.graph_picker_query.pop();
+            ui.graph_picker_sel = 0; // the match set changed — re-anchor
+            DeckAction::Handled
+        }
+        // Printable characters extend the filter. Modified chords (Ctrl/Cmd)
+        // are not filter input — let them fall through as Ignored so global
+        // shortcuts still resolve.
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META) =>
+        {
+            ui.graph_picker_query.push(c);
+            ui.graph_picker_sel = 0; // the match set changed — re-anchor
+            DeckAction::Handled
+        }
+        _ => DeckAction::Ignored,
     }
 }
 
@@ -2429,6 +2545,7 @@ mod tests {
                 location: Some("src/lib.rs".into()),
             }],
             edges: vec![],
+            files: vec!["src/lib.rs".into()],
         };
         ingest_inbound(
             &Inbound::GraphSnapshot(snapshot.clone()),
@@ -2438,6 +2555,23 @@ mod tests {
         assert_eq!(ui.graph.as_ref(), Some(&snapshot));
     }
 
+    // ── Graph file picker ────────────────────────────────────────────────────
+
+    /// A three-file graph rooted on the busiest (`src/b.rs`), on the Graph tab.
+    fn ui_with_graph() -> DeckUi {
+        use crate::graph::{GraphNode, GraphSnapshot};
+        let mut ui = ready_ui();
+        ui.tab = DeckTab::Graph;
+        ui.graph = Some(GraphSnapshot {
+            focus: "src/b.rs".into(),
+            nodes: vec![GraphNode {
+                label: "src/b.rs".into(),
+                kind: "file".into(),
+                location: Some("src/b.rs".into()),
+            }],
+            edges: vec![],
+            files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
+        });
     // ---- AGENTS tab: INSTALLED AGENTS pane -------------------------------
 
     fn installed_entry(name: &str, version: u32) -> InstalledAgentEntry {
@@ -2469,6 +2603,18 @@ mod tests {
     }
 
     #[test]
+    fn slash_opens_the_picker_defaulting_to_the_current_focus() {
+        let model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        let action = handle_deck_key(ch('/'), &model, &mut ui);
+        assert_eq!(action, DeckAction::Handled);
+        assert!(ui.graph_picker_open, "/ opens the picker on the Graph tab");
+        // Default selection is the busiest/focused file (index 1 = src/b.rs),
+        // the sensible default — not forced there, just pre-selected.
+        assert_eq!(ui.graph_picker_sel, 1);
+        assert!(
+            ui.composer.buffer().is_empty(),
+            "/ did not leak into the prompt"
     fn agents_pane_arrows_switch_and_first_visit_asks_for_the_list() {
         let model = model_with(&["lead"]);
         let mut ui = ready_ui();
@@ -2490,6 +2636,115 @@ mod tests {
     }
 
     #[test]
+    fn enter_also_opens_the_picker() {
+        let model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        assert!(ui.graph_picker_open);
+    }
+
+    #[test]
+    fn typing_filters_and_re_anchors_the_selection() {
+        let model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        open_graph_picker(&mut ui);
+        // Filter to just "a.rs" — one match, selection re-anchors to 0.
+        handle_deck_key(ch('a'), &model, &mut ui);
+        assert_eq!(ui.graph_picker_query, "a");
+        assert_eq!(ui.graph_picker_sel, 0);
+        let matches = ui
+            .graph
+            .as_ref()
+            .unwrap()
+            .matching_files(&ui.graph_picker_query);
+        assert_eq!(matches, vec!["src/a.rs"]);
+    }
+
+    #[test]
+    fn enter_in_the_picker_re_roots_on_the_selected_file() {
+        let model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        open_graph_picker(&mut ui);
+        // A multi-char needle (`c.rs`) narrows to exactly src/c.rs — a bare
+        // `c` would also match the shared `src/` prefix of every file.
+        for c in "c.rs".chars() {
+            handle_deck_key(ch(c), &model, &mut ui);
+        }
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        assert_eq!(
+            action,
+            DeckAction::Send(WorkspaceInput::FocusGraphFile {
+                file: "src/c.rs".into()
+            }),
+            "Enter sends the re-root request for the filtered selection"
+        );
+        assert!(!ui.graph_picker_open, "the picker closes on selection");
+    }
+
+    #[test]
+    fn down_arrow_walks_the_filtered_matches_and_clamps() {
+        let model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        open_graph_picker(&mut ui);
+        ui.graph_picker_sel = 0;
+        handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+        handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+        handle_deck_key(key(KeyCode::Down), &model, &mut ui); // past the end
+        assert_eq!(ui.graph_picker_sel, 2, "clamps to the last of three files");
+    }
+
+    #[test]
+    fn esc_closes_the_picker_without_re_rooting() {
+        let model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        open_graph_picker(&mut ui);
+        let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+        assert_eq!(action, DeckAction::Handled);
+        assert!(!ui.graph_picker_open);
+    }
+
+    #[test]
+    fn the_picker_is_modal_over_the_composer() {
+        // A printable key while the picker is open filters — it must NOT type
+        // into the global composer (the queue-editor modality contract).
+        let model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        open_graph_picker(&mut ui);
+        handle_deck_key(ch('b'), &model, &mut ui);
+        assert_eq!(ui.graph_picker_query, "b");
+        assert!(
+            ui.composer.buffer().is_empty(),
+            "filter keys never reach the composer"
+        );
+    }
+
+    #[test]
+    fn a_re_rooted_snapshot_resets_the_node_cursor() {
+        let mut model = model_with(&["lead"]);
+        let mut ui = ui_with_graph();
+        ui.graph_cursor = 5; // stale cursor from the previous neighborhood
+        use crate::graph::{GraphNode, GraphSnapshot};
+        let rerooted = GraphSnapshot {
+            focus: "src/a.rs".into(),
+            nodes: vec![GraphNode {
+                label: "src/a.rs".into(),
+                kind: "file".into(),
+                location: Some("src/a.rs".into()),
+            }],
+            edges: vec![],
+            files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
+        };
+        ingest_inbound(&Inbound::GraphSnapshot(rerooted), &mut model, &mut ui);
+        assert_eq!(ui.graph_cursor, 0, "the cursor lands on the new focus");
+    }
+
+    #[test]
+    fn the_picker_does_not_open_without_a_loaded_graph() {
+        let model = model_with(&["lead"]);
+        let mut ui = ready_ui();
+        ui.tab = DeckTab::Graph; // no snapshot loaded
+        handle_deck_key(ch('/'), &model, &mut ui);
+        assert!(!ui.graph_picker_open, "nothing to pick from — stays closed");
     fn slash_agents_opens_the_tab_on_the_installed_pane() {
         let model = model_with(&["lead"]);
         let mut ui = ready_ui();
