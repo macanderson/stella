@@ -11,6 +11,10 @@ use tokio::process::Command;
 use crate::registry::Tool;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
+/// Ceiling on the model-supplied `timeout_secs`. The timeout is the hang
+/// backstop for commands the model itself launches — accepting an arbitrary
+/// u64 lets one tool call disable the backstop entirely (u64::MAX ≈ never).
+const MAX_TIMEOUT_SECS: u64 = 600;
 const MAX_OUTPUT_BYTES: usize = 100_000;
 
 pub struct Bash;
@@ -25,7 +29,7 @@ impl Tool for Bash {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "Shell command to execute" },
-                    "timeout_secs": { "type": "integer", "description": "Timeout in seconds (default 120)" },
+                    "timeout_secs": { "type": "integer", "description": "Timeout in seconds (default 120, max 600)" },
                     "trace": { "type": "boolean", "description": "Echo each executed line (set -x) as an execution trace" }
                 },
                 "required": ["command"]
@@ -46,7 +50,8 @@ impl Tool for Bash {
         let timeout_secs = input
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
-            .unwrap_or(DEFAULT_TIMEOUT_SECS);
+            .unwrap_or(DEFAULT_TIMEOUT_SECS)
+            .min(MAX_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
         // stderr — an execution trace a judge can demand as evidence.
         let traced;
