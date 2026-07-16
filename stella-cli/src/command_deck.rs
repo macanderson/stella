@@ -61,6 +61,7 @@ use crate::agent;
 use crate::config::Config;
 use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRegistry};
 use crate::memory::{SessionMemory, inject_recall_block, turn_warrants_reflection};
+use crate::runtime::TokioSleeper;
 
 /// The lead agent's id — the one conversation this driver runs.
 const LEAD: &str = "lead";
@@ -616,8 +617,13 @@ async fn run_lead_turn(
             root: cfg.workspace_root.clone(),
         };
         let hook_runner = ShellHookRunner;
-        let mut engine = Engine::new(provider, &tapped, agent::engine_config_for(cfg))
-            .with_calibration(calibration);
+        let mut engine = Engine::with_sleeper(
+            provider,
+            &tapped,
+            agent::engine_config_for(cfg),
+            &TokioSleeper,
+        )
+        .with_calibration(calibration);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
