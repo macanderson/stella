@@ -443,6 +443,25 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         return action;
     }
 
+    // Textarea editing beats per-tab navigation once the composer has
+    // content: Enter breaks the line / the chord submits, and cursor motion
+    // moves through the prompt instead of scrolling the active tab. A blank
+    // composer leaves all of these to the tabs (handle_edit_key gates its
+    // motion on the buffer internally).
+    if !ui.composer.is_blank() {
+        match classify_enter(&key, ui.enter_submits) {
+            EnterAction::Submit => return dispatch_submission(ui),
+            EnterAction::Newline => {
+                ui.composer.insert_newline();
+                return DeckAction::Handled;
+            }
+            EnterAction::NotEnter => {}
+        }
+    }
+    if handle_edit_key(key, &mut ui.composer) {
+        return DeckAction::Handled;
+    }
+
     // Per-tab navigation for non-typing keys…
     if let Some(action) = match ui.tab {
         DeckTab::Agents => handle_agents_key(key, model, ui, composer_empty),
@@ -897,7 +916,8 @@ fn handle_session_key(
 
 /// Dispatch the composer's content: a `!`-prefixed line is a shell command
 /// that executes IMMEDIATELY, bypassing the prompt queue and any busy agent
-/// entirely; any other prompt ALWAYS enqueues — never blocks on a busy agent.
+/// entirely; any other prompt ALWAYS enqueues — never blocks on a busy agent,
+/// though a held dispatch (see [`submit_prompt`]) jumps it to the front.
 fn dispatch_submission(ui: &mut DeckUi) -> DeckAction {
     match ui.composer.take_submission() {
         Some(text) if text.trim_start().starts_with('!') => {
@@ -917,7 +937,7 @@ fn dispatch_submission(ui: &mut DeckUi) -> DeckAction {
                 DeckAction::Shell(cmd)
             }
         }
-        Some(text) => DeckAction::Send(WorkspaceInput::Enqueue { text }),
+        Some(text) => submit_prompt(ui, text),
         None => DeckAction::Ignored,
     }
 }
@@ -1632,7 +1652,7 @@ mod tests {
             handle_deck_key(ch(c), &model, &mut ui);
         }
         assert_eq!(
-            handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+            handle_deck_key(cmd_enter(), &model, &mut ui),
             DeckAction::Send(WorkspaceInput::EnqueueFront {
                 text: "urgent fix".into()
             }),
@@ -1643,7 +1663,7 @@ mod tests {
             handle_deck_key(ch(c), &model, &mut ui);
         }
         assert_eq!(
-            handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+            handle_deck_key(cmd_enter(), &model, &mut ui),
             DeckAction::Send(WorkspaceInput::Enqueue {
                 text: "later".into()
             }),
