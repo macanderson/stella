@@ -74,6 +74,10 @@ pub struct AskUserPrompt {
 /// is applied by [`crate::render`]; this type carries only content.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TranscriptEntry {
+    /// A user-submitted prompt. Not an `AgentEvent` — the deck driver pushes
+    /// this when `PromptStarted` arrives so the user's message is visible
+    /// inline in the transcript, matching the Crush-style conversational layout.
+    User(String),
     /// A stage boundary marker (`triage`, `plan`, `execute`, …).
     Stage(StageKind),
     /// Accumulated assistant natural-language output.
@@ -223,7 +227,7 @@ impl SessionModel {
                 self.transcript.push(TranscriptEntry::ToolStart {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),
-                    input: summarize(&compact_json(&call.input)),
+                    input: format_tool_input(&call.name, &call.input),
                 });
             }
             AgentEvent::ToolResult {
@@ -436,6 +440,14 @@ impl SessionModel {
         }
     }
 
+    /// Push a user-submitted prompt into the transcript. This is **not** an
+    /// `AgentEvent` fold — the deck driver calls this when `PromptStarted`
+    /// arrives so user messages appear inline in the conversational scrollback.
+    pub fn push_user_prompt(&mut self, text: &str) {
+        self.transcript
+            .push(TranscriptEntry::User(text.to_string()));
+    }
+
     /// Record a file touch, retaining the latest diff for the path (L-T5).
     fn touch_file(&mut self, path: &str, kind: FileChangeKind, diff: &Option<String>) {
         if let Some(existing) = self.files.iter_mut().find(|f| f.path == path) {
@@ -458,6 +470,63 @@ impl SessionModel {
 /// the model never panics on a tool card.
 fn compact_json(value: &serde_json::Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
+}
+
+/// Format a tool-call input as a human-readable one-liner. Instead of raw
+/// JSON, this extracts the most relevant field(s) per tool name so the
+/// transcript reads naturally — `path` for file tools, `cmd` for shell, the
+/// query for search tools, and so on.
+fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
+    let str_field = |key: &str| -> Option<String> {
+        input.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    };
+
+    // Primary field per tool — the one the user cares about at a glance.
+    if let Some(p) = str_field("path").or_else(|| str_field("file_path")) {
+        return match name {
+            "edit_file" => {
+                let old = str_field("old_string").map(|s| truncate_field(&s, 40));
+                let new = str_field("new_string").map(|s| truncate_field(&s, 40));
+                match (old, new) {
+                    (Some(o), Some(n)) => format!("{p}  {o} → {n}"),
+                    _ => p,
+                }
+            }
+            "write_file" => {
+                let lines = str_field("content").map(|c| c.lines().count()).unwrap_or(0);
+                format!("{p}  ({lines} lines)")
+            }
+            _ => p,
+        };
+    }
+
+    if let Some(cmd) = str_field("cmd").or_else(|| str_field("command")) {
+        return truncate_field(&cmd, 120);
+    }
+
+    if let Some(query) = str_field("query").or_else(|| str_field("pattern"))
+        .or_else(|| str_field("symbol"))
+    {
+        return truncate_field(&query, 80);
+    }
+
+    if let Some(prompt) = str_field("question").or_else(|| str_field("prompt")) {
+        return truncate_field(&prompt, 80);
+    }
+
+    // Fallback: compact JSON, summarized.
+    summarize(&compact_json(input))
+}
+
+/// Truncate a field value to `max` chars with an ellipsis.
+fn truncate_field(s: &str, max: usize) -> String {
+    let flat = s.replace(['\n', '\r'], " ");
+    let chars: Vec<char> = flat.chars().collect();
+    if chars.len() <= max {
+        return flat;
+    }
+    let head: String = chars[..max.saturating_sub(1)].iter().collect();
+    format!("{head}…")
 }
 
 /// Truncate a summary to [`SUMMARY_BUDGET`] chars with a middle-out elision —

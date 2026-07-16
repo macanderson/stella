@@ -15,6 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 ratatui.workspace = true
+unicode-width.workspace = true
 crossterm.workspace = true
 ratatui-comfy-tabs.workspace = true
 tachyonfx.workspace = true

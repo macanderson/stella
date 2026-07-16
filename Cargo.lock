@@ -2847,6 +2847,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tui-big-text",
+ "unicode-width",
 ]
 
 [[package]]
