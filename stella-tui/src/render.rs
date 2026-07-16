@@ -718,6 +718,12 @@ pub(crate) fn entry_lines(
     out: &mut Vec<Line<'static>>,
 ) {
     match entry {
+        TranscriptEntry::Evicted { count } => out.push(Line::from(Span::styled(
+            format!("… {count} earlier entries evicted"),
+            Style::new()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        ))),
         TranscriptEntry::User(text) => {
             let md = crate::markdown::render(text);
             let mut entry_out: Vec<Line<'static>> = Vec::new();
@@ -1472,6 +1478,21 @@ mod tests {
             joined.contains("[✗ read_file]"),
             "result labels itself with its tool: {joined}"
         );
+    }
+
+    #[test]
+    fn eviction_marker_renders_as_a_one_line_system_note() {
+        let mut out = Vec::new();
+        entry_lines(
+            &TranscriptEntry::Evicted { count: 1234 },
+            false,
+            false,
+            80,
+            &mut out,
+        );
+        assert_eq!(out.len(), 1, "the marker costs exactly one visual row");
+        let text: String = out[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "… 1234 earlier entries evicted");
     }
 
     // ---- Replay determinism (L-T1) ------------------------------------
