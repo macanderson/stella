@@ -2,7 +2,11 @@
 //! `stella-fleet`'s one dispatch seam: a DAG of tasks (from positional
 //! prompts or a `--plan` file), a git worktree per isolated task, wave
 //! scheduling with bounded concurrency, and every attempt/commit/dollar
-//! stamped into the SQLite ledger (`.stella/fleet.db`).
+//! stamped into the SQLite ledger (`.stella/fleet.db`). A task that declares
+//! `claims` (workspace-relative paths it will touch) holds them as
+//! cooperative file locks in `.stella/store.db` for the attempt's duration —
+//! a path another task (or another run) already claims fails that dispatch
+//! by name instead of letting two agents edit the same file.
 //!
 //! Each worker is a full Stella engine turn (the raw step-loop) running in
 //! its task's workspace with the standard tool registry — headless: no MCP,
@@ -111,6 +115,18 @@ pub async fn run_fleet(
         FleetConfig::new(&run_id, &base_sha).with_max_concurrency(max_concurrency.max(1)),
     )
     .map_err(|e| format!("could not start the fleet: {e}"))?;
+    // File claims live in the workspace store (`.stella/store.db`), opened
+    // only when the plan declares any: enforcing claims requires the store
+    // (a claim silently unenforced defeats its purpose), but a claim-free
+    // run must not grow a new failure mode.
+    let fleet = if plan.tasks.iter().any(|t| !t.claims.is_empty()) {
+        let store = stella_store::Store::open(&root).map_err(|e| {
+            format!("this plan declares file claims but the workspace store cannot open: {e}")
+        })?;
+        fleet.with_claim_store(store)
+    } else {
+        fleet
+    };
 
     let report = fleet
         .run_plan(&plan)
@@ -416,12 +432,15 @@ mod tests {
             prompt = "add the /users endpoint"
             depends_on = ["schema"]
             isolation = "shared_tree"
+            claims = ["src/users.rs"]
         "#;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("plan.toml");
         std::fs::write(&path, toml_plan).expect("write");
         let plan = load_plan(&[], Some(&path)).expect("toml plan");
         assert_eq!(plan.tasks[1].depends_on, vec!["schema".to_string()]);
+        assert_eq!(plan.tasks[1].claims, vec!["src/users.rs".to_string()]);
+        assert!(plan.tasks[0].claims.is_empty(), "claims default to none");
         plan.validate().expect("valid");
 
         let json_path = dir.path().join("plan.json");

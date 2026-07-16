@@ -186,7 +186,8 @@ enum Command {
         tasks: Vec<String>,
 
         /// A plan file instead: .json or .toml with [[tasks]] entries
-        /// (id, title, prompt, optional depends_on + isolation)
+        /// (id, title, prompt, optional depends_on + isolation + claims —
+        /// paths held as cooperative file locks while the task runs)
         #[arg(long, value_name = "FILE", conflicts_with = "tasks")]
         plan: Option<std::path::PathBuf>,
 
