@@ -479,10 +479,13 @@ pub fn select_skills(
 // Rendering — the volatile context block injected after the stable prefix
 // ============================================================================
 
-/// Chars-per-token divisor, consistent with [`crate::estimator`]'s
-/// `CHARS_PER_TOKEN` (3.5 biases the estimate high — code/JSON run denser than
-/// prose, and over-estimating trims *earlier*, the safe direction).
-const CHARS_PER_TOKEN: f64 = 3.5;
+/// Chars-per-token divisor — [`crate::estimator`]'s constant, shared so the
+/// two heuristics can never drift on the divisor (3.5 biases the estimate
+/// high — code/JSON run denser than prose, and over-estimating trims
+/// *earlier*, the safe direction). Counting differs deliberately: this
+/// module counts chars to line up with its char-boundary truncation, the
+/// estimator counts bytes.
+const CHARS_PER_TOKEN: f64 = crate::estimator::CHARS_PER_TOKEN;
 /// Per-skill body budget before the body is truncated with a marker.
 const SKILL_BODY_TOKEN_BUDGET: u64 = 400;
 /// Total budget for the whole injected section — once exceeded, remaining
