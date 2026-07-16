@@ -413,6 +413,18 @@ pub async fn run_deck_session(
                     requeue_front(&mut queue, &in_tx, dispatch.stop_and_hold(None));
                     continue 'session;
                 }
+                // The Graph tab's file picker asked to re-root on a file:
+                // requery its neighborhood and push a fresh snapshot back, the
+                // same out-of-band refresh `/init` uses. The loop is idle here,
+                // so the read runs inline.
+                Some(WorkspaceInput::FocusGraphFile { file }) => {
+                    if let Some(snapshot) =
+                        agent::graph_snapshot_focus(&cfg.workspace_root, Some(&file))
+                    {
+                        let _ = in_tx.send(Inbound::GraphSnapshot(snapshot));
+                    }
+                    continue 'session;
+                }
                 // A stray answer/decision/control with no turn in flight has
                 // nothing to act on.
                 Some(_) => continue 'session,
@@ -589,6 +601,22 @@ pub async fn run_deck_session(
                         // backlog and the user's next submission runs first.
                         Some(WorkspaceInput::StopAndHold { .. }) => {
                             break TurnEnd::Cancelled { hold: true }
+                        }
+                        // The Graph tab's file picker can re-root mid-turn (a
+                        // user browsing the graph while an agent works). The
+                        // requery opens SQLite + loads grammars, so run it on
+                        // the blocking pool rather than stalling this event
+                        // pump; it sends the fresh snapshot back when done.
+                        Some(WorkspaceInput::FocusGraphFile { file }) => {
+                            let tx = in_tx.clone();
+                            let root = cfg.workspace_root.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Some(snapshot) =
+                                    agent::graph_snapshot_focus(&root, Some(&file))
+                                {
+                                    let _ = tx.send(Inbound::GraphSnapshot(snapshot));
+                                }
+                            });
                         }
                         // Scope review is not engine-driven yet, and deep
                         // pause/resume/restart need the fleet supervisor —

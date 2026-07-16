@@ -185,6 +185,14 @@ pub enum WorkspaceInput {
     /// Esc is the plain [`AgentControl::Stop`]: cancel, and the next queued
     /// prompt dispatches automatically.
     StopAndHold { agent: AgentId },
+    /// Re-root the Graph tab on `file`: the deck's file picker sends this when
+    /// the user selects a file, and the driver answers with a fresh
+    /// [`Inbound::GraphSnapshot`] centered on it (the same out-of-band refresh
+    /// path `/init` uses). `stella-tui` cannot query the graph store itself, so
+    /// re-rooting is a round-trip rather than a local recompute — the picker
+    /// only knows the file *names* (shipped in [`GraphSnapshot::files`]), never
+    /// their neighborhoods. `file` is a root-relative path from that list.
+    FocusGraphFile { file: String },
     /// Tear down the deck.
     Quit,
 }
