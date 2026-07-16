@@ -156,8 +156,9 @@ pub struct SyncOutcome {
     /// Created links as `(kind, name)`.
     pub linked: Vec<(ExtensionKind, String)>,
     /// Entries skipped by the plan (symlink sources, existing names).
-    /// Asserted by tests only — the init progress line reports links and
-    /// errors, never skips — so the bin target sees it as unread.
+    // dead_code fires in the bin target only: the count is asserted by unit
+    // tests and kept for parity with the plan's skip list, but the init
+    // progress line reports created links only.
     #[allow(dead_code)]
     pub skipped: usize,
     pub errors: Vec<String>,
