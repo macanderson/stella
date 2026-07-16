@@ -75,6 +75,22 @@ fn definition_name_for(path: &Path, kind: ExtensionKind) -> String {
         .unwrap_or(fallback)
 }
 
+/// Whether the loader can read a definition out of this entry: a flat file
+/// always can (`read_definition_files` matches any `.md` extension); a
+/// directory only can when it holds the kind's nested definition file. This
+/// mirrors, exactly, the condition under which `read_definition_files`
+/// silently skips a directory — no nested file present at all, so nothing
+/// loads and nothing is diagnosed. A namespace directory such as
+/// `.claude/commands/vercel/` holding only `deploy.md` (no `COMMAND.md`) is
+/// not loadable by this measure.
+fn is_loadable_entry(path: &Path, kind: ExtensionKind) -> bool {
+    if path.is_dir() {
+        path.join(nested_file(kind)).symlink_metadata().is_ok()
+    } else {
+        true
+    }
+}
+
 /// Scan one source directory for one kind (`<source_root>/<kind>`), with
 /// per-entry symlink detection and best-effort frontmatter-name resolution.
 /// Hidden entries (`.DS_Store`, `.skill-lock.json`, …) are ignored. Sorted by
@@ -97,6 +113,7 @@ fn scan_source(source_root: &Path, kind: ExtensionKind) -> SyncSource {
                 .unwrap_or(false);
             Some(SyncEntry {
                 definition_name: definition_name_for(&entry.path(), kind),
+                is_loadable: is_loadable_entry(&entry.path(), kind),
                 name,
                 path: entry.path().display().to_string(),
                 is_symlink,
@@ -122,6 +139,21 @@ fn existing_targets(dir: &Path, kind: ExtensionKind) -> stella_core::extensions:
         targets.file_names.push(name);
     }
     targets
+}
+
+/// One human-readable line for a `NotLoadable` skip — named individually
+/// (unlike the benign skip reasons, which are just a count) because the bug
+/// this reason exists to fix (#104) is exactly a silently-adopted entry;
+/// folding it into "N already present" would also misdescribe it, since
+/// nothing with this name was actually present anywhere.
+fn describe_unloadable_skip(skip: &stella_core::extensions::SyncSkip) -> String {
+    format!(
+        "{} ({}): namespaced directory — no {}.md or {} found, not loadable",
+        skip.name,
+        skip.kind.dir_name(),
+        skip.name,
+        nested_file(skip.kind)
+    )
 }
 
 /// The relative path from inside `from_dir` to `target` — symlinks are
@@ -155,11 +187,20 @@ fn relative_symlink_target(from_dir: &Path, target: &Path) -> PathBuf {
 pub struct SyncOutcome {
     /// Created links as `(kind, name)`.
     pub linked: Vec<(ExtensionKind, String)>,
-    /// Entries skipped by the plan (symlink sources, existing names). Not
-    /// yet surfaced in the progress line, so only tests read it — the bin
-    /// target's dead-code analysis needs the explicit allow.
+    /// Entries skipped for the benign, expected reasons (symlink sources,
+    /// already-present names, duplicate loaded names) — folded into the
+    /// summary's "N already present" rather than named individually.
+    /// Deliberately excludes `NotLoadable` skips, which are named
+    /// individually in `unloadable` instead (see its doc).
     #[allow(dead_code)]
     pub skipped: usize,
+    /// One human-readable line per entry skipped as `NotLoadable` (a
+    /// namespace directory with no nested definition file — see issue
+    /// #104). Unlike `skipped`, these are always surfaced by
+    /// `sync_extensions`, even when nothing else in this scope was linked
+    /// or already present: the bug this reason exists to fix is exactly a
+    /// silently-adopted entry, so going quiet here would reintroduce it.
+    pub unloadable: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -180,8 +221,10 @@ impl SyncOutcome {
 
 /// Adopt every command/skill/agent found under `source_roots` (in precedence
 /// order) into `dest_root` (`.stella` or `~/.config/stella`) as symlinks.
-/// Idempotent: symlink sources, already-present names, and duplicate names
-/// are skipped by the plan (`stella_core::extensions::plan_extension_sync`).
+/// Idempotent: symlink sources, already-present names, duplicate names, and
+/// unloadable entries (namespace directories with no nested definition
+/// file) are skipped by the plan
+/// (`stella_core::extensions::plan_extension_sync`).
 fn sync_into(dest_root: &Path, source_roots: &[PathBuf]) -> SyncOutcome {
     let sources: Vec<SyncSource> = ExtensionKind::ALL
         .iter()
@@ -192,7 +235,17 @@ fn sync_into(dest_root: &Path, source_roots: &[PathBuf]) -> SyncOutcome {
     let plan = plan_extension_sync(&sources, &existing);
 
     let mut outcome = SyncOutcome {
-        skipped: plan.skips.len(),
+        skipped: plan
+            .skips
+            .iter()
+            .filter(|s| s.reason != stella_core::extensions::SyncSkipReason::NotLoadable)
+            .count(),
+        unloadable: plan
+            .skips
+            .iter()
+            .filter(|s| s.reason == stella_core::extensions::SyncSkipReason::NotLoadable)
+            .map(describe_unloadable_skip)
+            .collect(),
         ..SyncOutcome::default()
     };
     for link in &plan.links {
@@ -231,7 +284,11 @@ fn user_config_root() -> Option<PathBuf> {
 
 /// Run the sync at both scopes and report through `emit` — the shared init
 /// hook (`agent::init_workspace`) calls this so `stella init` and `/init`
-/// behave identically. Quiet when there is nothing to do.
+/// behave identically. Quiet when there is nothing to do — except a
+/// `NotLoadable` skip (a namespace directory adopted from another agent's
+/// dirs that stella's loader could never read), which always gets a line,
+/// even in a scope where nothing else linked (issue #104: the entire point
+/// is that this shape must never go unmentioned).
 pub fn sync_extensions(workspace_root: &Path, emit: &mut dyn FnMut(String)) {
     let mut scopes: Vec<(&str, PathBuf, Vec<PathBuf>)> = vec![(
         "workspace",
@@ -250,18 +307,30 @@ pub fn sync_extensions(workspace_root: &Path, emit: &mut dyn FnMut(String)) {
 
     for (scope, dest, sources) in scopes {
         let outcome = sync_into(&dest, &sources);
-        if let Some(summary) = outcome.summary() {
-            let skipped = match outcome.skipped {
-                0 => String::new(),
-                n => format!(", {n} already present"),
-            };
-            emit(format!(
-                "✓ adopted {summary} from .claude/.agents ({scope} scope{skipped})"
-            ));
-        }
-        for error in &outcome.errors {
-            emit(format!("! extension link failed: {error}"));
-        }
+        emit_sync_outcome(scope, &outcome, emit);
+    }
+}
+
+/// Emit one scope's progress lines: the `✓ adopted …` summary (only when
+/// something linked), then a line for every `NotLoadable` skip — always,
+/// even when nothing linked, so a scope holding only an unloadable
+/// namespace directory is never silent (issue #104) — then any
+/// link-creation errors.
+fn emit_sync_outcome(scope: &str, outcome: &SyncOutcome, emit: &mut dyn FnMut(String)) {
+    if let Some(summary) = outcome.summary() {
+        let skipped = match outcome.skipped {
+            0 => String::new(),
+            n => format!(", {n} already present"),
+        };
+        emit(format!(
+            "✓ adopted {summary} from .claude/.agents ({scope} scope{skipped})"
+        ));
+    }
+    for note in &outcome.unloadable {
+        emit(format!("! skipped {note} ({scope} scope)"));
+    }
+    for error in &outcome.errors {
+        emit(format!("! extension link failed: {error}"));
     }
 }
 
@@ -597,6 +666,64 @@ mod tests {
                 .unwrap()
                 .contains("body of shared")
         );
+    }
+
+    #[test]
+    fn sync_skips_a_namespace_directory_with_no_nested_definition_file() {
+        // The exact shape from issue #104: another agent's namespaced
+        // command directory `.claude/commands/vercel/deploy.md`
+        // (`/vercel:deploy` in that agent) has neither a flat `vercel.md`
+        // nor a `vercel/COMMAND.md` — nothing stella's loader can read.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            &root.join(".claude/commands/vercel/deploy.md"),
+            "---\nname: deploy\n---\nDeploy $ARGUMENTS.",
+        );
+        write(&root.join(".claude/commands/build.md"), "Build it.");
+
+        let outcome = sync_into(
+            &root.join(".stella"),
+            &[root.join(".claude"), root.join(".agents")],
+        );
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(
+            outcome.linked,
+            vec![(ExtensionKind::Commands, "build.md".to_string())],
+            "the namespace directory is never linked"
+        );
+        // `NotLoadable` is reported through `unloadable`, not folded into
+        // the benign `skipped` count (nothing here was "already present").
+        assert_eq!(outcome.skipped, 0);
+        assert_eq!(outcome.unloadable.len(), 1, "{:?}", outcome.unloadable);
+        assert!(outcome.unloadable[0].contains("vercel"));
+        assert!(outcome.unloadable[0].contains("not loadable"));
+        assert!(!root.join(".stella/commands/vercel").exists());
+    }
+
+    #[test]
+    fn sync_reports_an_unloadable_namespace_directory_even_when_nothing_else_is_found() {
+        // A workspace whose ONLY entry under `.claude/commands/` is a
+        // namespace directory: `outcome.summary()` is `None` since nothing
+        // linked, so this must not go silent (issue #104's actual bug).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(&root.join(".claude/commands/vercel/deploy.md"), "Deploy.");
+
+        let outcome = sync_into(
+            &root.join(".stella"),
+            &[root.join(".claude"), root.join(".agents")],
+        );
+        assert!(outcome.linked.is_empty());
+        assert!(outcome.summary().is_none());
+        assert_eq!(outcome.unloadable.len(), 1, "{:?}", outcome.unloadable);
+
+        let mut lines = Vec::new();
+        emit_sync_outcome("workspace", &outcome, &mut |line| lines.push(line));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("vercel"));
+        assert!(lines[0].contains("not loadable"));
+        assert!(lines[0].contains("workspace scope"));
     }
 
     #[test]
