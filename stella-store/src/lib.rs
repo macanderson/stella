@@ -292,6 +292,19 @@ impl Store {
                  INTEGER NOT NULL DEFAULT 0;",
             )?;
         }
+        // Indexes are additive and safe on existing databases. Both tables
+        // grow one row per model call / event forever, and both hot queries
+        // otherwise full-scan: `drift_samples` filters (provider, model) and
+        // sorts (execution_id DESC, step DESC) at EVERY session start, and
+        // any event replay reads (execution_id, seq). Non-unique on purpose —
+        // retrofitting UNIQUE onto tables that may hold historic duplicates
+        // needs a dedupe migration first (expand → migrate → contract).
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS telemetry_by_model
+               ON telemetry(provider, model, execution_id, step);
+             CREATE INDEX IF NOT EXISTS events_by_execution
+               ON events(execution_id, seq);",
+        )?;
         Ok(())
     }
 
