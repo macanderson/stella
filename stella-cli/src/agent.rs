@@ -15,8 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use colored::Colorize;
-use stella_core::ports::{SystemClock, ToolExecutor};
-use stella_core::retry::TokioSleeper;
+use stella_core::ports::ToolExecutor;
 use stella_core::router::{CircuitBreaker, ProviderProfile};
 use stella_core::{
     BudgetGuard, CalibrationMap, Engine, EngineConfig, GoalConfig, GoalOutcome, RoleTable, Router,
@@ -44,6 +43,7 @@ use crate::config::Config;
 use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
 use crate::memory::{SessionMemory, inject_recall_block, turn_warrants_reflection};
+use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
 use stella_context::EpisodeOutcome;
 
@@ -1816,7 +1816,8 @@ async fn run_turn(
         .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let hook_runner = ShellHookRunner;
         let mut engine =
-            Engine::new(provider, &tools, engine_config_for(cfg)).with_calibration(calibration);
+            Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
+                .with_calibration(calibration);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
@@ -2119,7 +2120,8 @@ async fn run_goal_turn(
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
         let hook_runner = ShellHookRunner;
         let mut engine =
-            Engine::new(provider, &tools, engine_config_for(cfg)).with_calibration(calibration);
+            Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
+                .with_calibration(calibration);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }

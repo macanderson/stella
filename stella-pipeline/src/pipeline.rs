@@ -94,7 +94,8 @@ pub struct PipelinePorts<'a> {
     /// The interactive scope-review gate (L-E5).
     pub approvals: &'a dyn ApprovalGate,
     /// The delay port for retry backoff — the same testability seam
-    /// `stella-core` uses; production passes `&TokioSleeper`, tests a no-op.
+    /// `stella-core` uses; production passes the CLI's tokio-backed
+    /// sleeper, tests a no-op.
     pub sleeper: &'a dyn Sleeper,
     /// Lifecycle hooks for the execute engine — the parsed config plus the
     /// runner that spawns hook commands (`stella_core::hooks`). `None` runs
