@@ -39,6 +39,52 @@ pub(crate) fn client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// Parse a `Retry-After` header (delta-seconds form, RFC 9110 §10.2.3) into
+/// a millisecond hint for the retry policy — `stella-core/src/retry.rs`
+/// honors `RateLimited.retry_after_ms` when present. The HTTP-date form is
+/// not handled (providers send seconds on 429s); an absent or unparseable
+/// value yields `None` rather than an error.
+pub(crate) fn parse_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    let value = headers.get(reqwest::header::RETRY_AFTER)?;
+    let seconds: u64 = value.to_str().ok()?.trim().parse().ok()?;
+    Some(seconds.saturating_mul(1000))
+}
+
+/// The mechanical non-success ladder shared by every adapter, applied AFTER
+/// any vendor-specific pre-check (Z.ai's billing-encoded 429s, Google's
+/// API_KEY_INVALID-on-400):
+///
+/// - 401/403 → non-retryable `Auth`. A 403 (permission-denied key, model
+///   not enabled for the account) is a credential problem the user must fix
+///   — pointing them at their key beats a generic terminal error, and the
+///   step driver must not retry it.
+/// - 429 → retryable `RateLimited` carrying the Retry-After hint.
+/// - 5xx → retryable `Transport` (includes 529, which Anthropic and Z.ai
+///   use for load shedding). Without this a momentary blip aborts the whole
+///   turn (`Terminal.is_retryable() == false`).
+/// - anything else → `Terminal`, with the body for diagnosis.
+pub(crate) fn classify_http_status(
+    label: &str,
+    status: reqwest::StatusCode,
+    retry_after_ms: Option<u64>,
+    body: &str,
+) -> ProviderError {
+    use reqwest::StatusCode;
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            ProviderError::Auth(format!("{label} rejected the credential (HTTP {status})"))
+        }
+        StatusCode::TOO_MANY_REQUESTS => ProviderError::RateLimited {
+            message: format!("{label} rate limit"),
+            retry_after_ms,
+        },
+        s if s.is_server_error() => {
+            ProviderError::Transport(format!("{label} HTTP {status}: {body}"))
+        }
+        _ => ProviderError::Terminal(format!("{label} HTTP {status}: {body}")),
+    }
+}
+
 /// Await the next stream item, bounded by `idle`. Maps a stalled stream (no
 /// item within `idle`) and any transport error to a **retryable**
 /// `ProviderError::Transport`, and a clean end-of-stream to `Ok(None)`.
