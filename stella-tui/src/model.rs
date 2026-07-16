@@ -27,6 +27,24 @@ use stella_protocol::{
 /// one-line card (the diff panel and detail views carry the rest).
 const SUMMARY_BUDGET: usize = 200;
 
+/// Retention cap on transcript entries. The per-entry char budgets
+/// ([`INPUT_BUDGET`], [`OUTPUT_BUDGET`]) bound one entry to ~20 KiB, but
+/// without an entry-count cap a long-running session grows without bound;
+/// 4 000 entries bounds the worst case to low tens of MiB while staying far
+/// deeper than any scrollback a user actually walks. Below the cap the fold
+/// is unchanged.
+pub(crate) const MAX_TRANSCRIPT_ENTRIES: usize = 4_000;
+
+/// Entries dropped per eviction pass — 10% of the cap, so the O(chunk) drain
+/// and the deck fold-cache rebuild amortize over hundreds of events instead
+/// of firing on every push once the cap is reached.
+pub(crate) const TRANSCRIPT_EVICTION_CHUNK: usize = MAX_TRANSCRIPT_ENTRIES / 10;
+
+// A pass must drop more than the one marker it inserts (or the transcript
+// never shrinks) and must never drain the live tail.
+const _: () =
+    assert!(TRANSCRIPT_EVICTION_CHUNK >= 2 && TRANSCRIPT_EVICTION_CHUNK < MAX_TRANSCRIPT_ENTRIES);
+
 /// The whole derived state of a session, folded from its `AgentEvent` log.
 ///
 /// Every field is a pure function of the sequence of events applied so far;
@@ -74,6 +92,14 @@ pub struct AskUserPrompt {
 /// is applied by [`crate::render`]; this type carries only content.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TranscriptEntry {
+    /// Stands in for entries dropped by the retention cap
+    /// ([`MAX_TRANSCRIPT_ENTRIES`]) — always the first entry when present.
+    /// `count` is cumulative across eviction passes (a pass that drains an
+    /// earlier marker absorbs its count), so the retained window stays a pure
+    /// function of the event sequence and the monotonically growing count
+    /// doubles as a cache-invalidation generation for consumers indexing the
+    /// transcript (front-eviction shifts every retained index).
+    Evicted { count: usize },
     /// A user-submitted prompt. Not an `AgentEvent` — the deck driver pushes
     /// this when `PromptStarted` arrives so the user's message is visible
     /// inline in the transcript, matching the Crush-style conversational layout.
@@ -487,6 +513,7 @@ impl SessionModel {
                 });
             }
         }
+        self.evict_transcript_overflow();
     }
 
     /// Fold an entire log at once — the replay entry point.
@@ -525,6 +552,41 @@ impl SessionModel {
     pub fn push_user_prompt(&mut self, text: &str) {
         self.transcript
             .push(TranscriptEntry::User(text.to_string()));
+        self.evict_transcript_overflow();
+    }
+
+    /// Total transcript entries evicted by the retention cap so far.
+    /// Monotonic — a pass absorbs any prior marker and adds at least one —
+    /// so it serves as the invalidation generation for caches keyed on the
+    /// retained window's front (see the deck's `SessionFold`).
+    pub fn evicted_entries(&self) -> usize {
+        match self.transcript.first() {
+            Some(TranscriptEntry::Evicted { count }) => *count,
+            _ => 0,
+        }
+    }
+
+    /// Enforce [`MAX_TRANSCRIPT_ENTRIES`]: at the cap, drop the oldest
+    /// [`TRANSCRIPT_EVICTION_CHUNK`] entries and stand a single
+    /// [`TranscriptEntry::Evicted`] marker in their place, absorbing a prior
+    /// marker's count so the tally stays total, not per-pass. Runs inside
+    /// every transcript-growing mutator — the retained window is part of the
+    /// deterministic fold, never a render-time concern. Only the front is
+    /// drained, so streaming coalescing into the tail entry is unaffected.
+    fn evict_transcript_overflow(&mut self) {
+        if self.transcript.len() < MAX_TRANSCRIPT_ENTRIES {
+            return;
+        }
+        let evicted: usize = self
+            .transcript
+            .drain(..TRANSCRIPT_EVICTION_CHUNK)
+            .map(|entry| match entry {
+                TranscriptEntry::Evicted { count } => count,
+                _ => 1,
+            })
+            .sum();
+        self.transcript
+            .insert(0, TranscriptEntry::Evicted { count: evicted });
     }
 
     /// If tool call `call_id` was a file mutation, the path it touched —
@@ -1084,6 +1146,96 @@ mod tests {
             model.pending_ask_user.is_none(),
             "matching result clears it"
         );
+    }
+
+    /// A non-coalescing one-entry event, for growing the transcript by
+    /// exactly one entry per apply.
+    fn retry(attempt: u32) -> AgentEvent {
+        AgentEvent::Retry {
+            attempt,
+            reason: "r".into(),
+        }
+    }
+
+    #[test]
+    fn below_the_cap_nothing_evicts() {
+        let mut model = SessionModel::new();
+        for i in 0..(MAX_TRANSCRIPT_ENTRIES - 1) {
+            model.apply(&retry(i as u32));
+        }
+        assert_eq!(model.transcript.len(), MAX_TRANSCRIPT_ENTRIES - 1);
+        assert_eq!(model.evicted_entries(), 0);
+        assert!(matches!(
+            model.transcript[0],
+            TranscriptEntry::Retry { attempt: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn transcript_caps_with_a_front_eviction_marker() {
+        let mut model = SessionModel::new();
+        let total = MAX_TRANSCRIPT_ENTRIES + 250;
+        for i in 0..total {
+            model.apply(&retry(i as u32));
+        }
+        assert!(model.transcript.len() <= MAX_TRANSCRIPT_ENTRIES);
+        let count = match model.transcript[0] {
+            TranscriptEntry::Evicted { count } => count,
+            ref other => panic!("expected the eviction marker first, got {other:?}"),
+        };
+        // The marker plus the retained entries account for every entry pushed.
+        assert_eq!(count + (model.transcript.len() - 1), total);
+        // The tail is untouched: the newest event is still the last entry.
+        match model.transcript.last() {
+            Some(TranscriptEntry::Retry { attempt, .. }) => {
+                assert_eq!(*attempt, (total - 1) as u32);
+            }
+            other => panic!("expected the newest retry last, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eviction_marker_accumulates_across_passes() {
+        let mut model = SessionModel::new();
+        // Enough to trigger a second pass, which drains the first marker.
+        let total = MAX_TRANSCRIPT_ENTRIES + TRANSCRIPT_EVICTION_CHUNK + 10;
+        for i in 0..total {
+            model.apply(&retry(i as u32));
+        }
+        let count = model.evicted_entries();
+        assert!(
+            count > TRANSCRIPT_EVICTION_CHUNK,
+            "second pass absorbed the first marker's count: {count}"
+        );
+        assert_eq!(count + (model.transcript.len() - 1), total);
+        // Exactly one marker survives, at the front.
+        let markers = model
+            .transcript
+            .iter()
+            .filter(|e| matches!(e, TranscriptEntry::Evicted { .. }))
+            .count();
+        assert_eq!(markers, 1);
+    }
+
+    #[test]
+    fn user_prompts_count_against_the_cap() {
+        let mut model = SessionModel::new();
+        for i in 0..(MAX_TRANSCRIPT_ENTRIES + 5) {
+            model.push_user_prompt(&format!("prompt {i}"));
+        }
+        assert!(model.transcript.len() <= MAX_TRANSCRIPT_ENTRIES);
+        assert!(model.evicted_entries() >= TRANSCRIPT_EVICTION_CHUNK);
+    }
+
+    #[test]
+    fn replay_past_the_cap_stays_deterministic() {
+        let log: Vec<AgentEvent> = (0..(MAX_TRANSCRIPT_ENTRIES + TRANSCRIPT_EVICTION_CHUNK + 3))
+            .map(|i| retry(i as u32))
+            .collect();
+        let a = SessionModel::replay(&log);
+        let b = SessionModel::replay(&log);
+        assert_eq!(a, b);
+        assert!(a.transcript.len() <= MAX_TRANSCRIPT_ENTRIES);
     }
 
     #[test]
