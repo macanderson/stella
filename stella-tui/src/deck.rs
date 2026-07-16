@@ -112,6 +112,15 @@ pub struct AgentEntry {
     pub res: ResourceSample,
     /// Recent activity intensity, one sample per event, for the sparkline.
     pub activity: ActivitySpark,
+    /// Wall-clock ms at which the in-flight chat turn started — set the instant
+    /// the prompt is dispatched (`Inbound::PromptStarted`) and cleared when the
+    /// turn ends. `Some` means a turn is live and the header clock counts up
+    /// from here; `None` means it holds `last_turn_ms` (see [`Self::turn_clock_ms`]).
+    pub turn_started_ms: Option<u64>,
+    /// Duration in ms of the most recently completed turn, held until the next
+    /// turn begins. `None` before any turn has finished, so the header clock
+    /// reads zero at rest.
+    pub last_turn_ms: Option<u64>,
 }
 
 impl AgentEntry {
@@ -129,12 +138,35 @@ impl AgentEntry {
             last_activity_ms: started,
             res: ResourceSample::default(),
             activity: ActivitySpark::new(ACTIVITY_WINDOW),
+            turn_started_ms: None,
+            last_turn_ms: None,
         }
     }
 
     /// Elapsed wall-clock ms given the deck's current clock.
     pub fn elapsed_ms(&self, now_ms: u64) -> u64 {
         now_ms.saturating_sub(self.meta.started_ms)
+    }
+
+    /// The value the header turn-clock displays, in ms: the live elapsed time
+    /// while a turn is in flight, otherwise the last completed turn's duration
+    /// (zero before any turn has run). Always defined — the clock is visible at
+    /// all times, even at rest.
+    pub fn turn_clock_ms(&self, now_ms: u64) -> u64 {
+        match self.turn_started_ms {
+            Some(start) => now_ms.saturating_sub(start),
+            None => self.last_turn_ms.unwrap_or(0),
+        }
+    }
+
+    /// Freeze the turn clock at `now_ms` if a turn is in flight — the turn's
+    /// elapsed becomes the held `last_turn_ms` and the live clock stops. A
+    /// no-op when no turn is running, so double-fires (e.g. a cancel that emits
+    /// its own terminal event after the engine already completed) are harmless.
+    fn end_turn(&mut self, now_ms: u64) {
+        if let Some(start) = self.turn_started_ms.take() {
+            self.last_turn_ms = Some(now_ms.saturating_sub(start));
+        }
     }
 
     /// Spend per hour, or `0.0` before any wall-clock has elapsed.
@@ -262,6 +294,12 @@ impl WorkspaceModel {
                 // the Crush-style layout where user messages are visible.
                 if let Some(idx) = self.index_of(agent) {
                     self.agents[idx].model.push_user_prompt(text);
+                    // A new chat turn begins the instant the prompt is
+                    // dispatched: start the header clock here and drop the
+                    // prior turn's held time so the readout switches straight
+                    // to the live count.
+                    self.agents[idx].turn_started_ms = Some(ts);
+                    self.agents[idx].last_turn_ms = None;
                 }
             }
             Inbound::PromptRequeued { agent, text } => {
@@ -352,7 +390,18 @@ impl WorkspaceModel {
                 AgentEvent::Complete { model, cost_usd } => {
                     entry.meta.model = Some(model.clone());
                     entry.cost_usd = entry.cost_usd.max(*cost_usd);
+                    // The turn-completion event: freeze the header clock at its
+                    // final elapsed so it holds the last turn's duration.
+                    entry.end_turn(now);
                 }
+                // A non-retryable error also ends the turn — an aborted turn,
+                // a user Stop, or a double-Esc hold all fold to one of these
+                // (see `command_deck`). Retryable errors mean the turn
+                // continues (they fold to `Running`), so the clock keeps
+                // ticking; only the terminal kind stops it.
+                AgentEvent::Error {
+                    retryable: false, ..
+                } => entry.end_turn(now),
                 _ => {}
             }
         }
@@ -764,6 +813,98 @@ mod tests {
             agent: agent.into(),
             event,
         }
+    }
+    fn prompt_started(agent: &str, text: &str) -> Inbound {
+        Inbound::PromptStarted {
+            agent: agent.into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn turn_clock_holds_zero_then_runs_freezes_and_resets() {
+        let mut w = WorkspaceModel::new();
+        w.now_ms = 1_000;
+        w.apply_inbound(&reg("lead"));
+
+        // Idle, pre-turn: the clock reads zero and is always defined.
+        assert_eq!(w.agents[0].turn_clock_ms(w.now_ms), 0);
+        assert_eq!(w.agents[0].turn_started_ms, None);
+
+        // A prompt is dispatched — the clock starts from now_ms and runs live.
+        w.now_ms = 5_000;
+        w.apply_inbound(&prompt_started("lead", "do the thing"));
+        assert_eq!(w.agents[0].turn_started_ms, Some(5_000));
+        w.now_ms = 8_000;
+        assert_eq!(
+            w.agents[0].turn_clock_ms(w.now_ms),
+            3_000,
+            "3s elapsed, live"
+        );
+
+        // The turn completes — the clock freezes at its final elapsed and holds
+        // it as later deck-clock frames advance.
+        w.now_ms = 9_500;
+        w.apply_inbound(&ev(
+            "lead",
+            AgentEvent::Complete {
+                model: "m".into(),
+                cost_usd: 0.0,
+            },
+        ));
+        assert_eq!(w.agents[0].turn_started_ms, None);
+        assert_eq!(w.agents[0].last_turn_ms, Some(4_500)); // 9.5s − 5.0s
+        w.now_ms = 60_000;
+        assert_eq!(
+            w.agents[0].turn_clock_ms(w.now_ms),
+            4_500,
+            "the completed turn's time is held, not still counting up"
+        );
+
+        // The next prompt resets: the prior turn's held time is dropped and the
+        // clock runs anew from zero.
+        w.apply_inbound(&prompt_started("lead", "again"));
+        assert_eq!(w.agents[0].turn_started_ms, Some(60_000));
+        assert_eq!(w.agents[0].last_turn_ms, None);
+        assert_eq!(w.agents[0].turn_clock_ms(w.now_ms), 0);
+    }
+
+    #[test]
+    fn a_cancelled_turn_freezes_the_clock_but_a_retryable_error_does_not() {
+        let mut w = WorkspaceModel::new();
+        w.now_ms = 0;
+        w.apply_inbound(&reg("lead"));
+        w.apply_inbound(&prompt_started("lead", "go"));
+
+        // A retryable error is mid-turn noise (it folds to `Running`) — the turn
+        // continues, so the clock keeps ticking.
+        w.now_ms = 2_000;
+        w.apply_inbound(&ev(
+            "lead",
+            AgentEvent::Error {
+                message: "transient".into(),
+                retryable: true,
+            },
+        ));
+        assert_eq!(
+            w.agents[0].turn_started_ms,
+            Some(0),
+            "a retryable error leaves the turn running"
+        );
+        assert_eq!(w.agents[0].turn_clock_ms(w.now_ms), 2_000);
+
+        // A non-retryable error (user Stop / abort / double-Esc all fold to
+        // this) ends the turn exactly like `Complete`.
+        w.now_ms = 3_000;
+        w.apply_inbound(&ev(
+            "lead",
+            AgentEvent::Error {
+                message: "turn stopped by user".into(),
+                retryable: false,
+            },
+        ));
+        assert_eq!(w.agents[0].turn_started_ms, None);
+        assert_eq!(w.agents[0].last_turn_ms, Some(3_000));
     }
 
     #[test]

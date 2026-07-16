@@ -155,7 +155,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     ])
     .split(area);
 
-    render_header(agent, bands[0], buf);
+    render_header(agent, model.now_ms, bands[0], buf);
     render_hud(&sm.hud, bands[1], buf);
     if let Some(proposal) = &sm.pending_scope_review {
         render_scope_review(proposal, false, bands[2], buf);
@@ -223,8 +223,11 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     );
 }
 
-/// The one-line identity header: `▶ lead · running   goal…`.
-fn render_header(agent: &AgentEntry, area: Rect, buf: &mut Buffer) {
+/// The one-line identity header: `▶ lead · running   0:00:00`. The trailing
+/// slot is the **per-turn wall clock** — live while a turn is in flight, else
+/// the last turn's held duration (zero before any turn), formatted `h:mm:ss`
+/// and always present.
+fn render_header(agent: &AgentEntry, now_ms: u64, area: Rect, buf: &mut Buffer) {
     let st = agent.status;
     let line = Line::from(vec![
         Span::styled(
@@ -238,9 +241,17 @@ fn render_header(agent: &AgentEntry, area: Rect, buf: &mut Buffer) {
             Style::new().fg(theme::status_color(st)),
         ),
         Span::raw("   "),
-        Span::styled(agent.meta.title.clone(), theme::muted()),
+        Span::styled(fmt_hms(agent.turn_clock_ms(now_ms)), theme::accent()),
     ]);
     Paragraph::new(line).render(area, buf);
+}
+
+/// Format a millisecond duration as `h:mm:ss` — hours un-padded, minutes and
+/// seconds zero-padded to two digits. Drives the per-turn header clock.
+fn fmt_hms(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    format!("{h}:{m:02}:{s:02}")
 }
 
 /// Shown when there are no agents at all.
@@ -399,5 +410,47 @@ mod tests {
             text.contains("first-message"),
             "selected entry still visible under streaming:\n{text}"
         );
+    }
+
+    #[test]
+    fn fmt_hms_formats_zero_sub_minute_and_over_an_hour() {
+        // Always h:mm:ss, hours un-padded, minutes/seconds zero-padded.
+        assert_eq!(fmt_hms(0), "0:00:00"); // the at-rest, pre-turn readout
+        assert_eq!(fmt_hms(45_000), "0:00:45"); // < 1 min
+        assert_eq!(fmt_hms(65_000), "0:01:05"); // rolls into minutes
+        assert_eq!(fmt_hms(3_600_000), "1:00:00"); // exactly one hour
+        assert_eq!(fmt_hms(3_661_000), "1:01:01"); // > 1 hr
+        assert_eq!(fmt_hms(45_296_000), "12:34:56"); // multi-hour, sub-ms floored
+    }
+
+    #[test]
+    fn header_shows_the_turn_clock_not_the_word_stella() {
+        // The workspace-name title used to sit to the right of `running`; in the
+        // stella repo that literally read "stella". It is now the turn clock —
+        // the header must show the h:mm:ss readout and no longer the word.
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "stella", 0)));
+        // A plain event flips the agent to `Running` (so the label reads
+        // "running") without starting a turn — the clock stays at zero.
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Text {
+                delta: "working".into(),
+            },
+        });
+        let area = Rect::new(0, 0, 80, 1);
+        let mut buf = Buffer::empty(area);
+        render_header(&model.agents[0], model.now_ms, area, &mut buf);
+
+        let text = buffer_text(&buf);
+        assert!(
+            !text.contains("stella"),
+            "the word `stella` is gone from the header:\n{text}"
+        );
+        assert!(
+            text.contains("0:00:00"),
+            "the turn clock reads zero before any turn:\n{text}"
+        );
+        assert!(text.contains("running"), "status label intact:\n{text}");
     }
 }
