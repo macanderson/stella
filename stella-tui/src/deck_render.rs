@@ -17,7 +17,8 @@ use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::envelope::AgentStatus;
-use crate::render::{render_slash_popup, slash_popup_area, stage_label};
+use crate::render::{render_slash_popup, slash_popup_area};
+use crate::textline::stage_label;
 use crate::{fx, splash, theme, views};
 
 /// How long the deck fades in from muted after the splash hands off.
@@ -371,7 +372,6 @@ fn render_help(area: Rect, buf: &mut Buffer) {
         Line::from(Span::styled(" Command Deck — keys", theme::accent())),
         Line::default(),
         Line::from(Span::styled("  Tab / ⇧Tab   switch tabs", theme::body())),
-        Line::from(Span::styled("  1–5          jump to a tab", theme::body())),
         Line::from(Span::styled(
             "  ⌘⏎ / ⌃⏎      queue prompt (never blocks)",
             theme::body(),
