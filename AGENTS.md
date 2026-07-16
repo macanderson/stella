@@ -154,7 +154,6 @@ Sixteen crates. The one-sentence rule of thumb:
 | Multimodal generation | `stella-media` | |
 | Multi-agent fan-out, worktree isolation | `stella-fleet` | |
 | Open Context Protocol (wire types / host / conformance) | `ocp-types` · `ocp-host` · `ocp-conformance` | `ocp-types` stays dependency-light by contract. |
-| SWE-bench / Arena harness | `bench/` | Python, not Rust. |
 
 **Status — what ships vs. what's library-only.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /

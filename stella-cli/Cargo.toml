@@ -36,7 +36,6 @@ stella-fleet = { path = "../stella-fleet" }
 stella-pipeline = { path = "../stella-pipeline" }
 stella-tui = { path = "../stella-tui" }
 serde.workspace = true
-sha2.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 async-trait.workspace = true

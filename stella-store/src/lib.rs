@@ -114,16 +114,16 @@ pub struct TelemetryRow {
 /// Field order is the serialization contract for `stella stats --format
 /// json|csv` — append new fields at the end, never reorder.
 ///
-/// `division` is the Arena division *derivable from stored data alone*:
-/// provider `local` runs are provably Off-grid (`"off-grid"`); every other
-/// provider gets `"-"`. Heavyweight/Featherweight are claims about model
+/// `division` is a cost-tier classification *derivable from stored data
+/// alone*: provider `local` runs are provably free of API cost (`"off-grid"`);
+/// every other provider gets `"-"`. Finer-grained tiers are claims about model
 /// class and per-task caps that the store does not record, so they are
 /// never inferred here.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct UsageStatsRow {
     pub provider: String,
     pub model: String,
-    /// Arena division: `"off-grid"` for provider `local`, else `"-"`.
+    /// Cost-tier classification: `"off-grid"` for provider `local`, else `"-"`.
     pub division: String,
     /// Executions recorded (any outcome, including still-open ones).
     pub runs: i64,
@@ -146,8 +146,8 @@ pub struct UsageStatsRow {
 }
 
 impl UsageStatsRow {
-    /// Arena division derivable from the provider id alone (see the struct
-    /// docs for why only Off-grid is ever inferred).
+    /// Cost-tier classification derivable from the provider id alone (see
+    /// the struct docs for why only the off-grid tier is ever inferred).
     pub fn division_for_provider(provider: &str) -> &'static str {
         if provider == "local" { "off-grid" } else { "-" }
     }
@@ -836,7 +836,7 @@ impl Store {
     }
 
     /// Aggregate usage/cost analytics per (provider, model) — the data
-    /// behind `stella stats` and every Arena "$-per-resolved-task" receipt.
+    /// behind `stella stats` and every "$-per-resolved-task" receipt.
     ///
     /// Semantics:
     /// - One output row per distinct `executions.(provider, model)` pair;
@@ -852,8 +852,8 @@ impl Store {
     /// - Rows are ordered by total cost descending (ties broken by
     ///   provider, then model, so output is deterministic).
     ///
-    /// Division mapping: only provider `local` maps to an Arena division
-    /// (`off-grid`); all other rows carry `"-"` — see [`UsageStatsRow`].
+    /// Division mapping: only provider `local` maps to the off-grid cost
+    /// tier (`off-grid`); all other rows carry `"-"` — see [`UsageStatsRow`].
     pub fn usage_stats(&self) -> Result<Vec<UsageStatsRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
@@ -1593,7 +1593,7 @@ mod tests {
     /// Fixture: three providers with mixed outcomes.
     /// - anthropic: 1 aborted run, cost 0.05 → resolved = 0.
     /// - zai: 2 completed (0.02 + 0.01), 1 aborted, 1 never finished.
-    /// - local: 1 completed at $0 → the Off-grid division.
+    /// - local: 1 completed at $0 → the off-grid cost tier.
     fn seeded_store() -> Store {
         let store = Store::in_memory().unwrap();
 

@@ -28,7 +28,6 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 
 | Contribution | Where to start | Effort |
 |---|---|---|
-| ⚔ **An Arena run** — the single highest-value contribution: an officially-scored, fully-receipted benchmark of Stella vs. another agent, **win or lose** | [The Arena](README.md#the-arena) → open an [Arena run issue](https://github.com/oxageninc/stella/issues/new?template=arena_run.yml) | An evening + API budget |
 | 🐛 **A bug report with a repro** | [Bug report form](https://github.com/oxageninc/stella/issues/new?template=bug_report.yml) | 10 minutes |
 | 🧭 **Docs & examples** — fix a lie in the README before it fools someone else | Any `*.md` file, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `stella-model/src/` — copy the shape of an existing adapter | Medium |
@@ -93,7 +92,6 @@ Sixteen crates sounds like a lot; the rule of thumb is one sentence each:
 | Multimodal generation | `stella-media` |
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |
 | The Open Context Protocol (wire types / host / conformance) | `ocp-types` · `ocp-host` · `ocp-conformance` |
-| The SWE-bench / Arena harness | `bench/` (Python) |
 
 Some crates ship in the CLI today and some are complete-but-not-yet-wired
 library layers (`stella-pipeline`, `stella-fleet`, `stella-tui`, `stella-media`,
@@ -193,11 +191,10 @@ normal part of the loop here, not a rejection.
 
 - **[Bug report](https://github.com/oxageninc/stella/issues/new?template=bug_report.yml)** — include `stella --version`, OS, provider/model, and a repro.
 - **[Feature request](https://github.com/oxageninc/stella/issues/new?template=feature_request.yml)** — say what you're trying to do, not just what to add.
-- **[⚔ Arena run](https://github.com/oxageninc/stella/issues/new?template=arena_run.yml)** — submit a scored run for the leaderboard. Receipts required. Losses welcome — a loss with receipts is a bug report, and bug reports get fixed.
 
 Labels you'll see: `area:*` routes an issue to a crate; `P0`–`P2` is priority;
 `good first issue` and `help wanted` mean what they say; `needs-witness` means
-a PR is waiting on its witness test; `arena` is leaderboard business.
+a PR is waiting on its witness test.
 
 ## Security
 
@@ -212,5 +209,5 @@ contributions are licensed under the same terms, as certified by your DCO
 sign-off. No CLA, no copyright assignment.
 
 ```text
-   ·  .  ✦   ·   see you in the diff — and in the arena.   ·   ✦  .  ·
+   ·  .  ✦   ·        see you in the diff.        ·   ✦  .  ·
 ```
