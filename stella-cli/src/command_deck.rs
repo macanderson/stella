@@ -316,6 +316,15 @@ pub async fn run_deck_session(
     // submitted while this await runs are never lost — the deck's input
     // never blocks, and everything it sends buffers in `sub_rx` until the
     // driver loop below starts reading.
+    // Session-scoped MCP management state, shared with the MCP tab:
+    //   • `mcp_disabled` — server names disabled this session; toggling it
+    //     hides a server's tools from the model on the next call (live, no
+    //     reconnect), because the engine re-reads schemas each call.
+    //   • the usage ledger (from the registry) records every MCP call for the
+    //     `mcp_usage` telemetry table.
+    let mcp_disabled: stella_mcp::DisabledServers = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashSet::new(),
+    ));
     let mcp = match agent::load_mcp_plan(cfg) {
         agent::McpPlan::None => None,
         agent::McpPlan::Invalid(reason) => {
@@ -336,7 +345,13 @@ pub async fn run_deck_session(
                     delta: format!("connecting {} MCP server(s)…", servers.len()),
                 },
             });
-            let set = agent::connect_mcp_servers(&servers, registry.clone()).await;
+            let set = agent::connect_mcp_servers(
+                &servers,
+                registry.clone(),
+                Some(registry.mcp_usage_ledger()),
+                Some(mcp_disabled.clone()),
+            )
+            .await;
             let _ = in_tx.send(Inbound::Event {
                 agent: LEAD.to_string(),
                 event: AgentEvent::Text {

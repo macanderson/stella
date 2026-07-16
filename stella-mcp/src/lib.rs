@@ -68,5 +68,5 @@ pub use registry::{
     RegistryPage, RegistryServer,
 };
 pub use stdio::StdioTransport;
-pub use toolset::{DEFAULT_CALL_TIMEOUT, McpToolSet};
+pub use toolset::{DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet};
 pub use transport::Transport;
