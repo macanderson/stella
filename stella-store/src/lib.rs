@@ -144,6 +144,32 @@ impl UsageStatsRow {
     }
 }
 
+/// Best-effort hardening of the workspace `.stella/` directory. The store
+/// holds full session transcripts (prompts, tool outputs — which can carry
+/// file contents), so:
+/// - a directory this call just created gets owner-only permissions on unix,
+///   matching the credentials file's 0600-from-birth discipline; a
+///   pre-existing directory keeps whatever permissions the user chose;
+/// - a `.gitignore` covering the *generated* artifacts (databases, their WAL
+///   siblings, the reflections mining log) is dropped once if absent, so
+///   transcripts are never committed and pushed by accident. Deliberately
+///   NOT `*`: settings.json, mcp.toml, tools/, skills/ and memories/ are
+///   user-authored and meant to be committable.
+///
+/// Failures here are non-fatal by design (the DB open right after will
+/// surface a genuinely unusable directory).
+fn harden_workspace_dir(dir: &Path, created: bool) {
+    #[cfg(unix)]
+    if created {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    let gitignore = dir.join(".gitignore");
+    if !gitignore.exists() {
+        let _ = std::fs::write(&gitignore, "*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\n");
+    }
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
 }
@@ -153,7 +179,9 @@ impl Store {
     /// and apply the schema.
     pub fn open(workspace_root: &Path) -> Result<Self> {
         let dir = workspace_root.join(".stella");
+        let created = !dir.exists();
         std::fs::create_dir_all(&dir).map_err(|e| StoreError(e.to_string()))?;
+        harden_workspace_dir(&dir, created);
         Self::init(Connection::open(dir.join("store.db"))?)
     }
 
@@ -1097,6 +1125,40 @@ mod tests {
             let store = Store::open(&root).unwrap();
             assert_eq!(store.count("executions").unwrap(), 1);
         }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn open_hardens_a_fresh_dot_stella_dir() {
+        let root = std::env::temp_dir().join(format!("stella_harden_{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::create_dir_all(&root).unwrap();
+        let _store = Store::open(&root).unwrap();
+        let dir = root.join(".stella");
+
+        // Generated artifacts (transcript DBs, WAL siblings, reflections log)
+        // must be gitignored so session transcripts can't be committed by
+        // accident; user-authored files must NOT be (no bare `*`).
+        let gitignore = std::fs::read_to_string(dir.join(".gitignore")).unwrap();
+        assert!(gitignore.contains("*.db"));
+        assert!(gitignore.contains("reflections.jsonl"));
+        assert!(!gitignore.lines().any(|l| l.trim() == "*"));
+
+        // A pre-existing .gitignore is left alone (user may have customized).
+        std::fs::write(dir.join(".gitignore"), "custom\n").unwrap();
+        drop(Store::open(&root).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
+            "custom\n"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "fresh .stella must be owner-only");
+        }
+
         std::fs::remove_dir_all(&root).ok();
     }
 }
