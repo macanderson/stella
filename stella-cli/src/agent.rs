@@ -2013,6 +2013,7 @@ pub(crate) fn persist_event(
         input_tokens,
         output_tokens,
         cached_input_tokens,
+        cache_write_tokens,
         estimated_input_tokens,
         cost_usd,
         duration_ms,
@@ -2032,9 +2033,11 @@ pub(crate) fn persist_event(
                     output_tokens: *output_tokens,
                     cache_read_tokens: *cached_input_tokens,
                     cache_miss_tokens: input_tokens.saturating_sub(*cached_input_tokens),
-                    // Populated once the usage envelope carries cache-write
-                    // counts (staged follow-up).
-                    cache_write_tokens: 0,
+                    // Straight from the provider's usage envelope (Anthropic
+                    // `cache_creation_input_tokens`, Bedrock
+                    // `cacheWriteInputTokens`); 0 for providers that never
+                    // report cache writes.
+                    cache_write_tokens: *cache_write_tokens,
                     cost_usd: *cost_usd,
                     duration_ms: *duration_ms,
                     retries: *retries,
@@ -2469,6 +2472,50 @@ mod tests {
     use super::*;
     use crate::config::{ConfiguredProvider, PROVIDERS, ProviderConfig};
     use stella_model::credential::ApiKey;
+
+    /// The store write path for `StepUsage`: every token field on the event
+    /// — cache writes included — lands in the telemetry row verbatim.
+    /// Regression for issue #97, where `cache_write_tokens` was hard-coded
+    /// to 0 at this exact seam while the schema and `stella stats` already
+    /// carried the column.
+    #[test]
+    fn persist_event_records_cache_write_tokens_from_step_usage() {
+        let store = Store::in_memory().expect("in-memory store");
+        let execution_id = store
+            .begin_execution("run", "prompt", "anthropic", "claude-fable-5")
+            .expect("begin execution");
+        let event = AgentEvent::StepUsage {
+            step: 0,
+            model: "claude-fable-5".into(),
+            input_tokens: 1_000,
+            output_tokens: 50,
+            cached_input_tokens: 900,
+            cache_write_tokens: 640,
+            estimated_input_tokens: 980,
+            cost_usd: 0.0042,
+            duration_ms: 1_830,
+            retries: 0,
+            tool_calls: 1,
+        };
+
+        assert!(persist_event(&store, execution_id, 0, &event, "anthropic"));
+        store
+            .finish_execution(execution_id, "completed", 0.0042)
+            .expect("finish execution");
+
+        let rows = store.usage_stats().expect("usage stats");
+        let row = rows
+            .iter()
+            .find(|r| r.provider == "anthropic")
+            .expect("anthropic row");
+        assert_eq!(row.input_tokens, 1_000);
+        assert_eq!(row.output_tokens, 50);
+        assert_eq!(row.cache_read_tokens, 900);
+        assert_eq!(
+            row.cache_write_tokens, 640,
+            "the event's cache-write count must reach the store, never a hard-coded 0"
+        );
+    }
 
     /// A `Config` selecting `provider_id` at its default model, with a dummy
     /// key. `build_provider` only constructs the adapter (no network call),
