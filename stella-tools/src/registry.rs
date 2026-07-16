@@ -412,6 +412,24 @@ mod tests {
     }
 
     #[test]
+    fn every_registry_tool_is_reserved_against_custom_shadowing() {
+        // RESERVED_NAMES (custom.rs) hand-mirrors the registry so a custom
+        // manifest can never shadow a built-in. Its comment says "keep this
+        // in sync if either set changes" — this test IS that sync: a new
+        // built-in that isn't reserved would be silently shadowable.
+        let reg =
+            ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), Some(IssueBackend::GitHub));
+        for schema in reg.schemas() {
+            assert!(
+                crate::custom::RESERVED_NAMES.contains(&schema.name.as_str()),
+                "built-in tool `{}` is missing from custom::RESERVED_NAMES — \
+                 a custom manifest could shadow it",
+                schema.name
+            );
+        }
+    }
+
+    #[test]
     fn registry_advertises_the_full_tool_set() {
         let reg =
             ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), Some(IssueBackend::GitHub));
