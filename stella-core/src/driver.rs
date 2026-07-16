@@ -69,7 +69,7 @@ use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::hooks::{HookPayload, HookRunner, Hooks, run_hooks};
 use crate::loop_detect::{LoopDetectionConfig, detect_loop};
 use crate::ports::ToolExecutor;
-use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, TokioSleeper, retry_with_backoff};
+use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff};
 
 /// Everything about a turn's execution that isn't the provider/tools
 /// themselves: prompt shape, retry/compaction/loop tuning, and hard
@@ -151,7 +151,7 @@ pub struct Engine<'a> {
     pub(crate) sleeper: &'a dyn Sleeper,
     pub(crate) config: EngineConfig,
     /// Lifecycle hooks, off by default. Attached via [`Engine::with_hooks`]
-    /// so `new`/`with_sleeper` keep their existing signatures. When `None`,
+    /// so `with_sleeper` keeps its existing signature. When `None`,
     /// no hook is ever consulted and the turn path adds zero work.
     hooks: Option<HooksHandle<'a>>,
     /// Token-drift calibration (`crate::estimator::CalibrationMap`), off by
@@ -185,19 +185,11 @@ struct CommittedStep {
 }
 
 impl<'a> Engine<'a> {
-    /// Construct an engine with the production [`TokioSleeper`]. Use
-    /// [`Engine::with_sleeper`] in tests to run retries with zero real
+    /// Construct an engine with an injected [`Sleeper`]. This is the only
+    /// constructor — `stella-core` exports the port, never a production
+    /// impl, so the caller wires a real sleeper (the CLI's tokio-backed
+    /// one) and tests wire a no-op to run retries with zero real
     /// wall-clock delay.
-    pub fn new(
-        provider: &'a dyn Provider,
-        tools: &'a dyn ToolExecutor,
-        config: EngineConfig,
-    ) -> Self {
-        Self::with_sleeper(provider, tools, config, &TokioSleeper)
-    }
-
-    /// Construct an engine with an injected [`Sleeper`] — the seam that
-    /// makes `run_turn`'s retry loop testable without real sleeping.
     pub fn with_sleeper(
         provider: &'a dyn Provider,
         tools: &'a dyn ToolExecutor,
@@ -215,8 +207,8 @@ impl<'a> Engine<'a> {
     }
 
     /// Attach lifecycle hooks (`crate::hooks`) to an engine, opt-in. Kept a
-    /// builder so [`Engine::new`]/[`Engine::with_sleeper`] retain their
-    /// signatures and every existing call site is unchanged — an engine
+    /// builder so [`Engine::with_sleeper`] retains its signature and every
+    /// existing call site is unchanged — an engine
     /// built without this is exactly the pre-hooks engine. Takes both the
     /// parsed [`Hooks`] config and the [`HookRunner`] that executes the
     /// commands, because [`crate::hooks::run_hooks`] needs the port to run
