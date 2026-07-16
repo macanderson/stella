@@ -144,7 +144,7 @@ Sixteen crates. The one-sentence rule of thumb:
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | `stella-model` | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
 | Add/fix a built-in tool (`read_file`, `bash`, `verify_done`, …) | `stella-tools` | Implement the `Tool` trait, register in `ToolRegistry`. |
 | Change CLI commands, flags, or agent wiring | `stella-cli` | This is the shipping binary. |
-| Change REPL rendering / panels / keybindings | `stella-tui` | Pure-fold ratatui REPL. Not yet the default shell. |
+| Change REPL rendering / panels / keybindings | `stella-tui` | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | `stella-protocol` | **Zero logic, zero I/O — types only.** |
 | Persistence: executions, events, telemetry (SQLite) | `stella-store` | |
 | Retrieval: graph, embeddings, episodic memory | `stella-context` | |
@@ -155,13 +155,14 @@ Sixteen crates. The one-sentence rule of thumb:
 | Multi-agent fan-out, worktree isolation | `stella-fleet` | |
 | Open Context Protocol (wire types / host / conformance) | `ocp-types` · `ocp-host` · `ocp-conformance` | `ocp-types` stays dependency-light by contract. |
 
-**Status — what ships vs. what's library-only.** The live runtime path is
+**Status — what ships.** The live runtime path is
 `stella-cli` → `stella-core` → `stella-model` / `stella-tools` / `stella-store` /
-`stella-context` (recall only) / `stella-mcp`. Several crates are
-**complete and property-tested but not yet wired into the CLI**:
-`stella-pipeline`, `stella-fleet`, `stella-tui`, `stella-media`, and the fuller
-`stella-graph` retrieval + context plane. Wiring one of those into the CLI is a
-high-impact contribution; the design and tests are already there.
+`stella-context` (recall only) / `stella-mcp`, and the CLI also drives
+`stella-pipeline` (the default `stella run` path), `stella-fleet` (`stella fleet`),
+`stella-tui` (the Command Deck, the default interactive shell on a TTY), and
+`stella-media` (image generation via the `generate_image` tool). The fuller
+`stella-graph` retrieval + context plane (`stella init` builds the code-graph
+index; recall fans out through the OCP host) is also wired.
 
 ---
 
@@ -241,8 +242,6 @@ seconds; `cargo test --workspace` rebuilds everything.
 
 - **`Cargo.lock` is tracked.** Stella ships a binary and `install.sh` builds
   with `--locked`, so the lockfile must be committed and reproducible.
-- **The `dcp-types/` crate** is a prototype. If you see it in the workspace
-  members but it's not wired anywhere, it's experimental.
 - **`.cargo/config.toml` is gitignored** — it holds per-developer cargo aliases
   (`tc` = test stella-core, etc.). It's not committed.
 - **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →

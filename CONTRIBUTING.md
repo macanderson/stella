@@ -93,11 +93,13 @@ Sixteen crates sounds like a lot; the rule of thumb is one sentence each:
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |
 | The Open Context Protocol (wire types / host / conformance) | `ocp-types` · `ocp-host` · `ocp-conformance` |
 
-Some crates ship in the CLI today and some are complete-but-not-yet-wired
-library layers (`stella-pipeline`, `stella-fleet`, `stella-tui`, `stella-media`,
-and parts of the context/graph plane) — see the **status table** in the
-[README](README.md#workspace-layout). Wiring one of those into the CLI is a
-high-impact contribution; the design is already there and tested.
+All of the crates ship in the CLI today: `stella-pipeline` drives the default
+`stella run` path, `stella-fleet` powers `stella fleet`, `stella-tui` is the
+Command Deck (the default interactive shell on a TTY), and `stella-media`
+provides image generation via the `generate_image` tool. The context/graph
+plane is wired too — `stella init` builds the code-graph index and recall fans
+out through the OCP host. See the **status table** in the
+[README](README.md#workspace-layout).
 
 ## The ground rules
 

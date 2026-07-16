@@ -382,7 +382,7 @@ flowchart TD
 
 ## Workspace layout
 
-Seventeen crates total: fourteen `stella-*` crates plus the three `ocp-*` crates
+Sixteen crates total: thirteen `stella-*` crates plus the three `ocp-*` crates
 that implement the Open Context Protocol (the retrieval abstraction Stella's
 recall routes through).
 
@@ -399,7 +399,7 @@ recall routes through).
 | `stella-graph` | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python/SQL) |
 | `stella-pipeline` | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → execute → verify → judge |
 | `stella-fleet` | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, git-worktree isolation per task |
-| `stella-media` | Multimodal generation behind one `MediaProvider` port — image generation wired as the `generate_image` tool; SVG/video library-complete, not yet exposed as tools |
+| `stella-media` | Multimodal generation behind one `MediaProvider` port — image generation wired as the `generate_image` tool (registered when a media-capable key is set); SVG/video library-complete but not yet exposed as tools |
 | `stella-tui` | The Command Deck — a pure event-fold core + thin crossterm shell |
 | `ocp-types` · `ocp-host` · `ocp-conformance` | Open Context Protocol — wire types, host runtime, and the public conformance suite |
 

@@ -275,6 +275,13 @@ impl SessionModel {
     pub fn apply(&mut self, event: &AgentEvent) {
         match event {
             AgentEvent::Stage { name } => {
+                // A stage after a Complete means a new turn has started —
+                // clear the completion flag so the progress bar and HUD read
+                // fresh (otherwise the bar stays frozen at full-green and
+                // `final_cost_usd` is stale). Within a single turn, complete
+                // is never set until the very end, so this is a no-op there.
+                self.hud.complete = false;
+                self.hud.final_cost_usd = None;
                 self.hud.stage = Some(*name);
                 // Any stage that isn't the scope-review gate itself means the
                 // engine has moved past a pending gate (approved → execute,
@@ -551,7 +558,13 @@ impl SessionModel {
     /// Push a user-submitted prompt into the transcript. This is **not** an
     /// `AgentEvent` fold — the deck driver calls this when `PromptStarted`
     /// arrives so user messages appear inline in the conversational scrollback.
+    /// It is also the earliest signal that a new turn has begun, so it clears
+    /// any completion state from the prior turn — the progress bar and HUD
+    /// reset immediately on prompt submission rather than waiting for the
+    /// first `Stage` event of the new turn.
     pub fn push_user_prompt(&mut self, text: &str) {
+        self.hud.complete = false;
+        self.hud.final_cost_usd = None;
         self.transcript
             .push(TranscriptEntry::User(text.to_string()));
         self.evict_transcript_overflow();
