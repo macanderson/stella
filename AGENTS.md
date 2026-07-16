@@ -16,9 +16,16 @@ manual.
 
 ## Essential commands
 
-The repo is a Cargo workspace. Rust is **pinned to stable** via
-`rust-toolchain.toml` (rustup fetches it automatically). A **`Makefile`** wraps
-the common commands with the correct flags — run `make help` for the full list.
+The repo is a Cargo workspace. Rust is **pinned to a concrete version**
+(currently 1.97.0) via `rust-toolchain.toml` (rustup fetches it automatically).
+Floating on `channel = "stable"` was tried and reverted — each new stable
+release ships a slightly different rustfmt, which silently reformats
+previously-clean files and turns the CI fmt gate red with zero code changes.
+When bumping the pin for a new Rust release, do it as one dedicated PR that
+updates the version in `rust-toolchain.toml` and runs `cargo fmt --all` in the
+same commit (or the next one) so drift never accumulates. A **`Makefile`**
+wraps the common commands with the correct flags — run `make help` for the
+full list.
 
 ```bash
 make build               # cargo build --workspace
