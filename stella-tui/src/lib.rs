@@ -50,6 +50,7 @@ pub mod envelope;
 pub mod fx;
 pub mod graph;
 pub mod markdown;
+pub mod progress;
 pub mod resource;
 pub mod scenario;
 pub mod splash;

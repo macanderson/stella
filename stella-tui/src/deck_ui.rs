@@ -93,11 +93,12 @@ pub struct DeckUi {
     /// Armed by the first `ctrl+d` in the queue editor; the second one clears
     /// the whole queue. Any other key disarms.
     pub queue_confirm_clear: bool,
-    /// Legacy-terminal Enter semantics (see
-    /// [`crate::composer::classify_enter`]): `false` when the kitty keyboard
-    /// protocol is active (plain `⏎` = line break, `⌘⏎`/`⌃⏎` = submit),
-    /// `true` where a modified Enter is unreportable (plain `⏎` = submit,
-    /// `⌥⏎` = line break). The shell sets this from the terminal capability.
+    /// Whether the terminal is a *legacy* one (no kitty keyboard protocol).
+    /// Enter semantics are now universal — bare `⏎` submits, a modified `⏎`
+    /// breaks (see [`crate::composer::classify_enter`]) — so this no longer
+    /// gates behavior; it only picks which newline chord the composer footer
+    /// advertises: `⌥⏎` on legacy terminals (all that survives), `⌘⏎` where the
+    /// chord is reportable. The shell sets it from the terminal capability.
     pub enter_submits: bool,
     /// The transcript entry highlighted with ↑/↓ on the Session tab —
     /// `ctrl+o` toggles its expanded view. `None` = nothing selected.
@@ -129,13 +130,21 @@ pub struct DeckUi {
     pub dispatch_held: bool,
     /// The Session tab's incremental transcript fold cache.
     pub session_fold: crate::views::session::SessionFold,
+    /// The terminal's color depth, detected once at startup. Render-time-visible
+    /// so the progress bar can emit a per-cell ember gradient on truecolor and a
+    /// solid flame fill otherwise (an interpolated RGB has no `FALLBACKS` entry,
+    /// so it must not reach a 256/16-color terminal).
+    pub color_mode: crate::theme::ColorMode,
+    /// Motion off-switch (`--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`): freezes
+    /// the progress shimmer, pulse, and caret blink to a static frame.
+    pub no_anim: bool,
 }
 
 impl Default for DeckUi {
     fn default() -> Self {
         Self {
             tab: DeckTab::Session,
-            composer: Composer::new(),
+            composer: Composer::with_paste_threshold(crate::composer::DECK_PASTE_LINE_THRESHOLD),
             splash: SplashState::new(),
             help_open: false,
             focused: 0,
@@ -165,6 +174,8 @@ impl Default for DeckUi {
             esc_armed_at: None,
             dispatch_held: false,
             session_fold: crate::views::session::SessionFold::default(),
+            color_mode: crate::theme::ColorMode::default(),
+            no_anim: false,
         }
     }
 }
@@ -449,7 +460,7 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     // composer leaves all of these to the tabs (handle_edit_key gates its
     // motion on the buffer internally).
     if !ui.composer.is_blank() {
-        match classify_enter(&key, ui.enter_submits) {
+        match classify_enter(&key) {
             EnterAction::Submit => return dispatch_submission(ui),
             EnterAction::Newline => {
                 ui.composer.insert_newline();
@@ -670,7 +681,7 @@ fn handle_focused_gates(
             // command even while a question is pending — it must run
             // immediately, not be swallowed as the answer.
             KeyCode::Enter
-                if classify_enter(&key, ui.enter_submits) == EnterAction::Submit
+                if classify_enter(&key) == EnterAction::Submit
                     && !ui.composer.buffer().trim_start().starts_with('!') =>
             {
                 if let Some(answer) = ui.composer.take_submission() {
@@ -947,7 +958,7 @@ fn dispatch_submission(ui: &mut DeckUi) -> DeckAction {
 /// textarea interception; this fallback covers typing plus the blank-composer
 /// Enter, which submits nothing and inserts nothing.)
 fn handle_composer_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    match classify_enter(&key, ui.enter_submits) {
+    match classify_enter(&key) {
         EnterAction::Submit => return dispatch_submission(ui),
         // No line breaks into a fully blank composer — a stray leading
         // newline is never what an empty ⏎ meant.
@@ -1035,7 +1046,8 @@ mod tests {
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
-    /// The submit chord — `⌘⏎` as the kitty keyboard protocol reports it.
+    /// The newline chord — `⌘⏎` as the kitty keyboard protocol reports it
+    /// (a modified Enter inserts a line break; a bare Enter submits).
     fn cmd_enter() -> KeyEvent {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::SUPER)
     }
@@ -1265,13 +1277,13 @@ mod tests {
     }
 
     #[test]
-    fn submit_chord_always_enqueues_a_prompt_without_blocking() {
+    fn bare_enter_always_enqueues_a_prompt_without_blocking() {
         let model = model_with(&["lead"]);
         let mut ui = ready_ui();
         for c in "do the thing".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
-        let action = handle_deck_key(cmd_enter(), &model, &mut ui);
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             action,
             DeckAction::Send(WorkspaceInput::Enqueue {
@@ -1285,21 +1297,21 @@ mod tests {
     }
 
     #[test]
-    fn plain_enter_inserts_a_line_break_preserved_through_submit() {
+    fn a_modified_enter_inserts_a_line_break_preserved_through_submit() {
         let model = model_with(&["lead"]);
         let mut ui = ready_ui();
         for c in "line one".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
         assert_eq!(
-            handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+            handle_deck_key(cmd_enter(), &model, &mut ui),
             DeckAction::Handled,
-            "plain ⏎ is a line break, not a submit"
+            "⌘⏎ is a line break, not a submit"
         );
         for c in "line two".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
-        let action = handle_deck_key(cmd_enter(), &model, &mut ui);
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             action,
             DeckAction::Send(WorkspaceInput::Enqueue {
@@ -1342,10 +1354,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_terminals_fall_back_to_enter_submits_and_alt_enter_breaks() {
+    fn bare_enter_queues_and_a_modified_enter_inserts_a_break() {
         let model = model_with(&["lead"]);
         let mut ui = ready_ui();
-        ui.enter_submits = true; // no kitty keyboard protocol
         for c in "hi".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
@@ -1353,7 +1364,7 @@ mod tests {
         assert_eq!(
             handle_deck_key(alt_enter, &model, &mut ui),
             DeckAction::Handled,
-            "⌥⏎ is the legacy line break"
+            "⌥⏎ inserts a line break"
         );
         assert_eq!(ui.composer.buffer(), "hi\n");
         let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
@@ -1362,7 +1373,7 @@ mod tests {
             DeckAction::Send(WorkspaceInput::Enqueue {
                 text: "hi\n".into()
             }),
-            "plain ⏎ submits when the chord is unreportable"
+            "bare ⏎ queues (never blocks)"
         );
     }
 
@@ -1373,7 +1384,7 @@ mod tests {
         for c in "ab".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
-        handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        handle_deck_key(cmd_enter(), &model, &mut ui); // ⌘⏎ inserts a line break
         for c in "cd".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
@@ -1652,7 +1663,7 @@ mod tests {
             handle_deck_key(ch(c), &model, &mut ui);
         }
         assert_eq!(
-            handle_deck_key(cmd_enter(), &model, &mut ui),
+            handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
             DeckAction::Send(WorkspaceInput::EnqueueFront {
                 text: "urgent fix".into()
             }),
@@ -1663,7 +1674,7 @@ mod tests {
             handle_deck_key(ch(c), &model, &mut ui);
         }
         assert_eq!(
-            handle_deck_key(cmd_enter(), &model, &mut ui),
+            handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
             DeckAction::Send(WorkspaceInput::Enqueue {
                 text: "later".into()
             }),
@@ -1775,7 +1786,7 @@ mod tests {
         for c in "!cargo build".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
-        let action = handle_deck_key(cmd_enter(), &model, &mut ui);
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(action, DeckAction::Shell("cargo build".into()));
     }
 
@@ -1789,7 +1800,7 @@ mod tests {
         for c in "!!important".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
-        let action = handle_deck_key(cmd_enter(), &model, &mut ui);
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(action, DeckAction::Shell("!important".into()));
     }
 
@@ -1808,7 +1819,7 @@ mod tests {
         for c in "!ls".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }
-        let action = handle_deck_key(cmd_enter(), &model, &mut ui);
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             action,
             DeckAction::Shell("ls".into()),
@@ -1849,6 +1860,9 @@ mod tests {
         // so the composer must not read as "empty" here.
         let model = model_with_queue(&["first"]);
         let mut ui = ready_ui();
+        // Force a chip regardless of the deck's (high) paste threshold — this
+        // test is about the chip interaction, not where the threshold sits.
+        ui.composer = crate::composer::Composer::with_paste_threshold(3);
         ui.composer
             .paste("line1\nline2\nline3\nline4\nline5\nline6");
         assert!(ui.composer.buffer().is_empty());

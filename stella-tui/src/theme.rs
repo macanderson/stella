@@ -9,35 +9,94 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::deck::TraceKind;
 use crate::envelope::AgentStatus;
 
-// ── Brand + neutrals ────────────────────────────────────────────────────────
+// ── Oxagen palette — "ember heat on nocturne ground" ────────────────────────
+//
+// The brand system (docs/brand `tokens.css`, dark mode): a cool deep-violet
+// ground framing a warm ember mark. Ember (gold→flame→crimson) is the *heat* —
+// reserved for live / active / brand, never body text. Violet is interactive
+// chrome (keybind glyphs, links, focus). Neutrals carry the text. Every token
+// here is 24-bit; [`degrade_buffer`] narrows it to 256- or 16-color, or strips
+// it for `NO_COLOR`, once per frame for terminals that can't render truecolor.
 
-/// Stella brand amber — the single accent color (`#FFAC26`).
-pub const AMBER: Color = Color::Rgb(255, 172, 38);
-/// A deeper amber for gradients / pressed states.
-pub const AMBER_DEEP: Color = Color::Rgb(214, 137, 16);
+// Grounds (dark → light lift).
+/// App background — near-black nocturne navy.
+pub const GROUND: Color = Color::Rgb(0x0B, 0x0D, 0x16);
+/// Card / panel surface.
+pub const SURFACE: Color = Color::Rgb(0x15, 0x13, 0x1F);
+/// Raised panel (one step above surface).
+pub const RAISED: Color = Color::Rgb(0x1E, 0x1A, 0x2E);
+/// Hairline border / rule — a violet-black seam, not a grey line.
+pub const HAIRLINE: Color = Color::Rgb(0x24, 0x1B, 0x33);
+
+// Text tiers (primary → dim).
+/// Primary text.
+pub const TEXT_PRIMARY: Color = Color::Rgb(0xF5, 0xF4, 0xF2);
+/// Secondary text.
+pub const TEXT_SECONDARY: Color = Color::Rgb(0xB6, 0xAF, 0xC9);
+/// Tertiary text (labels, captions).
+pub const TEXT_TERTIARY: Color = Color::Rgb(0x7E, 0x77, 0x91);
+/// Dim text (the quietest legible tier).
+pub const TEXT_DIM: Color = Color::Rgb(0x6E, 0x68, 0x80);
+
+// Ember — the heat. Live / active / brand only; never body text.
+/// Ember gold — the hottest, brightest stop; the prompt `>>>`.
+pub const EMBER_GOLD: Color = Color::Rgb(0xF9, 0xD4, 0x23);
+/// Ember flame — the mid stop; the active-stage label / live status.
+pub const EMBER_FLAME: Color = Color::Rgb(0xFF, 0x7E, 0x5F);
+/// Ember crimson — the coolest ember stop; the failure frontier.
+pub const EMBER_CRIMSON: Color = Color::Rgb(0xC2, 0x18, 0x5B);
+
+/// Violet accent — interactive chrome, keybind glyphs, links, focus.
+pub const VIOLET: Color = Color::Rgb(0xA7, 0x8B, 0xFA);
+
+// Semantic (base + bright).
+/// Success (base).
+pub const SUCCESS: Color = Color::Rgb(0x1D, 0x9E, 0x75);
+/// Success (bright — text / completed fills).
+pub const SUCCESS_BRIGHT: Color = Color::Rgb(0x3F, 0xD6, 0x9B);
+/// Warning (base).
+pub const WARNING: Color = Color::Rgb(0xBA, 0x75, 0x17);
+/// Warning (bright — text).
+pub const WARNING_BRIGHT: Color = Color::Rgb(0xF4, 0xB2, 0x4A);
+/// Danger — reuses ember crimson.
+pub const DANGER: Color = EMBER_CRIMSON;
+/// Danger (bright — legible removed-line / error text on the dark backdrop).
+pub const DANGER_BRIGHT: Color = Color::Rgb(0xE5, 0x53, 0x7B);
+
+/// Warm amber kept for transcript agent body, to preserve the current feel
+/// (§1: body may keep a warm amber tint while chrome/status go true ember).
+pub const AGENT_AMBER: Color = Color::Rgb(0xE8, 0xA2, 0x4A);
+
+// ── Role aliases (what the rest of the crate references) ─────────────────────
+// Older token names remap onto the palette so existing call sites adopt the new
+// look without churn. New surfaces (progress bar, statline, composer) reference
+// the palette tokens above directly.
+
+/// Stella brand accent — ember gold.
+pub const AMBER: Color = EMBER_GOLD;
+/// A deeper ember (gradient / pressed) — flame.
+pub const AMBER_DEEP: Color = EMBER_FLAME;
 /// Near-white primary text.
-pub const INK: Color = Color::Rgb(235, 237, 240);
+pub const INK: Color = TEXT_PRIMARY;
 /// Dimmed secondary text.
-pub const MUTED: Color = Color::Rgb(140, 146, 156);
+pub const MUTED: Color = TEXT_SECONDARY;
 /// Panel border / rule.
-pub const RULE: Color = Color::Rgb(58, 62, 70);
+pub const RULE: Color = HAIRLINE;
 
 /// Background tint for the transcript entry selected with the arrow keys —
-/// a barely-there warm lift so the highlight reads without shouting.
-pub const SELECT_BG: Color = Color::Rgb(46, 42, 32);
-
-// ── Semantic ────────────────────────────────────────────────────────────────
+/// a barely-there violet lift so the highlight reads without shouting.
+pub const SELECT_BG: Color = Color::Rgb(0x25, 0x1F, 0x36);
 
 /// Success / positive / added lines.
-pub const OK: Color = Color::Rgb(126, 211, 128);
+pub const OK: Color = SUCCESS_BRIGHT;
 /// Warning / needs-input.
-pub const WARN: Color = Color::Rgb(240, 189, 79);
+pub const WARN: Color = WARNING_BRIGHT;
 /// Error / removed lines / failure.
-pub const BAD: Color = Color::Rgb(240, 113, 120);
-/// Running accent (cyan) — matches the "Processing" look of the reference UI.
-pub const RUN: Color = Color::Rgb(96, 191, 214);
-/// Paused / held (violet).
-pub const HELD: Color = Color::Rgb(180, 142, 214);
+pub const BAD: Color = DANGER_BRIGHT;
+/// Running accent — a cool cyan that stays structural against the ember heat.
+pub const RUN: Color = Color::Rgb(0x60, 0xBF, 0xD6);
+/// Paused / held — violet.
+pub const HELD: Color = VIOLET;
 
 // ── Diff panel ──────────────────────────────────────────────────────────────
 
@@ -69,88 +128,90 @@ pub const SYNTAX_NUMBER: Color = Color::Rgb(126, 197, 214);
 /// Line comment (rendered dimmed + italic).
 pub const SYNTAX_COMMENT: Color = Color::Rgb(118, 124, 134);
 
-// ── Activity spinner ────────────────────────────────────────────────────────
+// ── Ember gradient (the progress-bar fill) ──────────────────────────────────
 
-/// Darkest stop of the ember ramp (see [`EMBER_RAMP`]).
-pub const EMBER_LOW: Color = Color::Rgb(178, 72, 20);
-/// Brightest stop of the ember ramp (see [`EMBER_RAMP`]).
-pub const EMBER_HIGH: Color = Color::Rgb(255, 214, 130);
+/// The ember gradient's three stops, left → right: gold → flame → crimson.
+/// The determinate progress fill interpolates across these per cell (truecolor
+/// only; lesser terminals collapse to a solid [`EMBER_FLAME`] fill).
+pub const EMBER_STOPS: [Color; 3] = [EMBER_GOLD, EMBER_FLAME, EMBER_CRIMSON];
 
-/// Burnt-sunset ember ramp, dark → bright, for the working-spinner gradient —
-/// the brand's amber answer to the pink/purple reference spinner.
-pub const EMBER_RAMP: [Color; 4] = [EMBER_LOW, AMBER_DEEP, AMBER, EMBER_HIGH];
+/// Linear-interpolate two RGB colors at `t ∈ [0, 1]`. Non-RGB inputs return
+/// `a` unchanged (the gradient only ever feeds it `Color::Rgb` stops).
+pub fn lerp_rgb(a: Color, b: Color, t: f64) -> Color {
+    let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
+        return a;
+    };
+    let t = t.clamp(0.0, 1.0);
+    let mix = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round() as u8;
+    Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
+}
 
-// ── 256-color fallback (non-truecolor terminals) ────────────────────────────
+/// The ember gradient sampled at `t ∈ [0, 1]`: gold at 0, flame at ½, crimson
+/// at 1, linearly interpolated between the two nearest [`EMBER_STOPS`].
+pub fn ember_gradient(t: f64) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let span = (EMBER_STOPS.len() - 1) as f64; // 2 segments
+    let scaled = t * span;
+    let i = (scaled.floor() as usize).min(EMBER_STOPS.len() - 2);
+    lerp_rgb(EMBER_STOPS[i], EMBER_STOPS[i + 1], scaled - i as f64)
+}
+
+/// Lighten `color` toward white by `amount ∈ [0, 1]` — the shimmer band and the
+/// pulsing head ride a lifted copy of the underlying gradient cell.
+pub fn lighten(color: Color, amount: f64) -> Color {
+    lerp_rgb(color, Color::Rgb(255, 255, 255), amount)
+}
+
+// ── Color-depth degradation (truecolor → 256 → 16 → none) ───────────────────
 //
-// Every color above is a `Color::Rgb`, which some terminals — anything
-// without `COLORTERM=truecolor`/`24bit` and without a `-direct` terminfo
-// entry, which includes the ubiquitous plain `xterm`/`screen`/`linux` console
-// and (despite the name suggesting otherwise) `-256color` variants too, since
-// that suffix only promises the *indexed* 256-color palette, not 24-bit —
-// either render as a terminal-chosen approximation (the amber accent can come
-// out brown/grey) or not at all. [`truecolor_supported`] decides once, from
-// `COLORTERM`/`TERM`, whether the deck should stay on the truecolor tokens
-// above or degrade every one of them to a hand-picked xterm-256 index via
-// [`resolve`].
+// Every palette token above is a `Color::Rgb`, which lesser terminals either
+// approximate unpredictably (amber comes out brown/grey) or ignore. The deck
+// detects the terminal's real depth once at startup ([`detect_color_mode`])
+// and narrows every cell to it once per frame ([`degrade_buffer`]):
 //
-// The fallback table sits immediately below the last truecolor token above
-// it (deliberately, not scattered per-const) so a newly added `Color::Rgb`
-// token with no matching entry here is easy to spot on read; the
-// `every_named_token_has_a_256_fallback` test below also checks it
-// mechanically. Each index was chosen as the nearest xterm-256 color-cube (or
-// grayscale-ramp) entry by Euclidean RGB distance — the same reference
-// standard terminals themselves use — not guessed. Two entries
-// (`DIFF_ADD_BG`, `DIFF_DEL_BG`) land on nearly the same dark grey once
-// degraded: both source colors are deliberately near-black "subtle" tints
-// (see their doc comments), so the 256-cube's coarse dark end can't keep them
-// visually apart — the add/remove distinction still reads correctly through
-// the paired `OK`/`BAD` foreground text, which resolves to clearly different
-// indices (114 vs 204).
+//   • Truecolor — pass through unchanged (24-bit).
+//   • Ansi256   — each token → a hand-picked xterm-256 cube/grayscale index.
+//   • Ansi16    → each token → the nearest ANSI base/bright index (0–15), for
+//                 the plainest `xterm`/`linux`/16-color consoles.
+//   • None      → `NO_COLOR` is set: strip every color to the terminal default
+//                 (monochrome), so structure survives with zero color.
 //
-// | token            | xterm-256 | approx. RGB      |
-// |------------------|-----------|-------------------|
-// | `AMBER`          | 214       | `#ffaf00`         |
-// | `AMBER_DEEP`     | 172       | `#d78700`         |
-// | `INK`            | 255       | `#eeeeee`         |
-// | `MUTED`          | 246       | `#949494`         |
-// | `RULE`           | 238       | `#444444`         |
-// | `SELECT_BG`      | 235       | `#262626`         |
-// | `OK`             | 114       | `#87d787`         |
-// | `WARN`           | 215       | `#ffaf5f`         |
-// | `BAD`            | 204       | `#ff5f87`         |
-// | `RUN`            | 74        | `#5fafd7`         |
-// | `HELD`           | 140       | `#af87d7`         |
-// | `DIFF_ADD_BG`    | 234       | `#1c1c1c`         |
-// | `DIFF_DEL_BG`    | 235       | `#262626`         |
-// | `SYNTAX_STRING`  | 180       | `#d7af87`         |
-// | `SYNTAX_NUMBER`  | 116       | `#87d7d7`         |
-// | `SYNTAX_COMMENT` | 244       | `#808080`         |
-// | `EMBER_LOW`      | 130       | `#af5f00`         |
-// | `EMBER_HIGH`     | 222       | `#ffd787`         |
+// The `(token, idx256, idx16)` table sits immediately below the last token so a
+// newly added `Color::Rgb` with no entry is easy to spot; the
+// `every_named_token_has_a_fallback` test also checks it mechanically. Indices
+// are the nearest cube/base entry by Euclidean RGB distance, not guessed.
 
-/// Whether the terminal advertises 24-bit ("truecolor") support, decided
-/// purely from the two environment inputs that matter — no `std::env` access
-/// here, so this is unit-testable without touching the process environment.
-/// [`detect_truecolor_support`] is the real caller that reads the actual
-/// environment once at startup.
-///
-/// Detection order:
-/// 1. `COLORTERM` is `truecolor` or `24bit` (case-insensitive) — the de facto
-///    standard signal, set by iTerm2, kitty, alacritty, wezterm, VS Code's
-///    integrated terminal, gnome-terminal, konsole, and most other modern
-///    terminals that actually support 24-bit color.
-/// 2. Otherwise, a `TERM` whose name contains `direct` (e.g. `xterm-direct`,
-///    `st-direct`) — the one `TERM`-only terminfo convention for advertising
-///    direct (24-bit) color.
-/// 3. Anything else is treated as non-truecolor, deliberately conservative:
-///    this covers bare legacy entries (`xterm`, `screen`, `linux`) *and* the
-///    very common `-256color` family (`xterm-256color`, `tmux-256color`,
-///    `screen-256color`) which only promise the 256-color palette this
-///    fallback table targets, plus the no-`TERM`-at-all case (cron/CI/piped
-///    output). Erring toward "degrade" is the safe failure mode: a 256-color
-///    fallback on a truecolor terminal is a harmless slight color shift, but
-///    raw truecolor RGB sent to a non-supporting terminal is the illegible
-///    approximation this fix exists to avoid.
+/// The color depth the deck renders at. Decided once from the environment; a
+/// `Copy` value threaded through the draw loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorMode {
+    /// 24-bit — tokens render verbatim (per-cell gradients allowed).
+    #[default]
+    Truecolor,
+    /// Indexed 256-color — tokens map to an xterm-256 index.
+    Ansi256,
+    /// 16-color ANSI — tokens map to a base/bright index (0–15).
+    Ansi16,
+    /// `NO_COLOR` — no color at all; every cell falls to the terminal default.
+    None,
+}
+
+impl ColorMode {
+    /// True only for the full 24-bit path — the one mode where per-cell
+    /// gradient RGB (the progress fill) is legible, so callers emit solid
+    /// named tokens instead when this is false.
+    pub fn is_truecolor(self) -> bool {
+        matches!(self, ColorMode::Truecolor)
+    }
+}
+
+/// Whether the terminal advertises 24-bit ("truecolor") support, decided purely
+/// from the two environment inputs that matter — no `std::env` access here, so
+/// this is unit-testable. `COLORTERM in {truecolor, 24bit}` (the de-facto signal
+/// set by iTerm2/kitty/alacritty/wezterm/VS Code/…) or a `TERM` containing
+/// `direct` (the terminfo direct-color convention) means yes; everything else —
+/// including the `-256color` family, which only promises the indexed palette —
+/// is conservatively no.
 pub fn truecolor_supported(colorterm: Option<&str>, term: Option<&str>) -> bool {
     if let Some(colorterm) = colorterm {
         let colorterm = colorterm.trim();
@@ -158,80 +219,120 @@ pub fn truecolor_supported(colorterm: Option<&str>, term: Option<&str>) -> bool 
             return true;
         }
     }
-
     match term {
         Some(term) => term.to_ascii_lowercase().contains("direct"),
         None => false,
     }
 }
 
-/// Read `COLORTERM`/`TERM` from the real process environment once and decide
-/// truecolor support via [`truecolor_supported`]. Call this once at startup
-/// (see `shell::run`, `deck_shell::run_deck`) and thread the result through —
-/// don't call it per-frame or per-token.
-pub fn detect_truecolor_support() -> bool {
-    truecolor_supported(
+/// Decide the [`ColorMode`] from the three environment inputs, most-restrictive
+/// first — pure, so it is unit-testable without touching the real environment.
+///
+/// 1. `NO_COLOR` set to anything (even empty, per the `no-color.org` spec) →
+///    [`ColorMode::None`]. It wins over every color signal.
+/// 2. Truecolor (via [`truecolor_supported`]) → [`ColorMode::Truecolor`].
+/// 3. A `TERM` promising 256 colors (`-256color`, or `COLORTERM` present at all)
+///    → [`ColorMode::Ansi256`].
+/// 4. Anything else (bare `xterm`/`screen`/`linux`, or no `TERM`) →
+///    [`ColorMode::Ansi16`], the safe floor: 16 ANSI colors exist essentially
+///    everywhere, so structure never renders as raw illegible RGB.
+pub fn color_mode(no_color: bool, colorterm: Option<&str>, term: Option<&str>) -> ColorMode {
+    if no_color {
+        return ColorMode::None;
+    }
+    if truecolor_supported(colorterm, term) {
+        return ColorMode::Truecolor;
+    }
+    let has_256 = colorterm.is_some()
+        || term.is_some_and(|t| t.to_ascii_lowercase().contains("256color"));
+    if has_256 {
+        ColorMode::Ansi256
+    } else {
+        ColorMode::Ansi16
+    }
+}
+
+/// Read `NO_COLOR`/`COLORTERM`/`TERM` from the real process environment once and
+/// decide the [`ColorMode`] via [`color_mode`]. Call once at startup (see
+/// `shell::run` / `deck_shell::run_deck`) and thread the result through — never
+/// per-frame or per-token.
+pub fn detect_color_mode() -> ColorMode {
+    color_mode(
+        std::env::var_os("NO_COLOR").is_some(),
         std::env::var("COLORTERM").ok().as_deref(),
         std::env::var("TERM").ok().as_deref(),
     )
 }
 
-/// `(truecolor token, xterm-256 fallback index)` pairs for every
-/// `Color::Rgb` token defined above. See the module-level table for the
-/// approximate RGB each index renders as.
-const FALLBACKS: &[(Color, u8)] = &[
-    (AMBER, 214),
-    (AMBER_DEEP, 172),
-    (INK, 255),
-    (MUTED, 246),
-    (RULE, 238),
-    (SELECT_BG, 235),
-    (OK, 114),
-    (WARN, 215),
-    (BAD, 204),
-    (RUN, 74),
-    (HELD, 140),
-    (DIFF_ADD_BG, 234),
-    (DIFF_DEL_BG, 235),
-    (SYNTAX_STRING, 180),
-    (SYNTAX_NUMBER, 116),
-    (SYNTAX_COMMENT, 244),
-    (EMBER_LOW, 130),
-    (EMBER_HIGH, 222),
+/// `(token, xterm-256 index, ANSI-16 index)` for every distinct `Color::Rgb`
+/// value in the palette. Role aliases share a value with a palette token, so
+/// one entry covers both — the table is keyed by value, first match wins.
+const FALLBACKS: &[(Color, u8, u8)] = &[
+    (GROUND, 233, 0),
+    (SURFACE, 234, 0),
+    (RAISED, 236, 8),
+    (HAIRLINE, 237, 8),
+    (TEXT_PRIMARY, 231, 15),
+    (TEXT_SECONDARY, 146, 7),
+    (TEXT_TERTIARY, 103, 8),
+    (TEXT_DIM, 60, 8),
+    (EMBER_GOLD, 220, 11),
+    (EMBER_FLAME, 209, 9),
+    (EMBER_CRIMSON, 161, 5),
+    (VIOLET, 141, 13),
+    (SUCCESS, 36, 2),
+    (SUCCESS_BRIGHT, 79, 10),
+    (WARNING, 136, 3),
+    (WARNING_BRIGHT, 215, 11),
+    (DANGER_BRIGHT, 204, 9),
+    (AGENT_AMBER, 179, 3),
+    (SELECT_BG, 235, 0),
+    (RUN, 74, 14),
+    (DIFF_ADD_BG, 22, 2),
+    (DIFF_DEL_BG, 52, 1),
+    (SYNTAX_STRING, 180, 3),
+    (SYNTAX_NUMBER, 116, 14),
+    (SYNTAX_COMMENT, 244, 8),
 ];
 
-/// Resolve one color for the terminal actually in use: unchanged when
-/// `truecolor` is `true`, or its [`FALLBACKS`] entry (an indexed 256-color)
-/// when `false`. A color with no matching entry (already-indexed, named,
-/// `Reset`, …) passes through unchanged either way — this only ever narrows
-/// the truecolor tokens defined above, never touches anything else.
-pub fn resolve(color: Color, truecolor: bool) -> Color {
-    if truecolor {
-        return color;
+/// Resolve one color for the mode actually in use. Truecolor passes through;
+/// `None` (NO_COLOR) drops every RGB to `Reset` (terminal default); 256/16 map
+/// via [`FALLBACKS`]. A color with no matching entry (already-indexed, named,
+/// `Reset`, or an interpolated gradient cell) passes through unchanged — this
+/// only ever narrows the palette tokens, never anything else.
+pub fn resolve(color: Color, mode: ColorMode) -> Color {
+    match mode {
+        ColorMode::Truecolor => color,
+        ColorMode::None => match color {
+            Color::Rgb(..) | Color::Indexed(_) => Color::Reset,
+            other => other,
+        },
+        ColorMode::Ansi256 => FALLBACKS
+            .iter()
+            .find_map(|(rgb, i256, _)| (*rgb == color).then_some(Color::Indexed(*i256)))
+            .unwrap_or(color),
+        ColorMode::Ansi16 => FALLBACKS
+            .iter()
+            .find_map(|(rgb, _, i16)| (*rgb == color).then_some(Color::Indexed(*i16)))
+            .unwrap_or(color),
     }
-    FALLBACKS
-        .iter()
-        .find_map(|(rgb, indexed)| (*rgb == color).then_some(Color::Indexed(*indexed)))
-        .unwrap_or(color)
 }
 
-/// Degrade every cell's colors in `buf` in place via [`resolve`]. A no-op
-/// when `truecolor` is `true`.
+/// Degrade every cell's colors in `buf` in place via [`resolve`]. A no-op in
+/// [`ColorMode::Truecolor`].
 ///
-/// This is the *only* place a fallback is actually applied, and it runs once
-/// per frame, right after the widgets render into the buffer — which is what
-/// lets every other call site in this crate (`render.rs`, `textline.rs`, the
-/// view modules, …) keep referencing `theme::TOKEN` directly, unaware that a
-/// 256-color terminal might be watching. See `shell::run` /
-/// `deck_shell::run_deck` for the two call sites.
-pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, truecolor: bool) {
-    if truecolor {
+/// This is the *only* place a fallback is applied, once per frame right after
+/// the widgets render — which lets every other call site in the crate keep
+/// referencing `theme::TOKEN` directly, unaware a lesser terminal is watching.
+/// See `shell::run` / `deck_shell::run_deck` for the call sites.
+pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, mode: ColorMode) {
+    if mode.is_truecolor() {
         return;
     }
     for cell in buf.content.iter_mut() {
-        cell.fg = resolve(cell.fg, false);
-        cell.bg = resolve(cell.bg, false);
-        cell.underline_color = resolve(cell.underline_color, false);
+        cell.fg = resolve(cell.fg, mode);
+        cell.bg = resolve(cell.bg, mode);
+        cell.underline_color = resolve(cell.underline_color, mode);
     }
 }
 
@@ -260,7 +361,8 @@ pub fn rule() -> Style {
 pub fn status_color(status: AgentStatus) -> Color {
     match status {
         AgentStatus::Queued => MUTED,
-        AgentStatus::Running => RUN,
+        // Live work is ember — the one place the heat means "running now".
+        AgentStatus::Running => EMBER_FLAME,
         AgentStatus::Paused => HELD,
         AgentStatus::WaitingInput => WARN,
         AgentStatus::Done => OK,
@@ -418,53 +520,79 @@ mod tests {
         }
     }
 
-    /// All eighteen `Color::Rgb` tokens defined in this module — kept as an
-    /// explicit list (rather than derived) so this test and
-    /// [`every_named_token_has_a_256_fallback`] both fail loudly the moment a
-    /// new truecolor token is added without a matching [`FALLBACKS`] entry.
-    const ALL_RGB_TOKENS: [Color; 18] = [
-        AMBER,
-        AMBER_DEEP,
-        INK,
-        MUTED,
-        RULE,
+    /// Every distinct `Color::Rgb` value in the palette — kept explicit (not
+    /// derived) so this and [`every_named_token_has_a_fallback`] fail loudly the
+    /// moment a new truecolor token lands without a [`FALLBACKS`] entry. Role
+    /// aliases (`INK`, `OK`, `DANGER`, …) share a value with a palette token, so
+    /// they are intentionally not re-listed.
+    const ALL_RGB_TOKENS: &[Color] = &[
+        GROUND,
+        SURFACE,
+        RAISED,
+        HAIRLINE,
+        TEXT_PRIMARY,
+        TEXT_SECONDARY,
+        TEXT_TERTIARY,
+        TEXT_DIM,
+        EMBER_GOLD,
+        EMBER_FLAME,
+        EMBER_CRIMSON,
+        VIOLET,
+        SUCCESS,
+        SUCCESS_BRIGHT,
+        WARNING,
+        WARNING_BRIGHT,
+        DANGER_BRIGHT,
+        AGENT_AMBER,
         SELECT_BG,
-        OK,
-        WARN,
-        BAD,
         RUN,
-        HELD,
         DIFF_ADD_BG,
         DIFF_DEL_BG,
         SYNTAX_STRING,
         SYNTAX_NUMBER,
         SYNTAX_COMMENT,
-        EMBER_LOW,
-        EMBER_HIGH,
     ];
 
     #[test]
-    fn every_named_token_has_a_256_fallback() {
+    fn every_named_token_has_a_fallback() {
         for token in ALL_RGB_TOKENS {
             assert!(
-                FALLBACKS.iter().any(|(rgb, _)| *rgb == token),
-                "token {token:?} has no xterm-256 fallback entry in FALLBACKS"
+                FALLBACKS.iter().any(|(rgb, ..)| rgb == token),
+                "token {token:?} has no FALLBACKS entry (256 + 16 index)"
+            );
+        }
+        // No duplicate values in the table (aliases share one entry by value).
+        for (i, (rgb, ..)) in FALLBACKS.iter().enumerate() {
+            assert!(
+                !FALLBACKS[..i].iter().any(|(other, ..)| other == rgb),
+                "duplicate FALLBACKS entry for {rgb:?}"
             );
         }
         assert_eq!(
             FALLBACKS.len(),
             ALL_RGB_TOKENS.len(),
-            "FALLBACKS should have exactly one entry per named RGB token — \
-             update both ALL_RGB_TOKENS and FALLBACKS when adding a new token"
+            "one FALLBACKS entry per distinct palette token"
         );
+    }
+
+    #[test]
+    fn role_aliases_track_their_palette_token() {
+        assert_eq!(AMBER, EMBER_GOLD);
+        assert_eq!(INK, TEXT_PRIMARY);
+        assert_eq!(MUTED, TEXT_SECONDARY);
+        assert_eq!(RULE, HAIRLINE);
+        assert_eq!(OK, SUCCESS_BRIGHT);
+        assert_eq!(WARN, WARNING_BRIGHT);
+        assert_eq!(BAD, DANGER_BRIGHT);
+        assert_eq!(DANGER, EMBER_CRIMSON);
+        assert_eq!(HELD, VIOLET);
     }
 
     #[test]
     fn truecolor_supported_reads_colorterm_first() {
         assert!(truecolor_supported(Some("truecolor"), None));
         assert!(truecolor_supported(Some("24bit"), Some("xterm")));
-        // Case-insensitive.
-        assert!(truecolor_supported(Some("TrueColor"), None));
+        assert!(truecolor_supported(Some("TrueColor"), None)); // case-insensitive
     }
 
     #[test]
@@ -475,54 +603,108 @@ mod tests {
 
     #[test]
     fn truecolor_supported_is_false_for_known_limited_terms() {
-        // No COLORTERM, and TERM values that only promise 16/256-indexed
-        // color, not 24-bit — the exact scenario this fix targets.
         assert!(!truecolor_supported(None, Some("xterm")));
         assert!(!truecolor_supported(None, Some("xterm-256color")));
         assert!(!truecolor_supported(None, Some("screen")));
-        assert!(!truecolor_supported(None, Some("screen-256color")));
         assert!(!truecolor_supported(None, Some("linux")));
         assert!(!truecolor_supported(None, Some("tmux-256color")));
-    }
-
-    #[test]
-    fn truecolor_supported_is_false_with_no_environment_at_all() {
         assert!(!truecolor_supported(None, None));
     }
 
     #[test]
-    fn resolve_passes_through_when_truecolor() {
-        assert_eq!(resolve(AMBER, true), AMBER);
+    fn color_mode_no_color_beats_every_color_signal() {
+        // NO_COLOR wins even on a truecolor terminal.
+        assert_eq!(color_mode(true, Some("truecolor"), None), ColorMode::None);
+        assert_eq!(color_mode(true, None, Some("xterm-256color")), ColorMode::None);
     }
 
     #[test]
-    fn resolve_maps_every_token_to_its_indexed_fallback_when_degraded() {
-        for (rgb, indexed) in FALLBACKS {
-            assert_eq!(resolve(*rgb, false), Color::Indexed(*indexed));
+    fn color_mode_detects_each_depth() {
+        assert_eq!(
+            color_mode(false, Some("truecolor"), None),
+            ColorMode::Truecolor
+        );
+        assert_eq!(
+            color_mode(false, None, Some("xterm-256color")),
+            ColorMode::Ansi256
+        );
+        // Bare legacy terminals, and no environment at all, floor at 16 colors.
+        assert_eq!(color_mode(false, None, Some("xterm")), ColorMode::Ansi16);
+        assert_eq!(color_mode(false, None, Some("linux")), ColorMode::Ansi16);
+        assert_eq!(color_mode(false, None, None), ColorMode::Ansi16);
+    }
+
+    #[test]
+    fn resolve_passes_through_when_truecolor() {
+        assert_eq!(resolve(EMBER_GOLD, ColorMode::Truecolor), EMBER_GOLD);
+    }
+
+    #[test]
+    fn resolve_maps_every_token_to_its_index_when_degraded() {
+        for (rgb, i256, i16) in FALLBACKS {
+            assert_eq!(resolve(*rgb, ColorMode::Ansi256), Color::Indexed(*i256));
+            assert_eq!(resolve(*rgb, ColorMode::Ansi16), Color::Indexed(*i16));
         }
     }
 
     #[test]
-    fn resolve_leaves_unmapped_colors_unchanged_when_degraded() {
-        assert_eq!(resolve(Color::Indexed(9), false), Color::Indexed(9));
-        assert_eq!(resolve(Color::Reset, false), Color::Reset);
+    fn resolve_strips_color_under_no_color() {
+        assert_eq!(resolve(EMBER_GOLD, ColorMode::None), Color::Reset);
+        assert_eq!(resolve(Color::Indexed(9), ColorMode::None), Color::Reset);
+        // A non-color (Reset) stays put — nothing to strip.
+        assert_eq!(resolve(Color::Reset, ColorMode::None), Color::Reset);
+    }
+
+    #[test]
+    fn resolve_leaves_unmapped_colors_unchanged_when_indexed() {
+        assert_eq!(resolve(Color::Indexed(9), ColorMode::Ansi256), Color::Indexed(9));
+        assert_eq!(resolve(Color::Reset, ColorMode::Ansi16), Color::Reset);
     }
 
     #[test]
     fn degrade_buffer_is_noop_when_truecolor() {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        buf.content[0].fg = AMBER;
-        degrade_buffer(&mut buf, true);
-        assert_eq!(buf.content[0].fg, AMBER);
+        buf.content[0].fg = EMBER_GOLD;
+        degrade_buffer(&mut buf, ColorMode::Truecolor);
+        assert_eq!(buf.content[0].fg, EMBER_GOLD);
     }
 
     #[test]
     fn degrade_buffer_resolves_every_cell_when_degraded() {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        buf.content[0].fg = AMBER;
-        buf.content[0].bg = HELD;
-        degrade_buffer(&mut buf, false);
-        assert_eq!(buf.content[0].fg, Color::Indexed(214));
-        assert_eq!(buf.content[0].bg, Color::Indexed(140));
+        buf.content[0].fg = EMBER_GOLD; // → 220 (256) / 11 (16)
+        buf.content[0].bg = VIOLET; // → 141 (256) / 13 (16)
+        degrade_buffer(&mut buf, ColorMode::Ansi256);
+        assert_eq!(buf.content[0].fg, Color::Indexed(220));
+        assert_eq!(buf.content[0].bg, Color::Indexed(141));
+    }
+
+    #[test]
+    fn degrade_buffer_strips_color_under_no_color() {
+        let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
+        buf.content[0].fg = EMBER_GOLD;
+        buf.content[0].bg = GROUND;
+        degrade_buffer(&mut buf, ColorMode::None);
+        assert_eq!(buf.content[0].fg, Color::Reset);
+        assert_eq!(buf.content[0].bg, Color::Reset);
+    }
+
+    #[test]
+    fn ember_gradient_spans_gold_to_crimson() {
+        assert_eq!(ember_gradient(0.0), EMBER_GOLD);
+        assert_eq!(ember_gradient(1.0), EMBER_CRIMSON);
+        assert_eq!(ember_gradient(0.5), EMBER_FLAME);
+        // Monotonic, clamped, never panics across the range.
+        for i in 0..=20 {
+            let _ = ember_gradient(f64::from(i) / 20.0);
+        }
+        assert_eq!(ember_gradient(-1.0), EMBER_GOLD);
+        assert_eq!(ember_gradient(2.0), EMBER_CRIMSON);
+    }
+
+    #[test]
+    fn lighten_moves_toward_white() {
+        assert_eq!(lighten(EMBER_GOLD, 0.0), EMBER_GOLD);
+        assert_eq!(lighten(EMBER_GOLD, 1.0), Color::Rgb(255, 255, 255));
     }
 }

@@ -111,6 +111,12 @@ struct Cli {
     #[arg(long)]
     plain: bool,
 
+    /// Freeze all deck animation (the run progress bar's shimmer/pulse and the
+    /// caret blink) to a static frame — for CI and asciinema-style recordings.
+    /// Also forced on by STELLA_NO_ANIM or NO_COLOR.
+    #[arg(long)]
+    no_anim: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -434,7 +440,7 @@ fn run(cli: Cli) -> Result<(), String> {
             // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
             // falls back to the line-based REPL.
             if use_deck(cli.plain) {
-                rt()?.block_on(command_deck::run_deck_session(&cfg, cli.budget))?;
+                rt()?.block_on(command_deck::run_deck_session(&cfg, cli.budget, cli.no_anim))?;
             } else {
                 rt()?.block_on(agent::run_interactive(&cfg, cli.budget))?;
             }
