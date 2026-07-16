@@ -194,7 +194,18 @@ impl Store {
         // execute_batch tolerates the row PRAGMA journal_mode returns (a
         // plain pragma_update errors on it). WAL means a read-only caller
         // (`stella stats`) is never blocked by a live session's writes.
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        // busy_timeout matches the sibling stores (context.db, codegraph.db):
+        // without it a second same-workspace session gets an immediate
+        // SQLITE_BUSY and its best-effort telemetry writes vanish silently.
+        // synchronous=NORMAL is the standard WAL pairing — durability to the
+        // last checkpoint rather than one fsync per event insert on the hot
+        // render path (matching stella-graph's store).
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA busy_timeout=5000;
+             PRAGMA foreign_keys=ON;",
+        )?;
         let store = Self {
             conn: Mutex::new(conn),
         };
