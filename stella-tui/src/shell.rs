@@ -36,6 +36,7 @@ use crate::input::UserInput;
 use crate::model::SessionModel;
 use crate::render::render;
 use crate::term::{PanicHookGuard, TerminalGuard};
+use crate::theme;
 use crate::ui::{ShellAction, UiState, handle_key, ingest};
 
 /// Configuration for one interactive session.
@@ -152,6 +153,10 @@ pub async fn run(
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &term_guard);
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    // Detected once (see `theme::truecolor_supported`) and threaded through
+    // the draw loop below, rather than touching every `theme::TOKEN` call
+    // site in `render.rs`/`textline.rs`/the view modules.
+    let truecolor = theme::detect_truecolor_support();
 
     let mut model = SessionModel::new();
     let mut ui = UiState::new(
@@ -185,7 +190,10 @@ pub async fn run(
     });
 
     loop {
-        terminal.draw(|f| render(&model, &mut ui, f))?;
+        terminal.draw(|f| {
+            render(&model, &mut ui, f);
+            theme::degrade_buffer(f.buffer_mut(), truecolor);
+        })?;
 
         tokio::select! {
             maybe_event = events.recv() => {

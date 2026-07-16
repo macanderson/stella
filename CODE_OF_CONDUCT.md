@@ -35,10 +35,6 @@ Examples of unacceptable behavior:
 - Other conduct which could reasonably be considered inappropriate in a
   professional setting
 
-A note specific to this project: **the Arena is competitive on purpose — the
-community is not.** Trash-talk the numbers, never the people. Benchmark
-submissions, win or lose, are treated with respect.
-
 ## Enforcement responsibilities
 
 Community leaders are responsible for clarifying and enforcing our standards of

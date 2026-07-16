@@ -29,11 +29,13 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use stella_protocol::FileChangeKind;
+use stella_protocol::{FileChangeKind, PrStatus};
 
 use crate::composer::{ComposerLayout, SlashMenu, layout as composer_layout, split_row_at};
 use crate::model::{AskUserPrompt, FileState, Hud, SessionModel, TranscriptEntry};
-use crate::textline::{self, EventLine, Tone, budget_mode_label, stage_label};
+use crate::textline::{
+    self, budget_mode_label, media_kind_label, media_state_label, pr_status_label, stage_label,
+};
 use crate::ui::{PanelFocus, UiState, ViewportMetrics};
 use crate::{diff, theme};
 
@@ -1090,7 +1092,11 @@ pub(crate) fn entry_lines(
                 "🎞 media",
                 style,
                 vec![Span::styled(
-                    format!("{} {artifact_id}: {state}", media_kind_label(*kind)),
+                    format!(
+                        "{} {artifact_id}: {}",
+                        media_kind_label(*kind),
+                        media_state_label(state)
+                    ),
                     style,
                 )],
                 width,
@@ -1220,6 +1226,15 @@ pub(crate) fn entry_lines(
     }
 }
 
+fn pr_status_color(status: PrStatus) -> Color {
+    match status {
+        PrStatus::Draft => Color::DarkGray,
+        PrStatus::Open => Color::Green,
+        PrStatus::Merged => Color::Magenta,
+        PrStatus::Closed => Color::Red,
+    }
+}
+
 fn file_line(file: &FileState, selected: bool) -> Line<'static> {
     let (marker, color) = match file.kind {
         FileChangeKind::Created => ("[+]", Color::Green),
@@ -1264,7 +1279,8 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use stella_protocol::{
-        AgentEvent, BudgetMode, FileChangeKind, ScopeProposal, StageKind, ToolCall, ToolOutput,
+        AgentEvent, BudgetMode, FileChangeKind, MediaJobState, MediaKind, ScopeProposal, StageKind,
+        ToolCall, ToolOutput,
     };
 
     /// Flatten a `TestBackend` buffer to one `String` per row (styling
@@ -1372,7 +1388,7 @@ mod tests {
             TranscriptEntry::MediaProgress {
                 artifact_id: "m1".into(),
                 kind: MediaKind::Image,
-                state: "queued".into(),
+                state: MediaJobState::Queued,
             },
             TranscriptEntry::MediaComplete {
                 label: "logo".into(),
@@ -1423,6 +1439,10 @@ mod tests {
                 | TranscriptEntry::ToolResult { .. }
                 | TranscriptEntry::Retry { .. }
                 | TranscriptEntry::Compaction { .. }
+                // Not in `samples`: it deliberately renders as an untagged
+                // system note, not a `[label]: ` line — see
+                // `eviction_marker_renders_as_a_one_line_system_note`.
+                | TranscriptEntry::Evicted { .. }
                 | TranscriptEntry::BudgetTick { .. }
                 | TranscriptEntry::ProviderFallback { .. }
                 | TranscriptEntry::ContextRecall { .. }

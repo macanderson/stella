@@ -6,9 +6,8 @@
 //! database file doesn't exist yet it says so instead of creating one.
 //!
 //! Formats: an aligned table for humans (with a TOTAL row), and json/csv
-//! for machine-readable receipts (Arena submissions want these). Field
-//! order in json/csv follows `UsageStatsRow`'s declaration order — a
-//! stable contract.
+//! for machine-readable receipts. Field order in json/csv follows
+//! `UsageStatsRow`'s declaration order — a stable contract.
 
 use clap::ValueEnum;
 use stella_store::{Store, UsageStatsRow};

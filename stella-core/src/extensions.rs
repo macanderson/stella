@@ -23,8 +23,8 @@
 //! Ecosystem tools already maintain `.claude/{commands,skills,agents}` and
 //! `.agents/{commands,skills,agents}`. On `stella init`, entries found there
 //! are **symlinked** into the matching `.stella/`-side directory so stella
-//! sees them without copying (edits stay in one place). Two rules keep the
-//! adoption sane, both encoded in [`plan_extension_sync`]:
+//! sees them without copying (edits stay in one place). Three rules keep the
+//! adoption sane, all encoded in [`plan_extension_sync`]:
 //!
 //!   1. **Never link a symlink.** Other agents symlink between these
 //!      directories too (e.g. `.claude/skills/x -> ../../.agents/skills/x`);
@@ -33,6 +33,16 @@
 //!   2. **Never clobber.** A name already present in the destination —
 //!      user-authored or linked by a previous init — is skipped, so the sync
 //!      is idempotent and hand-written definitions always win.
+//!   3. **Never link something the loader can't read.** A directory entry
+//!      without the kind's nested definition file (`<slug>/COMMAND.md`,
+//!      `<slug>/SKILL.md`, `<slug>/AGENT.md`) — e.g. a *namespace* directory
+//!      like `.claude/commands/vercel/` holding `deploy.md` (the
+//!      `/vercel:deploy` convention some agents use) — has nothing the
+//!      loader reads: the CLI's `read_definition_files` deliberately, and
+//!      silently, skips a directory with no nested file. Linking it would
+//!      create a symlink that does nothing, with no diagnostic anywhere.
+//!      Loading namespaced commands as `/ns:name` is a separate feature
+//!      decision, not this rule's concern.
 //!
 //! # No I/O in this module (`02-architecture.md` §1.3)
 //!
@@ -292,6 +302,16 @@ pub struct SyncEntry {
     /// definition, and linking both would leave the loader's merge order
     /// (destination-lexicographic) to pick a winner instead of source order.
     pub definition_name: String,
+    /// `true` when the loader can actually read a definition out of this
+    /// entry. A flat `<slug>.md` file always is. A directory is loadable
+    /// only when it contains the kind's nested definition file
+    /// (`COMMAND.md`/`SKILL.md`/`AGENT.md`) — mirrors, exactly, the shape
+    /// the loader's `read_definition_files` silently skips (no file, no
+    /// diagnostic, nothing loaded). A *namespace* directory such as
+    /// `.claude/commands/vercel/` holding only `deploy.md` (no
+    /// `vercel.md`/`vercel/COMMAND.md`) is not loadable: linking it would
+    /// adopt a symlink the loader can never resolve into anything.
+    pub is_loadable: bool,
 }
 
 /// The scanned contents of one source directory for one kind, in the
@@ -316,6 +336,12 @@ pub enum SyncSkipReason {
     /// earlier source directory this run, or by something already in the
     /// destination under a different file name.
     DuplicateName,
+    /// The entry is a directory without the kind's nested definition file —
+    /// a namespace directory (no `<slug>.md` or `COMMAND.md`/`SKILL.md`/
+    /// `AGENT.md` found), not loadable. Linking it would produce a symlink
+    /// the loader silently ignores; skipping it here instead keeps the sync
+    /// and the loader in agreement about what "adopted" means.
+    NotLoadable,
 }
 
 /// One symlink the CLI should create: `<dest>/<kind>/<name>` → `source_path`.
@@ -364,8 +390,9 @@ pub struct ExistingTargets {
 /// `sources` are in precedence order (e.g. `.claude/<kind>` before
 /// `.agents/<kind>`); `existing` describes each kind's destination directory.
 /// Deterministic: actions come out in scan order. See the module doc for the
-/// two rules (never link a symlink, never clobber); collision precedence
-/// between sources is decided on [`SyncEntry::definition_name`].
+/// three rules (never link a symlink, never clobber, never link something
+/// unloadable); collision precedence between sources is decided on
+/// [`SyncEntry::definition_name`].
 pub fn plan_extension_sync(
     sources: &[SyncSource],
     existing: &dyn Fn(ExtensionKind) -> ExistingTargets,
@@ -387,8 +414,8 @@ pub fn plan_extension_sync(
             for name in targets.definition_names {
                 claimed.insert((source.kind, name));
             }
-            targets.file_names.into_iter().collect()
-        });
+        }
+        let present = &present_files[&source.kind];
         for entry in &source.entries {
             let skip = |reason| SyncSkip {
                 kind: source.kind,
@@ -398,6 +425,8 @@ pub fn plan_extension_sync(
             };
             if entry.is_symlink {
                 plan.skips.push(skip(SyncSkipReason::SourceIsSymlink));
+            } else if !entry.is_loadable {
+                plan.skips.push(skip(SyncSkipReason::NotLoadable));
             } else if present.contains(&entry.name) {
                 plan.skips.push(skip(SyncSkipReason::DestinationExists));
             } else if !claimed.insert((source.kind, entry.definition_name.clone())) {
@@ -528,6 +557,24 @@ mod tests {
             // own entries; everywhere else the definition name is the file
             // name minus a `.md` suffix, like the scanner's fallback.
             definition_name: name.strip_suffix(".md").unwrap_or(name).to_string(),
+            // Every test entry built through this helper represents a
+            // normal, loadable file/directory; the unloadable shape is
+            // exercised explicitly (see `plan_skips_a_namespace_directory...`).
+            is_loadable: true,
+        }
+    }
+
+    /// A directory entry shaped like a namespace directory: real (not a
+    /// symlink), but with neither a `<slug>.md` file nor the kind's nested
+    /// definition file inside — the shape `.claude/commands/vercel/` has
+    /// when it holds only `deploy.md`.
+    fn unloadable_dir_entry(name: &str, path: &str) -> SyncEntry {
+        SyncEntry {
+            name: name.to_string(),
+            path: path.to_string(),
+            is_symlink: false,
+            definition_name: name.to_string(),
+            is_loadable: false,
         }
     }
 
@@ -571,6 +618,28 @@ mod tests {
     }
 
     #[test]
+    fn plan_skips_a_namespace_directory_with_no_nested_definition_file() {
+        // The exact shape from issue #104: `.claude/commands/vercel/` holds
+        // `deploy.md` (another agent's `/vercel:deploy` namespaced command)
+        // but no `vercel.md` or `vercel/COMMAND.md` — the scanner marks it
+        // unloadable rather than letting it through as a dangling adoption.
+        // A normal, loadable command in the same source is still linked.
+        let sources = vec![SyncSource {
+            kind: ExtensionKind::Commands,
+            entries: vec![
+                entry("deploy", "/h/.claude/commands/deploy.md", false),
+                unloadable_dir_entry("vercel", "/h/.claude/commands/vercel"),
+            ],
+        }];
+        let plan = plan_extension_sync(&sources, &no_existing);
+        assert_eq!(plan.links.len(), 1);
+        assert_eq!(plan.links[0].name, "deploy");
+        assert_eq!(plan.skips.len(), 1);
+        assert_eq!(plan.skips[0].name, "vercel");
+        assert_eq!(plan.skips[0].reason, SyncSkipReason::NotLoadable);
+    }
+
+    #[test]
     fn plan_never_clobbers_an_existing_destination_name() {
         let sources = vec![SyncSource {
             kind: ExtensionKind::Commands,
@@ -602,6 +671,7 @@ mod tests {
             path: path.to_string(),
             is_symlink: false,
             definition_name: "deploy".to_string(),
+            is_loadable: true,
         };
         let sources = vec![
             SyncSource {
