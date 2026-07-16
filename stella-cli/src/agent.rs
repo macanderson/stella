@@ -512,7 +512,7 @@ async fn run_pipeline_one_shot(
 
 /// Owns the boxed provider so the reference returned to the pipeline is
 /// valid for the pipeline's entire lifetime.
-struct SingleProviderResolver {
+pub(crate) struct SingleProviderResolver {
     provider: Box<dyn Provider>,
     model_ref: ModelRef,
 }
@@ -534,8 +534,8 @@ impl ProviderResolver for SingleProviderResolver {
 }
 
 /// Repo-structure summary via `git ls-files` for the planner's split context.
-struct GitRepoStructure {
-    root: std::path::PathBuf,
+pub(crate) struct GitRepoStructure {
+    pub(crate) root: std::path::PathBuf,
 }
 
 #[async_trait::async_trait]
@@ -561,8 +561,8 @@ impl RepoStructurePort for GitRepoStructure {
 /// (in-process, with real filesystem access), so a large untracked set is not
 /// silently clipped and a modification to an already-untracked file is
 /// detectable (its `len:mtime` fingerprint changes).
-struct GitRepoStatus {
-    root: std::path::PathBuf,
+pub(crate) struct GitRepoStatus {
+    pub(crate) root: std::path::PathBuf,
 }
 
 #[async_trait::async_trait]
@@ -642,8 +642,8 @@ fn render_file_tree(files: &str, max_lines: usize) -> String {
 }
 
 /// Runs shell commands for the verification ladder (flip oracle tests, diff).
-struct ShellCommandRunner {
-    root: std::path::PathBuf,
+pub(crate) struct ShellCommandRunner {
+    pub(crate) root: std::path::PathBuf,
 }
 
 #[async_trait::async_trait]

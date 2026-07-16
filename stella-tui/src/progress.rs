@@ -99,10 +99,14 @@ pub struct ProgressState {
 /// Which display phase (0=plan, 1=execute, 2=verify) a real stage belongs to.
 fn stage_phase(stage: StageKind) -> usize {
     match stage {
+        // Witness authoring is pre-execution work: it groups with planning on
+        // the 3-segment display (the bar must not jump to "verify" before the
+        // worker has run).
         StageKind::Triage
         | StageKind::ContextRecall
         | StageKind::Plan
-        | StageKind::ScopeReview => 0,
+        | StageKind::ScopeReview
+        | StageKind::Witness => 0,
         StageKind::Execute => 1,
         StageKind::Verify
         | StageKind::Judge

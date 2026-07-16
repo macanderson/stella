@@ -55,9 +55,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::ports::ToolExecutor;
-use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
+use stella_core::router::{CircuitBreaker, ProviderProfile};
+use stella_core::{BudgetGuard, CalibrationMap, Engine, RoleTable, Router, TurnOutcome};
+use stella_pipeline::{
+    AutoApproveGate, ContextRecallPort, NoContextRecall, Pipeline, PipelineConfig, PipelinePorts,
+    PipelineStatus, ProviderResolver,
+};
 use stella_model::provider::Provider;
-use stella_protocol::{AgentEvent, CompletionMessage, FileChangeKind, ToolOutput, ToolSchema};
+use stella_protocol::{
+    AgentEvent, CompletionMessage, FileChangeKind, ModelRef, ToolOutput, ToolSchema,
+};
 use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{CustomTool, CustomToolSet};
@@ -71,7 +78,7 @@ use crate::agent;
 use crate::config::Config;
 use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRegistry};
 use crate::memory::{SessionMemory, inject_recall_block, turn_warrants_reflection};
-use crate::runtime::TokioSleeper;
+use crate::runtime::{SystemClock, TokioSleeper};
 
 /// The lead agent's id — the one conversation this driver runs.
 const LEAD: &str = "lead";
@@ -348,6 +355,11 @@ pub async fn run_deck_session(
     // Double-Esc bookkeeping: parks dispatch and retains what the pair's
     // first press cancelled (see [`HoldState`]).
     let mut dispatch = HoldState::new();
+    // `/pipeline`: route lead turns through the staged pipeline (triage →
+    // witness → execute → verify → judge) instead of the raw engine loop.
+    // Session-local, OFF at start — mirrored to the PIPELINE stat box via
+    // `Inbound::Pipeline`.
+    let mut pipeline_on = false;
     'session: loop {
         // Take the next prompt: backlog first (unless held), else wait for
         // deck input.
@@ -428,6 +440,7 @@ pub async fn run_deck_session(
             &registry,
             cfg,
             &custom,
+            &mut pipeline_on,
         )
         .await;
         if matches!(command, DeckCommand::Handled | DeckCommand::InitCompleted) {
@@ -478,35 +491,67 @@ pub async fn run_deck_session(
         // refresh the volatile recall block, then append the user prompt.
         // `turn_base` is the truncation point that erases the whole turn if
         // it is cancelled; `reflect_start` scopes the reflection gate to what
-        // the turn itself appends.
-        if let Some(m) = &memory {
+        // the turn itself appends. In pipeline mode the pipeline owns BOTH —
+        // recall rides inside its one volatile recall+goal message (L-E8), so
+        // the driver appending either would double them.
+        if !pipeline_on && let Some(m) = &memory {
             let block = m.recall_block(&prompt).await;
             inject_recall_block(&mut messages, block);
         }
         let turn_base = messages.len();
-        messages.push(CompletionMessage::user(&prompt));
+        if !pipeline_on {
+            messages.push(CompletionMessage::user(&prompt));
+        }
         let reflect_start = messages.len();
 
         // The execution record outlives the turn future so a cancelled turn
         // can still be closed out in the store.
-        let execution = agent::begin_execution(&store, "deck", &prompt, cfg);
+        let execution = agent::begin_execution(
+            &store,
+            if pipeline_on { "deck-pipeline" } else { "deck" },
+            &prompt,
+            cfg,
+        );
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
 
         let end = {
-            let turn = run_lead_turn(
-                &*provider,
-                base_tools,
-                &custom_tools,
-                &registry,
-                &mut messages,
-                &mut budget,
-                &calibration,
-                cfg,
-                execution.clone(),
-                &in_tx,
-                &ask_io,
-            );
+            // Both arms return `Result<(), String>`, so one pinned future
+            // drives either path through the same select loop.
+            let turn = async {
+                if pipeline_on {
+                    run_lead_pipeline_turn(
+                        &*provider,
+                        base_tools,
+                        &custom_tools,
+                        &registry,
+                        memory.as_ref(),
+                        &prompt,
+                        &mut messages,
+                        &mut budget,
+                        cfg,
+                        execution.clone(),
+                        &in_tx,
+                        &ask_io,
+                    )
+                    .await
+                } else {
+                    run_lead_turn(
+                        &*provider,
+                        base_tools,
+                        &custom_tools,
+                        &registry,
+                        &mut messages,
+                        &mut budget,
+                        &calibration,
+                        cfg,
+                        execution.clone(),
+                        &in_tx,
+                        &ask_io,
+                    )
+                    .await
+                }
+            };
             tokio::pin!(turn);
             loop {
                 tokio::select! {
@@ -696,6 +741,7 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ("/models", "list providers & models"),
     ("/init", "index the workspace: domains + code graph"),
     ("/agents", "list custom agents"),
+    ("/pipeline", "toggle the staged pipeline (witness-verified turns)"),
     ("/files", "open the Files tab"),
     ("/diff", "open the diff viewer"),
     ("/graph", "open the code-graph tab"),
@@ -723,13 +769,14 @@ fn deck_slash_commands(custom: &crate::extensions::CustomExtensions) -> Vec<Slas
 /// transcript as `Text` events — the deck renders exclusively from events, so
 /// printing to stdout (which the alternate screen owns) is never an option.
 ///
-/// Vocabulary: `/help`, `/clear`, `/models`, `/init`, `/agents`. `/files`,
-/// `/diff`, `/graph` are deck-local (tab switches) and consumed TUI-side; an
-/// unknown bare `/command` gets a hint rather than a wasted model call. Every
-/// productized command is no-argument, so the *whole* trimmed input is
-/// matched — `/init do the thing` is a model prompt, not a silent reindex
-/// that discards the rest. Custom commands/skills (⚡) DO take arguments:
-/// `/fix-bug issue-42` expands the `fix-bug` template with `issue-42`.
+/// Vocabulary: `/help`, `/clear`, `/models`, `/init`, `/agents`,
+/// `/pipeline`. `/files`, `/diff`, `/graph` are deck-local (tab switches) and
+/// consumed TUI-side; an unknown bare `/command` gets a hint rather than a
+/// wasted model call. Every productized command is no-argument, so the
+/// *whole* trimmed input is matched — `/init do the thing` is a model prompt,
+/// not a silent reindex that discards the rest. Custom commands/skills (⚡)
+/// DO take arguments: `/fix-bug issue-42` expands the `fix-bug` template
+/// with `issue-42`.
 #[allow(clippy::too_many_arguments)]
 async fn run_deck_command(
     prompt: &str,
@@ -740,6 +787,7 @@ async fn run_deck_command(
     registry: &ToolRegistry,
     cfg: &Config,
     custom: &crate::extensions::CustomExtensions,
+    pipeline_on: &mut bool,
 ) -> DeckCommand {
     let trimmed = prompt.trim();
     if !trimmed.starts_with('/') {
@@ -755,7 +803,8 @@ async fn run_deck_command(
         "/help" => {
             let mut help = "commands: /help · /clear (reset conversation) · /models (list \
                  providers) · /init (index the workspace: domains + code graph) · /agents \
-                 (list custom agents) · /files · /diff · /graph (switch tabs) — anything \
+                 (list custom agents) · /pipeline (toggle witness-verified staged turns) · \
+                 /files · /diff · /graph (switch tabs) — anything \
                  else is a prompt. ctrl+t queue · ? overlay help"
                 .to_string();
             let customs = custom.slash_entries(&[]);
@@ -775,6 +824,22 @@ async fn run_deck_command(
         }
         "/models" => {
             say(Config::available_models_plain());
+        }
+        "/pipeline" => {
+            *pipeline_on = !*pipeline_on;
+            // Flip the PIPELINE stat box live — the deck renders exclusively
+            // from inbound messages, never from driver state it can't see.
+            let _ = in_tx.send(Inbound::Pipeline(*pipeline_on));
+            say(if *pipeline_on {
+                "staged pipeline ON — turns now run triage → recall → (plan → scope review) → \
+                 witness → execute → verify → judge, with bounded revision. The witness stage \
+                 authors a failing test that must flip to green before work counts as done; \
+                 large plans auto-approve in the deck (scope review is narrated, not gated). \
+                 `/pipeline` again to return to the raw engine loop."
+                    .to_string()
+            } else {
+                "staged pipeline OFF — turns run the raw engine loop.".to_string()
+            });
         }
         "/init" => {
             let mut emit = |line: String| say(line);
@@ -811,7 +876,7 @@ async fn run_deck_command(
                 return DeckCommand::Prompt;
             }
             say(format!(
-                "unknown command `{trimmed}` — try /help, /clear, /models, /init, /agents, /files, /diff, /graph"
+                "unknown command `{trimmed}` — try /help, /clear, /models, /init, /agents, /pipeline, /files, /diff, /graph"
             ));
         }
     }
@@ -913,6 +978,176 @@ async fn run_lead_turn(
     match outcome {
         TurnOutcome::Completed { .. } => Ok(()),
         TurnOutcome::Aborted { reason } => Err(reason),
+    }
+}
+
+/// Maps every role's resolved model to the deck's one borrowed provider. The
+/// deck session is single-provider by construction (one `build_provider`
+/// call), and its `Router` is built from one profile whose worker/triage/
+/// judge refs all name that provider's model — so answering every query with
+/// the one adapter is exact, not a fallback.
+struct DeckProviderResolver<'p> {
+    provider: &'p dyn Provider,
+}
+
+impl ProviderResolver for DeckProviderResolver<'_> {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        Some(self.provider)
+    }
+}
+
+/// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
+/// analogue of the `stella run` pipeline path — same tool stack, persistence,
+/// and event forwarding as [`run_lead_turn`], with `Pipeline::run` (triage →
+/// recall → plan → scope → witness → execute → verify → judge → revise) in
+/// place of the raw `Engine::run_turn`.
+///
+/// Deck-mode seams, all named:
+/// - **Scope review auto-approves.** The deck cannot block a turn on a stdio
+///   gate (the alternate screen owns the terminal), so `headless_bypass` is
+///   set and the `ScopeReview` event is narrated, not gated — the same seam
+///   the driver's `ScopeDecision` no-op documents. Deck-native scope review
+///   is the fleet-supervisor follow-up.
+/// - **The session's system prompt stays.** It was assembled once at deck
+///   startup (byte-stable for the cache prefix, L-E8); toggling `/pipeline`
+///   must not rewrite history. The pipeline's stage prompts (witness, judge,
+///   planner) are its own regardless of the worker's system prompt.
+/// - **Recall is the pipeline's port** (the workspace memory) — the driver
+///   skips its own `inject_recall_block` for pipeline turns.
+#[allow(clippy::too_many_arguments)]
+async fn run_lead_pipeline_turn(
+    provider: &dyn Provider,
+    base_tools: &dyn ToolExecutor,
+    custom_tools: &[CustomTool],
+    registry: &ToolRegistry,
+    memory: Option<&SessionMemory>,
+    prompt: &str,
+    messages: &mut Vec<CompletionMessage>,
+    budget: &mut BudgetGuard,
+    cfg: &Config,
+    execution: Option<(Arc<Store>, i64)>,
+    in_tx: &UnboundedSender<Inbound>,
+    ask_io: &DeckAskUserIo,
+) -> Result<(), String> {
+    budget.begin_turn();
+
+    let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let forwarder = spawn_forwarder(
+        rx,
+        execution.clone(),
+        cfg.provider.id.to_string(),
+        in_tx.clone(),
+    );
+
+    let result = {
+        let customs = CustomToolSet::new(
+            base_tools,
+            custom_tools.to_vec(),
+            cfg.workspace_root.clone(),
+        );
+        let (stub_tx, _) = mpsc::unbounded_channel();
+        let tools = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
+            .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
+        let tapped = FileChangeTap {
+            inner: &tools,
+            events: tx.clone(),
+            root: cfg.workspace_root.clone(),
+        };
+
+        let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+        let resolver = DeckProviderResolver { provider };
+        let profile = ProviderProfile::new(
+            cfg.provider.id,
+            model_ref.clone(),
+            model_ref.clone(),
+            model_ref,
+        );
+        let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+        let router = Router::new(RoleTable::new(), vec![profile], breaker);
+
+        let repo_structure = agent::GitRepoStructure {
+            root: cfg.workspace_root.clone(),
+        };
+        let repo_status = agent::GitRepoStatus {
+            root: cfg.workspace_root.clone(),
+        };
+        let command_runner = agent::ShellCommandRunner {
+            root: cfg.workspace_root.clone(),
+        };
+        let no_recall = NoContextRecall;
+        let recall: &dyn ContextRecallPort = match memory {
+            Some(m) => m,
+            None => &no_recall,
+        };
+        let hook_runner = ShellHookRunner;
+        let ports = PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tapped,
+            recall,
+            repo: &repo_structure,
+            repo_status: &repo_status,
+            commands: &command_runner,
+            approvals: &AutoApproveGate,
+            sleeper: &TokioSleeper,
+            hooks: cfg
+                .hooks
+                .as_ref()
+                .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
+        };
+        let config = PipelineConfig {
+            engine: agent::engine_config_for(cfg),
+            headless: true,
+            headless_bypass_scope_review: true,
+            ..PipelineConfig::default()
+        };
+        let pipeline = Pipeline::new(ports, tx.clone(), config);
+        pipeline.run(prompt, messages, budget).await
+    };
+    drop(tx);
+    let _ = forwarder.await;
+
+    if let Some((store, id)) = &execution {
+        let (outcome_label, cost) = match &result {
+            Ok(outcome) => {
+                let label = match outcome.status {
+                    PipelineStatus::Completed => "completed",
+                    PipelineStatus::Aborted { .. } => "aborted",
+                };
+                (label, outcome.total_cost_usd)
+            }
+            Err(_) => ("error", 0.0),
+        };
+        if !agent::record_execution_end(store, *id, registry, outcome_label, cost) {
+            let _ = in_tx.send(Inbound::Event {
+                agent: LEAD.to_string(),
+                event: AgentEvent::Error {
+                    message: "store write failed — the audit record (files touched / \
+                              memory citations / outcome) for this execution is incomplete"
+                        .to_string(),
+                    retryable: true,
+                },
+            });
+            // Same re-assert as run_lead_turn: the retryable warning above
+            // folds the lead back to Running, so restate the terminal state.
+            let _ = in_tx.send(Inbound::Status {
+                agent: LEAD.to_string(),
+                status: match &result {
+                    Ok(outcome) if matches!(outcome.status, PipelineStatus::Completed) => {
+                        AgentStatus::Done
+                    }
+                    _ => AgentStatus::Failed,
+                },
+            });
+        }
+    }
+
+    match result {
+        Ok(outcome) => match outcome.status {
+            PipelineStatus::Completed => Ok(()),
+            PipelineStatus::Aborted { reason } => Err(reason),
+        },
+        Err(e) => Err(e.to_string()),
     }
 }
 

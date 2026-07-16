@@ -197,10 +197,10 @@ pub struct WorkspaceModel {
     /// events). Drives the status-bar gauge and dispatch backpressure.
     pub global_cpu_pct: f32,
     /// Whether the session drives turns through the staged pipeline (triage →
-    /// plan → execute → verify → judge) rather than the raw engine loop.
-    /// Surfaced as the `PIPELINE` stat box. The deck runs the raw
-    /// `Engine::run_turn` path today, so this reads `false` there; it is the
-    /// seam to flip if the deck ever runs the staged pipeline.
+    /// witness → execute → verify → judge) rather than the raw engine loop.
+    /// Surfaced as the `PIPELINE` stat box. Seeded from
+    /// `DeckOptions::pipeline` and toggled live by [`Inbound::Pipeline`]
+    /// (the driver's `/pipeline` command).
     pub pipeline: bool,
 }
 
@@ -325,6 +325,9 @@ impl WorkspaceModel {
                     summary: format!("↩ {}", snip(text)),
                 });
             }
+            // The driver flipped staged-pipeline routing (`/pipeline`) — the
+            // PIPELINE stat box tracks it live.
+            Inbound::Pipeline(on) => self.pipeline = *on,
             // The graph snapshot and the slash vocabulary are out-of-band
             // read-models, not part of the event-log fold — the view state
             // owns them, applied in `ingest_inbound`, so the model

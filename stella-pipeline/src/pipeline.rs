@@ -1643,6 +1643,45 @@ mod tests {
         }
     }
 
+    /// A [`RepoStatusPort`] serving a scripted SEQUENCE of snapshots — one per
+    /// `untracked_fingerprints` call, holding the last once exhausted. Lets a
+    /// test make the working tree "change" between the witness stage, the
+    /// execute turn, and the tamper check.
+    struct SeqRepoStatus {
+        snapshots: std::sync::Mutex<VecDeque<HashMap<String, String>>>,
+        last: std::sync::Mutex<HashMap<String, String>>,
+    }
+    impl SeqRepoStatus {
+        fn new(snapshots: Vec<Vec<(&str, &str)>>) -> Self {
+            let mapped: VecDeque<HashMap<String, String>> = snapshots
+                .into_iter()
+                .map(|files| {
+                    files
+                        .into_iter()
+                        .map(|(p, fp)| (p.to_string(), fp.to_string()))
+                        .collect()
+                })
+                .collect();
+            Self {
+                snapshots: std::sync::Mutex::new(mapped),
+                last: std::sync::Mutex::new(HashMap::new()),
+            }
+        }
+    }
+    #[async_trait]
+    impl RepoStatusPort for SeqRepoStatus {
+        async fn untracked_fingerprints(&self) -> HashMap<String, String> {
+            let mut q = self.snapshots.lock().unwrap();
+            match q.pop_front() {
+                Some(next) => {
+                    *self.last.lock().unwrap() = next.clone();
+                    next
+                }
+                None => self.last.lock().unwrap().clone(),
+            }
+        }
+    }
+
     /// A scripted provider serving triage, plan, worker, and judge calls from
     /// one ordered queue (the resolver hands the same provider to every role).
     struct ScriptedProvider {
@@ -2234,5 +2273,289 @@ mod tests {
     #[test]
     fn assemble_user_message_is_just_the_goal_when_no_recall() {
         assert_eq!(assemble_user_message("hello", &[]), "hello");
+    }
+
+    /// With no `--test-command`, the witness author arms the flip oracle: its
+    /// authored command is observed failing, the worker's change flips it, and
+    /// the run submits fast on deterministic evidence — judge skipped.
+    #[tokio::test]
+    async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
+        // triage → "single"; witness author turn → marker line; worker → done.
+        let provider = ScriptedProvider::new(vec![
+            text_result("single"),
+            text_result("wrote the test.\nTEST_COMMAND: run-witness"),
+            text_result("done"),
+        ]);
+        let resolver = OneProvider(&provider);
+        // Test-command pops: witness fail-check (fail), per-candidate baseline
+        // (fail), post-execute observation (pass) → a genuine flip.
+        let runner = ScriptedRunner::new(vec![false, false, true], "@@ -1 +1 @@\n-old\n+new");
+        let tools = EmptyTools;
+        let recall = NoContextRecall;
+        let repo = NoRepoStructure;
+        let repo_status = NoRepoStatus;
+        let approvals = AutoApproveGate;
+        let sleeper = NoopSleeper;
+        let router = router();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let pipeline = Pipeline::new(
+            PipelinePorts {
+                router: &router,
+                providers: &resolver,
+                tools: &tools,
+                recall: &recall,
+                repo: &repo,
+                repo_status: &repo_status,
+                commands: &runner,
+                approvals: &approvals,
+                sleeper: &sleeper,
+                hooks: None,
+            },
+            tx,
+            PipelineConfig::default(),
+        );
+
+        let mut messages = vec![CompletionMessage::system("sys")];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = pipeline
+            .run("Fix the retry bug", &mut messages, &mut budget)
+            .await
+            .expect("run succeeds");
+
+        assert_eq!(outcome.status, PipelineStatus::Completed);
+        let verdict = outcome.verdict.expect("verified");
+        assert!(verdict.passed);
+        assert!(
+            verdict.deterministic,
+            "a witness flip is deterministic evidence: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.summary.contains("run-witness"),
+            "the evidence names the witness command: {}",
+            verdict.summary
+        );
+
+        let s = stages(&drain(&mut rx));
+        assert!(s.contains(&StageKind::Witness), "witness stage emitted");
+        assert!(!s.contains(&StageKind::Judge), "judge skipped on the flip");
+    }
+
+    /// A witness whose test passes on the unmodified code proves nothing: one
+    /// bounded repair retry, and if it still passes the witness is discarded —
+    /// the run degrades to model-judge verification instead of failing.
+    #[tokio::test]
+    async fn a_witness_that_never_fails_is_discarded_and_the_judge_verifies() {
+        let provider = ScriptedProvider::new(vec![
+            text_result("single"),
+            text_result("TEST_COMMAND: always-green"),
+            // The repair attempt also yields a command that passes.
+            text_result("TEST_COMMAND: still-green"),
+            text_result("done"), // worker
+            text_result("PASS matches the goal"), // judge (no flip evidence)
+        ]);
+        let resolver = OneProvider(&provider);
+        // Pops: witness check (pass), repair check (pass) → discard. Then no
+        // test command exists for the candidate, so no further pops.
+        let runner = ScriptedRunner::new(vec![true, true], "@@ -1 +1 @@\n-a\n+b");
+        let tools = EmptyTools;
+        let recall = NoContextRecall;
+        let repo = NoRepoStructure;
+        let repo_status = NoRepoStatus;
+        let approvals = AutoApproveGate;
+        let sleeper = NoopSleeper;
+        let router = router();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let pipeline = Pipeline::new(
+            PipelinePorts {
+                router: &router,
+                providers: &resolver,
+                tools: &tools,
+                recall: &recall,
+                repo: &repo,
+                repo_status: &repo_status,
+                commands: &runner,
+                approvals: &approvals,
+                sleeper: &sleeper,
+                hooks: None,
+            },
+            tx,
+            PipelineConfig::default(),
+        );
+
+        let mut messages = vec![CompletionMessage::system("sys")];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = pipeline
+            .run("Fix the retry bug", &mut messages, &mut budget)
+            .await
+            .expect("run succeeds");
+
+        assert_eq!(outcome.status, PipelineStatus::Completed);
+        let verdict = outcome.verdict.expect("verified");
+        assert!(verdict.passed);
+        assert!(
+            !verdict.deterministic,
+            "no flip → the model judge decided, not the ladder"
+        );
+        let events = drain(&mut rx);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                AgentEvent::Error { message, retryable: true } if message.contains("witness")
+            )),
+            "the discarded witness is warned about, never silent"
+        );
+        assert!(stages(&events).contains(&StageKind::Judge));
+    }
+
+    /// Tamper exclusion: the worker modified the witness test file after it
+    /// was authored, so the observed fail→pass flip is NOT credited — the
+    /// evidence degrades to inconclusive and the model judge decides.
+    #[tokio::test]
+    async fn a_tampered_witness_file_excludes_the_flip_from_evidence() {
+        let provider = ScriptedProvider::new(vec![
+            text_result("single"),
+            text_result("TEST_COMMAND: run-witness"),
+            text_result("done"),                    // worker
+            text_result("FAIL the test was edited"), // judge on tampered evidence
+        ]);
+        let resolver = OneProvider(&provider);
+        // witness check (fail), baseline (fail), post-execute (pass) → the
+        // oracle flips — but the tamper check below must void the credit.
+        let runner = ScriptedRunner::new(vec![false, false, true], "@@ -1 +1 @@\n-a\n+b");
+        // untracked_fingerprints call order: witness-before (empty),
+        // witness-after (test authored at w1 → watchlist), candidate
+        // untracked_before, gather_diff after execute, tamper check — where
+        // the file now reads w2: TAMPERED.
+        let repo_status = SeqRepoStatus::new(vec![
+            vec![],
+            vec![("tests/witness.rs", "w1")],
+            vec![("tests/witness.rs", "w1")],
+            vec![("tests/witness.rs", "w1")],
+            vec![("tests/witness.rs", "w2")],
+        ]);
+        let tools = EmptyTools;
+        let recall = NoContextRecall;
+        let repo = NoRepoStructure;
+        let approvals = AutoApproveGate;
+        let sleeper = NoopSleeper;
+        let router = router();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let config = PipelineConfig {
+            max_revisions: 0, // judge FAIL ends the run — keeps the script short
+            ..PipelineConfig::default()
+        };
+        let pipeline = Pipeline::new(
+            PipelinePorts {
+                router: &router,
+                providers: &resolver,
+                tools: &tools,
+                recall: &recall,
+                repo: &repo,
+                repo_status: &repo_status,
+                commands: &runner,
+                approvals: &approvals,
+                sleeper: &sleeper,
+                hooks: None,
+            },
+            tx,
+            config,
+        );
+
+        let mut messages = vec![CompletionMessage::system("sys")];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = pipeline
+            .run("Fix the retry bug", &mut messages, &mut budget)
+            .await
+            .expect("run succeeds");
+
+        let verdict = outcome.verdict.expect("verified");
+        assert!(!verdict.passed, "the judge failed the tampered work");
+        assert!(
+            !verdict.deterministic,
+            "a tampered flip must never submit fast — it degrades to the judge"
+        );
+        assert!(
+            stages(&drain(&mut rx)).contains(&StageKind::Judge),
+            "tamper forces the model judge instead of SubmitFast"
+        );
+    }
+
+    /// Distress guidance: the FIRST deterministic failure revises on raw
+    /// evidence alone; the SECOND spends one judge call whose course-correction
+    /// rides with the next revision prompt.
+    #[tokio::test]
+    async fn second_consecutive_red_verification_gets_judge_guidance() {
+        let provider = ScriptedProvider::new(vec![
+            text_result("single"),
+            text_result("done"),              // worker
+            text_result("first fix"),         // revision 1 (no guidance)
+            text_result("You are patching the symptom; fix the parser instead."), // guidance
+            text_result("second fix"),        // revision 2 (carries guidance)
+        ]);
+        let resolver = OneProvider(&provider);
+        // baseline (fail), post-execute (fail) → revise; post-revision-1
+        // (fail) → distress → guidance → revise; post-revision-2 (fail) →
+        // revisions exhausted → deterministic failed verdict.
+        let runner = ScriptedRunner::new(
+            vec![false, false, false, false],
+            "@@ -1 +1 @@\n-a\n+b",
+        );
+        let tools = EmptyTools;
+        let recall = NoContextRecall;
+        let repo = NoRepoStructure;
+        let repo_status = NoRepoStatus;
+        let approvals = AutoApproveGate;
+        let sleeper = NoopSleeper;
+        let router = router();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let config = PipelineConfig {
+            test_command: Some("cargo test -p x".into()),
+            max_revisions: 2,
+            ..PipelineConfig::default()
+        };
+        let pipeline = Pipeline::new(
+            PipelinePorts {
+                router: &router,
+                providers: &resolver,
+                tools: &tools,
+                recall: &recall,
+                repo: &repo,
+                repo_status: &repo_status,
+                commands: &runner,
+                approvals: &approvals,
+                sleeper: &sleeper,
+                hooks: None,
+            },
+            tx,
+            config,
+        );
+
+        let mut messages = vec![CompletionMessage::system("sys")];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = pipeline
+            .run("Fix the failing test", &mut messages, &mut budget)
+            .await
+            .expect("run succeeds");
+
+        let verdict = outcome.verdict.expect("verified");
+        assert!(!verdict.passed);
+        assert!(verdict.deterministic, "red tests are a deterministic fail");
+        assert_eq!(outcome.revisions, 2);
+
+        // The guidance text reached the worker's revision prompt.
+        let carried = messages.iter().any(|m| {
+            m.content.contains("Independent reviewer course-correction")
+                && m.content.contains("fix the parser instead")
+        });
+        assert!(carried, "guidance rides with the second revision prompt");
+        assert!(
+            stages(&drain(&mut rx)).contains(&StageKind::Judge),
+            "the guidance call is an honest Judge stage in the stream"
+        );
     }
 }
