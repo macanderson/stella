@@ -4,16 +4,24 @@
 //! (`[profile.release] panic = "abort"`), so destructors never run on a
 //! panicking process and a Drop-only guard leaves the user's terminal
 //! stranded in raw mode on the alternate screen. The panic hook installed by
-//! [`PanicHookGuard`] therefore restores the terminal *directly* — sharing
-//! the guard's acquired-state flags — and then prints the panic to the real
-//! screen.
+//! [`PanicHookGuard`] therefore restores the terminal *directly* in abort
+//! builds — sharing the guard's acquired-state flags — and then delegates to
+//! the previously installed hook, so the standard panic message (and any
+//! `RUST_BACKTRACE` output) lands on the user's real screen, not the
+//! alternate one.
 //!
-//! The one panic that must NOT tear the session down is a panel panic in a
-//! dev (unwind) build: `render::guarded_panel` catches those and renders an
-//! error card in place. Panel draws mark themselves via [`PanelBoundary`],
-//! and the hook skips restoration for them — but only when unwinding is
-//! actually available (`cfg!(panic = "unwind")`); under abort the catch is
-//! inert, the process is about to die, and restoring is always right.
+//! In unwind (dev) builds the hook never restores; it only writes the debug
+//! log. The hook fires for EVERY panic on ANY thread or tokio task, and a
+//! session can outlive a panic in two ways that make hook-time restoration
+//! actively harmful: panel panics are caught by `render::guarded_panel` and
+//! rendered as an error card in place (see [`PanelBoundary`]), and a panic
+//! on a background task can leave the deck session running while other
+//! sessions continue — restoring there would tear the live UI out from
+//! under them. Any panic that really does end the program unwinds into
+//! [`TerminalGuard`]'s `Drop`, which performs the restore on that orderly
+//! path. Under abort none of that machinery gets a chance to run — the
+//! process dies inside the hook — so the hook is the only restoration point
+//! and restoring is always right, even mid-panel-draw.
 
 use std::cell::Cell;
 use std::io;
@@ -111,9 +119,15 @@ thread_local! {
     static IN_GUARDED_PANEL: Cell<bool> = const { Cell::new(false) };
 }
 
-/// RAII marker for a panel draw whose panics are caught by the caller.
-/// While one is alive on a thread, the panic hook leaves the terminal alone
-/// in unwind builds so the session can continue with an error card.
+/// RAII marker for a panel draw whose panics are caught by the caller
+/// (`render::guarded_panel`, effective in unwind builds only).
+///
+/// The panic hook no longer consults this flag: in unwind builds the hook
+/// never restores the terminal at all (module docs), and under abort the
+/// catch is inert — the process is about to die — so restoring even during
+/// a marked panel draw is always right. The marker is kept as the
+/// panel-draw-in-progress mechanism (and for anything that later needs to
+/// distinguish caught-in-place panics from fatal ones).
 pub(crate) struct PanelBoundary {
     prev: bool,
 }
@@ -136,23 +150,29 @@ impl Drop for PanelBoundary {
 /// the guard's field stays readable.
 type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
 
-/// Installs a panic hook that restores the terminal before the process dies
-/// and puts the previous hook back on drop.
+/// Installs a panic hook that, in abort builds, restores the terminal before
+/// the process dies — and puts the previous hook back on drop.
 ///
-/// The hook: (1) appends the panic to the structured debug log when one is
-/// configured; (2) unless this is a caught panel panic in an unwind build,
-/// restores the terminal via the shared state and prints the panic message —
-/// which now lands on the user's real screen, not the alternate one. Under
-/// `panic = "abort"` this hook is the ONLY restoration that ever runs on a
-/// panicking process.
+/// The hook: (1) always appends the panic to the structured debug log when
+/// one is configured; (2) under `panic = "abort"` ONLY, restores the
+/// terminal via the shared state and then delegates to the previously
+/// installed hook, so the standard panic message and `RUST_BACKTRACE`
+/// output print on the user's real screen, not the alternate one. In unwind
+/// builds step (2) never happens — the hook fires for panics the session
+/// survives (caught panel draws, background tasks), and real teardown
+/// restores via [`TerminalGuard`]'s `Drop` instead (see the module docs).
 pub(crate) struct PanicHookGuard {
-    prev: Option<PanicHook>,
+    prev: Arc<PanicHook>,
 }
 
 impl PanicHookGuard {
     pub(crate) fn install(debug_log_path: Option<PathBuf>, terminal: &TerminalGuard) -> Self {
         let state = terminal.state.clone();
-        let prev = std::panic::take_hook();
+        // Shared with the installed closure so Drop can also reinstall it:
+        // the closure delegates to the previous hook for the standard
+        // message + backtrace, and the guard hands it back on teardown.
+        let prev: Arc<PanicHook> = Arc::new(std::panic::take_hook());
+        let delegate = Arc::clone(&prev);
         std::panic::set_hook(Box::new(move |info| {
             if let Some(path) = &debug_log_path {
                 let _ = crate::shell::append_json_line(
@@ -161,21 +181,23 @@ impl PanicHookGuard {
                     serde_json::json!({ "info": info.to_string() }),
                 );
             }
-            let caught_panel_panic = cfg!(panic = "unwind") && IN_GUARDED_PANEL.with(Cell::get);
-            if !caught_panel_panic {
+            // Abort builds only: the process dies right after this hook, so
+            // it is the last chance to leave the terminal usable. Unwind
+            // builds must NOT restore here — the panic may be one the
+            // session survives (see the module docs).
+            if cfg!(panic = "abort") {
                 state.restore();
-                eprintln!("{info}");
+                (*delegate)(info);
             }
         }));
-        Self { prev: Some(prev) }
+        Self { prev }
     }
 }
 
 impl Drop for PanicHookGuard {
     fn drop(&mut self) {
-        if let Some(prev) = self.prev.take() {
-            std::panic::set_hook(prev);
-        }
+        let prev = Arc::clone(&self.prev);
+        std::panic::set_hook(Box::new(move |info| (*prev)(info)));
     }
 }
 

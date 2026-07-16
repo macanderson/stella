@@ -1329,13 +1329,17 @@ mod tests {
         assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     }
 
-    /// Tools that log start/end order. The first read-only `read_file` ends
-    /// only after the second has ended (a Notify handshake, not a wall-clock
-    /// sleep — a loaded CI runner can stall the "fast" path past any sleep
-    /// and flip the asserted order); mutating `edit_file` records that it
-    /// saw a quiet world (no read in flight).
+    /// Tools that log start/end order. The two read-only `read_file` calls
+    /// run a two-phase Notify handshake (not a wall-clock sleep — a loaded
+    /// CI runner can stall the "fast" path past any sleep): call_1 announces
+    /// its start and then waits for call_2 to end; call_2 refuses to end
+    /// until call_1 has started. Each call blocks on the other, so BOTH
+    /// sequential orders deadlock (caught by the test's timeout) and only
+    /// genuinely overlapping execution completes. Mutating `edit_file`
+    /// records that it saw a quiet world (no read in flight).
     struct RecordingTools {
         log: Arc<TokioMutex<Vec<String>>>,
+        read1_started: tokio::sync::Notify,
         read2_done: tokio::sync::Notify,
     }
     #[async_trait]
@@ -1355,11 +1359,18 @@ mod tests {
             let which = input.get("which").and_then(|v| v.as_str()).unwrap_or("?");
             self.log.lock().await.push(format!("start:{name}:{which}"));
             if name == "read_file" && which == "call_1" {
-                // Deterministic ordering: with real concurrency call_2 runs,
-                // ends, and releases this wait (Notify stores the permit if
-                // it fires first). A sequential executor deadlocks here —
-                // caught by the test's outer timeout instead of hanging.
+                // Phase 1: tell call_2 we started, then wait for it to end.
+                // A sequential executor running call_1 first parks here
+                // forever (call_2 never runs) — caught by the outer timeout.
+                self.read1_started.notify_one();
                 self.read2_done.notified().await;
+            }
+            if name == "read_file" && which == "call_2" {
+                // Phase 2: refuse to end until call_1 has started (Notify
+                // stores the permit if call_1 got there first). A sequential
+                // executor running call_2 first parks here forever — so
+                // neither serial order can sneak past the overlap assert.
+                self.read1_started.notified().await;
             }
             self.log.lock().await.push(format!("end:{name}:{which}"));
             if name == "read_file" && which == "call_2" {
@@ -1389,6 +1400,7 @@ mod tests {
         let log = Arc::new(TokioMutex::new(Vec::new()));
         let tools = RecordingTools {
             log: log.clone(),
+            read1_started: tokio::sync::Notify::new(),
             read2_done: tokio::sync::Notify::new(),
         };
         let sleeper = NoopSleeper;
@@ -1421,8 +1433,8 @@ mod tests {
         assert!(position("start:read_file:call_4") > position("end:edit_file:call_3"));
 
         // Real concurrency inside the read group: the slow first read ends
-        // AFTER the fast second read (sequential execution would finish
-        // call_1 before call_2 even starts).
+        // AFTER the fast second read (sequential execution in either order
+        // deadlocks on the handshake and never reaches this assert).
         assert!(
             position("end:read_file:call_2") < position("end:read_file:call_1"),
             "reads did not overlap — executed sequentially? log: {log:?}"

@@ -215,7 +215,12 @@ pub async fn run(
                     // (the guard enabled it), so the composer can fold it
                     // into a chip instead of replaying N raw Enter keys.
                     Some(Event::Paste(text)) => {
-                        ui.composer.paste(&text);
+                        // Modal gates swallow paste like any other non-gate
+                        // input — never queue text into the hidden composer.
+                        if model.pending_scope_review.is_none() && model.pending_ask_user.is_none()
+                        {
+                            ui.composer.paste(&text);
+                        }
                     }
                     // Resize/other events: the next draw picks them up.
                     Some(_) => {}
