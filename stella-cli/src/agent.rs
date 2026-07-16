@@ -388,7 +388,6 @@ async fn run_pipeline_one_shot(
 
     let files = registry.files_touched();
     if let Some((store, id)) = &execution {
-        let _ = store.record_files_touched(*id, &files);
         let (outcome_label, cost) = match &result {
             Ok(outcome) => {
                 let label = match outcome.status {
@@ -399,7 +398,9 @@ async fn run_pipeline_one_shot(
             }
             Err(_) => ("error", 0.0),
         };
-        let _ = store.finish_execution(*id, outcome_label, cost);
+        if !record_execution_end(store, *id, &files, outcome_label, cost) {
+            warn_store_write_failed("the audit record (files touched / outcome)");
+        }
     }
 
     // Episodic memory: a run that did work (tools or file changes) becomes a
@@ -1762,12 +1763,13 @@ async fn run_turn(
     // executor the engine held.
     let files = registry.files_touched();
     if let Some((store, id)) = &execution {
-        let _ = store.record_files_touched(*id, &files);
         let (outcome_label, cost) = match &outcome {
             TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
             TurnOutcome::Aborted { .. } => ("aborted", 0.0),
         };
-        let _ = store.finish_execution(*id, outcome_label, cost);
+        if !record_execution_end(store, *id, &files, outcome_label, cost) {
+            warn_store_write_failed("the audit record (files touched / outcome)");
+        }
     }
 
     if format == OutputFormat::Json {
@@ -1890,6 +1892,34 @@ fn spawn_renderer(
         }
         collected
     })
+}
+
+/// Best-effort end-of-execution records: which files the agent touched and
+/// how the run ended. A failure must not abort the turn, but it must not
+/// vanish either — the store is the durable audit record of what the agent
+/// did. Returns `false` when either write failed so the caller can surface
+/// a warning on its own channel (stderr for the CLI surfaces, a deck event
+/// for the TUI, where stderr belongs to the alternate screen).
+pub(crate) fn record_execution_end(
+    store: &Store,
+    execution_id: i64,
+    files: &[(String, String)],
+    outcome_label: &str,
+    cost_usd: f64,
+) -> bool {
+    let files_ok = store.record_files_touched(execution_id, files).is_ok();
+    let finish_ok = store
+        .finish_execution(execution_id, outcome_label, cost_usd)
+        .is_ok();
+    files_ok && finish_ok
+}
+
+/// The stderr form of the store-write warning, for the non-deck surfaces.
+pub(crate) fn warn_store_write_failed(what: &str) {
+    eprintln!(
+        "  {} store write failed — {what} for this execution is incomplete",
+        "⚠".yellow()
+    );
 }
 
 /// Persist one drained event to an open execution record: append it to the
@@ -2025,12 +2055,13 @@ async fn run_goal_turn(
 
     let files = registry.files_touched();
     if let Some((store, id)) = &execution {
-        let _ = store.record_files_touched(*id, &files);
         let (outcome_label, cost) = match &outcome {
             GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
             GoalOutcome::Unmet { cost_usd, .. } => ("goal_unmet", *cost_usd),
         };
-        let _ = store.finish_execution(*id, outcome_label, cost);
+        if !record_execution_end(store, *id, &files, outcome_label, cost) {
+            warn_store_write_failed("the audit record (files touched / outcome)");
+        }
     }
     tui::files_touched_panel(&files);
 

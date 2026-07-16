@@ -351,8 +351,18 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
                 // Erase the partial turn: the next prompt continues from the
                 // last committed conversation state.
                 messages.truncate(turn_base);
-                if let Some((store, id)) = &execution {
-                    let _ = store.finish_execution(*id, "cancelled", 0.0);
+                if let Some((store, id)) = &execution
+                    && store.finish_execution(*id, "cancelled", 0.0).is_err()
+                {
+                    let _ = in_tx.send(Inbound::Event {
+                        agent: LEAD.to_string(),
+                        event: AgentEvent::Error {
+                            message: "store write failed — this cancelled execution was not \
+                                      recorded"
+                                .to_string(),
+                            retryable: true,
+                        },
+                    });
                 }
                 let _ = in_tx.send(Inbound::Event {
                     agent: LEAD.to_string(),
@@ -530,12 +540,21 @@ async fn run_lead_turn(
 
     let files = registry.files_touched();
     if let Some((store, id)) = &execution {
-        let _ = store.record_files_touched(*id, &files);
         let (outcome_label, cost) = match &outcome {
             TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
             TurnOutcome::Aborted { .. } => ("aborted", 0.0),
         };
-        let _ = store.finish_execution(*id, outcome_label, cost);
+        if !agent::record_execution_end(store, *id, &files, outcome_label, cost) {
+            let _ = in_tx.send(Inbound::Event {
+                agent: LEAD.to_string(),
+                event: AgentEvent::Error {
+                    message: "store write failed — the audit record (files touched / \
+                              outcome) for this execution is incomplete"
+                        .to_string(),
+                    retryable: true,
+                },
+            });
+        }
     }
 
     match outcome {
@@ -547,8 +566,10 @@ async fn run_lead_turn(
 /// Drain one turn's engine events: persist each (via the shared
 /// [`agent::persist_event`] write path) and forward it to the deck as the
 /// lead agent's `Inbound::Event`. The deck-mode replacement for
-/// [`agent::spawn_renderer`] — persistence failures degrade silently here
-/// because stderr belongs to the alternate screen.
+/// [`agent::spawn_renderer`]. stderr belongs to the alternate screen here,
+/// so a persistence failure warns *through the deck* instead — once — as a
+/// transcript-visible error event; silently losing the audit trail (disk
+/// full, DB locked) is not acceptable.
 fn spawn_forwarder(
     mut rx: UnboundedReceiver<AgentEvent>,
     execution: Option<(Arc<Store>, i64)>,
@@ -557,9 +578,21 @@ fn spawn_forwarder(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut seq = 0u64;
+        let mut store_warned = false;
         while let Some(event) = rx.recv().await {
             if let Some((store, id)) = &execution {
-                let _ = agent::persist_event(store, *id, seq, &event, &provider_id);
+                if !agent::persist_event(store, *id, seq, &event, &provider_id) && !store_warned {
+                    store_warned = true;
+                    let _ = inbound.send(Inbound::Event {
+                        agent: LEAD.to_string(),
+                        event: AgentEvent::Error {
+                            message: "store write failed — the persisted event/telemetry \
+                                      record for this session is incomplete"
+                                .to_string(),
+                            retryable: true,
+                        },
+                    });
+                }
                 seq += 1;
             }
             let _ = inbound.send(Inbound::Event {
