@@ -35,6 +35,7 @@ use crate::graph::GraphSnapshot;
 use crate::resource::ResourceMonitor;
 use crate::shell::DebugLog;
 use crate::term::{PanicHookGuard, TerminalGuard};
+use crate::theme;
 
 /// The repaint / sample cadence. ~30 fps keeps animations smooth and the CPU
 /// gauge / elapsed timers live without busy-spinning.
@@ -265,6 +266,10 @@ pub async fn run_deck(
     let guard = TerminalGuard::enter(opts.mouse_capture)?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &guard);
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    // Detected once (see `theme::truecolor_supported`) and threaded through
+    // the draw loop below, rather than touching every `theme::TOKEN` call
+    // site in `deck_render.rs`/the view modules.
+    let truecolor = theme::detect_truecolor_support();
 
     let mut model = WorkspaceModel::new();
     model.now_ms = now_ms();
@@ -309,7 +314,10 @@ pub async fn run_deck(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     'run: loop {
-        terminal.draw(|f| render_deck(&model, &mut ui, f))?;
+        terminal.draw(|f| {
+            render_deck(&model, &mut ui, f);
+            theme::degrade_buffer(f.buffer_mut(), truecolor);
+        })?;
 
         tokio::select! {
             maybe_inbound = inbound.recv() => {
