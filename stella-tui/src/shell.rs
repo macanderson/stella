@@ -153,10 +153,10 @@ pub async fn run(
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &term_guard);
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-    // Detected once (see `theme::truecolor_supported`) and threaded through
-    // the draw loop below, rather than touching every `theme::TOKEN` call
-    // site in `render.rs`/`textline.rs`/the view modules.
-    let truecolor = theme::detect_truecolor_support();
+    // Detected once (see `theme::color_mode`) and threaded through the draw
+    // loop below, rather than touching every `theme::TOKEN` call site in
+    // `render.rs`/`textline.rs`/the view modules.
+    let color_mode = theme::detect_color_mode();
 
     let mut model = SessionModel::new();
     let mut ui = UiState::new(
@@ -192,7 +192,7 @@ pub async fn run(
     loop {
         terminal.draw(|f| {
             render(&model, &mut ui, f);
-            theme::degrade_buffer(f.buffer_mut(), truecolor);
+            theme::degrade_buffer(f.buffer_mut(), color_mode);
         })?;
 
         tokio::select! {

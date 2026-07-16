@@ -629,7 +629,7 @@ fn render_composer(
         let hint = if enter_submits {
             "⏎ send · ⌥⏎ newline"
         } else {
-            "⏎ newline · ⌘⏎ send · ⌥[ start · ⌥] end"
+            "⏎ send · ⌘⏎ newline · ⌥[ start · ⌥] end"
         };
         let mut spans = vec![Span::styled("› ", accent)];
         if focused {

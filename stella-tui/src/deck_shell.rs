@@ -63,6 +63,10 @@ pub struct DeckOptions {
     /// The slash-command vocabulary for the `/` popup (the caller owns the
     /// real list, exactly like the single-session `RunOptions`).
     pub slash_commands: Vec<SlashCommand>,
+    /// Disable all motion (progress shimmer / pulse / caret blink) — the
+    /// `--no-anim` flag, for CI and asciinema-style recordings that want a
+    /// static frame. Also forced on by `STELLA_NO_ANIM` or `NO_COLOR`.
+    pub no_anim: bool,
 }
 
 fn now_ms() -> u64 {
@@ -266,16 +270,27 @@ pub async fn run_deck(
     let guard = TerminalGuard::enter(opts.mouse_capture)?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &guard);
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-    // Detected once (see `theme::truecolor_supported`) and threaded through
-    // the draw loop below, rather than touching every `theme::TOKEN` call
-    // site in `deck_render.rs`/the view modules.
-    let truecolor = theme::detect_truecolor_support();
+    // Detected once (see `theme::color_mode`) and threaded through the draw loop
+    // below, rather than touching every `theme::TOKEN` call site in
+    // `deck_render.rs`/the view modules.
+    let color_mode = theme::detect_color_mode();
+    // Motion off-switch for CI/recording: the explicit `--no-anim`, its env
+    // synonym, or `NO_COLOR` (a recording context wants a static frame). Gates
+    // the progress shimmer / pulse / caret blink; the deck otherwise only ever
+    // runs on a TTY, so no additional TTY check is needed.
+    let no_anim = opts.no_anim
+        || std::env::var_os("STELLA_NO_ANIM").is_some()
+        || color_mode == theme::ColorMode::None;
 
     let mut model = WorkspaceModel::new();
     model.now_ms = now_ms();
-    let mut ui = DeckUi::new(Composer::new());
+    let mut ui = DeckUi::new(Composer::with_paste_threshold(
+        crate::composer::DECK_PASTE_LINE_THRESHOLD,
+    ));
     ui.graph = opts.initial_graph.clone();
     ui.slash_commands = opts.slash_commands.clone();
+    ui.color_mode = color_mode;
+    ui.no_anim = no_anim;
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).
     ui.enter_submits = !guard.kitty();
@@ -316,7 +331,7 @@ pub async fn run_deck(
     'run: loop {
         terminal.draw(|f| {
             render_deck(&model, &mut ui, f);
-            theme::degrade_buffer(f.buffer_mut(), truecolor);
+            theme::degrade_buffer(f.buffer_mut(), color_mode);
         })?;
 
         tokio::select! {

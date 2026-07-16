@@ -211,7 +211,11 @@ fn requeue_front(
 /// Run a full deck session: the deck shell on its own task, the engine
 /// driver inline. Returns when the user quits (Ctrl-C) or the deck's input
 /// stream ends.
-pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result<(), String> {
+pub async fn run_deck_session(
+    cfg: &Config,
+    budget_limit: Option<f64>,
+    no_anim: bool,
+) -> Result<(), String> {
     // ── Session assembly (still on the normal screen — prints are fine) ────
     // MCP connect is NOT here: it can block up to 10s per server, so it runs
     // after the deck task spawns, narrated as transcript events (#98).
@@ -277,6 +281,7 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
         debug_log_path: debug_log_path(),
         slash_commands: deck_slash_commands(&custom),
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
+        no_anim,
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering

@@ -20,14 +20,12 @@
 //!
 //! ## Textarea semantics
 //!
-//! The live buffer is a real multi-line editor: `⏎` inserts a line break that
-//! survives verbatim into the submitted prompt, the cursor moves freely
-//! (arrows, Home/End, `⌥[`/`⌥]` to the very start/end), and [`layout`]
-//! soft-wraps the content to the viewport width so everything typed stays
-//! visible before submitting. Submission is a chord — `⌘⏎` (or `⌃⏎`) — on
-//! terminals that can report it (the kitty keyboard protocol); on legacy
-//! terminals, where a modified Enter is indistinguishable from a plain one,
-//! [`classify_enter`] falls back to Enter-submits with `⌥⏎` as the newline.
+//! The live buffer is a real multi-line editor: a **modified** `⏎` (`⌘⏎`/`⌃⏎`,
+//! or the universally-safe `⌥⏎`) inserts a line break that survives verbatim
+//! into the submitted prompt, the cursor moves freely (arrows, Home/End,
+//! `⌥[`/`⌥]` to the very start/end), and [`layout`] soft-wraps the content to
+//! the viewport width so everything typed stays visible before submitting. A
+//! **bare** `⏎` always submits (never blocks) — see [`classify_enter`].
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use unicode_width::UnicodeWidthChar;
@@ -35,6 +33,13 @@ use unicode_width::UnicodeWidthChar;
 /// Below this many lines a paste is inserted inline; at or above it, the
 /// paste collapses to a chip. Small on purpose (L-T3).
 pub const DEFAULT_PASTE_LINE_THRESHOLD: usize = 6;
+
+/// The deck composer's paste threshold. The deck's input box grows to a few
+/// lines and then *scrolls* (see `DECK_COMPOSER_MAX_ROWS`), so a normal
+/// multi-line prompt should render inline — one `>>>` per line — rather than
+/// collapse to a chip; only a genuinely huge blob (a whole file) is worth
+/// chipping to protect the model context. This sits well past the visible cap.
+pub const DECK_PASTE_LINE_THRESHOLD: usize = 48;
 
 /// One piece of composer content: either typed text or a collapsed paste.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,7 +188,8 @@ impl Composer {
         self.cursor += c.len_utf8();
     }
 
-    /// Insert a line break at the cursor — the plain-`⏎` textarea action.
+    /// Insert a line break at the cursor — the modified-`⏎` textarea action
+    /// (`⌘⏎`/`⌃⏎`/`⌥⏎`; a bare `⏎` submits instead).
     pub fn insert_newline(&mut self) {
         self.insert_char('\n');
     }
@@ -397,24 +403,25 @@ pub enum EnterAction {
 
 /// Classify an Enter keypress for a textarea composer.
 ///
-/// With the kitty keyboard protocol active (`enter_submits == false`) the
-/// submit action is a chord — `⌘⏎` (macOS Cmd reports as SUPER/META) or `⌃⏎`
-/// — and a plain or `⌥`-modified `⏎` is a line break. On legacy terminals
-/// (`enter_submits == true`) a modified Enter is indistinguishable from a
-/// plain one, so plain `⏎` submits and the line break moves to `⌥⏎` (its ESC
-/// prefix survives even legacy encodings).
-pub fn classify_enter(key: &KeyEvent, enter_submits: bool) -> EnterAction {
+/// One rule, honest across every terminal: a **bare** `⏎` submits, and `⏎` with
+/// any newline modifier — `⌘⏎`/`⌃⏎` (macOS Cmd reports as SUPER/META) or `⌥⏎` —
+/// inserts a line break. With the kitty keyboard protocol all three modifiers
+/// are reportable; on a legacy terminal only `⌥⏎` survives (its ESC prefix
+/// does), and an unreportable `⌘⏎`/`⌃⏎` harmlessly folds into a plain `⏎` and
+/// submits — the best a legacy terminal can do. This is the inverse of the old
+/// chord-to-submit mapping: Enter now always dispatches, so the queue is one
+/// keystroke away and never blocks.
+pub fn classify_enter(key: &KeyEvent) -> EnterAction {
     if !matches!(key.code, KeyCode::Enter) {
         return EnterAction::NotEnter;
     }
-    let chord = key
-        .modifiers
-        .intersects(KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::CONTROL);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
-    if chord || (enter_submits && !alt) {
-        EnterAction::Submit
-    } else {
+    let newline = key.modifiers.intersects(
+        KeyModifiers::SUPER | KeyModifiers::META | KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    if newline {
         EnterAction::Newline
+    } else {
+        EnterAction::Submit
     }
 }
 
@@ -848,22 +855,22 @@ mod tests {
     }
 
     #[test]
-    fn classify_enter_prefers_the_chord_and_falls_back_on_legacy_terminals() {
+    fn classify_enter_submits_bare_and_breaks_on_a_modifier() {
         let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let cmd = KeyEvent::new(KeyCode::Enter, KeyModifiers::SUPER);
+        let meta = KeyEvent::new(KeyCode::Enter, KeyModifiers::META);
         let ctrl = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
         let alt = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
-        // Kitty-protocol terminals: chord submits, everything else breaks.
-        assert_eq!(classify_enter(&plain, false), EnterAction::Newline);
-        assert_eq!(classify_enter(&cmd, false), EnterAction::Submit);
-        assert_eq!(classify_enter(&ctrl, false), EnterAction::Submit);
-        assert_eq!(classify_enter(&alt, false), EnterAction::Newline);
-        // Legacy terminals: plain Enter submits, ⌥⏎ is the line break.
-        assert_eq!(classify_enter(&plain, true), EnterAction::Submit);
-        assert_eq!(classify_enter(&alt, true), EnterAction::Newline);
-        assert_eq!(classify_enter(&cmd, true), EnterAction::Submit);
+        // Bare Enter always submits (never blocks).
+        assert_eq!(classify_enter(&plain), EnterAction::Submit);
+        // Every newline modifier inserts a line break instead.
+        assert_eq!(classify_enter(&cmd), EnterAction::Newline);
+        assert_eq!(classify_enter(&meta), EnterAction::Newline);
+        assert_eq!(classify_enter(&ctrl), EnterAction::Newline);
+        assert_eq!(classify_enter(&alt), EnterAction::Newline);
+        // A non-Enter key is not this function's concern.
         let other = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(classify_enter(&other, false), EnterAction::NotEnter);
+        assert_eq!(classify_enter(&other), EnterAction::NotEnter);
     }
 
     #[test]

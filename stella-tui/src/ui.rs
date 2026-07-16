@@ -80,11 +80,11 @@ pub struct UiState {
     /// Whether reasoning entries render in full. Off by default — collapsed
     /// thinking shows a one-line live tail; `ctrl+r` toggles.
     pub thinking_expanded: bool,
-    /// Legacy-terminal Enter semantics (see [`classify_enter`]): `false` on
-    /// terminals with the kitty keyboard protocol, where plain `⏎` is a line
-    /// break and `⌘⏎`/`⌃⏎` submits; `true` where a modified Enter cannot be
-    /// distinguished, so plain `⏎` submits and `⌥⏎` is the line break. The
-    /// shell sets this from the terminal's actual capability.
+    /// Whether the terminal is a *legacy* one (no kitty keyboard protocol).
+    /// Enter semantics are universal now — bare `⏎` submits, a modified `⏎`
+    /// breaks (see [`classify_enter`]) — so this only selects which newline
+    /// chord the hint advertises (`⌥⏎` on legacy, `⌘⏎` where reportable). The
+    /// shell sets it from the terminal's actual capability.
     pub enter_submits: bool,
     /// Viewport sizes from the last render (for scroll clamping).
     pub metrics: ViewportMetrics,
@@ -227,7 +227,7 @@ fn handle_ask_user_key(
                 None => None,
             }
         }
-        KeyCode::Enter => match classify_enter(&key, ui.enter_submits) {
+        KeyCode::Enter => match classify_enter(&key) {
             EnterAction::Submit => match ui.composer.take_submission() {
                 Some(answer) => {
                     ui.ask_answered = true;
@@ -276,7 +276,7 @@ fn handle_composer_key(key: KeyEvent, ui: &mut UiState) -> ShellAction {
     // Enter is a textarea key: plain `⏎` breaks the line (preserved verbatim
     // in the submitted prompt), the `⌘⏎`/`⌃⏎` chord submits — flipped on
     // legacy terminals that can't report a modified Enter (`enter_submits`).
-    match classify_enter(&key, ui.enter_submits) {
+    match classify_enter(&key) {
         EnterAction::Submit => {
             return match ui.composer.take_submission() {
                 Some(text) => ShellAction::Submit(UserInput::Prompt { text }),
@@ -433,7 +433,8 @@ mod tests {
     fn ch(c: char) -> KeyEvent {
         key(KeyCode::Char(c))
     }
-    /// The submit chord — `⌘⏎` as the kitty keyboard protocol reports it.
+    /// The newline chord — `⌘⏎` as the kitty keyboard protocol reports it
+    /// (a modified Enter inserts a line break; a bare Enter submits).
     fn cmd_enter() -> KeyEvent {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::SUPER)
     }
@@ -455,13 +456,13 @@ mod tests {
     }
 
     #[test]
-    fn typing_builds_a_prompt_and_the_submit_chord_sends_it() {
+    fn typing_builds_a_prompt_and_bare_enter_sends_it() {
         let model = SessionModel::new();
         let mut ui = UiState::default();
         for c in "hello".chars() {
             assert_eq!(handle_key(ch(c), &model, &mut ui), ShellAction::Handled);
         }
-        let action = handle_key(cmd_enter(), &model, &mut ui);
+        let action = handle_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::Prompt {
@@ -471,21 +472,21 @@ mod tests {
     }
 
     #[test]
-    fn plain_enter_inserts_a_line_break_preserved_through_submit() {
+    fn a_modified_enter_inserts_a_line_break_preserved_through_submit() {
         let model = SessionModel::new();
         let mut ui = UiState::default();
         for c in "line one".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
         assert_eq!(
-            handle_key(key(KeyCode::Enter), &model, &mut ui),
+            handle_key(cmd_enter(), &model, &mut ui),
             ShellAction::Handled,
-            "plain ⏎ is a line break, not a submit"
+            "⌘⏎ is a line break, not a submit"
         );
         for c in "line two".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
-        let action = handle_key(cmd_enter(), &model, &mut ui);
+        let action = handle_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::Prompt {
@@ -526,10 +527,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_terminals_fall_back_to_enter_submits_and_alt_enter_breaks() {
+    fn bare_enter_submits_and_a_modified_enter_inserts_a_break() {
         let model = SessionModel::new();
         let mut ui = UiState::default();
-        ui.enter_submits = true; // no kitty keyboard protocol
         for c in "hi".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
@@ -537,7 +537,7 @@ mod tests {
         assert_eq!(
             handle_key(alt_enter, &model, &mut ui),
             ShellAction::Handled,
-            "⌥⏎ is the legacy line break"
+            "⌥⏎ inserts a line break"
         );
         assert_eq!(ui.composer.buffer(), "hi\n");
         let action = handle_key(key(KeyCode::Enter), &model, &mut ui);
@@ -546,7 +546,7 @@ mod tests {
             ShellAction::Submit(UserInput::Prompt {
                 text: "hi\n".into()
             }),
-            "plain ⏎ submits when the chord is unreportable"
+            "bare ⏎ submits (never blocks)"
         );
     }
 
@@ -557,7 +557,7 @@ mod tests {
         for c in "ab".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
-        handle_key(key(KeyCode::Enter), &model, &mut ui);
+        handle_key(cmd_enter(), &model, &mut ui); // ⌘⏎ inserts a line break
         for c in "cd".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
@@ -676,7 +676,7 @@ mod tests {
         for c in "mysql".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
-        let action = handle_key(cmd_enter(), &model, &mut ui);
+        let action = handle_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::AskUserAnswer {
@@ -688,18 +688,18 @@ mod tests {
 
     #[test]
     fn ask_user_free_text_answer_can_span_lines() {
-        // Plain ⏎ while a question is pending is a line break in the answer,
-        // not a submit — the chord dispatches the whole multi-line text.
+        // A modified ⏎ while a question is pending is a line break in the
+        // answer, not a submit — a bare ⏎ dispatches the whole multi-line text.
         let model = model_with_ask();
         let mut ui = UiState::default();
         for c in "two".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
-        handle_key(key(KeyCode::Enter), &model, &mut ui);
+        handle_key(cmd_enter(), &model, &mut ui);
         for c in "lines".chars() {
             handle_key(ch(c), &model, &mut ui);
         }
-        let action = handle_key(cmd_enter(), &model, &mut ui);
+        let action = handle_key(key(KeyCode::Enter), &model, &mut ui);
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::AskUserAnswer {
