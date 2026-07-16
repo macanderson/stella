@@ -21,13 +21,20 @@ pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// the turn forever.
 pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// A `reqwest::Client` with [`CONNECT_TIMEOUT`] applied. Falls back to the
-/// default client if the builder fails (only possible on a broken TLS
-/// backend, which is catastrophic and unrelated to any single request) —
-/// never panics on the construction path.
+/// A `reqwest::Client` with [`CONNECT_TIMEOUT`] applied, plus a per-read
+/// stall bound of [`STREAM_IDLE_TIMEOUT`]. The read timeout closes the gap
+/// [`next_with_timeout`] cannot see: the wait between a successful connect
+/// and the first response byte (headers). Without it, a provider LB that
+/// accepts the connection and then black-holes hangs `.send()` forever and
+/// the retry engine never fires. The bound matches the stream-idle policy,
+/// so it can never kill a stream the idle timeout would have allowed.
+/// Falls back to the default client if the builder fails (only possible on
+/// a broken TLS backend, which is catastrophic and unrelated to any single
+/// request) — never panics on the construction path.
 pub(crate) fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(STREAM_IDLE_TIMEOUT)
         .build()
         .unwrap_or_default()
 }
