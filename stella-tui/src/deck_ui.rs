@@ -2572,6 +2572,9 @@ mod tests {
             edges: vec![],
             files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
         });
+        ui
+    }
+
     // ---- AGENTS tab: INSTALLED AGENTS pane -------------------------------
 
     fn installed_entry(name: &str, version: u32) -> InstalledAgentEntry {
@@ -2615,6 +2618,10 @@ mod tests {
         assert!(
             ui.composer.buffer().is_empty(),
             "/ did not leak into the prompt"
+        );
+    }
+
+    #[test]
     fn agents_pane_arrows_switch_and_first_visit_asks_for_the_list() {
         let model = model_with(&["lead"]);
         let mut ui = ready_ui();
@@ -2745,6 +2752,9 @@ mod tests {
         ui.tab = DeckTab::Graph; // no snapshot loaded
         handle_deck_key(ch('/'), &model, &mut ui);
         assert!(!ui.graph_picker_open, "nothing to pick from — stays closed");
+    }
+
+    #[test]
     fn slash_agents_opens_the_tab_on_the_installed_pane() {
         let model = model_with(&["lead"]);
         let mut ui = ready_ui();
