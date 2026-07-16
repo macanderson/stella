@@ -694,4 +694,28 @@ mod tests {
     fn quote_neutralizes_single_quotes() {
         assert_eq!(quote("a'b"), r"'a'\''b'");
     }
+
+    #[test]
+    fn issue_refs_reject_flag_shaped_values_and_accept_real_refs() {
+        // The ref is passed positionally to gh, so a flag-shaped value is
+        // argument injection — this pins the `-` guard in require_issue_ref.
+        for injected in ["--web", "-R other/repo"] {
+            match require_issue_ref(&json!({ "issue": injected })) {
+                Err(ToolOutput::Error { message }) => {
+                    assert!(message.contains("invalid issue ref"), "{message}");
+                }
+                other => panic!("expected error for `{injected}`, got {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            require_issue_ref(&json!({ "issue": "123" })).unwrap(),
+            "123"
+        );
+        assert_eq!(
+            require_issue_ref(&json!({ "issue": "#123" })).unwrap(),
+            "#123"
+        );
+        assert_eq!(require_issue_ref(&json!({ "issue": 123 })).unwrap(), "123");
+    }
 }

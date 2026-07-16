@@ -427,6 +427,20 @@ mod tests {
                 schema.name
             );
         }
+
+        // Conditionally-registered tools never show up in a bare registry's
+        // schemas (code_graph needs an index on disk, generate_image needs a
+        // media key), so the registry-driven loop above can't catch them
+        // drifting out of RESERVED_NAMES. Pin them explicitly — if you add a
+        // new conditionally-registered tool, add its name to this array.
+        const CONDITIONALLY_REGISTERED: &[&str] = &["code_graph", "generate_image"];
+        for name in CONDITIONALLY_REGISTERED {
+            assert!(
+                crate::custom::RESERVED_NAMES.contains(name),
+                "conditionally-registered tool `{name}` is missing from \
+                 custom::RESERVED_NAMES — a custom manifest could shadow it"
+            );
+        }
     }
 
     #[test]

@@ -25,8 +25,6 @@
 //! HEAD) is a much weaker witness than an assertion failure — the agent
 //! (and any judge) should check the tail for WHY the old code failed.
 
-use std::time::Duration;
-
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};

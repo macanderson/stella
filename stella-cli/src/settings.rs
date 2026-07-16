@@ -147,9 +147,13 @@ impl Settings {
         // spirit.
         for (id, entry) in &project_only.providers {
             if entry.api_key.is_some() {
+                // The provider id is attacker-controlled text from a repo
+                // file; escape it so a malicious key can't smuggle terminal
+                // control sequences into stderr.
                 eprintln!(
-                    "  ! providers.{id} in {} sets an inline api_key — prefer api_key_env \
+                    "  ! providers.{} in {} sets an inline api_key — prefer api_key_env \
                      (project settings files are often committed)",
+                    id.escape_debug(),
                     project.display()
                 );
             }

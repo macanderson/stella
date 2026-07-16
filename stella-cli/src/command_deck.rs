@@ -364,6 +364,10 @@ pub async fn run_deck_session(cfg: &Config, budget_limit: Option<f64>) -> Result
                         },
                     });
                 }
+                // Must stay AFTER the store warning above: the warning is
+                // retryable (folds to Running) while this one is not (folds
+                // to Failed), so this event is what leaves the lead in a
+                // terminal state on the dashboard.
                 let _ = in_tx.send(Inbound::Event {
                     agent: LEAD.to_string(),
                     event: AgentEvent::Error {
@@ -552,6 +556,17 @@ async fn run_lead_turn(
                               outcome) for this execution is incomplete"
                         .to_string(),
                     retryable: true,
+                },
+            });
+            // That warning lands AFTER the turn's Complete event, and the
+            // deck's status fold maps a retryable Error back to Running — so
+            // without this re-assert a finished turn would show as running
+            // forever. Restate the turn's terminal status explicitly.
+            let _ = in_tx.send(Inbound::Status {
+                agent: LEAD.to_string(),
+                status: match &outcome {
+                    TurnOutcome::Completed { .. } => AgentStatus::Done,
+                    TurnOutcome::Aborted { .. } => AgentStatus::Failed,
                 },
             });
         }

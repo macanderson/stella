@@ -297,10 +297,14 @@ impl McpClient {
     /// Call `tool` with `arguments`, returning the mapped [`ToolOutput`].
     ///
     /// Resilience: the call is bounded by [`McpClient::set_call_timeout`]. If
-    /// the connection has *dropped*, one transparent reconnect + retry is
-    /// attempted so a single blip self-heals within the turn; if it *hangs*
-    /// (timeout) or the reconnect is still backing off, a clear, server-named
-    /// error is returned as data — the agent's turn is never aborted.
+    /// the connection has *dropped*, the transport is reconnected for the
+    /// next call, but the request is transparently re-sent only when the tool
+    /// advertises `readOnlyHint`/`idempotentHint` — a drop is ambiguous (the
+    /// server may have executed the call before the connection died), so a
+    /// non-idempotent tool surfaces a server-named ambiguity error instead of
+    /// risking double execution. If the call *hangs* (timeout) or the
+    /// reconnect is still backing off, a clear, server-named error is
+    /// returned as data — the agent's turn is never aborted.
     pub async fn call_tool(&self, tool: &str, arguments: Value) -> Result<ToolOutput, McpError> {
         let params = CallToolParams {
             name: tool.to_string(),

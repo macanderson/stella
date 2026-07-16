@@ -52,10 +52,12 @@ impl SseDecoder {
         Self::default()
     }
 
-    /// Feed a chunk of already-decoded UTF-8 text. Retained for unit tests;
-    /// transports reading a byte stream must use [`SseDecoder::push_bytes`]
-    /// so a character split across two network chunks is reassembled rather
-    /// than mangled.
+    /// Feed a chunk of already-decoded UTF-8 text. Retained for unit tests
+    /// (and compiled only there — no production caller exists); transports
+    /// reading a byte stream must use [`SseDecoder::push_bytes`] so a
+    /// character split across two network chunks is reassembled rather than
+    /// mangled.
+    #[cfg(test)]
     pub fn push(&mut self, chunk: &str) {
         self.buf.push_str(chunk);
     }

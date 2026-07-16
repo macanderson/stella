@@ -1943,9 +1943,10 @@ pub(crate) fn warn_store_write_failed(what: &str) {
 /// event stream and, for `StepUsage`, add a telemetry row. Shared by
 /// [`spawn_renderer`] (one-shot/REPL rendering) and the command deck's event
 /// forwarder (`crate::command_deck`), so the store's write path lives in
-/// exactly one place. Returns `false` when the event-stream append failed so
-/// the caller can surface its once-only warning; the telemetry row stays
-/// silently best-effort, exactly as before this was extracted.
+/// exactly one place. Returns `false` when the event-stream append failed OR
+/// (for `StepUsage`) the telemetry insert failed, so the caller's once-only
+/// "telemetry for this execution is incomplete" warning actually covers the
+/// telemetry row too — a telemetry-only failure must not stay silent.
 pub(crate) fn persist_event(
     store: &Store,
     execution_id: i64,
@@ -1954,6 +1955,8 @@ pub(crate) fn persist_event(
     provider_id: &str,
 ) -> bool {
     let recorded = store.record_event(execution_id, seq, event).is_ok();
+    // True when the event carried no StepUsage or the insert succeeded.
+    let mut telemetry_ok = true;
     if let AgentEvent::StepUsage {
         step,
         model,
@@ -1967,28 +1970,30 @@ pub(crate) fn persist_event(
         tool_calls,
     } = event
     {
-        let _ = store.record_telemetry(
-            execution_id,
-            &TelemetryRow {
-                step: *step as u64,
-                provider: provider_id.to_string(),
-                model: model.clone(),
-                input_tokens: *input_tokens,
-                estimated_input_tokens: *estimated_input_tokens,
-                output_tokens: *output_tokens,
-                cache_read_tokens: *cached_input_tokens,
-                cache_miss_tokens: input_tokens.saturating_sub(*cached_input_tokens),
-                // Populated once the usage envelope carries cache-write
-                // counts (staged follow-up).
-                cache_write_tokens: 0,
-                cost_usd: *cost_usd,
-                duration_ms: *duration_ms,
-                retries: *retries,
-                tool_calls: *tool_calls as u64,
-            },
-        );
+        telemetry_ok = store
+            .record_telemetry(
+                execution_id,
+                &TelemetryRow {
+                    step: *step as u64,
+                    provider: provider_id.to_string(),
+                    model: model.clone(),
+                    input_tokens: *input_tokens,
+                    estimated_input_tokens: *estimated_input_tokens,
+                    output_tokens: *output_tokens,
+                    cache_read_tokens: *cached_input_tokens,
+                    cache_miss_tokens: input_tokens.saturating_sub(*cached_input_tokens),
+                    // Populated once the usage envelope carries cache-write
+                    // counts (staged follow-up).
+                    cache_write_tokens: 0,
+                    cost_usd: *cost_usd,
+                    duration_ms: *duration_ms,
+                    retries: *retries,
+                    tool_calls: *tool_calls as u64,
+                },
+            )
+            .is_ok();
     }
-    recorded
+    recorded && telemetry_ok
 }
 
 /// Run one goal loop through `stella_core::Engine::run_goal`: working turns

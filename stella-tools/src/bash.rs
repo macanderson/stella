@@ -29,7 +29,7 @@ impl Tool for Bash {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "Shell command to execute" },
-                    "timeout_secs": { "type": "integer", "description": "Timeout in seconds (default 120, max 600)" },
+                    "timeout_secs": { "type": "integer", "description": "Timeout in seconds (default 120, max 600; 0 = default)" },
                     "trace": { "type": "boolean", "description": "Echo each executed line (set -x) as an execution trace" }
                 },
                 "required": ["command"]
@@ -47,9 +47,12 @@ impl Tool for Bash {
                 };
             }
         };
+        // 0 means "use the default", matching custom.rs's timeout convention
+        // — a literal 0 would otherwise time out every invocation instantly.
         let timeout_secs = input
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
+            .filter(|&t| t > 0)
             .unwrap_or(DEFAULT_TIMEOUT_SECS)
             .min(MAX_TIMEOUT_SECS);
         // trace: true prefixes `set -x` so every executed line echoes to
