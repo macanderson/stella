@@ -328,6 +328,29 @@ pub fn judge_prompt(goal: &str, diff: &str, evidence_summary: &str) -> String {
     )
 }
 
+/// The distress-guidance prompt: spent only when the worker is demonstrably
+/// stuck — the *second consecutive* deterministic test failure in the revise
+/// loop (`PipelineConfig::distress_guidance`). Not a verdict (the failure is
+/// already deterministic — re-judging it would be spend without information,
+/// L-E11); the judge model instead reads goal + diff + failing evidence and
+/// returns concrete course-correction the next revision turn carries. This is
+/// deliberately event-triggered, never a fixed "halfway checkpoint": a
+/// mandatory mid-run judge burns a near-worker-sized call on the majority of
+/// runs that were going fine, and "halfway" has no honest denominator mid-run.
+pub fn guidance_prompt(goal: &str, diff: &str, evidence_summary: &str) -> String {
+    format!(
+        "You are an independent senior reviewer. A coding agent has FAILED verification \
+         twice in a row on the same task — its approach is likely wrong, not merely \
+         incomplete. From the evidence below, give concrete course-correction: what the \
+         agent is most plausibly doing wrong, and what to do differently. At most 6 lines. \
+         Do not restate the goal or the evidence; do not write code.\n\n\
+         ## Goal\n{goal}\n\n\
+         ## Failing evidence\n{evidence_summary}\n\n\
+         ## Current diff\n{diff}\n\n\
+         Course-correction:"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

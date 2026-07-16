@@ -268,6 +268,15 @@ impl WorkspaceModel {
                 if self.agents[i].status != AgentStatus::Killed {
                     self.agents[i].status = *status;
                 }
+                // `WaitingInput` via `Status` is the host's "back to idle"
+                // signal — it arrives after handled commands (`/init`, MCP
+                // connect, startup) that skip the model turn, so no turn is in
+                // flight. Freeze the header clock; unlike `AskUser` (which
+                // reaches `WaitingInput` through the event stream mid-turn),
+                // this path means the turn is genuinely over.
+                if *status == AgentStatus::WaitingInput {
+                    self.agents[i].end_turn(self.now_ms);
+                }
             }
             Inbound::PromptStarted { agent, text } => {
                 // The dispatcher drained the oldest queued prompt. Both sides
@@ -905,6 +914,40 @@ mod tests {
         ));
         assert_eq!(w.agents[0].turn_started_ms, None);
         assert_eq!(w.agents[0].last_turn_ms, Some(3_000));
+    }
+
+    #[test]
+    fn waiting_input_status_stops_the_clock_after_init_or_handled_command() {
+        let mut w = WorkspaceModel::new();
+        w.now_ms = 0;
+        w.apply_inbound(&reg("lead"));
+
+        // `/init` and other handled commands send `PromptStarted` (the deck
+        // doesn't classify commands until after) then `Status { WaitingInput }`
+        // — but no `Complete`/`Error` event. Before the fix the clock ran
+        // forever; now `WaitingInput` via `Status` freezes it.
+        w.now_ms = 1_000;
+        w.apply_inbound(&prompt_started("lead", "/init"));
+        assert_eq!(w.agents[0].turn_started_ms, Some(1_000));
+
+        w.now_ms = 4_000;
+        w.apply_inbound(&Inbound::Status {
+            agent: "lead".into(),
+            status: AgentStatus::WaitingInput,
+        });
+        assert_eq!(
+            w.agents[0].turn_started_ms,
+            None,
+            "WaitingInput status must stop the turn clock"
+        );
+        assert_eq!(
+            w.agents[0].last_turn_ms,
+            Some(3_000),
+            "the clock freezes at its elapsed, not reset to zero"
+        );
+        // And stays frozen as frames advance — no runaway.
+        w.now_ms = 100_000;
+        assert_eq!(w.agents[0].turn_clock_ms(w.now_ms), 3_000);
     }
 
     #[test]

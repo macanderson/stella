@@ -24,6 +24,14 @@ pub enum StageKind {
     ContextRecall,
     Plan,
     ScopeReview,
+    /// Witness authoring: before the worker executes, an independent model
+    /// (the judge's resolution, never the worker's transcript) writes the
+    /// witness test — a test that FAILS on the current code and will pass
+    /// once the goal is met — arming the deterministic flip oracle (L-E11).
+    /// The witness is visible to the worker (iterating against a failing
+    /// test is where convergence comes from); integrity comes from tamper
+    /// exclusion at verify time, not from hiding the test.
+    Witness,
     Execute,
     Verify,
     Judge,
