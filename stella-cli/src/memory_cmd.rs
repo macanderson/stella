@@ -495,6 +495,7 @@ fn render_table(rows: &[MemoryListRow]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     fn memory_node(public_id: &str, label: &str, content: &str) -> NodeRow {
         NodeRow {
