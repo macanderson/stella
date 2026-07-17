@@ -321,6 +321,12 @@ enum MemoryCmd {
         /// The memory's stable id (nod_…) as shown by `stella memory list`
         id: String,
     },
+    /// Re-validate old memories against the current codebase (Proposal 5).
+    /// Scans each memory for file-path anchors (e.g. `stella-cli/src/agent.rs`),
+    /// checks whether those paths still exist, and flags stale ones. A stale
+    /// memory is one whose referenced path no longer exists — a strong signal
+    /// the memory is about refactored-away code and may mislead.
+    Validate,
 }
 
 /// The version string shown by `--version` and `stella version`: the crate
@@ -453,6 +459,7 @@ fn run(cli: Cli) -> Result<(), String> {
             return match cmd {
                 MemoryCmd::List { format } => memory_cmd::run_memory_list(*format),
                 MemoryCmd::Promote { id } => memory_cmd::run_memory_promote(id),
+                MemoryCmd::Validate => memory_cmd::run_memory_validate(),
             };
         }
         Some(Command::Mcp { cmd }) => {
