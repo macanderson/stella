@@ -68,6 +68,15 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      # rust-toolchain.toml pins the repo to a concrete toolchain (e.g. 1.97.0),
+      # and the build runs on *that*, not `stable`. dtolnay's `targets:` above
+      # installs the target for `stable`, so a genuine cross-target (x86_64 on
+      # the arm64 macOS runner) fails with E0463 "can't find crate for `core`".
+      # Add the target to the pinned toolchain — this runs in the checkout, so
+      # rustup honors rust-toolchain.toml (auto-installing the pin on first use).
+      - name: Add the cross target to the pinned toolchain
+        run: rustup target add ${{ matrix.target }}
+
       # Stamp the release version (from the tag) into the workspace manifest so
       # the compiled binary reports it — `stella --version` == the release tag.
       # No commit lands on main; this edit is ephemeral to the build runner.
