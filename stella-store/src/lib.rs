@@ -1552,12 +1552,14 @@ pub fn fold_citation_stats(rows: &[MemoryCitationRow]) -> Vec<MemoryCitationStat
     let mut stats: Vec<MemoryCitationStats> = Vec::new();
     let mut score_sum: i64 = 0;
     let mut truthful_count: i64 = 0;
+    let mut untruthful_count: i64 = 0;
 
     for row in rows {
         let fresh = stats.last().is_none_or(|s| s.memory_id != row.memory_id);
         if fresh {
             score_sum = 0;
             truthful_count = 0;
+            untruthful_count = 0;
             stats.push(MemoryCitationStats {
                 memory_id: row.memory_id.clone(),
                 citations: 0,
@@ -1574,6 +1576,9 @@ pub fn fold_citation_stats(rows: &[MemoryCitationRow]) -> Vec<MemoryCitationStat
         entry.citations += 1;
         score_sum += row.useful_score;
         truthful_count += i64::from(row.truthful);
+        if !row.truthful {
+            untruthful_count += 1;
+        }
         if row.is_positive() {
             entry.positive_streak += 1;
         } else {
@@ -1583,7 +1588,11 @@ pub fn fold_citation_stats(rows: &[MemoryCitationRow]) -> Vec<MemoryCitationStat
         entry.avg_score = score_sum as f64 / entry.citations as f64;
         entry.truthful_rate = truthful_count as f64 / entry.citations as f64;
         entry.eligible = entry.positive_streak > PROMOTION_CITATIONS_REQUIRED;
-        entry.quarantined = entry.negatives >= QUARANTINE_NEGATIVES_THRESHOLD;
+        // Quarantine is driven by UNTRUTHFUL citations only (Proposal 3) — a
+        // memory verified wrong ≥ threshold times is excluded from recall.
+        // A low-usefulness-but-truthful citation does not quarantine; it only
+        // affects promotion eligibility via the negative streak.
+        entry.quarantined = untruthful_count >= QUARANTINE_NEGATIVES_THRESHOLD;
     }
     stats
 }

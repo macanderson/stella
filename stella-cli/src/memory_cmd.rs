@@ -316,15 +316,18 @@ fn extract_path_anchors(text: &str) -> Vec<String> {
     let exts = [
         "rs", "py", "ts", "tsx", "js", "jsx", "go", "md", "sql", "toml",
     ];
-    text.split(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_')
+    text.split(|c: char| !(c.is_alphanumeric() || c == '/' || c == '.' || c == '-' || c == '_'))
         .filter(|tok| {
+            // Trim trailing dots — a sentence like "see src/lib.rs." would
+            // otherwise produce token "src/lib.rs." with extension "rs.".
+            let tok = tok.trim_end_matches('.');
             tok.contains('/')
                 && tok
                     .rsplit('.')
                     .next()
                     .is_some_and(|ext| exts.contains(&ext))
         })
-        .map(String::from)
+        .map(|tok| tok.trim_end_matches('.').to_string())
         .collect()
 }
 

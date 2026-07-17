@@ -1,5 +1,8 @@
 # Self-improvement: current state and what's missing
 
+**Status: All 5 proposals implemented.** See the implementation summary at
+the bottom of this document.
+
 An honest assessment of whether the reflection-and-recall loop actually
 makes the agent better over time, and concrete proposals to guarantee
 improvement instead of relying on hope.

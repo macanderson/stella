@@ -93,8 +93,11 @@ pub const OK: Color = SUCCESS_BRIGHT;
 pub const WARN: Color = WARNING_BRIGHT;
 /// Error / removed lines / failure.
 pub const BAD: Color = DANGER_BRIGHT;
-/// Running accent — a cool cyan that stays structural against the ember heat.
-pub const RUN: Color = Color::Rgb(0x60, 0xBF, 0xD6);
+/// Structural / process accent — Stella's single cool anchor. Aliased to
+/// [`VIOLET`] (the brand's interactive-chrome / link hue) so no baby-blue cyan
+/// survives anywhere: every former "cool cyan" call site (links, diff hunk
+/// headers, graph relations, trace stage/tool/vcs) now reads violet.
+pub const RUN: Color = VIOLET;
 /// Paused / held — violet.
 pub const HELD: Color = VIOLET;
 
@@ -113,18 +116,19 @@ pub const DIFF_DEL_BG: Color = Color::Rgb(52, 24, 26);
 // `crate::diff`), while a recognized token overrides only the foreground.
 // Every color is chosen to read on all three diff backdrops (add green, del
 // red, and the plain panel) and to stay inside the amber/ember brand family —
-// never pink/purple. Keyword rides the brand amber so code structure pops the
-// way the accent does everywhere else; strings take a softer warm sand so they
-// separate from keywords without a second saturated hue; numbers take a
-// lighter cousin of the cool [`RUN`] cyan used across the deck (brightened to
-// read on the diff backdrops); comments dim toward [`MUTED`].
+// Keyword rides the brand amber so code structure pops the way the accent does
+// everywhere else; strings take a softer warm sand so they separate from
+// keywords without a second saturated hue; numbers take the cool [`VIOLET`]
+// anchor — the one non-warm principle color, and the counterpoint to the warm
+// keyword/string stops (reads on all three diff backdrops, no cyan); comments
+// dim toward [`MUTED`].
 
 /// Language keyword (`fn`/`let`/`def`/`import`/`return`…).
 pub const SYNTAX_KEYWORD: Color = AMBER;
 /// String / char literal.
 pub const SYNTAX_STRING: Color = Color::Rgb(214, 184, 120);
-/// Numeric literal.
-pub const SYNTAX_NUMBER: Color = Color::Rgb(126, 197, 214);
+/// Numeric literal — violet, the cool counterpoint to the warm keyword/string.
+pub const SYNTAX_NUMBER: Color = VIOLET;
 /// Line comment (rendered dimmed + italic).
 pub const SYNTAX_COMMENT: Color = Color::Rgb(118, 124, 134);
 
@@ -287,11 +291,9 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (DANGER_BRIGHT, 204, 9),
     (AGENT_AMBER, 179, 3),
     (SELECT_BG, 235, 0),
-    (RUN, 74, 14),
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
     (SYNTAX_STRING, 180, 3),
-    (SYNTAX_NUMBER, 116, 14),
     (SYNTAX_COMMENT, 244, 8),
 ];
 
@@ -388,12 +390,13 @@ pub fn status_glyph(status: AgentStatus) -> &'static str {
 
 /// Color a [`crate::graph::GraphNode`] by its `kind`, so the Graph tab's node
 /// list, detail panel, and node-edge sketch all agree on one palette:
-/// function/method one hue, struct/enum/trait another, file/module a third.
+/// function/method violet, struct/enum/trait green, file/module flame — three
+/// distinct on-brand hues, none of them the amber that carries the graph chrome.
 pub fn graph_kind_color(kind: &str) -> Color {
     match kind {
         "function" | "method" => RUN,
         "struct" | "enum" | "trait" => OK,
-        "file" | "module" => HELD,
+        "file" | "module" => AMBER_DEEP,
         _ => MUTED,
     }
 }
@@ -436,7 +439,10 @@ pub fn spark_glyph(intensity: u8) -> char {
 /// A small rotating palette an agent id is hashed into. The point is
 /// stability, not per-color meaning: the same id always lands on the same
 /// slot, so an agent reads as one consistent color everywhere it appears.
-const AGENT_PALETTE: [Color; 6] = [RUN, HELD, AMBER, OK, WARN, AMBER_DEEP];
+/// Five distinct on-brand hues — violet, gold, green, amber, flame — with no
+/// cyan and no crimson (crimson reads as failure elsewhere, so it never brands
+/// a healthy agent).
+const AGENT_PALETTE: [Color; 5] = [HELD, AMBER, OK, WARN, AMBER_DEEP];
 
 /// A deterministic (not randomized — stable across processes and test runs)
 /// color for one agent id, picked from [`AGENT_PALETTE`] by hashing the id.
@@ -461,10 +467,11 @@ fn fnv1a(s: &str) -> u64 {
 // ── Trace kind → color (Traces tab kind chip) ───────────────────────────────
 
 /// A color per [`TraceKind`], for the Traces tab's kind chip. Grouped by
-/// meaning: `RUN` for process/action events (stage, tool, vcs), `AMBER`/
-/// `AMBER_DEEP` for produced artifacts (file, media), `HELD` for
-/// memory/context events, and the shared `OK`/`WARN`/`BAD` semantics for
-/// verdicts, spend, and errors.
+/// meaning: `RUN` (violet) for process/action events (stage, tool, vcs),
+/// `AMBER`/`AMBER_DEEP` for produced artifacts (file, media), a dim neutral for
+/// quiet memory/context events, and the shared `OK`/`WARN`/`BAD` semantics for
+/// verdicts, spend, and errors. Memory drops to `TEXT_TERTIARY` rather than
+/// reuse violet — the process group already owns the deck's one cool anchor.
 pub fn trace_kind_color(kind: TraceKind) -> Color {
     match kind {
         TraceKind::Stage => RUN,
@@ -473,7 +480,7 @@ pub fn trace_kind_color(kind: TraceKind) -> Color {
         TraceKind::Tool => RUN,
         TraceKind::File => AMBER,
         TraceKind::Budget => WARN,
-        TraceKind::Context => HELD,
+        TraceKind::Context => TEXT_TERTIARY,
         TraceKind::Verdict => OK,
         TraceKind::Media => AMBER_DEEP,
         TraceKind::Vcs => RUN,
@@ -545,11 +552,9 @@ mod tests {
         DANGER_BRIGHT,
         AGENT_AMBER,
         SELECT_BG,
-        RUN,
         DIFF_ADD_BG,
         DIFF_DEL_BG,
         SYNTAX_STRING,
-        SYNTAX_NUMBER,
         SYNTAX_COMMENT,
     ];
 
@@ -586,6 +591,28 @@ mod tests {
         assert_eq!(BAD, DANGER_BRIGHT);
         assert_eq!(DANGER, EMBER_CRIMSON);
         assert_eq!(HELD, VIOLET);
+        // The two former baby-blue cyans now resolve onto the violet anchor.
+        assert_eq!(RUN, VIOLET);
+        assert_eq!(SYNTAX_NUMBER, VIOLET);
+    }
+
+    /// Regression guard: the baby-blue cyans that used to fight the ember
+    /// palette (`RUN`'s `#60BFD6`, `SYNTAX_NUMBER`'s `#7EC5D6`) must never
+    /// reappear on any palette token or its aliases. Stella's only cool hue is
+    /// violet; every other principle color is warm.
+    #[test]
+    fn no_baby_blue_cyan_survives_anywhere() {
+        const OLD_RUN_CYAN: Color = Color::Rgb(0x60, 0xBF, 0xD6);
+        const OLD_NUMBER_CYAN: Color = Color::Rgb(126, 197, 214);
+        let mut all: Vec<Color> = ALL_RGB_TOKENS.to_vec();
+        all.extend([RUN, SYNTAX_NUMBER, HELD, AMBER, OK, WARN, AMBER_DEEP]);
+        for token in all {
+            assert_ne!(token, OLD_RUN_CYAN, "a token still holds the RUN cyan");
+            assert_ne!(
+                token, OLD_NUMBER_CYAN,
+                "a token still holds the number cyan"
+            );
+        }
     }
 
     #[test]
