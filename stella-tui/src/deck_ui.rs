@@ -4122,7 +4122,11 @@ mod tests {
         handle_deck_key(key(KeyCode::Up), &model, &mut ui);
         assert_eq!(ui.skills.preview.as_ref().unwrap().scroll, 0);
         handle_deck_key(key(KeyCode::Up), &model, &mut ui);
-        assert_eq!(ui.skills.preview.as_ref().unwrap().scroll, 0, "clamped at 0");
+        assert_eq!(
+            ui.skills.preview.as_ref().unwrap().scroll,
+            0,
+            "clamped at 0"
+        );
     }
 
     #[test]

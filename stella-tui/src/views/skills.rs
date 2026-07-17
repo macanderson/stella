@@ -193,7 +193,10 @@ fn render_search(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 Span::styled(" ".repeat(pad), theme::muted()),
             ];
             if !bar.is_empty() {
-                spans.push(Span::styled(format!("{bar} "), Style::default().fg(theme::AMBER)));
+                spans.push(Span::styled(
+                    format!("{bar} "),
+                    Style::default().fg(theme::AMBER),
+                ));
             }
             if !metric.is_empty() {
                 spans.push(Span::styled(metric, theme::muted()));
@@ -441,8 +444,7 @@ fn render_preview(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             // is clamped to raw line count so the last page stays reachable.
             let text = tui_markdown::from_str(&body);
             let content_h = text.height();
-            let max_scroll =
-                content_h.saturating_sub(body_area.height as usize) as u16;
+            let max_scroll = content_h.saturating_sub(body_area.height as usize) as u16;
             let scroll = preview.scroll.min(max_scroll);
             preview.scroll = scroll;
             Paragraph::new(text)
@@ -612,8 +614,16 @@ mod tests {
         ui.skills.query = "rust".into();
         ui.skills.query_dirty = false;
         ui.skills.hits = vec![
-            hit("wshobson/agents@rust-async-patterns", "15.8K installs", 15800),
-            hit("apollographql/skills@rust-best-practices", "13.9K installs", 13900),
+            hit(
+                "wshobson/agents@rust-async-patterns",
+                "15.8K installs",
+                15800,
+            ),
+            hit(
+                "apollographql/skills@rust-best-practices",
+                "13.9K installs",
+                13900,
+            ),
         ];
         let area = Rect::new(0, 0, 90, 14);
         let mut buf = Buffer::empty(area);

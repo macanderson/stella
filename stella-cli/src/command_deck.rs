@@ -1405,7 +1405,9 @@ fn parse_result_line(line: &str) -> Option<(String, String, u64)> {
 /// The numeric install count from a string like `"15.8K installs"` — the first
 /// token parseable as a number with an optional K/M/B suffix. `0` if none.
 fn parse_installs_count(s: &str) -> u64 {
-    s.split_whitespace().find_map(parse_count_token).unwrap_or(0)
+    s.split_whitespace()
+        .find_map(parse_count_token)
+        .unwrap_or(0)
 }
 
 /// Parse one token like `15.8K` / `9K` / `342` into an absolute count.
@@ -2351,7 +2353,10 @@ mod tests {
         // Never leak escape codes or the instruction line into a hit.
         for h in &hits {
             assert!(!h.id.contains('\u{1b}') && !h.id.contains('['), "{h:?}");
-            assert!(!h.id.contains("Install"), "instruction line rejected: {h:?}");
+            assert!(
+                !h.id.contains("Install"),
+                "instruction line rejected: {h:?}"
+            );
         }
     }
 
@@ -2386,7 +2391,10 @@ mod tests {
         let md = extract_skill_md_from_use(out);
         assert!(md.starts_with("---"), "starts at frontmatter: {md}");
         assert!(md.contains("# Rust Async"));
-        assert!(!md.contains("You are being given"), "preamble dropped: {md}");
+        assert!(
+            !md.contains("You are being given"),
+            "preamble dropped: {md}"
+        );
         assert!(!md.contains("</SKILL.md>"), "close marker dropped: {md}");
     }
 
