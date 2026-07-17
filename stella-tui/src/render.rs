@@ -1544,6 +1544,36 @@ mod tests {
         }
     }
 
+    /// A wrapped continuation line begins flush at the content column: exactly
+    /// `LABEL_COL` leading spaces, never one more. Regression for the bug where
+    /// the wrap-boundary space was carried onto the next line, stacking on top
+    /// of the indent and drifting every wrapped row one column right of the
+    /// clean left edge (the "extra blank space after the colon on wrap" report).
+    #[test]
+    fn wrapped_continuation_starts_flush_at_the_content_column() {
+        let content = "the quick brown fox jumps over the lazy dog and then keeps \
+                       on running well past the right edge to force several wraps";
+        let spans = vec![Span::raw(label_tag("agent")), Span::raw(content)];
+        let mut out = Vec::new();
+        // Narrow width so the content wraps several times.
+        wrap_one_indent(Line::from(spans), 60, LABEL_COL, &mut out);
+
+        assert!(
+            out.len() > 1,
+            "content must wrap into a continuation row, got {} row(s)",
+            out.len()
+        );
+        for (i, line) in out.iter().enumerate().skip(1) {
+            let text: String = line.spans.iter().flat_map(|s| s.content.chars()).collect();
+            let leading = text.chars().take_while(|c| *c == ' ').count();
+            assert_eq!(
+                leading, LABEL_COL,
+                "continuation row {i} must start exactly at the content column \
+                 (indent {LABEL_COL}, no carried wrap space); got {leading}: {text:?}",
+            );
+        }
+    }
+
     #[test]
     fn files_panel_lists_touched_files_by_label() {
         let mut model = SessionModel::new();
