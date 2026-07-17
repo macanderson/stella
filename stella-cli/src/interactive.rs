@@ -718,9 +718,7 @@ mod tests {
         }
         let reg = SkillRegistry::from_env(std::path::PathBuf::from("/ws"));
         assert!(
-            reg.install_cmd
-                .iter()
-                .any(|t| t == "--yes" || t == "-y"),
+            reg.install_cmd.iter().any(|t| t == "--yes" || t == "-y"),
             "default install cmd must be non-interactive (have --yes/-y): {:?}",
             reg.install_cmd
         );
