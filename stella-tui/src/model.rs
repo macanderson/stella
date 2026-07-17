@@ -565,6 +565,11 @@ impl SessionModel {
     pub fn push_user_prompt(&mut self, text: &str) {
         self.hud.complete = false;
         self.hud.final_cost_usd = None;
+        // Also drop the prior turn's stage, or the progress bar would resume
+        // frozen at that stale position (e.g. verify → 83%) instead of restarting
+        // at the new turn's beginning. A model turn's first `Stage` event resets
+        // this anyway; a driver command (which emits no stages) relies on it.
+        self.hud.stage = None;
         self.transcript
             .push(TranscriptEntry::User(text.to_string()));
         self.evict_transcript_overflow();
