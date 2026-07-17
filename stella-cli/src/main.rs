@@ -241,6 +241,21 @@ enum Command {
         provider: Option<String>,
     },
 
+    /// Open the Observatory — a local web dashboard over this workspace's
+    /// telemetry (.stella/store.db + fleet.db): spend, tokens, cache
+    /// traffic, tool calls, files touched, memory citations, reflections,
+    /// and fleet runs. Binds 127.0.0.1 only and opens the stores strictly
+    /// read-only — nothing ever leaves this machine.
+    Observe {
+        /// Port to bind on 127.0.0.1 (0 picks a free port)
+        #[arg(long, default_value_t = 7787)]
+        port: u16,
+
+        /// Open the dashboard in the default browser once serving
+        #[arg(long)]
+        open: bool,
+    },
+
     /// Inspect the project's memories through the citation feedback loop —
     /// most-cited first, usefulness scores, truthfulness — and promote an
     /// eligible memory to a project rule (.stella/rules/). Reads local state
@@ -385,6 +400,38 @@ impl GraphOp {
     }
 }
 
+/// `stella observe` — serve the Observatory dashboard for this workspace on
+/// `127.0.0.1` until interrupted. Telemetry stores are opened read-only; the
+/// page and its assets are embedded, so nothing is fetched from anywhere.
+fn run_observe(port: u16, open: bool) -> Result<(), String> {
+    let root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to start runtime: {e}"))?;
+    rt.block_on(stella_observatory::serve(root, port, move |addr| {
+        let url = format!("http://{addr}/");
+        println!();
+        println!("  {} {}", "◆".bright_magenta(), "Stella Observatory".bold());
+        println!("  {} {}", "→".yellow(), url);
+        println!(
+            "  {}",
+            "reads .stella (read-only) · binds 127.0.0.1 only · Ctrl+C to stop".dimmed()
+        );
+        if open {
+            // Best-effort convenience; the printed URL is the contract.
+            let opener = if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            let _ = std::process::Command::new(opener).arg(&url).spawn();
+        }
+    }))
+    .map_err(|e| e.to_string())
+}
+
 /// `stella graph <op> <target>` — the human door to the same query surface
 /// the `graph_query` tool gives the agent. Frames print exactly as the model
 /// would receive them.
@@ -466,6 +513,11 @@ fn run(cli: Cli) -> Result<(), String> {
             // MCP management reads/writes local config + the registry over
             // HTTP — no provider or API key required.
             return mcp_cmd::run(cmd);
+        }
+        Some(Command::Observe { port, open }) => {
+            // Loopback-only dashboard over local telemetry — no provider or
+            // API key required; the stores are opened strictly read-only.
+            return run_observe(*port, *open);
         }
         Some(Command::Version) => {
             println!("stella v{}", version_string());
@@ -568,6 +620,7 @@ fn run(cli: Cli) -> Result<(), String> {
         | Command::Stats { .. }
         | Command::Memory { .. }
         | Command::Mcp { .. }
+        | Command::Observe { .. }
         | Command::Models
         | Command::Version => {
             unreachable!("handled before provider resolution")

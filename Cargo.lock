@@ -2637,6 +2637,7 @@ dependencies = [
  "stella-graph",
  "stella-mcp",
  "stella-model",
+ "stella-observatory",
  "stella-pipeline",
  "stella-protocol",
  "stella-store",
@@ -2769,6 +2770,18 @@ dependencies = [
  "tokio",
  "toml",
  "wiremock",
+]
+
+[[package]]
+name = "stella-observatory"
+version = "0.3.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
