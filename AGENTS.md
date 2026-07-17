@@ -64,6 +64,16 @@ make gate                # = fmt --check + clippy -D warnings + test --workspace
 
 For a faster pre-push sanity check (no tests): `make check`.
 
+**Run `make hooks` once per clone.** It installs a `pre-push` git hook
+(`core.hooksPath=.githooks`) that runs `make gate` automatically on every push
+and aborts the push if it fails. This is the gate's real enforcement point
+today: the org's GitHub Actions is **billing-locked**, so the required CI checks
+fast-fail in seconds without ever running, and with `enforce_admins` off,
+gate-failing code otherwise slips onto `main` through admin/auto merges. The
+hook catches it on the author's push instead. It is advisory (per-clone,
+bypassable with `SKIP_GATE=1 git push` or `git push --no-verify`) — not a
+server-side guarantee, which is impossible while the checks can't execute.
+
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources` + `cargo audit`). Note `deny.toml`
 intentionally does **not** gate on licenses; advisories, bans, and source

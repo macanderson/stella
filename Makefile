@@ -68,6 +68,14 @@ gate: format-check lint test ## Full CI gate: fmt-check + clippy + test
 .PHONY: check
 check: format-check lint ## Fast pre-push check (fmt + clippy, no tests)
 
+.PHONY: hooks
+hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
+	git config core.hooksPath .githooks
+	@chmod +x .githooks/* 2>/dev/null || true
+	@printf '\033[32m✔ hooks installed\033[0m — pre-push now runs the fmt+clippy+test gate.\n'
+	@printf '  Needed because org Actions is billing-locked and never runs the gate itself.\n'
+	@printf '  Bypass in emergencies: \033[36mSKIP_GATE=1 git push\033[0m (or \033[36mgit push --no-verify\033[0m).\n'
+
 .PHONY: docs
 docs: ## Build rustdoc for the workspace (skip dep docs)
 	cargo doc --workspace --no-deps
