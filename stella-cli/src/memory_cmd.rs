@@ -80,6 +80,16 @@ pub fn run_memory_list(format: MemoryFormat) -> Result<(), String> {
                     "✦".magenta()
                 );
             }
+            let quarantined = rows.iter().filter(|r| r.quarantined).count();
+            if quarantined > 0 {
+                println!(
+                    "\n{} {quarantined} quarantined memor{them} excluded from recall — \
+                     cited untruthful {threshold}+ times. Review with `stella memory list --json`.",
+                    "⚠".yellow(),
+                    them = if quarantined == 1 { "y" } else { "ies" },
+                    threshold = stella_store::QUARANTINE_NEGATIVES_THRESHOLD,
+                );
+            }
         }
         MemoryFormat::Json => println!(
             "{}",
@@ -286,7 +296,7 @@ fn slugify(label: &str) -> String {
 /// Column headers, in `MemoryListRow` field order (`memory` last, so the
 /// one unbounded column never breaks alignment).
 const TABLE_HEADERS: [&str; 7] = [
-    "ID", "CITES", "AVG", "TRUTHFUL", "STREAK", "ELIGIBLE", "MEMORY",
+    "ID", "CITES", "AVG", "TRUTHFUL", "STREAK", "STATUS", "MEMORY",
 ];
 
 fn table_cells(row: &MemoryListRow) -> [String; 7] {
@@ -296,6 +306,13 @@ fn table_cells(row: &MemoryListRow) -> [String; 7] {
     }
     // Keep the free-text column single-line so alignment holds.
     let memory = memory.replace(['\n', '\r'], " ");
+    let status = if row.quarantined {
+        "QUARANTINED"
+    } else if row.eligible {
+        "eligible"
+    } else {
+        "-"
+    };
     [
         row.id.clone(),
         row.citations.to_string(),
@@ -310,7 +327,7 @@ fn table_cells(row: &MemoryListRow) -> [String; 7] {
             "-".into()
         },
         row.positive_streak.to_string(),
-        if row.eligible { "yes" } else { "-" }.to_string(),
+        status.to_string(),
         memory,
     ]
 }
