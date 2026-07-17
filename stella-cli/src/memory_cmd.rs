@@ -708,9 +708,18 @@ mod tests {
             use stella_context::{ContextDelta, MemoryInput};
             let delta = ContextDelta {
                 memories: vec![
-                    MemoryInput::reflection("agent.rs at stella-cli/src/agent.rs does X", vec![]),
-                    MemoryInput::reflection("old.rs at deleted/old.rs was removed", vec![]),
-                    MemoryInput::reflection("a memory with no paths at all", vec![]),
+                    MemoryInput::reflection(
+                        "agent.rs at stella-cli/src/agent.rs does X",
+                        Vec::<String>::new(),
+                    ),
+                    MemoryInput::reflection(
+                        "old.rs at deleted/old.rs was removed",
+                        Vec::<String>::new(),
+                    ),
+                    MemoryInput::reflection(
+                        "a memory with no paths at all",
+                        Vec::<String>::new(),
+                    ),
                 ],
                 ..Default::default()
             };
