@@ -810,7 +810,8 @@ pub async fn run_deck_session(
                     && turn_warrants_reflection(&messages[reflect_start..])
                     && let Some(m) = &mut memory
                 {
-                    m.reflect_and_record(&*provider, &messages, true, true).await;
+                    m.reflect_and_record(&*provider, &messages, true, true)
+                        .await;
                 }
             }
             TurnEnd::Cancelled { hold } => {

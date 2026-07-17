@@ -934,7 +934,8 @@ pub async fn run_goal_cmd(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        m.reflect_and_record(&*provider, &messages, false, true).await;
+        m.reflect_and_record(&*provider, &messages, false, true)
+            .await;
     }
     if let Some(set) = &mcp {
         set.close_all().await;
@@ -1168,7 +1169,8 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             } else if turn_warrants_reflection(&messages[turn_start..])
                 && let Some(m) = &mut memory
             {
-                m.reflect_and_record(&*provider, &messages, false, true).await;
+                m.reflect_and_record(&*provider, &messages, false, true)
+                    .await;
             }
             continue;
         }
@@ -1228,7 +1230,8 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         } else if turn_warrants_reflection(&messages[turn_start..])
             && let Some(m) = &mut memory
         {
-            m.reflect_and_record(&*provider, &messages, false, true).await;
+            m.reflect_and_record(&*provider, &messages, false, true)
+                .await;
         }
     }
 

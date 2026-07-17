@@ -394,6 +394,7 @@ mod tests {
             negatives: 0,
             positive_streak: streak,
             eligible,
+            quarantined: false,
         }
     }
 
@@ -547,7 +548,7 @@ mod tests {
         let out = render_table(&rows);
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines[0].starts_with("ID"));
-        assert!(lines[1].contains("yes"), "eligible row flagged: {out}");
+        assert!(lines[1].contains("eligible"), "eligible row flagged: {out}");
         assert!(
             lines[2].contains("  -  "),
             "uncited rows show `-`, not fake zeros: {out}"
