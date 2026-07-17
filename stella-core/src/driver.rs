@@ -1112,9 +1112,7 @@ mod tests {
 
         let events = drain_events(&mut rx);
         assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, AgentEvent::Error { .. })),
+            events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
             "the user must see an error explaining the empty turn"
         );
         assert!(

@@ -271,6 +271,52 @@ pub struct SkillUsageRow {
     pub reason: String,
 }
 
+/// One normalized tool-call row for the `tool_calls` log — a queryable
+/// per-call record materialized from the `events` stream. Stores shape,
+/// timing, and success (never the full output — `bytes_out` is its size).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallRow {
+    pub call_id: String,
+    pub name: String,
+    /// `"native"` | `"mcp"` | `"skill"` | `"agent"`.
+    pub surface: String,
+    pub args_json: String,
+    pub args_digest: String,
+    pub reason: String,
+    pub ok: bool,
+    pub error: String,
+    pub bytes_out: i64,
+    pub duration_ms: i64,
+}
+
+/// The agent's self-review of one turn, tied 1:1 to its execution (and thus to
+/// `executions.prompt`). The `produced_output`/`wrote_files`/`truncated`
+/// objective companions let the dashboard flag a self-silent, zero-output turn
+/// as a failure regardless of the model's own rating.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExecutionReflectionRow {
+    pub prompt: String,
+    pub delivered: Option<bool>,
+    pub self_rating: Option<i64>,
+    pub what_went_well: String,
+    pub what_to_improve: String,
+    pub critique: String,
+    pub produced_output: bool,
+    pub wrote_files: bool,
+    pub truncated: bool,
+}
+
+/// One durable reflection/lesson row. `execution_id` is `None` for cross-turn
+/// lessons; `domains` is a JSON array of domain tags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReflectionRow {
+    pub execution_id: Option<i64>,
+    pub kind: String,
+    pub content: String,
+    pub domains: String,
+    pub occurred_at: i64,
+}
+
 /// One aggregated analytics row per (provider, model): the numbers behind
 /// "$-per-resolved-task" receipts, straight from local telemetry.
 ///
