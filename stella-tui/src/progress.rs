@@ -143,9 +143,14 @@ impl ProgressState {
         let complete = hud.complete || agent.status == AgentStatus::Done;
         let error = matches!(agent.status, AgentStatus::Failed | AgentStatus::Killed);
 
-        // Idle: a registered agent that hasn't started a turn (no stage, not
-        // terminal) reads as a flat track, exactly like having no agent at all.
-        if !complete && !error && hud.stage.is_none() && !agent.status.is_active() {
+        // Idle: no turn in flight and nothing to show — a flat track, exactly
+        // like having no agent at all. Keyed on the header clock
+        // (`turn_started_ms`), the one honest "a turn is running" signal: it is
+        // set on `PromptStarted` and cleared by `end_turn` on completion. Status
+        // alone is unreliable here — `WaitingInput` is `is_active()` yet is also
+        // the post-command resting state, which would otherwise strand the bar
+        // mid-fill after a handled command (e.g. `/init`) finishes.
+        if !complete && !error && hud.stage.is_none() && agent.turn_started_ms.is_none() {
             return Self::idle();
         }
 
@@ -492,6 +497,89 @@ mod tests {
         let s = ProgressState::derive(focused(&verify), verify.now_ms, false);
         assert_eq!(s.segments[2], SegState::Active);
         assert!((s.fill - 5.0 / 6.0).abs() < 1e-9);
+    }
+
+    fn lead_registered(now_ms: u64) -> WorkspaceModel {
+        let mut m = WorkspaceModel::new();
+        m.now_ms = now_ms;
+        m.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        m
+    }
+
+    #[test]
+    fn command_in_flight_with_no_stage_reads_in_progress_not_idle() {
+        // A driver command (e.g. /init) emits no Stage events, but PromptStarted
+        // starts the clock — the bar must show the default in-progress state
+        // (plan), never a stale fill and never idle.
+        let mut m = lead_registered(5_000);
+        m.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "/init".into(),
+        });
+        let s = ProgressState::derive(focused(&m), m.now_ms, false);
+        assert_eq!(s.phase, RunPhase::Running, "clock running ⇒ in-progress");
+        assert_eq!(
+            s.segments[0],
+            SegState::Active,
+            "default in-progress = plan"
+        );
+        assert!(
+            (s.fill - 1.0 / 6.0).abs() < 1e-9,
+            "restarts at the beginning"
+        );
+    }
+
+    #[test]
+    fn resting_after_a_command_reads_idle_not_stranded() {
+        // When a handled command completes, the clock stops (WaitingInput →
+        // end_turn) and, with no stage/complete, the bar returns to idle — it is
+        // never left frozen mid-fill even though WaitingInput is `is_active()`.
+        let mut m = lead_registered(5_000);
+        m.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "/init".into(),
+        });
+        m.apply_inbound(&Inbound::Status {
+            agent: "lead".into(),
+            status: AgentStatus::WaitingInput,
+        });
+        let s = ProgressState::derive(focused(&m), m.now_ms, false);
+        assert_eq!(s.phase, RunPhase::Idle, "clock stopped + no stage ⇒ idle");
+        assert_eq!(s.fill, 0.0);
+    }
+
+    #[test]
+    fn new_prompt_after_completion_restarts_from_the_beginning() {
+        // A completed turn leaves the bar full-green; the NEXT submission must
+        // reset it to the in-progress start, not resume frozen at verify/100%.
+        let mut m = agent_running(StageKind::Verify);
+        m.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Complete {
+                model: "glm-5.2".into(),
+                cost_usd: 0.1,
+            },
+        });
+        assert_eq!(
+            ProgressState::derive(focused(&m), m.now_ms, false).phase,
+            RunPhase::Complete,
+            "precondition: full-green"
+        );
+        m.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "another".into(),
+        });
+        let s = ProgressState::derive(focused(&m), m.now_ms, false);
+        assert_eq!(
+            s.phase,
+            RunPhase::Running,
+            "reset to in-progress, not stale complete"
+        );
+        assert!(
+            (s.fill - 1.0 / 6.0).abs() < 1e-9,
+            "back to the plan-phase start, got {}",
+            s.fill
+        );
     }
 
     #[test]

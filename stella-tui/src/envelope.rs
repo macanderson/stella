@@ -129,6 +129,12 @@ pub enum Inbound {
     /// [`Inbound::PromptStarted`]'s front-pop — so the queue view keeps
     /// matching what will actually run.
     PromptRequeued { agent: AgentId, text: String },
+    /// Reset one agent's session to its seq-0 state — a `/clear`. Folded like a
+    /// core event (it mutates the model, not just view state): the agent's
+    /// transcript is blanked, its cost/token counters and the header clock zero
+    /// out, and the progress-bar HUD returns to idle. The driver sends this on
+    /// `/clear` (alongside clearing its own LLM message history).
+    SessionReset { agent: AgentId },
     /// A refreshed code-graph snapshot for the Graph tab. Unlike the other
     /// variants this is **not** a folded event — the graph is an out-of-band
     /// read-model (see `COMMAND_DECK_DESIGN.md` → "The purity boundary"). It

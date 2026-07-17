@@ -317,6 +317,12 @@ impl WorkspaceModel {
                     // to the live count.
                     self.agents[idx].turn_started_ms = Some(ts);
                     self.agents[idx].last_turn_ms = None;
+                    // Flip to Running now so the progress bar reads in-progress
+                    // from the instant of submission — a driver command (e.g.
+                    // `/init`) emits no stage events, and the prior turn may have
+                    // left the status at `Done`, which would otherwise keep the
+                    // bar frozen at full-green until the engine spoke.
+                    self.agents[idx].status = AgentStatus::Running;
                 }
             }
             Inbound::PromptRequeued { agent, text } => {
@@ -332,6 +338,24 @@ impl WorkspaceModel {
                     kind: TraceKind::Stage,
                     summary: format!("↩ {}", snip(text)),
                 });
+            }
+            // `/clear`: reset the agent's session to seq-0 — blank the
+            // transcript, zero the cost/token counters and the header clock, and
+            // return the HUD (progress bar) to idle. The prompt echo the paired
+            // `PromptStarted` pushed is wiped along with the rest.
+            Inbound::SessionReset { agent } => {
+                if let Some(idx) = self.index_of(agent) {
+                    let entry = &mut self.agents[idx];
+                    entry.model = SessionModel::new();
+                    entry.status = AgentStatus::WaitingInput;
+                    entry.tokens_in = 0;
+                    entry.tokens_out = 0;
+                    entry.cache_read_tokens = 0;
+                    entry.cost_usd = 0.0;
+                    entry.budget_ticked = false;
+                    entry.turn_started_ms = None;
+                    entry.last_turn_ms = None;
+                }
             }
             // The driver flipped staged-pipeline routing (`/pipeline`) — the
             // PIPELINE stat box tracks it live.
@@ -846,6 +870,67 @@ mod tests {
             agent: agent.into(),
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn session_reset_blanks_transcript_zeroes_cost_and_stops_the_clock() {
+        let mut w = WorkspaceModel::new();
+        w.now_ms = 1_000;
+        w.apply_inbound(&reg("lead"));
+        w.apply_inbound(&prompt_started("lead", "hello"));
+        w.apply_inbound(&ev(
+            "lead",
+            AgentEvent::Text {
+                delta: "hi there".into(),
+            },
+        ));
+        if let Some(a) = w.agents.first_mut() {
+            a.cost_usd = 0.42;
+        }
+        assert!(
+            !w.agents[0].model.transcript.is_empty(),
+            "precondition: content present"
+        );
+        assert!(
+            w.agents[0].turn_started_ms.is_some(),
+            "precondition: clock running"
+        );
+
+        // `/clear` sends this.
+        w.apply_inbound(&Inbound::SessionReset {
+            agent: "lead".into(),
+        });
+
+        let a = &w.agents[0];
+        assert!(a.model.transcript.is_empty(), "transcript blanked");
+        assert_eq!(a.cost_usd, 0.0, "cost stat zeroed");
+        assert_eq!(w.total_cost(), 0.0, "workspace cost total zeroed");
+        assert_eq!(a.turn_started_ms, None, "wall clock stopped");
+        assert!(
+            !a.model.hud.complete && a.model.hud.stage.is_none(),
+            "hud/progress reset to idle"
+        );
+    }
+
+    #[test]
+    fn prompt_started_flips_a_finished_agent_back_to_running() {
+        // A completed turn leaves the lead resting; the next submission must flip
+        // it to Running (and clear any stale stage) so the progress bar leaves
+        // the full-green complete state and restarts in-progress.
+        let mut w = WorkspaceModel::new();
+        w.now_ms = 1_000;
+        w.apply_inbound(&reg("lead"));
+        if let Some(a) = w.agents.first_mut() {
+            a.status = AgentStatus::Done;
+            a.model.hud.stage = Some(StageKind::Complete);
+            a.model.hud.complete = true;
+        }
+        w.apply_inbound(&prompt_started("lead", "next"));
+        let a = &w.agents[0];
+        assert_eq!(a.status, AgentStatus::Running, "new turn ⇒ running");
+        assert!(a.model.hud.stage.is_none(), "stale stage cleared on submit");
+        assert!(!a.model.hud.complete, "stale completion cleared on submit");
+        assert!(a.turn_started_ms.is_some(), "the header clock restarts");
     }
 
     #[test]

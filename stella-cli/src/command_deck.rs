@@ -1767,9 +1767,16 @@ async fn run_deck_command(
             say(help);
         }
         "/clear" => {
+            // Reset the driver's own LLM history…
             messages.clear();
             messages.push(CompletionMessage::system(system_prompt.to_string()));
-            say("conversation cleared".to_string());
+            // …and the deck's session view: blank the transcript (including the
+            // `/clear` echo the paired PromptStarted just pushed), zero the cost
+            // stat, and return the progress bar to idle. No `say()` — that would
+            // re-populate the transcript we are clearing.
+            let _ = in_tx.send(Inbound::SessionReset {
+                agent: LEAD.to_string(),
+            });
         }
         "/models" => {
             say(Config::available_models_plain());

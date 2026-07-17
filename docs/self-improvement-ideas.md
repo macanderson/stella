@@ -1,8 +1,11 @@
 # Self-improvement: current state and what's missing
 
+<<<<<<< HEAD
 **Status: All 5 proposals implemented.** See the implementation summary at
 the bottom of this document.
 
+=======
+>>>>>>> origin/main
 An honest assessment of whether the reflection-and-recall loop actually
 makes the agent better over time, and concrete proposals to guarantee
 improvement instead of relying on hope.
@@ -269,6 +272,7 @@ The five proposals close the loop in priority order:
 Together they transform the loop from "accumulate lessons and hope" to
 "record outcomes, attribute them, prune failures, and measure the delta."
 That is what guarantees improvement over time.
+<<<<<<< HEAD
 
 ---
 
@@ -316,3 +320,5 @@ All five proposals are now implemented and tested:
 - `extract_path_anchors` extracts workspace-relative paths from memory text.
 - `validate_memories` checks anchors against the current file tree.
 - Reports ok / stale / no-anchors counts with per-memory detail.
+=======
+>>>>>>> origin/main
