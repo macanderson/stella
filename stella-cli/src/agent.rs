@@ -1190,7 +1190,11 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         messages.push(CompletionMessage::user(input));
         println!();
 
-        if let Some(m) = &memory {
+        if let Some(m) = &mut memory {
+            // Proposal 4: A/B recall measurement — on ~1/10 turns (the A/B
+            // rate), suppress recall so the outcome is comparable to recalled
+            // turns. The suppressed flag rides with the turn for attribution.
+            m.maybe_suppress_recall(STELLA_AB_RECALL_RATE);
             let block = m.recall_block(input).await;
             inject_recall_block(&mut messages, block);
         }
