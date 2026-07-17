@@ -302,7 +302,7 @@ impl SessionMemory {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        self.ab_suppressed = ns % (rate as u64) == 0;
+        self.ab_suppressed = ns.is_multiple_of(rate as u64);
         self.ab_suppressed
     }
 
