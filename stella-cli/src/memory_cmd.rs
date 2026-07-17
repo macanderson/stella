@@ -700,18 +700,21 @@ mod tests {
         std::fs::create_dir_all(context_db.parent().unwrap()).unwrap();
         std::fs::create_dir_all(root.path().join("stella-cli/src")).unwrap();
         std::fs::write(root.path().join("stella-cli/src/agent.rs"), "pub fn x() {}").unwrap();
-        let context = stella_context::ContextStore::open(&context_db).unwrap();
-        use stella_context::{ContextDelta, MemoryInput};
-        let delta = ContextDelta {
-            memories: vec![
-                MemoryInput::reflection("agent.rs at stella-cli/src/agent.rs does X", vec![]),
-                MemoryInput::reflection("old.rs at deleted/old.rs was removed", vec![]),
-                MemoryInput::reflection("a memory with no paths at all", vec![]),
-            ],
-            ..Default::default()
-        };
-        context.upsert_sync(delta);
-        drop(context);
+        // Write memories via the context store's async upsert.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let context = stella_context::ContextStore::open(&context_db).unwrap();
+            use stella_context::{ContextDelta, MemoryInput};
+            let delta = ContextDelta {
+                memories: vec![
+                    MemoryInput::reflection("agent.rs at stella-cli/src/agent.rs does X", vec![]),
+                    MemoryInput::reflection("old.rs at deleted/old.rs was removed", vec![]),
+                    MemoryInput::reflection("a memory with no paths at all", vec![]),
+                ],
+                ..Default::default()
+            };
+            context.upsert(delta).await.unwrap();
+        });
 
         let rows = validate_memories(root.path()).unwrap();
         assert_eq!(rows.len(), 3);
