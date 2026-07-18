@@ -1,4 +1,4 @@
-//! Typed media errors (: fail loud, recover
+//! Typed media errors (fail loud, recover
 //! gracefully — never `panic!` in the hot path). This mirrors
 //! `stella_protocol::ProviderError`'s category shape (transport / rate-limit /
 //! auth / malformed / cancelled / terminal) with its own type because
@@ -44,7 +44,7 @@ pub enum MediaError {
     ContentPolicy(String),
 
     /// A capability was requested that no configured key can serve
-    /// (: "fails loudly, naming which keys would enable
+    /// ("fails loudly, naming which keys would enable
     /// it"). Terminal.
     #[error(
         "media capability `{capability}` is unavailable with the configured providers; \

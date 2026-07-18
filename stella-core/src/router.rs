@@ -169,7 +169,7 @@ struct BreakerEntry {
     opened_at_ms: Option<u64>,
 }
 
-/// Per-provider circuit breaker ( "a per-provider
+/// Per-provider circuit breaker ("a per-provider
 /// circuit breaker", §7 reliability rules; L-M7: "every adapter carries a
 /// breaker … no silent mid-turn family switches"). One `CircuitBreaker`
 /// instance tracks every provider's state, keyed by provider id.

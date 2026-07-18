@@ -1,6 +1,6 @@
 //! Extracted symbols: the function/method/type declarations the indexer
 //! pulls out of a source file. Kinds are the cross-language superset the
-//! spec names ( "Symbol (function/type/module)";
+//! spec names ("Symbol (function/type/module)";
 //! task brief: "functions, methods, structs/classes/enums/traits/interfaces").
 
 /// What kind of declaration a symbol is. Stored as its lowercase [`Self::tag`]

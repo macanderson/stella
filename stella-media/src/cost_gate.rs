@@ -12,7 +12,7 @@
 use crate::error::MediaError;
 use crate::provider::CostEstimate;
 
-/// Default confirmation threshold (: "default: any
+/// Default confirmation threshold ("default: any
 /// video"). At `$0.00`, every video with a positive estimate consults the
 /// gate; a caller can raise it to auto-approve cheap jobs.
 pub const DEFAULT_VIDEO_COST_THRESHOLD_USD: f64 = 0.0;

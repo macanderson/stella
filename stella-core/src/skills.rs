@@ -1,5 +1,5 @@
 //! Workspace skills engine — filesystem-first reusable knowledge
-//! (: `<workspace>/.stella/skills/`, "skill.md files
+//! (`<workspace>/.stella/skills/`, "skill.md files
 //! (ADR-008 filesystem-first)").
 //!
 //! A **skill** is a reusable procedure, convention, or learned preference —

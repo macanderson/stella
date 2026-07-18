@@ -24,7 +24,7 @@
 //!
 //! [`BudgetGuard::record_spend`] takes a bare `cost_usd: f64` and does not
 //! care what produced it — a text completion, an image job, or a video job
-//! all settle through the same call ( "media counts").
+//! all settle through the same call ("media counts").
 //! `stella-media` does not exist yet; no special-casing is needed here for
 //! that to fall out for free later.
 //!

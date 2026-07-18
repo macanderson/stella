@@ -28,7 +28,7 @@ const DEFAULT_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
 /// Default CogView slug used when the caller doesn't pin one.
 pub const DEFAULT_MODEL: &str = "cogview-4";
 /// Documented default rate — real pricing comes from the catalog once wired
-/// (: costs are catalog data, never truly hard-coded).
+/// (costs are catalog data, never truly hard-coded).
 const DEFAULT_IMAGE_USD_EACH: f64 = 0.06;
 
 /// A CogView image provider.

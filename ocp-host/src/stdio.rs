@@ -1,5 +1,5 @@
 //! Stdio transport: a child-process OCP provider spoken to over its
-//! stdin/stdout ( "local providers: child
+//! stdin/stdout ("local providers: child
 //! processes over stdio").
 //!
 //! Two layers:

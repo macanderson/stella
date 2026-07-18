@@ -2,7 +2,7 @@
 //!
 //! A tree-sitter symbol + import-edge indexer over a workspace, persisted in
 //! SQLite, exposed as a **built-in OCP provider** feeding `stella-context`
-//! (: "implemented AS a built-in OCP provider … the
+//! ("implemented AS a built-in OCP provider … the
 //! protocol's first proof of non-triviality"). It depends only on `ocp-types`
 //! for the wire shape — never on `stella-context` — so the provider boundary
 //! stays one-directional.

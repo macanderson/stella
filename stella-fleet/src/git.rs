@@ -1,4 +1,4 @@
-//! Git-worktree isolation ( "git-worktree isolation").
+//! Git-worktree isolation ("git-worktree isolation").
 //!
 //! We shell out to the `git` binary through the [`GitCli`] port rather than
 //! linking libgit2/git2 — a deliberate design constraint: the native build is

@@ -1,4 +1,4 @@
-//! The planner DAG ( "planner DAG";
+//! The planner DAG ("planner DAG";
 //! Phase 5 item 2). Pure scheduling logic over owned data — no
 //! I/O, no async — so every property is table- and proptest-checkable
 //!.

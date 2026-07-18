@@ -22,7 +22,7 @@ pub enum MessageRole {
 
 /// Reasoning effort forwarded to models with a thinking/extended-reasoning
 /// mode. One enum, mapped per-adapter to the provider's own parameter name
-/// ( "reasoning_param").
+/// ("reasoning_param").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {

@@ -1,5 +1,5 @@
 //! [`ContextStore`] — the one SQLite file, one engine that backs the context
-//! plane (: "SQLite everywhere … one WAL, one backup
+//! plane ("SQLite everywhere … one WAL, one backup
 //! story, one file format"). It holds the bi-temporal property graph
 //! (`node` + `edge`), the fingerprinted embedding index (`embedding`),
 //! episodic memory (`episode`), and the embedder-fingerprint registry.

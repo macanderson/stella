@@ -68,7 +68,7 @@ pub struct DroppedFrame {
     pub reason: DropReason,
 }
 
-/// The typed, inspectable result of a recall (: typed
+/// The typed, inspectable result of a recall (typed
 /// outputs, not stringly telemetry). Carries the packed frames, the dropped
 /// report, the coverage score, and the honesty flag for lexical fallback.
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-//! PR / CI monitor ( "PR/CI monitor").
+//! PR / CI monitor ("PR/CI monitor").
 //!
 //! Everything runs behind the [`GhCli`] port (real impl shells to `gh`), so
 //! the reconciliation and the capped-wait state machine are exercised against

@@ -1,5 +1,5 @@
 //! `HostError` — the one typed error the host runtime raises
-//! ( "fail loud"). Everything a fan-out or a single
+//! ("fail loud"). Everything a fan-out or a single
 //! provider exchange can go wrong with is a named variant here; nothing in
 //! the hot path panics. `ocp-host` owns its own error type rather than
 //! borrowing `stella`'s so the crate stays industry-facing and dependency-
