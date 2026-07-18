@@ -1,3 +1,0 @@
-# Auto-request review from the maintainer on every PR.
-# https://docs.github.com/articles/about-code-owners
-*       @macanderson
