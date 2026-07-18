@@ -1091,7 +1091,8 @@ impl Store {
         let Ok(usage) = usage::UsageStore::open_default() else {
             return false;
         };
-        self.sync_to_usage(execution_id, &root, &usage).unwrap_or(false)
+        self.sync_to_usage(execution_id, &root, &usage)
+            .unwrap_or(false)
     }
 
     /// Bring the database to [`SCHEMA_VERSION`]. `PRAGMA user_version` 0 is
@@ -2585,7 +2586,13 @@ mod tests {
             )
             .unwrap();
         store
-            .record_event(id, 4, &AgentEvent::Text { delta: "done".into() })
+            .record_event(
+                id,
+                4,
+                &AgentEvent::Text {
+                    delta: "done".into(),
+                },
+            )
             .unwrap();
 
         // Materialize the normalized tool_calls log from the events.

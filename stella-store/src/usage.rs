@@ -322,8 +322,18 @@ mod tests {
             .sync_execution(&rollup(
                 1,
                 vec![
-                    ToolBucket { tool: "grep".into(), surface: "native".into(), calls: 2, errors: 0 },
-                    ToolBucket { tool: "read_file".into(), surface: "native".into(), calls: 1, errors: 1 },
+                    ToolBucket {
+                        tool: "grep".into(),
+                        surface: "native".into(),
+                        calls: 2,
+                        errors: 0,
+                    },
+                    ToolBucket {
+                        tool: "read_file".into(),
+                        surface: "native".into(),
+                        calls: 1,
+                        errors: 1,
+                    },
                 ],
             ))
             .unwrap();
@@ -338,7 +348,12 @@ mod tests {
         let usage = UsageStore::in_memory().unwrap();
         let r = rollup(
             7,
-            vec![ToolBucket { tool: "grep".into(), surface: "native".into(), calls: 2, errors: 0 }],
+            vec![ToolBucket {
+                tool: "grep".into(),
+                surface: "native".into(),
+                calls: 2,
+                errors: 0,
+            }],
         );
         usage.sync_execution(&r).unwrap();
         usage.sync_execution(&r).unwrap(); // re-sync must not double-count
@@ -349,7 +364,15 @@ mod tests {
     #[test]
     fn two_projects_aggregate_independently_but_share_tool_totals() {
         let usage = UsageStore::in_memory().unwrap();
-        let mut a = rollup(1, vec![ToolBucket { tool: "grep".into(), surface: "native".into(), calls: 3, errors: 0 }]);
+        let mut a = rollup(
+            1,
+            vec![ToolBucket {
+                tool: "grep".into(),
+                surface: "native".into(),
+                calls: 3,
+                errors: 0,
+            }],
+        );
         usage.sync_execution(&a).unwrap();
         a.project_id = "proj_b".into();
         a.project_name = "arena".into();
