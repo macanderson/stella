@@ -1,0 +1,75 @@
+---
+title: Hooks
+description: Run shell commands on Stella's agent lifecycle events — SessionStart, PreToolUse, and PostToolUse — configured under the hooks key in settings.json.
+---
+
+Hooks are shell commands that fire on agent lifecycle events. They are configured under the `hooks` key in your `settings.json` and follow Claude Code parity, so existing hook knowledge carries over.
+
+Each hook receives the event payload as **JSON on stdin**, so your command can read the event details and react to them.
+
+<Callout type="info">
+  This page covers the **config-driven shell hooks** — the `hooks` key in `settings.json`,
+  no code required. For the *programmatic* in-process event bus (observe every event, gate
+  actions with allow / modify / deny / require-approval, in code when you embed Stella's
+  engine), see [Extension hooks](/docs/extensions).
+</Callout>
+
+## Events
+
+Stella fires hooks on three lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
+
+| Event | When it runs | Blocking? | Matcher |
+| --- | --- | --- | --- |
+| `SessionStart` | Once before the turn. | No — output is used as context. | Ignored. |
+| `PreToolUse` | Before a tool executes. | Yes — a non-zero exit blocks the tool. | Glob over the tool name. |
+| `PostToolUse` | After a tool executes. | No — side effects only, never blocks. | Glob over the tool name. |
+
+### `SessionStart`
+
+Runs once before the turn begins. Anything the hook prints to **stdout is appended to the system prompt** as extra context — a handy way to inject environment details, project conventions, or the current date into every session. The matcher is **ignored** for this event.
+
+### `PreToolUse`
+
+Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool does not run, and the model receives the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target a single tool such as `bash` or a family of tools.
+
+### `PostToolUse`
+
+Runs after a tool executes. It is for **side effects only and never blocks** — its exit status cannot stop or undo the tool call that already ran. Use it for logging, formatting, notifications, or similar follow-up work. The matcher is a **glob over the tool name**.
+
+## Timeouts
+
+Each hook may set a `timeoutMs`, the maximum time the command is allowed to run:
+
+- **Default:** `60000` (60 seconds).
+- **Hard maximum:** `600000` (600 seconds / 10 minutes).
+
+## Example
+
+The following `settings.json` runs `./scripts/guard.sh` before every `bash` tool call, with a 5-second timeout. Because it is a `PreToolUse` hook, a non-zero exit from the script blocks the `bash` call. Each hook runs as `bash -c <command>` with its working directory set to the workspace root, so a relative path like `./scripts/guard.sh` resolves from the repository root.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/guard.sh",
+            "timeoutMs": 5000
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+<Callout type="warn">
+**Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless you set `STELLA_PROJECT_HOOKS=1` — otherwise the merged hook set is rebuilt from the user and org-managed scopes alone, and a stderr notice names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.config/stella/settings.json`) always load.
+</Callout>
+
+<Callout type="info">
+Hooks live in the same `settings.json` that carries your provider configuration. See the [settings documentation](/docs/configuration/settings) for how the file is resolved and merged across scopes.
+</Callout>

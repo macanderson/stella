@@ -1,0 +1,40 @@
+---
+title: stella version
+description: Print the installed Stella version and exit.
+---
+
+Print the version of the installed `stella` binary and exit.
+
+## Synopsis
+
+```bash
+stella version
+```
+
+A top-level flag prints the version too, in clap's default format (no `v` prefix):
+
+```bash
+stella --version
+```
+
+## Output
+
+The `version` subcommand prints a `v`-prefixed line:
+
+```text
+stella v0.3.9
+```
+
+`stella --version` prints clap's default form instead — the binary name, a space, then the
+bare version:
+
+```text
+stella 0.3.9
+```
+
+The exact number tracks the release you installed. Binaries built in dev mode
+(`scripts/dev.sh`) append a git-sha stamp, e.g. `stella v0.3.9-dev.abc1234`; released
+binaries print the bare semver.
+
+Use it to confirm an install or upgrade, or to capture the version in a CI log. This
+command needs no provider or API key configured.

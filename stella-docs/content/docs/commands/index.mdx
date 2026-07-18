@@ -1,0 +1,93 @@
+---
+title: Commands
+description: Overview of every Stella subcommand, the default chat behavior, global flags, and exit codes.
+---
+
+The `stella` binary is a fast, BYOK (bring-your-own-key), model-agnostic terminal coding agent. Every piece of functionality is exposed through a subcommand.
+
+Running `stella` with **no subcommand** opens the [Command Deck](/docs/commands/chat) — a tabbed terminal UI — exactly as if you had run `stella chat`. Pass `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead; the deck also steps aside automatically when stdin or stdout is not a terminal.
+
+```bash
+# These two invocations are identical
+stella
+stella chat
+```
+
+## Subcommands
+
+| Command | Purpose |
+| --- | --- |
+| `stella run <prompt>` | Send a one-shot prompt, non-interactive (staged pipeline by default). |
+| `stella chat` | Interactive session — the Command Deck TUI (the default when no subcommand is given). |
+| `stella goal <goal>` | Work in judged rounds until a judge model confirms the goal is met. |
+| `stella monitor [target]` | Watch CI for a branch/PR and fix failures until fully green. |
+| `stella init` | Analyze the workspace, infer its domain taxonomy, and build the code-graph index. |
+| `stella fleet <tasks...>` | Fan tasks out to a fleet of worker agents — one git worktree per task. |
+| `stella graph <op> <target>` | Query the code graph built by `stella init` (offline, no API key). |
+| `stella models` | List configured providers and available models. |
+| `stella stats` | Summarize cost, tokens, and resolve rate per provider/model from local telemetry. |
+| `stella memory` | Inspect memories through the citation loop, and promote one to a project rule. |
+| `stella mcp` | Manage MCP servers — search a registry, install, list, and show usage telemetry. |
+| `stella tools` | List every tool available to the agent this session. |
+| `stella config` | Show the fully resolved configuration. |
+| `stella version` | Print the version and exit. |
+
+Each command page in this section documents its usage synopsis, behavior, relevant flags, and realistic examples.
+
+## Global flags
+
+The following flags apply to **every** command. Most have a corresponding environment variable so you can set it once for a shell session or in your CI configuration — the exception is `--api-key`, which is intentionally env-less (use `credentials.toml` or a provider key env var such as `ANTHROPIC_API_KEY` instead).
+
+Because these are top-level flags, place them **before** the subcommand — e.g. `stella --output-format json run "…"`, not `stella run "…" --output-format json`.
+
+| Flag | Env var | Default | Meaning |
+| --- | --- | --- | --- |
+| `--model <provider/model_id>` | `STELLA_MODEL` | auto-detected | Pin the worker model, e.g. `zai/glm-5.2`, `anthropic/claude-fable-5`, `openai/gpt-5.5`, `local/llama3.3`. |
+| `--api-key <key>` | — | none | Highest-precedence step of the credential chain. Requires an explicit `--model provider/...` (a bare key is ambiguous). |
+| `--base-url <url>` | `STELLA_BASE_URL` | provider default | Required with `--model local/<model>` to point at a local OpenAI-compatible server; an optional proxy override for any other provider. |
+| `--output-format <text\|json\|stream-json>` | `STELLA_OUTPUT_FORMAT` | `text` | Response rendering mode, honored by `stella run` (the interactive `chat`/`goal`/`monitor` modes always render text). See the table below. |
+| `--budget <usd>` | `STELLA_BUDGET` | none (observed) | Hard USD spend cap for the whole run/session. Must be positive and finite. |
+| `--plain` | `STELLA_PLAIN=1` | off | Use the plain line-based REPL for chat instead of the Command Deck (also auto-selected on a non-TTY). |
+| `--no-anim` | `STELLA_NO_ANIM` / `NO_COLOR` | off | Freeze all deck animation to a static frame (for CI and asciinema-style recordings). |
+
+<Callout type="warn">
+Prefer an environment variable or `credentials.toml` for anything long-lived. A key passed with `--api-key` is visible in your shell history and in `ps` output.
+</Callout>
+
+### `--output-format` values
+
+| Value | Behavior |
+| --- | --- |
+| `text` | Interactive, human-readable render (the default). |
+| `json` | One final JSON object emitted at the end of the run (headless). |
+| `stream-json` | One JSON line per `AgentEvent` as it happens (headless streaming). |
+
+### `--budget` modes
+
+| Mode | How to trigger | Behavior |
+| --- | --- | --- |
+| Observed | Omit `--budget` | Spend is metered for the cost summary but never blocks. |
+| Enforced | Pass `--budget <usd>` | A hard cap. Work aborts cleanly (never mid-tool) once spend exceeds the cap. |
+
+Token usage, cost, and per-step metering are recorded in a local SQLite store on your disk (`<workspace>/.stella/store.db`) — nothing is sent anywhere. See [`stella stats`](/docs/commands/stats).
+
+## Model selection
+
+If you do not pass `--model`, Stella auto-detects a provider by picking the first one with a resolvable credential, in this preference order:
+
+```text
+zai, anthropic, openai, xai, deepseek, gemini, openrouter, then vertex, and bedrock LAST
+```
+
+`vertex` and `bedrock` are checked last so that generic AWS or Google credentials present for other reasons never hijack selection. To be explicit, pin a model with `--model provider/model_id`.
+
+## Exit codes
+
+Every command follows standard shell conventions:
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Success. |
+| non-zero | An error occurred (for example, a missing credential, an aborted budget-capped run, or a failed goal). |
+
+This makes Stella safe to compose in scripts and CI pipelines — check `$?` (or rely on `set -e`) to react to failures.

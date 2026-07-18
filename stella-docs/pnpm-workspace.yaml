@@ -1,0 +1,7 @@
+# pnpm 11 reads build-script approvals from here (no longer from package.json's
+# "pnpm" field). Both deps ship prebuilt platform binaries via optional deps, so
+# approving their build scripts just lets `pnpm install` exit cleanly — which
+# Next 16's pre-build dependency check (and Vercel) require.
+allowBuilds:
+  esbuild: true
+  sharp: true

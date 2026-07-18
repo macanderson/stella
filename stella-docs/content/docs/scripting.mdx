@@ -1,0 +1,84 @@
+---
+title: Scripting & automation
+description: Run Stella headlessly in CI with JSON and streaming-JSON output, environment-variable configuration, and enforced budgets.
+---
+
+Stella is built to run unattended. The `--output-format` flag switches from the
+human-oriented terminal rendering to machine-readable output, and every important flag has
+an environment-variable equivalent for CI.
+
+## Output formats
+
+`--output-format` (env `STELLA_OUTPUT_FORMAT`) takes one of three values:
+
+| Value | Shape | Use |
+| --- | --- | --- |
+| `text` | Interactive human rendering (default) | Local, interactive use |
+| `json` | One final JSON object summarizing the turn | Capture a result in a script |
+| `stream-json` | One JSON line per agent event, as it happens | Live progress in a pipeline |
+
+`stream-json` is a line-per-event serialization of Stella's internal event enum — a stable
+machine interface you can parse incrementally.
+
+```bash
+# One final JSON object
+stella --output-format json run "list the public API of the auth module"
+
+# Newline-delimited event stream, parsed as it arrives
+stella --output-format stream-json run "fix the failing test" | while IFS= read -r line; do
+  echo "$line" | jq -r '.type // "event"'
+done
+```
+
+## Configure via environment
+
+Every core flag has an environment variable, so a CI job can be configured without editing
+the command line:
+
+| Flag | Environment variable |
+| --- | --- |
+| `--model` | `STELLA_MODEL` |
+| `--base-url` | `STELLA_BASE_URL` |
+| `--output-format` | `STELLA_OUTPUT_FORMAT` |
+| `--budget` | `STELLA_BUDGET` |
+
+```bash
+export STELLA_MODEL=anthropic/claude-fable-5
+export STELLA_OUTPUT_FORMAT=stream-json
+export STELLA_BUDGET=5
+stella run "update the changelog for the pending release"
+```
+
+## Headless credentials
+
+In CI, supply the provider key through the environment (or a mounted
+[`settings.json`](/docs/configuration/settings)) — never the interactive prompt, which is
+skipped when there is no TTY:
+
+```bash
+export ANTHROPIC_API_KEY="$SECRET_ANTHROPIC_KEY"
+stella --output-format json run "generate release notes from the diff since the last tag"
+```
+
+<Callout type="warn">
+  With no resolvable key and no TTY, Stella fails fast with a clear error rather than
+  hanging on a prompt that can never be answered. Make sure a key is in the environment
+  before the run.
+</Callout>
+
+## Enforced budgets in CI
+
+Pair headless runs with an [enforced budget](/docs/telemetry#budget-observed-vs-enforced)
+so an automated job can never overspend:
+
+```bash
+stella --budget 3 --output-format json run "port the utils module to the new client"
+```
+
+Work aborts cleanly once the cap is reached — never mid-tool — so the workspace is left in
+a consistent state.
+
+## Exit codes
+
+`stella` exits `0` on success and non-zero on failure (an unresolved credential, an
+invalid flag, or an aborted run), so you can gate a pipeline on its result.

@@ -1,0 +1,69 @@
+---
+title: Telemetry & budget
+description: Local-only token, cost, and step metering in a local SQLite store — and how --budget turns metering into a hard spend cap.
+---
+
+Stella meters every run **locally**. Token usage, cost, and per-step accounting land in a
+SQLite store on your disk — nothing is sent anywhere.
+
+## Local metering
+
+| What | Where |
+| --- | --- |
+| Token usage, cost, per-step metering | `<workspace>/.stella/store.db` (SQLite) |
+
+Because the store is a real SQLite file, you can inspect it with any SQLite client after a
+run — e.g. `sqlite3 <workspace>/.stella/store.db` — and every execution, its model, and its
+cost are queryable on your own machine. WAL is enabled, so a read-only reader like
+[`stella stats`](/docs/commands/stats) is never blocked by a live session. Stella never
+transmits this data.
+
+## Budget: observed vs. enforced
+
+The `--budget` flag (or the `STELLA_BUDGET` environment variable) attaches a USD spend
+limit to the whole run or session.
+
+- **Observed mode (default, no `--budget`)** — Stella meters spend for the end-of-run cost
+  summary but never blocks. Use it to *see* what a task costs.
+- **Enforced mode (`--budget <usd>`)** — a hard cap. Once total spend exceeds the limit,
+  work aborts **cleanly** — never in the middle of a tool call — so you are never left with
+  a half-applied edit.
+
+```bash
+# Observed: meter the cost, never block
+stella run "summarize the architecture of this repo"
+
+# Enforced: stop cleanly once spend passes $2.00
+stella --budget 2.00 goal "all tests pass and clippy is clean"
+
+# Via environment, e.g. in CI
+export STELLA_BUDGET=5
+stella run "port the utils module to the new API"
+```
+
+<Callout type="info">
+  The budget must be a positive, finite dollar amount. It applies to the entire run or
+  interactive session, not per turn.
+</Callout>
+
+## Cost summary
+
+Every run ends with a cost summary derived from the same metering that feeds the local
+SQLite store, so the number you see matches what was recorded locally.
+
+## Seeing your usage
+
+Three ways to read the telemetry back, all local:
+
+- **[`stella observe`](/docs/telemetry/dashboard)** — the Observatory, a loopback-only web
+  dashboard (default `http://127.0.0.1:7787/`): runs, spend, resolve rates, **$/resolved**
+  per model, tool and file leaderboards, the memory plane, MCP traffic, and the fleet
+  ledger.
+- **[`stella stats`](/docs/commands/stats)** — the same per-provider/model aggregation in
+  the terminal, as a table, JSON, or CSV.
+- **`/export`** (in the Command Deck) — a portable ZIP with raw JSON dumps and a
+  self-contained `dashboard.html` report. See
+  [the dashboard page](/docs/telemetry/dashboard).
+
+Every file it reads, creates, updates, or deletes is also recorded per run — see
+[Files touched](/docs/telemetry/files-touched).

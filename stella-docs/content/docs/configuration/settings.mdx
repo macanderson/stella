@@ -1,0 +1,199 @@
+---
+title: settings.json
+description: Override any provider's base URL, API key, display name, or default model — merged across a project, org-managed, and user scope hierarchy.
+---
+
+`settings.json` is Stella's configuration file. Its `providers` map lets you override the
+built-in defaults for any provider — **without reaching for a provider-specific
+environment variable**. It is the recommended way to, for example, route a Z.ai coding-plan
+subscription through its dedicated endpoint.
+
+## The `providers` map
+
+Keyed by provider id. Every field is optional — supply only what differs from the built-in
+default:
+
+```json
+{
+  "providers": {
+    "zai": {
+      "id": "zai",
+      "name": "ZAI Provider",
+      "base_url": "https://api.z.ai/api/coding/paas/v4",
+      "api_key": "your_api_key"
+    }
+  }
+}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | string | Optional restatement of the map key; if present it **must equal the key** — a mismatch is a hard, named load error (guards against copy-pasting the wrong provider) |
+| `name` | string | Display name shown by `stella config` / `stella models` |
+| `base_url` | string | Base URL requests go to (a coding-plan endpoint, a proxy, a gateway) |
+| `api_key` | string | API key for this provider (slots into the [credential chain](/docs/getting-started/providers#the-credential-chain)) |
+| `api_key_env` | string | Name of an environment variable to read the key from — safer than an inline `api_key` in a committed project file |
+| `default_model` | string | Model used when none is pinned with `--model` |
+| `dialect` | string | Wire adapter for a **new** provider: `openai-compatible` (default) \| `openai-responses` \| `anthropic` \| `gemini` (`vertex`/`bedrock` are reserved to built-ins) |
+
+The map key **is** the provider id (`zai` above). Leave a field out entirely to inherit the
+built-in default — note that an **empty string** for `base_url` or `name` overwrites the
+built-in with an empty value (breaking the provider) rather than being ignored; only
+`api_key` and `default_model` treat empty as unset.
+
+<Callout type="info">
+  `providers` both overrides built-ins and **defines brand-new providers**: use an id that
+  isn't built-in, set the required `base_url`, and optionally a `dialect` (defaults to
+  `openai-compatible`). That is how you point Stella at any OpenAI-compatible gateway from
+  config alone.
+</Callout>
+
+## The scope hierarchy
+
+`settings.json` is read across three scopes and merged, applied lowest to highest so the
+more specific scope wins. The merge is **field by field** for `providers` (and last-scope-
+wins for `mcp`); `hooks` are the exception — they **concatenate** across scopes (see
+[Lifecycle hooks](#lifecycle-hooks)).
+
+| Preference | Scope | Path |
+| --- | --- | --- |
+| Highest | **project** | `<workspace>/.stella/settings.json` |
+| Middle | **org-managed** | `STELLA_MANAGED_SETTINGS`, else the platform default (below) |
+| Lowest | **user** | `~/.config/stella/settings.json` |
+
+The org-managed path is resolved as:
+
+1. The `STELLA_MANAGED_SETTINGS` environment variable (an explicit path — for MDM/CI), else
+2. `/Library/Application Support/stella/settings.json` on macOS, or
+3. `/etc/stella/settings.json` on other Unix.
+
+A project entry overrides an org-managed one, which overrides a user one — **per field**.
+So a project can change just a base URL while inheriting the API key from a higher scope.
+This lets an organization ship shared defaults (a gateway base URL, a team key) that a
+project can still override.
+
+<Callout type="info">
+  A missing file at any scope is fine — it is simply skipped. A file that is present but
+  malformed is reported as a named error rather than silently dropping your configuration.
+</Callout>
+
+### Worked example
+
+Suppose three files are present:
+
+```json title="~/.config/stella/settings.json (user)"
+{
+  "providers": {
+    "zai": {
+      "api_key": "sk-personal",
+      "name": "User Name",
+      "base_url": "https://api.z.ai/api/paas/v4"
+    }
+  }
+}
+```
+
+```json title="org-managed (STELLA_MANAGED_SETTINGS)"
+{
+  "providers": {
+    "zai": {
+      "name": "Org Gateway",
+      "base_url": "https://org-gateway.example/v4"
+    }
+  }
+}
+```
+
+```json title="<workspace>/.stella/settings.json (project)"
+{
+  "providers": {
+    "zai": {
+      "base_url": "https://api.z.ai/api/coding/paas/v4"
+    }
+  }
+}
+```
+
+The merged result for `zai`:
+
+- `base_url` → `https://api.z.ai/api/coding/paas/v4` — **project wins**
+- `name` → `Org Gateway` — **org-managed wins** over user (project didn't set it)
+- `api_key` → `sk-personal` — from user (only the user scope set it)
+
+## Precedence within a field
+
+`settings.json` values are one link in a larger chain. Command-line flags still win:
+
+**Base URL** — `--base-url` flag &gt; the `ZAI_GLM_CODING_PLAN=1` toggle (Z.ai only) &gt;
+`settings.json` `base_url` &gt; the built-in default. So if both the env toggle and a
+`settings.json` `base_url` are set for Z.ai, the env toggle wins.
+
+**API key** — `--api-key` flag &gt; the provider's env var &gt; `settings.json`
+`api_key` &gt; `~/.config/stella/credentials.toml` &gt; interactive prompt. See the
+[credential chain](/docs/getting-started/providers#the-credential-chain).
+
+An API key configured **only** in `settings.json` is enough for Stella to auto-detect and
+run that provider — no provider-specific environment variable required.
+
+## The Z.ai coding-plan example
+
+If you subscribe to a Z.ai coding plan, point `providers.zai.base_url` at the coding
+endpoint instead of setting the bespoke `ZAI_GLM_CODING_PLAN=1` variable:
+
+```json title=".stella/settings.json"
+{
+  "providers": {
+    "zai": {
+      "base_url": "https://api.z.ai/api/coding/paas/v4"
+    }
+  }
+}
+```
+
+Your `ZAI_API_KEY` env var (or a `settings.json` `api_key`) supplies the key; the base URL
+now comes from the file. Verify:
+
+```bash
+stella config    # Base URL should read https://api.z.ai/api/coding/paas/v4
+```
+
+<Callout type="warn">
+  The `ZAI_GLM_CODING_PLAN=1` environment toggle still works and actually takes precedence
+  over a `settings.json` `base_url` for Z.ai — so if you switch to the provider-agnostic
+  setting, unset the env toggle to avoid a surprising override. It may be removed in a future
+  release.
+</Callout>
+
+## The `mcp` section
+
+`settings.json` also has a top-level `mcp` section. Its `registry_url` sets the base URL of
+the MCP Server Registry that `stella mcp search` and the deck's MCP tab query; when unset it
+falls back to the official registry. Like `providers`, it merges last-scope-wins per field,
+so a project can point at a different registry than the user default.
+
+```json
+{
+  "mcp": {
+    "registry_url": "https://registry.example.internal/mcp"
+  }
+}
+```
+
+## Lifecycle hooks
+
+`settings.json` also carries `hooks` — shell commands that fire on agent lifecycle events.
+That schema is documented on the [Hooks](/docs/agent-tools/hooks) page.
+
+Unlike `providers`, hooks **concatenate** across scopes — every scope can add matchers and
+none replaces another's. Hooks from the user and org-managed scopes always load, but hooks
+declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) load
+**only** when `STELLA_PROJECT_HOOKS=1` is set (a trust boundary, so a cloned repo can't run
+commands on your machine unbidden); a stderr notice names any skipped project hooks.
+
+## Security
+
+`settings.json` may contain an API key in plaintext. If you store keys there, treat the
+file like any other secret — restrict its permissions and keep the project-scope file out
+of version control (add `.stella/settings.json` to `.gitignore` if it holds credentials).
+For keys specifically, [`credentials.toml`](/docs/configuration/credentials) is written
+with owner-only permissions and is the safer home.

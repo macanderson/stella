@@ -1,0 +1,155 @@
+---
+title: Inference Pipeline
+description: How Stella turns a prompt into verified work — the agent step loop, the staged pipeline (triage, plan, scope, witness, execute, verify, judge), deterministic verification, and per-role model routing.
+---
+
+# Inference Pipeline
+
+Stella's answer to "did the agent actually do the work?" is structural, not
+rhetorical. Every prompt runs through an **inference pipeline** that separates
+*doing* the work from *verifying* it — with deterministic checks preferred
+over model opinion, and an independent judge preferred over self-assessment.
+
+## The foundation: the step loop
+
+At the bottom of everything is a simple, single-threaded **step loop**:
+
+1. **The model proposes tool calls.** Given the conversation so far — the
+   prompt, prior tool results, recalled memories and rules — the model decides
+   what to do next.
+2. **Tools execute.** Stella runs each proposed tool: reading files, editing
+   code, running commands. Independent read-only calls fan out in parallel.
+3. **Results feed back.** Tool output is appended to the conversation.
+4. **Repeat until done.** The loop continues until the model stops proposing
+   actions, a [budget](/docs/telemetry) trips, or a backstop fires.
+
+There is no coordinator process and no hidden multi-agent swarm — one
+deterministic loop: plan, fan tools out, observe, compact if the conversation
+gets noisy, repeat. When the conversation approaches the compaction budget,
+Stella compacts it and keeps going.
+
+`stella run --no-pipeline` and interactive chat drive this raw loop directly.
+Everything else in this page is structure built **on top of** it.
+
+## The staged pipeline
+
+`stella run` (and pipeline-mode turns in the Command Deck) wraps the step loop
+in stages:
+
+```
+triage → recall → plan → scope review → witness → execute → verify → judge → revise
+```
+
+### 1. Triage
+
+A fast, cheap classification call decides how much process the task deserves —
+a **lookup** ("what does this function do?") skips planning entirely, a
+**single-file** change gets a light path, a **multi-file** change gets the full
+pipeline. Triage runs under a hard latency ceiling (10 seconds); if the model
+doesn't answer in time, Stella falls through to the full path rather than
+waiting. Triage can run on its own [configured model](/docs/configuration/agent-engine-config) —
+typically the cheapest, fastest one you have.
+
+### 2. Plan
+
+The planner produces explicit steps from the goal, recalled context, and a
+repository-structure summary. A plan that fails to parse gets one bounded
+repair attempt, then degrades to a single-step plan — a stubborn planner never
+blocks the work.
+
+### 3. Scope review
+
+If the plan's blast radius crosses configured thresholds (estimated files
+touched), Stella pauses for an interactive **scope review** — you approve,
+trim, or abort the plan before any file changes. Headless runs must opt in to
+bypass this gate explicitly; there is no silent auto-approve.
+
+### 4. Witness
+
+Verification needs something deterministic to check. If you passed
+`--test-command`, that command is the oracle. If not, an independent model —
+the **witness author**, never the worker — writes a minimal *failing* test
+that pins down the intended behavior. Witness files are watched for tampering:
+a worker that edits the witness test doesn't get credit for "passing" it.
+
+### 5. Execute
+
+The worker runs the step loop against the plan — reading, editing, building,
+testing — with the full [toolbelt](/docs/agent-tools) and its
+[configured model, prompt, and parameters](/docs/configuration/agent-engine-config).
+
+### 6. Verify — the deterministic ladder
+
+Verification prefers evidence over opinion, in strict order:
+
+- **The flip oracle.** The test command (yours or the witness's) must **fail
+  before** the change and **pass after** it. A suite that was already green
+  proves nothing; the fail→pass flip is what proves the change did the work.
+- **The zero-diff guard.** A run that changed nothing (including untracked
+  files) can never claim success.
+- **The diff budget.** A small diff (≤ 400 changed lines by default) backed by
+  deterministic evidence can submit without any model judge at all.
+- **Escalation to the judge** happens only when deterministic evidence is
+  unavailable or inconclusive.
+
+The same discipline is available to the agent as a tool:
+**`verify_done`** replays a new test against the *previous* code in a shadow
+worktree at `git HEAD` — the test must fail there and pass on the change
+(**WITNESS CONFIRMED**). A green suite alone is never accepted as proof.
+
+### 7. Judge
+
+When a model verdict is needed, the **judge** — a separate model call, by
+preference from a *different model family* than the worker — reviews the goal,
+the diff, and the evidence summary, and answers with a leading `PASS` or
+`FAIL`. The judge never sees the worker's narration, only what actually
+changed. If the judge call fails, Stella falls back to a conservative
+heuristic verdict rather than hanging or guessing.
+
+### 8. Revise
+
+A failed verification sends the worker back with the failure evidence — up to
+a bounded number of revision turns (2 by default). After two *consecutive*
+deterministic failures, Stella spends one judge call on **distress guidance**:
+a course-correction note that rides with the next revision prompt instead of
+letting the worker keep digging the same hole.
+
+### Best-of-N candidates (opt-in)
+
+The pipeline can generate N candidate executions and select the best by
+verification score — paid for with N× the execution cost, so it is strictly
+opt-in.
+
+## Per-role model routing
+
+Each stage can run on its own model, provider, and gateway — see
+[Agent engine config](/docs/configuration/agent-engine-config). The router
+that resolves each role also carries reliability machinery:
+
+- **Per-provider circuit breakers.** Three consecutive transport failures open
+  a provider's breaker; routing skips it and reports the fallback visibly —
+  never a silent mid-turn switch. After a cooldown, one trial call decides
+  whether the breaker closes.
+- **Cross-family judging.** The judge prefers a healthy provider whose model
+  *family* differs from the worker's (Claude judging GLM's work, GPT judging
+  Claude's). With only one family configured, the judge degrades to the same
+  family — with a visible caveat, never an error.
+- **Soft degradation everywhere.** A configured role model whose provider has
+  no credential falls back to the worker with a notice. Configuration can
+  never turn a runnable pipeline into an error.
+
+## Budget enforcement
+
+`--budget <usd>` caps the whole run. The pipeline checks the meter **between**
+steps and stages and aborts cleanly — never mid-tool-call — so you are never
+left with a half-applied edit. See [Telemetry &amp; budget](/docs/telemetry).
+
+## Where each mode picks it up
+
+| Mode | Uses |
+| --- | --- |
+| `stella run` | The full staged pipeline (default) |
+| `stella run --no-pipeline` | The raw step loop |
+| Command Deck (`/pipeline` ON, the default) | The staged pipeline per turn |
+| [`stella goal`](/docs/agent-modes/goal-mode) | Pipeline rounds + an independent goal judge |
+| [`stella fleet`](/docs/agent-fleets) | The pipeline per worker, in parallel worktrees |

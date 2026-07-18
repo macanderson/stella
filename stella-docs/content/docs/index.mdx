@@ -1,0 +1,70 @@
+---
+title: Introduction
+description: Stella is a fast, bring-your-own-key, model-agnostic terminal coding agent. Point it at any provider, give it a goal, and let a verifier decide when the work is done.
+---
+
+**Stella** is a fast, model-agnostic coding agent that lives in your terminal. It is
+**bring-your-own-key (BYOK)**: there is no account and no sign-up — Stella runs on the
+provider credentials you already have, and everything it records stays on your machine.
+
+```bash
+export ANTHROPIC_API_KEY=your_key_here
+stella run "add a --json flag to the export command and update the tests"
+```
+
+## What makes Stella different
+
+- **BYOK, no lock-in.** Stella auto-detects the provider from whichever API keys you have
+  set. Bring Anthropic, OpenAI, Gemini, Vertex, Bedrock, xAI, DeepSeek, Z.ai, OpenRouter,
+  or any OpenAI-compatible local server.
+- **Verified outcomes.** [Goal mode](/docs/agent-modes/goal-mode) doesn't stop on a hunch — a separate
+  judge model verifies the definition of done from evidence before the loop ends.
+- **Real tools with a permission model.** Read, edit, glob, grep, shell, CI, screenshots,
+  issue tracking, and developer-defined script tools — each gated by a per-tool permission
+  model and optional [lifecycle hooks](/docs/agent-tools/hooks).
+- **Configuration that scales to a team.** Override any provider's base URL, key, or model
+  in [`settings.json`](/docs/configuration/settings), merged across a project →
+  org-managed → user hierarchy.
+- **Local-first telemetry.** Token usage, cost, and per-step metering land in a local
+  SQLite store (`.stella/store.db`) on your disk. Nothing is sent anywhere.
+
+## How it fits together
+
+```text
+  you ──▶ stella ──▶ provider (your key)
+             │
+             ├─ tools: read · edit · bash · grep · ci · verify · …
+             ├─ MCP servers (.stella/mcp.toml)
+             ├─ memory & code graph (.stella/)
+             └─ judge (goal mode) ──▶ "is the goal actually met?"
+```
+
+Stella sends your prompt to the model you selected, lets the model call tools to read and
+change your workspace, feeds the results back, and repeats until the task is done. In
+[goal mode](/docs/agent-modes/goal-mode) a second model judges the result from evidence, so the loop
+ends on a verified outcome rather than the worker's own say-so.
+
+## The documentation
+
+- **[Getting Started](/docs/getting-started)** — install, initialize a repo, configure
+  provider keys.
+- **[Inference Pipeline](/docs/inference-pipeline)** — triage → plan → witness → execute →
+  verify → judge: how work gets *proven*, not just done.
+- **[Context Engine](/docs/context-engine)** — memories, the tree-sitter code graph,
+  reflections, and the prompt-cache-native recall that makes them cheap.
+- **[Agent Modes](/docs/agent-modes)** — Command Deck chat, one-shot runs, judged goal
+  mode, CI monitoring.
+- **[Agent Fleets](/docs/agent-fleets)** — parallel workers in isolated git worktrees.
+- **[Agent Tools](/docs/agent-tools)** — the built-in toolbelt, skills, MCP servers,
+  custom commands, hooks, and permissions.
+- **[Configuration &amp; Settings](/docs/configuration)** — `settings.json`, per-agent
+  engine config, credentials, and the scope hierarchy.
+- **[Telemetry &amp; Usage Analytics](/docs/telemetry)** — local-only metering, the
+  dashboard, budgets, and the files-touched ledger.
+- **[Donate](/docs/donate)** — keep independent, local-first tooling alive.
+- **[Commands](/docs/commands)** — the full command and flag reference.
+
+<Callout type="info">
+  Stella is BYOK — it never proxies your traffic through a hosted service. Your keys call
+  your provider directly, and your telemetry stays local.
+</Callout>

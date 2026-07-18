@@ -1,0 +1,137 @@
+---
+title: Context Engine
+description: How Stella remembers — bi-temporal memory, prompt-cache-native recall, the citation loop, reflections, the tree-sitter code graph, and the domain taxonomy that ties it all together.
+---
+
+# Context Engine
+
+Stella accumulates knowledge about your workspace so each session starts
+smarter than a blank slate — and it does so **prompt-cache-natively**: durable
+knowledge rides the provider's prompt cache instead of being re-billed at
+full price every call.
+
+## Where knowledge lives
+
+Everything is on your disk, under `.stella/`:
+
+| Path | What it holds |
+| --- | --- |
+| `.stella/memories/*.md` | Workspace memories — one Markdown lesson per file, written by `save_memory` |
+| `.stella/context.db` | The **bi-temporal** context store: episodes, reflection memories, domain facts |
+| `.stella/reflections.jsonl` | The reflection mining log — one JSON lesson per line |
+| `.stella/codegraph.db` | The tree-sitter code-graph index |
+| `.stella/rules/*.md` | Rules — promoted memories and guard rules |
+| `.stella/skills/` | Project [skills](/docs/agent-tools/skills) |
+| `.stella/domains.toml` | The domain taxonomy — the shared tagging vocabulary |
+| `.stella/store.db` | The citation ledger and [telemetry](/docs/telemetry) |
+
+*Bi-temporal* means the context store keeps both when a fact was true and
+when Stella believed it: re-running `stella init` **supersedes** stale facts
+rather than deleting them, so "what did we believe then?" stays answerable.
+
+## Two injection points, one cache discipline
+
+Stella feeds context to the model at exactly two places, chosen so the
+expensive part never changes:
+
+1. **The baked prefix (stable).** At session start, workspace memories and
+   Tier-1 rules are concatenated into the system prompt — deterministically,
+   byte-stable for the whole session. That stability is what lets the entire
+   prefix ride the provider's prompt cache (~0.1× input cost on cached
+   reads). A memory saved mid-session deliberately takes effect **next**
+   session: hot-injecting it would invalidate the cache on every save.
+2. **The recall block (volatile).** Each turn, a single `[auto-recalled
+   context]` message is refreshed **in place** right after the stable prefix
+   — never accumulating. It carries what's relevant to *this* prompt:
+   matching memories (similarity + domain overlap + recency), code-graph
+   hits, past episodes, and selected [skills](/docs/agent-tools/skills) —
+   capped by default at 5 frames / ~1,200 tokens. Nothing relevant? No block
+   at all.
+
+Recall fans out through the **Open Context Protocol (OCP)** host to
+in-process providers — the workspace memory store and the code graph — fused
+by score under one token budget.
+
+## The citation loop: memories that earn their place
+
+Memory in Stella is not write-only. It is a feedback loop:
+
+- **`save_memory`** writes a lesson (a slug plus ≤ 2,000 chars of Markdown)
+  to `.stella/memories/`.
+- Recalled memories carry a stable id (`nod_…`). When one actually informs a
+  turn, the model calls **`cite_memory`** with a usefulness score (1–5), a
+  truthfulness flag, and a remark. Citations aggregate into a ledger in
+  `.stella/store.db`.
+- **`stella memory list`** ranks memories by citation count, average
+  usefulness, and truthful rate. **`stella memory validate`** flags memories
+  whose file-path anchors no longer exist.
+- **Promotion:** a memory cited successfully **more than 10 consecutive
+  times** (one negative citation resets the streak) becomes eligible for
+  `stella memory promote <id>`, which turns it into a durable rule at
+  `.stella/rules/<slug>.md`.
+- **Quarantine:** a memory repeatedly cited as *untruthful* is filtered out
+  of every future recall block. Bad memories don't just rank lower — they
+  disappear.
+
+## Reflections: learning from every working turn
+
+After any turn that did real work (tool calls happened — a pure chat turn is
+skipped to save the call), Stella spends one cheap, deterministic model call
+to extract **0–3 lessons**, tagged with allowed domains, written to both the
+context store and `.stella/reflections.jsonl`. Failed turns get a dedicated
+root-cause prompt — failure is treated as the highest-value learning signal,
+not something to forget.
+
+Every working turn is also recorded as an **episode** — a summary, the files
+touched, the outcome, and its time window — so future recall can surface
+"the last time we touched this area."
+
+Recurring lessons that keep showing up in the reflection log are
+**auto-promoted into skills** (a new `.stella/skills/<slug>/SKILL.md`),
+capped per session and never clobbering an existing skill.
+
+### Honest measurement: A/B control turns
+
+Does recall actually help? Stella measures instead of assuming: at a fixed
+rate (about every 10th turn), recall is deterministically suppressed and the
+turn recorded as a **control turn**. Comparing outcomes with and against
+controls keeps the memory system accountable for real, measured lift.
+
+## The code graph
+
+`graph_query` gives the agent structural answers instead of grep guesses,
+backed by a native **tree-sitter** index of your code:
+
+- **Languages:** Rust, Python, JavaScript, TypeScript, TSX, and SQL.
+- **Indexed:** symbol definitions and import edges.
+- **Queries:** `definitions` and `references` (by symbol name); `imports`,
+  `importers`, and `neighbors` (by file path). The same five operations back
+  the offline [`stella graph`](/docs/commands/graph) CLI.
+
+The index builds automatically: [`stella init`](/docs/getting-started/initialization)
+builds it eagerly, and every session also builds/refreshes it in the
+background — the moment it's ready, `graph_query` switches on mid-session.
+An in-process file watcher (200 ms debounce, no daemon) keeps it fresh as
+files change, for exactly as long as the session runs.
+
+<Callout type="info">
+  One honest capability gap: `importers` edges resolve for relative
+  TypeScript/JavaScript and Python imports. Rust `use` paths are indexed
+  unresolved — an empty `importers` answer for a Rust file is a limitation,
+  not a stale index.
+</Callout>
+
+## The domain taxonomy
+
+`stella init` infers a short tagging vocabulary for *your* project —
+`.stella/domains.toml` — and it becomes the connective tissue of the whole
+engine: memories, reflections, episodes, skills, and code-graph nodes all
+carry domain tags, so recall can relate a lesson, a past episode, and a file
+to the same area of the codebase.
+
+## Version-control your agent's brain
+
+Memories, rules, skills, and the taxonomy are plain files — commit them, and
+your whole team's agents share the same accumulated knowledge. The `.db`
+files are local state; see
+[what to commit](/docs/getting-started/initialization#what-to-commit).

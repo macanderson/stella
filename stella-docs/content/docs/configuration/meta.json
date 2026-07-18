@@ -1,0 +1,4 @@
+{
+  "title": "Configuration & Settings",
+  "pages": ["index", "settings", "agent-engine-config", "credentials"]
+}

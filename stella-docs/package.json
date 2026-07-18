@@ -1,0 +1,34 @@
+{
+  "name": "stella-cli-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Documentation site for the Stella CLI — stella.oxagen.sh",
+  "scripts": {
+    "dev": "next dev --port 3400",
+    "build": "NODE_ENV=production next build",
+    "start": "next start --port 3400",
+    "postinstall": "fumadocs-mdx",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fumadocs-core": "16.9.3",
+    "fumadocs-mdx": "15.0.10",
+    "fumadocs-ui": "16.9.3",
+    "lucide-react": "0.556.0",
+    "next": "16.2.10",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.0",
+    "@types/mdx": "2.0.13",
+    "@types/node": "25.9.1",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "postcss": "8.5.15",
+    "tailwindcss": "4.3.0",
+    "typescript": "5.9.3"
+  }
+}

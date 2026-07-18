@@ -1,0 +1,66 @@
+---
+title: stella mcp
+description: Manage MCP servers — search a registry, install into .stella/mcp.toml, list configured servers, and show usage telemetry.
+---
+
+Manage the Model Context Protocol servers Stella connects at session start. `stella mcp` is the scriptable half of the surface; the [Command Deck](/docs/commands/chat)'s **MCP tab** (`/mcp`) is the interactive half, where per-session enable/disable and the masked credential prompt live.
+
+For how MCP tools reach the agent, see [MCP servers](/docs/agent-tools/mcp). This page is the command reference.
+
+## Synopsis
+
+```bash
+stella mcp <list|search|install|remove|usage> [args]
+```
+
+## What it does
+
+`stella mcp` reads and writes the workspace's `.stella/mcp.toml` and talks to the MCP server registry (over HTTP) for search and install. It needs no provider API key. Servers configured here are connected at the start of each interactive session.
+
+## Subcommands
+
+### `stella mcp list`
+
+List the MCP servers configured in `.stella/mcp.toml`.
+
+```bash
+stella mcp list
+```
+
+### `stella mcp search <query>...`
+
+Search the MCP server registry (the `mcp.registry_url` from `settings.json`, else the official registry). Omit the query to page through everything; `--limit` caps the page.
+
+```bash
+stella mcp search filesystem
+stella mcp search github --limit 5
+```
+
+### `stella mcp install <name>`
+
+Install a registry server (by the name shown in `stella mcp search`) into `.stella/mcp.toml`, so you don't hand-edit the file. `--alias` sets a local alias / tool-namespace segment (default: a sanitized form of the name). Installing overwrites any existing entry — MCP servers are not versioned.
+
+```bash
+stella mcp install filesystem
+stella mcp install github --alias gh
+```
+
+### `stella mcp remove <name>`
+
+Remove a configured server from `.stella/mcp.toml` by its local name.
+
+```bash
+stella mcp remove filesystem
+```
+
+### `stella mcp usage`
+
+Show MCP tool-usage telemetry from `.stella/store.db` — calls per server and tool.
+
+```bash
+stella mcp usage
+```
+
+<Callout type="info">
+Enabling or disabling a server for a session, and entering any credentials it needs, happen in the deck's MCP tab (`/mcp`) — those are session-scoped and not part of the scriptable CLI.
+</Callout>

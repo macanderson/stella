@@ -1,0 +1,80 @@
+---
+title: Installation
+description: Install the Stella CLI via the install script, Homebrew, cargo, or from source.
+---
+
+Stella ships as a single self-contained binary named `stella`. There is no runtime to
+install alongside it.
+
+## Prerequisites
+
+- **macOS or Linux**, `x86_64` or `arm64`.
+- For the prebuilt / Homebrew paths: nothing but `curl`.
+- For `cargo install` / building from source: **Rust 1.90+** (via [rustup](https://rustup.rs)) and `git`.
+- **An API key** for any one supported provider — *or* a local OpenAI-compatible model
+  server (Ollama, vLLM, LM Studio, llama.cpp) and no key at all. See
+  [Providers &amp; models](/docs/getting-started/providers).
+- Optional: [`ripgrep`](https://github.com/BurntSushi/ripgrep) and
+  [`fd`](https://github.com/sharkdp/fd) on your `PATH` (the `grep`/`glob` tools shell out
+  to them), and `gh` for the CI and issue tools.
+
+## Install
+
+### Prebuilt binary (`curl | sh`)
+
+Installs the latest tagged release for your platform, verifies its SHA-256, and falls
+back to `cargo install` where no prebuilt binary is published:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+stella --version
+```
+
+### Homebrew
+
+Installs the prebuilt binary from the tap — no Rust toolchain needed. The release workflow
+keeps the formula in sync on every tag:
+
+```bash
+brew install macanderson/tap/stella
+# equivalently:
+brew tap macanderson/tap && brew install stella
+```
+
+### From cargo
+
+Requires Rust 1.90+ and git:
+
+```bash
+cargo install --locked --git https://github.com/macanderson/stella stella-cli
+stella --version
+```
+
+### From source
+
+```bash
+git clone https://github.com/macanderson/stella.git
+cd stella
+cargo build --release
+./target/release/stella --version
+```
+
+<Callout type="info">
+  The `curl | sh` and Homebrew paths fetch binaries published by the release workflow,
+  which runs on `v*` tags. Until the first tagged release is cut, use the cargo or
+  from-source path.
+</Callout>
+
+## Verify
+
+```bash
+stella version
+```
+
+Then confirm a provider is configured:
+
+```bash
+stella models   # every provider, its default model, key status, and base URL
+```
+
+Next: the [Quickstart](/docs/getting-started).

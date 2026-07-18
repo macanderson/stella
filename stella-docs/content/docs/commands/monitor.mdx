@@ -1,0 +1,61 @@
+---
+title: stella monitor
+description: Watch CI for a branch or PR and fix failures until it is fully green.
+---
+
+Watch CI for a branch or pull request and fix failures until the pipeline is fully green.
+
+## Synopsis
+
+```bash
+stella monitor [target] [global flags]
+```
+
+The optional `target` is a branch or PR to watch. When omitted, it defaults to `main`.
+
+## What it does
+
+`stella monitor` uses the `ci_status` tool to watch the CI runs for the given `target`. It works iteratively — inspecting each failure, fixing its root cause, then **committing and pushing the fix** before re-checking — and treats the job as a goal that is met **only when the latest CI run is all-green**.
+
+Because it is goal-shaped, `monitor` keeps working across CI runs until the pipeline passes, then exits.
+
+<Callout type="warn">
+`monitor` commits and pushes its fixes to the target branch between CI runs. Because the default target is `main`, a bare `stella monitor` will push commits directly to `main` — pass a feature branch or PR as the `target` if that is not what you want.
+</Callout>
+
+<Callout type="info">
+`stella monitor` relies on the `ci_status` tool, which reads CI state through the GitHub `gh` CLI — so `gh` must be installed and authenticated on your `PATH`. See [Tools](/docs/commands/tools) for the full built-in tool list.
+</Callout>
+
+## Flags
+
+`stella monitor` takes the [global flags](/docs/commands). The most relevant ones:
+
+| Flag | Why it matters here |
+| --- | --- |
+| `--model <provider/model_id>` | Pin the worker model used to diagnose and fix failures. |
+| `--budget <usd>` | Cap total spend while it works across CI runs. |
+
+<Callout type="info">
+`monitor` is an interactive mode and always renders human-readable text; it does **not** honor `--output-format`.
+</Callout>
+
+## Examples
+
+Watch the default `main` branch and fix failures until green:
+
+```bash
+stella monitor
+```
+
+Watch a specific branch:
+
+```bash
+stella monitor feature/payments-refactor
+```
+
+Watch a pull request and cap total spend:
+
+```bash
+stella --budget 5.00 monitor "#128"
+```

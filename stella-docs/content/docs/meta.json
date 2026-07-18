@@ -1,0 +1,19 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "index",
+    "getting-started",
+    "inference-pipeline",
+    "context-engine",
+    "agent-modes",
+    "agent-fleets",
+    "agent-tools",
+    "configuration",
+    "telemetry",
+    "donate",
+    "---Reference---",
+    "commands",
+    "extensions",
+    "scripting"
+  ]
+}

@@ -1,0 +1,39 @@
+---
+title: MCP Servers
+description: Connect Model Context Protocol servers to Stella so their tools merge into the agent at session start.
+---
+
+Stella can connect to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and merge their tools into the agent. This lets you extend the agent with capabilities that live outside your workspace — without writing a [custom script tool](/docs/agent-tools/custom-tools) for each one.
+
+## Configuration
+
+MCP servers are configured in `.stella/mcp.toml` in your workspace. Stella connects to each configured server at **session start** and merges the tools it exposes into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools.
+
+The quickest way to add a server is the [`stella mcp`](/docs/commands/mcp) command family — `stella mcp search <query>` to find one in the registry, then `stella mcp install <name>` to write the `.stella/mcp.toml` entry for you (no hand-editing). `stella mcp list` shows what's configured, and `stella mcp remove <name>` drops one.
+
+Because the tools are added at session start, connecting a new server takes effect on your next session.
+
+<Callout type="warn">
+`stella tools` does **not** enumerate MCP tools — it prints a note that MCP servers merge more tools at session start. Confirm a server is wired up with `stella mcp list`, or verify its tools from inside a session (the deck's MCP tab, `/mcp`).
+</Callout>
+
+## Example configuration
+
+```toml
+# .stella/mcp.toml
+
+[servers.filesystem]
+transport = "stdio"
+cmd = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+```
+
+A server entry needs a `transport` discriminant (`stdio` or `http`). For a stdio server, `cmd` is the executable and `args` its arguments; Stella launches it and merges the tools it reports for the session.
+
+<Callout type="warn">
+A stdio MCP subprocess runs with a **scrubbed environment** — ambient shell variables (including credentials like `ANTHROPIC_API_KEY` or `GITHUB_TOKEN`) are **not** inherited. Any variable the server needs must be listed explicitly in the entry's `env` table, e.g. `env = { GITHUB_TOKEN = "…" }`.
+</Callout>
+
+<Callout type="info">
+MCP tools are treated like any other tool once merged in: they follow the [per-tool permission model](/docs/agent-tools/permissions) and their calls can be gated or blocked with a [`PreToolUse` hook](/docs/agent-tools/hooks).
+</Callout>

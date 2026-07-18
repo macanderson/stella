@@ -1,0 +1,175 @@
+/**
+ * Stella CLI docs — styles.
+ *
+ * Brand system: "ember gold on warm ground". The identity is a gold
+ * chevron+cells terminal mark (assets/) over a warm Night surface in dark
+ * mode and a warm Paper surface in light mode. Fumadocs' neutral tokens are
+ * re-tinted here so the whole site reads as Stella rather than shadcn-neutral.
+ *
+ * Palette (from the Stella brand kit):
+ *   Highlight #FFD97A · Gold #F5B33C · Amber #E08A20
+ *   Ink #15120C · Night #0B0A08 · Paper #FBF7EF
+ *   Gradient: #FFD97A → #F5B33C (48%) → #E08A20
+ *
+ * Contrast rule: bright gold is for the Night surface and non-text accents
+ * (the mark, borders, hero glints, buttons). For link/active *text* on the
+ * light Paper surface we drop to a deeper amber so body-size text clears
+ * WCAG AA; dark mode keeps the bright gold, which clears AA on Night easily.
+ *
+ * The landing-page layer is namespaced `lp-*` so it never leaks into /docs.
+ */
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+/* Let Tailwind see Fumadocs' compiled utility classes. */
+@source "../../node_modules/fumadocs-ui/dist/**/*.js";
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Brand tokens + Fumadocs token overrides
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Raw brand scale — reference these for decorative gold anywhere. */
+  --stella-gold-bright: #ffd97a;
+  --stella-gold: #f5b33c;
+  --stella-amber: #e08a20;
+  --stella-amber-deep: #9a6a0f; /* AA-legible gold for text on Paper */
+  --stella-ink: #15120c;
+  --stella-night: #0b0a08;
+  --stella-paper: #fbf7ef;
+  --stella-gradient: linear-gradient(
+    135deg,
+    var(--stella-gold-bright) 0%,
+    var(--stella-gold) 48%,
+    var(--stella-amber) 100%
+  );
+
+  /* Light mode — warm Paper ground, deep-amber functional accent. */
+  --color-fd-background: #fbf7ef;
+  --color-fd-foreground: #1a160e;
+  --color-fd-muted: #f1ebdd;
+  --color-fd-muted-foreground: #625a4c;
+  --color-fd-card: #fffdf8;
+  --color-fd-card-foreground: #1a160e;
+  --color-fd-popover: #fffdf8;
+  --color-fd-popover-foreground: #1a160e;
+  --color-fd-border: #e8dfcd;
+  --color-fd-accent: #f1ebdd;
+  --color-fd-accent-foreground: #15120c;
+  --color-fd-primary: #9a6a0f;
+  --color-fd-primary-foreground: #fbf7ef;
+  --color-fd-secondary: #f1ebdd;
+  --color-fd-secondary-foreground: #15120c;
+  --color-fd-ring: #e08a20;
+}
+
+.dark {
+  /* Dark mode — warm Night ground, bright gold accent. */
+  --color-fd-background: #0b0a08;
+  --color-fd-foreground: #f5f1e8;
+  --color-fd-muted: #1c1710;
+  --color-fd-muted-foreground: #9c9385;
+  --color-fd-card: #141109;
+  --color-fd-card-foreground: #f5f1e8;
+  --color-fd-popover: #141109;
+  --color-fd-popover-foreground: #f5f1e8;
+  --color-fd-border: #2a2318;
+  --color-fd-accent: #221c12;
+  --color-fd-accent-foreground: #f5f1e8;
+  --color-fd-primary: #f5b33c;
+  --color-fd-primary-foreground: #15120c;
+  --color-fd-secondary: #1c1710;
+  --color-fd-secondary-foreground: #f5f1e8;
+  --color-fd-ring: #f5b33c;
+}
+
+/* Inline code keeps a warm tint in dark mode so it reads as part of the system. */
+.dark code {
+  color: var(--stella-gold-bright);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Landing page (the (home) route only). Pure-CSS, namespaced `lp-*`.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* Faint terminal grid behind the hero, masked to fade out. */
+.lp-hero-grid {
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in oklch, var(--stella-gold) 8%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklch, var(--stella-gold) 8%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+/* Warm ember glow anchored to the top of the hero. */
+.lp-hero-glow {
+  background: radial-gradient(
+    ellipse 60% 50% at 50% -10%,
+    color-mix(in oklch, var(--stella-gold) 22%, transparent),
+    transparent 70%
+  );
+}
+
+/* Gold gradient text (the "stella" wordmark in the headline). */
+.lp-gold-text {
+  background: var(--stella-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Vivid gold primary button — dark ink label for high contrast in both modes. */
+.lp-cta {
+  background: var(--stella-gradient);
+  color: var(--stella-ink);
+  box-shadow: 0 1px 0 0 color-mix(in oklch, var(--stella-gold-bright) 60%, transparent) inset;
+}
+.lp-cta:hover {
+  filter: brightness(1.05);
+}
+
+.lp-terminal {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+}
+
+/* The `>` prompt in the terminal card, in brand gold. */
+.lp-prompt {
+  color: var(--stella-gold);
+}
+
+.lp-caret {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1.05em;
+  translate: 0 0.16em;
+  background: var(--stella-gold);
+  animation: lp-blink 1.05s steps(1) infinite;
+}
+
+@keyframes lp-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-caret {
+    animation: none;
+  }
+}

@@ -1,0 +1,51 @@
+---
+title: stella memory
+description: Inspect memories through the citation feedback loop, validate them against the code, and promote one to a project rule.
+---
+
+Inspect the project's memories through the citation feedback loop — most-cited first, with usefulness and truthfulness — and promote a proven memory to a project rule. It reads local state only and needs no API key.
+
+For the concepts behind memories, reflections, and the code graph, see [Memory](/docs/context-engine). This page is the command reference.
+
+## Synopsis
+
+```bash
+stella memory <list|promote|validate> [args]
+```
+
+## What it does
+
+As the agent works, it cites the memories that informed a turn via the `cite_memory` tool; those citations aggregate into a usefulness/truthfulness score per memory. `stella memory` is the inspection and promotion surface over that loop.
+
+## Subcommands
+
+### `stella memory list`
+
+List memories ranked by citation count, with average usefulness, truthfulness rate, and rule-promotion eligibility.
+
+```bash
+stella memory list
+stella memory list --format json
+```
+
+`--format` accepts `table` (default, aligned) or `json`.
+
+### `stella memory promote <id>`
+
+Promote an eligible memory to a project rule at `.stella/rules/<slug>.md`. Pass the memory's stable id (`nod_…`) as shown by `stella memory list`.
+
+```bash
+stella memory promote nod_9f2c1a
+```
+
+<Callout type="info">
+Eligibility is strict: a memory must have been cited successfully **more than 10** consecutive times since its last negative remark. A single negative citation resets the count until it is re-earned.
+</Callout>
+
+### `stella memory validate`
+
+Re-validate old memories against the current codebase. It scans each memory for file-path anchors (e.g. `stella-cli/src/agent.rs`), checks whether those paths still exist, and flags stale ones — a memory whose referenced path no longer exists is a strong signal it is about refactored-away code and may mislead.
+
+```bash
+stella memory validate
+```

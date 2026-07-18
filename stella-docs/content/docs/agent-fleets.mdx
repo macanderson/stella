@@ -1,0 +1,115 @@
+---
+title: Agent Fleets
+description: Fan a dependency-ordered task DAG out to parallel worker agents, each isolated in its own git worktree — with cooperative file claims, a SQLite ledger of every attempt and dollar, and an optional CI watch.
+---
+
+# Agent Fleets
+
+`stella fleet` runs **many tasks at once** — each task handled by a full
+Stella worker in its **own git worktree**, on its own branch, isolated from
+your working copy and from every other worker.
+
+```bash
+stella fleet \
+  "Add unit tests for the parser module" \
+  "Document every public function in src/api/" \
+  "Fix the clippy warnings in the store crate"
+```
+
+## How a fleet run works
+
+1. **Plan.** Task prompts (inline, or from a `--plan` file) form a DAG:
+   tasks with `depends_on` wait for their dependencies.
+2. **Isolate.** Every isolated task gets a fresh git worktree branched from a
+   pinned base commit (the current `HEAD`, or `--base-ref`) onto a
+   `fleet/<task>` branch. Workers can't see each other's uncommitted work and
+   can't touch your checkout.
+3. **Dispatch in waves.** Dependency-ordered waves run up to
+   `--max-concurrency` tasks at once (default 4).
+4. **Work.** Each worker is a full engine run — the
+   [staged pipeline](/docs/inference-pipeline) with the standard toolbelt,
+   honoring your [agent-engine config](/docs/configuration/agent-engine-config).
+   Workers are headless by design: no MCP, no interactive prompts, nothing
+   that can block on stdin.
+5. **Record.** Every attempt, commit, timeout, and dollar lands in the fleet
+   ledger at `.stella/fleet.db` — local SQLite, like all
+   [Stella telemetry](/docs/telemetry).
+6. **Review.** Worktrees and `fleet/<task>` branches are deliberately **left
+   in place** — the branches *are* the work product. Inspect, test, and merge
+   them on your terms; `git worktree list` shows them all.
+
+## Plan files
+
+For anything beyond a handful of independent prompts, declare a plan
+(`.toml` or `.json`):
+
+```toml title="release-prep.toml"
+[[tasks]]
+id = "t1"
+title = "Bump the version and changelog"
+prompt = "Bump the workspace version to 1.4.0 and update CHANGELOG.md"
+claims = ["Cargo.toml", "CHANGELOG.md"]
+
+[[tasks]]
+id = "t2"
+title = "Regenerate the CLI reference"
+prompt = "Regenerate docs/cli-reference.md from the current --help output"
+depends_on = ["t1"]
+```
+
+Each task carries an `id`, `title`, `prompt`, and optionally `depends_on`
+(orders the waves), `isolation`, and `claims`.
+
+### File claims — cooperative locks
+
+A task that declares `claims` (workspace-relative paths it intends to touch)
+holds them as **cooperative file locks** for the attempt's duration. A second
+task — or a second fleet run — that claims an already-held path fails that
+dispatch *by name* instead of silently racing another agent into the same
+file.
+
+## Budget across a fleet
+
+`--budget` is enforced twice: each child runs under its own guard (the
+aggregate cap divided across the concurrency width, so one wave's in-flight
+children can't collectively overshoot), and the fleet stops launching new
+waves once total metered spend crosses the cap. In-flight siblings settle
+cleanly — never a mid-tool kill.
+
+## Watching CI: `--watch`
+
+After the fan-out, `--watch` holds a **fleet monitor** on every branch that
+carries successful work: it watches each branch's CI to completion via the
+`gh` CLI, reconciles PR status live, and exits non-zero if any watched branch
+ends red.
+
+```bash
+stella fleet --plan release-prep.toml --max-concurrency 2 --watch
+```
+
+<Callout type="warn">
+  `--watch` only has something to watch once branches are pushed — for
+  example when your task prompts push and open PRs. It requires an installed,
+  authenticated `gh`.
+</Callout>
+
+## Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `<task>...` | One or more task prompts. Required unless `--plan` is given. |
+| `--plan <FILE>` | A `.json`/`.toml` plan with `[[tasks]]` entries. |
+| `--max-concurrency <N>` | Max tasks running at once per wave. Default `4`. |
+| `--base-ref <ref>` | Git ref the worktrees branch from. Default: current `HEAD`, pinned to a SHA at start so mid-run commits can't drift the base. |
+| `--watch` | Watch each successful branch's CI to completion after the fan-out. |
+| `--no-pipeline` | Workers run the raw step loop instead of the staged pipeline. |
+
+## Cleaning up
+
+When you've merged (or rejected) the branches:
+
+```bash
+git worktree list                 # see what the fleet left behind
+git worktree remove <path>        # per worktree
+git branch -D fleet/<task>        # per branch
+```
