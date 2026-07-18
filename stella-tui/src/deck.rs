@@ -106,6 +106,12 @@ pub struct AgentEntry {
     /// contract (`cached_input_tokens ⊆ input_tokens`), so the session
     /// cache-hit rate `cache_read_tokens / tokens_in` is always in `[0, 1]`.
     pub cache_read_tokens: u64,
+    /// The **current** context-window occupancy: the `input_tokens` of the most
+    /// recent `StepUsage` (the prompt size the last call actually sent), NOT the
+    /// running sum. This is what the Ctx% gauge divides by the window — using
+    /// the cumulative `tokens_in` pinned the meter at 100% after a few turns,
+    /// since the total input across a session dwarfs any single window.
+    pub context_tokens: u64,
     /// Live spend. Authoritative once a `BudgetTick` has been seen (its
     /// `spent_usd` already covers step costs — mirrors the HUD accounting in
     /// `SessionModel`); until then, `StepUsage.cost_usd` accumulates here as
@@ -141,6 +147,7 @@ impl AgentEntry {
             tokens_in: 0,
             tokens_out: 0,
             cache_read_tokens: 0,
+            context_tokens: 0,
             cost_usd: 0.0,
             budget_ticked: false,
             last_activity_ms: started,
@@ -351,6 +358,7 @@ impl WorkspaceModel {
                     entry.tokens_in = 0;
                     entry.tokens_out = 0;
                     entry.cache_read_tokens = 0;
+                    entry.context_tokens = 0;
                     entry.cost_usd = 0.0;
                     entry.budget_ticked = false;
                     entry.turn_started_ms = None;
@@ -372,7 +380,11 @@ impl WorkspaceModel {
             | Inbound::SkillPreview { .. }
             | Inbound::McpServers(_)
             | Inbound::McpSearchResults(_)
-            | Inbound::ShowHelp => {}
+            | Inbound::Sessions(_)
+            | Inbound::Notifications(_)
+            | Inbound::McpOauthStatus { .. }
+            | Inbound::ShowHelp
+            | Inbound::Splash(_) => {}
         }
     }
 
@@ -425,6 +437,8 @@ impl WorkspaceModel {
                     entry.tokens_in += input_tokens;
                     entry.tokens_out += output_tokens;
                     entry.cache_read_tokens += cached_input_tokens;
+                    // Occupancy is the LATEST call's prompt size, not the sum.
+                    entry.context_tokens = *input_tokens;
                     entry.meta.model = Some(model.clone());
                     // Fallback accounting: a stream that never emits
                     // `BudgetTick` (scenario feeds, minimal drivers) still
@@ -482,11 +496,17 @@ impl WorkspaceModel {
 pub struct FileRecord {
     pub agent: AgentId,
     pub path: String,
+    /// The latest *mutation* kind — a read only sets this on a file that has
+    /// never been mutated, so an edited file's badge never regresses to `R`
+    /// when the agent re-reads it.
     pub kind: FileChangeKind,
     pub added: u32,
     pub removed: u32,
-    /// How many `FileChange` events have touched this (agent, path).
+    /// How many *mutating* `FileChange` events have touched this
+    /// (agent, path).
     pub changes: u32,
+    /// How many times this (agent, path) has been read.
+    pub reads: u32,
 }
 
 /// Every file touched this session, with CRUD op and line +/- parsed from the
@@ -505,18 +525,24 @@ impl FileLedger {
             .iter_mut()
             .find(|r| r.agent == agent && r.path == path)
         {
-            rec.kind = kind;
-            rec.added += added;
-            rec.removed += removed;
-            rec.changes += 1;
+            if kind.is_mutation() {
+                rec.kind = kind;
+                rec.added += added;
+                rec.removed += removed;
+                rec.changes += 1;
+            } else {
+                rec.reads += 1;
+            }
         } else {
+            let mutation = kind.is_mutation();
             self.records.push(FileRecord {
                 agent: agent.to_string(),
                 path: path.to_string(),
                 kind,
                 added,
                 removed,
-                changes: 1,
+                changes: mutation as u32,
+                reads: !mutation as u32,
             });
         }
     }
@@ -529,6 +555,9 @@ impl FileLedger {
     }
     pub fn file_count(&self) -> usize {
         self.records.len()
+    }
+    pub fn total_reads(&self) -> u32 {
+        self.records.iter().map(|r| r.reads).sum()
     }
 }
 
@@ -1141,6 +1170,80 @@ mod tests {
     }
 
     #[test]
+    fn ledger_counts_reads_without_regressing_the_mutation_badge() {
+        let mut w = WorkspaceModel::new();
+        w.apply_inbound(&reg("lead"));
+        let read = |path: &str| {
+            ev(
+                "lead",
+                AgentEvent::FileChange {
+                    path: path.into(),
+                    kind: FileChangeKind::Read,
+                    diff: None,
+                },
+            )
+        };
+        // A read-only file shows up with an R badge and a read count.
+        w.apply_inbound(&read("src/a.rs"));
+        w.apply_inbound(&read("src/a.rs"));
+        let rec = &w.ledger.records[0];
+        assert_eq!(rec.kind, FileChangeKind::Read);
+        assert_eq!((rec.changes, rec.reads), (0, 2));
+
+        // A mutation owns the badge and ± totals; a later re-read only
+        // counts.
+        w.apply_inbound(&ev(
+            "lead",
+            AgentEvent::FileChange {
+                path: "src/a.rs".into(),
+                kind: FileChangeKind::Modified,
+                diff: Some("+one\n".into()),
+            },
+        ));
+        w.apply_inbound(&read("src/a.rs"));
+        let rec = &w.ledger.records[0];
+        assert_eq!(rec.kind, FileChangeKind::Modified);
+        assert_eq!((rec.changes, rec.reads), (1, 3));
+        assert_eq!(w.ledger.total_reads(), 3);
+        assert_eq!(w.ledger.total_added(), 1);
+        assert_eq!(w.ledger.file_count(), 1);
+    }
+
+    #[test]
+    fn context_tokens_track_the_latest_window_not_the_cumulative_input() {
+        // THE Ctx% P1: the gauge divided the CUMULATIVE input by the window, so
+        // after a few turns it pinned at 100%. context_tokens must hold only the
+        // most recent call's prompt size (current occupancy), while tokens_in
+        // keeps the running total for the I/O column.
+        let mut w = WorkspaceModel::new();
+        w.apply_inbound(&reg("lead"));
+        let step = |input: u64| AgentEvent::StepUsage {
+            step: 1,
+            model: "glm-5.2".into(),
+            input_tokens: input,
+            output_tokens: 10,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            estimated_input_tokens: input,
+            cost_usd: 0.0,
+            duration_ms: 1,
+            retries: 0,
+            tool_calls: 0,
+        };
+        // Three calls of 150k each: cumulative 450k dwarfs the 200k window, but
+        // the window was only 150k full on the LAST call.
+        w.apply_inbound(&ev("lead", step(150_000)));
+        w.apply_inbound(&ev("lead", step(150_000)));
+        w.apply_inbound(&ev("lead", step(150_000)));
+
+        let lead = &w.agents[0];
+        assert_eq!(lead.context_tokens, 150_000, "occupancy = latest call only");
+        assert_eq!(lead.tokens_in, 450_000, "cumulative input is still summed");
+        // Occupancy reads a real 75%, not a pinned 100% from 450k / 200k.
+        assert!((lead.context_tokens as f64 / 200_000.0 - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
     fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
         let step = |cost_usd: f64| AgentEvent::StepUsage {
             step: 1,
@@ -1282,6 +1385,7 @@ mod tests {
                     content: "sqlite".into(),
                 },
                 duration_ms: 1,
+                speculated: false,
             },
         ));
         assert_eq!(w.agents[0].status, AgentStatus::Running);

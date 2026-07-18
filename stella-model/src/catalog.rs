@@ -233,7 +233,12 @@ impl Catalog {
                     },
                 },
                 CatalogEntry {
-                    id: "auto",
+                    // OpenRouter's fully-qualified slug for its own
+                    // meta-router. The gateway's model ids are ALL
+                    // `vendor/model` — a bare `auto` is not a model there,
+                    // so this row must carry the wire-true id (it is sent
+                    // verbatim as the request's `model`).
+                    id: "openrouter/auto",
                     provider: "openrouter",
                     family: "openrouter",
                     // OpenRouter's own meta-routing model — a real,
@@ -409,7 +414,7 @@ mod tests {
         // `cost_usd` is never a silent no-op on the real request path.
         let catalog = Catalog::seed();
         for entry in catalog.entries() {
-            if entry.id == "auto" {
+            if entry.id == "openrouter/auto" {
                 continue;
             }
             assert!(

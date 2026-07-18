@@ -17,8 +17,10 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
+futures-util.workspace = true
 libc.workspace = true
 reqwest = { workspace = true }
+sha2.workspace = true
 toml.workspace = true
 
 [dev-dependencies]

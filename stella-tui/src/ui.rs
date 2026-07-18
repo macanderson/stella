@@ -20,8 +20,9 @@ use crate::composer::{
     handle_slash_popup_key, slash_popup_matches,
 };
 use crate::input::{ScopeDecision, UserInput};
-use crate::model::{AskUserPrompt, SessionModel};
+use crate::model::{AskUserPrompt, SessionModel, TranscriptEntry};
 use crate::scroll::ScrollState;
+use ratatui::text::Line;
 
 /// Which surface currently has keyboard focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,6 +47,27 @@ pub struct ViewportMetrics {
     pub transcript_total: usize,
     pub diff_height: usize,
     pub diff_total: usize,
+}
+
+/// Memoized transcript render. [`crate::render::transcript_lines`] re-wraps
+/// every entry each call (O(transcript)); a session redraws far more often than
+/// its transcript changes (every scroll, cursor blink, or files-pane update),
+/// so caching the parsed lines keyed on what actually feeds them — the
+/// transcript's shape, the wrap width, and thinking expansion — skips that work
+/// on unchanged frames.
+///
+/// The key is a cheap fingerprint, valid because the transcript is append-only
+/// except for streaming deltas coalescing into the **trailing** `Text`/
+/// `Reasoning` entry (see [`crate::model::SessionModel`]): `len` catches every
+/// append and `trailing_stream_len` catches the growing tail. No earlier entry
+/// is ever mutated, so no earlier change can slip past this pair.
+#[derive(Debug, Clone)]
+struct TranscriptCache {
+    len: usize,
+    trailing_stream_len: usize,
+    expand_thinking: bool,
+    width: usize,
+    lines: Vec<Line<'static>>,
 }
 
 /// All ephemeral view state for one session (see module docs).
@@ -88,6 +110,9 @@ pub struct UiState {
     pub enter_submits: bool,
     /// Viewport sizes from the last render (for scroll clamping).
     pub metrics: ViewportMetrics,
+    /// Memoized transcript render (see [`TranscriptCache`]). Private: the render
+    /// path reads it only through [`UiState::transcript_lines`].
+    transcript_cache: Option<TranscriptCache>,
 }
 
 impl Default for UiState {
@@ -106,6 +131,7 @@ impl Default for UiState {
             thinking_expanded: false,
             enter_submits: false,
             metrics: ViewportMetrics::default(),
+            transcript_cache: None,
         }
     }
 }
@@ -118,6 +144,46 @@ impl UiState {
             slash_commands,
             ..Self::default()
         }
+    }
+
+    /// Rebuild the memoized transcript render only when the transcript shape,
+    /// wrap width, or thinking expansion changed. Call once per frame before
+    /// [`transcript_lines`](Self::transcript_lines); on an unchanged frame this
+    /// is an O(1) fingerprint check that skips the whole re-wrap.
+    pub fn ensure_transcript_lines(
+        &mut self,
+        model: &SessionModel,
+        expand_thinking: bool,
+        width: usize,
+    ) {
+        let len = model.transcript.len();
+        let trailing_stream_len = match model.transcript.last() {
+            Some(TranscriptEntry::Text(s) | TranscriptEntry::Reasoning(s)) => s.len(),
+            _ => 0,
+        };
+        let fresh = self.transcript_cache.as_ref().is_some_and(|c| {
+            c.len == len
+                && c.trailing_stream_len == trailing_stream_len
+                && c.expand_thinking == expand_thinking
+                && c.width == width
+        });
+        if !fresh {
+            let lines = crate::render::transcript_lines(model, expand_thinking, width);
+            self.transcript_cache = Some(TranscriptCache {
+                len,
+                trailing_stream_len,
+                expand_thinking,
+                width,
+                lines,
+            });
+        }
+    }
+
+    /// The transcript lines from the most recent
+    /// [`ensure_transcript_lines`](Self::ensure_transcript_lines) — empty until
+    /// it has run at least once.
+    pub fn transcript_lines(&self) -> &[Line<'static>] {
+        self.transcript_cache.as_ref().map_or(&[], |c| &c.lines)
     }
 }
 
@@ -174,9 +240,15 @@ pub fn handle_key(key: KeyEvent, model: &SessionModel, ui: &mut UiState) -> Shel
         return ShellAction::Handled;
     }
 
-    // A pending, unanswered scope card is modal-ish: a/t/x/Esc decide it.
+    // A pending, unanswered scope card is modal-ish: a/t/x/Esc decide it — but
+    // only from an empty composer. The decision keys are ordinary prompt
+    // characters, so once the user starts typing a message (e.g. "add a table")
+    // the keys must build the prompt, not silently approve/trim/abort the gate.
+    // Mirrors the deck (`crate::deck_ui`) and the ask_user quick-pick's
+    // "only when nothing is typed" rule.
     if model.pending_scope_review.is_some()
         && !ui.scope_answered
+        && ui.composer.buffer().is_empty()
         && let Some(decision) = scope_decision_for(key.code)
     {
         ui.scope_answered = true;
@@ -229,11 +301,11 @@ fn handle_ask_user_key(
         }
         KeyCode::Enter => match classify_enter(&key) {
             EnterAction::Submit => match ui.composer.take_submission() {
-                Some(answer) => {
+                Some(submission) => {
                     ui.ask_answered = true;
                     Some(ShellAction::Submit(UserInput::AskUserAnswer {
                         id: prompt.id.clone(),
-                        answer,
+                        answer: submission.text,
                     }))
                 }
                 // An empty submit while a question is pending: force an
@@ -270,7 +342,10 @@ fn handle_composer_key(key: KeyEvent, ui: &mut UiState) -> ShellAction {
     {
         return match outcome {
             SlashPopupOutcome::Handled => ShellAction::Handled,
-            SlashPopupOutcome::Submit(text) => ShellAction::Submit(UserInput::Prompt { text }),
+            SlashPopupOutcome::Submit(text) => ShellAction::Submit(UserInput::Prompt {
+                text,
+                attachments: Vec::new(),
+            }),
         };
     }
     // Enter is a textarea key: plain `⏎` breaks the line (preserved verbatim
@@ -279,7 +354,10 @@ fn handle_composer_key(key: KeyEvent, ui: &mut UiState) -> ShellAction {
     match classify_enter(&key) {
         EnterAction::Submit => {
             return match ui.composer.take_submission() {
-                Some(text) => ShellAction::Submit(UserInput::Prompt { text }),
+                Some(submission) => ShellAction::Submit(UserInput::Prompt {
+                    text: submission.text,
+                    attachments: submission.attachments,
+                }),
                 None => ShellAction::Ignored,
             };
         }
@@ -466,7 +544,8 @@ mod tests {
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::Prompt {
-                text: "hello".into()
+                text: "hello".into(),
+                attachments: Vec::new(),
             })
         );
     }
@@ -490,7 +569,8 @@ mod tests {
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::Prompt {
-                text: "line one\nline two".into()
+                text: "line one\nline two".into(),
+                attachments: Vec::new(),
             }),
             "the typed line break survives into the submitted prompt"
         );
@@ -544,7 +624,8 @@ mod tests {
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::Prompt {
-                text: "hi\n".into()
+                text: "hi\n".into(),
+                attachments: Vec::new(),
             }),
             "bare ⏎ submits (never blocks)"
         );
@@ -620,6 +701,38 @@ mod tests {
                 ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Abort))
             );
         }
+    }
+
+    #[test]
+    fn scope_card_keys_yield_to_a_prompt_being_typed() {
+        // THE scope-key P1: the decision keys (a/t/x) are ordinary prompt
+        // letters and used to fire even mid-prompt, so typing a message like
+        // "add a table" while a scope card was up silently approved/aborted the
+        // gate. They must defer to a non-empty composer — same rule the deck and
+        // the ask_user quick-pick already use.
+        let model = model_with_scope();
+        let mut ui = UiState::default();
+
+        // A leading non-decision char types and makes the composer non-empty.
+        assert_eq!(handle_key(ch('f'), &model, &mut ui), ShellAction::Handled);
+        assert!(!ui.scope_answered, "typing must not answer the gate");
+
+        // Now a/t/x build the prompt instead of deciding.
+        for c in "atx".chars() {
+            assert_eq!(handle_key(ch(c), &model, &mut ui), ShellAction::Handled);
+        }
+        assert!(
+            !ui.scope_answered,
+            "no decision submitted while a prompt is typed"
+        );
+        assert_eq!(ui.composer.buffer(), "fatx");
+
+        // From an empty composer the gate still decides on a single key.
+        ui.composer.clear();
+        assert_eq!(
+            handle_key(ch('a'), &model, &mut ui),
+            ShellAction::Submit(UserInput::ScopeDecision(ScopeDecision::Approve))
+        );
     }
 
     #[test]
@@ -779,7 +892,8 @@ mod tests {
         assert_eq!(
             action,
             ShellAction::Submit(UserInput::Prompt {
-                text: "/diff".into()
+                text: "/diff".into(),
+                attachments: Vec::new(),
             })
         );
         assert!(ui.composer.is_empty(), "running a command clears the line");

@@ -72,7 +72,7 @@ use stella_tools::custom::{CustomTool, CustomToolSet};
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, Inbound, SkillOp, SkillScope, SkillSearchHit,
-    SkillsView, SlashCommand, UserInput, WorkspaceInput, run_deck,
+    SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -309,6 +309,24 @@ pub async fn run_deck_session(
     // never waits on the driver (and vice versa).
     let deck = tokio::spawn(run_deck(opts, in_rx, sub_tx));
 
+    // The launch cinematic: hold the splash's battle loop open over session
+    // init and release it once BOTH async legs — the background code-graph
+    // build below and the MCP connect after it — have finished, so the movie
+    // covers however long a first launch's indexing takes instead of handing
+    // off to a deck that is still visibly assembling itself. Any key still
+    // skips; `--no-anim` sessions ignore the cue entirely.
+    let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
+    let init_pending = Arc::new(std::sync::atomic::AtomicUsize::new(2));
+    let release_splash = {
+        let tx = in_tx.clone();
+        move || {
+            if init_pending.fetch_sub(1, Ordering::SeqCst) == 1 {
+                let _ = tx.send(Inbound::Splash(SplashCue::Release));
+            }
+        }
+    };
+    let release_on_graph_ready = release_splash.clone();
+
     // Auto-build the code-graph index in the background (a cheap incremental
     // refresh if it already exists) and keep it fresh via the live watcher, so
     // `graph_query` is available this session — and the Graph tab populates —
@@ -339,6 +357,8 @@ pub async fn run_deck_session(
                 agent: LEAD.to_string(),
                 status: AgentStatus::WaitingInput,
             });
+            // One of the two init legs the launch splash waits on.
+            release_on_graph_ready();
         }),
     );
 
@@ -384,6 +404,7 @@ pub async fn run_deck_session(
                 registry.clone(),
                 Some(registry.mcp_usage_ledger()),
                 Some(mcp_disabled.clone()),
+                Some(crate::mcp_cmd::oauth_manager(&cfg.workspace_root)),
             )
             .await;
             let _ = in_tx.send(Inbound::Event {
@@ -408,6 +429,33 @@ pub async fn run_deck_session(
     };
     // Seed the MCP tab with the configured servers and their live state.
     send_mcp_snapshot(cfg, &mcp, &mcp_disabled, &in_tx).await;
+    // MCP connect settled (or there was nothing to connect) — the other init
+    // leg the launch splash waits on.
+    release_splash();
+
+    // ── Cross-process session registry + persist-until-read notifications ──
+    // This session announces itself machine-wide (every deck's SESSIONS
+    // overlay reads the same registry), and a poller keeps the inbox badge
+    // live as other sessions produce notifications. Registry hygiene runs
+    // opportunistically at startup; both stores are best-effort — a failed
+    // write never disturbs the session.
+    let session_registry = stella_store::SessionRegistry::open_default();
+    let _ = session_registry.prune(SESSION_RECORD_MAX_AGE_MS);
+    let _ = stella_store::NotificationStore::open_default().prune(NOTIFICATION_MAX_AGE_MS);
+    let workspace_name = cfg
+        .workspace_root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| cfg.workspace_root.display().to_string());
+    let mut session_record = stella_store::SessionRecord::new(
+        cfg.workspace_root.display().to_string(),
+        workspace_name.clone(),
+    );
+    let _ = session_registry.upsert(&session_record);
+    // What the record's terminal status will be at exit (last turn wins);
+    // quitting with an abandoned backlog overrides to Cancelled below.
+    let mut session_exit = stella_store::SessionStatus::Complete;
+    spawn_notification_poller(in_tx.clone());
 
     // ── The driver loop ─────────────────────────────────────────────────────
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -444,7 +492,7 @@ pub async fn run_deck_session(
                 Some(WorkspaceInput::Enqueue { text })
                 | Some(WorkspaceInput::EnqueueFront { text })
                 | Some(WorkspaceInput::ToAgent {
-                    input: UserInput::Prompt { text },
+                    input: UserInput::Prompt { text, .. },
                     ..
                 }) => {
                     dispatch.release();
@@ -502,11 +550,19 @@ pub async fn run_deck_session(
                 }
                 // Fallthrough for everything else, serviced between turns
                 // (install/search hit the network, so they must not stall a
-                // live turn): MCP tab actions first, then the INSTALLED AGENTS
-                // pane's synchronous filesystem ops. A stray answer/decision/
-                // control with no turn in flight falls through both no-ops.
+                // live turn): MCP tab actions first, then the session-registry
+                // / inbox verbs, then the INSTALLED AGENTS pane's synchronous
+                // filesystem ops. A stray answer/decision/control with no turn
+                // in flight falls through all three no-ops.
                 Some(other) => {
-                    if !service_mcp_action(&other, cfg, &mcp, &mcp_disabled, &in_tx).await {
+                    if !service_mcp_action(&other, cfg, &mcp, &mcp_disabled, &in_tx).await
+                        && !service_registry_action(
+                            &other,
+                            &session_registry,
+                            &session_record.id,
+                            &in_tx,
+                        )
+                    {
                         handle_agents_input(&other, cfg, &in_tx);
                     }
                     continue 'session;
@@ -582,6 +638,18 @@ pub async fn run_deck_session(
             }
         };
 
+        // A real model turn is about to run — announce the work machine-wide.
+        // The first prompt names the session (`<workspace>: <prompt…>`),
+        // every prompt refreshes the summary, and the phase flips to
+        // In Progress for other decks' SESSIONS overlays. Uses `submitted`
+        // (what the user typed), never a custom command's expansion.
+        if session_record.summary.is_empty() {
+            session_record.title = format!("{workspace_name}: {}", prompt_line(&submitted, 48));
+        }
+        session_record.summary = prompt_line(&submitted, 240);
+        session_record.status = stella_store::SessionStatus::InProgress;
+        let _ = session_registry.upsert(&session_record);
+
         // Per-turn conversation bookkeeping, mirroring `run_interactive`:
         // refresh the volatile recall block, then append the user prompt.
         // `turn_base` is the truncation point that erases the whole turn if
@@ -595,7 +663,9 @@ pub async fn run_deck_session(
         }
         let turn_base = messages.len();
         if !pipeline_on {
-            messages.push(CompletionMessage::user(&prompt));
+            // Attach any media files the prompt names (including `⌃V`
+            // clipboard images, which arrive as their stored payload path).
+            messages.push(crate::attachments::user_message(&prompt));
         }
         let reflect_start = messages.len();
 
@@ -676,7 +746,7 @@ pub async fn run_deck_session(
                         None | Some(WorkspaceInput::Quit) => break TurnEnd::Quit,
                         Some(WorkspaceInput::Enqueue { text })
                         | Some(WorkspaceInput::ToAgent {
-                            input: UserInput::Prompt { text }, ..
+                            input: UserInput::Prompt { text, .. }, ..
                         }) => queue.push_back(text),
                         // An explicit front-insert stays a front-insert even
                         // if a turn started before it arrived — the deck's
@@ -772,6 +842,33 @@ pub async fn run_deck_session(
                         | Some(WorkspaceInput::McpRemove { .. })
                         | Some(WorkspaceInput::McpAuth { .. })
                         | Some(WorkspaceInput::McpRefresh) => {}
+                        // OAuth login is a spawned browser round-trip — safe
+                        // to start mid-turn (its transport picks the tokens
+                        // up lazily on the next call either way).
+                        Some(WorkspaceInput::McpOauthLogin { server }) => {
+                            spawn_mcp_oauth_login(
+                                server,
+                                cfg.workspace_root.clone(),
+                                in_tx.clone(),
+                            );
+                        }
+                        // The SESSIONS overlay and the inbox stay live while a
+                        // turn runs — cheap local file reads/writes, exactly
+                        // like the INSTALLED AGENTS pane above.
+                        Some(
+                            input @ (WorkspaceInput::SessionsRefresh
+                            | WorkspaceInput::SessionArchive { .. }
+                            | WorkspaceInput::SessionDelete { .. }
+                            | WorkspaceInput::NotificationRead { .. }
+                            | WorkspaceInput::NotificationsReadAll),
+                        ) => {
+                            service_registry_action(
+                                &input,
+                                &session_registry,
+                                &session_record.id,
+                                &in_tx,
+                            );
+                        }
                         // Scope review is not engine-driven yet, and deep
                         // pause/resume/restart need the fleet supervisor —
                         // both named seams, both no-ops here.
@@ -814,6 +911,33 @@ pub async fn run_deck_session(
                 {
                     m.reflect_and_record(&*provider, &messages, true, true)
                         .await;
+                }
+                // Registry + inbox: the turn settled, so the session now
+                // waits on the user (Needs Input, machine-wide). Failed work
+                // always lands a persist-until-read notification; successful
+                // work does too when it ran long enough that the user has
+                // plausibly looked away.
+                session_exit = if outcome.is_err() {
+                    stella_store::SessionStatus::Error
+                } else {
+                    stella_store::SessionStatus::Complete
+                };
+                session_record.status = stella_store::SessionStatus::NeedsInput;
+                let _ = session_registry.upsert(&session_record);
+                let turn_secs = crate::memory::unix_now_secs().saturating_sub(started_unix);
+                let inbox = stella_store::NotificationStore::open_default();
+                if let Err(reason) = &outcome {
+                    let _ = inbox.push(&stella_store::Notification::new(
+                        format!("{workspace_name}: turn failed"),
+                        format!("{} — {reason}", prompt_line(&submitted, 80)),
+                        session_record.id.clone(),
+                    ));
+                } else if turn_secs >= LONG_TURN_NOTIFY_SECS {
+                    let _ = inbox.push(&stella_store::Notification::new(
+                        format!("{workspace_name}: work finished ({turn_secs}s)"),
+                        prompt_line(&submitted, 160),
+                        session_record.id.clone(),
+                    ));
                 }
             }
             TurnEnd::Cancelled { hold } => {
@@ -859,6 +983,12 @@ pub async fn run_deck_session(
                         retryable: false,
                     },
                 });
+                // Registry: an interrupted turn leaves the session waiting on
+                // the user; if the deck exits from this state, it exits
+                // Cancelled (the user abandoned the interrupted work).
+                session_exit = stella_store::SessionStatus::Cancelled;
+                session_record.status = stella_store::SessionStatus::NeedsInput;
+                let _ = session_registry.upsert(&session_record);
             }
             TurnEnd::Quit => break 'session,
         }
@@ -869,6 +999,16 @@ pub async fn run_deck_session(
             handle_agent_create(&description, scope, cfg, &*provider, &in_tx).await;
         }
     }
+
+    // The session is over — leave the registry record in its terminal state.
+    // (A crash never reaches here; readers downgrade a dead pid to Error.)
+    // Quitting with prompts still queued means the work was abandoned.
+    session_record.status = if queue.is_empty() {
+        session_exit
+    } else {
+        stella_store::SessionStatus::Cancelled
+    };
+    let _ = session_registry.upsert(&session_record);
 
     // Closing our inbound sender ends the deck's stream if the user hasn't
     // already quit; then wait for it to restore the terminal.
@@ -931,6 +1071,10 @@ async fn mcp_snapshot(
     let schemas = mcp.as_ref().map(|s| s.schemas()).unwrap_or_default();
     let usage = crate::mcp_cmd::usage_stats(&cfg.workspace_root).unwrap_or_default();
     let disabled_set = disabled.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let oauth_logins: std::collections::HashSet<String> =
+        crate::mcp_cmd::oauth_logged_in(&cfg.workspace_root)
+            .into_iter()
+            .collect();
 
     config
         .names()
@@ -969,6 +1113,7 @@ async fn mcp_snapshot(
                     .into_iter()
                     .map(str::to_string)
                     .collect(),
+                oauth: (transport.kind_label() == "http").then(|| oauth_logins.contains(name)),
                 calls,
             }
         })
@@ -1079,9 +1224,211 @@ async fn service_mcp_action(
             }
             send_mcp_snapshot(cfg, mcp, disabled, in_tx).await;
         }
+        WorkspaceInput::McpOauthLogin { server } => {
+            spawn_mcp_oauth_login(server.clone(), cfg.workspace_root.clone(), in_tx.clone());
+        }
         _ => return false,
     }
     true
+}
+
+/// Registry hygiene: terminal session records older than this are swept at
+/// deck startup (30 days).
+const SESSION_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+/// Inbox hygiene: **read** notifications older than this are swept at deck
+/// startup (14 days). Unread ones persist regardless — that is the contract.
+const NOTIFICATION_MAX_AGE_MS: u64 = 14 * 24 * 60 * 60 * 1000;
+/// How often the deck re-reads the machine-wide notification store.
+const NOTIFY_POLL_MS: u64 = 3_000;
+/// A successful turn at least this long lands a "work finished" notification
+/// — long enough that the user has plausibly looked away.
+const LONG_TURN_NOTIFY_SECS: i64 = 60;
+
+/// One prompt flattened to a single display line, char-safe-truncated — the
+/// session registry's title/summary shape.
+fn prompt_line(prompt: &str, max_chars: usize) -> String {
+    let flat: String = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max_chars {
+        return flat;
+    }
+    let head: String = flat.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{head}…")
+}
+
+/// Service a session-registry / inbox verb from the deck. Returns `true` if
+/// `input` was one (so the caller skips its own dispatch). All of these are
+/// cheap local file ops, serviced identically idle or mid-turn.
+fn service_registry_action(
+    input: &WorkspaceInput,
+    registry: &stella_store::SessionRegistry,
+    my_session_id: &str,
+    in_tx: &mpsc::UnboundedSender<Inbound>,
+) -> bool {
+    match input {
+        WorkspaceInput::SessionsRefresh => {
+            let _ = in_tx.send(sessions_inbound(registry, my_session_id));
+        }
+        WorkspaceInput::SessionArchive { id } => {
+            let _ = registry.set_status(id, stella_store::SessionStatus::Archived);
+            let _ = in_tx.send(sessions_inbound(registry, my_session_id));
+        }
+        WorkspaceInput::SessionDelete { id } => {
+            // The deck refuses to delete its own record UI-side too; this is
+            // the belt-and-suspenders check.
+            if id != my_session_id {
+                let _ = registry.remove(id);
+            }
+            let _ = in_tx.send(sessions_inbound(registry, my_session_id));
+        }
+        WorkspaceInput::NotificationRead { id } => {
+            let store = stella_store::NotificationStore::open_default();
+            let _ = store.mark_read(id);
+            let _ = in_tx.send(notifications_inbound(&store));
+        }
+        WorkspaceInput::NotificationsReadAll => {
+            let store = stella_store::NotificationStore::open_default();
+            let _ = store.mark_all_read();
+            let _ = in_tx.send(notifications_inbound(&store));
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// The SESSIONS overlay snapshot: every registry record mapped to the deck's
+/// [`stella_tui::SessionInfo`], flagging this process's own record.
+fn sessions_inbound(registry: &stella_store::SessionRegistry, mine: &str) -> Inbound {
+    let sessions = registry
+        .list()
+        .into_iter()
+        .map(|r| stella_tui::SessionInfo {
+            mine: r.id == mine,
+            phase: session_phase(r.status),
+            id: r.id,
+            title: r.title,
+            summary: r.summary,
+            workspace: r.workspace,
+            started_ms: r.started_at_ms,
+            updated_ms: r.updated_at_ms,
+        })
+        .collect();
+    Inbound::Sessions(sessions)
+}
+
+/// Store status → TUI phase (the TUI mirrors the enum so it never links the
+/// store crate).
+fn session_phase(status: stella_store::SessionStatus) -> stella_tui::SessionPhase {
+    match status {
+        stella_store::SessionStatus::InProgress => stella_tui::SessionPhase::InProgress,
+        stella_store::SessionStatus::NeedsInput => stella_tui::SessionPhase::NeedsInput,
+        stella_store::SessionStatus::Cancelled => stella_tui::SessionPhase::Cancelled,
+        stella_store::SessionStatus::Complete => stella_tui::SessionPhase::Complete,
+        stella_store::SessionStatus::Archived => stella_tui::SessionPhase::Archived,
+        stella_store::SessionStatus::Error => stella_tui::SessionPhase::Error,
+    }
+}
+
+/// The inbox snapshot for the deck (badge + overlay), newest first.
+fn notifications_inbound(store: &stella_store::NotificationStore) -> Inbound {
+    let items = store
+        .list()
+        .into_iter()
+        .map(|n| stella_tui::NotificationInfo {
+            id: n.id,
+            title: n.title,
+            body: n.body,
+            source: n.source,
+            created_ms: n.created_at_ms,
+            read: n.read,
+        })
+        .collect();
+    Inbound::Notifications(items)
+}
+
+/// Poll the machine-wide notification store and push a fresh snapshot when
+/// it changes — other sessions produce into the same store, so the badge
+/// must not wait for a local action. Exits with the deck (send fails once
+/// the inbound channel closes).
+fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
+    tokio::spawn(async move {
+        let store = stella_store::NotificationStore::open_default();
+        let mut fingerprint: Vec<(String, bool)> = Vec::new();
+        let mut first = true;
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(NOTIFY_POLL_MS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            if in_tx.is_closed() {
+                break;
+            }
+            let list = store.list();
+            let next: Vec<(String, bool)> = list.iter().map(|n| (n.id.clone(), n.read)).collect();
+            // The first pass always pushes (the badge must show pre-existing
+            // unread messages); afterwards only changes do.
+            if first || next != fingerprint {
+                first = false;
+                fingerprint = next;
+                if in_tx.send(notifications_inbound(&store)).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// Run the browser OAuth login for an http MCP server in the background.
+/// Progress streams to the MCP tab's status line; the authorize URL and the
+/// final outcome also land in the persist-until-read inbox (the browser may
+/// have opened on another screen, and the tab may not be visible).
+fn spawn_mcp_oauth_login(
+    server: String,
+    workspace_root: std::path::PathBuf,
+    in_tx: mpsc::UnboundedSender<Inbound>,
+) {
+    tokio::spawn(async move {
+        let inbox = stella_store::NotificationStore::open_default();
+        let progress_tx = in_tx.clone();
+        let progress_server = server.clone();
+        let progress_inbox = inbox.clone();
+        let mut on_event = move |event: stella_mcp::LoginEvent| {
+            let message = match event {
+                stella_mcp::LoginEvent::Status(line) => line,
+                stella_mcp::LoginEvent::AuthorizeUrl(url) => {
+                    let _ = progress_inbox.push(&stella_store::Notification::new(
+                        format!("MCP OAuth: approve `{progress_server}` in your browser"),
+                        url.clone(),
+                        progress_server.clone(),
+                    ));
+                    format!("approve in your browser: {url}")
+                }
+            };
+            let _ = progress_tx.send(Inbound::McpOauthStatus {
+                server: progress_server.clone(),
+                message,
+                outcome: None,
+            });
+        };
+        let result = crate::mcp_cmd::oauth_login(&workspace_root, &server, &mut on_event).await;
+        let (message, ok) = match result {
+            Ok(()) => ("logged in — tokens auto-refresh".to_string(), true),
+            Err(e) => (e, false),
+        };
+        let title = if ok {
+            format!("MCP OAuth: `{server}` logged in")
+        } else {
+            format!("MCP OAuth: `{server}` login failed")
+        };
+        let _ = inbox.push(&stella_store::Notification::new(
+            title,
+            message.clone(),
+            server.clone(),
+        ));
+        let _ = in_tx.send(Inbound::McpOauthStatus {
+            server,
+            message,
+            outcome: Some(ok),
+        });
+    });
 }
 
 /// The disposition of a would-be slash command.
@@ -1126,6 +1473,16 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ("/graph", "open the code-graph tab"),
     ("/skills", "open the SKILLS tab: manage · search · create"),
     ("/mcp", "open the MCP servers tab"),
+    (
+        "/sessions",
+        "every stella session on this machine, grouped by status (also: ← on an empty prompt)",
+    ),
+    (
+        "/context",
+        "this session's active skills + MCP servers (also: → on an empty prompt)",
+    ),
+    ("/inbox", "notifications — messages persist until read"),
+    ("/mcp-search", "search the MCP registry & install servers"),
     ("/donate", "support stella — become a GitHub Sponsor"),
 ];
 
@@ -1797,8 +2154,18 @@ async fn run_deck_command(
             });
         }
         "/init" => {
+            // Replay the launch cinematic over the reindex: the battle loops
+            // for as long as init runs, then the wordmark reveal hands the
+            // frame back to the deck. The progress lines still land in the
+            // transcript behind the splash (and any key skips straight to
+            // them). Released on BOTH outcomes — a failed init must never
+            // strand a held splash.
+            let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
             let mut emit = |line: String| say(line);
-            match agent::init_workspace(Some(provider), &cfg.workspace_root, &mut emit).await {
+            let outcome =
+                agent::init_workspace(Some(provider), &cfg.workspace_root, &mut emit).await;
+            let _ = in_tx.send(Inbound::Splash(SplashCue::Release));
+            match outcome {
                 Ok(_) => {
                     // A fresh index may name tables/types the schema gate
                     // should know about this session, not just the next one.
@@ -1849,7 +2216,7 @@ async fn run_deck_command(
         // tab, `/skills` and `/mcp` opening their tabs) are normally consumed
         // TUI-side, but a queued one reaches here — accept it as handled (a
         // no-op) rather than calling it "unknown".
-        "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" => {}
+        "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search" => {}
         _ => {
             // A custom command/skill/agent (⚡): expand its template —
             // arguments and all — into the prompt the model turn runs.
@@ -2247,6 +2614,7 @@ impl AskUserIo for DeckAskUserIo {
                     content: answer.clone(),
                 },
                 duration_ms: 0,
+                speculated: false,
             },
         });
 
@@ -2260,11 +2628,13 @@ impl AskUserIo for DeckAskUserIo {
 // ── FileChange synthesis ────────────────────────────────────────────────────
 
 /// A [`ToolExecutor`] wrapper that emits `AgentEvent::FileChange` when a
-/// file-mutating built-in succeeds, so the deck's Files tab / diff panel and
+/// file-touching built-in succeeds, so the deck's Files tab / diff panel and
 /// ledger are live during the turn. The diff is synthesized from the tool's
 /// own input (`edit_file` carries old/new verbatim; `write_file` the full
 /// content; `delete_file` reads the file before executing) — an honest
 /// approximation until the tool layer emits real diffs on the event path.
+/// Successful `read_file` calls emit too (kind `Read`, no diff) — the Files
+/// tab counts reads per file, matching the registry ledger's `R` events.
 struct FileChangeTap<'a> {
     inner: &'a dyn ToolExecutor,
     events: UnboundedSender<AgentEvent>,
@@ -2308,9 +2678,9 @@ impl ToolExecutor for FileChangeTap<'_> {
     }
 }
 
-/// The `(kind, pseudo-diff)` for one successful mutating tool call, or `None`
-/// for tools that don't change files. `pre` is `(existed_before, old_content)`
-/// as captured by the tap.
+/// The `(kind, pseudo-diff)` for one successful file-touching tool call, or
+/// `None` for tools that don't touch files. `pre` is
+/// `(existed_before, old_content)` as captured by the tap.
 fn file_change_of(
     name: &str,
     input: &Value,
@@ -2318,6 +2688,7 @@ fn file_change_of(
 ) -> Option<(FileChangeKind, Option<String>)> {
     let text = |key: &str| input.get(key).and_then(Value::as_str);
     match name {
+        "read_file" => Some((FileChangeKind::Read, None)),
         "write_file" => {
             let existed = pre.map(|(existed, _)| existed).unwrap_or(false);
             let kind = if existed {
@@ -2635,12 +3006,49 @@ mod tests {
             events: tx,
             root: dir.path().to_path_buf(),
         };
-        tap.execute("read_file", &serde_json::json!({ "path": "x" }))
+        tap.execute("grep", &serde_json::json!({ "pattern": "x" }))
             .await;
         assert!(
             recv_file_change(&mut rx).is_none(),
-            "read-only tools emit nothing"
+            "non-file read-only tools emit nothing"
         );
+    }
+
+    #[tokio::test]
+    async fn tap_emits_a_diffless_read_event_for_successful_reads_only() {
+        // A successful read rides the FileChange path (kind Read, no diff) so
+        // the Files tab counts reads; a failed read stays silent.
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let inner = FakeInner { error: false };
+        let tap = FileChangeTap {
+            inner: &inner,
+            events: tx,
+            root: dir.path().to_path_buf(),
+        };
+        tap.execute("read_file", &serde_json::json!({ "path": "src/lib.rs" }))
+            .await;
+        match recv_file_change(&mut rx) {
+            Some(AgentEvent::FileChange { path, kind, diff }) => {
+                assert_eq!(path, "src/lib.rs");
+                assert_eq!(kind, FileChangeKind::Read);
+                assert_eq!(diff, None, "reads never carry a diff");
+            }
+            other => panic!("expected FileChange, got {other:?}"),
+        }
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let failing = FakeInner { error: true };
+        let tap = FileChangeTap {
+            inner: &failing,
+            events: tx,
+            root: dir.path().to_path_buf(),
+        };
+        let out = tap
+            .execute("read_file", &serde_json::json!({ "path": "ghost.rs" }))
+            .await;
+        assert!(out.is_error());
+        assert!(recv_file_change(&mut rx).is_none(), "no event on error");
     }
 
     #[test]

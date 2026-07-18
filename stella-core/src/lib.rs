@@ -25,6 +25,7 @@ pub mod retry;
 pub mod router;
 pub mod rules;
 pub mod skills;
+pub(crate) mod speculation;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the

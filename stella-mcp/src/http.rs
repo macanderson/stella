@@ -11,17 +11,20 @@
 //! notifications interleaved before it are skipped).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::Client;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::error::McpError;
+use crate::oauth::OAuthTokenSource;
 use crate::protocol::{JsonRpcMessage, JsonRpcNotification, JsonRpcRequest};
 use crate::sse::SseDecoder;
 use crate::transport::Transport;
@@ -37,6 +40,9 @@ pub struct HttpTransport {
     session_id: Mutex<Option<String>>,
     next_id: AtomicU64,
     server_name: String,
+    /// OAuth bearer supplier. Lazy: yields no header until a login is stored
+    /// for this server, so static-header servers are unaffected.
+    bearer: Option<Arc<OAuthTokenSource>>,
 }
 
 impl HttpTransport {
@@ -67,51 +73,96 @@ impl HttpTransport {
             session_id: Mutex::new(None),
             next_id: AtomicU64::new(1),
             server_name: server_name.to_string(),
+            bearer: None,
         })
     }
 
+    /// Attach an OAuth bearer supplier consulted on every request. When it
+    /// yields a token, it *overrides* any static `Authorization` header.
+    pub fn with_bearer_source(mut self, source: Arc<OAuthTokenSource>) -> Self {
+        self.bearer = Some(source);
+        self
+    }
+
     /// POST `body`, capture any assigned session id, and reject non-2xx.
+    ///
+    /// OAuth: when a bearer source is attached and holds a login, its access
+    /// token rides as `Authorization` (refreshed ahead of expiry inside the
+    /// source). A 401 answer triggers exactly one forced refresh + resend; a
+    /// second 401 surfaces as a re-auth error.
     async fn send(&self, body: String) -> Result<reqwest::Response, McpError> {
-        let mut builder = self
-            .client
-            .post(&self.url)
-            .headers(self.base_headers.clone())
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json, text/event-stream")
-            .body(body);
-        if let Some(session) = self.session_id.lock().await.clone() {
-            builder = builder.header(SESSION_HEADER, session);
-        }
-
-        let response = builder.send().await.map_err(|e| {
-            McpError::Transport(format!(
-                "HTTP request to `{}` failed: {e}",
-                self.server_name
-            ))
-        })?;
-
-        // Capture the session id the first time the server assigns one.
-        if let Some(session) = response
-            .headers()
-            .get(SESSION_HEADER)
-            .and_then(|v| v.to_str().ok())
-        {
-            let mut guard = self.session_id.lock().await;
-            if guard.is_none() {
-                *guard = Some(session.to_string());
+        for attempt in 0..2u8 {
+            let mut headers = self.base_headers.clone();
+            let mut has_oauth = false;
+            if let Some(source) = &self.bearer {
+                let token = if attempt == 0 {
+                    source.bearer().await?
+                } else {
+                    Some(source.refreshed_bearer().await?)
+                };
+                if let Some(token) = token {
+                    let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
+                        .map_err(|e| McpError::Auth(format!("token is not header-safe: {e}")))?;
+                    value.set_sensitive(true);
+                    headers.insert(AUTHORIZATION, value);
+                    has_oauth = true;
+                }
             }
-        }
 
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(McpError::Transport(format!(
-                "server `{}` returned HTTP {status}: {}",
-                self.server_name,
-                truncate(&text, 500)
-            )));
+            let mut builder = self
+                .client
+                .post(&self.url)
+                .headers(headers)
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json, text/event-stream")
+                .body(body.clone());
+            if let Some(session) = self.session_id.lock().await.clone() {
+                builder = builder.header(SESSION_HEADER, session);
+            }
+
+            let response = builder.send().await.map_err(|e| {
+                McpError::Transport(format!(
+                    "HTTP request to `{}` failed: {e}",
+                    self.server_name
+                ))
+            })?;
+
+            // Capture the session id the first time the server assigns one.
+            if let Some(session) = response
+                .headers()
+                .get(SESSION_HEADER)
+                .and_then(|v| v.to_str().ok())
+            {
+                let mut guard = self.session_id.lock().await;
+                if guard.is_none() {
+                    *guard = Some(session.to_string());
+                }
+            }
+
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED && attempt == 0 && has_oauth {
+                // Stale/revoked access token: force one refresh and resend.
+                continue;
+            }
+            if !status.is_success() {
+                let text = response.text().await.unwrap_or_default();
+                let hint = if status == StatusCode::UNAUTHORIZED {
+                    format!(
+                        " — authorize with `stella mcp login {}` (or `o` on it in the deck's MCP tab)",
+                        self.server_name
+                    )
+                } else {
+                    String::new()
+                };
+                return Err(McpError::Transport(format!(
+                    "server `{}` returned HTTP {status}: {}{hint}",
+                    self.server_name,
+                    truncate(&text, 500)
+                )));
+            }
+            return Ok(response);
         }
-        Ok(response)
+        unreachable!("send loop returns on every path within two attempts")
     }
 
     /// Read a `text/event-stream` body and return the JSON-RPC message that

@@ -19,27 +19,33 @@ use rusqlite::{Connection, params};
 
 use crate::{Result, StoreError};
 
-/// Where the user-tier aggregate lives. `STELLA_DATA_DIR` overrides; otherwise
-/// the platform data dir (NOT the config dir — this is data, not config).
-pub fn usage_db_path() -> PathBuf {
+/// The user-tier stella data dir (usage rollup, session registry,
+/// notifications). `STELLA_DATA_DIR` overrides; otherwise the platform data
+/// dir (NOT the config dir — this is data, not config).
+pub fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("STELLA_DATA_DIR") {
-        return PathBuf::from(dir).join("usage.db");
+        return PathBuf::from(dir);
     }
     #[cfg(target_os = "macos")]
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join("Library/Application Support/stella/usage.db");
+        return PathBuf::from(home).join("Library/Application Support/stella");
     }
     #[cfg(target_os = "windows")]
     if let Some(appdata) = std::env::var_os("APPDATA") {
-        return PathBuf::from(appdata).join("stella").join("usage.db");
+        return PathBuf::from(appdata).join("stella");
     }
     if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(xdg).join("stella").join("usage.db");
+        return PathBuf::from(xdg).join("stella");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".local/share/stella/usage.db");
+        return PathBuf::from(home).join(".local/share/stella");
     }
-    PathBuf::from("usage.db")
+    PathBuf::from(".")
+}
+
+/// Where the user-tier aggregate lives: `data_dir()/usage.db`.
+pub fn usage_db_path() -> PathBuf {
+    data_dir().join("usage.db")
 }
 
 /// A stable, dependency-free project identity: FNV-1a/64 of the canonical

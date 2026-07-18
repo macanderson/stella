@@ -147,7 +147,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         // ── lead executes: reads, edits, commits ────────────────────────
         ev(lead, AgentEvent::Stage { name: StageKind::Execute }),
         ev(lead, tool_start("c1", "read_file", json!({ "path": "apps/app/automations/page.tsx" }))),
-        ev(lead, AgentEvent::ToolResult { call_id: "c1".into(), output: ToolOutput::Ok { content: "312 lines".into() }, duration_ms: 42 }),
+        ev(lead, AgentEvent::ToolResult { call_id: "c1".into(), output: ToolOutput::Ok { content: "312 lines".into() }, duration_ms: 42, speculated: false }),
         ev(lead, AgentEvent::FileChange { path: "apps/app/automations/page.tsx".into(), kind: FileChangeKind::Modified, diff: Some("@@ -10,3 +10,7 @@\n-  const items = []\n+  const items = useAutomations()\n+  const [q, setQ] = useState(\"\")\n+  const filtered = filter(items, q)\n+  const onNew = () => open()\n".into()) }),
         ev(lead, AgentEvent::StepUsage { step: 2, model: "glm-5.2".into(), input_tokens: 8_200, output_tokens: 900, cached_input_tokens: 6_000, cache_write_tokens: 0, estimated_input_tokens: 8_000, cost_usd: 0.018, duration_ms: 2100, retries: 0, tool_calls: 1 }),
         ev(lead, AgentEvent::BudgetTick { spent_usd: 0.039, limit_usd: Some(2.5), mode: stella_protocol::BudgetMode::Observed }),

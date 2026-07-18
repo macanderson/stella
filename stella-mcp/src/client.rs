@@ -42,6 +42,7 @@ use tokio::sync::Mutex;
 use crate::config::{McpServerConfig, McpTransport};
 use crate::error::McpError;
 use crate::http::HttpTransport;
+use crate::oauth::OAuthManager;
 use crate::protocol::{
     CallToolParams, CallToolResult, ContentBlock, Implementation, InitializeParams,
     InitializeResult, ListToolsParams, ListToolsResult, PREFERRED_PROTOCOL_VERSION,
@@ -261,7 +262,18 @@ impl McpClient {
     /// Build the transport for `config`, then run the full handshake +
     /// tool discovery. `timeout` bounds each underlying request.
     pub async fn connect(config: &McpServerConfig, timeout: Duration) -> Result<Self, McpError> {
-        let transport = build_transport(config, timeout).await?;
+        Self::connect_with_auth(config, timeout, None).await
+    }
+
+    /// [`McpClient::connect`], with an optional [`OAuthManager`] whose lazy
+    /// per-server token source rides every HTTP transport (including each
+    /// reconnect's fresh transport) — see [`crate::oauth`].
+    pub async fn connect_with_auth(
+        config: &McpServerConfig,
+        timeout: Duration,
+        auth: Option<Arc<OAuthManager>>,
+    ) -> Result<Self, McpError> {
+        let transport = build_transport(config, timeout, auth.as_deref()).await?;
         let mut client = McpClient::new(&config.name, transport);
         client.call_timeout = timeout;
         client.initialize().await?;
@@ -270,7 +282,8 @@ impl McpClient {
         let cfg = config.clone();
         client.reconnect = Some(Arc::new(move || {
             let cfg = cfg.clone();
-            Box::pin(async move { build_transport(&cfg, timeout).await })
+            let auth = auth.clone();
+            Box::pin(async move { build_transport(&cfg, timeout, auth.as_deref()).await })
         }));
         Ok(client)
     }
@@ -448,9 +461,31 @@ impl McpClient {
         // The fresh transport must pass the full handshake before we trust it;
         // we keep the *original* advertised tool set (reconnect restores
         // connectivity, it does not re-negotiate the surface mid-session).
-        if let Err(err) = run_handshake(&self.name, transport.as_ref()).await {
-            conn.tear_down(&err);
-            return Err(err);
+        //
+        // Bound the handshake by `call_timeout`: a respawned server that never
+        // answers `initialize` would otherwise hang here forever while holding
+        // the connection mutex, wedging the agent turn and every `health()`
+        // snapshot — the exact timeout guarantee this path is supposed to keep.
+        match tokio::time::timeout(
+            self.call_timeout,
+            run_handshake(&self.name, transport.as_ref()),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                conn.tear_down(&err);
+                return Err(err);
+            }
+            Err(_elapsed) => {
+                let err = McpError::Closed(format!(
+                    "server `{}` did not complete the reconnect handshake within {:.1}s",
+                    self.name,
+                    self.call_timeout.as_secs_f64(),
+                ));
+                conn.tear_down(&err);
+                return Err(err);
+            }
         }
         conn.transport = Some(transport);
         conn.mark_healthy();
@@ -527,17 +562,24 @@ struct Handshake {
 
 /// Build a fresh (pre-handshake) transport for `config`. Shared by the first
 /// [`McpClient::connect`] and every later reconnect so both spawn the child
-/// with the identical (scrubbed, for stdio) environment.
+/// with the identical (scrubbed, for stdio) environment. When an
+/// [`OAuthManager`] is supplied, every HTTP transport gets its lazy
+/// per-server token source (a no-op until a login is stored).
 async fn build_transport(
     config: &McpServerConfig,
     timeout: Duration,
+    auth: Option<&OAuthManager>,
 ) -> Result<Box<dyn Transport>, McpError> {
     Ok(match &config.transport {
         McpTransport::Stdio { cmd, args, env } => {
             Box::new(StdioTransport::spawn(&config.name, cmd, args, env).await?)
         }
         McpTransport::Http { url, headers } => {
-            Box::new(HttpTransport::new(&config.name, url, headers, timeout)?)
+            let mut transport = HttpTransport::new(&config.name, url, headers, timeout)?;
+            if let Some(manager) = auth {
+                transport = transport.with_bearer_source(manager.source_for(&config.name));
+            }
+            Box::new(transport)
         }
     })
 }
@@ -933,6 +975,58 @@ mod tests {
         assert_eq!(health.state, HealthState::Live);
         assert_eq!(health.consecutive_failures, 0);
         assert!(health.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_whose_handshake_hangs_times_out_instead_of_wedging() {
+        // Initial transport handshakes, advertises a read-only tool, then the
+        // first call drops (child exited) → reconnect fires.
+        let initial = ScriptedTransport::new();
+        initial.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        initial.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": "echo", "inputSchema": { "type": "object" },
+                "annotations": { "readOnlyHint": true } }] }),
+        );
+        initial.push_err("tools/call", McpError::Closed("child exited".into()));
+
+        // The respawned server never answers `initialize`.
+        struct HangHandshake;
+        #[async_trait::async_trait]
+        impl Transport for HangHandshake {
+            async fn request(&self, _method: &str, _params: Value) -> Result<Value, McpError> {
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+            async fn notify(&self, _method: &str, _params: Value) -> Result<(), McpError> {
+                Ok(())
+            }
+            async fn close(&self) -> Result<(), McpError> {
+                Ok(())
+            }
+        }
+
+        let mut client = McpClient::new("srv", Box::new(initial))
+            .with_test_reconnector(|| async { Ok(Box::new(HangHandshake) as Box<dyn Transport>) });
+        client.initialize().await.unwrap();
+        client.set_call_timeout(Duration::from_millis(40));
+
+        // The witness: the whole call must COMPLETE quickly. Before the fix the
+        // reconnect handshake awaited unbounded, so this call hung forever and
+        // the outer guard below would fire. (call_tool surfaces the original
+        // drop error rather than the handshake-timeout message, which is fine —
+        // "did not wedge" is the property under test.)
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.call_tool("echo", serde_json::json!({})),
+        )
+        .await
+        .expect("reconnect handshake must not hang the call");
+        result.expect_err("a hung reconnect handshake surfaces an error, not success");
+        assert_eq!(client.health().await.state, HealthState::Down);
     }
 
     #[tokio::test]

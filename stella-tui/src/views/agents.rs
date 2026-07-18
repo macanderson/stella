@@ -146,7 +146,7 @@ fn agent_row(entry: &AgentEntry, now_ms: u64, is_focused: bool) -> Row<'static> 
 
     let status_cell = Cell::from(status.label()).style(Style::default().fg(status_color));
 
-    let ctx_frac = ctx_used_fraction(entry.tokens_in);
+    let ctx_frac = ctx_used_fraction(entry.context_tokens);
     let ctx_cell = Cell::from(format!("{:>3.0}%", ctx_frac * 100.0))
         .style(Style::default().fg(theme::gauge_color(ctx_frac)));
 
@@ -232,14 +232,16 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
 
 /// Context-window utilization, clamped to `[0.0, 1.0]`.
 ///
-/// `tokens_in` is the real per-agent count folded from `StepUsage` events,
-/// but the divisor is a NOMINAL 200k-token window — the real per-model
-/// context window isn't threaded through `AgentMeta`/`AgentEvent` yet, so
-/// this is an approximation good enough for a dashboard density signal, not
-/// a hard cutoff. Revisit once model context size rides the wire.
-fn ctx_used_fraction(tokens_in: u64) -> f64 {
+/// `context_tokens` is the CURRENT occupancy — the most recent `StepUsage`'s
+/// `input_tokens` (the last call's prompt size), not the running total, which
+/// would pin the gauge at 100% after a few turns. The divisor is a NOMINAL
+/// 200k-token window — the real per-model context window isn't threaded through
+/// `AgentMeta`/`AgentEvent` yet, so this is an approximation good enough for a
+/// dashboard density signal, not a hard cutoff. Revisit once model context size
+/// rides the wire.
+fn ctx_used_fraction(context_tokens: u64) -> f64 {
     const NOMINAL_CONTEXT_WINDOW: f64 = 200_000.0;
-    (tokens_in as f64 / NOMINAL_CONTEXT_WINDOW).min(1.0)
+    (context_tokens as f64 / NOMINAL_CONTEXT_WINDOW).min(1.0)
 }
 
 /// `mm:ss`, growing past two digits of minutes rather than wrapping.

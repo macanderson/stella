@@ -617,11 +617,13 @@ pub(crate) struct GitRepoStructure {
 #[async_trait::async_trait]
 impl RepoStructurePort for GitRepoStructure {
     async fn structure_summary(&self) -> String {
-        let output = tokio::process::Command::new("git")
-            .args(["ls-files"])
-            .current_dir(&self.root)
-            .output()
-            .await;
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.args(["ls-files"]).current_dir(&self.root);
+        // Hook-exported GIT_* vars must not re-target this at another repo.
+        for var in stella_tools::exec::GIT_REPO_ENV_VARS {
+            cmd.env_remove(var);
+        }
+        let output = cmd.output().await;
         match output {
             Ok(out) if out.status.success() => {
                 render_file_tree(&String::from_utf8_lossy(&out.stdout), 200)
@@ -647,18 +649,21 @@ impl RepoStatusPort for GitRepoStatus {
         let mut out = std::collections::HashMap::new();
         // `-z` NUL-delimits paths (robust to spaces/newlines); quotePath off
         // keeps non-ASCII literal. Full stdout is read — never truncated.
-        let output = tokio::process::Command::new("git")
-            .args([
-                "-c",
-                "core.quotePath=false",
-                "ls-files",
-                "--others",
-                "--exclude-standard",
-                "-z",
-            ])
-            .current_dir(&self.root)
-            .output()
-            .await;
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.args([
+            "-c",
+            "core.quotePath=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+        .current_dir(&self.root);
+        // Hook-exported GIT_* vars must not re-target this at another repo.
+        for var in stella_tools::exec::GIT_REPO_ENV_VARS {
+            cmd.env_remove(var);
+        }
+        let output = cmd.output().await;
         let Ok(listing) = output else {
             return out;
         };
@@ -847,7 +852,7 @@ async fn run_raw_one_shot(
         CompletionMessage::system(
             with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await,
         ),
-        CompletionMessage::user(prompt),
+        crate::attachments::user_message(prompt),
     ];
 
     // The self-improvement loop (memory.rs): recall relevant memories +
@@ -1272,7 +1277,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         };
         let input = expanded.as_deref().unwrap_or(input);
 
-        messages.push(CompletionMessage::user(input));
+        messages.push(crate::attachments::user_message(input));
         println!();
 
         if let Some(m) = &mut memory {
@@ -1861,8 +1866,9 @@ pub(crate) async fn connect_mcp_servers(
     native: std::sync::Arc<dyn ToolExecutor>,
     usage: Option<stella_core::mcp_usage::McpUsageLedger>,
     disabled: Option<stella_mcp::DisabledServers>,
+    auth: Option<std::sync::Arc<stella_mcp::OAuthManager>>,
 ) -> McpToolSet {
-    let mut set = McpToolSet::connect(servers, MCP_CONNECT_TIMEOUT)
+    let mut set = McpToolSet::connect_with_auth(servers, MCP_CONNECT_TIMEOUT, auth)
         .await
         .wrapping(native);
     // Record each successful MCP call into the session's usage ledger, and
@@ -1902,7 +1908,8 @@ pub(crate) async fn connect_mcp(
         McpPlan::Servers(servers) => servers,
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
-    let set = connect_mcp_servers(&servers, native, usage, None).await;
+    let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root);
+    let set = connect_mcp_servers(&servers, native, usage, None, Some(auth)).await;
     if print_diagnostics {
         for (name, reason) in set.failed_servers() {
             eprintln!(
@@ -2374,6 +2381,7 @@ fn spawn_renderer(
                         call_id,
                         output,
                         duration_ms,
+                        ..
                     } => {
                         let name = tool_names
                             .get(call_id)
@@ -3083,9 +3091,19 @@ fn build_provider_parts(
                 "local" => "the local endpoint",
                 _ => display_name,
             };
-            let provider = stella_model::zai::ZaiProvider::new(api_key, model_id.to_string())
+            let mut provider = stella_model::zai::ZaiProvider::new(api_key, model_id.to_string())
                 .with_base_url(effective_base_url)
                 .with_identity(provider_id, label);
+            if provider_id == "openrouter" {
+                // First-class OpenRouter: app attribution on every request,
+                // and the gateway's own usage accounting so
+                // `CompletionResult::cost_usd` is the routed call's real
+                // price (its slugs are unseeded — see config.rs — so there
+                // is no catalog list price to fall back on).
+                provider = provider
+                    .with_attribution("https://stella.oxagen.sh", "Stella")
+                    .with_usage_accounting();
+            }
             Ok(Box::new(provider))
         }
     }

@@ -62,21 +62,29 @@ fn tail(s: &str) -> &str {
     &s[idx..]
 }
 
+/// A `git` command aimed at `dir` and ONLY `dir`: repo-targeting env vars a
+/// surrounding git hook may have exported are scrubbed so they cannot
+/// redirect the invocation at the outer repository
+/// ([`crate::exec::GIT_REPO_ENV_VARS`]).
+fn git_in(dir: &std::path::Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(dir);
+    for var in crate::exec::GIT_REPO_ENV_VARS {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 /// Best-effort removal of the shadow worktree — both the registration and
 /// the directory.
 async fn cleanup_shadow(root: &std::path::Path, shadow: &std::path::Path) {
-    let _ = Command::new("git")
+    let _ = git_in(root)
         .args(["worktree", "remove", "--force"])
         .arg(shadow)
-        .current_dir(root)
         .output()
         .await;
     let _ = tokio::fs::remove_dir_all(shadow).await;
-    let _ = Command::new("git")
-        .args(["worktree", "prune"])
-        .current_dir(root)
-        .output()
-        .await;
+    let _ = git_in(root).args(["worktree", "prune"]).output().await;
 }
 
 #[async_trait]
@@ -142,18 +150,38 @@ impl Tool for VerifyDone {
                 };
             }
         };
+        // The shadow worktree mirrors the git TOPLEVEL, not the workspace root
+        // — which may be a subdirectory of the repo. So test-file destinations
+        // must be relative to the toplevel, and the shadow test must run in the
+        // subdirectory that corresponds to the workspace root. Assuming
+        // root == toplevel produced a false verdict (a false WITNESS CONFIRMED
+        // or false VACUOUS) whenever verify_done ran from a repo subdirectory.
+        let canon_toplevel = match run("git rev-parse --show-toplevel", root, 30).await {
+            Ok((0, out)) => {
+                let p = std::path::PathBuf::from(out.trim());
+                p.canonicalize().unwrap_or(p)
+            }
+            // Not a git repo (or older git): the HEAD check below reports it.
+            _ => canon_root.clone(),
+        };
+        let root_rel = canon_root
+            .strip_prefix(&canon_toplevel)
+            .unwrap_or(std::path::Path::new(""))
+            .to_path_buf();
         // Every test file must resolve inside the workspace and exist. Each
-        // entry is `(display_name, canonical_src, root_relative_dst)`.
+        // entry is `(display_name, canonical_src, toplevel_relative_dst)` — the
+        // destination is relative to the git TOPLEVEL so `shadow.join(dst)`
+        // lands at the file's real position in the repo tree.
         let mut resolved: Vec<(String, std::path::PathBuf, std::path::PathBuf)> = Vec::new();
         for file in &test_files {
             match crate::resolve_within_root(root, file) {
                 Some(path) if path.is_file() => {
-                    let relpath = match path.strip_prefix(&canon_root) {
+                    let relpath = match path.strip_prefix(&canon_toplevel) {
                         Ok(r) => r.to_path_buf(),
                         Err(_) => {
                             return ToolOutput::Error {
                                 message: format!(
-                                    "test file `{file}` resolved outside the workspace root"
+                                    "test file `{file}` resolved outside the git repository"
                                 ),
                             };
                         }
@@ -210,11 +238,10 @@ impl Tool for VerifyDone {
             std::process::id(),
             SHADOW_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        let added = Command::new("git")
+        let added = git_in(root)
             .args(["worktree", "add", "--detach"])
             .arg(&shadow)
             .arg(&head)
-            .current_dir(root)
             .output()
             .await;
         match added {
@@ -253,7 +280,11 @@ impl Tool for VerifyDone {
             }
         }
 
-        let shadow_run = run(test_cmd, &shadow, timeout_secs).await;
+        // Run in the shadow subdirectory matching the workspace root, so a
+        // relative `test_cmd` (e.g. `cargo test`) resolves the same package it
+        // would in the real working tree — not the repo toplevel.
+        let shadow_cwd = shadow.join(&root_rel);
+        let shadow_run = run(test_cmd, &shadow_cwd, timeout_secs).await;
         cleanup_shadow(root, &shadow).await;
         let (old_exit, old_output) = match shadow_run {
             Ok(pair) => pair,
@@ -311,29 +342,31 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&root).unwrap();
-        for args in [
-            vec!["init", "-q"],
-            vec!["config", "user.email", "t@t.t"],
-            vec!["config", "user.name", "t"],
-        ] {
-            let out = std::process::Command::new("git")
-                .args(&args)
-                .current_dir(&root)
-                .output()
-                .unwrap();
+        // Scrub hook-exported GIT_* vars exactly like the production paths
+        // (`git_in`) — without this, running the suite from inside a git
+        // hook (the pre-push gate) re-targets `git init` at the HOST repo.
+        let scratch_git = |args: &[&str]| {
+            let mut cmd = std::process::Command::new("git");
+            cmd.args(args).current_dir(&root);
+            for var in crate::exec::GIT_REPO_ENV_VARS {
+                cmd.env_remove(var);
+            }
+            let out = cmd.output().unwrap();
             assert!(out.status.success(), "git {args:?} failed");
+        };
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "t@t.t"],
+            &["config", "user.name", "t"],
+        ] {
+            scratch_git(args);
         }
         std::fs::write(root.join("impl.txt"), "old behavior\n").unwrap();
         for args in [
-            vec!["add", "."],
-            vec!["commit", "-q", "-m", "previous version"],
+            &["add", "."][..],
+            &["commit", "-q", "-m", "previous version"],
         ] {
-            let out = std::process::Command::new("git")
-                .args(&args)
-                .current_dir(&root)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "git {args:?} failed");
+            scratch_git(args);
         }
         root
     }

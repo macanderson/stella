@@ -9,6 +9,22 @@
 | `⏎` | Insert a line break (multi-line prompt) |
 | `!cmd` | Run a shell command **now** (skips the queue) |
 | `/` | Slash-command popup (↑/↓ · `Tab` complete · `⏎` run) |
+| `Ctrl-V` | Paste from the clipboard — a copied **image** is stored and attached |
+
+## Attachments
+
+Stella understands images, PDFs, audio, and video as context. Attach them by:
+
+- `Ctrl-V` after copying an image (screenshot, browser copy) — the bitmap is
+  saved under `.stella/attachments/` and rides your next prompt.
+- Naming a file in the prompt (or dragging it onto the terminal): any path to
+  an existing image / PDF / audio / video file is attached automatically.
+
+What each provider ingests natively varies (Gemini reads all four; Anthropic
+and OpenAI read images + PDFs; the OpenAI-compatible gateways read images).
+Anything a provider can't read is described to the model instead of failing
+the turn. Stella imposes no size limit of its own — provider request limits
+still apply.
 
 ## Turn control
 
@@ -50,7 +66,16 @@ picker to re-root the neighborhood on any indexed file.
 `Space` enable/disable · `Ctrl-X` ×2 delete · `Ctrl-O` preview · `e` edit ·
 `p` pin · `n` new (LLM) · `←` `→` switch panes.
 
-**MCP** — MCP servers. `e`/`Space` toggle · `a` auth · `x` remove · `/` search.
+**MCP** — MCP servers. `e`/`Space` toggle · `a` auth · `o` OAuth login (http)
+· `x` remove · `/` search.
+
+## Overlays on the Session tab (empty prompt)
+
+| Key | Action |
+|---|---|
+| `←` | **Sessions** — every stella session on this machine, grouped by status (In Progress · Needs Input · Cancelled · Complete · Archived · Error). `a` archive · `x` delete · `r` refresh |
+| `→` | **Context** — this session's active skills + MCP servers, without leaving the transcript |
+| `/inbox` | **Inbox** — notifications that persist until read (`⏎`/`Space` mark read · `R` all read). Unread count lives in the INBOX statline cell |
 
 ## Slash commands
 
@@ -68,6 +93,9 @@ picker to re-root the neighborhood on any indexed file.
 | `/agents` | Open the Agents tab |
 | `/skills` | Open the SKILLS tab |
 | `/mcp` | Open the MCP tab |
+| `/sessions` | All stella sessions on this machine (also `←`) |
+| `/context` | Active skills + MCP servers (also `→`) |
+| `/inbox` | Notifications — persist until read |
 
 Custom ⚡ commands and skills from `.stella/agents` and `.stella/skills` also
 appear in the `/` popup — type `/<name> <args>` to run them.

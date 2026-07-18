@@ -129,13 +129,14 @@ impl ToolRegistry {
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
         let mut entries: Vec<Arc<dyn Tool>> = vec![
-            Arc::new(crate::read::ReadFile),
+            Arc::new(crate::read::ReadFile::default()),
             Arc::new(crate::write::WriteFile),
             Arc::new(crate::edit::EditFile),
             Arc::new(crate::delete::DeleteFile),
             Arc::new(crate::bash::Bash),
             Arc::new(crate::grep::Grep),
             Arc::new(crate::glob::Glob),
+            Arc::new(crate::gather::GatherContext),
             Arc::new(crate::exploration::Explorations),
             Arc::new(crate::exploration::SaveExploration),
             Arc::new(crate::memory::SaveMemory),
@@ -911,6 +912,7 @@ mod tests {
             "bash",
             "grep",
             "glob",
+            "gather_context",
             "explorations",
             "save_exploration",
             "save_memory",
@@ -929,7 +931,7 @@ mod tests {
         ] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
-        assert_eq!(names.len(), 22, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 23, "unexpected tool count: {names:?}");
     }
 
     /// The schema list is serialized verbatim into the prompt prefix; a
@@ -948,7 +950,7 @@ mod tests {
     fn issue_tools_absent_without_a_configured_backend() {
         let (_root, reg) = bare_registry(None);
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        assert_eq!(names.len(), 17, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 18, "unexpected tool count: {names:?}");
         for absent in [
             "create_issue",
             "update_issue",
@@ -1074,7 +1076,13 @@ mod tests {
         for schema in reg.schemas() {
             let expected = matches!(
                 schema.name.as_str(),
-                "read_file" | "grep" | "glob" | "explorations" | "ci_status" | "search_issues"
+                "read_file"
+                    | "grep"
+                    | "glob"
+                    | "gather_context"
+                    | "explorations"
+                    | "ci_status"
+                    | "search_issues"
             );
             assert_eq!(
                 schema.read_only, expected,

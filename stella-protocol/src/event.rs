@@ -77,6 +77,13 @@ pub enum AgentEvent {
         call_id: String,
         output: ToolOutput,
         duration_ms: u64,
+        /// True when this result was produced by speculative execution: the
+        /// call was read-only and began executing while the model was still
+        /// streaming the rest of its response, so `duration_ms` (the real
+        /// execution time) overlapped the model call instead of following
+        /// it. `serde(default)` so streams recorded before this field parse.
+        #[serde(default)]
+        speculated: bool,
     },
     Retry {
         attempt: u32,
@@ -152,11 +159,13 @@ pub enum AgentEvent {
         to: String,
         reason: String,
     },
-    /// A file was created/modified/deleted by the agent, carrying the diff
-    /// so the TUI's files-touched panel renders per-edit diffs without a
+    /// A file was read/created/modified/deleted by the agent, carrying the
+    /// diff so the TUI's files-touched panel renders per-edit diffs without a
     /// second data path (L-T5: in TS, the `onFileEdit` callback had to be
     /// patched into two pipeline switches — here there is one emission
-    /// point by construction).
+    /// point by construction). Reads carry no diff; consumers that only care
+    /// about mutations (the pipeline's zero-diff guard, inline transcript
+    /// diffs) filter on the kind.
     FileChange {
         path: String,
         kind: FileChangeKind,
@@ -243,9 +252,22 @@ pub enum AgentEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileChangeKind {
+    /// Content was successfully read — no mutation, never a diff. Rides the
+    /// same event so the files-touched panel sees reads without a second
+    /// data path.
+    Read,
     Created,
     Modified,
     Deleted,
+}
+
+impl FileChangeKind {
+    /// Whether this kind mutated the file — what the pipeline's zero-diff
+    /// guard and inline transcript diffs key on. Reads are observability,
+    /// not change.
+    pub fn is_mutation(self) -> bool {
+        !matches!(self, FileChangeKind::Read)
+    }
 }
 
 /// A context frame as cited in a `ContextRecall` event. `citation_label`
@@ -363,6 +385,35 @@ mod tests {
     }
 
     #[test]
+    fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
+        // Round-trip with the flag set.
+        let event = AgentEvent::ToolResult {
+            call_id: "call_1".into(),
+            output: ToolOutput::Ok {
+                content: "x".into(),
+            },
+            duration_ms: 42,
+            speculated: true,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentEvent::ToolResult { speculated, .. } => assert!(speculated),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        // A stream recorded BEFORE the field existed must still parse, with
+        // the safe default (not speculated).
+        let old = r#"{"type":"tool_result","call_id":"c","output":{"ok":{"content":""}},"duration_ms":1}"#;
+        match serde_json::from_str::<AgentEvent>(old) {
+            Ok(AgentEvent::ToolResult { speculated, .. }) => {
+                assert!(!speculated, "missing field must default to false")
+            }
+            other => panic!("old stream must parse: {other:?}"),
+        }
+    }
+
+    #[test]
     fn budget_tick_roundtrips_with_optional_limit() {
         let event = AgentEvent::BudgetTick {
             spent_usd: 0.42,
@@ -436,6 +487,24 @@ mod tests {
                 assert!(diff.is_some());
             }
             other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_kind_serializes_and_is_the_only_non_mutation() {
+        assert_eq!(
+            serde_json::to_string(&FileChangeKind::Read).unwrap(),
+            "\"read\""
+        );
+        let back: FileChangeKind = serde_json::from_str("\"read\"").unwrap();
+        assert_eq!(back, FileChangeKind::Read);
+        assert!(!FileChangeKind::Read.is_mutation());
+        for kind in [
+            FileChangeKind::Created,
+            FileChangeKind::Modified,
+            FileChangeKind::Deleted,
+        ] {
+            assert!(kind.is_mutation(), "{kind:?} is a mutation");
         }
     }
 

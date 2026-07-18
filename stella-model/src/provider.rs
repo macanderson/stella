@@ -3,4 +3,4 @@
 //! every model call through `&dyn Provider` without depending on any
 //! concrete adapter; every adapter in this crate implements it.
 
-pub use stella_protocol::Provider;
+pub use stella_protocol::{Provider, ToolCallObserver};

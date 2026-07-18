@@ -98,13 +98,16 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     let transcript_area = cols[0];
     let right_area = cols[1];
 
-    let t_lines = transcript_lines(model, ui.thinking_expanded, inner_width(transcript_area));
+    let expand_thinking = ui.thinking_expanded;
+    let t_width = inner_width(transcript_area);
+    ui.ensure_transcript_lines(model, expand_thinking, t_width);
+    let t_lines = ui.transcript_lines();
     let t_total = t_lines.len();
     let t_inner_h = inner_height(transcript_area);
     let t_window = ui.scroll.window(t_total, t_inner_h);
     let following = ui.scroll.follow;
     guarded_panel(frame, transcript_area, "transcript", |buf| {
-        render_transcript(&t_lines, t_window.clone(), following, transcript_area, buf)
+        render_transcript(t_lines, t_window.clone(), following, transcript_area, buf)
     });
 
     // ---- Right pane: diff viewer when open, else the files-touched panel.
@@ -355,17 +358,20 @@ pub(crate) fn render_transcript(
         .get(window.clone())
         .map(<[Line]>::to_vec)
         .unwrap_or_default();
-    render_transcript_window(visible, window, lines.len(), following, area, buf);
+    render_transcript_window(visible, window, lines.len(), following, None, area, buf);
 }
 
 /// [`render_transcript`] for a caller that already materialized just the
 /// visible window (the deck's fold cache clones ≤ one viewport of lines per
-/// frame instead of the whole history); `total` sizes the title.
+/// frame instead of the whole history); `total` sizes the title. `hint`, when
+/// set, renders as a dim bottom title — the contextual "what can I press
+/// here" line the deck varies with the transcript's interaction state.
 pub(crate) fn render_transcript_window(
     visible: Vec<Line<'static>>,
     window: Range<usize>,
     total: usize,
     following: bool,
+    hint: Option<&str>,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -378,7 +384,16 @@ pub(crate) fn render_transcript_window(
             window.end.min(total)
         )
     };
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let mut block = Block::default().borders(Borders::ALL).title(title);
+    if let Some(hint) = hint {
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                format!(" {hint} "),
+                Style::new().fg(Color::DarkGray),
+            ))
+            .right_aligned(),
+        );
+    }
     // No wrap: one logical line per row keeps the scroll math line-exact
     // (L-T4); overflow is clipped horizontally, not reflowed.
     Paragraph::new(Text::from(visible))
@@ -810,6 +825,22 @@ fn push_labeled(
     push_labeled_block(label, label_style, vec![Line::from(content)], width, out);
 }
 
+/// Emit one expanded-detail row (a ctrl+o body line) at the content column.
+/// Detail rows sit directly under their parent row's content — aligned to
+/// [`LABEL_COL`] exactly like wrap continuations — never at the left margin,
+/// so an expanded body reads as part of the same two-column layout.
+fn push_detail_line(text: &str, width: usize, out: &mut Vec<Line<'static>>) {
+    wrap_one_indent(
+        Line::from(vec![
+            Span::raw(cont_indent()),
+            Span::styled(text.to_owned(), Style::new().fg(theme::MUTED)),
+        ]),
+        width,
+        LABEL_COL,
+        out,
+    );
+}
+
 /// Multi-line form of [`push_labeled`]: the tag labels the first line and
 /// every following line indents to the content column.
 fn push_labeled_block(
@@ -963,15 +994,7 @@ pub(crate) fn entry_lines(
                     .and_then(|v| serde_json::to_string_pretty(&v))
                     .unwrap_or_else(|_| raw.clone());
                 for l in pretty.lines() {
-                    wrap_one_indent(
-                        Line::from(Span::styled(
-                            format!("    {l}"),
-                            Style::new().fg(theme::MUTED),
-                        )),
-                        width,
-                        4,
-                        out,
-                    );
+                    push_detail_line(l, width, out);
                 }
             }
         }
@@ -981,6 +1004,7 @@ pub(crate) fn entry_lines(
             summary,
             full,
             duration_ms,
+            speculated,
             ..
         } => {
             let (glyph, color) = if *ok {
@@ -993,27 +1017,26 @@ pub(crate) fn entry_lines(
             let label = format!("{glyph} {name}");
             let label_style = Style::new().fg(color).add_modifier(Modifier::BOLD);
             let extra = full.lines().count().saturating_sub(1);
+            // ⚡ marks a speculated result: the duration overlapped the
+            // model's own streaming instead of following it.
+            let dur = if *speculated {
+                format!("⚡{duration_ms}ms")
+            } else {
+                format!("{duration_ms}ms")
+            };
             if expanded {
                 push_labeled(
                     &label,
                     label_style,
                     vec![Span::styled(
-                        format!("({} lines · {duration_ms}ms)", extra + 1),
+                        format!("({} lines · {dur})", extra + 1),
                         Style::new().fg(Color::DarkGray),
                     )],
                     width,
                     out,
                 );
                 for l in full.lines() {
-                    wrap_one_indent(
-                        Line::from(Span::styled(
-                            format!("    {l}"),
-                            Style::new().fg(theme::MUTED),
-                        )),
-                        width,
-                        4,
-                        out,
-                    );
+                    push_detail_line(l, width, out);
                 }
             } else {
                 // Collapsed: exactly one output line; the hint names how many
@@ -1025,9 +1048,9 @@ pub(crate) fn entry_lines(
                     .unwrap_or(summary.as_str());
                 let shown: String = first.chars().take(160).collect();
                 let hint = if extra > 0 {
-                    format!("  (+{extra} lines · {duration_ms}ms)")
+                    format!("  (+{extra} lines · {dur})")
                 } else {
-                    format!("  ({duration_ms}ms)")
+                    format!("  ({dur})")
                 };
                 push_labeled(
                     &label,
@@ -1301,15 +1324,19 @@ fn pr_status_color(status: PrStatus) -> Color {
 
 fn file_line(file: &FileState, selected: bool) -> Line<'static> {
     let (marker, color) = match file.kind {
+        FileChangeKind::Read => ("[r]", Color::DarkGray),
         FileChangeKind::Created => ("[+]", Color::Green),
         FileChangeKind::Modified => ("[~]", Color::Yellow),
         FileChangeKind::Deleted => ("[-]", Color::Red),
     };
-    let count = if file.changes > 1 {
+    let mut count = if file.changes > 1 {
         format!(" ({})", file.changes)
     } else {
         String::new()
     };
+    if file.reads > 0 {
+        count.push_str(&format!(" ·r{}", file.reads));
+    }
     let mut style = Style::new().fg(color);
     if selected {
         style = style.add_modifier(Modifier::REVERSED);
@@ -1417,6 +1444,7 @@ mod tests {
                 summary: "done".into(),
                 full: "done".into(),
                 duration_ms: 3,
+                speculated: false,
                 diff: None,
             },
             TranscriptEntry::Retry {
@@ -1897,6 +1925,63 @@ mod tests {
     }
 
     #[test]
+    fn ui_memoizes_transcript_lines_and_invalidates_on_a_streaming_delta() {
+        // The transcript re-wrap is O(transcript) and ran EVERY frame — a
+        // session redraws far more often than it changes. The UiState cache
+        // must (a) reuse the parsed lines on an unchanged frame, and (b) still
+        // invalidate when a streaming delta grows the trailing entry (its
+        // length changes but the entry count does not), or new tokens would
+        // never appear.
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::Text {
+            delta: "a fairly long assistant message that wraps at a narrow width".into(),
+        });
+        let mut ui = UiState::default();
+
+        // First frame populates the cache, and it matches a direct render.
+        ui.ensure_transcript_lines(&model, false, 40);
+        let first = ui.transcript_lines().to_vec();
+        let ptr = ui.transcript_lines().as_ptr();
+        assert_eq!(first, transcript_lines(&model, false, 40));
+
+        // An unchanged frame reuses the SAME backing allocation — no re-wrap.
+        ui.ensure_transcript_lines(&model, false, 40);
+        assert_eq!(
+            ui.transcript_lines().as_ptr(),
+            ptr,
+            "an unchanged frame must not rebuild the transcript"
+        );
+
+        // A streaming delta coalesces into the trailing Text entry: entry count
+        // stays 1, but the tail grows. The cache must rebuild and show it.
+        model.apply(&AgentEvent::Text {
+            delta: " …and still more streamed text arriving token by token".into(),
+        });
+        assert_eq!(
+            model.transcript.len(),
+            1,
+            "the delta coalesced, not appended"
+        );
+        ui.ensure_transcript_lines(&model, false, 40);
+        assert_eq!(ui.transcript_lines(), transcript_lines(&model, false, 40));
+        assert_ne!(
+            ui.transcript_lines(),
+            first.as_slice(),
+            "a grown trailing entry must produce fresh lines"
+        );
+
+        // A width change (a resize) also invalidates.
+        let wide = ui.transcript_lines().as_ptr();
+        ui.ensure_transcript_lines(&model, false, 20);
+        assert_ne!(
+            ui.transcript_lines().as_ptr(),
+            wide,
+            "a wrap-width change must rebuild"
+        );
+        assert_eq!(ui.transcript_lines(), transcript_lines(&model, false, 20));
+    }
+
+    #[test]
     fn a_panicking_panel_becomes_an_error_card_and_input_stays_alive() {
         // L-T7: force a panel to panic via a panicking draw closure and prove
         // (a) it renders as a visible error card, (b) a sibling panel still
@@ -1955,6 +2040,7 @@ mod tests {
                 message: "not found".into(),
             },
             duration_ms: 12,
+            speculated: false,
         });
         let lines = transcript_lines(&model, false, 0);
         let joined: String = lines
@@ -1969,6 +2055,65 @@ mod tests {
         assert!(
             joined.contains("[✗ read_file]"),
             "result labels itself with its tool: {joined}"
+        );
+    }
+
+    /// Expanded (ctrl+o) detail rows — full tool output and pretty-printed
+    /// call args — align at the content column exactly like their parent
+    /// row's content, not at the left margin: the transcript's two-column
+    /// layout must hold for the hidden rows too.
+    #[test]
+    fn expanded_detail_rows_align_at_the_content_column() {
+        let indent = " ".repeat(LABEL_COL);
+        let line_text =
+            |l: &Line<'_>| -> String { l.spans.iter().map(|s| s.content.as_ref()).collect() };
+
+        let mut result_rows = Vec::new();
+        entry_lines(
+            &TranscriptEntry::ToolResult {
+                call_id: "c1".into(),
+                name: "grep".into(),
+                ok: true,
+                summary: "hit".into(),
+                full: "src/a.rs:1: hit\nsrc/b.rs:2: hit".into(),
+                duration_ms: 5,
+                diff: None,
+                speculated: false,
+            },
+            false,
+            true,
+            120,
+            &mut result_rows,
+        );
+        let details: Vec<String> = result_rows.iter().skip(1).map(line_text).collect();
+        assert_eq!(details.len(), 2, "both output lines render");
+        for d in &details {
+            assert!(
+                d.starts_with(&indent) && !d.starts_with(&format!("{indent} ")),
+                "detail row starts exactly at LABEL_COL: {d:?}"
+            );
+        }
+
+        let mut start_rows = Vec::new();
+        entry_lines(
+            &TranscriptEntry::ToolStart {
+                call_id: "c1".into(),
+                name: "grep".into(),
+                input: "pattern".into(),
+                raw: r#"{"pattern":"hit"}"#.into(),
+                path: None,
+            },
+            false,
+            true,
+            120,
+            &mut start_rows,
+        );
+        assert!(
+            start_rows
+                .iter()
+                .skip(1)
+                .all(|l| line_text(l).starts_with(&indent)),
+            "expanded call args align at the content column"
         );
     }
 
@@ -2062,6 +2207,7 @@ mod tests {
                 summary: "ok".into(),
                 full: "ok".into(),
                 duration_ms: 3,
+                speculated: false,
                 diff: None,
             }),
             Some(theme::EMBER_GOLD),
@@ -2075,6 +2221,7 @@ mod tests {
                 summary: "no".into(),
                 full: "no".into(),
                 duration_ms: 3,
+                speculated: false,
                 diff: None,
             }),
             Some(theme::EMBER_CRIMSON),

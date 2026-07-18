@@ -108,6 +108,17 @@ impl JsonRpcMessage {
         }
     }
 
+    /// Whether this is a RESPONSE to one of our requests, as opposed to a
+    /// server-initiated request or notification. A response carries `result`
+    /// or `error` and NO `method`; a server request/notification carries a
+    /// `method`. Only a response may fulfill a pending client waiter —
+    /// otherwise a server `ping` request whose id happens to collide with an
+    /// in-flight client id would be delivered to that caller as its answer,
+    /// failing the real call and orphaning the real response.
+    pub fn is_response(&self) -> bool {
+        self.method.is_none() && (self.result.is_some() || self.error.is_some())
+    }
+
     /// Collapse a correlated response into either its `result`, its `error`
     /// mapped to [`McpError::JsonRpc`], or a [`McpError::Protocol`] violation
     /// when it carries neither. Both transports funnel responses through here
@@ -362,5 +373,37 @@ mod tests {
         assert!(is_supported_version("2025-06-18"));
         assert!(is_supported_version("2024-11-05"));
         assert!(!is_supported_version("1999-01-01"));
+    }
+
+    #[test]
+    fn only_a_response_can_fulfill_a_waiter_not_a_server_request() {
+        // A success response with our id — routable.
+        let resp: JsonRpcMessage =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","id":7,"result":{"ok":true}}"#).unwrap();
+        assert!(resp.is_response());
+        assert_eq!(resp.correlated_id(), Some(7));
+
+        // An error response — also routable.
+        let err: JsonRpcMessage = serde_json::from_str(
+            r#"{"jsonrpc":"2.0","id":7,"error":{"code":-32000,"message":"x"}}"#,
+        )
+        .unwrap();
+        assert!(err.is_response());
+
+        // A SERVER-INITIATED request whose id collides with an in-flight
+        // client id (7) — carries a `method`, so it must NOT be routed to the
+        // waiting caller even though the id matches.
+        let server_req: JsonRpcMessage =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#).unwrap();
+        assert!(
+            !server_req.is_response(),
+            "a server request must never fulfill a client waiter"
+        );
+        assert_eq!(server_req.correlated_id(), Some(7));
+
+        // A server notification (no id) — not a response.
+        let note: JsonRpcMessage =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","method":"notifications/progress"}"#).unwrap();
+        assert!(!note.is_response());
     }
 }

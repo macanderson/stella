@@ -197,6 +197,15 @@ fn render_browse(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
                 Style::default().fg(theme::VIOLET),
             ));
         }
+        // OAuth state for http servers: logged in (green) or available (`o`).
+        match server.oauth {
+            Some(true) => spans.push(Span::styled(
+                "  ⚿ oauth ✓",
+                Style::default().fg(theme::SUCCESS),
+            )),
+            Some(false) => spans.push(Span::styled("  ⚿ oauth: o to log in", theme::muted())),
+            None => {}
+        }
         spans.push(Span::styled(
             format!("  · {} tools", server.tool_count),
             theme::muted(),
@@ -330,8 +339,9 @@ fn footer(mode: McpMode) -> Line<'static> {
         McpMode::Browse => &[
             ("↑↓", "select"),
             ("e/␣", "enable/disable"),
-            ("/", "search"),
+            ("s", "search registry (also /mcp-search)"),
             ("a", "auth"),
+            ("o", "oauth login"),
             ("x", "remove"),
             ("r", "refresh"),
         ],

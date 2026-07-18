@@ -329,15 +329,42 @@ impl<'a> InteractiveToolSet<'a> {
                 content: "user declined the installation — do not retry; proceed without it".into(),
             };
         }
-        let argv = SkillRegistry::render(&registry.install_cmd, "{id}", id);
-        match registry.run(argv, 300).await {
-            Ok(out) => ToolOutput::Ok {
+        // Stage the registry CLI's write into a private tempdir, then adopt the
+        // produced tree into THIS project's `.stella/skills/` — the exact path
+        // the command deck uses. Running the install against the workspace
+        // directly lets `npx skills add` write global symlinks
+        // (`~/.config/stella/skills`) that never appear in the project scope, so
+        // the tool reported success yet the skill was absent from the list.
+        let tmp = match tempfile::Builder::new().prefix("stella-skill-").tempdir() {
+            Ok(t) => t,
+            Err(e) => {
+                return ToolOutput::Error {
+                    message: format!("install_skill: could not stage a tempdir: {e}"),
+                };
+            }
+        };
+        let mut staged = registry.clone();
+        staged.workspace_root = tmp.path().to_path_buf();
+        let argv = SkillRegistry::render(&staged.install_cmd, "{id}", id);
+        if let Err(e) = staged.run(argv, 300).await {
+            return ToolOutput::Error {
+                message: format!("skills install failed: {e}"),
+            };
+        }
+        match crate::skill_manager::adopt_tree(
+            stella_tui::SkillScope::Project,
+            &registry.workspace_root,
+            tmp.path(),
+            id,
+        ) {
+            Ok(name) => ToolOutput::Ok {
                 content: format!(
-                    "installed `{id}`. It will be considered for selection on the next turn.\n{out}"
+                    "installed `{name}` into .stella/skills/. It will be considered for \
+                     selection on the next turn."
                 ),
             },
             Err(e) => ToolOutput::Error {
-                message: format!("skills install failed: {e}"),
+                message: format!("skills install produced nothing usable: {e}"),
             },
         }
     }
@@ -724,5 +751,54 @@ mod tests {
         );
         // The {id} placeholder is still present for substitution.
         assert!(reg.install_cmd.iter().any(|t| t.contains("{id}")));
+    }
+
+    #[tokio::test]
+    async fn install_skill_lands_in_the_project_scope_not_the_workspace_root() {
+        // THE cli-skills P1: the agent tool used to run the registry CLI
+        // directly against the workspace, so the skill was written wherever the
+        // CLI defaults (a global `~/.config/stella/skills` symlink) — the tool
+        // reported success yet the skill never showed up in the project's list.
+        // The fix mirrors the command deck: stage the install into a private
+        // tempdir, then `adopt_tree` it into `<ws>/.stella/skills/`.
+        let ws = tempfile::tempdir().expect("workspace tempdir");
+        // A fake installer that writes a SKILL.md into WHATEVER cwd it is run
+        // in. Under the fix that cwd is the private staging tempdir, so this
+        // never touches the workspace root.
+        let install_script = "mkdir -p demo-skill && printf '%s\\n' \
+            '---' 'name: demo-skill' 'description: a demo skill' '---' '# Demo' 'body' \
+            > demo-skill/SKILL.md";
+        let registry = SkillRegistry {
+            search_cmd: vec![],
+            install_cmd: vec!["sh".into(), "-c".into(), install_script.into()],
+            use_cmd: vec![],
+            workspace_root: ws.path().to_path_buf(),
+        };
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let inner = FakeInner;
+        // "1" = approve the install confirmation.
+        let set = InteractiveToolSet::new(&inner, tx, Box::new(ScriptedIo::new(vec!["1"])))
+            .with_skill_registry(registry);
+
+        let out = set
+            .execute(
+                "install_skill",
+                &serde_json::json!({ "id": "acme/demo-skill" }),
+            )
+            .await;
+        assert!(!out.is_error(), "install should succeed, got {out:?}");
+
+        // It landed in the PROJECT scope…
+        let landed = ws.path().join(".stella/skills/demo-skill/SKILL.md");
+        assert!(
+            landed.exists(),
+            "skill must land in <ws>/.stella/skills/, got {out:?}"
+        );
+        // …and the installer's raw write did NOT pollute the workspace root
+        // (the pre-fix behavior, which left the project scope empty).
+        assert!(
+            !ws.path().join("demo-skill/SKILL.md").exists(),
+            "install must stage into a tempdir, never write the workspace root directly"
+        );
     }
 }

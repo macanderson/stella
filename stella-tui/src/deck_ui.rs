@@ -30,7 +30,7 @@ use crate::composer::{
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::envelope::{
     AgentControl, AgentId, AgentScope, AgentStatus, Inbound, InstalledAgentEntry, Secret, SkillOp,
-    SkillScope, SkillSearchHit, SkillsView, WorkspaceInput,
+    SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
 };
 use crate::graph::GraphSnapshot;
 use crate::input::{ScopeDecision, UserInput};
@@ -344,10 +344,11 @@ pub struct DeckUi {
     /// front-eviction shifts every retained index, so when it advances that
     /// agent's `expanded` set is stale and must drop.
     pub evicted_seen: std::collections::HashMap<String, usize>,
-    /// Armed by a `ctrl+o` pressed from the prompt (no selection); a second
-    /// consecutive `ctrl+o` escalates to the all-thinking toggle. Any other
-    /// key disarms.
-    pub ctrl_o_primed: bool,
+    /// The no-selection `ctrl+o` overlay: every expandable transcript entry
+    /// renders expanded, without touching the per-entry `expanded` sets.
+    /// `ctrl+o` (still with no selection) or Esc on the Session tab turns it
+    /// off — every way in has a way out.
+    pub transcript_expand_all: bool,
     /// When a turn-stopping Esc armed the double-Esc escalation. A second
     /// Esc inside [`ESC_DOUBLE_WINDOW`] with no other key in between sends
     /// [`WorkspaceInput::StopAndHold`]; any other key — or an Esc claimed by
@@ -368,6 +369,34 @@ pub struct DeckUi {
     /// Motion off-switch (`--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`): freezes
     /// the progress shimmer, pulse, and caret blink to a static frame.
     pub no_anim: bool,
+    /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
+    /// tab, or `/sessions`). Modal while open: ↑/↓ move, `a` archive, `x`
+    /// delete, `r` refresh, Esc/`←` close.
+    pub sessions_open: bool,
+    /// The machine-wide session registry snapshot ([`Inbound::Sessions`]),
+    /// pre-sorted by the driver; the overlay groups it by phase.
+    pub sessions: Vec<crate::envelope::SessionInfo>,
+    /// Selected row in the overlay's flattened (grouped) row list.
+    pub sessions_sel: usize,
+    /// Whether the CONTEXT overlay is open (empty-prompt `→` on the Session
+    /// tab, or `/context`): active skills + MCP servers for THIS session,
+    /// rendered from the already-live `skills`/`mcp` snapshots.
+    pub context_open: bool,
+    /// Vertical scroll offset (rows) for the CONTEXT overlay; render clamps.
+    pub context_scroll: usize,
+    /// Whether the INBOX overlay is open (`/inbox`): the persist-until-read
+    /// notifications. ↑/↓ move, Enter/Space mark read, `R` mark all read.
+    pub inbox_open: bool,
+    /// The notification snapshot ([`Inbound::Notifications`]), newest first.
+    /// The footer badge shows its unread count even while the overlay is shut.
+    pub notifications: Vec<crate::envelope::NotificationInfo>,
+    /// Selected row in the inbox overlay.
+    pub inbox_sel: usize,
+    /// Driver requests queued by handlers/ingest beyond the one action a key
+    /// can return (e.g. opening CONTEXT refreshes both skills and MCP; a
+    /// finished OAuth login refreshes the MCP snapshot). The shell drains
+    /// this after every key/inbound and forwards each as a submission.
+    pub pending_inputs: Vec<WorkspaceInput>,
 }
 
 impl Default for DeckUi {
@@ -408,12 +437,21 @@ impl Default for DeckUi {
             expanded: std::collections::HashMap::new(),
             expanded_rev: 0,
             evicted_seen: std::collections::HashMap::new(),
-            ctrl_o_primed: false,
+            transcript_expand_all: false,
             esc_armed_at: None,
             dispatch_held: false,
             session_fold: crate::views::session::SessionFold::default(),
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,
+            sessions_open: false,
+            sessions: Vec::new(),
+            sessions_sel: 0,
+            context_open: false,
+            context_scroll: 0,
+            inbox_open: false,
+            notifications: Vec::new(),
+            inbox_sel: 0,
+            pending_inputs: Vec::new(),
         }
     }
 }
@@ -436,15 +474,70 @@ impl DeckUi {
         }
     }
 
-    /// Route a bracketed paste to whichever editing surface owns the
-    /// keyboard: the agent-definition editor while it is open, the global
-    /// composer otherwise. Keeps [`crate::deck_shell`] a dumb wire.
+    /// Route a bracketed paste to whichever surface owns the keyboard, in the
+    /// SAME precedence [`handle_deck_key`] routes keystrokes — so a paste lands
+    /// in the focused input, never the global composer behind it.
+    ///
+    /// This is a security boundary as much as a UX one: the most important case
+    /// is the MCP credential **value** step, where a pasted secret would
+    /// otherwise land — in plaintext — in the composer and could be sent as a
+    /// prompt or shown in the transcript. A modal text input always wins; only
+    /// when nothing modal owns the keyboard does the composer receive the paste.
+    /// Keeps [`crate::deck_shell`] a dumb wire.
     pub fn paste(&mut self, text: &str) {
-        if self.installed.mode == InstalledMode::Edit {
-            self.installed.editor.paste(text);
-        } else {
-            self.composer.paste(text);
+        // 1. Installed-agents sub-modes are modal while open.
+        if self.installed.mode != InstalledMode::Browse {
+            match self.installed.mode {
+                InstalledMode::Edit => self.installed.editor.paste(text),
+                InstalledMode::CreateDescribe => self.installed.create_desc.push_str(text),
+                // Scope / version pickers hold no text — swallow, never leak.
+                InstalledMode::CreateScope | InstalledMode::PickVersion | InstalledMode::Browse => {
+                }
+            }
+            return;
         }
+
+        // 2. The Graph tab's modal file-filter input.
+        if self.graph_picker_open {
+            push_single_line(&mut self.graph_picker_query, text);
+            return;
+        }
+
+        // 3. The SKILLS tab is keyboard-owning: its overlays and search query
+        //    claim keys ahead of the composer, so a paste must too.
+        if self.tab == DeckTab::Skills {
+            match &mut self.skills.prompt {
+                Some(SkillPrompt::CreateDescription { buffer })
+                | Some(SkillPrompt::Edit { buffer, .. }) => buffer.push_str(text),
+                // Scope / pin pickers hold no text.
+                Some(SkillPrompt::Scope { .. } | SkillPrompt::Pin { .. }) => {}
+                None if self.skills.focus == SkillsFocus::Search => {
+                    push_single_line(&mut self.skills.query, text);
+                }
+                // Installed-list navigation owns no text input: fall through to
+                // the composer, matching its printable-char fallthrough.
+                None => self.composer.paste(text),
+            }
+            return;
+        }
+
+        // 4. The MCP tab's modal search and credential inputs.
+        if self.tab == DeckTab::Mcp {
+            match self.mcp.mode {
+                McpMode::Search => push_single_line(&mut self.mcp.query, text),
+                McpMode::Auth => match self.mcp.auth.step {
+                    AuthStep::Field => push_single_line(&mut self.mcp.auth.field, text),
+                    // The secret value: NEVER the composer.
+                    AuthStep::Value => push_single_line(&mut self.mcp.auth.value, text),
+                },
+                // Browse list owns no text input — start a prompt like any tab.
+                McpMode::Browse => self.composer.paste(text),
+            }
+            return;
+        }
+
+        // 5. Default: the global composer.
+        self.composer.paste(text);
     }
 
     /// Point the deck at agent `idx`. A session-message selection indexes the
@@ -590,6 +683,55 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         ui.help_scroll.top = 0;
         return;
     }
+    // The machine-wide session registry snapshot — out-of-band view state
+    // for the SESSIONS overlay (and its refreshes after archive/delete).
+    if let Inbound::Sessions(sessions) = inbound {
+        ui.sessions = sessions.clone();
+        ui.sessions_sel = ui.sessions_sel.min(sessions.len().saturating_sub(1));
+        return;
+    }
+    // The persist-until-read notification snapshot: feeds the footer badge
+    // continuously and the inbox overlay when open.
+    if let Inbound::Notifications(notifications) = inbound {
+        ui.notifications = notifications.clone();
+        ui.inbox_sel = ui.inbox_sel.min(notifications.len().saturating_sub(1));
+        return;
+    }
+    // OAuth login progress lands on the MCP tab's status line; a successful
+    // finish means the token store changed, so the snapshot (⚿ oauth badge)
+    // is stale — queue a refresh for the shell to forward.
+    if let Inbound::McpOauthStatus {
+        server,
+        message,
+        outcome,
+    } = inbound
+    {
+        ui.mcp.status = Some(match outcome {
+            None => format!("{server}: {message}"),
+            Some(true) => format!("{server}: ✓ {message}"),
+            Some(false) => format!("{server}: ✗ {message}"),
+        });
+        if *outcome == Some(true) {
+            ui.pending_inputs.push(WorkspaceInput::McpRefresh);
+        }
+        return;
+    }
+    // Launch-cinematic cues: the driver replays the splash held open over a
+    // running init (`/init`, session startup) and releases it when init
+    // finishes. Out-of-band view state like `ShowHelp`. `--no-anim`
+    // sessions ignore the replay — their contract is a static frame — and a
+    // release on a splash that never held is a harmless no-op.
+    if let Inbound::Splash(cue) = inbound {
+        match cue {
+            SplashCue::Replay => {
+                if !ui.no_anim {
+                    ui.splash = SplashState::new_held();
+                }
+            }
+            SplashCue::Release => ui.splash.release(),
+        }
+        return;
+    }
     model.apply_inbound(inbound);
     clamp(model, ui);
 }
@@ -653,19 +795,30 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
 /// 5. scope-review gate pending, composer empty — Esc aborts the plan
 /// 6. Files tab with the diff open — Esc closes the diff
 /// 7. Session tab with a message highlighted — Esc clears the highlight
-/// 8. armed by a turn-stopping Esc within [`ESC_DOUBLE_WINDOW`], no other
+/// 8. Session tab with the ctrl+o expand-ALL overlay on — Esc collapses it
+///    (each Esc peels one layer: highlight first, then the overlay, so
+///    every way into an expanded view has a graceful way back out)
+/// 9. armed by a turn-stopping Esc within [`ESC_DOUBLE_WINDOW`], no other
 ///    key in between — Esc escalates to [`WorkspaceInput::StopAndHold`]
 ///    (cancel, requeue the interrupted prompt at the front, hold dispatch
 ///    for the user's next submission)
-/// 9. focused agent [`AgentStatus::Running`] — Esc stops the in-flight turn
-///    ([`AgentControl::Stop`]; the driver truncates the partial turn and
-///    auto-dispatches the next queued prompt)
-/// 10. otherwise Esc is ignored
+/// 10. focused agent [`AgentStatus::Running`] — Esc stops the in-flight turn
+///     ([`AgentControl::Stop`]; the driver truncates the partial turn and
+///     auto-dispatches the next queued prompt)
+/// 11. otherwise Esc is ignored
 ///
 /// The composer's content never gates rules 8–9: the cursor always lives in
 /// the global composer, so a stop must leave a typed draft untouched. A
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 9's `Running` check.
+/// Append a paste into a single-line input, dropping newlines so a multi-line
+/// clipboard blob cannot smuggle extra "lines" into a one-line field (a search
+/// query, a credential field, a secret value). Multi-line surfaces (the agent
+/// editor, a skill body) take the raw text instead.
+fn push_single_line(buf: &mut String, text: &str) {
+    buf.extend(text.chars().filter(|&c| c != '\n' && c != '\r'));
+}
+
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
@@ -673,9 +826,6 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
 
     let is_ctrl_o =
         key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('o'));
-    if !is_ctrl_o {
-        ui.ctrl_o_primed = false;
-    }
 
     // The double-Esc pair: EVERY key consumes the armed state up front; only
     // the unclaimed turn-stopping Esc at the tail re-arms, and only an
@@ -719,11 +869,12 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     }
 
     // Ctrl-O: the expand/collapse verb. On a ↑/↓-highlighted message it
-    // toggles that message; from the prompt it toggles the most recent
-    // expandable message, and a second consecutive press escalates to the
-    // all-thinking toggle (chain-of-thought everywhere). The SKILLS tab reuses
-    // ctrl+o for its own markdown preview overlay, so it must NOT be claimed
-    // here on that tab — the keyboard-owning skills handler below owns it.
+    // toggles that message; with nothing highlighted (e.g. mid-prompt) it
+    // toggles the expand-ALL overlay — every expandable message opens at
+    // once, and a second ctrl+o (or Esc on the Session tab) closes them all
+    // again. The SKILLS tab reuses ctrl+o for its own markdown preview
+    // overlay, so it must NOT be claimed here on that tab — the
+    // keyboard-owning skills handler below owns it.
     if is_ctrl_o && ui.tab != DeckTab::Skills {
         if let Some(sel) = ui.session_selected {
             // Only a genuinely expandable entry toggles — a no-op press must
@@ -732,19 +883,26 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
                 && agent.model.transcript.get(sel).is_some_and(is_expandable)
             {
                 let id = agent.meta.id.clone();
+                if ui.transcript_expand_all {
+                    // Collapsing ONE row out of the everything-open overlay:
+                    // materialize the overlay into the per-entry set first,
+                    // so the toggle below closes just the highlighted row and
+                    // the rest stay open.
+                    let all: std::collections::HashSet<usize> = agent
+                        .model
+                        .transcript
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| is_expandable(e))
+                        .map(|(i, _)| i)
+                        .collect();
+                    ui.expanded.insert(id.clone(), all);
+                    ui.transcript_expand_all = false;
+                }
                 toggle_expanded(ui, &id, sel);
             }
-        } else if ui.ctrl_o_primed {
-            ui.ctrl_o_primed = false;
-            ui.thinking_expanded = !ui.thinking_expanded;
         } else {
-            if let Some(agent) = model.agents.get(ui.focused)
-                && let Some(idx) = last_expandable(&agent.model.transcript)
-            {
-                let id = agent.meta.id.clone();
-                toggle_expanded(ui, &id, idx);
-            }
-            ui.ctrl_o_primed = true;
+            ui.transcript_expand_all = !ui.transcript_expand_all;
         }
         return DeckAction::Handled;
     }
@@ -771,15 +929,30 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         return handle_graph_picker_key(key, ui);
     }
 
+    // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the
+    // queue editor while open: they own the keyboard until dismissed.
+    if ui.sessions_open {
+        return handle_sessions_key(key, ui);
+    }
+    if ui.inbox_open {
+        return handle_inbox_key(key, ui);
+    }
+    if ui.context_open {
+        return handle_context_key(key, ui);
+    }
+
     let composer_empty = ui.composer.buffer().is_empty();
 
     // The SKILLS tab is a keyboard-owning manager: it claims the keys for its
     // list, search query, and overlays *ahead* of tab-nav and the global
-    // composer, so a search term (or a manage hotkey like space) is never
-    // swallowed as prompt text. Keys it declines (`None`) fall through — Tab
-    // still leaves the tab, `?` still opens help from the installed pane.
+    // composer. But its bare-letter/space manage hotkeys (space/e/p/n) honor
+    // the deck-wide "hotkeys only from an empty composer" contract — while a
+    // prompt is being typed they fall through so the letters build the prompt,
+    // never trigger an edit/pin/create. Search-query typing and the modal
+    // overlays are genuine text inputs and always claim. Keys it declines
+    // (`None`) fall through — Tab still leaves the tab, `?` still opens help.
     if ui.tab == DeckTab::Skills
-        && let Some(action) = handle_skills_key(key, ui)
+        && let Some(action) = handle_skills_key(key, ui, composer_empty)
     {
         return action;
     }
@@ -827,6 +1000,22 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         ui.queue_sel = model.queue.pending() - 1;
         ui.queue_confirm_clear = false;
         return DeckAction::Handled;
+    }
+
+    // `←` from an empty composer on the Session tab opens the SESSIONS
+    // overlay — every running stella session on this machine, grouped by
+    // status. `→` opens the CONTEXT overlay (this session's active skills +
+    // MCP servers) without leaving the transcript. Both are gated to the
+    // Session tab + full composer emptiness, so ←/→ on other tabs (Agents
+    // pane nav, Graph cursor, skills pickers) are untouched, and typing a
+    // prompt never trips them (handle_edit_key claims ←/→ once text exists).
+    if ui.tab == DeckTab::Session && ui.composer.is_empty() {
+        if matches!(key.code, KeyCode::Left) {
+            return open_sessions_overlay(ui);
+        }
+        if matches!(key.code, KeyCode::Right) {
+            return open_context_overlay(ui);
+        }
     }
 
     // Focused-agent gates take precedence over normal composer editing, exactly
@@ -1019,6 +1208,22 @@ fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Optio
                 ui.set_tab(DeckTab::Mcp);
                 DeckAction::Handled
             }
+            // The three transcript-page overlays are deck-local view state,
+            // exactly like the tab switches above (their keyboard shortcuts:
+            // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
+            "/sessions" => open_sessions_overlay(ui),
+            "/context" => open_context_overlay(ui),
+            "/inbox" => open_inbox_overlay(ui),
+            // `/mcp-search` jumps straight into the MCP tab's registry
+            // search — THE way to begin looking for a server from anywhere
+            // (the old `/`-on-the-MCP-tab trigger collided with the command
+            // menu and is gone; `s` on the tab is the local equivalent).
+            "/mcp-search" => {
+                ui.set_tab(DeckTab::Mcp);
+                ui.mcp.mode = McpMode::Search;
+                ui.mcp.status = None;
+                DeckAction::Handled
+            }
             // Everything else — including `/help` — is enqueued for the
             // driver, which owns the session vocabulary and answers into the
             // transcript (a transient overlay would leave no record).
@@ -1079,6 +1284,146 @@ fn handle_queue_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
             DeckAction::Handled
         }
         _ => DeckAction::Ignored,
+    }
+}
+
+/// Open the SESSIONS overlay (empty-prompt `←`, `/sessions`) and ask the
+/// driver for a fresh registry snapshot.
+pub(crate) fn open_sessions_overlay(ui: &mut DeckUi) -> DeckAction {
+    ui.sessions_open = true;
+    ui.sessions_sel = 0;
+    DeckAction::Send(WorkspaceInput::SessionsRefresh)
+}
+
+/// Open the CONTEXT overlay (empty-prompt `→`, `/context`) and freshen both
+/// snapshots it renders — the second refresh rides `pending_inputs` since a
+/// key returns only one action.
+pub(crate) fn open_context_overlay(ui: &mut DeckUi) -> DeckAction {
+    ui.context_open = true;
+    ui.context_scroll = 0;
+    ui.pending_inputs.push(WorkspaceInput::McpRefresh);
+    DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
+}
+
+/// Open the INBOX overlay (`/inbox`). The driver's poller keeps the
+/// notification snapshot fresh; nothing to request.
+pub(crate) fn open_inbox_overlay(ui: &mut DeckUi) -> DeckAction {
+    ui.inbox_open = true;
+    ui.inbox_sel = 0;
+    DeckAction::Handled
+}
+
+/// The SESSIONS overlay's rows in display order: grouped by phase (the
+/// [`crate::envelope::SessionPhase::ALL`] order), newest-started first within
+/// a group — the flat list `sessions_sel` indexes and render walks.
+pub fn grouped_session_rows(ui: &DeckUi) -> Vec<&crate::envelope::SessionInfo> {
+    let mut rows = Vec::with_capacity(ui.sessions.len());
+    for phase in crate::envelope::SessionPhase::ALL {
+        // `Inbound::Sessions` arrives newest-started first from the driver,
+        // so a stable filter keeps that order within each group.
+        rows.extend(ui.sessions.iter().filter(|s| s.phase == phase));
+    }
+    rows
+}
+
+/// The SESSIONS overlay key map: ↑/↓ select, `a` archive, `x` delete
+/// (another session's record only — never this session's own), `r` refresh,
+/// Esc/`←`/`q` close. Modal: everything else is swallowed.
+fn handle_sessions_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    let count = grouped_session_rows(ui).len();
+    ui.sessions_sel = ui.sessions_sel.min(count.saturating_sub(1));
+    match key.code {
+        KeyCode::Esc | KeyCode::Left | KeyCode::Char('q') => {
+            ui.sessions_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.sessions_sel = ui.sessions_sel.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            if count > 0 {
+                ui.sessions_sel = (ui.sessions_sel + 1).min(count - 1);
+            }
+            DeckAction::Handled
+        }
+        KeyCode::Char('r') => DeckAction::Send(WorkspaceInput::SessionsRefresh),
+        KeyCode::Char('a') => match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
+            Some(row) => DeckAction::Send(WorkspaceInput::SessionArchive { id: row.id.clone() }),
+            None => DeckAction::Handled,
+        },
+        KeyCode::Char('x') => {
+            match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
+                // This deck's own record is written by this process — deleting
+                // it out from under the writer would just resurrect on the
+                // next transition, so the key refuses.
+                Some(row) if !row.mine => {
+                    DeckAction::Send(WorkspaceInput::SessionDelete { id: row.id.clone() })
+                }
+                _ => DeckAction::Handled,
+            }
+        }
+        _ => DeckAction::Handled,
+    }
+}
+
+/// The INBOX overlay key map: ↑/↓ select, Enter/Space mark the selected
+/// notification read, `R` mark all read, Esc/`q` close. Modal.
+fn handle_inbox_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    let count = ui.notifications.len();
+    ui.inbox_sel = ui.inbox_sel.min(count.saturating_sub(1));
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            ui.inbox_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.inbox_sel = ui.inbox_sel.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            if count > 0 {
+                ui.inbox_sel = (ui.inbox_sel + 1).min(count - 1);
+            }
+            DeckAction::Handled
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => match ui.notifications.get(ui.inbox_sel) {
+            Some(n) if !n.read => {
+                DeckAction::Send(WorkspaceInput::NotificationRead { id: n.id.clone() })
+            }
+            _ => DeckAction::Handled,
+        },
+        KeyCode::Char('R') => DeckAction::Send(WorkspaceInput::NotificationsReadAll),
+        _ => DeckAction::Handled,
+    }
+}
+
+/// The CONTEXT overlay key map: ↑/↓/PageUp/PageDown scroll, Esc/`→`/`q`
+/// close. Read-only — management lives on the SKILLS/MCP tabs. Modal.
+fn handle_context_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    match key.code {
+        KeyCode::Esc | KeyCode::Right | KeyCode::Char('q') => {
+            ui.context_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.context_scroll = ui.context_scroll.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            // Render clamps to the content height it measures.
+            ui.context_scroll = ui.context_scroll.saturating_add(1);
+            DeckAction::Handled
+        }
+        KeyCode::PageUp => {
+            ui.context_scroll = ui.context_scroll.saturating_sub(10);
+            DeckAction::Handled
+        }
+        KeyCode::PageDown => {
+            ui.context_scroll = ui.context_scroll.saturating_add(10);
+            DeckAction::Handled
+        }
+        _ => DeckAction::Handled,
     }
 }
 
@@ -1270,7 +1615,7 @@ fn handle_pick_version_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 /// composer (nav, manage hotkeys, the search query, overlays), `None` for keys
 /// that should fall through to the deck-global handlers — Tab still leaves the
 /// tab and `?` still opens help from the installed pane.
-fn handle_skills_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction> {
+fn handle_skills_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
     // The ctrl+o preview overlay is fully modal (scroll + esc close) and sits
     // ahead of every pane and the other prompts.
     if ui.skills.preview.is_some() {
@@ -1282,7 +1627,7 @@ fn handle_skills_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction> {
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match ui.skills.focus {
-        SkillsFocus::Installed => handle_skills_installed_key(key, ui, ctrl),
+        SkillsFocus::Installed => handle_skills_installed_key(key, ui, ctrl, composer_empty),
         SkillsFocus::Search => handle_skills_search_key(key, ui),
     }
 }
@@ -1371,7 +1716,12 @@ fn handle_skills_preview_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 
 /// The installed-skills (manage) pane: navigate, toggle enabled (space),
 /// uninstall (ctrl+x twice), edit (e), pin (p), create (n), cross to search (→).
-fn handle_skills_installed_key(key: KeyEvent, ui: &mut DeckUi, ctrl: bool) -> Option<DeckAction> {
+fn handle_skills_installed_key(
+    key: KeyEvent,
+    ui: &mut DeckUi,
+    ctrl: bool,
+    composer_empty: bool,
+) -> Option<DeckAction> {
     let count = ui.skills.view.rows.len();
     // Any key other than a fresh ctrl+x disarms the two-press uninstall.
     let was_armed = ui.skills.uninstall_armed;
@@ -1395,7 +1745,9 @@ fn handle_skills_installed_key(key: KeyEvent, ui: &mut DeckUi, ctrl: bool) -> Op
             }
             Some(DeckAction::Handled)
         }
-        KeyCode::Char(' ') => {
+        // space toggles enabled — but only from an empty composer, so a space
+        // typed mid-prompt builds the prompt instead of flipping a skill.
+        KeyCode::Char(' ') if composer_empty => {
             let Some(row) = ui.skills.view.rows.get(ui.skills.sel) else {
                 return Some(DeckAction::Handled);
             };
@@ -1450,7 +1802,7 @@ fn handle_skills_installed_key(key: KeyEvent, ui: &mut DeckUi, ctrl: bool) -> Op
         // Preview the selected skill's rendered SKILL.md (scrollable, esc closes).
         KeyCode::Char('o') if ctrl => open_installed_preview(ui),
         // Edit the selected skill's body (saving makes a new pinned version).
-        KeyCode::Char('e') if !ctrl => {
+        KeyCode::Char('e') if !ctrl && composer_empty => {
             if let Some(row) = ui.skills.view.rows.get(ui.skills.sel) {
                 ui.skills.prompt = Some(SkillPrompt::Edit {
                     scope: row.scope,
@@ -1461,7 +1813,7 @@ fn handle_skills_installed_key(key: KeyEvent, ui: &mut DeckUi, ctrl: bool) -> Op
             Some(DeckAction::Handled)
         }
         // Pin a specific version (no edit, no version bump).
-        KeyCode::Char('p') if !ctrl => {
+        KeyCode::Char('p') if !ctrl && composer_empty => {
             if let Some(row) = ui.skills.view.rows.get(ui.skills.sel) {
                 if row.latest <= 1 {
                     ui.skills.status = Some(format!("{} has only one version", row.name));
@@ -1477,7 +1829,7 @@ fn handle_skills_installed_key(key: KeyEvent, ui: &mut DeckUi, ctrl: bool) -> Op
             Some(DeckAction::Handled)
         }
         // Create a new skill with LLM assistance from a short description.
-        KeyCode::Char('n') if !ctrl => {
+        KeyCode::Char('n') if !ctrl && composer_empty => {
             ui.skills.prompt = Some(SkillPrompt::CreateDescription {
                 buffer: String::new(),
             });
@@ -1794,12 +2146,12 @@ fn handle_focused_gates(
                 if classify_enter(&key) == EnterAction::Submit
                     && !ui.composer.buffer().trim_start().starts_with('!') =>
             {
-                if let Some(answer) = ui.composer.take_submission() {
+                if let Some(submission) = ui.composer.take_submission() {
                     return Some(DeckAction::Send(WorkspaceInput::ToAgent {
                         agent: agent.clone(),
                         input: UserInput::AskUserAnswer {
                             id: prompt.id.clone(),
-                            answer,
+                            answer: submission.text,
                         },
                     }));
                 }
@@ -1842,9 +2194,11 @@ fn handle_mcp_browse_key(
             }
             Some(DeckAction::Handled)
         }
-        // Enter search mode. `/` is safe: it only reaches here on a blank
-        // composer (else it opens the slash popup).
-        KeyCode::Char('/') if composer_empty => {
+        // Enter registry-search mode. `s` sits with the tab's other letter
+        // actions (e/a/x/r, all gated on an empty composer). `/` deliberately
+        // does NOT enter search anymore: it belongs to the command menu
+        // everywhere — `/mcp-search` in that menu lands here too.
+        KeyCode::Char('s') if composer_empty => {
             ui.mcp.mode = McpMode::Search;
             ui.mcp.status = None;
             Some(DeckAction::Handled)
@@ -1871,6 +2225,23 @@ fn handle_mcp_browse_key(
             };
             ui.mcp.mode = McpMode::Auth;
             Some(DeckAction::Handled)
+        }
+        // Start the browser OAuth login for the selected server. Http-only —
+        // a stdio server has no authorization server, so the key explains
+        // instead of firing.
+        KeyCode::Char('o') if composer_empty => {
+            let server = ui.mcp.selected_server()?;
+            let name = server.name.clone();
+            if server.oauth.is_none() {
+                ui.mcp.status = Some(format!(
+                    "{name}: OAuth login applies to http servers (use `a` for env credentials)"
+                ));
+                return Some(DeckAction::Handled);
+            }
+            ui.mcp.status = Some(format!("{name}: starting OAuth login…"));
+            Some(DeckAction::Send(WorkspaceInput::McpOauthLogin {
+                server: name,
+            }))
         }
         // Remove the selected server from mcp.toml.
         KeyCode::Char('x') if composer_empty => ui.mcp.selected_server().map(|s| {
@@ -2326,11 +2697,6 @@ fn is_expandable(entry: &crate::model::TranscriptEntry) -> bool {
     )
 }
 
-/// The most recent transcript entry `ctrl+o` can meaningfully expand.
-fn last_expandable(transcript: &[crate::model::TranscriptEntry]) -> Option<usize> {
-    transcript.iter().rposition(is_expandable)
-}
-
 fn handle_session_key(
     key: KeyEvent,
     model: &WorkspaceModel,
@@ -2342,6 +2708,28 @@ fn handle_session_key(
         .get(ui.focused)
         .map(|a| a.model.transcript.len())
         .unwrap_or(0);
+    // ⌘/⌃ + [ / ] jump to the transcript's ends (the composer's ⌥[ / ⌥]
+    // cursor motion is untouched — different modifier). On terminals without
+    // the kitty keyboard protocol ⌃[ arrives as Esc and simply follows the
+    // Esc rules instead; nothing surprising happens.
+    let jump_mod = key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META);
+    match key.code {
+        // Jump to the beginning of the session's transcript…
+        KeyCode::Char('[') if jump_mod => {
+            ui.session_selected = None;
+            ui.session_scroll.to_top();
+            return Some(DeckAction::Handled);
+        }
+        // …and to the end (which re-arms tail-follow).
+        KeyCode::Char(']') if jump_mod => {
+            ui.session_selected = None;
+            ui.session_scroll.to_bottom();
+            return Some(DeckAction::Handled);
+        }
+        _ => {}
+    }
     match key.code {
         // ↑/↓ walk a message highlight through the transcript (the scroll
         // window follows the highlight); ↓ past the last message drops the
@@ -2374,6 +2762,13 @@ fn handle_session_key(
             ui.session_selected = None;
             Some(DeckAction::Handled)
         }
+        // The expand-ALL overlay's Esc way out (precedence rule 8): claimed
+        // here, ahead of the turn-stop Esc, so closing the overlay can never
+        // cancel a running turn.
+        KeyCode::Esc if ui.transcript_expand_all => {
+            ui.transcript_expand_all = false;
+            Some(DeckAction::Handled)
+        }
         KeyCode::Up => {
             ui.session_scroll.scroll_up(1, total, height);
             Some(DeckAction::Handled)
@@ -2399,7 +2794,10 @@ fn handle_session_key(
 /// entirely; any other prompt ALWAYS enqueues — never blocks on a busy agent,
 /// though a held dispatch (see [`submit_prompt`]) jumps it to the front.
 fn dispatch_submission(ui: &mut DeckUi) -> DeckAction {
-    match ui.composer.take_submission() {
+    // The deck queue is text-shaped: attachments enter deck prompts as
+    // pasted payload *paths* (extracted at dispatch by the driver), so the
+    // submission's text is the whole content here.
+    match ui.composer.take_submission().map(|s| s.text) {
         Some(text) if text.trim_start().starts_with('!') => {
             // Strip only the single leading `!` dispatch marker — not
             // every leading `!` — so a command whose own text starts
@@ -2442,7 +2840,7 @@ fn handle_composer_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
         EnterAction::NotEnter => {}
     }
     match key.code {
-        KeyCode::Enter => match ui.composer.take_submission() {
+        KeyCode::Enter => match ui.composer.take_submission().map(|s| s.text) {
             // A `!`-prefixed line is a shell command: it executes IMMEDIATELY,
             // bypassing the prompt queue and any busy agent entirely.
             Some(text) if text.trim_start().starts_with('!') => {
@@ -2553,6 +2951,7 @@ mod tests {
                     content: "line one\nline two\nline three".into(),
                 },
                 duration_ms: 7,
+                speculated: false,
             },
         });
     }
@@ -2588,31 +2987,89 @@ mod tests {
     }
 
     #[test]
-    fn double_ctrl_o_from_the_prompt_toggles_all_thinking() {
+    fn ctrl_o_with_no_selection_toggles_the_expand_all_overlay() {
         let mut model = model_with(&["lead"]);
         with_tool_exchange(&mut model, "lead");
         let mut ui = ready_ui();
-        assert!(!ui.thinking_expanded);
 
-        // First press (no selection): toggles the most recent expandable
-        // message and arms the escalation…
+        // First press (no selection): every expandable message opens at once —
+        // no per-entry set is touched.
         handle_deck_key(ctrl('o'), &model, &mut ui);
-        assert!(ui.ctrl_o_primed);
-        assert!(!ui.thinking_expanded);
-        // …second consecutive press: the all-thinking toggle.
+        assert!(ui.transcript_expand_all, "expand-all overlay on");
+        assert!(
+            ui.expanded.get("lead").is_none_or(|set| set.is_empty()),
+            "the overlay does not write the per-entry sets"
+        );
+        // Second press: everything closes again — ctrl+o is its own way out.
+        handle_deck_key(ctrl('o'), &model, &mut ui);
+        assert!(!ui.transcript_expand_all, "ctrl+o again collapses");
+    }
+
+    #[test]
+    fn esc_collapses_the_expand_all_overlay_before_stopping_the_turn() {
+        let mut model = model_with(&["lead"]);
+        with_tool_exchange(&mut model, "lead"); // events flip the agent to Running
+        let mut ui = ready_ui();
+        handle_deck_key(ctrl('o'), &model, &mut ui);
+        assert!(ui.transcript_expand_all);
+
+        // Esc's first job here is the overlay — NOT cancelling the running
+        // turn (precedence rule 8 beats rules 9–10).
+        let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+        assert!(!ui.transcript_expand_all, "esc is a graceful way out");
+        assert!(
+            matches!(action, DeckAction::Handled),
+            "the overlay-collapsing esc must not reach the turn-stop rules"
+        );
+        // With the overlay gone, the next Esc resumes normal duty (stop the
+        // in-flight turn).
+        let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+        assert!(
+            matches!(action, DeckAction::Send(WorkspaceInput::Control { .. })),
+            "esc after the overlay closes stops the turn as before"
+        );
+    }
+
+    #[test]
+    fn ctrl_o_on_a_highlight_peels_one_row_out_of_the_expand_all_overlay() {
+        let mut model = model_with(&["lead"]);
+        with_tool_exchange(&mut model, "lead"); // entries 0 (call) + 1 (result)
+        let mut ui = ready_ui();
+        handle_deck_key(ctrl('o'), &model, &mut ui); // overlay on
+        handle_deck_key(key(KeyCode::Up), &model, &mut ui); // highlight entry 1
+
         handle_deck_key(ctrl('o'), &model, &mut ui);
         assert!(
-            ui.thinking_expanded,
-            "ctrl+o twice = chain-of-thought everywhere"
+            !ui.transcript_expand_all,
+            "the overlay materializes into per-entry expansions"
         );
-
-        // Any other key disarms the escalation.
-        handle_deck_key(ctrl('o'), &model, &mut ui);
-        handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+        let set = ui.expanded.get("lead").expect("materialized set");
         assert!(
-            !ui.ctrl_o_primed,
-            "a non-ctrl+o key disarms the double-press"
+            set.contains(&0) && !set.contains(&1),
+            "the highlighted row collapsed; the rest stay open: {set:?}"
         );
+    }
+
+    #[test]
+    fn bracket_jumps_reach_both_ends_of_the_transcript() {
+        let mut model = model_with(&["lead"]);
+        with_tool_exchange(&mut model, "lead");
+        let mut ui = ready_ui();
+        // A scrollable transcript (metrics as the render pass would set them).
+        ui.metrics.session_total = 100;
+        ui.metrics.session_height = 10;
+
+        // ⌘/⌃ [ pins the window to the very beginning of the session…
+        handle_deck_key(ctrl('['), &model, &mut ui);
+        assert!(!ui.session_scroll.follow);
+        assert_eq!(ui.session_scroll.window(100, 10), 0..10, "jumped to start");
+
+        // …and ⌘/⌃ ] returns to the end, re-arming tail-follow. Both also
+        // drop any highlight so the pinned selection can't yank the view back.
+        let cmd_close = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::SUPER);
+        handle_deck_key(cmd_close, &model, &mut ui);
+        assert!(ui.session_scroll.follow, "jumped to end = follow the tail");
+        assert_eq!(ui.session_selected, None);
     }
 
     #[test]
@@ -2725,6 +3182,36 @@ mod tests {
         );
         assert!(ui.splash.is_done(), "first key skips the splash");
         assert!(ui.composer.buffer().is_empty(), "and does not type");
+    }
+
+    #[test]
+    fn splash_cues_replay_and_release_the_cinematic() {
+        let mut model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        ui.splash.skip(); // the deck is up; `/init` arrives later
+        assert!(ui.splash.is_done());
+
+        // Replay: a fresh held splash owns the frame again…
+        ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
+        assert!(!ui.splash.is_done(), "replay restarts the cinematic");
+
+        // …and Release is what lets its timeline run out (exact timing is
+        // splash::tests territory — here we only pin that the cue routes).
+        ingest_inbound(&Inbound::Splash(SplashCue::Release), &mut model, &mut ui);
+        assert!(!ui.splash.is_done(), "the battle floor still plays out");
+    }
+
+    #[test]
+    fn no_anim_sessions_ignore_splash_replays() {
+        let mut model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        ui.no_anim = true;
+        ui.splash.skip();
+        ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
+        assert!(
+            ui.splash.is_done(),
+            "a no-anim session never replays the cinematic"
+        );
     }
 
     #[test]
@@ -3456,6 +3943,45 @@ mod tests {
     }
 
     #[test]
+    fn slash_mcp_search_jumps_straight_into_registry_search() {
+        let model = model_with(&["lead"]);
+        let mut ui = ready_ui();
+        ui.slash_commands = vec![
+            SlashCommand::new("/mcp", "mcp"),
+            SlashCommand::new("/mcp-search", "search the MCP registry"),
+        ];
+        for c in "/mcp-search".chars() {
+            handle_deck_key(ch(c), &model, &mut ui);
+        }
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        assert_eq!(action, DeckAction::Handled, "/mcp-search is deck-local");
+        assert_eq!(ui.tab, DeckTab::Mcp);
+        assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Search);
+    }
+
+    #[test]
+    fn slash_on_the_mcp_tab_opens_the_command_menu_not_search() {
+        // The old `/`-enters-search trigger collided with the command menu;
+        // `/` must now behave on the MCP tab exactly as everywhere else —
+        // it starts a slash query in the composer.
+        let model = model_with(&["lead"]);
+        let mut ui = ready_ui();
+        ui.slash_commands = vec![SlashCommand::new("/mcp-search", "search")];
+        ui.set_tab(DeckTab::Mcp);
+        handle_deck_key(ch('/'), &model, &mut ui);
+        assert_eq!(
+            ui.mcp.mode,
+            crate::views::mcp::McpMode::Browse,
+            "`/` no longer enters MCP search"
+        );
+        assert_eq!(ui.composer.buffer(), "/", "the slash query is typing");
+        assert!(
+            !slash_matches(&ui).is_empty(),
+            "…and the command menu is open over it"
+        );
+    }
+
+    #[test]
     fn mcp_tab_navigates_toggles_and_enters_search() {
         use crate::envelope::McpServerInfo;
         let model = model_with(&["lead"]);
@@ -3470,6 +3996,7 @@ mod tests {
                 health: Some("live".into()),
                 tool_count: 3,
                 auth_fields: vec!["Authorization".into()],
+                oauth: Some(false),
                 calls: 5,
             },
             McpServerInfo {
@@ -3480,6 +4007,7 @@ mod tests {
                 health: None,
                 tool_count: 0,
                 auth_fields: vec![],
+                oauth: None,
                 calls: 0,
             },
         ];
@@ -3498,8 +4026,9 @@ mod tests {
             })
         );
 
-        // `/` enters search mode; typing builds the query; Enter searches.
-        handle_deck_key(ch('/'), &model, &mut ui);
+        // `s` enters search mode; typing builds the query; Enter searches.
+        // (`/` no longer does — it belongs to the command menu everywhere.)
+        handle_deck_key(ch('s'), &model, &mut ui);
         assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Search);
         for c in "git".chars() {
             handle_deck_key(ch(c), &model, &mut ui);
@@ -3531,6 +4060,7 @@ mod tests {
             health: Some("live".into()),
             tool_count: 1,
             auth_fields: vec![],
+            oauth: Some(false),
             calls: 0,
         }];
         // `a` enters auth mode.
@@ -3561,6 +4091,66 @@ mod tests {
             other => panic!("expected McpAuth, got {other:?}"),
         }
         assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Browse);
+    }
+
+    #[test]
+    fn a_pasted_secret_lands_in_the_credential_value_never_the_composer() {
+        // THE paste-routing security P1: a bracketed paste while the MCP auth
+        // VALUE step is focused used to fall through to the global composer, so
+        // a pasted API token landed — in plaintext — in the prompt buffer (and
+        // could be sent, or shown in the transcript). It must route to the
+        // credential value input instead.
+        let model = model_with(&["lead"]);
+        let mut ui = ready_ui();
+        ui.set_tab(DeckTab::Mcp);
+        ui.mcp.servers = vec![crate::envelope::McpServerInfo {
+            name: "github".into(),
+            kind: "http".into(),
+            enabled: true,
+            connected: true,
+            health: Some("live".into()),
+            tool_count: 1,
+            auth_fields: vec![],
+            oauth: Some(false),
+            calls: 0,
+        }];
+        handle_deck_key(ch('a'), &model, &mut ui); // enter auth
+        for c in "TOKEN".chars() {
+            handle_deck_key(ch(c), &model, &mut ui);
+        }
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui); // → Value step
+        assert_eq!(ui.mcp.auth.step, crate::views::mcp::AuthStep::Value);
+
+        // Paste a multi-line secret blob.
+        ui.paste("sk-pasted-token\nextra");
+
+        // It went into the credential value (newlines dropped — a one-line
+        // field), and did NOT leak into the global composer.
+        assert_eq!(ui.mcp.auth.value, "sk-pasted-tokenextra");
+        assert!(
+            ui.composer.buffer().is_empty(),
+            "a pasted secret must never reach the composer: {:?}",
+            ui.composer.buffer()
+        );
+    }
+
+    #[test]
+    fn a_paste_in_skills_search_types_into_the_query_not_the_composer() {
+        // The SKILLS tab is keyboard-owning: a paste in its search pane must
+        // build the query, exactly like typed characters do, never the composer.
+        // (paste() is a direct DeckUi method, so no WorkspaceModel is needed.)
+        let mut ui = ready_ui();
+        ui.set_tab(DeckTab::Skills);
+        ui.skills.focus = SkillsFocus::Search;
+
+        ui.paste("postgres\nmigrations");
+
+        assert_eq!(ui.skills.query, "postgresmigrations");
+        assert!(
+            ui.composer.buffer().is_empty(),
+            "a skills-tab paste must not reach the composer: {:?}",
+            ui.composer.buffer()
+        );
     }
 
     #[test]
@@ -4258,6 +4848,49 @@ mod tests {
                 body: "old body +more".into(),
             }))
         );
+    }
+
+    #[test]
+    fn skills_manage_hotkeys_yield_to_a_nonempty_composer() {
+        // THE skills-key P1: the installed-pane manage hotkeys (space/e/p/n)
+        // were claimed unconditionally, so typing a prompt on the SKILLS tab was
+        // hijacked — 'n' opened the create flow, 'e' the edit overlay, space
+        // toggled a skill. They must honor the deck-wide "hotkeys only from an
+        // empty composer" contract and, mid-prompt, build the prompt instead.
+        let model = WorkspaceModel::new();
+        let mut ui = skills_ui();
+        let r = a_row("sql-style", SkillScope::Project, true);
+        ui.skills.view = SkillsView {
+            rows: vec![r],
+            status: None,
+            busy: false,
+        };
+
+        // 'r' is not a hotkey → it falls through to the composer, so the
+        // composer is now non-empty.
+        handle_deck_key(ch('r'), &model, &mut ui);
+        assert_eq!(ui.composer.buffer(), "r");
+
+        // Now the manage-hotkey characters type into the composer, not fire.
+        for c in "enp e".chars() {
+            handle_deck_key(ch(c), &model, &mut ui);
+        }
+        assert!(
+            ui.skills.prompt.is_none(),
+            "no manage overlay may open while a prompt is being typed"
+        );
+        assert!(
+            ui.skills.view.rows[0].enabled,
+            "space must not toggle the skill mid-prompt"
+        );
+        assert_eq!(ui.composer.buffer(), "renp e");
+
+        // From an EMPTY composer, 'e' still opens the edit overlay as designed —
+        // the gate only defers to a prompt in progress, it doesn't disable the
+        // hotkeys.
+        ui.composer.clear();
+        handle_deck_key(ch('e'), &model, &mut ui);
+        assert!(matches!(ui.skills.prompt, Some(SkillPrompt::Edit { .. })));
     }
 
     #[test]

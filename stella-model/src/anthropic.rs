@@ -14,7 +14,7 @@ use stella_protocol::{
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
-use crate::provider::Provider;
+use crate::provider::{Provider, ToolCallObserver};
 use crate::sse::SseDecoder;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -122,6 +122,14 @@ enum AnthropicContentBlock {
     Text {
         text: String,
     },
+    /// A user-attached image (`{"type":"image","source":{...}}`).
+    Image {
+        source: AnthropicMediaSource,
+    },
+    /// A user-attached PDF (`{"type":"document","source":{...}}`).
+    Document {
+        source: AnthropicMediaSource,
+    },
     ToolUse {
         id: String,
         name: String,
@@ -133,6 +141,59 @@ enum AnthropicContentBlock {
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         is_error: bool,
     },
+}
+
+/// The base64 payload envelope shared by image and document blocks.
+#[derive(Serialize, Debug)]
+struct AnthropicMediaSource {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    media_type: String,
+    data: String,
+}
+
+impl AnthropicMediaSource {
+    fn base64(media_type: impl Into<String>, data: String) -> Self {
+        Self {
+            kind: "base64",
+            media_type: media_type.into(),
+            data,
+        }
+    }
+}
+
+/// The Messages API ingests images and PDFs natively; audio, video, and
+/// arbitrary binaries degrade to descriptive text notes.
+const ANTHROPIC_CAPS: crate::attachment::DialectCaps = crate::attachment::DialectCaps {
+    images: true,
+    pdfs: true,
+    audio: false,
+    video: false,
+};
+
+/// Map a user message's attachments to Anthropic content blocks. Media
+/// blocks precede text (the documented preferred ordering for vision).
+fn attachment_blocks(message: &CompletionMessage) -> Vec<AnthropicContentBlock> {
+    crate::attachment::wire_parts(&message.attachments, ANTHROPIC_CAPS)
+        .into_iter()
+        .map(|part| match part {
+            crate::attachment::WirePart::Image { media_type, base64 } => {
+                AnthropicContentBlock::Image {
+                    source: AnthropicMediaSource::base64(media_type, base64),
+                }
+            }
+            crate::attachment::WirePart::Pdf { base64, .. } => AnthropicContentBlock::Document {
+                source: AnthropicMediaSource::base64("application/pdf", base64),
+            },
+            crate::attachment::WirePart::Text { text } => AnthropicContentBlock::Text { text },
+            // Audio/video are switched off in ANTHROPIC_CAPS, so wire_parts
+            // has already degraded them to Text notes.
+            crate::attachment::WirePart::Audio { .. }
+            | crate::attachment::WirePart::Video { .. } => {
+                unreachable!("caps exclude audio/video")
+            }
+        })
+        .collect()
 }
 
 /// Streamed SSE payloads from the Messages API's `content_block_delta`
@@ -156,6 +217,15 @@ enum AnthropicStreamEvent {
         #[serde(default)]
         index: usize,
         delta: AnthropicDelta,
+    },
+    /// A content block finished streaming. For a `tool_use` block this is
+    /// the earliest moment its complete input is known — the hook that lets
+    /// [`aggregate_anthropic_stream`] announce the call to a
+    /// [`ToolCallObserver`] while the rest of the message still streams.
+    #[serde(rename = "content_block_stop")]
+    ContentBlockStop {
+        #[serde(default)]
+        index: usize,
     },
     #[serde(rename = "message_delta")]
     MessageDelta {
@@ -286,14 +356,19 @@ fn to_anthropic_messages(
             // the session permanently (every retry re-sends it). So a text
             // block is emitted only when it carries non-whitespace content,
             // and a message that ends up with zero blocks is dropped rather
-            // than padded with an empty block.
+            // than padded with an empty block. Attachment blocks (images,
+            // documents, inlined files) precede the typed text.
             MessageRole::User => {
+                let mut content = attachment_blocks(message);
                 if !message.content.trim().is_empty() {
+                    content.push(AnthropicContentBlock::Text {
+                        text: message.content.clone(),
+                    });
+                }
+                if !content.is_empty() {
                     out.push(AnthropicMessage {
                         role: "user",
-                        content: vec![AnthropicContentBlock::Text {
-                            text: message.content.clone(),
-                        }],
+                        content,
                     });
                 }
             }
@@ -360,6 +435,28 @@ impl Provider for AnthropicProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, None).await
+    }
+
+    async fn complete_observed(
+        &self,
+        req: CompletionRequest,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, Some(observer)).await
+    }
+}
+
+impl AnthropicProvider {
+    /// The one request/stream/aggregate body behind both `complete` and
+    /// `complete_observed` — the observer is threaded down to the stream
+    /// aggregator, which announces each tool call at its
+    /// `content_block_stop`.
+    async fn complete_inner(
+        &self,
+        req: CompletionRequest,
+        observer: Option<&dyn ToolCallObserver>,
+    ) -> Result<CompletionResult, ProviderError> {
         let (system, messages) = to_anthropic_messages(&req.messages);
         let body = AnthropicRequest {
             model: &self.model,
@@ -409,7 +506,7 @@ impl Provider for AnthropicProvider {
             ));
         }
 
-        let (text, tool_calls, usage) = aggregate_anthropic_stream(response).await?;
+        let (text, tool_calls, usage) = aggregate_anthropic_stream(response, observer).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -433,6 +530,7 @@ struct ToolUseAccumulator {
 
 async fn aggregate_anthropic_stream(
     response: reqwest::Response,
+    observer: Option<&dyn ToolCallObserver>,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage), ProviderError> {
     use std::collections::BTreeMap;
 
@@ -498,6 +596,33 @@ async fn aggregate_anthropic_stream(
                     }
                     AnthropicDelta::Other => {}
                 },
+                Ok(AnthropicStreamEvent::ContentBlockStop { index }) => {
+                    // The earliest moment a tool call is complete. Announce
+                    // it to the observer ONLY when its input already parses —
+                    // a block whose JSON is broken or truncated must go
+                    // through the end-of-stream repair/truncation logic
+                    // below, never reach speculative execution. The
+                    // accumulator stays in the map: the final assembly below
+                    // remains the single source of truth, and it re-parses
+                    // the same bytes, so an announced call and its committed
+                    // twin are structurally identical.
+                    if let (Some(observer), Some(acc)) = (observer, tool_uses.get(&index)) {
+                        let input = if acc.input_json.is_empty() {
+                            Some(serde_json::json!({}))
+                        } else {
+                            serde_json::from_str(&acc.input_json).ok()
+                        };
+                        if let Some(input) = input
+                            && !acc.id.is_empty()
+                        {
+                            observer.tool_call_streamed(&ToolCall {
+                                call_id: acc.id.clone(),
+                                name: acc.name.clone(),
+                                input,
+                            });
+                        }
+                    }
+                }
                 Ok(AnthropicStreamEvent::MessageDelta { delta, usage: u }) => {
                     if let Some(reason) = delta.stop_reason {
                         stop_reason = Some(reason);
@@ -598,6 +723,81 @@ mod tests {
     use stella_protocol::MessageRole;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn user_attachments_map_to_image_and_document_blocks_before_text() {
+        use stella_protocol::{Attachment, AttachmentSource};
+        let attachments = vec![
+            Attachment {
+                name: "shot.png".into(),
+                media_type: "image/png".into(),
+                byte_len: 3,
+                source: AttachmentSource::Data {
+                    base64: "aW1n".into(), // "img"
+                },
+            },
+            Attachment {
+                name: "spec.pdf".into(),
+                media_type: "application/pdf".into(),
+                byte_len: 3,
+                source: AttachmentSource::Data {
+                    base64: "cGRm".into(), // "pdf"
+                },
+            },
+            Attachment {
+                name: "clip.mp4".into(),
+                media_type: "video/mp4".into(),
+                byte_len: 3,
+                source: AttachmentSource::Data {
+                    base64: "dmlk".into(), // "vid"
+                },
+            },
+        ];
+        let messages = vec![CompletionMessage::user_with_attachments(
+            "what do you see?",
+            attachments,
+        )];
+        let (_, mapped) = to_anthropic_messages(&messages);
+        assert_eq!(mapped.len(), 1);
+        let json = serde_json::to_value(&mapped[0]).unwrap();
+        let blocks = json["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 4, "{json}");
+        assert_eq!(blocks[0]["type"], "image");
+        assert_eq!(blocks[0]["source"]["type"], "base64");
+        assert_eq!(blocks[0]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[0]["source"]["data"], "aW1n");
+        assert_eq!(blocks[1]["type"], "document");
+        assert_eq!(blocks[1]["source"]["media_type"], "application/pdf");
+        // Video is not natively ingestible on this dialect: degrade note.
+        assert_eq!(blocks[2]["type"], "text");
+        let note = blocks[2]["text"].as_str().unwrap();
+        assert!(note.contains("clip.mp4"), "{note}");
+        // The typed text comes after the media blocks.
+        assert_eq!(blocks[3]["type"], "text");
+        assert_eq!(blocks[3]["text"], "what do you see?");
+    }
+
+    #[test]
+    fn attachment_only_user_message_survives_without_text() {
+        use stella_protocol::{Attachment, AttachmentSource};
+        let messages = vec![CompletionMessage::user_with_attachments(
+            "",
+            vec![Attachment {
+                name: "shot.png".into(),
+                media_type: "image/png".into(),
+                byte_len: 3,
+                source: AttachmentSource::Data {
+                    base64: "aW1n".into(),
+                },
+            }],
+        )];
+        let (_, mapped) = to_anthropic_messages(&messages);
+        assert_eq!(mapped.len(), 1, "attachment-only message must not drop");
+        let json = serde_json::to_value(&mapped[0]).unwrap();
+        let blocks = json["content"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "image");
+    }
 
     /// The reported failure's happy path: a multi-kilobyte `write_file` tool
     /// call whose argument JSON is split across HUNDREDS of `input_json_delta`
@@ -884,6 +1084,7 @@ mod tests {
                     input: serde_json::json!({"path": "a"}),
                 }],
                 tool_results: vec![],
+                attachments: Vec::new(),
             },
             // A fully content-less assistant turn — must vanish entirely,
             // NOT become an empty text block.
@@ -892,6 +1093,7 @@ mod tests {
                 content: String::new(),
                 tool_calls: vec![],
                 tool_results: vec![],
+                attachments: Vec::new(),
             },
             // An empty user turn — dropped, never an empty text block.
             CompletionMessage {
@@ -899,6 +1101,7 @@ mod tests {
                 content: "  ".into(),
                 tool_calls: vec![],
                 tool_results: vec![],
+                attachments: Vec::new(),
             },
         ];
         let (_, mapped) = to_anthropic_messages(&messages);
@@ -1100,6 +1303,113 @@ mod tests {
         assert_eq!(result.usage.output_tokens, 15);
     }
 
+    /// Shared with the zai tests in spirit: records every announcement so a
+    /// test can compare them against the final `CompletionResult`.
+    struct RecordingObserver(std::sync::Mutex<Vec<stella_protocol::ToolCall>>);
+
+    impl ToolCallObserver for RecordingObserver {
+        fn tool_call_streamed(&self, call: &stella_protocol::ToolCall) {
+            self.0.lock().unwrap().push(call.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_observed_announces_a_tool_call_at_its_block_stop() {
+        let server = MockServer::start().await;
+        // The tool_use block CLOSES (content_block_stop) while the message
+        // continues with a text block — the exact window speculation exists
+        // to exploit.
+        let sse_body = concat!(
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"src/lib.rs\\\"}\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"reading it now\"}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("read src/lib.rs")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
+        let result = provider
+            .complete_observed(req, &observer)
+            .await
+            .expect("should succeed");
+
+        let announced = observer.0.lock().unwrap();
+        assert_eq!(announced.len(), 1, "exactly one announcement per block");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(
+            announced[0], result.tool_calls[0],
+            "an announced call must be identical to its committed twin — \
+             harvest matches by exact equality"
+        );
+        assert_eq!(
+            announced[0].input,
+            serde_json::json!({"path": "src/lib.rs"})
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_observed_never_announces_a_block_whose_json_is_broken() {
+        let server = MockServer::start().await;
+        // The block closes but its accumulated JSON does not parse — the
+        // end-of-stream repair path owns it; speculation must never see it.
+        let sse_body = concat!(
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\": not json,}\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("go")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
+        let result = provider
+            .complete_observed(req, &observer)
+            .await
+            .expect("broken JSON on a finished block is the repair sentinel, not an error");
+        assert!(
+            observer.0.lock().unwrap().is_empty(),
+            "unparseable input must not be announced"
+        );
+        // The committed call still carries the Null repair sentinel.
+        assert_eq!(result.tool_calls.len(), 1);
+        assert!(result.tool_calls[0].input.is_null());
+    }
+
     #[test]
     fn to_anthropic_messages_frames_tool_results_as_user_blocks() {
         use stella_protocol::{ToolCall, ToolOutput, ToolResult};
@@ -1113,6 +1423,7 @@ mod tests {
                     input: serde_json::json!({"command": "ls"}),
                 }],
                 tool_results: vec![],
+                attachments: Vec::new(),
             },
             CompletionMessage {
                 role: MessageRole::Tool,
@@ -1124,6 +1435,7 @@ mod tests {
                         message: "command failed".into(),
                     },
                 }],
+                attachments: Vec::new(),
             },
         ];
         let (_, mapped) = to_anthropic_messages(&messages);
@@ -1162,6 +1474,7 @@ mod tests {
                 content: "hi".into(),
                 tool_calls: vec![],
                 tool_results: vec![],
+                attachments: Vec::new(),
             }],
             max_output_tokens: None,
             temperature: None,
@@ -1197,6 +1510,7 @@ mod tests {
                 content: "hi".into(),
                 tool_calls: vec![],
                 tool_results: vec![],
+                attachments: Vec::new(),
             }],
             max_output_tokens: None,
             temperature: None,
@@ -1231,6 +1545,7 @@ mod tests {
                 content: "hi".into(),
                 tool_calls: vec![],
                 tool_results: vec![],
+                attachments: Vec::new(),
             }],
             max_output_tokens: None,
             temperature: None,

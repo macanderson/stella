@@ -171,6 +171,7 @@ fn spawn_shell_command(
                 call_id,
                 output,
                 duration_ms: started.elapsed().as_millis() as u64,
+                speculated: false,
             },
         });
         // Park the lane so it never reads as still-working (a lingering
@@ -296,6 +297,9 @@ pub async fn run_deck(
     ui.slash_commands = opts.slash_commands.clone();
     ui.color_mode = color_mode;
     ui.no_anim = no_anim;
+    // A no-anim session collapses the launch cinematic to one brief static
+    // wordmark frame (and `ingest_inbound` drops any later replay cues).
+    ui.splash.set_reduced(no_anim);
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).
     ui.enter_submits = !guard.kitty();
@@ -334,6 +338,14 @@ pub async fn run_deck(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     'run: loop {
+        // Requests queued by handlers/ingest beyond their single return value
+        // (a CONTEXT open refreshing two snapshots, a finished OAuth login
+        // refreshing the MCP tab). Drained before the draw so a request made
+        // by the branch below it never waits an extra loop turn.
+        for input in ui.pending_inputs.drain(..) {
+            let _ = submissions.send(input);
+        }
+
         terminal.draw(|f| {
             render_deck(&model, &mut ui, f);
             theme::degrade_buffer(f.buffer_mut(), color_mode);
@@ -349,6 +361,34 @@ pub async fn run_deck(
             }
             maybe_key = key_rx.recv() => {
                 match maybe_key {
+                    // `⌃V`: explicit clipboard pull — the only way a *bitmap*
+                    // (a copied screenshot) reaches the deck, since bracketed
+                    // paste never carries one. The image payload is stored
+                    // under `.stella/attachments/` and its path is pasted as
+                    // text: the deck's prompt queue is text-shaped, and the
+                    // driver extracts media paths into attachments at
+                    // dispatch. Clipboard text falls back to a normal paste.
+                    Some(Event::Key(key))
+                        if key.kind != KeyEventKind::Release
+                            && key.code == crossterm::event::KeyCode::Char('v')
+                            && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
+                    {
+                        match crate::clipboard::capture(
+                            &crate::clipboard::default_attachments_dir(),
+                        ) {
+                            Ok(crate::clipboard::ClipboardPaste::Image(att)) => {
+                                debug.note(&format!("clipboard image stored: {}", att.label()));
+                                if let stella_protocol::AttachmentSource::Path { path } =
+                                    &att.source
+                                {
+                                    ui.paste(&format!("{path} "));
+                                }
+                            }
+                            Ok(crate::clipboard::ClipboardPaste::Text(text)) => ui.paste(&text),
+                            Ok(crate::clipboard::ClipboardPaste::Empty) => {}
+                            Err(err) => debug.note(&err),
+                        }
+                    }
                     Some(Event::Key(key)) if key.kind != KeyEventKind::Release => {
                         match handle_deck_key(key, &model, &mut ui) {
                             DeckAction::Quit => {

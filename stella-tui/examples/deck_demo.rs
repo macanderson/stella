@@ -123,6 +123,7 @@ async fn main() -> std::io::Result<()> {
                                 call_id: id,
                                 output: ToolOutput::Ok { content: answer },
                                 duration_ms: 0,
+                                speculated: false,
                             },
                         });
                     }
@@ -176,7 +177,20 @@ async fn main() -> std::io::Result<()> {
                 | WorkspaceInput::McpInstall { .. }
                 | WorkspaceInput::McpRemove { .. }
                 | WorkspaceInput::McpAuth { .. }
+                | WorkspaceInput::McpOauthLogin { .. }
                 | WorkspaceInput::McpRefresh => {}
+                // The SESSIONS overlay reads the machine-wide registry and the
+                // inbox reads the notification store — both live in the real
+                // CLI driver. The demo answers with empty snapshots so the
+                // overlays render their empty states instead of waiting.
+                WorkspaceInput::SessionsRefresh
+                | WorkspaceInput::SessionArchive { .. }
+                | WorkspaceInput::SessionDelete { .. } => {
+                    let _ = react_tx.send(Inbound::Sessions(vec![]));
+                }
+                WorkspaceInput::NotificationRead { .. } | WorkspaceInput::NotificationsReadAll => {
+                    let _ = react_tx.send(Inbound::Notifications(vec![]));
+                }
                 WorkspaceInput::Quit => break,
             }
         }
@@ -226,6 +240,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
                 content: "ok".into(),
             },
             duration_ms: 30,
+            speculated: false,
         }),
         ev(AgentEvent::FileChange {
             path: "src/lib.rs".into(),
