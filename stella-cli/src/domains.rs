@@ -89,9 +89,8 @@ impl Domains {
 
     /// Resolve the domains a workspace-relative path belongs to, by prefix
     /// match. A path matching nothing gets an empty set — untagged is
-    /// valid, not an error. Not yet consumed by the CLI (path-scoped
-    /// code-graph tagging is not wired up); kept and unit-tested for that use.
-    #[allow(dead_code)]
+    /// valid, not an error. Consumed by memory write-back to tag episodes
+    /// with their domain context.
     pub fn domains_for_path(&self, rel_path: &str) -> Vec<String> {
         let normalized = rel_path.trim_start_matches("./");
         self.domains
