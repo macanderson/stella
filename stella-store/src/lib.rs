@@ -72,7 +72,12 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use stella_protocol::{AgentEvent, ToolOutput};
 
+pub mod notify;
+pub mod sessions;
 pub mod usage;
+
+pub use notify::{Notification, NotificationStore};
+pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 
 /// FNV-1a/64 hex — a stable, dependency-free digest for prompt hashes and
 /// tool-arg fingerprints (loop detection, not security).

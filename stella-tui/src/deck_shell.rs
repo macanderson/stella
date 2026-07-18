@@ -338,6 +338,14 @@ pub async fn run_deck(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     'run: loop {
+        // Requests queued by handlers/ingest beyond their single return value
+        // (a CONTEXT open refreshing two snapshots, a finished OAuth login
+        // refreshing the MCP tab). Drained before the draw so a request made
+        // by the branch below it never waits an extra loop turn.
+        for input in ui.pending_inputs.drain(..) {
+            let _ = submissions.send(input);
+        }
+
         terminal.draw(|f| {
             render_deck(&model, &mut ui, f);
             theme::degrade_buffer(f.buffer_mut(), color_mode);

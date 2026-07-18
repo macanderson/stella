@@ -49,6 +49,7 @@ use stella_protocol::{ToolOutput, ToolSchema};
 
 use crate::client::{McpClient, ServerHealth};
 use crate::config::McpServerConfig;
+use crate::oauth::OAuthManager;
 
 /// A session-scoped set of server names disabled by the operator. Shared with
 /// the CLI/TUI so a toggle takes effect on the next model call — the engine
@@ -89,6 +90,18 @@ impl McpToolSet {
     /// blocks the others. `timeout` bounds both each connect and (until
     /// overridden with [`McpToolSet::with_call_timeout`]) each later call.
     pub async fn connect(configs: &[McpServerConfig], timeout: Duration) -> Self {
+        Self::connect_with_auth(configs, timeout, None).await
+    }
+
+    /// [`McpToolSet::connect`], with an optional [`OAuthManager`] that gives
+    /// every HTTP server a lazy OAuth bearer source (see [`crate::oauth`]).
+    /// Hosts that support `stella mcp login` pass one; everything else is
+    /// unchanged.
+    pub async fn connect_with_auth(
+        configs: &[McpServerConfig],
+        timeout: Duration,
+        auth: Option<Arc<OAuthManager>>,
+    ) -> Self {
         let mut clients = Vec::new();
         let mut failed = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
@@ -105,7 +118,12 @@ impl McpToolSet {
                 failed.push((config.name.clone(), "duplicate server name".into()));
                 continue;
             }
-            match tokio::time::timeout(timeout, McpClient::connect(config, timeout)).await {
+            match tokio::time::timeout(
+                timeout,
+                McpClient::connect_with_auth(config, timeout, auth.clone()),
+            )
+            .await
+            {
                 Ok(Ok(client)) => clients.push(client),
                 Ok(Err(err)) => failed.push((config.name.clone(), err.user_message())),
                 Err(_) => failed.push((

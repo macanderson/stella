@@ -97,6 +97,17 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if ui.graph_picker_open {
         render_graph_picker(ui, area, buf);
     }
+    // The transcript-page overlays (SESSIONS / INBOX / CONTEXT) center over
+    // the whole frame like the queue editor; help (below) still wins the top.
+    if ui.sessions_open {
+        render_sessions_overlay(model, ui, area, buf);
+    }
+    if ui.inbox_open {
+        render_inbox_overlay(model, ui, area, buf);
+    }
+    if ui.context_open {
+        render_context_overlay(ui, area, buf);
+    }
 
     // Deck motion (crate::fx), scrubbed like the splash: each frame builds a
     // fresh effect and processes it once at its wall-clock elapsed, so no
@@ -203,6 +214,361 @@ fn render_queue_popup(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
         .border_style(theme::accent())
         .title(format!(" queue · {pending} pending "));
     Paragraph::new(lines).block(block).render(popup, buf);
+}
+
+/// The SESSIONS overlay (empty-prompt `←`, `/sessions`): every stella
+/// session on this machine from the cross-process registry, grouped by
+/// status in [`crate::envelope::SessionPhase::ALL`] order, each with its
+/// human title and a summary of the work involved. Selection walks the
+/// flattened rows ([`crate::deck_ui::grouped_session_rows`]).
+fn render_sessions_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+    let w = area.width.saturating_sub(6).min(110);
+    let h = area.height.saturating_sub(4).min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    Clear.render(popup, buf);
+
+    let rows = crate::deck_ui::grouped_session_rows(ui);
+    let selected = ui.sessions_sel.min(rows.len().saturating_sub(1));
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    if rows.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "  no stella sessions registered yet",
+            theme::muted(),
+        )));
+    }
+
+    // Two lines per session + one heading per non-empty group; window on the
+    // *selected session* so long lists keep it in view.
+    let visible_sessions = ((h as usize).saturating_sub(4) / 3).max(1);
+    let start = selected
+        .saturating_sub(visible_sessions.saturating_sub(1) / 2)
+        .min(rows.len().saturating_sub(visible_sessions));
+
+    let mut flat_idx = 0usize;
+    let mut emitted = 0usize;
+    for phase in crate::envelope::SessionPhase::ALL {
+        let group: Vec<_> = rows.iter().filter(|s| s.phase == phase).collect();
+        if group.is_empty() {
+            continue;
+        }
+        let mut heading_emitted = false;
+        for session in group {
+            let in_window = flat_idx >= start && emitted < visible_sessions;
+            if in_window {
+                if !heading_emitted {
+                    lines.push(Line::from(Span::styled(
+                        format!("  {} ({})", phase.label().to_uppercase(), {
+                            rows.iter().filter(|s| s.phase == phase).count()
+                        }),
+                        theme::accent().add_modifier(Modifier::BOLD),
+                    )));
+                    heading_emitted = true;
+                }
+                let is_sel = flat_idx == selected;
+                let marker = if is_sel { "▸ " } else { "  " };
+                let dot = Span::styled("● ", Style::default().fg(phase_color(phase)));
+                let mut title_style = Style::default().fg(theme::INK);
+                if is_sel {
+                    title_style = title_style
+                        .bg(theme::SELECT_BG)
+                        .add_modifier(Modifier::BOLD);
+                }
+                let mine = if session.mine { "  (this session)" } else { "" };
+                let title: String = session
+                    .title
+                    .chars()
+                    .take((w as usize).saturating_sub(24 + mine.len()))
+                    .collect();
+                lines.push(Line::from(vec![
+                    Span::raw(marker),
+                    dot,
+                    Span::styled(title, title_style),
+                    Span::styled(mine.to_string(), theme::muted()),
+                ]));
+                let summary = if session.summary.is_empty() {
+                    "(no work recorded yet)".to_string()
+                } else {
+                    session.summary.clone()
+                };
+                let detail = format!(
+                    "      {} — {} · {}",
+                    truncate_chars(&summary, (w as usize).saturating_sub(40)),
+                    session.workspace,
+                    fmt_age(model.now_ms.saturating_sub(session.updated_ms)),
+                );
+                lines.push(Line::from(Span::styled(
+                    truncate_chars(&detail, (w as usize).saturating_sub(4)),
+                    theme::muted(),
+                )));
+                emitted += 1;
+            }
+            flat_idx += 1;
+        }
+    }
+
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        " ↑/↓ select · a archive · x delete · r refresh · esc/← close",
+        theme::muted(),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::accent())
+        .title(format!(" stella sessions · {} ", rows.len()));
+    Paragraph::new(lines).block(block).render(popup, buf);
+}
+
+/// The color of a session-phase dot (ember palette; no pink/purple).
+fn phase_color(phase: crate::envelope::SessionPhase) -> ratatui::style::Color {
+    use crate::envelope::SessionPhase;
+    match phase {
+        SessionPhase::InProgress => theme::SUCCESS_BRIGHT,
+        SessionPhase::NeedsInput => theme::WARNING_BRIGHT,
+        SessionPhase::Cancelled => theme::TEXT_TERTIARY,
+        SessionPhase::Complete => theme::SUCCESS,
+        SessionPhase::Archived => theme::TEXT_TERTIARY,
+        SessionPhase::Error => theme::DANGER_BRIGHT,
+    }
+}
+
+/// The INBOX overlay (`/inbox`): the persist-until-read notifications,
+/// newest first — unread bold with a ● dot, read dimmed with ✓. Marking read
+/// (Enter/Space, or `R` for all) is the only way a message leaves the badge.
+fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+    let w = area.width.saturating_sub(8).min(96);
+    let h = area.height.saturating_sub(6).min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    Clear.render(popup, buf);
+
+    let unread = ui.notifications.iter().filter(|n| !n.read).count();
+    let selected = ui.inbox_sel.min(ui.notifications.len().saturating_sub(1));
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    if ui.notifications.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "  inbox zero — notifications persist here until read",
+            theme::muted(),
+        )));
+    }
+
+    let visible = ((h as usize).saturating_sub(4) / 2).max(1);
+    let start = selected
+        .saturating_sub(visible.saturating_sub(1) / 2)
+        .min(ui.notifications.len().saturating_sub(visible));
+    for (i, n) in ui
+        .notifications
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible)
+    {
+        let is_sel = i == selected;
+        let marker = if is_sel { "▸ " } else { "  " };
+        let (dot, mut title_style) = if n.read {
+            ("✓ ", theme::muted())
+        } else {
+            (
+                "● ",
+                Style::default().fg(theme::INK).add_modifier(Modifier::BOLD),
+            )
+        };
+        if is_sel {
+            title_style = title_style.bg(theme::SELECT_BG);
+        }
+        let dot_style = if n.read {
+            theme::muted()
+        } else {
+            Style::default().fg(theme::WARNING_BRIGHT)
+        };
+        lines.push(Line::from(vec![
+            Span::raw(marker),
+            Span::styled(dot, dot_style),
+            Span::styled(
+                truncate_chars(&n.title, (w as usize).saturating_sub(8)),
+                title_style,
+            ),
+        ]));
+        let source = if n.source.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", n.source)
+        };
+        let detail = format!(
+            "      {}{} · {}",
+            truncate_chars(&n.body, (w as usize).saturating_sub(24)),
+            source,
+            fmt_age(model.now_ms.saturating_sub(n.created_ms)),
+        );
+        lines.push(Line::from(Span::styled(
+            truncate_chars(&detail, (w as usize).saturating_sub(4)),
+            theme::muted(),
+        )));
+    }
+
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        " ↑/↓ select · ⏎/␣ mark read · R mark all read · esc close",
+        theme::muted(),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::accent())
+        .title(format!(" inbox · {unread} unread "));
+    Paragraph::new(lines).block(block).render(popup, buf);
+}
+
+/// The CONTEXT overlay (empty-prompt `→`, `/context`): what THIS session is
+/// running with — the active skills and the MCP servers — without leaving
+/// the transcript. Read-only; management stays on the SKILLS/MCP tabs.
+fn render_context_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+    let w = area.width.saturating_sub(8).min(96);
+    let h = area.height.saturating_sub(6).min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    Clear.render(popup, buf);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let skills = &ui.skills.view.rows;
+    let enabled_skills = skills.iter().filter(|s| s.enabled).count();
+    lines.push(Line::from(Span::styled(
+        format!("  ACTIVE SKILLS ({enabled_skills}/{})", skills.len()),
+        theme::accent().add_modifier(Modifier::BOLD),
+    )));
+    if skills.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    none installed — /skills to browse",
+            theme::muted(),
+        )));
+    }
+    for skill in skills {
+        let (glyph, glyph_style) = if skill.enabled {
+            ("●", Style::default().fg(theme::SUCCESS_BRIGHT))
+        } else {
+            ("○", theme::muted())
+        };
+        let desc = truncate_chars(&skill.description, (w as usize).saturating_sub(30));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(glyph, glyph_style),
+            Span::raw(" "),
+            Span::styled(skill.name.clone(), Style::default().fg(theme::INK)),
+            Span::styled(format!("  [{}]", skill.origin), theme::muted()),
+            Span::styled(format!("  {desc}"), theme::muted()),
+        ]));
+    }
+
+    lines.push(Line::default());
+    let servers = &ui.mcp.servers;
+    let connected = servers.iter().filter(|s| s.connected).count();
+    lines.push(Line::from(Span::styled(
+        format!("  MCP SERVERS ({connected}/{} connected)", servers.len()),
+        theme::accent().add_modifier(Modifier::BOLD),
+    )));
+    if servers.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "    none configured — /mcp to search + install",
+            theme::muted(),
+        )));
+    }
+    for server in servers {
+        let (glyph, glyph_style) = if server.enabled && server.connected {
+            ("●", Style::default().fg(theme::SUCCESS_BRIGHT))
+        } else if server.enabled {
+            ("◌", Style::default().fg(theme::WARNING_BRIGHT))
+        } else {
+            ("○", theme::muted())
+        };
+        let state = if !server.enabled {
+            "disabled".to_string()
+        } else if server.connected {
+            server.health.clone().unwrap_or_else(|| "live".to_string())
+        } else {
+            "not connected".to_string()
+        };
+        let mut spans = vec![
+            Span::raw("  "),
+            Span::styled(glyph, glyph_style),
+            Span::raw(" "),
+            Span::styled(server.name.clone(), Style::default().fg(theme::INK)),
+            Span::styled(format!("  [{}]", server.kind), theme::muted()),
+            Span::styled(format!("  {state}"), theme::muted()),
+            Span::styled(format!("  · {} tools", server.tool_count), theme::muted()),
+        ];
+        match server.oauth {
+            Some(true) => spans.push(Span::styled(
+                "  ⚿ oauth ✓",
+                Style::default().fg(theme::SUCCESS),
+            )),
+            Some(false) => spans.push(Span::styled("  ⚿ no oauth login", theme::muted())),
+            None => {}
+        }
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        " ↑/↓ scroll · manage on the SKILLS / MCP tabs · esc/→ close",
+        theme::muted(),
+    )));
+
+    // Clamp the scroll to the measured content so ↓ can't run off the end.
+    let inner_h = (h as usize).saturating_sub(2);
+    let max_scroll = lines.len().saturating_sub(inner_h);
+    ui.context_scroll = ui.context_scroll.min(max_scroll);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::accent())
+        .title(" session context ");
+    Paragraph::new(lines)
+        .block(block)
+        .scroll((ui.context_scroll as u16, 0))
+        .render(popup, buf);
+}
+
+/// Char-safe prefix truncation with an ellipsis.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{head}…")
+}
+
+/// A compact "3m ago"-style age from a millisecond delta.
+fn fmt_age(delta_ms: u64) -> String {
+    let secs = delta_ms / 1000;
+    if secs < 60 {
+        return format!("{secs}s ago");
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins}m ago");
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    format!("{}d ago", hours / 24)
 }
 
 /// The Graph tab's file picker: a centered overlay listing every indexed file,
@@ -613,6 +979,29 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
             "PIPELINE",
             vec![Span::styled(pipeline_txt, pipeline_style)],
             3,
+        ),
+        (
+            "INBOX",
+            {
+                // Persist-until-read notifications: the badge is the always-on
+                // surface; `/inbox` opens the overlay that clears it.
+                let unread = ui.notifications.iter().filter(|n| !n.read).count();
+                if unread == 0 {
+                    vec![Span::styled("—", dim)]
+                } else {
+                    vec![Span::styled(
+                        format!("✉ {unread}"),
+                        Style::default()
+                            .fg(theme::WARNING_BRIGHT)
+                            .add_modifier(Modifier::BOLD),
+                    )]
+                }
+            },
+            if ui.notifications.iter().any(|n| !n.read) {
+                8
+            } else {
+                2
+            },
         ),
     ];
 

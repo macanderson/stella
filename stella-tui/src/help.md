@@ -66,7 +66,16 @@ picker to re-root the neighborhood on any indexed file.
 `Space` enable/disable · `Ctrl-X` ×2 delete · `Ctrl-O` preview · `e` edit ·
 `p` pin · `n` new (LLM) · `←` `→` switch panes.
 
-**MCP** — MCP servers. `e`/`Space` toggle · `a` auth · `x` remove · `/` search.
+**MCP** — MCP servers. `e`/`Space` toggle · `a` auth · `o` OAuth login (http)
+· `x` remove · `/` search.
+
+## Overlays on the Session tab (empty prompt)
+
+| Key | Action |
+|---|---|
+| `←` | **Sessions** — every stella session on this machine, grouped by status (In Progress · Needs Input · Cancelled · Complete · Archived · Error). `a` archive · `x` delete · `r` refresh |
+| `→` | **Context** — this session's active skills + MCP servers, without leaving the transcript |
+| `/inbox` | **Inbox** — notifications that persist until read (`⏎`/`Space` mark read · `R` all read). Unread count lives in the INBOX statline cell |
 
 ## Slash commands
 
@@ -84,6 +93,9 @@ picker to re-root the neighborhood on any indexed file.
 | `/agents` | Open the Agents tab |
 | `/skills` | Open the SKILLS tab |
 | `/mcp` | Open the MCP tab |
+| `/sessions` | All stella sessions on this machine (also `←`) |
+| `/context` | Active skills + MCP servers (also `→`) |
+| `/inbox` | Notifications — persist until read |
 
 Custom ⚡ commands and skills from `.stella/agents` and `.stella/skills` also
 appear in the `/` popup — type `/<name> <args>` to run them.

@@ -42,6 +42,7 @@ use tokio::sync::Mutex;
 use crate::config::{McpServerConfig, McpTransport};
 use crate::error::McpError;
 use crate::http::HttpTransport;
+use crate::oauth::OAuthManager;
 use crate::protocol::{
     CallToolParams, CallToolResult, ContentBlock, Implementation, InitializeParams,
     InitializeResult, ListToolsParams, ListToolsResult, PREFERRED_PROTOCOL_VERSION,
@@ -261,7 +262,18 @@ impl McpClient {
     /// Build the transport for `config`, then run the full handshake +
     /// tool discovery. `timeout` bounds each underlying request.
     pub async fn connect(config: &McpServerConfig, timeout: Duration) -> Result<Self, McpError> {
-        let transport = build_transport(config, timeout).await?;
+        Self::connect_with_auth(config, timeout, None).await
+    }
+
+    /// [`McpClient::connect`], with an optional [`OAuthManager`] whose lazy
+    /// per-server token source rides every HTTP transport (including each
+    /// reconnect's fresh transport) — see [`crate::oauth`].
+    pub async fn connect_with_auth(
+        config: &McpServerConfig,
+        timeout: Duration,
+        auth: Option<Arc<OAuthManager>>,
+    ) -> Result<Self, McpError> {
+        let transport = build_transport(config, timeout, auth.as_deref()).await?;
         let mut client = McpClient::new(&config.name, transport);
         client.call_timeout = timeout;
         client.initialize().await?;
@@ -270,7 +282,8 @@ impl McpClient {
         let cfg = config.clone();
         client.reconnect = Some(Arc::new(move || {
             let cfg = cfg.clone();
-            Box::pin(async move { build_transport(&cfg, timeout).await })
+            let auth = auth.clone();
+            Box::pin(async move { build_transport(&cfg, timeout, auth.as_deref()).await })
         }));
         Ok(client)
     }
@@ -549,17 +562,24 @@ struct Handshake {
 
 /// Build a fresh (pre-handshake) transport for `config`. Shared by the first
 /// [`McpClient::connect`] and every later reconnect so both spawn the child
-/// with the identical (scrubbed, for stdio) environment.
+/// with the identical (scrubbed, for stdio) environment. When an
+/// [`OAuthManager`] is supplied, every HTTP transport gets its lazy
+/// per-server token source (a no-op until a login is stored).
 async fn build_transport(
     config: &McpServerConfig,
     timeout: Duration,
+    auth: Option<&OAuthManager>,
 ) -> Result<Box<dyn Transport>, McpError> {
     Ok(match &config.transport {
         McpTransport::Stdio { cmd, args, env } => {
             Box::new(StdioTransport::spawn(&config.name, cmd, args, env).await?)
         }
         McpTransport::Http { url, headers } => {
-            Box::new(HttpTransport::new(&config.name, url, headers, timeout)?)
+            let mut transport = HttpTransport::new(&config.name, url, headers, timeout)?;
+            if let Some(manager) = auth {
+                transport = transport.with_bearer_source(manager.source_for(&config.name));
+            }
+            Box::new(transport)
         }
     })
 }

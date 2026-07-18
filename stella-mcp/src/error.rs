@@ -46,6 +46,12 @@ pub enum McpError {
     /// Configuration could not be parsed (bad TOML, unknown transport shape).
     #[error("invalid MCP configuration: {0}")]
     Config(String),
+
+    /// OAuth authorization failed: discovery, registration, the browser
+    /// round-trip, a token exchange, or a refresh. The message never carries
+    /// a token value — only endpoint URLs and the server's own error codes.
+    #[error("authorization error: {0}")]
+    Auth(String),
 }
 
 impl McpError {

@@ -205,6 +205,96 @@ pub enum Inbound {
     /// [`crate::deck_ui::ingest_inbound`]. Out-of-band view state, ignored by
     /// the model fold — like [`Inbound::GraphSnapshot`].
     ShowHelp,
+    /// A refreshed snapshot of the **cross-process session registry** for the
+    /// SESSIONS overlay (empty-prompt `←`). Every running stella session on
+    /// this machine, grouped by [`SessionPhase`]. Out-of-band view state like
+    /// [`Inbound::GraphSnapshot`]; the driver answers
+    /// [`WorkspaceInput::SessionsRefresh`] and every archive/delete with one.
+    Sessions(Vec<SessionInfo>),
+    /// A refreshed snapshot of the persist-until-read notification store for
+    /// the inbox overlay and the footer's unread badge. The driver polls the
+    /// store (other sessions produce into it too) and pushes one whenever the
+    /// set changes. Out-of-band view state, ignored by the model fold.
+    Notifications(Vec<NotificationInfo>),
+    /// Progress from an in-flight MCP OAuth login the tab started
+    /// ([`WorkspaceInput::McpOauthLogin`]). `outcome` is `None` while running,
+    /// `Some(ok)` when finished — success triggers the tab to request a fresh
+    /// snapshot so the ⚿ oauth badge flips. Out-of-band view state.
+    McpOauthStatus {
+        server: String,
+        message: String,
+        outcome: Option<bool>,
+    },
+}
+
+/// The session-registry lifecycle phase, exactly the grouping the SESSIONS
+/// overlay shows. A TUI-local mirror of `stella-store`'s `SessionStatus`
+/// (the deck never links the store crate; the driver maps one to the other).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionPhase {
+    InProgress,
+    NeedsInput,
+    Cancelled,
+    Complete,
+    Archived,
+    Error,
+}
+
+impl SessionPhase {
+    /// Display/grouping order: attention-worthy first.
+    pub const ALL: [SessionPhase; 6] = [
+        SessionPhase::InProgress,
+        SessionPhase::NeedsInput,
+        SessionPhase::Cancelled,
+        SessionPhase::Complete,
+        SessionPhase::Archived,
+        SessionPhase::Error,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SessionPhase::InProgress => "In Progress",
+            SessionPhase::NeedsInput => "Needs Input",
+            SessionPhase::Cancelled => "Cancelled",
+            SessionPhase::Complete => "Complete",
+            SessionPhase::Archived => "Archived",
+            SessionPhase::Error => "Error",
+        }
+    }
+}
+
+/// One row of the SESSIONS overlay — a running (or finished) stella session
+/// from the machine-wide registry, with the human title and work summary the
+/// registry holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionInfo {
+    /// Registry id (`ses-…`), the archive/delete handle.
+    pub id: String,
+    /// Human title: `<workspace basename>: <first prompt…>`.
+    pub title: String,
+    /// What work is involved — the latest prompt/goal, truncated.
+    pub summary: String,
+    /// Workspace path (dimmed detail line).
+    pub workspace: String,
+    pub phase: SessionPhase,
+    pub started_ms: u64,
+    pub updated_ms: u64,
+    /// True for the record of THIS deck process (rendered with a marker and
+    /// protected from delete).
+    pub mine: bool,
+}
+
+/// One persist-until-read notification as the inbox overlay lists it. A
+/// mirror of `stella-store`'s `Notification` minus storage concerns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotificationInfo {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    /// Origin hint (session id, server name); may be empty.
+    pub source: String,
+    pub created_ms: u64,
+    pub read: bool,
     /// A launch-cinematic cue (see [`SplashCue`]): the driver replays the
     /// splash held open over a running init (session startup, `/init`) and
     /// releases it when init finishes. Out-of-band view state, applied
@@ -376,6 +466,25 @@ pub enum WorkspaceInput {
     },
     /// MCP tab: rebuild and re-push the [`Inbound::McpServers`] snapshot.
     McpRefresh,
+    /// MCP tab: start the browser OAuth login for a configured **http**
+    /// server. The driver runs the flow in the background and streams
+    /// [`Inbound::McpOauthStatus`] updates (including the authorize URL).
+    McpOauthLogin { server: String },
+    /// SESSIONS overlay opened (or `r`): read the machine-wide session
+    /// registry and answer with [`Inbound::Sessions`].
+    SessionsRefresh,
+    /// SESSIONS overlay: tuck a session record away (status → Archived).
+    /// Answered with a fresh [`Inbound::Sessions`].
+    SessionArchive { id: String },
+    /// SESSIONS overlay: delete a session record from the registry.
+    /// Answered with a fresh [`Inbound::Sessions`].
+    SessionDelete { id: String },
+    /// Inbox overlay: mark one notification read (it may then be pruned —
+    /// "persists until read" is the store's contract). Answered with a fresh
+    /// [`Inbound::Notifications`].
+    NotificationRead { id: String },
+    /// Inbox overlay: mark everything read.
+    NotificationsReadAll,
     /// Tear down the deck.
     Quit,
 }
@@ -514,6 +623,9 @@ pub struct McpServerInfo {
     /// Configured credential field names (env vars / headers) — presence means
     /// auth is set; the values are never carried here.
     pub auth_fields: Vec<String>,
+    /// OAuth state: `None` = not applicable (stdio), `Some(logged_in)` for an
+    /// http server (`o` starts the browser login; tokens never ride here).
+    pub oauth: Option<bool>,
     /// Total recorded calls to this server's tools (from local telemetry).
     pub calls: u64,
 }

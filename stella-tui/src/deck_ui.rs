@@ -369,6 +369,34 @@ pub struct DeckUi {
     /// Motion off-switch (`--no-anim` / `STELLA_NO_ANIM` / `NO_COLOR`): freezes
     /// the progress shimmer, pulse, and caret blink to a static frame.
     pub no_anim: bool,
+    /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
+    /// tab, or `/sessions`). Modal while open: ↑/↓ move, `a` archive, `x`
+    /// delete, `r` refresh, Esc/`←` close.
+    pub sessions_open: bool,
+    /// The machine-wide session registry snapshot ([`Inbound::Sessions`]),
+    /// pre-sorted by the driver; the overlay groups it by phase.
+    pub sessions: Vec<crate::envelope::SessionInfo>,
+    /// Selected row in the overlay's flattened (grouped) row list.
+    pub sessions_sel: usize,
+    /// Whether the CONTEXT overlay is open (empty-prompt `→` on the Session
+    /// tab, or `/context`): active skills + MCP servers for THIS session,
+    /// rendered from the already-live `skills`/`mcp` snapshots.
+    pub context_open: bool,
+    /// Vertical scroll offset (rows) for the CONTEXT overlay; render clamps.
+    pub context_scroll: usize,
+    /// Whether the INBOX overlay is open (`/inbox`): the persist-until-read
+    /// notifications. ↑/↓ move, Enter/Space mark read, `R` mark all read.
+    pub inbox_open: bool,
+    /// The notification snapshot ([`Inbound::Notifications`]), newest first.
+    /// The footer badge shows its unread count even while the overlay is shut.
+    pub notifications: Vec<crate::envelope::NotificationInfo>,
+    /// Selected row in the inbox overlay.
+    pub inbox_sel: usize,
+    /// Driver requests queued by handlers/ingest beyond the one action a key
+    /// can return (e.g. opening CONTEXT refreshes both skills and MCP; a
+    /// finished OAuth login refreshes the MCP snapshot). The shell drains
+    /// this after every key/inbound and forwards each as a submission.
+    pub pending_inputs: Vec<WorkspaceInput>,
 }
 
 impl Default for DeckUi {
@@ -415,6 +443,15 @@ impl Default for DeckUi {
             session_fold: crate::views::session::SessionFold::default(),
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,
+            sessions_open: false,
+            sessions: Vec::new(),
+            sessions_sel: 0,
+            context_open: false,
+            context_scroll: 0,
+            inbox_open: false,
+            notifications: Vec::new(),
+            inbox_sel: 0,
+            pending_inputs: Vec::new(),
         }
     }
 }
@@ -646,6 +683,36 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         ui.help_scroll.top = 0;
         return;
     }
+    // The machine-wide session registry snapshot — out-of-band view state
+    // for the SESSIONS overlay (and its refreshes after archive/delete).
+    if let Inbound::Sessions(sessions) = inbound {
+        ui.sessions = sessions.clone();
+        ui.sessions_sel = ui.sessions_sel.min(sessions.len().saturating_sub(1));
+        return;
+    }
+    // The persist-until-read notification snapshot: feeds the footer badge
+    // continuously and the inbox overlay when open.
+    if let Inbound::Notifications(notifications) = inbound {
+        ui.notifications = notifications.clone();
+        ui.inbox_sel = ui.inbox_sel.min(notifications.len().saturating_sub(1));
+        return;
+    }
+    // OAuth login progress lands on the MCP tab's status line; a successful
+    // finish means the token store changed, so the snapshot (⚿ oauth badge)
+    // is stale — queue a refresh for the shell to forward.
+    if let Inbound::McpOauthStatus {
+        server,
+        message,
+        outcome,
+    } = inbound
+    {
+        ui.mcp.status = Some(match outcome {
+            None => format!("{server}: {message}"),
+            Some(true) => format!("{server}: ✓ {message}"),
+            Some(false) => format!("{server}: ✗ {message}"),
+        });
+        if *outcome == Some(true) {
+            ui.pending_inputs.push(WorkspaceInput::McpRefresh);
     // Launch-cinematic cues: the driver replays the splash held open over a
     // running init (`/init`, session startup) and releases it when init
     // finishes. Out-of-band view state like `ShowHelp`. `--no-anim`
@@ -859,6 +926,18 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         return handle_graph_picker_key(key, ui);
     }
 
+    // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the
+    // queue editor while open: they own the keyboard until dismissed.
+    if ui.sessions_open {
+        return handle_sessions_key(key, ui);
+    }
+    if ui.inbox_open {
+        return handle_inbox_key(key, ui);
+    }
+    if ui.context_open {
+        return handle_context_key(key, ui);
+    }
+
     let composer_empty = ui.composer.buffer().is_empty();
 
     // The SKILLS tab is a keyboard-owning manager: it claims the keys for its
@@ -918,6 +997,22 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         ui.queue_sel = model.queue.pending() - 1;
         ui.queue_confirm_clear = false;
         return DeckAction::Handled;
+    }
+
+    // `←` from an empty composer on the Session tab opens the SESSIONS
+    // overlay — every running stella session on this machine, grouped by
+    // status. `→` opens the CONTEXT overlay (this session's active skills +
+    // MCP servers) without leaving the transcript. Both are gated to the
+    // Session tab + full composer emptiness, so ←/→ on other tabs (Agents
+    // pane nav, Graph cursor, skills pickers) are untouched, and typing a
+    // prompt never trips them (handle_edit_key claims ←/→ once text exists).
+    if ui.tab == DeckTab::Session && ui.composer.is_empty() {
+        if matches!(key.code, KeyCode::Left) {
+            return open_sessions_overlay(ui);
+        }
+        if matches!(key.code, KeyCode::Right) {
+            return open_context_overlay(ui);
+        }
     }
 
     // Focused-agent gates take precedence over normal composer editing, exactly
@@ -1110,6 +1205,12 @@ fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Optio
                 ui.set_tab(DeckTab::Mcp);
                 DeckAction::Handled
             }
+            // The three transcript-page overlays are deck-local view state,
+            // exactly like the tab switches above (their keyboard shortcuts:
+            // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
+            "/sessions" => open_sessions_overlay(ui),
+            "/context" => open_context_overlay(ui),
+            "/inbox" => open_inbox_overlay(ui),
             // `/mcp-search` jumps straight into the MCP tab's registry
             // search — THE way to begin looking for a server from anywhere
             // (the old `/`-on-the-MCP-tab trigger collided with the command
@@ -1180,6 +1281,146 @@ fn handle_queue_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
             DeckAction::Handled
         }
         _ => DeckAction::Ignored,
+    }
+}
+
+/// Open the SESSIONS overlay (empty-prompt `←`, `/sessions`) and ask the
+/// driver for a fresh registry snapshot.
+pub(crate) fn open_sessions_overlay(ui: &mut DeckUi) -> DeckAction {
+    ui.sessions_open = true;
+    ui.sessions_sel = 0;
+    DeckAction::Send(WorkspaceInput::SessionsRefresh)
+}
+
+/// Open the CONTEXT overlay (empty-prompt `→`, `/context`) and freshen both
+/// snapshots it renders — the second refresh rides `pending_inputs` since a
+/// key returns only one action.
+pub(crate) fn open_context_overlay(ui: &mut DeckUi) -> DeckAction {
+    ui.context_open = true;
+    ui.context_scroll = 0;
+    ui.pending_inputs.push(WorkspaceInput::McpRefresh);
+    DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
+}
+
+/// Open the INBOX overlay (`/inbox`). The driver's poller keeps the
+/// notification snapshot fresh; nothing to request.
+pub(crate) fn open_inbox_overlay(ui: &mut DeckUi) -> DeckAction {
+    ui.inbox_open = true;
+    ui.inbox_sel = 0;
+    DeckAction::Handled
+}
+
+/// The SESSIONS overlay's rows in display order: grouped by phase (the
+/// [`crate::envelope::SessionPhase::ALL`] order), newest-started first within
+/// a group — the flat list `sessions_sel` indexes and render walks.
+pub fn grouped_session_rows(ui: &DeckUi) -> Vec<&crate::envelope::SessionInfo> {
+    let mut rows = Vec::with_capacity(ui.sessions.len());
+    for phase in crate::envelope::SessionPhase::ALL {
+        // `Inbound::Sessions` arrives newest-started first from the driver,
+        // so a stable filter keeps that order within each group.
+        rows.extend(ui.sessions.iter().filter(|s| s.phase == phase));
+    }
+    rows
+}
+
+/// The SESSIONS overlay key map: ↑/↓ select, `a` archive, `x` delete
+/// (another session's record only — never this session's own), `r` refresh,
+/// Esc/`←`/`q` close. Modal: everything else is swallowed.
+fn handle_sessions_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    let count = grouped_session_rows(ui).len();
+    ui.sessions_sel = ui.sessions_sel.min(count.saturating_sub(1));
+    match key.code {
+        KeyCode::Esc | KeyCode::Left | KeyCode::Char('q') => {
+            ui.sessions_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.sessions_sel = ui.sessions_sel.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            if count > 0 {
+                ui.sessions_sel = (ui.sessions_sel + 1).min(count - 1);
+            }
+            DeckAction::Handled
+        }
+        KeyCode::Char('r') => DeckAction::Send(WorkspaceInput::SessionsRefresh),
+        KeyCode::Char('a') => match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
+            Some(row) => DeckAction::Send(WorkspaceInput::SessionArchive { id: row.id.clone() }),
+            None => DeckAction::Handled,
+        },
+        KeyCode::Char('x') => {
+            match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
+                // This deck's own record is written by this process — deleting
+                // it out from under the writer would just resurrect on the
+                // next transition, so the key refuses.
+                Some(row) if !row.mine => {
+                    DeckAction::Send(WorkspaceInput::SessionDelete { id: row.id.clone() })
+                }
+                _ => DeckAction::Handled,
+            }
+        }
+        _ => DeckAction::Handled,
+    }
+}
+
+/// The INBOX overlay key map: ↑/↓ select, Enter/Space mark the selected
+/// notification read, `R` mark all read, Esc/`q` close. Modal.
+fn handle_inbox_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    let count = ui.notifications.len();
+    ui.inbox_sel = ui.inbox_sel.min(count.saturating_sub(1));
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            ui.inbox_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.inbox_sel = ui.inbox_sel.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            if count > 0 {
+                ui.inbox_sel = (ui.inbox_sel + 1).min(count - 1);
+            }
+            DeckAction::Handled
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => match ui.notifications.get(ui.inbox_sel) {
+            Some(n) if !n.read => {
+                DeckAction::Send(WorkspaceInput::NotificationRead { id: n.id.clone() })
+            }
+            _ => DeckAction::Handled,
+        },
+        KeyCode::Char('R') => DeckAction::Send(WorkspaceInput::NotificationsReadAll),
+        _ => DeckAction::Handled,
+    }
+}
+
+/// The CONTEXT overlay key map: ↑/↓/PageUp/PageDown scroll, Esc/`→`/`q`
+/// close. Read-only — management lives on the SKILLS/MCP tabs. Modal.
+fn handle_context_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    match key.code {
+        KeyCode::Esc | KeyCode::Right | KeyCode::Char('q') => {
+            ui.context_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.context_scroll = ui.context_scroll.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            // Render clamps to the content height it measures.
+            ui.context_scroll = ui.context_scroll.saturating_add(1);
+            DeckAction::Handled
+        }
+        KeyCode::PageUp => {
+            ui.context_scroll = ui.context_scroll.saturating_sub(10);
+            DeckAction::Handled
+        }
+        KeyCode::PageDown => {
+            ui.context_scroll = ui.context_scroll.saturating_add(10);
+            DeckAction::Handled
+        }
+        _ => DeckAction::Handled,
     }
 }
 
@@ -1981,6 +2222,23 @@ fn handle_mcp_browse_key(
             };
             ui.mcp.mode = McpMode::Auth;
             Some(DeckAction::Handled)
+        }
+        // Start the browser OAuth login for the selected server. Http-only —
+        // a stdio server has no authorization server, so the key explains
+        // instead of firing.
+        KeyCode::Char('o') if composer_empty => {
+            let server = ui.mcp.selected_server()?;
+            let name = server.name.clone();
+            if server.oauth.is_none() {
+                ui.mcp.status = Some(format!(
+                    "{name}: OAuth login applies to http servers (use `a` for env credentials)"
+                ));
+                return Some(DeckAction::Handled);
+            }
+            ui.mcp.status = Some(format!("{name}: starting OAuth login…"));
+            Some(DeckAction::Send(WorkspaceInput::McpOauthLogin {
+                server: name,
+            }))
         }
         // Remove the selected server from mcp.toml.
         KeyCode::Char('x') if composer_empty => ui.mcp.selected_server().map(|s| {
@@ -3735,6 +3993,7 @@ mod tests {
                 health: Some("live".into()),
                 tool_count: 3,
                 auth_fields: vec!["Authorization".into()],
+                oauth: Some(false),
                 calls: 5,
             },
             McpServerInfo {
@@ -3745,6 +4004,7 @@ mod tests {
                 health: None,
                 tool_count: 0,
                 auth_fields: vec![],
+                oauth: None,
                 calls: 0,
             },
         ];
@@ -3797,6 +4057,7 @@ mod tests {
             health: Some("live".into()),
             tool_count: 1,
             auth_fields: vec![],
+            oauth: Some(false),
             calls: 0,
         }];
         // `a` enters auth mode.
@@ -3847,6 +4108,7 @@ mod tests {
             health: Some("live".into()),
             tool_count: 1,
             auth_fields: vec![],
+            oauth: Some(false),
             calls: 0,
         }];
         handle_deck_key(ch('a'), &model, &mut ui); // enter auth

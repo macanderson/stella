@@ -2956,10 +2956,13 @@ name = "stella-mcp"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "base64",
  "futures-util",
+ "rand 0.10.2",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "stella-core",
  "stella-protocol",
  "thiserror 2.0.18",
@@ -3047,6 +3050,7 @@ dependencies = [
 name = "stella-store"
 version = "0.3.0"
 dependencies = [
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

@@ -124,6 +124,94 @@ pub fn remove(workspace_root: &Path, name: &str) -> Result<bool, String> {
     Ok(removed)
 }
 
+/// The workspace's OAuth token store, beside `mcp.toml` (owner-only JSON).
+pub fn oauth_store_path(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".stella").join("mcp_oauth.json")
+}
+
+/// The session's OAuth manager: lazy per-server bearer sources over the
+/// workspace token store. Cheap; construct once per connect.
+pub fn oauth_manager(workspace_root: &Path) -> std::sync::Arc<stella_mcp::OAuthManager> {
+    std::sync::Arc::new(stella_mcp::OAuthManager::new(oauth_store_path(
+        workspace_root,
+    )))
+}
+
+/// Look up the URL a configured **http** server points at — the OAuth login
+/// target. A stdio server has no authorization server, so it is an error.
+pub fn http_server_url(workspace_root: &Path, server: &str) -> Result<String, String> {
+    let cfg = load_config(workspace_root)?;
+    match cfg.get(server) {
+        Some(stella_mcp::McpTransport::Http { url, .. }) => Ok(url.clone()),
+        Some(_) => Err(format!(
+            "`{server}` is a stdio server — OAuth login applies to http servers only"
+        )),
+        None => Err(format!(
+            "no MCP server `{server}` in {}",
+            mcp_toml_path(workspace_root).display()
+        )),
+    }
+}
+
+/// Run the interactive OAuth login for a configured http server, emitting
+/// progress through `notify` (the CLI prints; the deck forwards to its MCP
+/// tab). The browser is opened best-effort for `AuthorizeUrl` events — the
+/// URL is always also surfaced so the user can open it by hand.
+pub async fn oauth_login(
+    workspace_root: &Path,
+    server: &str,
+    notify: &mut (dyn FnMut(stella_mcp::LoginEvent) + Send),
+) -> Result<(), String> {
+    let url = http_server_url(workspace_root, server)?;
+    let store_path = oauth_store_path(workspace_root);
+    let tokens = stella_mcp::oauth::login(
+        server,
+        &url,
+        &stella_mcp::LoginOptions::default(),
+        &mut |event| {
+            if let stella_mcp::LoginEvent::AuthorizeUrl(url) = &event {
+                open_in_browser(url);
+            }
+            notify(event);
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    stella_mcp::TokenStore::new(store_path)
+        .put(server, &tokens)
+        .map_err(|e| e.to_string())
+}
+
+/// Forget a server's OAuth tokens; returns whether any existed.
+pub fn oauth_logout(workspace_root: &Path, server: &str) -> Result<bool, String> {
+    stella_mcp::TokenStore::new(oauth_store_path(workspace_root))
+        .remove(server)
+        .map_err(|e| e.to_string())
+}
+
+/// The configured servers that currently hold OAuth logins.
+pub fn oauth_logged_in(workspace_root: &Path) -> Vec<String> {
+    stella_mcp::TokenStore::new(oauth_store_path(workspace_root))
+        .logged_in_servers()
+        .unwrap_or_default()
+}
+
+/// Best-effort `open`/`xdg-open`/`start` of the authorize URL. Failure is
+/// fine — the URL is printed/shown for manual opening either way.
+fn open_in_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let launcher = ("open", vec![url.to_string()]);
+    #[cfg(target_os = "windows")]
+    let launcher = ("cmd", vec!["/C".into(), "start".into(), url.to_string()]);
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let launcher = ("xdg-open", vec![url.to_string()]);
+    let _ = std::process::Command::new(launcher.0)
+        .args(&launcher.1)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 /// Per-(server, tool) usage aggregates from local telemetry
 /// (`.stella/store.db`). Missing store → empty (never creates the file).
 pub fn usage_stats(workspace_root: &Path) -> Result<Vec<stella_store::McpUsageStat>, String> {
@@ -180,6 +268,8 @@ pub fn run(cmd: &crate::McpCmd) -> Result<(), String> {
         ),
         crate::McpCmd::Install { name, alias } => run_install(&workspace_root, name, alias.clone()),
         crate::McpCmd::Remove { name } => run_remove(&workspace_root, name),
+        crate::McpCmd::Login { name } => run_login(&workspace_root, name),
+        crate::McpCmd::Logout { name } => run_logout(&workspace_root, name),
         crate::McpCmd::Usage => run_usage(&workspace_root),
     }
 }
@@ -297,6 +387,39 @@ fn run_remove(workspace_root: &Path, name: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("no configured MCP server named `{name}`"))
+    }
+}
+
+fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
+    crate::tui::section_header(&format!("OAuth login — {name}"));
+    runtime()?.block_on(oauth_login(
+        workspace_root,
+        name,
+        &mut |event| match event {
+            stella_mcp::LoginEvent::Status(line) => println!("  {} {line}", "·".green()),
+            stella_mcp::LoginEvent::AuthorizeUrl(url) => {
+                println!(
+                    "  {} approve access in your browser (opened automatically):",
+                    "◆".yellow()
+                );
+                println!("    {}", url.bright_magenta());
+            }
+        },
+    ))?;
+    println!(
+        "  {} logged in — tokens in {} (auto-refreshed; `stella mcp logout {name}` to forget)",
+        "◆".yellow(),
+        oauth_store_path(workspace_root).display()
+    );
+    Ok(())
+}
+
+fn run_logout(workspace_root: &Path, name: &str) -> Result<(), String> {
+    if oauth_logout(workspace_root, name)? {
+        println!("  {} logged out of {}", "◆".yellow(), name.bright_magenta());
+        Ok(())
+    } else {
+        Err(format!("no stored OAuth login for `{name}`"))
     }
 }
 

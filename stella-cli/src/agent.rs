@@ -1866,8 +1866,9 @@ pub(crate) async fn connect_mcp_servers(
     native: std::sync::Arc<dyn ToolExecutor>,
     usage: Option<stella_core::mcp_usage::McpUsageLedger>,
     disabled: Option<stella_mcp::DisabledServers>,
+    auth: Option<std::sync::Arc<stella_mcp::OAuthManager>>,
 ) -> McpToolSet {
-    let mut set = McpToolSet::connect(servers, MCP_CONNECT_TIMEOUT)
+    let mut set = McpToolSet::connect_with_auth(servers, MCP_CONNECT_TIMEOUT, auth)
         .await
         .wrapping(native);
     // Record each successful MCP call into the session's usage ledger, and
@@ -1907,7 +1908,8 @@ pub(crate) async fn connect_mcp(
         McpPlan::Servers(servers) => servers,
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
-    let set = connect_mcp_servers(&servers, native, usage, None).await;
+    let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root);
+    let set = connect_mcp_servers(&servers, native, usage, None, Some(auth)).await;
     if print_diagnostics {
         for (name, reason) in set.failed_servers() {
             eprintln!(

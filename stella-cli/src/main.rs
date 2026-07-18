@@ -328,6 +328,17 @@ pub enum McpCmd {
         /// The configured server's local name
         name: String,
     },
+    /// OAuth login to a configured http server (opens your browser; tokens
+    /// land owner-only in .stella/mcp_oauth.json and auto-refresh)
+    Login {
+        /// The configured server's local name
+        name: String,
+    },
+    /// Forget a server's OAuth tokens
+    Logout {
+        /// The configured server's local name
+        name: String,
+    },
     /// Show MCP tool-usage telemetry (.stella/store.db): calls per server/tool
     Usage,
 }
