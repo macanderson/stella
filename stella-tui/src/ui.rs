@@ -20,8 +20,9 @@ use crate::composer::{
     handle_slash_popup_key, slash_popup_matches,
 };
 use crate::input::{ScopeDecision, UserInput};
-use crate::model::{AskUserPrompt, SessionModel};
+use crate::model::{AskUserPrompt, SessionModel, TranscriptEntry};
 use crate::scroll::ScrollState;
+use ratatui::text::Line;
 
 /// Which surface currently has keyboard focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,6 +47,27 @@ pub struct ViewportMetrics {
     pub transcript_total: usize,
     pub diff_height: usize,
     pub diff_total: usize,
+}
+
+/// Memoized transcript render. [`crate::render::transcript_lines`] re-wraps
+/// every entry each call (O(transcript)); a session redraws far more often than
+/// its transcript changes (every scroll, cursor blink, or files-pane update),
+/// so caching the parsed lines keyed on what actually feeds them — the
+/// transcript's shape, the wrap width, and thinking expansion — skips that work
+/// on unchanged frames.
+///
+/// The key is a cheap fingerprint, valid because the transcript is append-only
+/// except for streaming deltas coalescing into the **trailing** `Text`/
+/// `Reasoning` entry (see [`crate::model::SessionModel`]): `len` catches every
+/// append and `trailing_stream_len` catches the growing tail. No earlier entry
+/// is ever mutated, so no earlier change can slip past this pair.
+#[derive(Debug, Clone)]
+struct TranscriptCache {
+    len: usize,
+    trailing_stream_len: usize,
+    expand_thinking: bool,
+    width: usize,
+    lines: Vec<Line<'static>>,
 }
 
 /// All ephemeral view state for one session (see module docs).
@@ -88,6 +110,9 @@ pub struct UiState {
     pub enter_submits: bool,
     /// Viewport sizes from the last render (for scroll clamping).
     pub metrics: ViewportMetrics,
+    /// Memoized transcript render (see [`TranscriptCache`]). Private: the render
+    /// path reads it only through [`UiState::transcript_lines`].
+    transcript_cache: Option<TranscriptCache>,
 }
 
 impl Default for UiState {
@@ -106,6 +131,7 @@ impl Default for UiState {
             thinking_expanded: false,
             enter_submits: false,
             metrics: ViewportMetrics::default(),
+            transcript_cache: None,
         }
     }
 }
@@ -118,6 +144,46 @@ impl UiState {
             slash_commands,
             ..Self::default()
         }
+    }
+
+    /// Rebuild the memoized transcript render only when the transcript shape,
+    /// wrap width, or thinking expansion changed. Call once per frame before
+    /// [`transcript_lines`](Self::transcript_lines); on an unchanged frame this
+    /// is an O(1) fingerprint check that skips the whole re-wrap.
+    pub fn ensure_transcript_lines(
+        &mut self,
+        model: &SessionModel,
+        expand_thinking: bool,
+        width: usize,
+    ) {
+        let len = model.transcript.len();
+        let trailing_stream_len = match model.transcript.last() {
+            Some(TranscriptEntry::Text(s) | TranscriptEntry::Reasoning(s)) => s.len(),
+            _ => 0,
+        };
+        let fresh = self.transcript_cache.as_ref().is_some_and(|c| {
+            c.len == len
+                && c.trailing_stream_len == trailing_stream_len
+                && c.expand_thinking == expand_thinking
+                && c.width == width
+        });
+        if !fresh {
+            let lines = crate::render::transcript_lines(model, expand_thinking, width);
+            self.transcript_cache = Some(TranscriptCache {
+                len,
+                trailing_stream_len,
+                expand_thinking,
+                width,
+                lines,
+            });
+        }
+    }
+
+    /// The transcript lines from the most recent
+    /// [`ensure_transcript_lines`](Self::ensure_transcript_lines) — empty until
+    /// it has run at least once.
+    pub fn transcript_lines(&self) -> &[Line<'static>] {
+        self.transcript_cache.as_ref().map_or(&[], |c| &c.lines)
     }
 }
 

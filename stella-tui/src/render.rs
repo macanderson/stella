@@ -98,13 +98,16 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     let transcript_area = cols[0];
     let right_area = cols[1];
 
-    let t_lines = transcript_lines(model, ui.thinking_expanded, inner_width(transcript_area));
+    let expand_thinking = ui.thinking_expanded;
+    let t_width = inner_width(transcript_area);
+    ui.ensure_transcript_lines(model, expand_thinking, t_width);
+    let t_lines = ui.transcript_lines();
     let t_total = t_lines.len();
     let t_inner_h = inner_height(transcript_area);
     let t_window = ui.scroll.window(t_total, t_inner_h);
     let following = ui.scroll.follow;
     guarded_panel(frame, transcript_area, "transcript", |buf| {
-        render_transcript(&t_lines, t_window.clone(), following, transcript_area, buf)
+        render_transcript(t_lines, t_window.clone(), following, transcript_area, buf)
     });
 
     // ---- Right pane: diff viewer when open, else the files-touched panel.
@@ -1894,6 +1897,59 @@ mod tests {
             "tail is visible while following:\n{text}"
         );
         assert!(!text.contains("LINE000"), "head is scrolled off:\n{text}");
+    }
+
+    #[test]
+    fn ui_memoizes_transcript_lines_and_invalidates_on_a_streaming_delta() {
+        // The transcript re-wrap is O(transcript) and ran EVERY frame — a
+        // session redraws far more often than it changes. The UiState cache
+        // must (a) reuse the parsed lines on an unchanged frame, and (b) still
+        // invalidate when a streaming delta grows the trailing entry (its
+        // length changes but the entry count does not), or new tokens would
+        // never appear.
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::Text {
+            delta: "a fairly long assistant message that wraps at a narrow width".into(),
+        });
+        let mut ui = UiState::default();
+
+        // First frame populates the cache, and it matches a direct render.
+        ui.ensure_transcript_lines(&model, false, 40);
+        let first = ui.transcript_lines().to_vec();
+        let ptr = ui.transcript_lines().as_ptr();
+        assert_eq!(first, transcript_lines(&model, false, 40));
+
+        // An unchanged frame reuses the SAME backing allocation — no re-wrap.
+        ui.ensure_transcript_lines(&model, false, 40);
+        assert_eq!(
+            ui.transcript_lines().as_ptr(),
+            ptr,
+            "an unchanged frame must not rebuild the transcript"
+        );
+
+        // A streaming delta coalesces into the trailing Text entry: entry count
+        // stays 1, but the tail grows. The cache must rebuild and show it.
+        model.apply(&AgentEvent::Text {
+            delta: " …and still more streamed text arriving token by token".into(),
+        });
+        assert_eq!(model.transcript.len(), 1, "the delta coalesced, not appended");
+        ui.ensure_transcript_lines(&model, false, 40);
+        assert_eq!(ui.transcript_lines(), transcript_lines(&model, false, 40));
+        assert_ne!(
+            ui.transcript_lines(),
+            first.as_slice(),
+            "a grown trailing entry must produce fresh lines"
+        );
+
+        // A width change (a resize) also invalidates.
+        let wide = ui.transcript_lines().as_ptr();
+        ui.ensure_transcript_lines(&model, false, 20);
+        assert_ne!(
+            ui.transcript_lines().as_ptr(),
+            wide,
+            "a wrap-width change must rebuild"
+        );
+        assert_eq!(ui.transcript_lines(), transcript_lines(&model, false, 20));
     }
 
     #[test]
