@@ -845,9 +845,20 @@ mod tests {
 
     use crate::issues::IssueBackend;
 
+    /// A registry rooted in a fresh empty tempdir. Rooting tests at a shared
+    /// path like `/tmp` is not hermetic: a stray `.stella/codegraph.db` left
+    /// there by a real session conditionally registers `graph_query` and
+    /// skews every tool-set assertion. The `TempDir` is returned so the root
+    /// outlives the registry.
+    fn bare_registry(issue_backend: Option<IssueBackend>) -> (tempfile::TempDir, ToolRegistry) {
+        let root = tempfile::tempdir().unwrap();
+        let reg = ToolRegistry::with_issue_backend(root.path().to_path_buf(), issue_backend);
+        (root, reg)
+    }
+
     #[tokio::test]
     async fn unknown_tool_returns_error_not_panic() {
-        let reg = ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), None);
+        let (_root, reg) = bare_registry(None);
         let result = reg.execute("nonexistent", &Value::Null).await;
         assert!(result.is_error());
     }
@@ -858,8 +869,7 @@ mod tests {
         // manifest can never shadow a built-in. Its comment says "keep this
         // in sync if either set changes" — this test IS that sync: a new
         // built-in that isn't reserved would be silently shadowable.
-        let reg =
-            ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), Some(IssueBackend::GitHub));
+        let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
         for schema in reg.schemas() {
             assert!(
                 crate::custom::RESERVED_NAMES.contains(&schema.name.as_str()),
@@ -891,8 +901,7 @@ mod tests {
 
     #[test]
     fn registry_advertises_the_full_tool_set() {
-        let reg =
-            ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), Some(IssueBackend::GitHub));
+        let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
         for expected in [
             "read_file",
@@ -928,8 +937,7 @@ mod tests {
     /// prompt-cache prefix matching across processes.
     #[test]
     fn schemas_are_sorted_by_name_for_prompt_cache_stability() {
-        let reg =
-            ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), Some(IssueBackend::GitHub));
+        let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
         let mut sorted = names.clone();
         sorted.sort();
@@ -938,7 +946,7 @@ mod tests {
 
     #[test]
     fn issue_tools_absent_without_a_configured_backend() {
-        let reg = ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), None);
+        let (_root, reg) = bare_registry(None);
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
         assert_eq!(names.len(), 17, "unexpected tool count: {names:?}");
         for absent in [
@@ -989,7 +997,8 @@ mod tests {
         }
         let provider: Arc<dyn stella_media::MediaProvider> = Arc::new(NullMedia);
         let names = |backend| {
-            ToolRegistry::with_backends(PathBuf::from("/tmp"), None, Some(backend))
+            let root = tempfile::tempdir().unwrap();
+            ToolRegistry::with_backends(root.path().to_path_buf(), None, Some(backend))
                 .schemas()
                 .iter()
                 .map(|s| s.name.clone())
@@ -1061,8 +1070,7 @@ mod tests {
         // The engine parallelizes on this flag — a mutating tool marked
         // read-only would race writes; a read-only tool marked mutating
         // just loses concurrency. Pin the partition explicitly.
-        let reg =
-            ToolRegistry::with_issue_backend(PathBuf::from("/tmp"), Some(IssueBackend::GitHub));
+        let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
         for schema in reg.schemas() {
             let expected = matches!(
                 schema.name.as_str(),

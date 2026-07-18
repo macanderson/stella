@@ -1,12 +1,12 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/stella-logo-dark-transparent.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/stella-logo-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="assets/stella-logo-light.svg">
     <img src="assets/stella-logo-light.svg" alt="Stella" width="420">
   </picture>
 </p>
 
-<p align="center"><strong>Context beats parameters.</strong></p>
+<p align="center"><strong>Open Source - Tree Sitter Parsed Code Graph - Bi-temporal Memory - Self-Improvement Measured & Benched</strong></p>
 <p align="center">
   <a href="https://github.com/macanderson/stella/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/macanderson/stella/ci.yml?branch=main&style=flat-square&logo=github&label=ci" alt="CI status"></a>
   <a href="https://github.com/macanderson/stella/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/macanderson/stella/release.yml?style=flat-square&logo=github&label=release" alt="Release status"></a>
