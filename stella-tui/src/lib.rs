@@ -51,6 +51,7 @@ pub mod diff;
 pub mod envelope;
 pub mod fx;
 pub mod graph;
+pub mod invaders;
 pub mod markdown;
 pub mod progress;
 pub mod resource;
@@ -87,7 +88,7 @@ pub use deck_ui::{
 pub use envelope::{
     AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, Inbound,
     InstalledAgentEntry, McpSearchItem, McpSearchOutcome, McpServerInfo, Secret, SkillOp, SkillRow,
-    SkillScope, SkillSearchHit, SkillsView, WorkspaceInput,
+    SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
 };
 pub use graph::{GraphEdge, GraphNode, GraphSnapshot};
 pub use resource::ResourceMonitor;

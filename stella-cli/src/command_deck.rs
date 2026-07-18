@@ -72,7 +72,7 @@ use stella_tools::custom::{CustomTool, CustomToolSet};
 use stella_tools::hook_runner::ShellHookRunner;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, Inbound, SkillOp, SkillScope, SkillSearchHit,
-    SkillsView, SlashCommand, UserInput, WorkspaceInput, run_deck,
+    SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -309,6 +309,24 @@ pub async fn run_deck_session(
     // never waits on the driver (and vice versa).
     let deck = tokio::spawn(run_deck(opts, in_rx, sub_tx));
 
+    // The launch cinematic: hold the splash's battle loop open over session
+    // init and release it once BOTH async legs — the background code-graph
+    // build below and the MCP connect after it — have finished, so the movie
+    // covers however long a first launch's indexing takes instead of handing
+    // off to a deck that is still visibly assembling itself. Any key still
+    // skips; `--no-anim` sessions ignore the cue entirely.
+    let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
+    let init_pending = Arc::new(std::sync::atomic::AtomicUsize::new(2));
+    let release_splash = {
+        let tx = in_tx.clone();
+        move || {
+            if init_pending.fetch_sub(1, Ordering::SeqCst) == 1 {
+                let _ = tx.send(Inbound::Splash(SplashCue::Release));
+            }
+        }
+    };
+    let release_on_graph_ready = release_splash.clone();
+
     // Auto-build the code-graph index in the background (a cheap incremental
     // refresh if it already exists) and keep it fresh via the live watcher, so
     // `graph_query` is available this session — and the Graph tab populates —
@@ -339,6 +357,8 @@ pub async fn run_deck_session(
                 agent: LEAD.to_string(),
                 status: AgentStatus::WaitingInput,
             });
+            // One of the two init legs the launch splash waits on.
+            release_on_graph_ready();
         }),
     );
 
@@ -408,6 +428,9 @@ pub async fn run_deck_session(
     };
     // Seed the MCP tab with the configured servers and their live state.
     send_mcp_snapshot(cfg, &mcp, &mcp_disabled, &in_tx).await;
+    // MCP connect settled (or there was nothing to connect) — the other init
+    // leg the launch splash waits on.
+    release_splash();
 
     // ── The driver loop ─────────────────────────────────────────────────────
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -1800,8 +1823,18 @@ async fn run_deck_command(
             });
         }
         "/init" => {
+            // Replay the launch cinematic over the reindex: the battle loops
+            // for as long as init runs, then the wordmark reveal hands the
+            // frame back to the deck. The progress lines still land in the
+            // transcript behind the splash (and any key skips straight to
+            // them). Released on BOTH outcomes — a failed init must never
+            // strand a held splash.
+            let _ = in_tx.send(Inbound::Splash(SplashCue::Replay));
             let mut emit = |line: String| say(line);
-            match agent::init_workspace(Some(provider), &cfg.workspace_root, &mut emit).await {
+            let outcome =
+                agent::init_workspace(Some(provider), &cfg.workspace_root, &mut emit).await;
+            let _ = in_tx.send(Inbound::Splash(SplashCue::Release));
+            match outcome {
                 Ok(_) => {
                     // A fresh index may name tables/types the schema gate
                     // should know about this session, not just the next one.

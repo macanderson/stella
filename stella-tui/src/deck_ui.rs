@@ -30,7 +30,7 @@ use crate::composer::{
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::envelope::{
     AgentControl, AgentId, AgentScope, AgentStatus, Inbound, InstalledAgentEntry, Secret, SkillOp,
-    SkillScope, SkillSearchHit, SkillsView, WorkspaceInput,
+    SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
 };
 use crate::graph::GraphSnapshot;
 use crate::input::{ScopeDecision, UserInput};
@@ -644,6 +644,22 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         ui.help_scroll = ScrollState::default();
         ui.help_scroll.follow = false;
         ui.help_scroll.top = 0;
+        return;
+    }
+    // Launch-cinematic cues: the driver replays the splash held open over a
+    // running init (`/init`, session startup) and releases it when init
+    // finishes. Out-of-band view state like `ShowHelp`. `--no-anim`
+    // sessions ignore the replay — their contract is a static frame — and a
+    // release on a splash that never held is a harmless no-op.
+    if let Inbound::Splash(cue) = inbound {
+        match cue {
+            SplashCue::Replay => {
+                if !ui.no_anim {
+                    ui.splash = SplashState::new_held();
+                }
+            }
+            SplashCue::Release => ui.splash.release(),
+        }
         return;
     }
     model.apply_inbound(inbound);
@@ -2904,6 +2920,36 @@ mod tests {
         );
         assert!(ui.splash.is_done(), "first key skips the splash");
         assert!(ui.composer.buffer().is_empty(), "and does not type");
+    }
+
+    #[test]
+    fn splash_cues_replay_and_release_the_cinematic() {
+        let mut model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        ui.splash.skip(); // the deck is up; `/init` arrives later
+        assert!(ui.splash.is_done());
+
+        // Replay: a fresh held splash owns the frame again…
+        ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
+        assert!(!ui.splash.is_done(), "replay restarts the cinematic");
+
+        // …and Release is what lets its timeline run out (exact timing is
+        // splash::tests territory — here we only pin that the cue routes).
+        ingest_inbound(&Inbound::Splash(SplashCue::Release), &mut model, &mut ui);
+        assert!(!ui.splash.is_done(), "the battle floor still plays out");
+    }
+
+    #[test]
+    fn no_anim_sessions_ignore_splash_replays() {
+        let mut model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        ui.no_anim = true;
+        ui.splash.skip();
+        ingest_inbound(&Inbound::Splash(SplashCue::Replay), &mut model, &mut ui);
+        assert!(
+            ui.splash.is_done(),
+            "a no-anim session never replays the cinematic"
+        );
     }
 
     #[test]

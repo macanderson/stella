@@ -296,6 +296,9 @@ pub async fn run_deck(
     ui.slash_commands = opts.slash_commands.clone();
     ui.color_mode = color_mode;
     ui.no_anim = no_anim;
+    // A no-anim session collapses the launch cinematic to one brief static
+    // wordmark frame (and `ingest_inbound` drops any later replay cues).
+    ui.splash.set_reduced(no_anim);
     // Enter semantics follow the terminal's actual capability (see
     // `crate::term::TerminalGuard::kitty` and `crate::composer::classify_enter`).
     ui.enter_submits = !guard.kitty();
