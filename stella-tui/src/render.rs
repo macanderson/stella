@@ -1304,15 +1304,19 @@ fn pr_status_color(status: PrStatus) -> Color {
 
 fn file_line(file: &FileState, selected: bool) -> Line<'static> {
     let (marker, color) = match file.kind {
+        FileChangeKind::Read => ("[r]", Color::DarkGray),
         FileChangeKind::Created => ("[+]", Color::Green),
         FileChangeKind::Modified => ("[~]", Color::Yellow),
         FileChangeKind::Deleted => ("[-]", Color::Red),
     };
-    let count = if file.changes > 1 {
+    let mut count = if file.changes > 1 {
         format!(" ({})", file.changes)
     } else {
         String::new()
     };
+    if file.reads > 0 {
+        count.push_str(&format!(" ·r{}", file.reads));
+    }
     let mut style = Style::new().fg(color);
     if selected {
         style = style.add_modifier(Modifier::REVERSED);

@@ -2260,11 +2260,13 @@ impl AskUserIo for DeckAskUserIo {
 // ── FileChange synthesis ────────────────────────────────────────────────────
 
 /// A [`ToolExecutor`] wrapper that emits `AgentEvent::FileChange` when a
-/// file-mutating built-in succeeds, so the deck's Files tab / diff panel and
+/// file-touching built-in succeeds, so the deck's Files tab / diff panel and
 /// ledger are live during the turn. The diff is synthesized from the tool's
 /// own input (`edit_file` carries old/new verbatim; `write_file` the full
 /// content; `delete_file` reads the file before executing) — an honest
 /// approximation until the tool layer emits real diffs on the event path.
+/// Successful `read_file` calls emit too (kind `Read`, no diff) — the Files
+/// tab counts reads per file, matching the registry ledger's `R` events.
 struct FileChangeTap<'a> {
     inner: &'a dyn ToolExecutor,
     events: UnboundedSender<AgentEvent>,
@@ -2308,9 +2310,9 @@ impl ToolExecutor for FileChangeTap<'_> {
     }
 }
 
-/// The `(kind, pseudo-diff)` for one successful mutating tool call, or `None`
-/// for tools that don't change files. `pre` is `(existed_before, old_content)`
-/// as captured by the tap.
+/// The `(kind, pseudo-diff)` for one successful file-touching tool call, or
+/// `None` for tools that don't touch files. `pre` is
+/// `(existed_before, old_content)` as captured by the tap.
 fn file_change_of(
     name: &str,
     input: &Value,
@@ -2318,6 +2320,7 @@ fn file_change_of(
 ) -> Option<(FileChangeKind, Option<String>)> {
     let text = |key: &str| input.get(key).and_then(Value::as_str);
     match name {
+        "read_file" => Some((FileChangeKind::Read, None)),
         "write_file" => {
             let existed = pre.map(|(existed, _)| existed).unwrap_or(false);
             let kind = if existed {
@@ -2635,12 +2638,49 @@ mod tests {
             events: tx,
             root: dir.path().to_path_buf(),
         };
-        tap.execute("read_file", &serde_json::json!({ "path": "x" }))
+        tap.execute("grep", &serde_json::json!({ "pattern": "x" }))
             .await;
         assert!(
             recv_file_change(&mut rx).is_none(),
-            "read-only tools emit nothing"
+            "non-file read-only tools emit nothing"
         );
+    }
+
+    #[tokio::test]
+    async fn tap_emits_a_diffless_read_event_for_successful_reads_only() {
+        // A successful read rides the FileChange path (kind Read, no diff) so
+        // the Files tab counts reads; a failed read stays silent.
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let inner = FakeInner { error: false };
+        let tap = FileChangeTap {
+            inner: &inner,
+            events: tx,
+            root: dir.path().to_path_buf(),
+        };
+        tap.execute("read_file", &serde_json::json!({ "path": "src/lib.rs" }))
+            .await;
+        match recv_file_change(&mut rx) {
+            Some(AgentEvent::FileChange { path, kind, diff }) => {
+                assert_eq!(path, "src/lib.rs");
+                assert_eq!(kind, FileChangeKind::Read);
+                assert_eq!(diff, None, "reads never carry a diff");
+            }
+            other => panic!("expected FileChange, got {other:?}"),
+        }
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let failing = FakeInner { error: true };
+        let tap = FileChangeTap {
+            inner: &failing,
+            events: tx,
+            root: dir.path().to_path_buf(),
+        };
+        let out = tap
+            .execute("read_file", &serde_json::json!({ "path": "ghost.rs" }))
+            .await;
+        assert!(out.is_error());
+        assert!(recv_file_change(&mut rx).is_none(), "no event on error");
     }
 
     #[test]
