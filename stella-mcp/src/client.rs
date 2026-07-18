@@ -448,9 +448,31 @@ impl McpClient {
         // The fresh transport must pass the full handshake before we trust it;
         // we keep the *original* advertised tool set (reconnect restores
         // connectivity, it does not re-negotiate the surface mid-session).
-        if let Err(err) = run_handshake(&self.name, transport.as_ref()).await {
-            conn.tear_down(&err);
-            return Err(err);
+        //
+        // Bound the handshake by `call_timeout`: a respawned server that never
+        // answers `initialize` would otherwise hang here forever while holding
+        // the connection mutex, wedging the agent turn and every `health()`
+        // snapshot — the exact timeout guarantee this path is supposed to keep.
+        match tokio::time::timeout(
+            self.call_timeout,
+            run_handshake(&self.name, transport.as_ref()),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                conn.tear_down(&err);
+                return Err(err);
+            }
+            Err(_elapsed) => {
+                let err = McpError::Closed(format!(
+                    "server `{}` did not complete the reconnect handshake within {:.1}s",
+                    self.name,
+                    self.call_timeout.as_secs_f64(),
+                ));
+                conn.tear_down(&err);
+                return Err(err);
+            }
         }
         conn.transport = Some(transport);
         conn.mark_healthy();
@@ -933,6 +955,58 @@ mod tests {
         assert_eq!(health.state, HealthState::Live);
         assert_eq!(health.consecutive_failures, 0);
         assert!(health.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_reconnect_whose_handshake_hangs_times_out_instead_of_wedging() {
+        // Initial transport handshakes, advertises a read-only tool, then the
+        // first call drops (child exited) → reconnect fires.
+        let initial = ScriptedTransport::new();
+        initial.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        initial.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": "echo", "inputSchema": { "type": "object" },
+                "annotations": { "readOnlyHint": true } }] }),
+        );
+        initial.push_err("tools/call", McpError::Closed("child exited".into()));
+
+        // The respawned server never answers `initialize`.
+        struct HangHandshake;
+        #[async_trait::async_trait]
+        impl Transport for HangHandshake {
+            async fn request(&self, _method: &str, _params: Value) -> Result<Value, McpError> {
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+            async fn notify(&self, _method: &str, _params: Value) -> Result<(), McpError> {
+                Ok(())
+            }
+            async fn close(&self) -> Result<(), McpError> {
+                Ok(())
+            }
+        }
+
+        let mut client = McpClient::new("srv", Box::new(initial))
+            .with_test_reconnector(|| async { Ok(Box::new(HangHandshake) as Box<dyn Transport>) });
+        client.initialize().await.unwrap();
+        client.set_call_timeout(Duration::from_millis(40));
+
+        // The witness: the whole call must COMPLETE quickly. Before the fix the
+        // reconnect handshake awaited unbounded, so this call hung forever and
+        // the outer guard below would fire. (call_tool surfaces the original
+        // drop error rather than the handshake-timeout message, which is fine —
+        // "did not wedge" is the property under test.)
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.call_tool("echo", serde_json::json!({})),
+        )
+        .await
+        .expect("reconnect handshake must not hang the call");
+        result.expect_err("a hung reconnect handshake surfaces an error, not success");
+        assert_eq!(client.health().await.state, HealthState::Down);
     }
 
     #[tokio::test]

@@ -233,10 +233,15 @@ async fn read_loop(stdout: ChildStdout, pending: Pending, closed: Arc<AtomicBool
         let Ok(message) = serde_json::from_str::<JsonRpcMessage>(trimmed) else {
             continue;
         };
-        // A correlated response fulfills its waiter. A message with no id (a
-        // server-initiated notification/request) or with an unknown/timed-out
-        // id is dropped — v1 drives none of the server->client surface.
-        if let Some(id) = message.correlated_id()
+        // Only a genuine RESPONSE fulfills its waiter. A server-initiated
+        // request (e.g. `ping`, which carries a `method` AND an id) or a
+        // notification must never be routed to a pending client waiter — an id
+        // collision would otherwise hand a caller the server's request as its
+        // answer, failing the real call and orphaning the real response. An
+        // unknown/timed-out id is dropped — v1 drives none of the
+        // server->client surface.
+        if message.is_response()
+            && let Some(id) = message.correlated_id()
             && let Some(tx) = pending.lock().await.remove(&id)
         {
             let _ = tx.send(message.into_result());
