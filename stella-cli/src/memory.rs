@@ -871,6 +871,8 @@ pub async fn reflect_on_turn(
         temperature: Some(0.0),
         effort: None,
         tools: vec![],
+        reasoning: None,
+        params: None,
     };
 
     let result = provider.complete(req).await.map_err(|e| e.to_string())?;

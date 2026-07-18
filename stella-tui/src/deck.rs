@@ -383,6 +383,7 @@ impl WorkspaceModel {
             | Inbound::Sessions(_)
             | Inbound::Notifications(_)
             | Inbound::McpOauthStatus { .. }
+            | Inbound::EngineConfig { .. }
             | Inbound::ShowHelp
             | Inbound::Splash(_) => {}
         }

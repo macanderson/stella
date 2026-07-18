@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
     CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, MessageRole,
-    ProviderError, ReasoningEffort, ToolCall,
+    ProviderError, ReasoningEffort, ServiceTier, ToolCall, Verbosity,
 };
 
 use crate::catalog::{Catalog, Pricing};
@@ -98,6 +98,21 @@ struct OpenAiRequest<'a> {
     max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    /// Nucleus sampling from `CompletionRequest.params`, skipped when `None`
+    /// so a request without overrides serializes byte-identical to before
+    /// (the prompt-cache contract). Gated exactly like `temperature`: the
+    /// reasoning-model families reject sampling parameters with HTTP 400.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    /// Processing tier from `params.service_tier` ("auto"/"default"/"flex"/
+    /// "priority") — a routing hint, not a sampling one, so it is never
+    /// gated by model family.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<&'static str>,
+    /// Response-detail control from `params.verbosity`, wrapped in the
+    /// Responses API's `text` object (`{"verbosity": "low|medium|high"}`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<OpenAiText>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OpenAiToolSchema>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,6 +125,33 @@ struct OpenAiRequest<'a> {
 #[derive(Serialize)]
 struct OpenAiReasoning {
     effort: &'static str,
+}
+
+/// The Responses API's `text` configuration object. Only `verbosity` is
+/// modeled — the object exists solely to carry it, and it is omitted
+/// entirely when the caller expressed no preference.
+#[derive(Serialize)]
+struct OpenAiText {
+    verbosity: &'static str,
+}
+
+/// Map the engine's `Verbosity` enum to the API's lowercase token.
+fn map_verbosity(verbosity: Verbosity) -> &'static str {
+    match verbosity {
+        Verbosity::Low => "low",
+        Verbosity::Medium => "medium",
+        Verbosity::High => "high",
+    }
+}
+
+/// Map the engine's `ServiceTier` enum to the API's lowercase token.
+fn map_service_tier(tier: ServiceTier) -> &'static str {
+    match tier {
+        ServiceTier::Auto => "auto",
+        ServiceTier::Default => "default",
+        ServiceTier::Flex => "flex",
+        ServiceTier::Priority => "priority",
+    }
 }
 
 /// The Responses API's function-tool shape: flat (`name`/`description`/
@@ -446,6 +488,7 @@ impl Provider for OpenAiProvider {
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
         let (instructions, input) = to_openai_input(&req.messages);
+        let params = req.params.unwrap_or_default();
         let body = OpenAiRequest {
             model: &self.model,
             input,
@@ -461,10 +504,33 @@ impl Provider for OpenAiProvider {
             } else {
                 req.temperature
             },
-            tools: to_openai_tools(&req.tools),
-            reasoning: req.effort.map(|effort| OpenAiReasoning {
-                effort: map_reasoning_effort(effort),
+            // Same 400-avoidance gate as temperature: the reasoning families
+            // reject `top_p` too, and an ungated caller override would fail
+            // every turn Terminal on exactly the models people set effort on.
+            top_p: if is_reasoning_model(&self.model) {
+                None
+            } else {
+                params.top_p
+            },
+            service_tier: params.service_tier.map(map_service_tier),
+            text: params.verbosity.map(|verbosity| OpenAiText {
+                verbosity: map_verbosity(verbosity),
             }),
+            tools: to_openai_tools(&req.tools),
+            // `reasoning == Some(false)` suppresses the reasoning object even
+            // when an effort is pinned — an explicit off must win. A bare
+            // `Some(true)` with no effort turns thinking on at the API's
+            // middle tier; otherwise a pinned effort maps as it always has,
+            // and (None, None) keeps the field (and the pre-field bytes) off
+            // the wire.
+            reasoning: match (req.reasoning, req.effort) {
+                (Some(false), _) => None,
+                (_, Some(effort)) => Some(OpenAiReasoning {
+                    effort: map_reasoning_effort(effort),
+                }),
+                (Some(true), None) => Some(OpenAiReasoning { effort: "medium" }),
+                (None, None) => None,
+            },
             prompt_cache_key: &self.prompt_cache_key,
         };
 
@@ -682,6 +748,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
         provider.complete(req()).await.expect("first turn");
         provider.complete(req()).await.expect("second turn");
@@ -728,6 +796,8 @@ mod tests {
                 temperature: Some(0.0), // the engine default that used to 400
                 effort: None,
                 tools: vec![],
+                reasoning: None,
+                params: None,
             })
             .await
             .expect("turn");
@@ -866,6 +936,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -920,6 +992,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -967,6 +1041,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -992,6 +1068,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1020,6 +1098,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1049,6 +1129,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1084,6 +1166,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1120,6 +1204,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1152,6 +1238,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1183,12 +1271,191 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
         match err {
             ProviderError::Terminal(msg) => assert!(msg.contains("max_output_tokens"), "{msg}"),
             other => panic!("expected Terminal incomplete error, got {other:?}"),
+        }
+    }
+
+    /// Minimal happy-path SSE body for tests that only inspect the request.
+    const OK_SSE: &str = concat!(
+        "event: response.output_text.delta\n",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+        "event: response.completed\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+    );
+
+    async fn mock_ok(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(OK_SSE, "text/event-stream"))
+            .mount(server)
+            .await;
+    }
+
+    async fn first_request_body(server: &MockServer) -> String {
+        let requests = server.received_requests().await.expect("recorded requests");
+        String::from_utf8_lossy(&requests[0].body).into_owned()
+    }
+
+    #[tokio::test]
+    async fn generation_params_forward_top_p_service_tier_and_verbosity() {
+        use stella_protocol::GenerationParams;
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        // gpt-4.1 is a sampling model, so `top_p` passes the reasoning gate.
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-4.1").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: Some(GenerationParams {
+                    top_p: Some(0.9),
+                    // No Responses API slot — silently dropped, never a 400.
+                    top_k: Some(40),
+                    frequency_penalty: None,
+                    presence_penalty: None,
+                    repetition_penalty: None,
+                    seed: None,
+                    verbosity: Some(stella_protocol::Verbosity::Low),
+                    service_tier: Some(stella_protocol::ServiceTier::Priority),
+                }),
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(body.contains("\"top_p\":0.9"), "{body}");
+        assert!(body.contains("\"service_tier\":\"priority\""), "{body}");
+        assert!(body.contains("\"text\":{\"verbosity\":\"low\"}"), "{body}");
+        assert!(!body.contains("top_k"), "{body}");
+    }
+
+    /// `top_p` rides the same reasoning-model gate as `temperature`: the
+    /// gpt-5 family rejects sampling parameters with HTTP 400, so a caller
+    /// override must be dropped there — while the non-sampling routing hint
+    /// (`service_tier`) still goes through.
+    #[tokio::test]
+    async fn top_p_is_omitted_for_a_reasoning_model_like_temperature() {
+        use stella_protocol::GenerationParams;
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: Some(GenerationParams {
+                    top_p: Some(0.9),
+                    service_tier: Some(stella_protocol::ServiceTier::Flex),
+                    ..Default::default()
+                }),
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(!body.contains("top_p"), "{body}");
+        assert!(body.contains("\"service_tier\":\"flex\""), "{body}");
+    }
+
+    /// An explicit `reasoning: Some(false)` must win over a pinned effort —
+    /// the caller asked for thinking OFF, so no `reasoning` object rides.
+    #[tokio::test]
+    async fn reasoning_false_suppresses_the_reasoning_object_even_with_effort() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: Some(ReasoningEffort::High),
+                tools: vec![],
+                reasoning: Some(false),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(!body.contains("\"reasoning\""), "{body}");
+    }
+
+    /// A bare `Some(true)` with no effort turns thinking on at the API's
+    /// middle tier rather than silently doing nothing.
+    #[tokio::test]
+    async fn reasoning_true_without_effort_defaults_to_medium() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(
+            body.contains("\"reasoning\":{\"effort\":\"medium\"}"),
+            "{body}"
+        );
+    }
+
+    /// The prompt-cache stability contract: a request without params or a
+    /// reasoning preference serializes with none of the new keys.
+    #[tokio::test]
+    async fn absent_params_and_reasoning_add_no_keys_to_the_body() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        for key in ["top_p", "service_tier", "verbosity", "\"reasoning\""] {
+            assert!(!body.contains(key), "unexpected `{key}` in: {body}");
         }
     }
 }

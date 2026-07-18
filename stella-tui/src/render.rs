@@ -2079,7 +2079,6 @@ mod tests {
                 duration_ms: 5,
                 speculated: false,
                 diff: None,
-                speculated: false,
             },
             false,
             true,

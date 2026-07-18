@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
     CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ProviderError, ToolCall,
+    MessageRole, ProviderError, ReasoningEffort, ToolCall,
 };
 
 use crate::catalog::{Catalog, Pricing};
@@ -133,6 +133,38 @@ struct ZaiRequest<'a> {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    /// Sampling overrides from `CompletionRequest.params`, each skipped when
+    /// `None` so a request without overrides serializes byte-identical to
+    /// what this adapter has always sent (the prompt-cache contract).
+    /// `top_p`/`frequency_penalty`/`presence_penalty`/`seed` are standard
+    /// Chat Completions parameters; `top_k` and `repetition_penalty` are
+    /// non-standard but accepted by OpenRouter and local servers — they are
+    /// forwarded whenever `Some` because the user explicitly opted in, and an
+    /// honest provider error beats silently dropping an explicit setting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repetition_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<u64>,
+    /// GLM's native thinking switch (`{"type": "enabled"|"disabled"}`) —
+    /// only sent when this adapter is serving Z.ai itself AND the caller set
+    /// `CompletionRequest.reasoning`; other Chat Completions servers don't
+    /// speak this field and `None` keeps their wire untouched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<ZaiThinking>,
+    /// OpenRouter's normalized reasoning control — only sent when this
+    /// adapter is re-identified as OpenRouter, which translates it to
+    /// whatever the routed upstream vendor calls it. See
+    /// [`openrouter_reasoning`] for the effort/enabled shape rules.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<OpenRouterReasoning>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ZaiToolSchema>,
     /// OpenRouter usage accounting (`{"include": true}`) — omitted entirely
@@ -141,6 +173,70 @@ struct ZaiRequest<'a> {
     /// reject.
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<ZaiUsageInclude>,
+}
+
+/// GLM's request-level thinking object: `{"type": "enabled"}` /
+/// `{"type": "disabled"}`. Z.ai's default depends on the model, so the field
+/// is only sent when the caller expressed an explicit preference —
+/// `CompletionRequest.reasoning == None` keeps the provider default AND the
+/// pre-field wire bytes.
+#[derive(Serialize)]
+struct ZaiThinking {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+/// OpenRouter's `reasoning` object. Exactly one field is set per request:
+/// `effort` when the caller pinned a level, `enabled` for a bare on/off —
+/// sending both would be redundant (effort implies enabled) and `enabled:
+/// false` with an effort would be contradictory.
+#[derive(Serialize)]
+struct OpenRouterReasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+}
+
+/// Map the engine's one `ReasoningEffort` enum to OpenRouter's
+/// `reasoning.effort`, which only accepts `low`/`medium`/`high`. Same
+/// collapse posture as `openai.rs::map_reasoning_effort`: never drop the
+/// hint, never panic on a variant the gateway doesn't model.
+fn map_openrouter_effort(effort: ReasoningEffort) -> &'static str {
+    match effort {
+        ReasoningEffort::Low => "low",
+        ReasoningEffort::Medium => "medium",
+        ReasoningEffort::High | ReasoningEffort::Xhigh | ReasoningEffort::Max => "high",
+    }
+}
+
+/// Build OpenRouter's `reasoning` object from the request's reasoning/effort
+/// pair. Rules: an explicit off (`reasoning == Some(false)`) always wins and
+/// sends `{"enabled": false}` — a pinned effort must not resurrect thinking
+/// the caller suppressed; otherwise a pinned effort sends
+/// `{"effort": …}` (implicitly enabling); a bare `Some(true)` with no effort
+/// sends `{"enabled": true}` and lets the gateway pick the level; and
+/// neither set keeps the field off the wire entirely (provider default,
+/// byte-stable with the pre-field body).
+fn openrouter_reasoning(
+    reasoning: Option<bool>,
+    effort: Option<ReasoningEffort>,
+) -> Option<OpenRouterReasoning> {
+    match (reasoning, effort) {
+        (Some(false), _) => Some(OpenRouterReasoning {
+            effort: None,
+            enabled: Some(false),
+        }),
+        (_, Some(effort)) => Some(OpenRouterReasoning {
+            effort: Some(map_openrouter_effort(effort)),
+            enabled: None,
+        }),
+        (Some(true), None) => Some(OpenRouterReasoning {
+            effort: None,
+            enabled: Some(true),
+        }),
+        (None, None) => None,
+    }
 }
 
 #[derive(Serialize)]
@@ -563,12 +659,39 @@ impl ZaiProvider {
         req: CompletionRequest,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
+        // "Include" semantics: every override is `None` unless the caller
+        // set it, and `None` never reaches the wire — a request without
+        // params serializes byte-identical to the pre-params body.
+        let params = req.params.unwrap_or_default();
         let body = ZaiRequest {
             model: &self.model,
             messages: to_zai_messages(&req.messages),
             stream: true,
             max_tokens: req.max_output_tokens,
             temperature: req.temperature,
+            top_p: params.top_p,
+            top_k: params.top_k,
+            frequency_penalty: params.frequency_penalty,
+            presence_penalty: params.presence_penalty,
+            repetition_penalty: params.repetition_penalty,
+            seed: params.seed,
+            // Reasoning routes by identity: only Z.ai itself speaks GLM's
+            // `thinking` object and only OpenRouter speaks the normalized
+            // `reasoning` object. Any other identity behind this shared
+            // adapter (xAI, DeepSeek, local, settings-defined) gets neither —
+            // there is no portable Chat Completions reasoning field, and an
+            // unknown key would risk a hard 400 on servers the user never
+            // opted into experimenting with.
+            thinking: (self.id == "zai")
+                .then(|| {
+                    req.reasoning.map(|enabled| ZaiThinking {
+                        kind: if enabled { "enabled" } else { "disabled" },
+                    })
+                })
+                .flatten(),
+            reasoning: (self.id == "openrouter")
+                .then(|| openrouter_reasoning(req.reasoning, req.effort))
+                .flatten(),
             tools: to_zai_tools(&req.tools),
             usage: self
                 .usage_accounting
@@ -1003,6 +1126,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -1047,6 +1172,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -1095,6 +1222,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
@@ -1147,6 +1276,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         // The mock's matchers make a missing usage field / missing headers a
@@ -1186,6 +1317,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
         let result = provider.complete(req).await.expect("should succeed");
         assert_eq!(result.text, "thinking hard");
@@ -1225,6 +1358,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -1271,6 +1406,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1317,6 +1454,8 @@ mod tests {
                 temperature: None,
                 effort: None,
                 tools: vec![],
+                reasoning: None,
+                params: None,
             })
             .await
             .unwrap_err();
@@ -1357,6 +1496,8 @@ mod tests {
                 temperature: None,
                 effort: None,
                 tools: vec![],
+                reasoning: None,
+                params: None,
             })
             .await
             .unwrap_err();
@@ -1392,6 +1533,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1424,6 +1567,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1463,6 +1608,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1496,6 +1643,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1541,6 +1690,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1575,6 +1726,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1605,11 +1758,225 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
         // server_error / overloaded ⇒ retryable Transport.
         assert!(matches!(err, ProviderError::Transport(_)));
         assert!(err.is_retryable());
+    }
+
+    /// Minimal happy-path SSE body for tests that only inspect the request.
+    const OK_SSE: &str =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n";
+
+    async fn mock_ok(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(OK_SSE, "text/event-stream"))
+            .mount(server)
+            .await;
+    }
+
+    async fn first_request_body(server: &MockServer) -> String {
+        let requests = server.received_requests().await.expect("recorded requests");
+        String::from_utf8_lossy(&requests[0].body).into_owned()
+    }
+
+    #[tokio::test]
+    async fn generation_params_land_in_the_wire_body_including_nonstandard_fields() {
+        use stella_protocol::GenerationParams;
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: Some(GenerationParams {
+                    top_p: Some(0.9),
+                    top_k: Some(40),
+                    frequency_penalty: Some(0.5),
+                    presence_penalty: Some(0.25),
+                    repetition_penalty: Some(1.1),
+                    seed: Some(7),
+                    // Not part of this dialect — must never reach the wire.
+                    verbosity: Some(stella_protocol::Verbosity::High),
+                    service_tier: Some(stella_protocol::ServiceTier::Priority),
+                }),
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(body.contains("\"top_p\":0.9"), "{body}");
+        // top_k / repetition_penalty are non-standard but the user opted in.
+        assert!(body.contains("\"top_k\":40"), "{body}");
+        assert!(body.contains("\"frequency_penalty\":0.5"), "{body}");
+        assert!(body.contains("\"presence_penalty\":0.25"), "{body}");
+        assert!(body.contains("\"repetition_penalty\":1.1"), "{body}");
+        assert!(body.contains("\"seed\":7"), "{body}");
+        // verbosity/service_tier have no Chat Completions slot: dropped.
+        assert!(!body.contains("verbosity"), "{body}");
+        assert!(!body.contains("service_tier"), "{body}");
+    }
+
+    /// The prompt-cache stability contract: a request without params or a
+    /// reasoning preference must serialize with none of the new keys — the
+    /// body is byte-identical to what this adapter sent before they existed.
+    #[tokio::test]
+    async fn absent_params_and_reasoning_add_no_keys_to_the_body() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        for key in [
+            "top_p",
+            "top_k",
+            "frequency_penalty",
+            "presence_penalty",
+            "repetition_penalty",
+            "seed",
+            "thinking",
+            "reasoning",
+        ] {
+            assert!(!body.contains(key), "unexpected `{key}` in: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn zai_identity_maps_reasoning_to_glm_thinking_object() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+        let req = |reasoning| CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning,
+            params: None,
+        };
+        provider.complete(req(Some(true))).await.expect("on");
+        provider.complete(req(Some(false))).await.expect("off");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let on = String::from_utf8_lossy(&requests[0].body);
+        let off = String::from_utf8_lossy(&requests[1].body);
+        assert!(on.contains("\"thinking\":{\"type\":\"enabled\"}"), "{on}");
+        assert!(
+            off.contains("\"thinking\":{\"type\":\"disabled\"}"),
+            "{off}"
+        );
+    }
+
+    #[tokio::test]
+    async fn openrouter_identity_maps_reasoning_to_the_gateway_object() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "openrouter/auto")
+            .with_base_url(server.uri())
+            .with_identity("openrouter", "OpenRouter");
+        let req = |reasoning, effort| CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort,
+            tools: vec![],
+            reasoning,
+            params: None,
+        };
+        // Pinned effort (reasoning not suppressed) → {"effort": …}.
+        provider
+            .complete(req(None, Some(ReasoningEffort::Xhigh)))
+            .await
+            .expect("effort");
+        // Explicit off wins even over a pinned effort → {"enabled": false}.
+        provider
+            .complete(req(Some(false), Some(ReasoningEffort::High)))
+            .await
+            .expect("off");
+        // Bare on with no effort → {"enabled": true}.
+        provider.complete(req(Some(true), None)).await.expect("on");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let bodies: Vec<String> = requests
+            .iter()
+            .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+            .collect();
+        // Xhigh collapses to "high", the top tier OpenRouter models.
+        assert!(
+            bodies[0].contains("\"reasoning\":{\"effort\":\"high\"}"),
+            "{}",
+            bodies[0]
+        );
+        assert!(
+            bodies[1].contains("\"reasoning\":{\"enabled\":false}"),
+            "{}",
+            bodies[1]
+        );
+        assert!(
+            bodies[2].contains("\"reasoning\":{\"enabled\":true}"),
+            "{}",
+            bodies[2]
+        );
+        // GLM's thinking object is Z.ai-only; OpenRouter never sees it.
+        assert!(!bodies[0].contains("thinking"), "{}", bodies[0]);
+    }
+
+    /// Identities other than Z.ai and OpenRouter (xAI, DeepSeek, local, …)
+    /// have no known reasoning field on this dialect: the hint is ignored
+    /// rather than guessed at — an unknown key risks a hard 400.
+    #[tokio::test]
+    async fn other_identities_ignore_reasoning_entirely() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider = ZaiProvider::new(ApiKey::new("xai-test"), "grok-4")
+            .with_base_url(server.uri())
+            .with_identity("xai", "xAI");
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: Some(ReasoningEffort::High),
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(!body.contains("thinking"), "{body}");
+        assert!(!body.contains("reasoning"), "{body}");
     }
 }

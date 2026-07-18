@@ -34,6 +34,61 @@ pub enum ReasoningEffort {
     Max,
 }
 
+/// Response-detail level for providers with a verbosity parameter (OpenAI's
+/// `text.verbosity`). Adapters whose wire has no equivalent ignore it — the
+/// same never-fail contract as [`ReasoningEffort`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Verbosity {
+    Low,
+    Medium,
+    High,
+}
+
+/// Provider service tier: `Priority` routes to faster paid-tier capacity,
+/// `Flex` to cheaper capacity with slower response times. Only applied by
+/// providers that support tiered service; others use their default tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTier {
+    Auto,
+    Default,
+    Flex,
+    Priority,
+}
+
+/// Optional sampling/routing parameter overrides riding a
+/// [`CompletionRequest`]. Every field is independently optional —
+/// "include" semantics: `None` leaves the provider's own default in place,
+/// `Some` puts the value on the wire. Each adapter forwards the subset its
+/// dialect supports and silently drops the rest (a param the provider
+/// can't express must never fail the request).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct GenerationParams {
+    /// Nucleus sampling: cumulative-probability cutoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    /// Limit sampling to the k highest-probability tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    /// Penalize tokens by their frequency in the text so far.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
+    /// Penalize tokens that have appeared at all in the text so far.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
+    /// Multiplicative repetition penalty (>1 discourages, <1 encourages).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f32>,
+    /// Random seed for deterministic outputs, where supported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<Verbosity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+}
+
 /// One chat message handed to a provider, including any tool calls the
 /// assistant made or tool results being reported back.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -110,6 +165,17 @@ pub struct CompletionRequest {
     /// Reasoning effort for models that support a thinking mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<ReasoningEffort>,
+    /// Whether the model's thinking/extended-reasoning mode is enabled at
+    /// all. `Some(true)` asks the adapter to turn thinking on (at
+    /// `effort`'s level, or the adapter's default level when `effort` is
+    /// `None`); `Some(false)` asks it to suppress thinking; `None` keeps
+    /// the provider's default behavior (exactly the pre-field wire shape).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<bool>,
+    /// Optional sampling/routing overrides ([`GenerationParams`]) — each
+    /// adapter forwards the subset its dialect supports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<GenerationParams>,
     /// Tool schemas the model may call, in the engine's one internal shape
     /// (`crate::tool::ToolSchema`); each adapter translates to its own
     /// dialect.
@@ -192,6 +258,8 @@ mod tests {
             temperature: Some(0.2),
             effort: Some(ReasoningEffort::High),
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
         let json = serde_json::to_string(&req).expect("serialize");
         let back: CompletionRequest = serde_json::from_str(&json).expect("deserialize");

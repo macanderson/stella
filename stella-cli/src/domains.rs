@@ -189,6 +189,8 @@ pub async fn infer_domains(provider: &dyn Provider, root: &Path) -> Domains {
             temperature: Some(0.0),
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
         match provider.complete(req).await {
             Ok(result) => match parse_domains_json(&result.text) {

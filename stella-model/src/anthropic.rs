@@ -74,11 +74,56 @@ struct AnthropicRequest<'a> {
     /// Sampling temperature, forwarded from `CompletionRequest.temperature`.
     /// Omitted when `None` so Anthropic applies its own default — dropping it
     /// unconditionally (the prior bug) meant a caller-set temperature was
-    /// silently ignored.
+    /// silently ignored. Also omitted whenever `thinking` is set: the
+    /// Messages API rejects any temperature != 1 alongside extended thinking,
+    /// and the engine's default (0.0) would fail every thinking turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    /// Sampling overrides from `CompletionRequest.params`, skipped when
+    /// `None` so a request without overrides serializes byte-identical to
+    /// before (the prompt-cache contract). Only the subset the Messages API
+    /// speaks — the rest of `GenerationParams` has no slot here and is
+    /// silently dropped per the never-fail contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<u32>,
+    /// Extended thinking (`{"type":"enabled","budget_tokens":N}`), set only
+    /// for `CompletionRequest.reasoning == Some(true)`. `Some(false)` and
+    /// `None` both omit the block — thinking is opt-in per request on this
+    /// API, so "off" and "provider default" are the same wire shape (which
+    /// keeps the pre-field bytes stable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<AnthropicThinking>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<AnthropicToolSchema>,
+}
+
+/// The Messages API's extended-thinking switch. `budget_tokens` is a hard
+/// cap on thinking output and must satisfy `1024 <= budget < max_tokens` —
+/// [`thinking_budget_tokens`] maps the engine's effort tiers and the caller
+/// in `complete_inner` clamps against the request's actual `max_tokens`.
+#[derive(Serialize)]
+struct AnthropicThinking {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    budget_tokens: u32,
+}
+
+/// Map the engine's effort tiers onto thinking budgets. Anthropic has no
+/// named levels — the budget IS the level — so the tiers are spaced roughly
+/// geometrically from the API's 1024-token floor up to a Max that still
+/// leaves headroom under typical output caps. `None` defaults to Medium, the
+/// same middle-tier default posture as `openai.rs` ("effort":"medium").
+fn thinking_budget_tokens(effort: Option<stella_protocol::ReasoningEffort>) -> u32 {
+    use stella_protocol::ReasoningEffort::*;
+    match effort {
+        Some(Low) => 2_048,
+        None | Some(Medium) => 8_192,
+        Some(High) => 16_384,
+        Some(Xhigh) => 32_768,
+        Some(Max) => 49_152,
+    }
 }
 
 /// The opt-in prompt-cache marker (`{"type": "ephemeral"}`, default 5-minute
@@ -458,9 +503,30 @@ impl AnthropicProvider {
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
         let (system, messages) = to_anthropic_messages(&req.messages);
+        // Thinking budget, resolved before max_tokens because the two are
+        // coupled: the API requires budget < max_tokens, and this adapter's
+        // 4096-token max_tokens default would leave no room for any budget
+        // above Low. So when thinking is on and the CALLER didn't set an
+        // output cap, the default floor rises to budget + 8192 (thinking
+        // spends from the same output allowance as the answer — a budget
+        // that consumes the whole cap yields a truncated or empty turn).
+        // A caller-set cap is honored as-is and the budget clamps to it:
+        // at most max_tokens - 1024, never below the API's 1024 floor.
+        let thinking_budget =
+            (req.reasoning == Some(true)).then(|| thinking_budget_tokens(req.effort));
+        let max_tokens = match (req.max_output_tokens, thinking_budget) {
+            (Some(cap), _) => cap,
+            (None, Some(budget)) => budget + 8_192,
+            (None, None) => 4096,
+        };
+        let thinking = thinking_budget.map(|budget| AnthropicThinking {
+            kind: "enabled",
+            budget_tokens: budget.min(max_tokens.saturating_sub(1024)).max(1024),
+        });
+        let params = req.params.unwrap_or_default();
         let body = AnthropicRequest {
             model: &self.model,
-            max_tokens: req.max_output_tokens.unwrap_or(4096),
+            max_tokens,
             system: system.as_deref().map(|text| {
                 vec![AnthropicSystemBlock {
                     kind: "text",
@@ -471,7 +537,17 @@ impl AnthropicProvider {
             messages,
             stream: true,
             cache_control: EPHEMERAL_CACHE,
-            temperature: req.temperature,
+            // The API rejects temperature != 1 with thinking enabled; rather
+            // than special-casing 1.0, omit the field entirely and let the
+            // API apply its own thinking-compatible default.
+            temperature: if thinking.is_some() {
+                None
+            } else {
+                req.temperature
+            },
+            top_p: params.top_p,
+            top_k: params.top_k,
+            thinking,
             tools: req
                 .tools
                 .iter()
@@ -860,6 +936,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -908,6 +986,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -955,6 +1035,8 @@ mod tests {
                 temperature: None,
                 effort: None,
                 tools: vec![],
+                reasoning: None,
+                params: None,
             })
             .await
             .expect("a repairable malformed call must not abort the turn");
@@ -990,6 +1072,8 @@ mod tests {
                 temperature: None,
                 effort: None,
                 tools: vec![],
+                reasoning: None,
+                params: None,
             })
             .await
             .unwrap_err();
@@ -1036,6 +1120,8 @@ mod tests {
                 temperature: None,
                 effort: None,
                 tools: vec![],
+                reasoning: None,
+                params: None,
             })
             .await
             .unwrap_err();
@@ -1160,12 +1246,21 @@ mod tests {
             stream: true,
             cache_control: EPHEMERAL_CACHE,
             temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
             tools: vec![],
         };
         let v = serde_json::to_value(&body).expect("request serializes");
         assert_eq!(v["system"][0]["type"], "text");
         assert_eq!(v["system"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(v["cache_control"]["type"], "ephemeral");
+        // The optional params/thinking fields must vanish when unset — the
+        // byte-stability contract for requests without overrides.
+        let body_json = serde_json::to_string(&v).unwrap();
+        for key in ["top_p", "top_k", "thinking"] {
+            assert!(!body_json.contains(key), "unexpected `{key}`: {body_json}");
+        }
     }
 
     #[tokio::test]
@@ -1199,6 +1294,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -1242,6 +1339,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1291,6 +1390,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1345,6 +1446,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
@@ -1394,6 +1497,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
@@ -1480,6 +1585,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1516,6 +1623,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1551,6 +1660,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1587,6 +1698,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1628,6 +1741,8 @@ mod tests {
             temperature: Some(0.3),
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1652,6 +1767,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1684,11 +1801,183 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
         // overloaded_error ⇒ retryable Transport.
         assert!(matches!(err, ProviderError::Transport(_)));
         assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn thinking_budgets_map_effort_tiers_and_default_to_medium() {
+        use stella_protocol::ReasoningEffort::*;
+        assert_eq!(thinking_budget_tokens(Some(Low)), 2_048);
+        assert_eq!(thinking_budget_tokens(Some(Medium)), 8_192);
+        assert_eq!(thinking_budget_tokens(None), 8_192, "None defaults Medium");
+        assert_eq!(thinking_budget_tokens(Some(High)), 16_384);
+        assert_eq!(thinking_budget_tokens(Some(Xhigh)), 32_768);
+        assert_eq!(thinking_budget_tokens(Some(Max)), 49_152);
+    }
+
+    /// Minimal happy-path SSE body for tests that only inspect the request.
+    const OK_SSE: &str = concat!(
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
+    );
+
+    async fn mock_ok(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(OK_SSE, "text/event-stream"))
+            .mount(server)
+            .await;
+    }
+
+    async fn first_request_body(server: &MockServer) -> String {
+        let requests = server.received_requests().await.expect("recorded requests");
+        String::from_utf8_lossy(&requests[0].body).into_owned()
+    }
+
+    #[tokio::test]
+    async fn generation_params_forward_top_p_and_top_k_and_drop_the_rest() {
+        use stella_protocol::GenerationParams;
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: Some(GenerationParams {
+                    top_p: Some(0.9),
+                    top_k: Some(40),
+                    // No Messages API slot — silently dropped, never a 400.
+                    frequency_penalty: Some(0.5),
+                    presence_penalty: Some(0.25),
+                    repetition_penalty: Some(1.1),
+                    seed: Some(7),
+                    verbosity: None,
+                    service_tier: None,
+                }),
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(body.contains("\"top_p\":0.9"), "{body}");
+        assert!(body.contains("\"top_k\":40"), "{body}");
+        for dropped in [
+            "frequency_penalty",
+            "presence_penalty",
+            "repetition_penalty",
+            "seed",
+        ] {
+            assert!(!body.contains(dropped), "`{dropped}` leaked into: {body}");
+        }
+    }
+
+    /// `reasoning: Some(true)` with no caller output cap: the budget maps
+    /// from effort, the defaulted max_tokens rises to budget + 8192 so
+    /// thinking can't consume the whole output allowance, and temperature is
+    /// omitted entirely (the API rejects temperature != 1 with thinking).
+    #[tokio::test]
+    async fn reasoning_true_enables_thinking_raises_max_tokens_and_omits_temperature() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("think hard")],
+                max_output_tokens: None,
+                temperature: Some(0.0), // the engine default that would 400
+                effort: Some(stella_protocol::ReasoningEffort::Max),
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(
+            body.contains("\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":49152}"),
+            "{body}"
+        );
+        assert!(
+            body.contains("\"max_tokens\":57344"),
+            "49152 + 8192: {body}"
+        );
+        assert!(!body.contains("temperature"), "{body}");
+    }
+
+    /// A caller-set max_tokens is honored, and the budget clamps under it:
+    /// at most max_tokens - 1024 (the API requires budget < max_tokens).
+    #[tokio::test]
+    async fn thinking_budget_clamps_under_a_caller_set_max_tokens() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("think")],
+                max_output_tokens: Some(4096),
+                temperature: None,
+                effort: None, // Medium default: 8192, which exceeds the cap
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(body.contains("\"max_tokens\":4096"), "{body}");
+        assert!(
+            body.contains("\"budget_tokens\":3072"),
+            "4096 - 1024: {body}"
+        );
+    }
+
+    /// `Some(false)` and `None` are the same wire shape: no thinking block
+    /// (thinking is opt-in on this API), temperature forwarded as always —
+    /// i.e. exactly today's request bytes.
+    #[tokio::test]
+    async fn reasoning_false_sends_no_thinking_block_and_keeps_temperature() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: Some(0.3),
+                effort: Some(stella_protocol::ReasoningEffort::High),
+                tools: vec![],
+                reasoning: Some(false),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(!body.contains("thinking"), "{body}");
+        assert!(!body.contains("budget_tokens"), "{body}");
+        assert!(body.contains("\"temperature\":0.3"), "{body}");
+        assert!(body.contains("\"max_tokens\":4096"), "default cap: {body}");
     }
 }

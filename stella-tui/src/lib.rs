@@ -86,10 +86,10 @@ pub use deck_ui::{
     ingest_inbound,
 };
 pub use envelope::{
-    AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, Inbound,
-    InstalledAgentEntry, McpSearchItem, McpSearchOutcome, McpServerInfo, NotificationInfo, Secret,
-    SessionInfo, SessionPhase, SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView,
-    SplashCue, WorkspaceInput,
+    AgentControl, AgentId, AgentMeta, AgentScope, AgentStatus, AgentVersionInfo, EngineAgentState,
+    EngineConfigState, EngineRole, Inbound, InstalledAgentEntry, McpSearchItem, McpSearchOutcome,
+    McpServerInfo, NotificationInfo, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow,
+    SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
 };
 pub use graph::{GraphEdge, GraphNode, GraphSnapshot};
 pub use resource::ResourceMonitor;

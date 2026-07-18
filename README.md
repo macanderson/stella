@@ -186,6 +186,76 @@ Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 > scopes are always trusted. Project hooks are gated the same way, via
 > `STELLA_PROJECT_HOOKS`.
 
+### Agent engine config (`agent_engine_config`)
+
+The engine runs four configurable agents — **default** (the interactive /
+step-loop agent) and the pipeline's **worker**, **judge**, and **triage**.
+The `agent_engine_config` object in the same `settings.json` scope chain
+configures each one's model, gateway, system prompt, reasoning, and sampling
+parameters — and in the Command Deck, `/engine` opens an editor popup for
+all of it (`s` saves to user scope, `S` to project scope; `/model-worker`,
+`/model-judge`, `/model-triage`, `/model-default` jump straight to a model
+picker driven by `allowed_models`).
+
+```jsonc
+{
+  "agent_engine_config": {
+    // Flat per-role models ("provider/slug", or a bare catalog slug).
+    "default_model": "anthropic/claude-fable-5",
+    "pipeline_worker_model": "zai/glm-5.2",
+    "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+    "pipeline_triage_model": "deepseek/deepseek-chat",
+
+    // The model vocabulary the TUI pickers offer and auto_mode selects from.
+    "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2",
+                        "openrouter/openai/gpt-5.5"],
+
+    // "on" = pick the judge automatically from allowed_models: prefer a
+    // different model family than the worker's, then the highest catalog
+    // price tier. You never worry about it.
+    "auto_mode": "off",
+    // "on" = per-agent effort is chosen for you (judge high, worker
+    // medium, triage low), overriding any per-agent "effort".
+    "effort_auto": "off",
+    // "on" = thinking mode chosen for you (on everywhere except triage).
+    "reasoning_auto": "off",
+
+    // Per-agent deep config. Every field is optional — set it and it goes
+    // on the wire; leave it out and the provider default applies.
+    "agents": {
+      "judge": {
+        "provider": "openrouter",         // gateway: the slug goes to THIS
+        "model": "openai/gpt-5.5",        // provider verbatim (BYOK per agent)
+        "prompt": "You are a strict, evidence-first code judge.",
+        "effort": "high",                  // low | medium | high | xhigh | max
+        "reasoning": "on",                 // thinking mode on/off
+        "params": {
+          "temperature": 0.2, "top_p": 0.9, "top_k": 40,
+          "frequency_penalty": 0.0, "presence_penalty": 0.0,
+          "repetition_penalty": 1.0, "max_tokens": 4096, "seed": 7,
+          "verbosity": "low",              // OpenAI/Anthropic-family models
+          "service_tier": "priority"       // providers with tiered service
+        }
+      }
+    }
+  }
+}
+```
+
+Precedence per agent: `--model` flag > `agents.<agent>.model` >
+`pipeline_<agent>_model` > `default_model` > auto-detect. An agent's
+`provider` field routes its slug through that gateway verbatim, so the
+worker can run on your Anthropic key while the judge routes
+`openai/gpt-5.5` through your OpenRouter key and triage hits Z.ai. Each
+adapter forwards only the parameters its wire supports (`verbosity` and
+`service_tier` are dropped where meaningless); reasoning maps to GLM's
+`thinking`, OpenRouter's `reasoning`, Anthropic extended thinking (with an
+effort-tiered budget), OpenAI `reasoning.effort`, and Gemini
+`thinkingLevel`. Custom prompts replace the built-in base instructions;
+workspace memories and rules still append. A judge/triage model whose
+provider has no resolvable key degrades softly — the role rides the worker
+and a notice says so.
+
 ## Usage
 
 ### Interactive chat (default)

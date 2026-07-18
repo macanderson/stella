@@ -80,6 +80,13 @@ pub struct EngineConfig {
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub effort: Option<ReasoningEffort>,
+    /// Thinking-mode enable/disable forwarded to every completion —
+    /// `CompletionRequest::reasoning` semantics (`None` = provider default).
+    pub reasoning: Option<bool>,
+    /// Sampling/routing overrides forwarded to every completion —
+    /// `CompletionRequest::params` semantics (each adapter forwards the
+    /// subset its dialect supports).
+    pub params: Option<stella_protocol::GenerationParams>,
     pub retry_policy: RetryPolicy,
     pub loop_detection: LoopDetectionConfig,
     /// Compaction fires once the estimated conversation size exceeds this
@@ -113,6 +120,8 @@ impl Default for EngineConfig {
             max_output_tokens: Some(16384),
             temperature: Some(0.0),
             effort: None,
+            reasoning: None,
+            params: None,
             retry_policy: RetryPolicy::standard(),
             loop_detection: LoopDetectionConfig::default(),
             compaction_budget_tokens: 150_000,
@@ -439,6 +448,8 @@ impl<'a> Engine<'a> {
                 max_output_tokens: req_config.max_output_tokens,
                 temperature: req_config.temperature,
                 effort: req_config.effort,
+                reasoning: req_config.reasoning,
+                params: req_config.params,
                 tools: tools_schema.clone(),
             };
             let read_only = speculation_read_only.clone();

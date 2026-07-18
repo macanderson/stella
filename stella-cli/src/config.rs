@@ -370,6 +370,11 @@ pub struct Config {
     /// `Settings::load` for the project-scope trust boundary). `None` means
     /// no hooks configured anywhere — the engine runs the pre-hooks path.
     pub hooks: Option<stella_core::hooks::Hooks>,
+    /// The merged `agent_engine_config` from the settings scope chain —
+    /// per-agent models/prompts/effort/params and the auto modes. `None`
+    /// means the section is absent everywhere; consumers treat that as
+    /// all-defaults (`crate::engine_config` resolves it per run).
+    pub engine_settings: Option<crate::settings::AgentEngineConfig>,
 }
 
 impl Config {
@@ -425,6 +430,28 @@ impl Config {
         settings: &crate::settings::Settings,
         workspace_root: std::path::PathBuf,
     ) -> Result<Self, String> {
+        // The default agent's configured model sits BETWEEN the --model
+        // flag and auto-detect: an explicit flag always wins, but a
+        // settings-configured default beats "first provider with a key".
+        // The spec string is synthesized in --model's own grammar
+        // (`provider/slug`, or the agent's pinned provider prefixed onto a
+        // bare slug) so the whole existing resolution path applies
+        // unchanged. A provider pin without a model is left to the normal
+        // chain — the provider's own default_model already answers there.
+        let engine_default: Option<String> = settings.agent_engine_config.as_ref().and_then(|e| {
+            use crate::settings::EngineAgentKind;
+            let model = e.model_for(EngineAgentKind::Default)?;
+            let pinned = e
+                .agent(EngineAgentKind::Default)
+                .and_then(|a| a.provider.as_deref())
+                .filter(|p| !p.trim().is_empty());
+            Some(match pinned {
+                Some(provider) => format!("{provider}/{model}"),
+                None => model.to_string(),
+            })
+        });
+        let model_override = model_override.or(engine_default.as_deref());
+
         let mut cfg = Self::resolve_provider_config(
             model_override,
             api_key_override,
@@ -433,6 +460,7 @@ impl Config {
             workspace_root,
         )?;
         cfg.hooks = settings.hooks.clone();
+        cfg.engine_settings = settings.agent_engine_config.clone();
         Ok(cfg)
     }
 
@@ -526,6 +554,7 @@ impl Config {
                     workspace_root,
                     base_url_override: Some(base_url),
                     hooks: None,
+                    engine_settings: None,
                 });
             }
 
@@ -710,9 +739,11 @@ impl Config {
             api_key: key,
             workspace_root: workspace_root.to_path_buf(),
             base_url_override: base_url_override.map(str::to_string),
-            // Hooks ride the settings chain, not credential resolution —
-            // `load_with_settings` stamps them after the provider resolves.
+            // Hooks (and the agent-engine settings) ride the settings
+            // chain, not credential resolution — `load_with_settings`
+            // stamps both after the provider resolves.
             hooks: None,
+            engine_settings: None,
         })
     }
 
@@ -1166,6 +1197,7 @@ mod tests {
             workspace_root: std::path::PathBuf::from("/tmp/ws"),
             base_url_override: None,
             hooks: None,
+            engine_settings: None,
         };
         let dbg = format!("{cfg:?}");
         assert!(!dbg.contains(secret), "Config Debug leaked the key: {dbg}");

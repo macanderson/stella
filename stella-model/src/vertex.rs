@@ -193,6 +193,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -226,6 +228,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -236,5 +240,56 @@ mod tests {
             other => panic!("expected Auth, got {other:?}"),
         }
         assert!(!err.is_retryable());
+    }
+
+    /// Vertex shares `build_generation_config` with `gemini.rs`, so the
+    /// params/reasoning mapping (and its byte-stability early-out) is proven
+    /// there; this pins that the shared config actually rides the Vertex
+    /// request body — a regression guard against the two adapters drifting
+    /// onto separate builders.
+    #[tokio::test]
+    async fn complete_sends_shared_generation_config_params_on_the_wire() {
+        use stella_protocol::GenerationParams;
+        let server = MockServer::start().await;
+        let sse_body = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\n";
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = VertexProvider::new(
+            ApiKey::new("ya29.test-token"),
+            "gemini-3-pro",
+            "my-project",
+            "global",
+        )
+        .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: Some(true),
+                params: Some(GenerationParams {
+                    top_p: Some(0.9),
+                    top_k: Some(40),
+                    seed: Some(7),
+                    ..Default::default()
+                }),
+            })
+            .await
+            .expect("should succeed");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(body.contains("\"topP\":0.9"), "{body}");
+        assert!(body.contains("\"topK\":40"), "{body}");
+        assert!(body.contains("\"seed\":7"), "{body}");
+        assert!(
+            body.contains("\"thinkingConfig\":{\"thinkingLevel\":\"high\"}"),
+            "{body}"
+        );
     }
 }
