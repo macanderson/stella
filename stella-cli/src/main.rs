@@ -148,10 +148,18 @@ enum Command {
         test_command: Option<String>,
     },
 
-    /// Work in judged rounds until a judge model confirms the goal is met
+    /// Work in judged rounds until a judge model confirms the goal is met.
+    /// Each working round runs through the staged pipeline (triage, plan,
+    /// witness, execute, verify) by default; --no-pipeline falls back to the
+    /// raw step-loop.
     Goal {
         /// What must be true when done — assessed by the judge each round
         goal: String,
+
+        /// Use the raw step-loop instead of the staged pipeline for each
+        /// working round. The pipeline is the default.
+        #[arg(long)]
+        no_pipeline: bool,
     },
 
     /// Watch CI for a branch/PR and fix failures until it is fully green
@@ -210,6 +218,12 @@ enum Command {
         /// branches are pushed — e.g. task prompts that push and open PRs.
         #[arg(long)]
         watch: bool,
+
+        /// Use the raw step-loop instead of the staged pipeline (triage,
+        /// plan, witness, execute, verify) for each worker. The pipeline is
+        /// the default.
+        #[arg(long)]
+        no_pipeline: bool,
     },
 
     /// Query the code graph built by `stella init` — symbol definitions and
@@ -513,8 +527,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 test_command.as_deref(),
             ))?;
         }
-        Command::Goal { goal } => {
-            rt()?.block_on(agent::run_goal_cmd(&cfg, &goal, cli.budget))?;
+        Command::Goal { goal, no_pipeline } => {
+            rt()?.block_on(agent::run_goal_cmd(&cfg, &goal, cli.budget, !no_pipeline))?;
         }
         Command::Fleet {
             tasks,
@@ -522,6 +536,7 @@ fn run(cli: Cli) -> Result<(), String> {
             max_concurrency,
             base_ref,
             watch,
+            no_pipeline,
         } => {
             rt()?.block_on(fleet_cmd::run_fleet(
                 &cfg,
@@ -531,6 +546,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 max_concurrency,
                 cli.budget,
                 watch,
+                !no_pipeline,
             ))?;
         }
         Command::Monitor { target } => {
@@ -543,7 +559,7 @@ fn run(cli: Cli) -> Result<(), String> {
                  code, commit and push the fix, then re-check. The goal is met only when the \
                  latest CI run for `{target}` has completed with every check successful."
             );
-            rt()?.block_on(agent::run_goal_cmd(&cfg, &goal, cli.budget))?;
+            rt()?.block_on(agent::run_goal_cmd(&cfg, &goal, cli.budget, true))?;
         }
         Command::Chat => {
             // The Command Deck (tabbed TUI) is the default chat surface on a

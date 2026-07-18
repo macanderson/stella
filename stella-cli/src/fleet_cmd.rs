@@ -58,6 +58,7 @@ pub async fn run_fleet(
     max_concurrency: usize,
     budget_limit: Option<f64>,
     watch: bool,
+    use_pipeline: bool,
 ) -> Result<(), String> {
     let root = cfg.workspace_root.clone();
     let plan = load_plan(prompts, plan_file)?;
@@ -111,6 +112,7 @@ pub async fn run_fleet(
     let worker = EngineWorker {
         cfg: cfg.clone(),
         budget_limit,
+        use_pipeline,
     };
     let fleet = Fleet::new(
         worker,
@@ -331,11 +333,13 @@ fn render_watch_line(watch: &BranchWatch) {
     );
 }
 
-/// The engine-backed [`FleetWorker`]: one raw step-loop turn per task, in
-/// the task's own workspace, with the standard (headless) tool registry.
+/// The engine-backed [`FleetWorker`]: one turn per task (the staged pipeline
+/// by default, or the raw step-loop with `--no-pipeline`), in the task's own
+/// workspace, with the standard (headless) tool registry.
 struct EngineWorker {
     cfg: Config,
     budget_limit: Option<f64>,
+    use_pipeline: bool,
 }
 
 #[async_trait::async_trait]
@@ -349,6 +353,7 @@ impl FleetWorker for EngineWorker {
         // half of a oneshot from the async side.
         let cfg = self.cfg.clone();
         let budget_limit = self.budget_limit;
+        let use_pipeline = self.use_pipeline;
         let task = task.clone();
         let root = workspace_root.to_path_buf();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -357,7 +362,9 @@ impl FleetWorker for EngineWorker {
                 .enable_all()
                 .build()
                 .map_err(|e| format!("worker runtime failed to start: {e}"))
-                .and_then(|rt| rt.block_on(run_task(&cfg, budget_limit, &task, &root)));
+                .and_then(|rt| {
+                    rt.block_on(run_task(&cfg, budget_limit, use_pipeline, &task, &root))
+                });
             let _ = tx.send(result);
         });
         let failed = |reason: String| WorkerOutcome {
@@ -376,10 +383,14 @@ impl FleetWorker for EngineWorker {
     }
 }
 
-/// One engine turn in `root`, on the calling thread's runtime.
+/// One worker turn in `root`, on the calling thread's runtime. When
+/// `use_pipeline` is true (the default), the turn runs through the staged
+/// pipeline (triage → recall → plan → witness → execute → verify → judge);
+/// otherwise it falls back to the raw `Engine::run_turn` step-loop.
 async fn run_task(
     cfg: &Config,
     budget_limit: Option<f64>,
+    use_pipeline: bool,
     task: &Task,
     root: &Path,
 ) -> Result<WorkerOutcome, String> {
@@ -394,14 +405,17 @@ async fn run_task(
     let registry = ToolRegistry::new_detected(root.to_path_buf()).await;
     crate::rules::enforce_workspace_rules(&registry, root);
 
-    let mut messages = vec![
-        CompletionMessage::system(
-            // Each worker is its own session in its own workspace, so its
-            // SessionStart hooks fire here, in the worktree.
-            agent::with_session_hook_context(agent::build_system_prompt(root), &cfg).await,
-        ),
-        CompletionMessage::user(&task.prompt),
-    ];
+    let mut messages = vec![CompletionMessage::system(
+        // Each worker is its own session in its own workspace, so its
+        // SessionStart hooks fire here, in the worktree.
+        agent::with_session_hook_context(agent::build_system_prompt(root), &cfg).await,
+    )];
+    // The raw step-loop path needs the task prompt as a user message in the
+    // history; the pipeline path takes the goal separately and appends its own
+    // volatile recall+goal message (L-E8), so it must not be pre-seeded here.
+    if !use_pipeline {
+        messages.push(CompletionMessage::user(&task.prompt));
+    }
     // Each child runs under its own enforced guard at the full cap; the
     // parent fleet guard additionally stops new waves on the metered sum.
     let mut budget = agent::build_budget_guard(budget_limit);
@@ -409,27 +423,93 @@ async fn run_task(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
     let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let outcome = {
-        let hook_runner = ShellHookRunner;
-        let mut engine = Engine::with_sleeper(
-            &*provider,
-            &registry,
-            agent::engine_config_for(&cfg),
-            &TokioSleeper,
+
+    // `success`/`summary` are set by whichever path runs, then folded into
+    // the WorkerOutcome after the channel drains.
+    let (summary, success): (String, bool) = if use_pipeline {
+        use stella_core::router::{CircuitBreaker, ProviderProfile, RoleTable, Router};
+        use stella_pipeline::{
+            AutoApproveGate, NoContextRecall, Pipeline, PipelineConfig, PipelinePorts,
+            PipelineStatus,
+        };
+        let model_ref = stella_protocol::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+        let resolver = agent::BorrowedProviderResolver::new(&*provider);
+        let profile = ProviderProfile::new(
+            cfg.provider.id,
+            model_ref.clone(),
+            model_ref.clone(),
+            model_ref,
         );
-        if let Some(hooks) = &cfg.hooks {
-            engine = engine.with_hooks(hooks, &hook_runner);
+        let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+        let router = Router::new(RoleTable::new(), vec![profile], breaker);
+        let repo_structure = agent::GitRepoStructure {
+            root: root.to_path_buf(),
+        };
+        let repo_status = agent::GitRepoStatus {
+            root: root.to_path_buf(),
+        };
+        let command_runner = agent::ShellCommandRunner {
+            root: root.to_path_buf(),
+        };
+        let recall = NoContextRecall;
+        let hook_runner = ShellHookRunner;
+        let ports = PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &registry,
+            recall: &recall,
+            repo: &repo_structure,
+            repo_status: &repo_status,
+            commands: &command_runner,
+            approvals: &AutoApproveGate,
+            sleeper: &TokioSleeper,
+            hooks: cfg
+                .hooks
+                .as_ref()
+                .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
+        };
+        let config = PipelineConfig {
+            engine: agent::engine_config_for(&cfg),
+            headless: true,
+            headless_bypass_scope_review: true,
+            ..PipelineConfig::default()
+        };
+        let pipeline = Pipeline::new(ports, tx.clone(), config);
+        // The system prompt + task prompt are already in `messages`; the
+        // pipeline appends its own volatile recall+goal message, so pass the
+        // raw task prompt as the goal (the pipeline never re-reads `messages`
+        // for its goal — it takes `task.prompt` directly).
+        let result = pipeline.run(&task.prompt, &mut messages, &mut budget).await;
+        match result {
+            Ok(outcome) => match outcome.status {
+                PipelineStatus::Completed => (truncate(&outcome.final_text), true),
+                PipelineStatus::Aborted { reason } => (truncate(&reason), false),
+            },
+            Err(e) => (truncate(&e.to_string()), false),
         }
-        engine.run_turn(&mut messages, &mut budget, &tx).await
+    } else {
+        let outcome = {
+            let hook_runner = ShellHookRunner;
+            let mut engine = Engine::with_sleeper(
+                &*provider,
+                &registry,
+                agent::engine_config_for(&cfg),
+                &TokioSleeper,
+            );
+            if let Some(hooks) = &cfg.hooks {
+                engine = engine.with_hooks(hooks, &hook_runner);
+            }
+            engine.run_turn(&mut messages, &mut budget, &tx).await
+        };
+        match outcome {
+            TurnOutcome::Completed { text, .. } => (truncate(&text), true),
+            TurnOutcome::Aborted { reason } => (truncate(&reason), false),
+        }
     };
     drop(tx);
     let _ = drain.await;
 
     let spent = budget.session_spent_usd();
-    let (summary, success) = match outcome {
-        TurnOutcome::Completed { text, .. } => (truncate(&text), true),
-        TurnOutcome::Aborted { reason } => (truncate(&reason), false),
-    };
     let commits = collect_commits(root, &start_sha, &task.id).await;
     Ok(WorkerOutcome {
         cost_usd: spent,
