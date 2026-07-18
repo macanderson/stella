@@ -2374,6 +2374,7 @@ fn spawn_renderer(
                         call_id,
                         output,
                         duration_ms,
+                        ..
                     } => {
                         let name = tool_names
                             .get(call_id)
@@ -3083,9 +3084,19 @@ fn build_provider_parts(
                 "local" => "the local endpoint",
                 _ => display_name,
             };
-            let provider = stella_model::zai::ZaiProvider::new(api_key, model_id.to_string())
+            let mut provider = stella_model::zai::ZaiProvider::new(api_key, model_id.to_string())
                 .with_base_url(effective_base_url)
                 .with_identity(provider_id, label);
+            if provider_id == "openrouter" {
+                // First-class OpenRouter: app attribution on every request,
+                // and the gateway's own usage accounting so
+                // `CompletionResult::cost_usd` is the routed call's real
+                // price (its slugs are unseeded — see config.rs — so there
+                // is no catalog list price to fall back on).
+                provider = provider
+                    .with_attribution("https://stella.oxagen.sh", "Stella")
+                    .with_usage_accounting();
+            }
             Ok(Box::new(provider))
         }
     }

@@ -14,7 +14,7 @@ use stella_protocol::{
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
-use crate::provider::Provider;
+use crate::provider::{Provider, ToolCallObserver};
 use crate::sse::SseDecoder;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -156,6 +156,15 @@ enum AnthropicStreamEvent {
         #[serde(default)]
         index: usize,
         delta: AnthropicDelta,
+    },
+    /// A content block finished streaming. For a `tool_use` block this is
+    /// the earliest moment its complete input is known — the hook that lets
+    /// [`aggregate_anthropic_stream`] announce the call to a
+    /// [`ToolCallObserver`] while the rest of the message still streams.
+    #[serde(rename = "content_block_stop")]
+    ContentBlockStop {
+        #[serde(default)]
+        index: usize,
     },
     #[serde(rename = "message_delta")]
     MessageDelta {
@@ -360,6 +369,28 @@ impl Provider for AnthropicProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, None).await
+    }
+
+    async fn complete_observed(
+        &self,
+        req: CompletionRequest,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, Some(observer)).await
+    }
+}
+
+impl AnthropicProvider {
+    /// The one request/stream/aggregate body behind both `complete` and
+    /// `complete_observed` — the observer is threaded down to the stream
+    /// aggregator, which announces each tool call at its
+    /// `content_block_stop`.
+    async fn complete_inner(
+        &self,
+        req: CompletionRequest,
+        observer: Option<&dyn ToolCallObserver>,
+    ) -> Result<CompletionResult, ProviderError> {
         let (system, messages) = to_anthropic_messages(&req.messages);
         let body = AnthropicRequest {
             model: &self.model,
@@ -409,7 +440,7 @@ impl Provider for AnthropicProvider {
             ));
         }
 
-        let (text, tool_calls, usage) = aggregate_anthropic_stream(response).await?;
+        let (text, tool_calls, usage) = aggregate_anthropic_stream(response, observer).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -433,6 +464,7 @@ struct ToolUseAccumulator {
 
 async fn aggregate_anthropic_stream(
     response: reqwest::Response,
+    observer: Option<&dyn ToolCallObserver>,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage), ProviderError> {
     use std::collections::BTreeMap;
 
@@ -498,6 +530,33 @@ async fn aggregate_anthropic_stream(
                     }
                     AnthropicDelta::Other => {}
                 },
+                Ok(AnthropicStreamEvent::ContentBlockStop { index }) => {
+                    // The earliest moment a tool call is complete. Announce
+                    // it to the observer ONLY when its input already parses —
+                    // a block whose JSON is broken or truncated must go
+                    // through the end-of-stream repair/truncation logic
+                    // below, never reach speculative execution. The
+                    // accumulator stays in the map: the final assembly below
+                    // remains the single source of truth, and it re-parses
+                    // the same bytes, so an announced call and its committed
+                    // twin are structurally identical.
+                    if let (Some(observer), Some(acc)) = (observer, tool_uses.get(&index)) {
+                        let input = if acc.input_json.is_empty() {
+                            Some(serde_json::json!({}))
+                        } else {
+                            serde_json::from_str(&acc.input_json).ok()
+                        };
+                        if let Some(input) = input
+                            && !acc.id.is_empty()
+                        {
+                            observer.tool_call_streamed(&ToolCall {
+                                call_id: acc.id.clone(),
+                                name: acc.name.clone(),
+                                input,
+                            });
+                        }
+                    }
+                }
                 Ok(AnthropicStreamEvent::MessageDelta { delta, usage: u }) => {
                     if let Some(reason) = delta.stop_reason {
                         stop_reason = Some(reason);
@@ -1098,6 +1157,113 @@ mod tests {
         assert_eq!(call.input, serde_json::json!({"path": "src/lib.rs"}));
         assert_eq!(result.usage.input_tokens, 40);
         assert_eq!(result.usage.output_tokens, 15);
+    }
+
+    /// Shared with the zai tests in spirit: records every announcement so a
+    /// test can compare them against the final `CompletionResult`.
+    struct RecordingObserver(std::sync::Mutex<Vec<stella_protocol::ToolCall>>);
+
+    impl ToolCallObserver for RecordingObserver {
+        fn tool_call_streamed(&self, call: &stella_protocol::ToolCall) {
+            self.0.lock().unwrap().push(call.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_observed_announces_a_tool_call_at_its_block_stop() {
+        let server = MockServer::start().await;
+        // The tool_use block CLOSES (content_block_stop) while the message
+        // continues with a text block — the exact window speculation exists
+        // to exploit.
+        let sse_body = concat!(
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"src/lib.rs\\\"}\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"reading it now\"}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("read src/lib.rs")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
+        let result = provider
+            .complete_observed(req, &observer)
+            .await
+            .expect("should succeed");
+
+        let announced = observer.0.lock().unwrap();
+        assert_eq!(announced.len(), 1, "exactly one announcement per block");
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(
+            announced[0], result.tool_calls[0],
+            "an announced call must be identical to its committed twin — \
+             harvest matches by exact equality"
+        );
+        assert_eq!(
+            announced[0].input,
+            serde_json::json!({"path": "src/lib.rs"})
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_observed_never_announces_a_block_whose_json_is_broken() {
+        let server = MockServer::start().await;
+        // The block closes but its accumulated JSON does not parse — the
+        // end-of-stream repair path owns it; speculation must never see it.
+        let sse_body = concat!(
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\": not json,}\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("go")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
+        let result = provider
+            .complete_observed(req, &observer)
+            .await
+            .expect("broken JSON on a finished block is the repair sentinel, not an error");
+        assert!(
+            observer.0.lock().unwrap().is_empty(),
+            "unparseable input must not be announced"
+        );
+        // The committed call still carries the Null repair sentinel.
+        assert_eq!(result.tool_calls.len(), 1);
+        assert!(result.tool_calls[0].input.is_null());
     }
 
     #[test]

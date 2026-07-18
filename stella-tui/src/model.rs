@@ -136,6 +136,11 @@ pub enum TranscriptEntry {
         /// shows one line; ctrl+o reveals this.
         full: String,
         duration_ms: u64,
+        /// True when the result was produced by speculative execution
+        /// (the call ran while the model was still streaming); the renderer
+        /// marks these so overlap is visible, since `duration_ms` alone
+        /// would read as ordinary post-stream latency.
+        speculated: bool,
         /// For a *successful* file-mutating tool
         /// (`write_file`/`edit_file`/`delete_file`), the reference the
         /// renderer uses to show this call's diff inline. `None` for reads,
@@ -307,6 +312,7 @@ impl SessionModel {
                 call_id,
                 output,
                 duration_ms,
+                speculated,
             } => {
                 let (ok, summary, full) = match output {
                     ToolOutput::Ok { content } => {
@@ -357,6 +363,7 @@ impl SessionModel {
                     summary,
                     full,
                     duration_ms: *duration_ms,
+                    speculated: *speculated,
                     diff,
                 });
                 // The answer to an `ask_user` question comes back as this very
@@ -1024,6 +1031,7 @@ mod tests {
             call_id: "c1".into(),
             output: ToolOutput::Ok { content: big },
             duration_ms: 5,
+            speculated: false,
         });
         match model.transcript.last() {
             Some(TranscriptEntry::ToolResult { summary, .. }) => {
@@ -1140,6 +1148,7 @@ mod tests {
                 content: "x".into(),
             },
             duration_ms: 1,
+            speculated: false,
         });
         assert!(model.pending_ask_user.is_some());
         // The answer arrives as the ask_user tool's own result (matched by id).
@@ -1149,6 +1158,7 @@ mod tests {
                 content: "postgres".into(),
             },
             duration_ms: 1,
+            speculated: false,
         });
         assert!(
             model.pending_ask_user.is_none(),

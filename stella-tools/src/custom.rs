@@ -103,6 +103,7 @@ pub const RESERVED_NAMES: &[&str] = &[
     // Codebase maps & memory
     "explorations",
     "save_exploration",
+    "gather_context",
     "save_memory",
     "cite_memory",
     // The definition of done + build/test

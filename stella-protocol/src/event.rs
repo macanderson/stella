@@ -77,6 +77,13 @@ pub enum AgentEvent {
         call_id: String,
         output: ToolOutput,
         duration_ms: u64,
+        /// True when this result was produced by speculative execution: the
+        /// call was read-only and began executing while the model was still
+        /// streaming the rest of its response, so `duration_ms` (the real
+        /// execution time) overlapped the model call instead of following
+        /// it. `serde(default)` so streams recorded before this field parse.
+        #[serde(default)]
+        speculated: bool,
     },
     Retry {
         attempt: u32,
@@ -359,6 +366,35 @@ mod tests {
         match back {
             AgentEvent::ToolStart { call } => assert_eq!(call.name, "read_file"),
             other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
+        // Round-trip with the flag set.
+        let event = AgentEvent::ToolResult {
+            call_id: "call_1".into(),
+            output: ToolOutput::Ok {
+                content: "x".into(),
+            },
+            duration_ms: 42,
+            speculated: true,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentEvent::ToolResult { speculated, .. } => assert!(speculated),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        // A stream recorded BEFORE the field existed must still parse, with
+        // the safe default (not speculated).
+        let old = r#"{"type":"tool_result","call_id":"c","output":{"ok":{"content":""}},"duration_ms":1}"#;
+        match serde_json::from_str::<AgentEvent>(old) {
+            Ok(AgentEvent::ToolResult { speculated, .. }) => {
+                assert!(!speculated, "missing field must default to false")
+            }
+            other => panic!("old stream must parse: {other:?}"),
         }
     }
 

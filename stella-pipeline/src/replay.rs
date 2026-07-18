@@ -382,6 +382,7 @@ mod tests {
                 }
             },
             duration_ms: 12,
+            speculated: false,
         }
     }
     fn budget(spent: f64) -> AgentEvent {

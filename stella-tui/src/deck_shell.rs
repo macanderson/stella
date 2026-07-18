@@ -171,6 +171,7 @@ fn spawn_shell_command(
                 call_id,
                 output,
                 duration_ms: started.elapsed().as_millis() as u64,
+                speculated: false,
             },
         });
         // Park the lane so it never reads as still-working (a lingering

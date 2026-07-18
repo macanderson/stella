@@ -1326,6 +1326,7 @@ mod tests {
                     content: "sqlite".into(),
                 },
                 duration_ms: 1,
+                speculated: false,
             },
         ));
         assert_eq!(w.agents[0].status, AgentStatus::Running);

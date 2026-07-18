@@ -151,10 +151,16 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         env_var: "OPENROUTER_API_KEY",
         env_var_aliases: &[],
         display_name: "OpenRouter",
-        default_model: "auto",
+        default_model: "openrouter/auto",
         base_url: "https://openrouter.ai/api/v1",
         dialect: Dialect::OpenaiCompatible,
-        seeded: true,
+        // Unseeded on purpose, like `local`: OpenRouter fronts hundreds of
+        // `vendor/model` slugs that change weekly — a curated seed can only
+        // veto real models (`anthropic/claude-…` was a hard error here). A
+        // typo'd slug fails fast with OpenRouter's own named 400/404, and
+        // cost metering doesn't need list prices: the adapter requests the
+        // gateway's usage accounting and takes the reported per-call cost.
+        seeded: false,
     },
     // Vertex and Bedrock are appended LAST so auto-detection (the no-`--model`
     // path picks the first provider with a resolvable credential) never

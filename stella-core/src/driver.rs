@@ -70,6 +70,7 @@ use crate::hooks::{HookPayload, HookRunner, Hooks, run_hooks};
 use crate::loop_detect::{LoopDetectionConfig, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff};
+use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
 
 /// Everything about a turn's execution that isn't the provider/tools
 /// themselves: prompt shape, retry/compaction/loop tuning, and hard
@@ -184,6 +185,11 @@ struct CommittedStep {
     /// Names of tools whose schemas declare `read_only`, snapshotted from
     /// the same `schemas()` call the request itself was built from.
     read_only_tools: HashSet<String>,
+    /// Read-only calls executed speculatively while THIS committed
+    /// attempt's response was still streaming (`crate::speculation`).
+    /// Dispatch harvests matching entries instead of re-executing; a failed
+    /// attempt's pool never gets here — it is dropped with the attempt.
+    speculation: SpeculationPool,
     estimated_input_tokens: u64,
     retries: u32,
     duration_ms: u64,
@@ -418,6 +424,15 @@ impl<'a> Engine<'a> {
         let estimated_input_tokens = estimate_conversation_tokens(messages);
         let messages_snapshot = messages.to_vec();
         let req_config = &self.config;
+        let speculation_read_only = read_only_tools.clone();
+        // Each attempt runs the provider call and the speculation pump
+        // concurrently: the pump executes read-only calls the moment the
+        // adapter announces them (`crate::speculation`), so their wall-clock
+        // overlaps the stream instead of following it. The gate (and with
+        // it the channel's send half) drops when the provider call resolves,
+        // which is what lets the pump finish draining. A failed attempt
+        // drops its pool with the attempt — read-only work is safe to
+        // waste — and the retry builds a fresh channel and pool.
         let attempt: RetryAttemptFn = Box::new(move || {
             let req = CompletionRequest {
                 messages: messages_snapshot.clone(),
@@ -426,7 +441,19 @@ impl<'a> Engine<'a> {
                 effort: req_config.effort,
                 tools: tools_schema.clone(),
             };
-            Box::pin(self.provider.complete(req))
+            let read_only = speculation_read_only.clone();
+            Box::pin(async move {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                let pump = self.pump_speculations(rx);
+                let complete = async move {
+                    let gate = SpeculationGate::new(read_only, tx);
+                    self.provider.complete_observed(req, &gate).await
+                    // `gate` (and its sender) drop here → the pump's
+                    // stream ends once in-flight executions drain.
+                };
+                let (result, speculation) = futures_util::join!(complete, pump);
+                result.map(|result| (result, speculation))
+            })
         });
 
         let call_started = std::time::Instant::now();
@@ -434,7 +461,7 @@ impl<'a> Engine<'a> {
         let call_duration_ms = call_started.elapsed().as_millis() as u64;
 
         let RetryOutcome {
-            value: result,
+            value: (result, speculation),
             retries,
             ..
         } = match outcome {
@@ -463,10 +490,45 @@ impl<'a> Engine<'a> {
         Ok(CommittedStep {
             result,
             read_only_tools,
+            speculation,
             estimated_input_tokens,
             retries: retries.len() as u32,
             duration_ms: call_duration_ms,
         })
+    }
+
+    /// Receive announced calls from the [`SpeculationGate`] and execute them
+    /// concurrently (same cap as dispatch) while the model call streams,
+    /// collecting outputs into the attempt's [`SpeculationPool`]. Runs until
+    /// the gate drops the send half AND every in-flight execution finishes —
+    /// speculated calls are exactly the calls dispatch would run first, so
+    /// draining them is never wasted time on the committed path.
+    async fn pump_speculations(
+        &self,
+        mut rx: tokio::sync::mpsc::UnboundedReceiver<ToolCall>,
+    ) -> SpeculationPool {
+        let announced = futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx));
+        let mut in_flight = announced
+            .map(|call| async move {
+                let started = std::time::Instant::now();
+                let output = self.execute_with_repair(&call).await;
+                (call, output, started.elapsed().as_millis() as u64)
+            })
+            .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS);
+
+        let mut pool = SpeculationPool::new();
+        while let Some((call, output, duration_ms)) = in_flight.next().await {
+            pool.insert(
+                call.call_id.clone(),
+                SpeculativeResult {
+                    name: call.name,
+                    input: call.input,
+                    output,
+                    duration_ms,
+                },
+            );
+        }
+        pool
     }
 
     /// Bookkeeping for the call that just committed: drift feedback into
@@ -595,6 +657,7 @@ impl<'a> Engine<'a> {
         let CommittedStep {
             result,
             read_only_tools,
+            speculation,
             ..
         } = committed;
 
@@ -670,7 +733,7 @@ impl<'a> Engine<'a> {
         });
 
         let tool_results = self
-            .execute_tool_calls(&result.tool_calls, &read_only_tools, events)
+            .execute_tool_calls(&result.tool_calls, &read_only_tools, speculation, events)
             .await;
 
         messages.push(CompletionMessage {
@@ -699,10 +762,20 @@ impl<'a> Engine<'a> {
     /// does). The returned `Vec<ToolResult>` is always in original call
     /// order, so message history is deterministic regardless of completion
     /// order.
+    ///
+    /// `speculation` holds this step's speculatively-executed read-only
+    /// calls (`crate::speculation`). A call is *harvested* — its recorded
+    /// output delivered without re-executing — only when the pool entry
+    /// matches the committed call exactly (id, name, AND input); any
+    /// mismatch falls through to normal execution and the stale entry is
+    /// discarded. Harvested calls emit `ToolStart` immediately followed by
+    /// `ToolResult { speculated: true }` carrying the real (overlapped)
+    /// execution duration.
     async fn execute_tool_calls(
         &self,
         calls: &[ToolCall],
         read_only_tools: &HashSet<String>,
+        mut speculation: SpeculationPool,
         events: &UnboundedSender<AgentEvent>,
     ) -> Vec<ToolResult> {
         let mut indexed: Vec<(usize, ToolResult)> = Vec::with_capacity(calls.len());
@@ -721,6 +794,7 @@ impl<'a> Engine<'a> {
             // Plain copy for the closures: borrowing the loop variable
             // itself would conflict with advancing it below (E0506).
             let group_start = i;
+            let speculation = &mut speculation;
             let group_futures =
                 calls[group_start..group_end]
                     .iter()
@@ -728,19 +802,30 @@ impl<'a> Engine<'a> {
                     .map(|(offset, call)| {
                         let _ = events.send(AgentEvent::ToolStart { call: call.clone() });
                         let index = group_start + offset;
+                        let harvested = speculation
+                            .remove(&call.call_id)
+                            .filter(|s| s.name == call.name && s.input == call.input);
                         async move {
-                            let started = std::time::Instant::now();
-                            let output = self.execute_with_repair(call).await;
-                            (index, call, output, started.elapsed().as_millis() as u64)
+                            match harvested {
+                                Some(s) => (index, call, s.output, s.duration_ms, true),
+                                None => {
+                                    let started = std::time::Instant::now();
+                                    let output = self.execute_with_repair(call).await;
+                                    let duration_ms = started.elapsed().as_millis() as u64;
+                                    (index, call, output, duration_ms, false)
+                                }
+                            }
                         }
                     });
             let mut in_flight = futures_util::stream::iter(group_futures)
                 .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS);
-            while let Some((index, call, output, duration_ms)) = in_flight.next().await {
+            while let Some((index, call, output, duration_ms, speculated)) = in_flight.next().await
+            {
                 let _ = events.send(AgentEvent::ToolResult {
                     call_id: call.call_id.clone(),
                     output: output.clone(),
                     duration_ms,
+                    speculated,
                 });
                 indexed.push((
                     index,
@@ -840,10 +925,17 @@ impl<'a> Engine<'a> {
 }
 
 /// The boxed-future shape `retry_with_backoff` needs from its `attempt_fn`
-/// — named here purely to keep the call site in `run_turn` readable.
+/// — named here purely to keep the call site in `run_turn` readable. Each
+/// attempt yields the completion AND the speculative executions performed
+/// while that attempt streamed, as one value: the pool is only meaningful
+/// for the attempt that produced it.
 type RetryAttemptFn<'a> = Box<
-    dyn FnMut() -> Pin<Box<dyn Future<Output = Result<CompletionResultAlias, ProviderError>> + 'a>>
-        + 'a,
+    dyn FnMut() -> Pin<
+            Box<
+                dyn Future<Output = Result<(CompletionResultAlias, SpeculationPool), ProviderError>>
+                    + 'a,
+            >,
+        > + 'a,
 >;
 type CompletionResultAlias = stella_protocol::CompletionResult;
 
@@ -1026,6 +1118,220 @@ mod tests {
             out.push(event);
         }
         out
+    }
+
+    /// A provider that announces one tool call mid-"stream" via the
+    /// observer, then — when `wait_for_execution` — refuses to finish its
+    /// response until the tool has actually run. Returning at all therefore
+    /// PROVES the speculative execution overlapped the model call. The
+    /// second step completes the turn with plain text.
+    struct SpeculatingProvider {
+        announce: ToolCall,
+        /// The call the committed result carries — usually identical to
+        /// `announce`; different in the divergence test.
+        commit: ToolCall,
+        executed: Arc<tokio::sync::Notify>,
+        wait_for_execution: bool,
+        step: AtomicU32,
+    }
+    #[async_trait]
+    impl Provider for SpeculatingProvider {
+        fn id(&self) -> &str {
+            "speculating"
+        }
+        async fn complete(
+            &self,
+            _req: CompletionRequest,
+        ) -> Result<CompletionResultAlias, ProviderError> {
+            unreachable!("the engine must drive complete_observed, never bare complete")
+        }
+        async fn complete_observed(
+            &self,
+            _req: CompletionRequest,
+            observer: &dyn stella_protocol::ToolCallObserver,
+        ) -> Result<CompletionResultAlias, ProviderError> {
+            if self.step.fetch_add(1, Ordering::SeqCst) == 0 {
+                observer.tool_call_streamed(&self.announce);
+                if self.wait_for_execution {
+                    // "Keep streaming" until the speculated call has run.
+                    self.executed.notified().await;
+                }
+                Ok(CompletionResultAlias {
+                    text: String::new(),
+                    tool_calls: vec![self.commit.clone()],
+                    usage: CompletionUsage::default(),
+                    model: "speculating".into(),
+                    cost_usd: 0.0001,
+                    finish_reason: None,
+                })
+            } else {
+                Ok(text_result("done"))
+            }
+        }
+    }
+
+    /// A read-only counting executor that signals each execution — the
+    /// other half of the overlap proof.
+    struct NotifyingReadTools {
+        calls: Arc<AtomicU32>,
+        executed: Arc<tokio::sync::Notify>,
+    }
+    #[async_trait]
+    impl ToolExecutor for NotifyingReadTools {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            vec![ToolSchema {
+                name: "read_file".into(),
+                description: "read a file".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+            }]
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.executed.notify_one();
+            ToolOutput::Ok {
+                content: "contents".into(),
+            }
+        }
+    }
+
+    fn read_call(input: serde_json::Value) -> ToolCall {
+        ToolCall {
+            call_id: "c1".into(),
+            name: "read_file".into(),
+            input,
+        }
+    }
+
+    async fn run_speculation_turn(
+        provider: &SpeculatingProvider,
+        tools: &dyn ToolExecutor,
+    ) -> (TurnOutcome, Vec<AgentEvent>) {
+        let sleeper = NoopSleeper;
+        let engine = Engine::with_sleeper(provider, tools, EngineConfig::default(), &sleeper);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut messages = vec![CompletionMessage::user("read a.rs")];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            engine.run_turn(&mut messages, &mut budget, &tx),
+        )
+        .await
+        .expect("a hung turn means speculation deadlocked the provider/pump join");
+        (outcome, drain_events(&mut rx))
+    }
+
+    #[tokio::test]
+    async fn read_only_calls_execute_during_the_stream_and_are_harvested_not_rerun() {
+        let executed = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicU32::new(0));
+        let input = serde_json::json!({"path": "a.rs"});
+        let provider = SpeculatingProvider {
+            announce: read_call(input.clone()),
+            commit: read_call(input),
+            executed: executed.clone(),
+            // The provider cannot finish its response until the tool ran —
+            // completing the turn at all proves the overlap.
+            wait_for_execution: true,
+            step: AtomicU32::new(0),
+        };
+        let tools = NotifyingReadTools {
+            calls: calls.clone(),
+            executed,
+        };
+
+        let (outcome, events) = run_speculation_turn(&provider, &tools).await;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed { ref text, .. } if text == "done"),
+            "turn must complete: {outcome:?}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the speculated execution must be harvested, never re-run at dispatch"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ToolResult { call_id, speculated: true, .. } if call_id == "c1"
+            )),
+            "the harvested result must be marked speculated: {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_divergent_committed_call_is_re_executed_not_harvested() {
+        let executed = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicU32::new(0));
+        let provider = SpeculatingProvider {
+            // Announced input differs from what the final result carries —
+            // the harvest's exact-equality check must reject the pool entry.
+            announce: read_call(serde_json::json!({"path": "a.rs"})),
+            commit: read_call(serde_json::json!({"path": "b.rs"})),
+            executed: executed.clone(),
+            wait_for_execution: true,
+            step: AtomicU32::new(0),
+        };
+        let tools = NotifyingReadTools {
+            calls: calls.clone(),
+            executed,
+        };
+
+        let (outcome, events) = run_speculation_turn(&provider, &tools).await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "divergence must fall back to a real execution of the committed call"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ToolResult { call_id, speculated: false, .. } if call_id == "c1"
+            )),
+            "a re-executed result must NOT claim speculation: {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mutating_calls_are_never_speculated() {
+        let executed = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicU32::new(0));
+        let mutating = ToolCall {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            input: serde_json::json!({"cmd": "echo hi"}),
+        };
+        let provider = SpeculatingProvider {
+            announce: mutating.clone(),
+            commit: mutating,
+            executed,
+            // Must NOT wait: a mutating announcement is fenced, so nothing
+            // would ever signal — waiting would (correctly) deadlock.
+            wait_for_execution: false,
+            step: AtomicU32::new(0),
+        };
+        let tools = CountingTools {
+            calls: calls.clone(),
+        };
+
+        let (outcome, events) = run_speculation_turn(&provider, &tools).await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "exactly one execution, at dispatch — never during the stream"
+        );
+        assert!(
+            events.iter().all(|e| !matches!(
+                e,
+                AgentEvent::ToolResult {
+                    speculated: true,
+                    ..
+                }
+            )),
+            "no result of a mutating call may be speculated: {events:?}"
+        );
     }
 
     #[tokio::test]

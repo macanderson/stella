@@ -17,7 +17,7 @@ use stella_protocol::{
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
-use crate::provider::Provider;
+use crate::provider::{Provider, ToolCallObserver};
 use crate::sse::SseDecoder;
 
 /// International endpoint. `open.bigmodel.cn` (mainland) is the same wire
@@ -38,12 +38,22 @@ pub struct ZaiProvider {
     base_url: String,
     model: String,
     /// List pricing for `model`, resolved from the catalog at construction so
-    /// `cost_usd` is computed on the real request path. `None` only if the
-    /// slug isn't in the catalog — `build_provider` (`agent.rs`) rejects that
-    /// case up front, so in practice this is always `Some` for a live call.
+    /// `cost_usd` is computed on the real request path. `None` when the slug
+    /// isn't in the catalog — for seeded providers `build_provider`
+    /// (`agent.rs`) rejects that case up front; for gateway providers with
+    /// free-form slugs (OpenRouter) it is legitimately `None` and the cost
+    /// comes from the gateway's own usage accounting instead.
     pricing: Option<Pricing>,
     id: String,
     label: String,
+    /// Extra headers sent with every request — OpenRouter's app-attribution
+    /// pair (`HTTP-Referer`, `X-Title`). Empty for every other provider.
+    extra_headers: Vec<(&'static str, String)>,
+    /// Ask the gateway to report the request's actual cost in the final
+    /// usage frame (OpenRouter `usage: {"include": true}`). When the frame
+    /// carries a cost, it overrides catalog list pricing — the gateway
+    /// routed the call, only it knows what the call cost.
+    usage_accounting: bool,
 }
 
 impl ZaiProvider {
@@ -64,11 +74,37 @@ impl ZaiProvider {
             pricing,
             id: "zai".to_string(),
             label: "Z.ai".to_string(),
+            extra_headers: Vec::new(),
+            usage_accounting: false,
         }
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// OpenRouter app attribution: `HTTP-Referer` names the app's site,
+    /// `X-Title` its display name (shown on openrouter.ai rankings and in
+    /// the user's activity feed). Harmless on any other OpenAI-compatible
+    /// endpoint, but only the OpenRouter build path sets it.
+    pub fn with_attribution(
+        mut self,
+        referer: impl Into<String>,
+        title: impl Into<String>,
+    ) -> Self {
+        self.extra_headers.push(("HTTP-Referer", referer.into()));
+        self.extra_headers.push(("X-Title", title.into()));
+        self
+    }
+
+    /// Request per-call cost reporting in the stream's final usage frame
+    /// (OpenRouter `usage: {"include": true}`). A reported cost overrides
+    /// catalog list pricing in `CompletionResult::cost_usd`, which is what
+    /// makes budget metering real for a gateway whose routed models (and
+    /// therefore prices) are not in our seed catalog.
+    pub fn with_usage_accounting(mut self) -> Self {
+        self.usage_accounting = true;
         self
     }
 
@@ -99,6 +135,17 @@ struct ZaiRequest<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ZaiToolSchema>,
+    /// OpenRouter usage accounting (`{"include": true}`) — omitted entirely
+    /// unless the provider was built `with_usage_accounting`, so the shared
+    /// adapter never sends a field other Chat Completions servers might
+    /// reject.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<ZaiUsageInclude>,
+}
+
+#[derive(Serialize)]
+struct ZaiUsageInclude {
+    include: bool,
 }
 
 #[derive(Serialize)]
@@ -288,6 +335,13 @@ struct ZaiStreamDelta {
     /// ends with no feedback" defect). Captured so it can be surfaced.
     #[serde(default)]
     reasoning_content: Option<String>,
+    /// OpenRouter's normalized name for the same thing: reasoning models
+    /// routed through the gateway stream chain-of-thought under `reasoning`,
+    /// whatever the upstream vendor calls it. Folded into the same buffer as
+    /// `reasoning_content` so a reasoning-only turn is visible regardless of
+    /// which endpoint served it.
+    #[serde(default)]
+    reasoning: Option<String>,
     #[serde(default)]
     tool_calls: Vec<ZaiStreamToolCallDelta>,
 }
@@ -325,6 +379,12 @@ struct ZaiUsage {
     /// bill at the catalog's cheaper cached rate instead of full input.
     #[serde(default)]
     prompt_tokens_details: Option<ZaiPromptTokensDetails>,
+    /// OpenRouter usage accounting: the request's actual cost in USD
+    /// credits, present only when the request opted in (`usage.include`).
+    /// Authoritative over catalog list pricing — the gateway routed the
+    /// call, only it knows which upstream (at which price) served it.
+    #[serde(default)]
+    cost: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -410,6 +470,28 @@ impl Provider for ZaiProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, None).await
+    }
+
+    async fn complete_observed(
+        &self,
+        req: CompletionRequest,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, Some(observer)).await
+    }
+}
+
+impl ZaiProvider {
+    /// The one request/stream/aggregate body behind both `complete` and
+    /// `complete_observed` — the observer is threaded down to the stream
+    /// aggregator, which announces each tool call as soon as the next one
+    /// starts streaming (the OpenAI dialect's only completion boundary).
+    async fn complete_inner(
+        &self,
+        req: CompletionRequest,
+        observer: Option<&dyn ToolCallObserver>,
+    ) -> Result<CompletionResult, ProviderError> {
         let body = ZaiRequest {
             model: &self.model,
             messages: to_zai_messages(&req.messages),
@@ -417,12 +499,19 @@ impl Provider for ZaiProvider {
             max_tokens: req.max_output_tokens,
             temperature: req.temperature,
             tools: to_zai_tools(&req.tools),
+            usage: self
+                .usage_accounting
+                .then_some(ZaiUsageInclude { include: true }),
         };
 
-        let response = self
+        let mut request = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(self.api_key.reveal())
+            .bearer_auth(self.api_key.reveal());
+        for (name, value) in &self.extra_headers {
+            request = request.header(*name, value);
+        }
+        let response = request
             .json(&body)
             .send()
             .await
@@ -457,9 +546,13 @@ impl Provider for ZaiProvider {
             ));
         }
 
-        let (text, tool_calls, usage, finish_reason) =
-            aggregate_zai_stream(response, &self.label).await?;
-        let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
+        let (text, tool_calls, usage, finish_reason, reported_cost_usd) =
+            aggregate_zai_stream(response, &self.label, observer).await?;
+        // A gateway-reported cost (OpenRouter usage accounting) is
+        // authoritative; catalog list pricing is the estimate for providers
+        // that don't report one.
+        let cost_usd = reported_cost_usd
+            .unwrap_or_else(|| self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0));
         Ok(CompletionResult {
             text,
             tool_calls,
@@ -478,12 +571,64 @@ struct ToolCallAccumulator {
     id: String,
     name: String,
     arguments: String,
+    /// Whether this call was already announced to a [`ToolCallObserver`].
+    /// OpenAI-style tool calls stream sequentially by index, so a call is
+    /// complete the moment a HIGHER index appears — that boundary announces
+    /// it exactly once. The stream's last call has no such boundary and is
+    /// simply never announced (the completion returns immediately after, so
+    /// there is nothing to overlap with anyway).
+    announced: bool,
+}
+
+/// Announce every un-announced accumulator below `next_index` to the
+/// observer. Only calls whose arguments already parse are announced — a
+/// call the end-of-stream assembly would hand the `Null` repair sentinel
+/// must never reach speculative execution. Announced calls re-parse the
+/// same bytes at final assembly, so an announced call and its committed
+/// twin are structurally identical.
+fn announce_completed_below(
+    observer: &dyn ToolCallObserver,
+    tool_calls: &mut BTreeMap<usize, ToolCallAccumulator>,
+    next_index: usize,
+) {
+    for (_, acc) in tool_calls.range_mut(..next_index) {
+        if acc.announced {
+            continue;
+        }
+        acc.announced = true;
+        if acc.id.is_empty() {
+            continue;
+        }
+        let trimmed = acc.arguments.trim();
+        let input = if trimmed.is_empty() {
+            Some(Value::Object(serde_json::Map::new()))
+        } else {
+            serde_json::from_str(trimmed).ok()
+        };
+        if let Some(input) = input {
+            observer.tool_call_streamed(&ToolCall {
+                call_id: acc.id.clone(),
+                name: acc.name.clone(),
+                input,
+            });
+        }
+    }
 }
 
 async fn aggregate_zai_stream(
     response: reqwest::Response,
     label: &str,
-) -> Result<(String, Vec<ToolCall>, CompletionUsage, Option<FinishReason>), ProviderError> {
+    observer: Option<&dyn ToolCallObserver>,
+) -> Result<
+    (
+        String,
+        Vec<ToolCall>,
+        CompletionUsage,
+        Option<FinishReason>,
+        Option<f64>,
+    ),
+    ProviderError,
+> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
     // Chain-of-thought streamed under `reasoning_content`, kept separate from
@@ -496,6 +641,9 @@ async fn aggregate_zai_stream(
     // cut off at the token limit, so a tool call whose argument JSON didn't
     // finish streaming is truncated, not merely malformed.
     let mut truncated_at_token_limit = false;
+    // Gateway-reported per-call cost (OpenRouter usage accounting), from the
+    // final usage frame. `None` when the endpoint doesn't report one.
+    let mut reported_cost_usd: Option<f64> = None;
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT).await? {
@@ -523,6 +671,9 @@ async fn aggregate_zai_stream(
                     .prompt_tokens_details
                     .map(|d| d.cached_tokens)
                     .unwrap_or(0);
+                if u.cost.is_some() {
+                    reported_cost_usd = u.cost;
+                }
             }
             for choice in parsed.choices {
                 if choice.finish_reason.as_deref() == Some("length") {
@@ -534,7 +685,17 @@ async fn aggregate_zai_stream(
                 if let Some(rc) = choice.delta.reasoning_content {
                     reasoning.push_str(&rc);
                 }
+                if let Some(r) = choice.delta.reasoning {
+                    reasoning.push_str(&r);
+                }
                 for tc_delta in choice.delta.tool_calls {
+                    // A delta for index N proves every lower index finished
+                    // streaming (the dialect emits calls sequentially) —
+                    // the moment those calls can be announced for
+                    // speculative execution.
+                    if let Some(observer) = observer {
+                        announce_completed_below(observer, &mut tool_calls, tc_delta.index);
+                    }
                     let acc = tool_calls.entry(tc_delta.index).or_default();
                     if let Some(id) = tc_delta.id {
                         acc.id = id;
@@ -632,14 +793,14 @@ async fn aggregate_zai_stream(
         Some(FinishReason::Stop)
     };
 
-    Ok((text, calls, usage, finish_reason))
+    Ok((text, calls, usage, finish_reason, reported_cost_usd))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use stella_protocol::tool::ToolSchema;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
@@ -787,6 +948,137 @@ mod tests {
         assert_eq!(call.call_id, "call_1");
         assert_eq!(call.name, "read_file");
         assert_eq!(call.input, serde_json::json!({"path": "src/lib.rs"}));
+    }
+
+    /// Records announcements for comparison with the committed result.
+    struct RecordingObserver(std::sync::Mutex<Vec<ToolCall>>);
+
+    impl ToolCallObserver for RecordingObserver {
+        fn tool_call_streamed(&self, call: &ToolCall) {
+            self.0.lock().unwrap().push(call.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_observed_announces_a_call_when_the_next_index_starts() {
+        let server = MockServer::start().await;
+        // Two sequential tool calls: index 0 is complete the moment index 1
+        // appears — the only mid-stream completion boundary the OpenAI
+        // dialect offers. Index 1 (the last call) has no boundary and is
+        // never announced.
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_2\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"b.rs\\\"}\"}}]}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider =
+            ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("read both")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        let observer = RecordingObserver(std::sync::Mutex::new(Vec::new()));
+        let result = provider
+            .complete_observed(req, &observer)
+            .await
+            .expect("completion should succeed");
+
+        let announced = observer.0.lock().unwrap();
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(
+            announced.len(),
+            1,
+            "only index 0 has a completion boundary mid-stream"
+        );
+        assert_eq!(
+            announced[0], result.tool_calls[0],
+            "an announced call must be identical to its committed twin"
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_accounting_sends_the_include_field_and_takes_the_reported_cost() {
+        let server = MockServer::start().await;
+        // OpenRouter's final usage frame carries the routed call's actual
+        // cost; for an unseeded slug (no catalog pricing) that report is the
+        // ONLY real price. The request must opt in via `usage.include`.
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":10,\"cost\":0.0123}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_string_contains("\"usage\":{\"include\":true}"))
+            .and(header("HTTP-Referer", "https://stella.oxagen.sh"))
+            .and(header("X-Title", "Stella"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "anthropic/claude-sonnet-4.5")
+            .with_base_url(server.uri())
+            .with_identity("openrouter", "OpenRouter")
+            .with_attribution("https://stella.oxagen.sh", "Stella")
+            .with_usage_accounting();
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+
+        // The mock's matchers make a missing usage field / missing headers a
+        // 404 — reaching a successful result proves the request shape.
+        let result = provider.complete(req).await.expect("should succeed");
+        assert!(
+            (result.cost_usd - 0.0123).abs() < 1e-12,
+            "gateway-reported cost is authoritative, got {}",
+            result.cost_usd
+        );
+        assert_eq!(result.usage.input_tokens, 100);
+    }
+
+    #[tokio::test]
+    async fn openrouter_reasoning_deltas_surface_like_reasoning_content() {
+        let server = MockServer::start().await;
+        // OpenRouter normalizes chain-of-thought to `delta.reasoning`. A
+        // reasoning-only turn must surface it, same as GLM's
+        // `reasoning_content`, instead of returning a blank turn.
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"thinking \"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"hard\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "openrouter/auto")
+            .with_base_url(server.uri())
+            .with_identity("openrouter", "OpenRouter");
+        let req = CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+        };
+        let result = provider.complete(req).await.expect("should succeed");
+        assert_eq!(result.text, "thinking hard");
     }
 
     #[tokio::test]

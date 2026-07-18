@@ -123,6 +123,7 @@ async fn main() -> std::io::Result<()> {
                                 call_id: id,
                                 output: ToolOutput::Ok { content: answer },
                                 duration_ms: 0,
+                                speculated: false,
                             },
                         });
                     }
@@ -226,6 +227,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
                 content: "ok".into(),
             },
             duration_ms: 30,
+            speculated: false,
         }),
         ev(AgentEvent::FileChange {
             path: "src/lib.rs".into(),

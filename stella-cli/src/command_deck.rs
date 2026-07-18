@@ -2247,6 +2247,7 @@ impl AskUserIo for DeckAskUserIo {
                     content: answer.clone(),
                 },
                 duration_ms: 0,
+                speculated: false,
             },
         });
 

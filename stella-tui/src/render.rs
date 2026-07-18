@@ -984,6 +984,7 @@ pub(crate) fn entry_lines(
             summary,
             full,
             duration_ms,
+            speculated,
             ..
         } => {
             let (glyph, color) = if *ok {
@@ -996,12 +997,19 @@ pub(crate) fn entry_lines(
             let label = format!("{glyph} {name}");
             let label_style = Style::new().fg(color).add_modifier(Modifier::BOLD);
             let extra = full.lines().count().saturating_sub(1);
+            // ⚡ marks a speculated result: the duration overlapped the
+            // model's own streaming instead of following it.
+            let dur = if *speculated {
+                format!("⚡{duration_ms}ms")
+            } else {
+                format!("{duration_ms}ms")
+            };
             if expanded {
                 push_labeled(
                     &label,
                     label_style,
                     vec![Span::styled(
-                        format!("({} lines · {duration_ms}ms)", extra + 1),
+                        format!("({} lines · {dur})", extra + 1),
                         Style::new().fg(Color::DarkGray),
                     )],
                     width,
@@ -1028,9 +1036,9 @@ pub(crate) fn entry_lines(
                     .unwrap_or(summary.as_str());
                 let shown: String = first.chars().take(160).collect();
                 let hint = if extra > 0 {
-                    format!("  (+{extra} lines · {duration_ms}ms)")
+                    format!("  (+{extra} lines · {dur})")
                 } else {
-                    format!("  ({duration_ms}ms)")
+                    format!("  ({dur})")
                 };
                 push_labeled(
                     &label,
@@ -1420,6 +1428,7 @@ mod tests {
                 summary: "done".into(),
                 full: "done".into(),
                 duration_ms: 3,
+                speculated: false,
                 diff: None,
             },
             TranscriptEntry::Retry {
@@ -2015,6 +2024,7 @@ mod tests {
                 message: "not found".into(),
             },
             duration_ms: 12,
+            speculated: false,
         });
         let lines = transcript_lines(&model, false, 0);
         let joined: String = lines
@@ -2122,6 +2132,7 @@ mod tests {
                 summary: "ok".into(),
                 full: "ok".into(),
                 duration_ms: 3,
+                speculated: false,
                 diff: None,
             }),
             Some(theme::EMBER_GOLD),
@@ -2135,6 +2146,7 @@ mod tests {
                 summary: "no".into(),
                 full: "no".into(),
                 duration_ms: 3,
+                speculated: false,
                 diff: None,
             }),
             Some(theme::EMBER_CRIMSON),
