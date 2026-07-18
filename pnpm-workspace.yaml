@@ -1,0 +1,13 @@
+# The pnpm workspace for the stella monorepo's web packages. Rust crates are
+# NOT pnpm packages — cargo remains their build system and source of truth
+# (see the root package.json's rust:* scripts for the pnpm-side bridge).
+packages:
+  - stella-docs
+
+# pnpm 11 reads build-script approvals from here. Both deps ship prebuilt
+# platform binaries via optional deps, so approving their build scripts just
+# lets `pnpm install` exit cleanly — which Next 16's pre-build dependency
+# check (and Vercel) require.
+allowBuilds:
+  esbuild: true
+  sharp: true
