@@ -2897,7 +2897,7 @@ async fn run_goal_pipeline_turn(
 
         // An explicit break result (abort/error/judge-down) stands. If the goal
         // was met, success. Otherwise the round cap was reached unmet.
-        let result = match (result, goal_met) {
+        match (result, goal_met) {
             (Some(r), _) => r,
             (None, true) => Ok(()),
             (None, false) => {
@@ -2911,8 +2911,7 @@ async fn run_goal_pipeline_turn(
                     goal_config.max_rounds
                 ))
             }
-        };
-        result
+        }
     };
 
     drop(tx);

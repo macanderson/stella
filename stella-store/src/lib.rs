@@ -2073,7 +2073,10 @@ impl Store {
             for r in rows {
                 arr.push(r?);
             }
-            out.push(("executions", serde_json::to_string(&arr).unwrap_or_default()));
+            out.push((
+                "executions",
+                serde_json::to_string(&arr).unwrap_or_default(),
+            ));
         }
 
         // Telemetry — per-model-call token/cost/duration rows.
@@ -2144,11 +2147,7 @@ impl Store {
     fn query_to_json(&self, conn: &Connection, sql: &str) -> Result<String> {
         let mut stmt = conn.prepare(sql)?;
         let col_count = stmt.column_count();
-        let col_names: Vec<String> = stmt
-            .column_names()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let col_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
         let rows = stmt.query_map([], |row| {
             let mut obj = serde_json::Map::with_capacity(col_count);
             for (i, name) in col_names.iter().enumerate() {
@@ -2165,9 +2164,7 @@ impl Store {
                     ValueRef::Text(bytes) => {
                         serde_json::Value::String(String::from_utf8_lossy(bytes).into_owned())
                     }
-                    ValueRef::Blob(bytes) => {
-                        serde_json::Value::String(base64_encode(bytes))
-                    }
+                    ValueRef::Blob(bytes) => serde_json::Value::String(base64_encode(bytes)),
                 };
                 obj.insert(name.clone(), val);
             }
@@ -2195,8 +2192,7 @@ impl Store {
         ];
         let mut latest: Option<String> = None;
         for sql in candidates {
-            let row: rusqlite::Result<Option<String>> =
-                conn.query_row(sql, [], |row| row.get(0));
+            let row: rusqlite::Result<Option<String>> = conn.query_row(sql, [], |row| row.get(0));
             if let Ok(Some(ts)) = row
                 && !ts.is_empty()
             {
@@ -2213,9 +2209,8 @@ impl Store {
 /// RFC 4648 base64 encode without pulling a crate — only used for blob columns
 /// in the export dump (a rare case for this store).
 fn base64_encode(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b = [
             chunk[0],

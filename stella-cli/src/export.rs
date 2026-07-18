@@ -70,10 +70,7 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     // Raw JSON dumps — one per table, inside the timestamped folder.
     for (table, json) in &dumps {
         let pretty = pretty_json(json);
-        zip.add_file(
-            &format!("{folder}/raw/{table}.json"),
-            pretty.as_bytes(),
-        );
+        zip.add_file(&format!("{folder}/raw/{table}.json"), pretty.as_bytes());
     }
     // The dashboard.
     zip.add_file(&format!("{folder}/dashboard.html"), html.as_bytes());
@@ -115,11 +112,7 @@ fn comma(n: i64) -> String {
         }
         out.push(b as char);
     }
-    if neg {
-        format!("-{out}")
-    } else {
-        out
-    }
+    if neg { format!("-{out}") } else { out }
 }
 
 /// Sanitize a timestamp string for use as a directory name: strip anything
@@ -474,7 +467,11 @@ fn crc32_table() -> [u32; 256] {
     for i in 0..256u32 {
         let mut c = i;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB88320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
         table[i as usize] = c;
     }
@@ -639,17 +636,17 @@ mod tests {
 
     #[test]
     fn sanitize_timestamp_strips_unsafe_chars() {
-        assert_eq!(sanitize_timestamp("2024-01-15 10:30:00"), "2024-01-15-10-30-00");
+        assert_eq!(
+            sanitize_timestamp("2024-01-15 10:30:00"),
+            "2024-01-15-10-30-00"
+        );
         assert_eq!(sanitize_timestamp("1705312200000000"), "1705312200000000");
         assert_eq!(sanitize_timestamp("../etc/passwd"), "etc-passwd");
     }
 
     #[test]
     fn sanitize_timestamp_collapses_dash_runs() {
-        assert_eq!(
-            sanitize_timestamp("a--b---c"),
-            "a-b-c"
-        );
+        assert_eq!(sanitize_timestamp("a--b---c"), "a-b-c");
     }
 
     fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -674,35 +671,41 @@ mod tests {
         // Record a minimal execution + telemetry, then export and verify the
         // JSON round-trips.
         let store = Store::in_memory().unwrap();
-        use stella_store::{TelemetryRow, FileTouchRow};
+        use stella_store::{FileTouchRow, TelemetryRow};
 
         // We need an execution id — use the internal record path via a direct
         // SQL insert since start_execution is on the CLI side.
         store
-            .record_telemetry(1, &TelemetryRow {
-                step: 0,
-                provider: "test".into(),
-                model: "test-model".into(),
-                input_tokens: 100,
-                estimated_input_tokens: 90,
-                output_tokens: 50,
-                cache_read_tokens: 0,
-                cache_miss_tokens: 100,
-                cache_write_tokens: 10,
-                cost_usd: 0.001,
-                duration_ms: 500,
-                retries: 0,
-                tool_calls: 1,
-            })
+            .record_telemetry(
+                1,
+                &TelemetryRow {
+                    step: 0,
+                    provider: "test".into(),
+                    model: "test-model".into(),
+                    input_tokens: 100,
+                    estimated_input_tokens: 90,
+                    output_tokens: 50,
+                    cache_read_tokens: 0,
+                    cache_miss_tokens: 100,
+                    cache_write_tokens: 10,
+                    cost_usd: 0.001,
+                    duration_ms: 500,
+                    retries: 0,
+                    tool_calls: 1,
+                },
+            )
             .unwrap();
         store
-            .record_files_touched(1, &[FileTouchRow {
-                path: "src/main.rs".into(),
-                ops: "M".into(),
-                lines_added: 10,
-                lines_removed: 2,
-                events_json: "[]".into(),
-            }])
+            .record_files_touched(
+                1,
+                &[FileTouchRow {
+                    path: "src/main.rs".into(),
+                    ops: "M".into(),
+                    lines_added: 10,
+                    lines_removed: 2,
+                    events_json: "[]".into(),
+                }],
+            )
             .unwrap();
 
         let dumps = store.export_all_json().unwrap();
@@ -737,21 +740,24 @@ mod tests {
         {
             let store = Store::open(tmp.path()).unwrap();
             store
-                .record_telemetry(1, &TelemetryRow {
-                    step: 0,
-                    provider: "anthropic".into(),
-                    model: "claude-test".into(),
-                    input_tokens: 1000,
-                    estimated_input_tokens: 900,
-                    output_tokens: 200,
-                    cache_read_tokens: 500,
-                    cache_miss_tokens: 500,
-                    cache_write_tokens: 10,
-                    cost_usd: 0.012,
-                    duration_ms: 1500,
-                    retries: 1,
-                    tool_calls: 3,
-                })
+                .record_telemetry(
+                    1,
+                    &TelemetryRow {
+                        step: 0,
+                        provider: "anthropic".into(),
+                        model: "claude-test".into(),
+                        input_tokens: 1000,
+                        estimated_input_tokens: 900,
+                        output_tokens: 200,
+                        cache_read_tokens: 500,
+                        cache_miss_tokens: 500,
+                        cache_write_tokens: 10,
+                        cost_usd: 0.012,
+                        duration_ms: 1500,
+                        retries: 1,
+                        tool_calls: 3,
+                    },
+                )
                 .unwrap();
         }
 
@@ -759,7 +765,12 @@ mod tests {
         let zip_path = export_session(tmp.path()).expect("export should succeed");
         assert!(zip_path.exists(), "the zip file was written");
         assert!(
-            zip_path.file_name().unwrap().to_str().unwrap().starts_with("session-"),
+            zip_path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("session-"),
             "filename starts with session-"
         );
         assert!(
@@ -783,10 +794,7 @@ mod tests {
             content.contains("claude-test"),
             "model name appears in the data"
         );
-        assert!(
-            content.contains("manifest"),
-            "manifest is present"
-        );
+        assert!(content.contains("manifest"), "manifest is present");
     }
 
     #[test]
