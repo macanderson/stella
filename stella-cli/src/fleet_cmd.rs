@@ -110,7 +110,9 @@ pub async fn run_fleet(
     let run_id = format!("fleet-{now_ms}-{}", std::process::id());
     let worker = EngineWorker {
         cfg: cfg.clone(),
-        budget_limit,
+        // Divide the aggregate cap across the concurrency width so one wave's
+        // in-flight children can't collectively overshoot `--budget`.
+        per_child_budget: budget_limit.map(|b| b / max_concurrency.max(1) as f64),
     };
     let fleet = Fleet::new(
         worker,
@@ -335,7 +337,11 @@ fn render_watch_line(watch: &BranchWatch) {
 /// the task's own workspace, with the standard (headless) tool registry.
 struct EngineWorker {
     cfg: Config,
-    budget_limit: Option<f64>,
+    /// Per-child spend cap. Derived as `--budget / max_concurrency` (not the
+    /// full `--budget`), so a wave of concurrent children can't each spend the
+    /// whole cap and blow the aggregate — the parent fleet guard then enforces
+    /// the true total, stopping further launches once it is crossed.
+    per_child_budget: Option<f64>,
 }
 
 #[async_trait::async_trait]
@@ -348,7 +354,7 @@ impl FleetWorker for EngineWorker {
         // fleet workers are genuinely parallel — and awaiting the `Send`
         // half of a oneshot from the async side.
         let cfg = self.cfg.clone();
-        let budget_limit = self.budget_limit;
+        let per_child_budget = self.per_child_budget;
         let task = task.clone();
         let root = workspace_root.to_path_buf();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -357,7 +363,7 @@ impl FleetWorker for EngineWorker {
                 .enable_all()
                 .build()
                 .map_err(|e| format!("worker runtime failed to start: {e}"))
-                .and_then(|rt| rt.block_on(run_task(&cfg, budget_limit, &task, &root)));
+                .and_then(|rt| rt.block_on(run_task(&cfg, per_child_budget, &task, &root)));
             let _ = tx.send(result);
         });
         let failed = |reason: String| WorkerOutcome {

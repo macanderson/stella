@@ -164,6 +164,11 @@ pub enum FleetError {
     ClaimsWithoutStore { task: TaskId },
     #[error(transparent)]
     Claims(#[from] stella_store::StoreError),
+    /// The aggregate parent budget was already exhausted, so this task was
+    /// skipped before launching a worker rather than being run. Reported as a
+    /// budget skip, not a task failure.
+    #[error("task `{task}` skipped: fleet budget exhausted before it could start")]
+    BudgetExhausted { task: TaskId },
 }
 
 /// The fleet orchestrator. Owns the worker, the worktree manager, the ledger,
@@ -243,7 +248,21 @@ where
     /// into the ledger (one transaction) and meters its cost into the parent
     /// budget — returning a [`TaskHandle`].
     pub async fn dispatch(&self, task: &Task) -> Result<TaskHandle, FleetError> {
-        // 0. Claim the declared paths before anything else exists for this
+        // 0a. Aggregate budget gate — enforced BEFORE the worker runs. The
+        //     post-run `record_spend` alone only stopped launching the NEXT
+        //     wave, so a single wide fan-out wave (the common case: every
+        //     positional prompt is an independent task, all in one wave) ran to
+        //     completion and could spend far past `--budget`. Checking the
+        //     shared parent guard as each task claims a concurrency slot stops
+        //     launching further workers once the cap is crossed. Combined with
+        //     each child's per-child remaining-budget sub-cap (fleet_cmd), the
+        //     aggregate honors the flag.
+        if let BudgetOutcome::AbortTurn { .. } = self.lock_budget().evaluate() {
+            return Err(FleetError::BudgetExhausted {
+                task: task.id.clone(),
+            });
+        }
+        // 0b. Claim the declared paths before anything else exists for this
         //    attempt — a conflict is a plain dispatch failure with nothing
         //    (worktree, ledger rows) to clean up.
         self.acquire_claims(task)?;
@@ -448,17 +467,29 @@ where
             // away the settled siblings' handles (their spend, commits, and
             // worktrees would otherwise vanish from the report).
             let mut handles: Vec<TaskHandle> = Vec::with_capacity(ready.len());
+            let mut wave_tripped_budget = false;
             for (task_id, result) in self.run_wave(&ready).await {
-                attempted.insert(task_id.clone());
                 match result {
-                    Ok(handle) => handles.push(handle),
-                    Err(e) => report.dispatch_failures.push((task_id, e.to_string())),
+                    Ok(handle) => {
+                        attempted.insert(task_id.clone());
+                        handles.push(handle);
+                    }
+                    // A pre-dispatch budget skip is NOT a task failure and NOT
+                    // an attempt — the worker never ran. Leaving it out of
+                    // `attempted` lets the final recompute report it (and every
+                    // task behind the aborted wave) as `skipped`. Just trip the
+                    // run so no further waves launch.
+                    Err(FleetError::BudgetExhausted { .. }) => {
+                        wave_tripped_budget = true;
+                    }
+                    Err(e) => {
+                        attempted.insert(task_id.clone());
+                        report.dispatch_failures.push((task_id, e.to_string()));
+                    }
                 }
             }
             // Deterministic order regardless of completion timing.
             handles.sort_by(|a, b| a.task_id.cmp(&b.task_id));
-
-            let mut wave_tripped_budget = false;
             for handle in handles {
                 if handle.outcome.success {
                     succeeded.insert(handle.task_id.clone());
@@ -926,6 +957,67 @@ mod tests {
         assert_eq!(report.completed.len(), 3);
         // d has no attempt row at all — it was never dispatched.
         assert!(f.ledger_commits_for_task("d").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn enforced_budget_stops_a_wide_single_wave_fan_out() {
+        // THE fleet-budget P1: six INDEPENDENT tasks (no deps) all land in one
+        // wave — the common `stella fleet` shape where every positional prompt
+        // is its own task. Each costs 0.5 under an enforced $1.00 cap. The old
+        // code metered spend only AFTER each worker and only gated the NEXT
+        // wave, so this single wave ran all six to completion and spent
+        // 6 × 0.5 = $3.00 — 3× the cap. The pre-dispatch gate in `dispatch()`
+        // re-checks the shared parent guard as each task claims its slot, so
+        // once cumulative spend passes the cap the remaining tasks are skipped.
+        //
+        // Serialize the wave (max_concurrency = 1) so the trip point is exact:
+        // a,b run (spend 0.5, 1.0 == cap → Continue), c runs (spend 1.5 > cap),
+        // then d,e,f each evaluate over-cap and are skipped before running.
+        let plan = Plan::new(vec![
+            Task::new("a", "a", "p"),
+            Task::new("b", "b", "p"),
+            Task::new("c", "c", "p"),
+            Task::new("d", "d", "p"),
+            Task::new("e", "e", "p"),
+            Task::new("f", "f", "p"),
+        ]);
+        let f = fleet(
+            FakeWorker::new(0.5),
+            OkGit::new(),
+            BudgetGuard::new(BudgetMode::Enforced, Some(1.0), None),
+            FleetConfig::new("run1", "HEAD").with_max_concurrency(1),
+        );
+
+        let report = f.run_plan(&plan).await.unwrap();
+
+        assert!(report.budget_aborted, "the wide wave must trip the cap");
+        // Only three tasks ran; the fan-out did NOT spend 6 × 0.5.
+        assert_eq!(
+            report.completed.len(),
+            3,
+            "fan-out ran past the cap (completed = {:?})",
+            report.completed
+        );
+        // Total ledger spend is bounded near the cap, not N × cap.
+        let spent = f.ledger_total_spend().unwrap();
+        assert!(
+            spent <= 1.5 + 1e-9,
+            "aggregate spend {spent} exceeded the bounded trip point"
+        );
+        // The three un-launched tasks are reported as skipped (not silently
+        // dropped, not counted as failures), and never touched the ledger.
+        assert_eq!(report.skipped.len(), 3, "skipped = {:?}", report.skipped);
+        for id in ["d", "e", "f"] {
+            assert!(
+                report.skipped.contains(&id.to_string()),
+                "{id} should be skipped: {:?}",
+                report.skipped
+            );
+            assert!(
+                f.ledger_commits_for_task(id).unwrap().is_empty(),
+                "{id} must have no attempt/commit row — it never ran"
+            );
+        }
     }
 
     #[tokio::test]
