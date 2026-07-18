@@ -1,0 +1,47 @@
+---
+title: stella stats
+description: Summarize cost, tokens, and resolve rate per provider/model from local telemetry.
+---
+
+Read back what your runs actually cost. `stella stats` summarizes cost, tokens, and resolve rate per provider and model from the local telemetry store — `$/resolved-task` receipts, computed entirely on your machine.
+
+## Synopsis
+
+```bash
+stella stats [--format <table|json|csv>] [--provider <id>]
+```
+
+## What it does
+
+`stella stats` reads `<workspace>/.stella/store.db` — the embedded SQLite store every run writes to — and aggregates it per provider/model: total tokens, total cost, and how often work resolved. It makes no network calls and needs no API key; it only reads local telemetry.
+
+## Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--format <table\|json\|csv>` | Output format. `table` (default) prints an aligned table with a `TOTAL` row; `json` and `csv` are for piping into other tools. |
+| `--provider <id>` | Only include executions for this provider id (e.g. `zai`, `anthropic`, `local`). |
+
+## Examples
+
+Print the aligned summary with a total row:
+
+```bash
+stella stats
+```
+
+Just one provider, as CSV for a spreadsheet:
+
+```bash
+stella stats --provider anthropic --format csv > anthropic-spend.csv
+```
+
+Emit JSON for a dashboard or a jq pipeline:
+
+```bash
+stella stats --format json | jq '.[] | {model, cost_usd, resolve_rate}'
+```
+
+<Callout type="info">
+The store is a real SQLite file. Beyond `stella stats` you can query it directly with any SQLite client — see [Telemetry &amp; budget](/docs/telemetry).
+</Callout>

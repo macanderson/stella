@@ -1,4 +1,4 @@
 {
   "title": "Commands",
-  "pages": ["index", "run", "chat", "goal", "monitor", "init", "models", "tools", "config", "version"]
+  "pages": ["index", "run", "chat", "goal", "monitor", "init", "fleet", "graph", "models", "stats", "memory", "mcp", "tools", "config", "version"]
 }
