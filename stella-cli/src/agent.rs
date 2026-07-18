@@ -42,7 +42,9 @@ use crate::OutputFormat;
 use crate::config::Config;
 use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
-use crate::memory::{SessionMemory, inject_recall_block, turn_warrants_reflection};
+use crate::memory::{
+    ReflectionReport, SessionMemory, inject_recall_block, turn_warrants_reflection,
+};
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
 use stella_context::EpisodeOutcome;
@@ -460,17 +462,24 @@ async fn run_pipeline_one_shot(
             .await;
     }
 
-    if result.is_ok()
-        && turn_warrants_reflection(&messages)
+    // Reflect on turns that did real work — success AND failure. A failed
+    // pipeline run is a high-value learning signal (root-cause prompt via
+    // `succeeded=false`); gating on `turn_warrants_reflection` alone (not
+    // `is_ok`) still skips the wasteful case — an abort with no tool work,
+    // where there is nothing to mine and the failure was almost certainly
+    // external (unreachable provider, budget floor).
+    if turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        m.reflect_and_record(
-            resolver.provider(),
-            &messages,
-            format != OutputFormat::Text,
-            result.is_ok(),
-        )
-        .await;
+        let report = m
+            .reflect_and_record(
+                resolver.provider(),
+                &messages,
+                format != OutputFormat::Text,
+                result.is_ok(),
+            )
+            .await;
+        surface_reflection(&report, format);
     }
 
     if let Some(set) = &mcp {
@@ -838,15 +847,23 @@ async fn run_raw_one_shot(
     }
     // …and reflect on the completed turn, recording domain-tagged lessons
     // (recurring ones auto-promote to SKILL.md files). Best-effort: never
-    // fails or slows the turn that just ran. Gated on `turn_warrants_reflection`
-    // so a tool-free turn never spends a model call to mine lessons it can't
-    // have produced (the whole one-shot transcript IS this turn).
-    if outcome.is_ok()
-        && turn_warrants_reflection(&messages)
+    // fails or slows the turn that just ran. Reflect on success AND failure —
+    // a failed one-shot is a prime learning signal (root-cause prompt via
+    // `succeeded=false`). Gated on `turn_warrants_reflection` so a tool-free
+    // turn (nothing to mine, failure almost certainly external) never spends a
+    // model call. The report is surfaced so a model-call error is never silent.
+    if turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        m.reflect_and_record(&*provider, &messages, format != OutputFormat::Text, true)
+        let report = m
+            .reflect_and_record(
+                &*provider,
+                &messages,
+                format != OutputFormat::Text,
+                outcome.is_ok(),
+            )
             .await;
+        surface_reflection(&report, format);
     }
     if let Some(set) = &mcp {
         set.close_all().await;
@@ -1295,6 +1312,33 @@ pub(crate) async fn record_turn_episode(
     .await;
 }
 
+/// Surface a post-turn [`ReflectionReport`] for a headless / line-based
+/// format — the reflection outcome must never vanish (the silent-reflection
+/// blind spot this closes). `stream-json` gets one machine event line so a
+/// metering/CI consumer sees that reflection ran and whether it errored;
+/// `text` and `json` get a one-line stderr warning ONLY when the reflection
+/// model call actually failed — a clean empty reflection is the common,
+/// correct case and stays quiet. Never writes stdout in `json` mode, so that
+/// format's single-object contract is untouched. Best-effort: a `None` model
+/// error in `text`/`json` prints nothing.
+fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
+    if format == OutputFormat::StreamJson {
+        let line = serde_json::json!({
+            "type": "reflect",
+            "recorded": report.recorded,
+            "error": report.model_error,
+        });
+        println!("{line}");
+        return;
+    }
+    if let Some(err) = &report.model_error {
+        eprintln!(
+            "  {} post-turn reflection skipped — model call failed: {err}",
+            "!".yellow()
+        );
+    }
+}
+
 /// Build the workspace code-graph index into `.stella/codegraph.db` (the
 /// `stella-graph` tree-sitter indexer). This is the data side of `init`: the
 /// domain taxonomy tags graph nodes/edges, and the index makes the symbols +
@@ -1648,6 +1692,7 @@ pub async fn run_init(
     model_override: Option<&str>,
     api_key_override: Option<&str>,
     base_url_override: Option<&str>,
+    no_anim: bool,
 ) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
@@ -1675,8 +1720,16 @@ pub async fn run_init(
         }
     };
 
-    let mut emit = |line: String| println!("  {line}");
+    // Play the launch cinematic (starfield + jetpack turtle) over the indexing
+    // work. Progress lines route THROUGH it so they print above the animation
+    // instead of fighting its cursor moves; it steps aside on a non-TTY,
+    // --no-anim, STELLA_NO_ANIM, or NO_COLOR (`InitCinematic` degrades to a
+    // plain line printer). `finish()` clears the animation rows before the
+    // domain summary prints.
+    let cine = crate::init_fx::InitCinematic::start(crate::init_fx::animation_enabled(no_anim));
+    let mut emit = |line: String| cine.log(line);
     let domains = init_workspace(provider.as_deref(), &workspace_root, &mut emit).await?;
+    cine.finish().await;
 
     for domain in &domains.domains {
         println!(

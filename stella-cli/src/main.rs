@@ -24,6 +24,7 @@ mod config;
 mod domains;
 mod extensions;
 mod fleet_cmd;
+mod init_fx;
 mod interactive;
 mod mcp_cmd;
 mod memory;
@@ -540,6 +541,7 @@ fn run(cli: Cli) -> Result<(), String> {
             cli.model.as_deref(),
             cli.api_key.as_deref(),
             cli.base_url.as_deref(),
+            cli.no_anim,
         ));
     }
 
