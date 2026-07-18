@@ -157,19 +157,15 @@ struct ZaiStreamChunk {
     error: Option<ZaiStreamError>,
 }
 
-/// An OpenAI-compatible in-band error object. `code` is `Value` because
-/// gateways disagree on its type (string on some, integer HTTP status on
-/// others) — we only classify on `type`/`message` text, so its exact type
-/// doesn't matter.
+/// An OpenAI-compatible in-band error object. We classify only on
+/// `type`/`message` text — the gateways don't share a stable machine
+/// code, so matching on human-readable text is the only reliable signal.
 #[derive(Deserialize, Debug, Default)]
 struct ZaiStreamError {
     #[serde(default)]
     message: String,
     #[serde(default, rename = "type")]
     kind: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    code: Option<Value>,
 }
 
 /// Classify an in-band OpenAI-compatible error frame into a typed
@@ -221,9 +217,6 @@ struct ZaiErrorEnvelope {
 struct ZaiErrorBody {
     #[serde(default)]
     message: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    code: Option<Value>,
 }
 
 /// Classify an HTTP 429 by its body. Z.ai returns 429 both for real rate
