@@ -50,6 +50,7 @@ const SUMMARY_CHARS: usize = 96;
 
 /// Run a fleet: build/load the plan, dispatch it wave by wave, report —
 /// then, with `watch`, hold the fleet PR/CI monitor on the branches.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_fleet(
     cfg: &Config,
     prompts: &[String],

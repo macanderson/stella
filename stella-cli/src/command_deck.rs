@@ -1829,8 +1829,7 @@ async fn run_deck_command(
             }
         }
         "/donate" => {
-            say(
-                "❤️  Support Stella\n\
+            say("❤️  Support Stella\n\
                  \n\
                  Stella is free, open-source, and local-first — no server, no \
                  account, no telemetry sent home. If it's saving you time or \
@@ -1844,8 +1843,7 @@ async fn run_deck_command(
                  provider, and the next release.\n\
                  \n\
                  Thank you! 🙏"
-                    .to_string(),
-            );
+                .to_string());
         }
         // Deck-local commands (tab switches, `/agents` opening the Agents
         // tab, `/skills` and `/mcp` opening their tabs) are normally consumed
