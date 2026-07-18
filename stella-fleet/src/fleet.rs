@@ -865,7 +865,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_plan_executes_all_waves_and_meters_total_spend() {
-        // a -> {b, c} -> d : two middle tasks run concurrently in one wave.
+        // a -> {b, c} -> d: two middle tasks run concurrently in one wave.
         let plan = Plan::new(vec![
             Task::new("a", "a", "p"),
             Task::new("b", "b", "p").depends_on(["a"]),

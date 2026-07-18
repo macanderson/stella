@@ -4,7 +4,7 @@
 //! [`Sleeper`] port rather than calling `tokio::time::sleep` directly, the
 //! same "ports, not concretions" seam as [`crate::ports::Clock`].
 //!
-//! Binding lessons this module encodes :
+//! Binding lessons this module encodes:
 //!
 //! - **L-M4**: deterministic fast paths (triage/classification) run with
 //!   `max_retries = 0` and fall through on the first failure — never hang,

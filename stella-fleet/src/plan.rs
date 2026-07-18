@@ -1,7 +1,7 @@
 //! The planner DAG ("planner DAG";
 //! Phase 5 item 2). Pure scheduling logic over owned data — no
 //! I/O, no async — so every property is table- and proptest-checkable
-//!.
+//!
 //!
 //! A [`Plan`] is a set of [`Task`]s with `depends_on` edges. The fleet
 //! executes it wave by wave: [`Plan::ready_tasks`] returns the tasks whose

@@ -24,7 +24,7 @@ use crate::store::{ContextStore, NodeKind};
 #[async_trait]
 pub trait ContextProvider: Send + Sync {
     /// Identity and data-flow declaration surfaced at install/consent time
-    ///. A host gates `egress` providers
+    /// A host gates `egress` providers
     /// on explicit consent using this.
     fn info(&self) -> ProviderInfo;
 

@@ -52,7 +52,7 @@ impl Pricing {
 }
 
 /// Which tool-call dialect a model's provider speaks
-///.
+///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolDialect {
     AnthropicTools,

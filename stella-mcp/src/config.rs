@@ -4,7 +4,7 @@
 //! whole-file document ([`McpConfig`]) and a single entry
 //! ([`McpServerConfig`]) round-trip through serde + TOML.
 //!
-//! Security : a `stdio` server inherits **no**
+//! Security: a `stdio` server inherits **no**
 //! ambient environment. Only the keys listed in its `env` table reach the
 //! child — nothing else, so an `ANTHROPIC_API_KEY` in the parent shell can
 //! never leak into an MCP subprocess.

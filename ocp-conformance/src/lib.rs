@@ -1,5 +1,5 @@
 //! `ocp-conformance` — the public Open Context Protocol conformance suite
-//!.
+//!
 //!
 //! "OCP conformant" means *green on this suite for your declared capability
 //! set* — a checkable claim, which is what makes third-party adoption safe.

@@ -1,5 +1,5 @@
 //! Handshake and capability negotiation types
-//!. `DataFlow` is
+//! `DataFlow` is
 //! the security-critical field: hosts surface it at install/consent time,
 //! and `egress: true` providers must never be auto-enabled.
 

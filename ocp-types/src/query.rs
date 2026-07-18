@@ -1,5 +1,5 @@
 //! `context/query` request/response shapes
-//!. Budget-aware
+//! Budget-aware
 //! by contract: every query carries `max_tokens`; a conforming provider
 //! never returns more than the budget and never lies about cost.
 

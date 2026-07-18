@@ -2,7 +2,7 @@
 //! ("the agent cannot overwrite arbitrary paths via
 //! a generation tool"). Every generated file lands as `<id>.<ext>` *inside*
 //! the caller-supplied root, and a manifest row records its provenance
-//!.
+//!
 //!
 //! Path-traversal safety is structural: ids are generated here (never
 //! caller-supplied), and the filename is sanitized to `[a-z0-9_.-]` with any

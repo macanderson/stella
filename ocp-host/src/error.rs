@@ -12,7 +12,7 @@ use ocp_types::DataFlow;
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
     /// The provider speaks an incompatible protocol family
-    ///. Reported the instant the handshake ack
+    /// Reported the instant the handshake ack
     /// arrives — never a hang (task deliverable 1).
     #[error(
         "protocol version mismatch: host speaks {host}, provider {provider} speaks {provider_version}"
@@ -24,7 +24,7 @@ pub enum HostError {
     },
 
     /// A line/body could not be encoded to or decoded from the wire envelope
-    ///. A malformed provider message is a
+    /// A malformed provider message is a
     /// clean error, never a host crash (task deliverable 5).
     #[error("wire encode/decode error: {0}")]
     Wire(String),

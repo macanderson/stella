@@ -29,7 +29,7 @@ pub enum PreviewRung {
 /// lookup (rather than reading `std::env` directly) keeps detection pure and
 /// testable. Precedence: kitty (most capable) → iTerm2 → plain.
 ///
-/// Signals :
+/// Signals:
 /// * kitty: `KITTY_WINDOW_ID` set, or `TERM` contains `kitty`.
 /// * iTerm2: `TERM_PROGRAM` is `iTerm.app`, or `WezTerm` (which implements the
 ///   iTerm2 inline-image protocol).

@@ -1,8 +1,8 @@
 //! Credential resolution. Never `Display`/`Debug`-leaks the secret value —
 //! credentials are never logged, never in trace JSONL
-//!.
 //!
-//! Resolution order : CLI flag -> env var ->
+//!
+//! Resolution order: CLI flag -> env var ->
 //! provider-native config (`~/.config/stella/credentials.toml` here; the AWS
 //! profile file and Google ADC file remain deferred — the Bedrock/Vertex
 //! adapters take ready credentials from env vars for now, see their module
@@ -72,7 +72,7 @@ impl ApiKey {
         }
     }
 
-    /// The full resolution chain : CLI flag -> env
+    /// The full resolution chain: CLI flag -> env
     /// var -> `credentials_file` -> interactive prompt. `provider_id` keys
     /// both the credentials-file lookup and, on a successful interactive
     /// prompt, what gets written back so the user is only ever prompted

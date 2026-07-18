@@ -2,7 +2,7 @@
 //! whichever renderer (TUI or the JSON serializer) is listening.
 //! `--output-format stream-json` is a `serde_json` serialization of this
 //! exact enum, one line per event: a stable, versioned machine interface
-//!.
+//!
 //!
 //! This is deliberately a *subset* at Phase 0 (only what a bare
 //! provider-streaming spike needs); later phases append variants as the
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::tool::{ToolCall, ToolOutput};
 
 /// A named point in the turn's data flow
-///. Exactly one stage
+/// Exactly one stage
 /// vocabulary exists in this workspace — never duplicated per-crate (the
 /// TS-era `StageKind` duplication this structurally forbids, L-E1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +44,7 @@ pub enum StageKind {
     Complete,
 }
 
-/// Budget enforcement mode : `off` (no metering),
+/// Budget enforcement mode: `off` (no metering),
 /// `observed` (meter + warn), `enforced` (hard stop with a clean turn
 /// abort — never a mid-tool kill).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,7 +93,7 @@ pub enum AgentEvent {
         deduped: usize,
     },
     /// Emitted after every provider/media call that spends money
-    ///. The TUI HUD renders spend live from this
+    /// The TUI HUD renders spend live from this
     /// stream; nothing user-visible about spend is derived from state that
     /// isn't also in this event.
     BudgetTick {
@@ -162,7 +162,7 @@ pub enum AgentEvent {
         kind: FileChangeKind,
         diff: Option<String>,
     },
-    /// Context recall completed : which frames
+    /// Context recall completed: which frames
     /// reached the prompt, from which providers, at what token cost. Every
     /// frame carries a human `citation_label`, never a raw id (L-C4).
     ContextRecall {

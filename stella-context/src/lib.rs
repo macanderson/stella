@@ -1,6 +1,6 @@
 //! `stella-context` — **the context plane**: the single door between the
 //! engine and everything the agent knows that isn't already in the prompt
-//!. One SQLite file, one
+//! One SQLite file, one
 //! engine ([`ContextStore`]) holds a bi-temporal property graph, a fingerprinted
 //! embedding index, and episodic memory; on top of it sits a hybrid, budgeted,
 //! cited retrieval pipeline ([`ContextStore::recall`]) and a bi-temporal

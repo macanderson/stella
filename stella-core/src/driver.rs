@@ -94,7 +94,7 @@ pub struct EngineConfig {
     /// Working directory reported to lifecycle hooks (`crate::hooks`) as the
     /// `cwd` of every [`HookPayload`]. Kept here — rather than sniffed via
     /// `std::env::current_dir()` inside the engine — so `stella-core`
-    /// performs no I/O of its own : the caller
+    /// performs no I/O of its own: the caller
     /// (which already knows the workspace root) supplies the real path, and
     /// the `"."` default keeps hook-free turns unaffected. Only read when
     /// hooks are actually configured.

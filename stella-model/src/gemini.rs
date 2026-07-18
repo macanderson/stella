@@ -262,7 +262,7 @@ pub(crate) struct GeminiInboundPart {
 /// assignment wins. `candidates_token_count` excludes thinking tokens; the
 /// engine's one `output_tokens` figure includes them (they are billed
 /// output), per the "normalization lives in the adapter" rule
-///.
+///
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GeminiUsageMetadata {

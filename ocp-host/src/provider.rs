@@ -21,7 +21,7 @@ use crate::error::HostError;
 #[async_trait]
 pub trait ContextProvider: Send + Sync {
     /// The provider's host-facing id — its routing key and its consent key
-    ///.
+    ///
     fn id(&self) -> &str;
 
     /// Identity + declared data-flow direction, surfaced at consent time

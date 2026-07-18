@@ -66,5 +66,5 @@ pub use stdio::{RawStdioConnection, StdioProvider};
 pub use wire::{Envelope, decode_line, encode_line, envelope_kind, versions_compatible};
 
 /// The OCP protocol version this host speaks, re-exported from `ocp-types`
-///.
+///
 pub use ocp_types::PROTOCOL_VERSION;

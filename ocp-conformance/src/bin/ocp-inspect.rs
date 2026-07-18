@@ -1,5 +1,5 @@
 //! `ocp-inspect` — an interactive OCP prober, analogous to MCP's inspector
-//!. Point it at a provider; it completes the
+//! Point it at a provider; it completes the
 //! handshake, prints the negotiated capabilities, optionally fires a test
 //! query, and runs the conformance suite — all in human-readable colored
 //! output.

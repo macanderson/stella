@@ -1,5 +1,5 @@
 //! The `MediaProvider` port and its request/response types
-//!. One trait, many vendor adapters behind it —
+//! One trait, many vendor adapters behind it —
 //! the same ports-not-concretions discipline the chat `Provider` uses.
 //!
 //! `generate_image` is sync-ish (one HTTP round trip, bytes back);
@@ -10,7 +10,7 @@
 //! [`crate::artifact::ArtifactStore`] — so the artifact-root jail
 //! is enforced in exactly one place.
 //!
-//! Audio/3D are explicitly future : the trait reserves
+//! Audio/3D are explicitly future: the trait reserves
 //! that method-space by contract but ships no v1 stub, to avoid churning the
 //! port surface before there's a real adapter.
 
@@ -71,7 +71,7 @@ impl FromStr for ImageSize {
 }
 
 /// A per-job cost estimate drawn from the provider's rate card
-///. `detail` is the human explanation the cost gate
+/// `detail` is the human explanation the cost gate
 /// shows before charging money.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CostEstimate {

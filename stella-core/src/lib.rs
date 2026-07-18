@@ -6,7 +6,7 @@
 //! `ToolExecutor` traits and emits `AgentEvent`s over a channel. All
 //! decision logic (compaction, eviction, loop detection, budget) is plain
 //! synchronous functions over owned data — easy to property-test
-//!.
+//!
 
 pub mod budget;
 pub mod bus;

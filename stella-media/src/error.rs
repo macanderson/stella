@@ -4,7 +4,7 @@
 //! auth / malformed / cancelled / terminal) with its own type because
 //! `stella-media` may not depend on `stella-model` (parallel-workstream
 //! isolation, see the crate-level doc). Two categories are added beyond the
-//! chat provider's set, both required by :
+//! chat provider's set, both required by:
 //!
 //! * [`MediaError::ContentPolicy`] — a provider refusal (
 //!   §7 lists content-policy refusals as a failure shape the fixtures must
@@ -39,7 +39,7 @@ pub enum MediaError {
     Auth(String),
 
     /// The provider refused the prompt on safety/content-policy grounds
-    ///. Terminal.
+    /// Terminal.
     #[error("media provider refused the request (content policy): {0}")]
     ContentPolicy(String),
 
@@ -66,7 +66,7 @@ pub enum MediaError {
     Cancelled,
 
     /// The cost gate denied a video job above the confirmation threshold
-    ///. Terminal.
+    /// Terminal.
     #[error(
         "cost gate denied the job (estimated ${estimated_usd:.4}, threshold ${threshold_usd:.4})"
     )]

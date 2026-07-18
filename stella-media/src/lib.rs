@@ -13,12 +13,12 @@
 //!   runtime-skipped live smokes (L-V4).
 //! * [`artifact`] — [`ArtifactStore`]: the single writer to
 //!   `.stella/artifacts/`, path-traversal-proof, with a crash-atomic manifest
-//!.
+//!
 //! * [`svg`] — the [`SvgPipeline`]: validate → sanitize → optimize with a
 //!   bounded model-repair loop, treating LLM SVG as untrusted code (L-V2).
 //! * [`preview`] — the terminal preview ladder (kitty / iTerm2 / plain), pure
 //! string builders, no TTY writes.
-//! * [`cost_gate`] — the video confirmation gate :
+//! * [`cost_gate`] — the video confirmation gate:
 //!   deny-by-default headless, threshold-configurable.
 //! * [`jobs`] — persisted video-job state + live reconciliation so a
 //!   dollar-cost job survives a dropped terminal and is never reported from

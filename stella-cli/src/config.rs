@@ -1,6 +1,6 @@
 //! Configuration: provider/model resolution, BYOK credential lookup.
 //!
-//! Resolution order : CLI flag -> env var ->
+//! Resolution order: CLI flag -> env var ->
 //! `~/.config/stella/credentials.toml` -> interactive prompt on first use.
 //! The full chain lives in `stella_model::credential::ApiKey::resolve`; this
 //! module's job is picking WHICH provider (from `--model`, or the first one

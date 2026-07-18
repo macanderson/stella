@@ -12,7 +12,7 @@
 //! allowed writer — and every tool reports the citation-ready path.
 //!
 //! Video is an async, dollar-cost job behind the cost gate
-//!. A tool call has no interactive confirmation
+//! A tool call has no interactive confirmation
 //! surface, so `generate_video` runs the gate headless — deny by default,
 //! with the explicit `confirm_spend` input as the `--yes`-equivalent bypass
 //! the model passes only after the user approved the reported estimate. The

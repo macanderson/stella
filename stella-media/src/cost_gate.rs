@@ -57,7 +57,7 @@ impl CostGate for HeadlessCostGate {
     }
 }
 
-/// The pure gate decision : if the estimate is at or
+/// The pure gate decision: if the estimate is at or
 /// below `threshold_usd`, the job passes without consulting the gate;
 /// otherwise the gate decides. A denial is a terminal
 /// [`MediaError::CostDenied`] carrying the numbers.
