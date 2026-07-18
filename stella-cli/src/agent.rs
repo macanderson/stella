@@ -212,13 +212,46 @@ Workspace memories (lessons from previous sessions — apply them):
     }
 }
 
-/// EngineConfig for a session: defaults, with the workspace root as the
-/// `cwd` every lifecycle-hook payload reports (`stella_core::hooks`).
-pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
-    EngineConfig {
+/// EngineConfig for `kind`: defaults + the workspace root as hook `cwd`,
+/// with the agent's `agent_engine_config` tuning applied — temperature and
+/// max_tokens override the engine defaults only when set (the "Include"
+/// contract), effort/reasoning/params land verbatim (they default to
+/// `None` anyway).
+fn tuned_engine_config(cfg: &Config, kind: crate::settings::EngineAgentKind) -> EngineConfig {
+    let mut engine = EngineConfig {
         cwd: cfg.workspace_root.display().to_string(),
         ..EngineConfig::default()
+    };
+    if let Some(settings) = &cfg.engine_settings {
+        let tuning = crate::engine_config::tuning_for(settings, kind);
+        if tuning.temperature.is_some() {
+            engine.temperature = tuning.temperature;
+        }
+        if tuning.max_output_tokens.is_some() {
+            engine.max_output_tokens = tuning.max_output_tokens;
+        }
+        engine.effort = tuning.effort;
+        engine.reasoning = tuning.reasoning;
+        engine.params = tuning.params;
     }
+    engine
+}
+
+/// EngineConfig for a session's default (interactive/step-loop) agent.
+pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
+    tuned_engine_config(cfg, crate::settings::EngineAgentKind::Default)
+}
+
+/// EngineConfig for a pipeline's execute turns — the WORKER agent's tuning
+/// (plan and witness ride it too, matching the router's tiering).
+pub(crate) fn pipeline_engine_config_for(cfg: &Config) -> EngineConfig {
+    tuned_engine_config(cfg, crate::settings::EngineAgentKind::Worker)
+}
+
+/// EngineConfig for the goal loop's standalone judge engine — the JUDGE
+/// agent's tuning.
+pub(crate) fn judge_engine_config_for(cfg: &Config) -> EngineConfig {
+    tuned_engine_config(cfg, crate::settings::EngineAgentKind::Judge)
 }
 
 /// Fire `SessionStart` hooks once and return their stdout — the additional
@@ -247,15 +280,35 @@ pub(crate) async fn with_session_hook_context(mut system_prompt: String, cfg: &C
     system_prompt
 }
 
-/// Shortcut: the raw step-loop system prompt plus workspace memories
-/// (`pub(crate)`: the Command Deck session assembles the same prompt).
-pub(crate) fn build_system_prompt(workspace_root: &std::path::Path) -> String {
-    assemble_system_prompt(SYSTEM_PROMPT, workspace_root)
+/// The `agent_engine_config` custom prompt for `kind`, when one is set —
+/// it replaces the built-in BASE instruction set only; workspace memories
+/// and rules still append (they are workspace context, not part of the
+/// base persona, and a custom prompt should not silently disable them).
+fn custom_prompt_base(cfg: &Config, kind: crate::settings::EngineAgentKind) -> Option<String> {
+    cfg.engine_settings
+        .as_ref()
+        .and_then(|e| e.agent(kind))
+        .and_then(|a| a.prompt.clone())
+        .filter(|p| !p.trim().is_empty())
 }
 
-/// Shortcut: the pipeline-mode system prompt plus workspace memories.
-fn build_pipeline_system_prompt(workspace_root: &std::path::Path) -> String {
-    assemble_system_prompt(PIPELINE_SYSTEM_PROMPT, workspace_root)
+/// The raw step-loop system prompt plus workspace memories (`pub(crate)`:
+/// the Command Deck session assembles the same prompt). `workspace_root`
+/// is a parameter (not read off `cfg`) because fleet workers assemble the
+/// prompt for their own worktree root.
+pub(crate) fn build_system_prompt(cfg: &Config, workspace_root: &std::path::Path) -> String {
+    let base = custom_prompt_base(cfg, crate::settings::EngineAgentKind::Default);
+    assemble_system_prompt(base.as_deref().unwrap_or(SYSTEM_PROMPT), workspace_root)
+}
+
+/// The pipeline-mode system prompt plus workspace memories — the WORKER
+/// agent's custom prompt applies here.
+fn build_pipeline_system_prompt(cfg: &Config, workspace_root: &std::path::Path) -> String {
+    let base = custom_prompt_base(cfg, crate::settings::EngineAgentKind::Worker);
+    assemble_system_prompt(
+        base.as_deref().unwrap_or(PIPELINE_SYSTEM_PROMPT),
+        workspace_root,
+    )
 }
 
 /// Run a one-shot prompt. `use_pipeline` selects the staged pipeline (the
@@ -334,13 +387,19 @@ async fn run_pipeline_one_shot(
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let renderer = spawn_renderer(rx, format, execution.clone(), cfg.provider.id.to_string());
 
-    let resolver = SingleProviderResolver {
-        provider,
-        model_ref: model_ref.clone(),
-    };
+    // Role wiring from `agent_engine_config`: per-role model pins (triage/
+    // judge), their adapters, and per-role request overrides. Notices are
+    // stderr diagnostics — stdout may be machine-readable JSON.
+    let wiring = resolve_engine_wiring(cfg, &model_ref);
+    for notice in &wiring.notices {
+        eprintln!("  ! {notice}");
+    }
+    let resolver =
+        RoleProviderResolver::new(&*provider, model_ref.clone(), &wiring.extra_providers);
 
     let mut messages = vec![CompletionMessage::system(
-        with_session_hook_context(build_pipeline_system_prompt(&cfg.workspace_root), cfg).await,
+        with_session_hook_context(build_pipeline_system_prompt(cfg, &cfg.workspace_root), cfg)
+            .await,
     )];
     let mut memory = SessionMemory::open(&cfg.workspace_root, format == OutputFormat::Text);
     if let Some(m) = &memory {
@@ -368,18 +427,13 @@ async fn run_pipeline_one_shot(
             root: cfg.workspace_root.clone(),
         };
 
-        let profile = ProviderProfile::new(
-            cfg.provider.id,
-            model_ref.clone(),
-            model_ref.clone(),
-            model_ref,
-        );
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-        let router = Router::new(RoleTable::new(), vec![profile], breaker);
+        let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
 
         let is_text = format == OutputFormat::Text;
         let pipeline_config = PipelineConfig {
-            engine: engine_config_for(cfg),
+            engine: pipeline_engine_config_for(cfg),
+            role_overrides: wiring.role_overrides.clone(),
             headless: !is_text,
             headless_bypass_scope_review: !is_text,
             // `--test-command` arms the deterministic verify ladder: the
@@ -496,7 +550,7 @@ async fn run_pipeline_one_shot(
         }
         let report = m
             .reflect_and_record(
-                resolver.provider(),
+                &*provider,
                 &reflect_transcript,
                 format != OutputFormat::Text,
                 result.is_ok(),
@@ -567,45 +621,201 @@ async fn run_pipeline_one_shot(
 // Pipeline port adapters
 // -----------------------------------------------------------------------
 
-/// Owns the boxed provider so the reference returned to the pipeline is
-/// valid for the pipeline's entire lifetime.
-pub(crate) struct SingleProviderResolver {
-    provider: Box<dyn Provider>,
-    model_ref: ModelRef,
+/// Everything `agent_engine_config` resolves for one pipeline run: the
+/// role router inputs (profiles + pins), owned adapters for roles routed
+/// to a model other than the worker's, the per-role request overrides,
+/// and human-readable notices about wiring decisions (a provider without
+/// a credential, an adapter that failed to build). Every failure is soft:
+/// the affected role rides the worker, exactly as before this config
+/// existed — configuration must never turn a runnable pipeline into an
+/// error.
+pub(crate) struct EngineWiring {
+    pub(crate) profiles: Vec<ProviderProfile>,
+    pub(crate) pins: RoleTable,
+    /// Adapters for pinned off-worker models, keyed by the exact
+    /// [`ModelRef`] the pins route to (adapters bind their model id at
+    /// construction, so each distinct ref needs its own instance).
+    pub(crate) extra_providers: Vec<(ModelRef, Box<dyn Provider>)>,
+    pub(crate) role_overrides: stella_pipeline::PipelineRoleOverrides,
+    pub(crate) notices: Vec<String>,
 }
 
-impl SingleProviderResolver {
-    fn provider(&self) -> &dyn Provider {
-        &*self.provider
-    }
-}
+/// Resolve the engine wiring for a pipeline run whose worker is
+/// `worker_ref` (already resolved by `Config` — an explicit `--model`
+/// flag beats the settings, see `Config::load_with_settings`).
+///
+/// Routing rules, in order:
+/// - TRIAGE and JUDGE pins come from their configured model specs
+///   ([`crate::engine_config::model_spec_for`]).
+/// - `auto_mode: on` replaces the judge spec with
+///   [`crate::engine_config::auto_judge_spec`]'s pick from
+///   `allowed_models` (cross-family from the worker, then price tier);
+///   when the allowed list yields nothing usable it falls back to the
+///   explicit judge spec, then to normal router degradation.
+/// - A pin equal to the worker's own model needs no extra adapter — the
+///   primary resolver entry already serves it.
+///
+/// Pins deliberately bypass the circuit breaker (`RoleTable` semantics —
+/// an explicit pin wins unconditionally). If a pinned judge's provider
+/// fails, the pipeline's judge call degrades to its heuristic verdict,
+/// the same soft path an unreachable judge always took.
+pub(crate) fn resolve_engine_wiring(cfg: &Config, worker_ref: &ModelRef) -> EngineWiring {
+    use crate::engine_config::{
+        ModelSpec, auto_judge_spec, model_spec_for, spec_family, tuning_for,
+    };
+    use crate::settings::EngineAgentKind;
 
-impl ProviderResolver for SingleProviderResolver {
-    fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider> {
-        if model == &self.model_ref {
-            Some(&*self.provider)
+    let worker_profile = ProviderProfile::new(
+        worker_ref.provider.clone(),
+        worker_ref.clone(),
+        worker_ref.clone(),
+        worker_ref.clone(),
+    )
+    .with_family(provider_family(&worker_ref.provider));
+
+    let mut wiring = EngineWiring {
+        profiles: vec![worker_profile],
+        pins: RoleTable::new(),
+        extra_providers: Vec::new(),
+        role_overrides: stella_pipeline::PipelineRoleOverrides::default(),
+        notices: Vec::new(),
+    };
+    let Some(engine) = cfg.engine_settings.clone() else {
+        return wiring;
+    };
+
+    let triage_tuning = tuning_for(&engine, EngineAgentKind::Triage);
+    let judge_tuning = tuning_for(&engine, EngineAgentKind::Judge);
+    wiring.role_overrides.triage = stella_pipeline::RoleCallOverrides {
+        prompt: triage_tuning.prompt,
+        effort: triage_tuning.effort,
+        reasoning: triage_tuning.reasoning,
+        temperature: triage_tuning.temperature,
+        max_output_tokens: triage_tuning.max_output_tokens,
+        params: triage_tuning.params,
+    };
+    wiring.role_overrides.judge = stella_pipeline::RoleCallOverrides {
+        prompt: judge_tuning.prompt,
+        effort: judge_tuning.effort,
+        reasoning: judge_tuning.reasoning,
+        temperature: judge_tuning.temperature,
+        max_output_tokens: judge_tuning.max_output_tokens,
+        params: judge_tuning.params,
+    };
+
+    // Credentialed providers only — a model spec naming a provider without
+    // a resolvable key is reported and skipped, never a hard error.
+    let configured = crate::config::discover_configured_providers();
+    let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
+
+    let worker_family = spec_family(&ModelSpec {
+        provider: worker_ref.provider.clone(),
+        model: worker_ref.model_id.clone(),
+    });
+    let judge_spec = if engine.auto_mode_on() {
+        auto_judge_spec(&engine, &worker_family, &is_provider)
+            .or_else(|| model_spec_for(&engine, EngineAgentKind::Judge, &is_provider))
+    } else {
+        model_spec_for(&engine, EngineAgentKind::Judge, &is_provider)
+    };
+    let role_specs = [
+        (
+            Role::Triage,
+            "triage",
+            model_spec_for(&engine, EngineAgentKind::Triage, &is_provider),
+        ),
+        (Role::Judge, "judge", judge_spec),
+    ];
+
+    for (role, label, spec) in role_specs {
+        let Some(spec) = spec else { continue };
+        let Some(entry) = configured.iter().find(|c| c.config.id == spec.provider) else {
+            wiring.notices.push(format!(
+                "engine config: {label} model `{}/{}` skipped — no resolvable credential for \
+                 provider `{}`; {label} rides the worker",
+                spec.provider, spec.model, spec.provider
+            ));
+            continue;
+        };
+        // An empty slug is the "provider pin without a model" form — the
+        // provider's own default model.
+        let slug = if spec.model.is_empty() {
+            entry.config.default_model.to_string()
         } else {
-            None
+            spec.model.clone()
+        };
+        let pinned = ModelRef::new(entry.config.id, slug.clone());
+        if pinned == *worker_ref {
+            // Same instance as the worker: the primary resolver entry
+            // serves it; the pin still records the explicit choice.
+            wiring.pins.pin(role, pinned);
+            continue;
+        }
+        match build_provider_parts(
+            &entry.config,
+            &slug,
+            entry.api_key.clone(),
+            entry.config.base_url.to_string(),
+            None,
+        ) {
+            Ok(provider) => {
+                wiring.pins.pin(role, pinned.clone());
+                // A profile for the routed provider keeps the router's
+                // provider list honest (breaker bookkeeping, `providers()`
+                // introspection) even though the pin short-circuits it.
+                wiring.profiles.push(
+                    ProviderProfile::new(
+                        entry.config.id,
+                        pinned.clone(),
+                        pinned.clone(),
+                        pinned.clone(),
+                    )
+                    .with_family(provider_family(entry.config.id)),
+                );
+                wiring.extra_providers.push((pinned, provider));
+            }
+            Err(e) => wiring.notices.push(format!(
+                "engine config: {label} model `{}/{slug}` skipped — {e}; {label} rides the worker",
+                entry.config.id
+            )),
+        }
+    }
+    wiring
+}
+
+/// Maps each pinned [`ModelRef`] to its adapter: the primary (worker)
+/// provider plus the wiring's extra per-role adapters. The worker entry is
+/// borrowed (the caller owns it — boxed in one-shot, `&dyn` in the deck
+/// and goal paths); the extras are borrowed from the [`EngineWiring`].
+pub(crate) struct RoleProviderResolver<'p> {
+    primary: &'p dyn Provider,
+    primary_ref: ModelRef,
+    extra: &'p [(ModelRef, Box<dyn Provider>)],
+}
+
+impl<'p> RoleProviderResolver<'p> {
+    pub(crate) fn new(
+        primary: &'p dyn Provider,
+        primary_ref: ModelRef,
+        extra: &'p [(ModelRef, Box<dyn Provider>)],
+    ) -> Self {
+        Self {
+            primary,
+            primary_ref,
+            extra,
         }
     }
 }
 
-/// A [`ProviderResolver`] that borrows a single `&dyn Provider` — for
-/// pipeline paths that receive a borrowed provider (the goal loop, fleet
-/// workers) rather than owning one. Answers every model with that provider.
-pub(crate) struct BorrowedProviderResolver<'p> {
-    provider: &'p dyn Provider,
-}
-
-impl BorrowedProviderResolver<'_> {
-    pub(crate) fn new(provider: &dyn Provider) -> BorrowedProviderResolver<'_> {
-        BorrowedProviderResolver { provider }
-    }
-}
-
-impl ProviderResolver for BorrowedProviderResolver<'_> {
-    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
-        Some(self.provider)
+impl ProviderResolver for RoleProviderResolver<'_> {
+    fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider> {
+        if *model == self.primary_ref {
+            return Some(self.primary);
+        }
+        self.extra
+            .iter()
+            .find(|(model_ref, _)| model_ref == model)
+            .map(|(_, provider)| &**provider)
     }
 }
 
@@ -850,7 +1060,7 @@ async fn run_raw_one_shot(
 
     let mut messages = vec![
         CompletionMessage::system(
-            with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await,
+            with_session_hook_context(build_system_prompt(cfg, &cfg.workspace_root), cfg).await,
         ),
         crate::attachments::user_message(prompt),
     ];
@@ -971,7 +1181,7 @@ pub async fn run_goal_cmd(
     println!("  {}\n", goal.dimmed());
 
     let mut messages = vec![CompletionMessage::system(
-        with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await,
+        with_session_hook_context(build_system_prompt(cfg, &cfg.workspace_root), cfg).await,
     )];
     let mut memory = SessionMemory::open(&cfg.workspace_root, true);
     if let Some(m) = &memory {
@@ -1091,7 +1301,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // prefix (instructions + baked memories + SessionStart hook context) is
     // the prompt-cache contract (see build_system_prompt).
     let system_prompt =
-        with_session_hook_context(build_system_prompt(&cfg.workspace_root), cfg).await;
+        with_session_hook_context(build_system_prompt(cfg, &cfg.workspace_root), cfg).await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     let mut memory = SessionMemory::open(&cfg.workspace_root, true);
     // Custom extensions: ⚡ commands/skills invocable as `/name args`, custom
@@ -2733,11 +2943,39 @@ async fn run_goal_pipeline_turn(
     let execution = begin_execution(store, "goal", goal, cfg);
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 
+    // Role wiring from `agent_engine_config` — the pinned/auto judge (when
+    // configured) also serves as the goal loop's round judge below.
+    let wiring = resolve_engine_wiring(cfg, &model_ref);
+    for notice in &wiring.notices {
+        eprintln!("  ! {notice}");
+    }
+
     // Route the goal-loop judge. The pipeline's verify judge is the same role;
-    // both want independence from the worker.
+    // both want independence from the worker. An engine-config judge pin
+    // (explicit or auto_mode) wins; otherwise the discovery-based
+    // cross-family routing applies exactly as before.
     let configured = crate::config::discover_configured_providers();
-    let routed_judge = resolve_cross_family_judge(cfg.provider.id, &cfg.model_id, &configured);
-    if let Some((_, judge_id)) = &routed_judge {
+    let engine_judge: Option<(&dyn Provider, String)> = wiring
+        .pins
+        .get(Role::Judge)
+        .and_then(|pinned| {
+            wiring
+                .extra_providers
+                .iter()
+                .find(|(model_ref, _)| model_ref == pinned)
+        })
+        .map(|(model_ref, provider)| (&**provider, model_ref.provider.clone()));
+    let routed_judge = if engine_judge.is_none() {
+        resolve_cross_family_judge(cfg.provider.id, &cfg.model_id, &configured)
+    } else {
+        None
+    };
+    let (judge, judge_id): (&dyn Provider, Option<String>) = match (&engine_judge, &routed_judge) {
+        (Some((provider, id)), _) => (*provider, Some(id.clone())),
+        (None, Some((boxed, id))) => (&**boxed, Some(id.clone())),
+        (None, None) => (provider, None),
+    };
+    if let Some(judge_id) = &judge_id {
         println!(
             "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
              assessment\n",
@@ -2746,13 +2984,9 @@ async fn run_goal_pipeline_turn(
             judge_id.bright_green(),
         );
     }
-    let judge: &dyn Provider = match &routed_judge {
-        Some((boxed, _)) => &**boxed,
-        None => provider,
-    };
 
     let goal_config = GoalConfig::default();
-    let resolver = BorrowedProviderResolver::new(provider);
+    let resolver = RoleProviderResolver::new(provider, model_ref.clone(), &wiring.extra_providers);
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let renderer = spawn_renderer(
@@ -2773,14 +3007,8 @@ async fn run_goal_pipeline_turn(
         let tools = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
 
-        let profile = ProviderProfile::new(
-            cfg.provider.id,
-            model_ref.clone(),
-            model_ref.clone(),
-            model_ref.clone(),
-        );
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-        let router = Router::new(RoleTable::new(), vec![profile], breaker);
+        let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
 
         let repo_structure = GitRepoStructure {
             root: cfg.workspace_root.clone(),
@@ -2799,9 +3027,13 @@ async fn run_goal_pipeline_turn(
         // the session calibration (keyed per model, so a cross-family judge
         // learns its own drift) and a read-only view of the same tools.
         let read_only = stella_core::ports::ReadOnlyTools::new(&tools);
-        let judge_engine =
-            Engine::with_sleeper(judge, &read_only, engine_config_for(cfg), &TokioSleeper)
-                .with_calibration(calibration);
+        let judge_engine = Engine::with_sleeper(
+            judge,
+            &read_only,
+            judge_engine_config_for(cfg),
+            &TokioSleeper,
+        )
+        .with_calibration(calibration);
 
         let mut total_cost_usd = 0.0f64;
         let mut result: Option<Result<(), String>> = None;
@@ -2810,7 +3042,8 @@ async fn run_goal_pipeline_turn(
         for round in 1..=goal_config.max_rounds {
             budget.begin_turn();
             let pipeline_config = PipelineConfig {
-                engine: engine_config_for(cfg),
+                engine: pipeline_engine_config_for(cfg),
+                role_overrides: wiring.role_overrides.clone(),
                 headless: true,
                 headless_bypass_scope_review: true,
                 ..PipelineConfig::default()
@@ -3452,7 +3685,7 @@ mod tests {
         )
         .unwrap();
 
-        let prompt = build_system_prompt(root.path());
+        let prompt = build_system_prompt(&cfg_for("zai"), root.path());
         assert!(
             prompt.starts_with(SYSTEM_PROMPT),
             "rules append to the prompt; the base prefix must stay intact"
@@ -3481,6 +3714,7 @@ mod tests {
             workspace_root: std::path::PathBuf::from("/tmp"),
             base_url_override: None,
             hooks: None,
+            engine_settings: None,
         }
     }
 

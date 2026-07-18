@@ -22,8 +22,8 @@ use tokio::sync::mpsc;
 
 use stella_tui::scenario::{demo_graph, demo_inbound};
 use stella_tui::{
-    AgentControl, AgentMeta, AgentStatus, DeckOptions, GraphNode, GraphSnapshot, Inbound,
-    ScopeDecision, SkillsView, SlashCommand, UserInput, WorkspaceInput, run_deck,
+    AgentControl, AgentMeta, AgentStatus, DeckOptions, EngineConfigState, GraphNode, GraphSnapshot,
+    Inbound, ScopeDecision, SkillsView, SlashCommand, UserInput, WorkspaceInput, run_deck,
 };
 
 fn now_ms() -> u64 {
@@ -190,6 +190,24 @@ async fn main() -> std::io::Result<()> {
                 }
                 WorkspaceInput::NotificationRead { .. } | WorkspaceInput::NotificationsReadAll => {
                     let _ = react_tx.send(Inbound::Notifications(vec![]));
+                }
+                // The ENGINE overlay edits the driver-owned settings
+                // snapshot. The demo has no settings on disk: a save echoes
+                // the submitted state back (so the round-trip and the
+                // modified-marker clearing are demoable), a refresh answers
+                // with an empty default so the overlay renders instead of
+                // waiting forever.
+                WorkspaceInput::EngineConfigSave { state, .. } => {
+                    let _ = react_tx.send(Inbound::EngineConfig {
+                        state,
+                        status: Some("demo: config accepted (not persisted)".to_string()),
+                    });
+                }
+                WorkspaceInput::EngineConfigRefresh => {
+                    let _ = react_tx.send(Inbound::EngineConfig {
+                        state: EngineConfigState::default(),
+                        status: Some("the demo has no settings on disk".to_string()),
+                    });
                 }
                 WorkspaceInput::Quit => break,
             }

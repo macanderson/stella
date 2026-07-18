@@ -23,6 +23,7 @@ mod attachments;
 mod command_deck;
 mod config;
 mod domains;
+mod engine_config;
 mod export;
 mod extensions;
 mod fleet_cmd;

@@ -55,12 +55,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::ports::ToolExecutor;
-use stella_core::router::{CircuitBreaker, ProviderProfile};
-use stella_core::{BudgetGuard, CalibrationMap, Engine, RoleTable, Router, TurnOutcome};
+use stella_core::router::CircuitBreaker;
+use stella_core::{BudgetGuard, CalibrationMap, Engine, Router, TurnOutcome};
 use stella_model::provider::Provider;
 use stella_pipeline::{
     AutoApproveGate, ContextRecallPort, NoContextRecall, Pipeline, PipelineConfig, PipelinePorts,
-    PipelineStatus, ProviderResolver,
+    PipelineStatus,
 };
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, FileChangeKind, ModelRef, ToolOutput,
@@ -239,7 +239,7 @@ pub async fn run_deck_session(
     let calibration = agent::seed_calibration(&store, cfg);
 
     let system_prompt =
-        agent::with_session_hook_context(agent::build_system_prompt(&cfg.workspace_root), cfg)
+        agent::with_session_hook_context(agent::build_system_prompt(cfg, &cfg.workspace_root), cfg)
             .await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     // `warn: false`: past this point diagnostics would land on the alternate
@@ -286,6 +286,10 @@ pub async fn run_deck_session(
     // Seed the SKILLS tab so it has data the instant it is opened (both scopes),
     // without waiting on a `/skills` round-trip.
     let _ = in_tx.send(skills_snapshot(&cfg.workspace_root, None));
+    // Seed the ENGINE overlay (`/engine`) the same way: the merged
+    // agent_engine_config plus the picker vocabularies, ready before the
+    // user first opens it.
+    let _ = in_tx.send(engine_config_inbound(cfg, None));
 
     let ask_io = DeckAskUserIo {
         agent: LEAD.to_string(),
@@ -562,8 +566,9 @@ pub async fn run_deck_session(
                             &session_record.id,
                             &in_tx,
                         )
+                        && !handle_agents_input(&other, cfg, &in_tx)
                     {
-                        handle_agents_input(&other, cfg, &in_tx);
+                        handle_engine_config_input(&other, cfg, &in_tx);
                     }
                     continue 'session;
                 }
@@ -868,6 +873,17 @@ pub async fn run_deck_session(
                                 &session_record.id,
                                 &in_tx,
                             );
+                        }
+                        // The ENGINE overlay stays live while a turn runs —
+                        // settings reads/writes are cheap local filesystem
+                        // ops, exactly like the INSTALLED AGENTS pane. A
+                        // mid-turn save applies to runs started afterwards;
+                        // the in-flight turn keeps its resolved models.
+                        Some(
+                            input @ (WorkspaceInput::EngineConfigSave { .. }
+                            | WorkspaceInput::EngineConfigRefresh),
+                        ) => {
+                            handle_engine_config_input(&input, cfg, &in_tx);
                         }
                         // Scope review is not engine-driven yet, and deep
                         // pause/resume/restart need the fleet supervisor —
@@ -1483,12 +1499,91 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ),
     ("/inbox", "notifications — messages persist until read"),
     ("/mcp-search", "search the MCP registry & install servers"),
+    (
+        "/engine",
+        "configure the agent engine: models, prompts, effort & params per agent",
+    ),
+    ("/model-default", "pick the default agent's model"),
+    ("/model-worker", "pick the pipeline worker model"),
+    ("/model-judge", "pick the pipeline judge model"),
+    ("/model-triage", "pick the pipeline triage model"),
     ("/donate", "support stella — become a GitHub Sponsor"),
 ];
 
 /// The deck's reserved command names — see [`DECK_BUILTINS`].
 fn deck_reserved() -> Vec<&'static str> {
     DECK_BUILTINS.iter().map(|(name, _)| *name).collect()
+}
+
+// ── Agent-engine config (the `/engine` overlay) ─────────────────────────────
+
+/// Build an [`Inbound::EngineConfig`] snapshot: the freshly merged
+/// `agent_engine_config` from the settings scope chain, plus the picker
+/// vocabularies — every provider whose credential currently resolves, and
+/// the seed catalog's `provider/slug` list as the model-picker fallback
+/// when `allowed_models` is empty. Re-reading the chain (rather than
+/// caching) keeps the overlay honest about hand edits and about what a
+/// save at one scope means under the others.
+fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inbound {
+    let engine = crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| s.agent_engine_config)
+        .unwrap_or_default();
+    let providers: Vec<String> = crate::config::discover_configured_providers()
+        .into_iter()
+        .map(|p| p.config.id.to_string())
+        .collect();
+    let catalog_models: Vec<String> = stella_model::catalog::Catalog::seed()
+        .entries()
+        .iter()
+        .map(|entry| format!("{}/{}", entry.provider, entry.id))
+        .collect();
+    Inbound::EngineConfig {
+        state: crate::engine_config::state_from_settings(&engine, providers, catalog_models),
+        status,
+    }
+}
+
+/// Handle one ENGINE-overlay op (refresh / save) — cheap local settings
+/// I/O, answered with a fresh [`Inbound::EngineConfig`]. Called from BOTH
+/// recv sites so the overlay works mid-turn too. Returns `true` when the
+/// input was one of the overlay's.
+fn handle_engine_config_input(
+    input: &WorkspaceInput,
+    cfg: &Config,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    match input {
+        WorkspaceInput::EngineConfigRefresh => {
+            let _ = in_tx.send(engine_config_inbound(cfg, None));
+            true
+        }
+        WorkspaceInput::EngineConfigSave { state, scope } => {
+            let engine = crate::engine_config::settings_from_state(state);
+            let path = match scope {
+                AgentScope::User => crate::settings::user_settings_path(),
+                AgentScope::Project => {
+                    Some(crate::settings::project_settings_path(&cfg.workspace_root))
+                }
+            };
+            let status = match path {
+                None => "save failed: cannot determine $HOME for user settings".to_string(),
+                Some(path) => match engine.save_to(&path) {
+                    Ok(()) => format!(
+                        "saved to {} — applies to runs started from now on",
+                        path.display()
+                    ),
+                    Err(e) => format!("save failed: {e}"),
+                },
+            };
+            // The snapshot sent back is the MERGED view — if a project
+            // scope overrides what was just saved at the user scope, the
+            // overlay shows the effective value, not the wish.
+            let _ = in_tx.send(engine_config_inbound(cfg, Some(status)));
+            true
+        }
+        _ => false,
+    }
 }
 
 // ── Installed-agents manager (the AGENTS tab's INSTALLED AGENTS pane) ───────
@@ -1609,6 +1704,8 @@ async fn create_agent(
         temperature: Some(0.2),
         effort: None,
         tools: vec![],
+        reasoning: None,
+        params: None,
     };
     let result = provider
         .complete(req)
@@ -1971,6 +2068,8 @@ async fn create_skill_llm(
         temperature: Some(0.2),
         effort: None,
         tools: vec![],
+        reasoning: None,
+        params: None,
     };
     let content = match provider.complete(req).await {
         Ok(r) => extract_skill_md(&r.text),
@@ -2340,21 +2439,6 @@ async fn run_lead_turn(
     }
 }
 
-/// Maps every role's resolved model to the deck's one borrowed provider. The
-/// deck session is single-provider by construction (one `build_provider`
-/// call), and its `Router` is built from one profile whose worker/triage/
-/// judge refs all name that provider's model — so answering every query with
-/// the one adapter is exact, not a fallback.
-struct DeckProviderResolver<'p> {
-    provider: &'p dyn Provider,
-}
-
-impl ProviderResolver for DeckProviderResolver<'_> {
-    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
-        Some(self.provider)
-    }
-}
-
 /// One staged-pipeline turn for the lead agent (`/pipeline` ON): the deck
 /// analogue of the `stella run` pipeline path — same tool stack, persistence,
 /// and event forwarding as [`run_lead_turn`], with `Pipeline::run` (triage →
@@ -2414,15 +2498,19 @@ async fn run_lead_pipeline_turn(
         };
 
         let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-        let resolver = DeckProviderResolver { provider };
-        let profile = ProviderProfile::new(
-            cfg.provider.id,
-            model_ref.clone(),
-            model_ref.clone(),
-            model_ref,
-        );
+        // Role wiring from `agent_engine_config`: triage/judge pins + their
+        // adapters + per-role request overrides. Notices land in the
+        // transcript — stderr is invisible under the alternate screen.
+        let wiring = agent::resolve_engine_wiring(cfg, &model_ref);
+        for notice in &wiring.notices {
+            let _ = tx.send(AgentEvent::Text {
+                delta: format!("! {notice}\n"),
+            });
+        }
+        let resolver =
+            agent::RoleProviderResolver::new(provider, model_ref.clone(), &wiring.extra_providers);
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-        let router = Router::new(RoleTable::new(), vec![profile], breaker);
+        let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
 
         let repo_structure = agent::GitRepoStructure {
             root: cfg.workspace_root.clone(),
@@ -2455,7 +2543,8 @@ async fn run_lead_pipeline_turn(
                 .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
         };
         let config = PipelineConfig {
-            engine: agent::engine_config_for(cfg),
+            engine: agent::pipeline_engine_config_for(cfg),
+            role_overrides: wiring.role_overrides.clone(),
             headless: true,
             headless_bypass_scope_review: true,
             ..PipelineConfig::default()

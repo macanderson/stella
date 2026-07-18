@@ -221,6 +221,22 @@ pub(crate) struct GeminiGenerationConfig {
     pub(crate) max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) temperature: Option<f32>,
+    /// Sampling overrides from `CompletionRequest.params` — the struct-level
+    /// `rename_all` gives them the REST API's camelCase names (`topP`,
+    /// `topK`, `frequencyPenalty`, `presencePenalty`), matching
+    /// `max_output_tokens`/`maxOutputTokens` above. Each is skipped when
+    /// `None` so a request without overrides serializes byte-identical to
+    /// before (the prompt-cache contract).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) seed: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) frequency_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) presence_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) thinking_config: Option<GeminiThinkingConfig>,
 }
@@ -475,15 +491,50 @@ pub(crate) fn to_gemini_tools(tools: &[stella_protocol::tool::ToolSchema]) -> Ve
 }
 
 pub(crate) fn build_generation_config(req: &CompletionRequest) -> Option<GeminiGenerationConfig> {
-    if req.max_output_tokens.is_none() && req.temperature.is_none() && req.effort.is_none() {
+    let params = req.params.unwrap_or_default();
+    // The early-out considers EVERY field that could set a key below: a
+    // request with no overrides at all must omit `generationConfig` entirely
+    // (byte-stable with the pre-params wire), but any single override —
+    // including the new params and the reasoning switch — must produce it.
+    // Only the params this dialect actually forwards count; a request
+    // carrying nothing but verbosity/service_tier (which Gemini can't
+    // express) must not degrade to an empty `"generationConfig": {}`.
+    if req.max_output_tokens.is_none()
+        && req.temperature.is_none()
+        && req.effort.is_none()
+        && req.reasoning.is_none()
+        && params.top_p.is_none()
+        && params.top_k.is_none()
+        && params.seed.is_none()
+        && params.frequency_penalty.is_none()
+        && params.presence_penalty.is_none()
+    {
         return None;
     }
+    // Thinking level: an explicit `reasoning: Some(false)` maps to "low" —
+    // Gemini 3 cannot fully disable thinking (there is no "off"), so the
+    // lowest level is the closest honest expression of "suppress thinking".
+    // It wins over a pinned effort for the same reason an explicit off wins
+    // in the other adapters. A bare `Some(true)` with no effort picks
+    // "high" (Gemini 3 has no medium tier — see [`map_thinking_level`]);
+    // otherwise a pinned effort maps as it always has, and (None, None)
+    // sends no thinkingConfig (provider default).
+    let thinking_level = match (req.reasoning, req.effort) {
+        (Some(false), _) => Some("low"),
+        (_, Some(effort)) => Some(map_thinking_level(effort)),
+        (Some(true), None) => Some("high"),
+        (None, None) => None,
+    };
     Some(GeminiGenerationConfig {
         max_output_tokens: req.max_output_tokens,
         temperature: req.temperature,
-        thinking_config: req.effort.map(|effort| GeminiThinkingConfig {
-            thinking_level: map_thinking_level(effort),
-        }),
+        top_p: params.top_p,
+        top_k: params.top_k,
+        seed: params.seed,
+        frequency_penalty: params.frequency_penalty,
+        presence_penalty: params.presence_penalty,
+        thinking_config: thinking_level
+            .map(|thinking_level| GeminiThinkingConfig { thinking_level }),
     })
 }
 
@@ -821,6 +872,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -867,6 +920,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -914,6 +969,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -940,6 +997,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -966,6 +1025,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -993,6 +1054,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1003,5 +1066,143 @@ mod tests {
             }
             other => panic!("expected RateLimited, got {other:?}"),
         }
+    }
+
+    /// A bare request for config-shape tests; overrides are patched in.
+    fn bare_request() -> CompletionRequest {
+        CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        }
+    }
+
+    #[test]
+    fn generation_config_forwards_params_in_camel_case() {
+        use stella_protocol::GenerationParams;
+        let req = CompletionRequest {
+            params: Some(GenerationParams {
+                top_p: Some(0.9),
+                top_k: Some(40),
+                frequency_penalty: Some(0.5),
+                presence_penalty: Some(0.25),
+                seed: Some(7),
+                // No generateContent slot — silently dropped.
+                repetition_penalty: Some(1.1),
+                verbosity: Some(stella_protocol::Verbosity::High),
+                service_tier: Some(stella_protocol::ServiceTier::Priority),
+            }),
+            ..bare_request()
+        };
+        let config = build_generation_config(&req).expect("params force a config");
+        // Assert on the serialized string (the exact bytes reqwest sends),
+        // not a `to_value` round-trip — `to_value` widens f32 through f64
+        // and would perturb 0.9 into 0.90000003….
+        let body = serde_json::to_string(&config).unwrap();
+        // The REST API is camelCase — snake_case keys here would be silently
+        // ignored by the server, which is why the casing is pinned.
+        assert!(body.contains("\"topP\":0.9"), "{body}");
+        assert!(body.contains("\"topK\":40"), "{body}");
+        assert!(body.contains("\"seed\":7"), "{body}");
+        assert!(body.contains("\"frequencyPenalty\":0.5"), "{body}");
+        assert!(body.contains("\"presencePenalty\":0.25"), "{body}");
+        for dropped in ["repetition", "verbosity", "serviceTier", "top_p"] {
+            assert!(!body.contains(dropped), "`{dropped}` leaked into: {body}");
+        }
+    }
+
+    /// The byte-stability contract: no overrides at all — including a params
+    /// struct carrying only fields this dialect can't express — must omit
+    /// `generationConfig` entirely, exactly the pre-params wire shape.
+    #[test]
+    fn generation_config_is_omitted_without_any_forwardable_override() {
+        use stella_protocol::GenerationParams;
+        assert!(build_generation_config(&bare_request()).is_none());
+        let unforwardable = CompletionRequest {
+            params: Some(GenerationParams {
+                verbosity: Some(stella_protocol::Verbosity::Low),
+                service_tier: Some(stella_protocol::ServiceTier::Flex),
+                ..Default::default()
+            }),
+            ..bare_request()
+        };
+        assert!(
+            build_generation_config(&unforwardable).is_none(),
+            "verbosity/service_tier alone must not produce an empty config"
+        );
+    }
+
+    /// `reasoning: Some(false)` → thinkingLevel "low": Gemini 3 cannot fully
+    /// disable thinking, so the lowest level is the closest honest mapping —
+    /// and the explicit off wins over a pinned effort. A bare `Some(true)`
+    /// picks "high" (there is no medium tier).
+    #[test]
+    fn reasoning_switch_maps_to_thinking_levels() {
+        let off = CompletionRequest {
+            reasoning: Some(false),
+            effort: Some(ReasoningEffort::Max),
+            ..bare_request()
+        };
+        let config = build_generation_config(&off).expect("reasoning forces a config");
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["thinkingConfig"]["thinkingLevel"], "low", "{json}");
+
+        let on = CompletionRequest {
+            reasoning: Some(true),
+            ..bare_request()
+        };
+        let config = build_generation_config(&on).expect("reasoning forces a config");
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["thinkingConfig"]["thinkingLevel"], "high", "{json}");
+
+        // A pinned effort with no reasoning switch maps as it always has.
+        let effort_only = CompletionRequest {
+            effort: Some(ReasoningEffort::Low),
+            ..bare_request()
+        };
+        let config = build_generation_config(&effort_only).expect("effort forces a config");
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["thinkingConfig"]["thinkingLevel"], "low", "{json}");
+    }
+
+    /// End-to-end: the config rides the request body to the wire.
+    #[tokio::test]
+    async fn complete_sends_generation_config_params_on_the_wire() {
+        use stella_protocol::GenerationParams;
+        let server = MockServer::start().await;
+        let sse_body = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/models/gemini-3-pro:streamGenerateContent"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = GeminiProvider::new(ApiKey::new("test-key"), "gemini-3-pro")
+            .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                params: Some(GenerationParams {
+                    top_p: Some(0.9),
+                    top_k: Some(40),
+                    ..Default::default()
+                }),
+                reasoning: Some(false),
+                ..bare_request()
+            })
+            .await
+            .expect("should succeed");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(body.contains("\"topP\":0.9"), "{body}");
+        assert!(body.contains("\"topK\":40"), "{body}");
+        assert!(
+            body.contains("\"thinkingConfig\":{\"thinkingLevel\":\"low\"}"),
+            "{body}"
+        );
     }
 }

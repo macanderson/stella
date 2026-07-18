@@ -19,8 +19,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use stella_core::hooks::Hooks;
+use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 
 use crate::config::Dialect;
 
@@ -89,6 +90,386 @@ pub struct Settings {
     /// ([`Settings::mcp_registry_url`]).
     #[serde(default)]
     pub mcp: Option<McpSettings>,
+    /// Agent-engine configuration: per-role models, prompts, effort, and
+    /// sampling parameters for the four engine agents (default / worker /
+    /// judge / triage), plus the allowed-model vocabulary and the auto
+    /// modes. Scopes overlay per field like `providers`. Deliberately NOT
+    /// behind the project trust boundary: it carries no credential routing
+    /// (an agent's `provider` names an id whose `base_url`/`api_key_env`
+    /// are themselves gated above), and repo-supplied prompt text is
+    /// already the status quo via `.stella/memories` and workspace rules.
+    #[serde(default)]
+    pub agent_engine_config: Option<AgentEngineConfig>,
+}
+
+/// An `on`/`off` switch. A dedicated enum rather than `bool` because the
+/// JSON reads as configuration prose (`"auto_mode": "on"`) and because a
+/// typo'd value must be a loud parse error, not a silently-false bool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Toggle {
+    On,
+    Off,
+}
+
+impl Toggle {
+    pub fn is_on(self) -> bool {
+        matches!(self, Toggle::On)
+    }
+}
+
+/// The four configurable engine agents. `Default` is the interactive /
+/// step-loop agent; the other three are the staged pipeline's roles
+/// (`stella_protocol::Role::{Worker, Judge, Triage}` — `Plan` rides the
+/// worker's settings, matching the router's tiering).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineAgentKind {
+    Default,
+    Worker,
+    Judge,
+    Triage,
+}
+
+impl EngineAgentKind {
+    pub const ALL: [EngineAgentKind; 4] = [
+        EngineAgentKind::Default,
+        EngineAgentKind::Worker,
+        EngineAgentKind::Judge,
+        EngineAgentKind::Triage,
+    ];
+}
+
+/// The `agent_engine_config` root object — issue-style schema:
+///
+/// ```jsonc
+/// {
+///   "agent_engine_config": {
+///     "default_model": "anthropic/claude-fable-5",
+///     "pipeline_worker_model": "zai/glm-5.2",
+///     "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+///     "pipeline_triage_model": "deepseek/deepseek-chat",
+///     "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
+///     "auto_mode": "off",
+///     "effort_auto": "on",
+///     "reasoning_auto": "on",
+///     "agents": {
+///       "judge": {
+///         "provider": "openrouter",
+///         "model": "openai/gpt-5.5",
+///         "prompt": "You are a strict code-review judge…",
+///         "effort": "high",
+///         "reasoning": "on",
+///         "params": {"temperature": 0.2, "top_p": 0.9}
+///       }
+///     }
+///   }
+/// }
+/// ```
+///
+/// Model precedence per agent: `agents.<agent>.model` >
+/// `pipeline_<agent>_model` (or `default_model` for the default agent) >
+/// `default_model` > the provider's own default. A model string is either
+/// `provider/slug` (`--model` semantics) or, when the agent's `provider`
+/// field is set, a bare slug sent verbatim to THAT provider — which is how
+/// an OpenRouter key routes `openai/gpt-5.5` while an Anthropic key serves
+/// the worker.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentEngineConfig {
+    /// Model for the default (interactive/step-loop) agent, and the base
+    /// for every pipeline role that has no more specific setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_judge_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_worker_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_triage_model: Option<String>,
+    /// The model vocabulary the TUI pickers offer and `auto_mode` selects
+    /// from. Entries are `provider/slug` strings. Empty/absent = no
+    /// restriction (pickers fall back to the seed catalog).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_models: Option<Vec<String>>,
+    /// `on` = pick the judge model automatically from `allowed_models`,
+    /// preferring a different model family than the worker's and ranking
+    /// by catalog list price (the closest objective proxy for capability
+    /// tier the seed catalog carries). You never worry about it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_mode: Option<Toggle>,
+    /// `on` = per-agent reasoning effort is chosen automatically (judge
+    /// high, worker medium, triage low, default medium), overriding any
+    /// per-agent `effort`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_auto: Option<Toggle>,
+    /// `on` = thinking mode is chosen automatically (on for judge/worker/
+    /// default, off for triage), overriding any per-agent `reasoning`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_auto: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents: Option<AgentEngineAgents>,
+}
+
+/// The `agents` map — fixed keys rather than a `BTreeMap` so per-role
+/// access is exhaustive and typed instead of stringly (a misspelled agent
+/// key in JSON is simply ignored, the same tolerance every other settings
+/// object has for unknown fields).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentEngineAgents {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<AgentEngineAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<AgentEngineAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<AgentEngineAgent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triage: Option<AgentEngineAgent>,
+}
+
+impl AgentEngineAgents {
+    pub fn get(&self, kind: EngineAgentKind) -> Option<&AgentEngineAgent> {
+        match kind {
+            EngineAgentKind::Default => self.default.as_ref(),
+            EngineAgentKind::Worker => self.worker.as_ref(),
+            EngineAgentKind::Judge => self.judge.as_ref(),
+            EngineAgentKind::Triage => self.triage.as_ref(),
+        }
+    }
+
+    pub fn get_mut(&mut self, kind: EngineAgentKind) -> &mut Option<AgentEngineAgent> {
+        match kind {
+            EngineAgentKind::Default => &mut self.default,
+            EngineAgentKind::Worker => &mut self.worker,
+            EngineAgentKind::Judge => &mut self.judge,
+            EngineAgentKind::Triage => &mut self.triage,
+        }
+    }
+}
+
+/// One agent's engine overrides. Every field optional — an absent field
+/// means "no opinion", falling through to the flat model fields / engine
+/// defaults / the provider's own defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentEngineAgent {
+    /// Model slug — `provider/slug`, or a bare slug when `provider` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Gateway/provider id this agent's requests go through (a built-in id
+    /// or a settings-defined provider). When set, `model` is sent verbatim
+    /// as the slug to this provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Custom system prompt replacing the built-in one for this agent.
+    /// Workspace memories/rules still append to it (they are additive
+    /// context, not part of the base instruction set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// Reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`), forwarded
+    /// as `CompletionRequest::effort`. Overridden by `effort_auto: on`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
+    /// Thinking mode on/off, forwarded as `CompletionRequest::reasoning`.
+    /// Absent = the provider's default. Overridden by `reasoning_auto: on`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<AgentEngineParams>,
+}
+
+/// Per-agent generation parameters — the "Include" checkbox model: a
+/// `Some` value goes on the wire (where the provider's dialect supports
+/// it), `None` leaves the provider default untouched. `temperature` and
+/// `max_tokens` land on `CompletionRequest` directly; the rest ride
+/// `CompletionRequest::params`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentEngineParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<Verbosity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+}
+
+impl AgentEngineParams {
+    /// Overlay `other` (higher precedence) onto `self`, per field.
+    fn overlay(&mut self, other: &AgentEngineParams) {
+        macro_rules! take {
+            ($field:ident) => {
+                if other.$field.is_some() {
+                    self.$field = other.$field;
+                }
+            };
+        }
+        take!(temperature);
+        take!(top_p);
+        take!(top_k);
+        take!(frequency_penalty);
+        take!(presence_penalty);
+        take!(repetition_penalty);
+        take!(max_tokens);
+        take!(seed);
+        take!(verbosity);
+        take!(service_tier);
+    }
+}
+
+impl AgentEngineAgent {
+    /// Overlay `other` (higher precedence) onto `self`, per field —
+    /// `params` composes recursively so a project scope can set one knob
+    /// without clobbering the user scope's others.
+    fn overlay(&mut self, other: &AgentEngineAgent) {
+        macro_rules! take {
+            ($field:ident) => {
+                if other.$field.is_some() {
+                    self.$field = other.$field.clone();
+                }
+            };
+        }
+        take!(model);
+        take!(provider);
+        take!(prompt);
+        take!(effort);
+        take!(reasoning);
+        if let Some(params) = &other.params {
+            self.params
+                .get_or_insert_with(AgentEngineParams::default)
+                .overlay(params);
+        }
+    }
+}
+
+impl AgentEngineConfig {
+    /// Overlay `other` (higher precedence) onto `self`, per field, per
+    /// agent — the same composition rule as `ProviderSettings::overlay`.
+    /// `allowed_models` REPLACES wholesale (it is one vocabulary, not a
+    /// set of independent knobs — concatenating scopes would make it
+    /// impossible for a project to narrow the user's list).
+    fn overlay(&mut self, other: &AgentEngineConfig) {
+        macro_rules! take {
+            ($field:ident) => {
+                if other.$field.is_some() {
+                    self.$field = other.$field.clone();
+                }
+            };
+        }
+        take!(default_model);
+        take!(pipeline_judge_model);
+        take!(pipeline_worker_model);
+        take!(pipeline_triage_model);
+        take!(allowed_models);
+        take!(auto_mode);
+        take!(effort_auto);
+        take!(reasoning_auto);
+        if let Some(agents) = &other.agents {
+            let target = self.agents.get_or_insert_with(AgentEngineAgents::default);
+            for kind in EngineAgentKind::ALL {
+                if let Some(agent) = agents.get(kind) {
+                    target
+                        .get_mut(kind)
+                        .get_or_insert_with(AgentEngineAgent::default)
+                        .overlay(agent);
+                }
+            }
+        }
+    }
+
+    /// The per-agent overrides for `kind`, if any.
+    pub fn agent(&self, kind: EngineAgentKind) -> Option<&AgentEngineAgent> {
+        self.agents.as_ref().and_then(|a| a.get(kind))
+    }
+
+    /// The effective model STRING for `kind` (not yet resolved to a
+    /// provider): `agents.<kind>.model` > the flat per-role field >
+    /// `default_model`. `None` = no opinion (auto-detect / `--model` /
+    /// provider default decide, exactly as before this config existed).
+    pub fn model_for(&self, kind: EngineAgentKind) -> Option<&str> {
+        if let Some(model) = self.agent(kind).and_then(|a| a.model.as_deref()) {
+            return Some(model);
+        }
+        let flat = match kind {
+            EngineAgentKind::Default => None,
+            EngineAgentKind::Worker => self.pipeline_worker_model.as_deref(),
+            EngineAgentKind::Judge => self.pipeline_judge_model.as_deref(),
+            EngineAgentKind::Triage => self.pipeline_triage_model.as_deref(),
+        };
+        flat.or(self.default_model.as_deref())
+    }
+
+    /// The allowed-model vocabulary, empty when unrestricted.
+    pub fn allowed_models(&self) -> &[String] {
+        self.allowed_models.as_deref().unwrap_or(&[])
+    }
+
+    pub fn auto_mode_on(&self) -> bool {
+        self.auto_mode.is_some_and(Toggle::is_on)
+    }
+
+    pub fn effort_auto_on(&self) -> bool {
+        self.effort_auto.is_some_and(Toggle::is_on)
+    }
+
+    pub fn reasoning_auto_on(&self) -> bool {
+        self.reasoning_auto.is_some_and(Toggle::is_on)
+    }
+
+    /// Persist THIS config as the `agent_engine_config` key of the
+    /// settings file at `path`, preserving every other key in the file
+    /// byte-for-byte at the value level (providers, hooks, mcp, and any
+    /// forward-compat keys survive a TUI save untouched). Creates the file
+    /// (and parent directories) when absent.
+    pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        let mut root: serde_json::Value = match std::fs::read_to_string(path) {
+            Ok(contents) => serde_json::from_str(&contents)
+                .map_err(|e| format!("invalid settings file {}: {e}", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let object = root
+            .as_object_mut()
+            .ok_or_else(|| format!("settings file {} is not a JSON object", path.display()))?;
+        let value = serde_json::to_value(self)
+            .map_err(|e| format!("cannot serialize agent_engine_config: {e}"))?;
+        object.insert("agent_engine_config".to_string(), value);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+        }
+        let mut rendered = serde_json::to_string_pretty(&root)
+            .map_err(|e| format!("cannot render settings: {e}"))?;
+        rendered.push('\n');
+        std::fs::write(path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    }
+}
+
+/// The user-scope settings path (`~/.config/stella/settings.json`), when
+/// `HOME` is known — the TUI save target for user-scope edits and the
+/// first file of [`Settings::load`]'s chain.
+pub fn user_settings_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join(".config")
+            .join("stella")
+            .join("settings.json")
+    })
+}
+
+/// The project-scope settings path (`<workspace>/.stella/settings.json`).
+pub fn project_settings_path(workspace_root: &Path) -> PathBuf {
+    workspace_root.join(".stella").join("settings.json")
 }
 
 /// The `mcp` section of settings.json. All fields optional so an absent
@@ -157,11 +538,11 @@ impl Settings {
     pub fn load(workspace_root: &Path) -> Result<Self, String> {
         let mut trusted: Vec<PathBuf> = Vec::new();
         // Ascending precedence: user, org-managed, project.
-        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-            trusted.push(home.join(".config").join("stella").join("settings.json"));
+        if let Some(user) = user_settings_path() {
+            trusted.push(user);
         }
         trusted.push(managed_settings_path());
-        let project = workspace_root.join(".stella").join("settings.json");
+        let project = project_settings_path(workspace_root);
 
         let mut all = trusted.clone();
         all.push(project.clone());
@@ -273,6 +654,15 @@ impl Settings {
                 if let Some(url) = &mcp.registry_url {
                     target.registry_url = Some(url.clone());
                 }
+            }
+            // Agent-engine config overlays per field / per agent, like
+            // `providers` — a project can pin the judge model while the
+            // user scope's worker settings survive.
+            if let Some(engine) = &scope.agent_engine_config {
+                merged
+                    .agent_engine_config
+                    .get_or_insert_with(AgentEngineConfig::default)
+                    .overlay(engine);
             }
         }
         Ok(merged)
@@ -424,6 +814,173 @@ mod tests {
         let user = write(dir.path(), "user.json", r#"{"providers": {}}"#);
         let merged = Settings::load_from(&[user]).unwrap();
         assert!(merged.hooks.is_none(), "no hooks handle at all");
+    }
+
+    #[test]
+    fn agent_engine_config_parses_the_full_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write(
+            dir.path(),
+            "engine.json",
+            r#"{"agent_engine_config": {
+                "default_model": "anthropic/claude-fable-5",
+                "pipeline_worker_model": "zai/glm-5.2",
+                "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+                "pipeline_triage_model": "deepseek/deepseek-chat",
+                "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
+                "auto_mode": "on",
+                "effort_auto": "off",
+                "reasoning_auto": "on",
+                "agents": {
+                    "judge": {
+                        "provider": "openrouter",
+                        "model": "openai/gpt-5.5",
+                        "prompt": "You are a strict judge.",
+                        "effort": "high",
+                        "reasoning": "on",
+                        "params": {
+                            "temperature": 0.2,
+                            "top_p": 0.9,
+                            "top_k": 40,
+                            "frequency_penalty": 0.1,
+                            "presence_penalty": 0.0,
+                            "repetition_penalty": 1.05,
+                            "max_tokens": 2048,
+                            "seed": 7,
+                            "verbosity": "low",
+                            "service_tier": "priority"
+                        }
+                    }
+                }
+            }}"#,
+        );
+        let merged = Settings::load_from(&[file]).unwrap();
+        let engine = merged.agent_engine_config.expect("engine config");
+        assert_eq!(
+            engine.model_for(EngineAgentKind::Worker),
+            Some("zai/glm-5.2")
+        );
+        // The judge's per-agent model beats the flat pipeline_judge_model.
+        assert_eq!(
+            engine.model_for(EngineAgentKind::Judge),
+            Some("openai/gpt-5.5")
+        );
+        // No triage agent entry → the flat field answers.
+        assert_eq!(
+            engine.model_for(EngineAgentKind::Triage),
+            Some("deepseek/deepseek-chat")
+        );
+        // Default falls to default_model.
+        assert_eq!(
+            engine.model_for(EngineAgentKind::Default),
+            Some("anthropic/claude-fable-5")
+        );
+        assert!(engine.auto_mode_on());
+        assert!(!engine.effort_auto_on());
+        assert!(engine.reasoning_auto_on());
+        let judge = engine.agent(EngineAgentKind::Judge).expect("judge");
+        assert_eq!(judge.provider.as_deref(), Some("openrouter"));
+        assert_eq!(judge.effort, Some(ReasoningEffort::High));
+        assert_eq!(judge.reasoning, Some(Toggle::On));
+        let params = judge.params.expect("params");
+        assert_eq!(params.top_k, Some(40));
+        assert_eq!(params.verbosity, Some(Verbosity::Low));
+        assert_eq!(params.service_tier, Some(ServiceTier::Priority));
+    }
+
+    #[test]
+    fn agent_engine_config_overlays_per_field_and_per_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = write(
+            dir.path(),
+            "user.json",
+            r#"{"agent_engine_config": {
+                "default_model": "zai/glm-5.2",
+                "allowed_models": ["zai/glm-5.2"],
+                "agents": {"worker": {"effort": "medium", "params": {"temperature": 0.0}}}
+            }}"#,
+        );
+        let project = write(
+            dir.path(),
+            "project.json",
+            r#"{"agent_engine_config": {
+                "pipeline_judge_model": "anthropic/claude-fable-5",
+                "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"],
+                "agents": {"worker": {"params": {"top_p": 0.95}}}
+            }}"#,
+        );
+        let merged = Settings::load_from(&[user, project]).unwrap();
+        let engine = merged.agent_engine_config.expect("engine config");
+        // Project wins where it speaks; user fields it left unset survive.
+        assert_eq!(engine.default_model.as_deref(), Some("zai/glm-5.2"));
+        assert_eq!(
+            engine.pipeline_judge_model.as_deref(),
+            Some("anthropic/claude-fable-5")
+        );
+        // allowed_models replaces wholesale (one vocabulary, not knobs).
+        assert_eq!(engine.allowed_models().len(), 2);
+        // Worker params compose per field across scopes.
+        let worker = engine.agent(EngineAgentKind::Worker).expect("worker");
+        assert_eq!(worker.effort, Some(ReasoningEffort::Medium));
+        let params = worker.params.expect("params");
+        assert_eq!(params.temperature, Some(0.0));
+        assert_eq!(params.top_p, Some(0.95));
+    }
+
+    #[test]
+    fn agent_engine_config_save_preserves_other_keys_and_roundtrips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(
+            dir.path(),
+            "settings.json",
+            r#"{"providers": {"zai": {"default_model": "glm-5.2"}},
+                "mcp": {"registry_url": "https://my.registry/"},
+                "future_key": {"anything": true}}"#,
+        );
+        let engine = AgentEngineConfig {
+            pipeline_judge_model: Some("anthropic/claude-fable-5".to_string()),
+            auto_mode: Some(Toggle::Off),
+            ..AgentEngineConfig::default()
+        };
+        engine.save_to(&path).unwrap();
+
+        // Other keys survive byte-for-byte at the value level…
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["providers"]["zai"]["default_model"], "glm-5.2");
+        assert_eq!(raw["mcp"]["registry_url"], "https://my.registry/");
+        assert_eq!(raw["future_key"]["anything"], true);
+        // …absent options are omitted from the rendered JSON…
+        assert!(
+            raw["agent_engine_config"]
+                .as_object()
+                .unwrap()
+                .get("default_model")
+                .is_none(),
+            "None fields must not be rendered"
+        );
+        // …and the object round-trips through the normal load path.
+        let merged = Settings::load_from(std::slice::from_ref(&path)).unwrap();
+        let loaded = merged.agent_engine_config.expect("engine config");
+        assert_eq!(loaded, engine);
+
+        // Saving into a missing file creates it (and parents).
+        let fresh = dir.path().join("nested").join("settings.json");
+        engine.save_to(&fresh).unwrap();
+        let merged = Settings::load_from(&[fresh]).unwrap();
+        assert_eq!(merged.agent_engine_config, Some(engine));
+    }
+
+    #[test]
+    fn a_typoed_toggle_is_a_loud_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = write(
+            dir.path(),
+            "toggle.json",
+            r#"{"agent_engine_config": {"auto_mode": "enabled"}}"#,
+        );
+        let err = Settings::load_from(&[bad]).unwrap_err();
+        assert!(err.contains("invalid settings file"), "{err}");
     }
 
     #[test]

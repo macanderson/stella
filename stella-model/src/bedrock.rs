@@ -337,6 +337,14 @@ struct BedrockInferenceConfig {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    /// Nucleus sampling from `CompletionRequest.params` — `topP` is the only
+    /// sampling override Converse's model-agnostic `inferenceConfig` speaks.
+    /// The rest of `GenerationParams` (top_k, penalties, seed, …) would need
+    /// `additionalModelRequestFields`, a model-specific passthrough this
+    /// adapter doesn't have yet; per the never-fail contract those are
+    /// silently dropped rather than guessed at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -565,14 +573,21 @@ impl Provider for BedrockProvider {
                 });
             }
         }
-        let inference_config = if req.max_output_tokens.is_none() && req.temperature.is_none() {
-            None
-        } else {
-            Some(BedrockInferenceConfig {
-                max_tokens: req.max_output_tokens,
-                temperature: req.temperature,
-            })
-        };
+        // Only `top_p` has a Converse `inferenceConfig` slot — see the field
+        // doc on [`BedrockInferenceConfig`] for why the rest of the params
+        // (and the `reasoning` switch, which would ride the same missing
+        // `additionalModelRequestFields` passthrough) are dropped here.
+        let top_p = req.params.and_then(|p| p.top_p);
+        let inference_config =
+            if req.max_output_tokens.is_none() && req.temperature.is_none() && top_p.is_none() {
+                None
+            } else {
+                Some(BedrockInferenceConfig {
+                    max_tokens: req.max_output_tokens,
+                    temperature: req.temperature,
+                    top_p,
+                })
+            };
         let body = ConverseRequest {
             system,
             messages,
@@ -1166,6 +1181,8 @@ mod tests {
             temperature: Some(0.0),
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider
@@ -1211,6 +1228,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
         let result = provider
             .complete(req)
@@ -1246,6 +1265,8 @@ mod tests {
                 input_schema: serde_json::json!({"type":"object"}),
                 read_only: false,
             }],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
@@ -1276,6 +1297,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1300,6 +1323,8 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let err = provider.complete(req).await.unwrap_err();
@@ -1341,9 +1366,89 @@ mod tests {
             temperature: None,
             effort: None,
             tools: vec![],
+            reasoning: None,
+            params: None,
         };
 
         let result = provider.complete(req).await.expect("should succeed");
         assert_eq!(result.text, "ok");
+    }
+
+    /// Of the `GenerationParams`, only `top_p` has a Converse
+    /// `inferenceConfig` slot; the rest must be dropped silently (the
+    /// never-fail contract), not guessed into `additionalModelRequestFields`
+    /// this adapter doesn't have.
+    #[tokio::test]
+    async fn generation_params_forward_only_top_p_into_inference_config() {
+        use stella_protocol::GenerationParams;
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+                "usage": {"inputTokens": 1, "outputTokens": 1}
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = test_provider(&server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: Some(GenerationParams {
+                    top_p: Some(0.9),
+                    top_k: Some(40),
+                    seed: Some(7),
+                    ..Default::default()
+                }),
+            })
+            .await
+            .expect("should succeed");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(
+            body.contains("\"inferenceConfig\":{\"topP\":0.9}"),
+            "{body}"
+        );
+        assert!(!body.contains("topK"), "{body}");
+        assert!(!body.contains("seed"), "{body}");
+    }
+
+    /// The byte-stability contract: with no overrides at all, no
+    /// `inferenceConfig` key rides — exactly the pre-params request body.
+    #[tokio::test]
+    async fn absent_params_omit_inference_config_entirely() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+                "usage": {"inputTokens": 1, "outputTokens": 1}
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = test_provider(&server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(!body.contains("inferenceConfig"), "{body}");
+        assert!(!body.contains("topP"), "{body}");
     }
 }

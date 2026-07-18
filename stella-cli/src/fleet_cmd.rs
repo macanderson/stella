@@ -415,7 +415,7 @@ async fn run_task(
     let mut messages = vec![CompletionMessage::system(
         // Each worker is its own session in its own workspace, so its
         // SessionStart hooks fire here, in the worktree.
-        agent::with_session_hook_context(agent::build_system_prompt(root), &cfg).await,
+        agent::with_session_hook_context(agent::build_system_prompt(&cfg, root), &cfg).await,
     )];
     // The raw step-loop path needs the task prompt as a user message in the
     // history; the pipeline path takes the goal separately and appends its own
@@ -434,21 +434,25 @@ async fn run_task(
     // `success`/`summary` are set by whichever path runs, then folded into
     // the WorkerOutcome after the channel drains.
     let (summary, success): (String, bool) = if use_pipeline {
-        use stella_core::router::{CircuitBreaker, ProviderProfile, RoleTable, Router};
+        use stella_core::router::{CircuitBreaker, Router};
         use stella_pipeline::{
             AutoApproveGate, NoContextRecall, Pipeline, PipelineConfig, PipelinePorts,
             PipelineStatus,
         };
         let model_ref = stella_protocol::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
-        let resolver = agent::BorrowedProviderResolver::new(&*provider);
-        let profile = ProviderProfile::new(
-            cfg.provider.id,
+        // Role wiring from `agent_engine_config` — fleet workers honor the
+        // same triage/judge pins and per-role overrides as `stella run`.
+        let wiring = agent::resolve_engine_wiring(&cfg, &model_ref);
+        for notice in &wiring.notices {
+            eprintln!("  ! {notice}");
+        }
+        let resolver = agent::RoleProviderResolver::new(
+            &*provider,
             model_ref.clone(),
-            model_ref.clone(),
-            model_ref,
+            &wiring.extra_providers,
         );
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
-        let router = Router::new(RoleTable::new(), vec![profile], breaker);
+        let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
         let repo_structure = agent::GitRepoStructure {
             root: root.to_path_buf(),
         };
@@ -476,7 +480,8 @@ async fn run_task(
                 .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
         };
         let config = PipelineConfig {
-            engine: agent::engine_config_for(&cfg),
+            engine: agent::pipeline_engine_config_for(&cfg),
+            role_overrides: wiring.role_overrides.clone(),
             headless: true,
             headless_bypass_scope_review: true,
             ..PipelineConfig::default()

@@ -108,6 +108,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if ui.context_open {
         render_context_overlay(ui, area, buf);
     }
+    // The ENGINE overlay draws last in the chain so it sits above the other
+    // popups (its model-picker sub-overlay draws above it in turn); the help
+    // overlay below still wins the very top.
+    if ui.engine.open {
+        views::engine::render_overlay(ui, area, buf);
+    }
 
     // Deck motion (crate::fx), scrubbed like the splash: each frame builds a
     // fresh effect and processes it once at its wall-clock elapsed, so no

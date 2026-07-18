@@ -29,8 +29,8 @@ use crate::composer::{
 };
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::envelope::{
-    AgentControl, AgentId, AgentScope, AgentStatus, Inbound, InstalledAgentEntry, Secret, SkillOp,
-    SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
+    AgentControl, AgentId, AgentScope, AgentStatus, EngineRole, Inbound, InstalledAgentEntry,
+    Secret, SkillOp, SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
 };
 use crate::graph::GraphSnapshot;
 use crate::input::{ScopeDecision, UserInput};
@@ -397,6 +397,10 @@ pub struct DeckUi {
     /// finished OAuth login refreshes the MCP snapshot). The shell drains
     /// this after every key/inbound and forwards each as a submission.
     pub pending_inputs: Vec<WorkspaceInput>,
+    /// The ENGINE overlay (`/engine`, `/model-*`): the editor for
+    /// `settings.json` → `agent_engine_config`, over a driver-owned snapshot
+    /// ([`Inbound::EngineConfig`]). Modal while open.
+    pub engine: crate::views::engine::EngineOverlay,
 }
 
 impl Default for DeckUi {
@@ -452,6 +456,7 @@ impl Default for DeckUi {
             notifications: Vec::new(),
             inbox_sel: 0,
             pending_inputs: Vec::new(),
+            engine: crate::views::engine::EngineOverlay::default(),
         }
     }
 }
@@ -500,6 +505,18 @@ impl DeckUi {
         // 2. The Graph tab's modal file-filter input.
         if self.graph_picker_open {
             push_single_line(&mut self.graph_picker_query, text);
+            return;
+        }
+
+        // 2b. The ENGINE overlay is modal while open: a paste belongs to its
+        //     inline edit (a prompt, a model list) or the picker filter —
+        //     and with neither active it is swallowed, never the composer's.
+        if self.engine.open {
+            if let Some(edit) = self.engine.edit.as_mut() {
+                push_single_line(&mut edit.buffer, text);
+            } else if let Some(picker) = self.engine.picker.as_mut() {
+                push_single_line(&mut picker.query, text);
+            }
             return;
         }
 
@@ -716,6 +733,13 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         }
         return;
     }
+    // The agent-engine configuration snapshot — out-of-band view state for
+    // the ENGINE overlay (`/engine`). Applied by the overlay's own ingest,
+    // which guards unsaved local edits; the model fold never sees it.
+    if let Inbound::EngineConfig { state, status } = inbound {
+        crate::views::engine::ingest_config(ui, state, status);
+        return;
+    }
     // Launch-cinematic cues: the driver replays the splash held open over a
     // running init (`/init`, session startup) and releases it when init
     // finishes. Out-of-band view state like `ShowHelp`. `--no-anim`
@@ -927,6 +951,14 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     // filter keystroke can never leak into a half-typed prompt.
     if ui.graph_picker_open {
         return handle_graph_picker_key(key, ui);
+    }
+
+    // The ENGINE overlay (`/engine`) is modal exactly like the queue editor
+    // while open: it owns the keyboard — its inline edit buffer, its model
+    // picker, and its letter verbs (`s`/`S`/`x`/`r`) must never leak into
+    // the composer behind the popup.
+    if ui.engine.open {
+        return crate::views::engine::handle_engine_key(key, ui);
     }
 
     // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the
@@ -1214,6 +1246,16 @@ fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Optio
             "/sessions" => open_sessions_overlay(ui),
             "/context" => open_context_overlay(ui),
             "/inbox" => open_inbox_overlay(ui),
+            // The ENGINE overlay: deck-local view state over a driver-owned
+            // settings snapshot. `/engine` lands on the GLOBAL tab; the four
+            // `/model-<agent>` commands jump straight to that agent's tab
+            // with the model picker already open. Intercepted here so these
+            // never get submitted as prompts (registration is driver-side).
+            "/engine" => crate::views::engine::open_overlay(ui),
+            "/model-default" => crate::views::engine::open_with_picker(ui, EngineRole::Default),
+            "/model-worker" => crate::views::engine::open_with_picker(ui, EngineRole::Worker),
+            "/model-judge" => crate::views::engine::open_with_picker(ui, EngineRole::Judge),
+            "/model-triage" => crate::views::engine::open_with_picker(ui, EngineRole::Triage),
             // `/mcp-search` jumps straight into the MCP tab's registry
             // search — THE way to begin looking for a server from anywhere
             // (the old `/`-on-the-MCP-tab trigger collided with the command

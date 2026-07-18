@@ -115,11 +115,42 @@ pub struct PipelinePorts<'a> {
     pub hooks: Option<(&'a Hooks, &'a dyn HookRunner)>,
 }
 
+/// Per-role request overrides for the pipeline's raw completion calls
+/// (triage / judge / guidance), resolved by the caller from
+/// `agent_engine_config`. Every field is optional and falls through to the
+/// engine config's value — the worker's settings are the pipeline-wide
+/// base; these refine one role. `prompt`, when set, is prepended as a
+/// system message to the role's built-in task prompt (the task prompt
+/// carries the output contract — `PASS`/`FAIL`, the triage token — so it
+/// is never replaced outright).
+#[derive(Debug, Clone, Default)]
+pub struct RoleCallOverrides {
+    pub prompt: Option<String>,
+    pub effort: Option<stella_protocol::ReasoningEffort>,
+    pub reasoning: Option<bool>,
+    pub temperature: Option<f32>,
+    pub max_output_tokens: Option<u32>,
+    pub params: Option<stella_protocol::GenerationParams>,
+}
+
+/// The pipeline's per-role override set. Worker (and plan/witness, which
+/// ride the worker's tier) is configured through
+/// [`PipelineConfig::engine`] directly; only the two roles with their own
+/// models get their own request shaping.
+#[derive(Debug, Clone, Default)]
+pub struct PipelineRoleOverrides {
+    pub triage: RoleCallOverrides,
+    pub judge: RoleCallOverrides,
+}
+
 /// Tuning for the whole staged flow.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
     /// Passed to `stella-core::Engine` for every execute turn.
     pub engine: EngineConfig,
+    /// Per-role request overrides (`agent_engine_config`) for the raw
+    /// triage/judge completion calls.
+    pub role_overrides: PipelineRoleOverrides,
     /// Hard latency ceiling on the triage classification call (L-M4): if it
     /// doesn't answer within this, triage falls through to the full path.
     pub triage_latency_ceiling: Duration,
@@ -167,6 +198,7 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             engine: EngineConfig::default(),
+            role_overrides: PipelineRoleOverrides::default(),
             triage_latency_ceiling: Duration::from_secs(10),
             scope_thresholds: crate::scope::ScopeThresholds::default(),
             headless: false,
@@ -590,7 +622,12 @@ impl<'a> Pipeline<'a> {
         // Deterministic policy (L-M4: max_retries = 0) under a hard latency
         // ceiling: on provider error OR timeout, fall through — never hang,
         // never retry.
-        let call = self.complete_once(resolved.provider, messages, RetryPolicy::deterministic());
+        let call = self.complete_once(
+            resolved.provider,
+            messages,
+            RetryPolicy::deterministic(),
+            &self.config.role_overrides.triage,
+        );
         let model_class = match timeout(self.config.triage_latency_ceiling, call).await {
             Ok(Ok(result)) => {
                 *total += result.cost_usd;
@@ -628,11 +665,14 @@ impl<'a> Pipeline<'a> {
         }
 
         let prompt = build_planner_prompt(goal, recall, repo_structure);
+        // Plan rides the worker's settings (same router tier, same tuning).
+        let worker_overrides = RoleCallOverrides::default();
         let result = match self
             .complete_once(
                 resolved.provider,
                 vec![CompletionMessage::user(prompt)],
                 RetryPolicy::standard(),
+                &worker_overrides,
             )
             .await
         {
@@ -652,6 +692,7 @@ impl<'a> Pipeline<'a> {
                 resolved.provider,
                 vec![CompletionMessage::user(plan_repair_prompt(&result.text))],
                 RetryPolicy::deterministic(),
+                &worker_overrides,
             )
             .await
         {
@@ -1246,6 +1287,7 @@ impl<'a> Pipeline<'a> {
                 resolved.provider,
                 vec![CompletionMessage::user(prompt)],
                 RetryPolicy::deterministic(),
+                &self.config.role_overrides.judge,
             )
             .await
         {
@@ -1288,6 +1330,7 @@ impl<'a> Pipeline<'a> {
                 resolved.provider,
                 vec![CompletionMessage::user(prompt)],
                 RetryPolicy::deterministic(),
+                &self.config.role_overrides.judge,
             )
             .await
         {
@@ -1326,17 +1369,35 @@ impl<'a> Pipeline<'a> {
 
     /// One raw provider completion (triage/plan/judge — not the execute engine)
     /// under `policy`, emitting a `Retry` event per committed retry (L-E10).
+    /// `overrides` refines the engine config per role — pass
+    /// `&RoleCallOverrides::default()` for calls that ride the worker's
+    /// settings (plan, repair). A custom role prompt is prepended as a
+    /// system message here, one place, so every call site composes it the
+    /// same way.
     async fn complete_once(
         &self,
         provider: &dyn Provider,
         messages: Vec<CompletionMessage>,
         policy: RetryPolicy,
+        overrides: &RoleCallOverrides,
     ) -> Result<CompletionResult, stella_protocol::ProviderError> {
+        let messages = match &overrides.prompt {
+            Some(prompt) => {
+                let mut with_system = Vec::with_capacity(messages.len() + 1);
+                with_system.push(CompletionMessage::system(prompt.clone()));
+                with_system.extend(messages);
+                with_system
+            }
+            None => messages,
+        };
+        let engine = &self.config.engine;
         let req = CompletionRequest {
             messages,
-            max_output_tokens: self.config.engine.max_output_tokens,
-            temperature: self.config.engine.temperature,
-            effort: self.config.engine.effort,
+            max_output_tokens: overrides.max_output_tokens.or(engine.max_output_tokens),
+            temperature: overrides.temperature.or(engine.temperature),
+            effort: overrides.effort.or(engine.effort),
+            reasoning: overrides.reasoning.or(engine.reasoning),
+            params: overrides.params.or(engine.params),
             tools: Vec::new(),
         };
         let outcome =

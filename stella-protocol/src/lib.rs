@@ -21,7 +21,7 @@ pub use attachment::{
 };
 pub use completion::{
     CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ReasoningEffort,
+    GenerationParams, MessageRole, ReasoningEffort, ServiceTier, Verbosity,
 };
 pub use error::ProviderError;
 pub use event::{

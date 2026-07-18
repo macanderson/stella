@@ -231,6 +231,19 @@ pub enum Inbound {
         message: String,
         outcome: Option<bool>,
     },
+    /// A refreshed snapshot of the agent-engine configuration
+    /// (`settings.json` → `agent_engine_config`) for the ENGINE overlay
+    /// (`/engine`). Out-of-band view state exactly like
+    /// [`Inbound::GraphSnapshot`]: applied straight to `DeckUi` by
+    /// [`crate::deck_ui::ingest_inbound`], ignored by the model fold. The
+    /// driver sends one at startup, after every
+    /// [`WorkspaceInput::EngineConfigSave`], and on
+    /// [`WorkspaceInput::EngineConfigRefresh`]. `status`, when set,
+    /// replaces the overlay's hint line (save outcomes, errors).
+    EngineConfig {
+        state: EngineConfigState,
+        status: Option<String>,
+    },
 }
 
 /// The session-registry lifecycle phase, exactly the grouping the SESSIONS
@@ -485,8 +498,124 @@ pub enum WorkspaceInput {
     NotificationRead { id: String },
     /// Inbox overlay: mark everything read.
     NotificationsReadAll,
+    /// ENGINE overlay: persist the edited agent-engine configuration into
+    /// `settings.json` at `scope` (project `.stella/settings.json` or the
+    /// user's `~/.config/stella/settings.json`). The driver writes the
+    /// `agent_engine_config` object — preserving every other key in the
+    /// file — and answers with a fresh [`Inbound::EngineConfig`] carrying
+    /// the save outcome in `status`. Saved config applies to runs started
+    /// afterwards; in-flight turns keep their resolved models.
+    EngineConfigSave {
+        state: EngineConfigState,
+        scope: AgentScope,
+    },
+    /// ENGINE overlay opened (or wants a reload): re-read the settings
+    /// scope chain and answer with a fresh [`Inbound::EngineConfig`].
+    EngineConfigRefresh,
     /// Tear down the deck.
     Quit,
+}
+
+/// Which pipeline agent a per-agent engine override applies to — the four
+/// configurable "agents" of `agent_engine_config`. `Default` is the
+/// interactive/step-loop agent; the other three are the staged pipeline's
+/// roles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineRole {
+    Default,
+    Worker,
+    Judge,
+    Triage,
+}
+
+impl EngineRole {
+    /// Stable settings-key / display order.
+    pub const ALL: [EngineRole; 4] = [
+        EngineRole::Default,
+        EngineRole::Worker,
+        EngineRole::Judge,
+        EngineRole::Triage,
+    ];
+
+    /// The `agent_engine_config.agents.<key>` settings key (and display
+    /// label) for this agent.
+    pub fn key(self) -> &'static str {
+        match self {
+            EngineRole::Default => "default",
+            EngineRole::Worker => "worker",
+            EngineRole::Judge => "judge",
+            EngineRole::Triage => "triage",
+        }
+    }
+}
+
+/// One agent's engine overrides as the ENGINE overlay edits them — a
+/// TUI-local mirror of `stella-cli`'s `agent_engine_config` per-agent
+/// settings, decoupled (like [`InstalledAgentEntry`]) so the TUI crate
+/// stays independent of the settings engine; the driver maps one to the
+/// other. Every field is optional — `None` renders as "provider default"
+/// and is omitted from the saved JSON (the screenshot's unchecked
+/// "Include" box).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EngineAgentState {
+    /// Model slug — `"provider/slug"` or a bare slug.
+    pub model: Option<String>,
+    /// Gateway/provider id override (`"anthropic"`, `"openrouter"`,
+    /// `"zai"`, or a settings-defined provider). When set, `model` is sent
+    /// verbatim as the slug to THIS provider — how an OpenRouter key routes
+    /// an `openai/...` slug.
+    pub provider: Option<String>,
+    /// Custom system prompt replacing the built-in one for this agent.
+    pub prompt: Option<String>,
+    /// Reasoning effort: `low|medium|high|xhigh|max`.
+    pub effort: Option<String>,
+    /// Thinking mode on/off (`None` = provider default).
+    pub reasoning: Option<bool>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub repetition_penalty: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub seed: Option<u64>,
+    /// `low|medium|high`.
+    pub verbosity: Option<String>,
+    /// `auto|default|flex|priority`.
+    pub service_tier: Option<String>,
+}
+
+/// The full agent-engine configuration snapshot the ENGINE overlay renders
+/// and edits ([`Inbound::EngineConfig`] / [`WorkspaceInput::EngineConfigSave`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EngineConfigState {
+    /// Auto judge-model selection: pick the best allowed model for the
+    /// judge (preferring a different family than the worker's).
+    pub auto_mode: bool,
+    /// Auto per-agent effort (judge high, worker medium, triage low).
+    pub effort_auto: bool,
+    /// Auto per-agent reasoning (on for judge/worker, off for triage).
+    pub reasoning_auto: bool,
+    /// The model slugs the model pickers offer (`allowed_models`). Empty
+    /// means "no restriction" — pickers fall back to `catalog_models`.
+    pub allowed_models: Vec<String>,
+    /// Every configured provider id, for the provider picker.
+    pub providers: Vec<String>,
+    /// `provider/slug` strings from the seed catalog — the picker's
+    /// fallback vocabulary when `allowed_models` is empty.
+    pub catalog_models: Vec<String>,
+    /// Exactly one entry per [`EngineRole::ALL`] slot, in that order.
+    pub agents: Vec<EngineAgentState>,
+}
+
+impl EngineConfigState {
+    /// The state for `role`, if present (the driver always sends all four).
+    pub fn agent(&self, role: EngineRole) -> Option<&EngineAgentState> {
+        EngineRole::ALL
+            .iter()
+            .position(|r| *r == role)
+            .and_then(|i| self.agents.get(i))
+    }
 }
 
 /// Which scope a skill lives in / is installed to. The loader reads both
