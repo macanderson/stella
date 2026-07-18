@@ -1,10 +1,13 @@
 ---
-title: Quickstart
-description: Set a key, run your first prompt, and try goal mode — in under a minute.
+title: Getting Started
+description: Install Stella, set a provider key, initialize your repo, and run your first verified change — in under five minutes.
 ---
 
-This walks you from zero to a verified change. It assumes you've
-[installed](/docs/installation) the `stella` binary.
+This walks you from zero to a verified change:
+**[install](/docs/getting-started/installation)** the binary, set a provider
+key, **[initialize](/docs/getting-started/initialization)** the repo, and run.
+The full provider matrix (OpenRouter, local servers, Vertex, Bedrock, custom
+gateways) lives in **[Providers & models](/docs/getting-started/providers)**.
 
 ## 1. Set an API key
 
@@ -15,7 +18,7 @@ export ANTHROPIC_API_KEY=your_key_here   # or OPENAI_API_KEY, GEMINI_API_KEY, ZA
 ```
 
 No key handy? Point Stella at a local OpenAI-compatible server instead — see
-[Providers &amp; models](/docs/providers#local--any-openai-compatible-server).
+[Providers &amp; models](/docs/getting-started/providers#local--any-openai-compatible-server).
 
 Confirm what Stella resolved:
 
@@ -23,9 +26,20 @@ Confirm what Stella resolved:
 stella config    # provider, model, redacted key, base URL, workspace
 ```
 
-## 2. Run a one-shot prompt
+## 2. Initialize the repo (recommended)
 
 From inside a project directory:
+
+```bash
+stella init
+```
+
+This infers a domain taxonomy and builds the tree-sitter code graph the agent
+queries instead of grepping blind — see
+[Repo initialization](/docs/getting-started/initialization). It's optional
+(and offline-safe), but every session afterwards starts smarter.
+
+## 3. Run a one-shot prompt
 
 ```bash
 stella run "explain what this repository does, then list the riskiest files"
@@ -35,7 +49,7 @@ stella run "explain what this repository does, then list the riskiest files"
 through the staged pipeline (triage → plan → execute → verify → judge); `--no-pipeline` falls
 back to a single raw step loop. It can read files, run commands, and edit code as needed.
 
-## 3. Chat interactively
+## 4. Chat interactively
 
 Running `stella` with no subcommand opens the **Command Deck**, a tabbed terminal UI. Pass
 `--plain` (or set `STELLA_PLAIN=1`) for a plain line-based REPL instead:
@@ -61,7 +75,7 @@ Inside the deck, type a message to send it, or use a slash command to open a tab
 Press **Ctrl-C** to quit. (The plain REPL has a different, smaller set — including `/config`
 and `/goal` — see [`stella chat`](/docs/commands/chat).)
 
-## 4. Give it a goal
+## 5. Give it a goal
 
 Goal mode works in judged rounds until a **separate judge model** confirms the objective
 is met from evidence — not just because the worker says so:
@@ -70,9 +84,9 @@ is met from evidence — not just because the worker says so:
 stella goal "the test suite passes and there are no clippy warnings"
 ```
 
-See [Goal mode](/docs/goal-mode) for how the judge is chosen and how the loop ends.
+See [Goal mode](/docs/agent-modes/goal-mode) for how the judge is chosen and how the loop ends.
 
-## 5. Pin a specific model (optional)
+## 6. Pin a specific model (optional)
 
 By default Stella auto-detects the provider. Pin one explicitly with `--model`:
 
@@ -83,9 +97,9 @@ stella --model zai/glm-5.2 goal "CI is green on the current branch"
 
 ## Where to go next
 
-- **[Providers &amp; models](/docs/providers)** — the full provider matrix and the
+- **[Providers &amp; models](/docs/getting-started/providers)** — the full provider matrix and the
   credential chain.
-- **[Configuration](/docs/configuration/settings)** — override provider defaults in
-  `settings.json`.
-- **[Commands](/docs/commands)** — every command and global flag.
+- **[The inference pipeline](/docs/inference-pipeline)** — how work gets verified, not just done.
+- **[Agent modes](/docs/agent-modes)** — deck, run, goal, monitor, fleet: which to use when.
+- **[Configuration](/docs/configuration)** — settings.json, per-agent models, credentials.
 - **[Scripting](/docs/scripting)** — run Stella headlessly in CI with JSON output.

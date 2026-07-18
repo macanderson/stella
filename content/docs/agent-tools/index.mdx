@@ -3,7 +3,7 @@ title: Built-in Tools
 description: The complete catalog of tools the Stella agent can call in every session, including which are read-only and which mutate your workspace.
 ---
 
-Stella ships with a set of built-in tools that are always available to the agent. On top of these, you can add your own [custom script tools](/docs/tools/custom-tools) and merge in tools from [MCP servers](/docs/tools/mcp). Every tool is subject to a [per-tool permission model](/docs/tools/permissions).
+Stella ships with a set of built-in tools that are always available to the agent. On top of these, you can add your own [custom script tools](/docs/agent-tools/custom-tools) and merge in tools from [MCP servers](/docs/agent-tools/mcp). Every tool is subject to a [per-tool permission model](/docs/agent-tools/permissions).
 
 ## Listing tools
 
@@ -69,7 +69,9 @@ The issue tools target **Linear** when `LINEAR_API_KEY` is set; otherwise **GitH
 
 ## Where to go next
 
-- [Permissions](/docs/tools/permissions) — how read-only and mutating tools are gated, and how hooks can block tool calls.
-- [Custom tools](/docs/tools/custom-tools) — add your own script tools with a TOML manifest.
-- [MCP servers](/docs/tools/mcp) — merge tools from Model Context Protocol servers.
-- [Hooks](/docs/tools/hooks) — run shell commands on agent lifecycle events.
+- [Skills](/docs/agent-tools/skills) — reusable SKILL.md capabilities, versioned and registry-installable.
+- [Commands &amp; custom agents](/docs/agent-tools/commands) — extend the slash menu with templates and personas.
+- [Permissions](/docs/agent-tools/permissions) — how read-only and mutating tools are gated, and how hooks can block tool calls.
+- [Custom tools](/docs/agent-tools/custom-tools) — add your own script tools with a TOML manifest.
+- [MCP servers](/docs/agent-tools/mcp) — merge tools from Model Context Protocol servers.
+- [Hooks](/docs/agent-tools/hooks) — run shell commands on agent lifecycle events.

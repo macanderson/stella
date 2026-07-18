@@ -1,0 +1,84 @@
+---
+title: Repo initialization
+description: Prime a workspace with stella init — the domain taxonomy, the tree-sitter code graph, extension adoption, and everything that lands under .stella/.
+---
+
+Stella works in any directory with zero setup — but one command primes it
+with structured knowledge of your codebase:
+
+```bash
+cd your-project
+stella init
+```
+
+## What `stella init` does
+
+1. **Infers the domain taxonomy** → `.stella/domains.toml`. A short, shared
+   tagging vocabulary (auth, storage, api, …) used to label memories,
+   reflections, and every code-graph node — so the
+   [context engine](/docs/context-engine) can relate a memory, a reflection,
+   and a file to the same area of your project. Also persisted into the
+   context plane at `.stella/context.db`.
+2. **Builds the code-graph index** → `.stella/codegraph.db`. A tree-sitter
+   symbol/import index the agent queries through `graph_query` (and you query
+   through [`stella graph`](/docs/commands/graph)) instead of grepping blind.
+3. **Adopts existing agent extensions.** Commands, skills, and agents already
+   defined for other tools (`.claude/` and `.agents/` directories, workspace
+   and user scope) are adopted as symlinks under `.stella/` — your existing
+   setup carries over instead of starting from scratch.
+
+`stella init` works **offline** with a heuristic fallback, so it never
+hard-fails: you can initialize before configuring any provider key.
+
+<Callout type="info">
+  In interactive sessions the graph also auto-builds in the background and
+  refreshes live as files change — `stella init` is about doing it once,
+  eagerly, and generating the taxonomy alongside. Re-run it after large
+  refactors to rebuild the index and re-infer the taxonomy.
+</Callout>
+
+## What lands where
+
+Everything Stella knows about a workspace lives under `.stella/` — plain
+files and SQLite databases you can inspect, version, or delete at will:
+
+| Path | What it holds |
+| --- | --- |
+| `.stella/domains.toml` | The domain taxonomy (tagging vocabulary) |
+| `.stella/codegraph.db` | The tree-sitter code-graph index |
+| `.stella/context.db` | The context plane — memory nodes, reflections, episodes, bi-temporal facts |
+| `.stella/store.db` | Executions, events, token/cost telemetry, the files-touched ledger |
+| `.stella/memories/*.md` | Workspace [memories](/docs/context-engine) (plain Markdown) |
+| `.stella/rules/*.md` | Workspace rules — promoted memories and guard rules |
+| `.stella/skills/` | Project-scope [skills](/docs/agent-tools/skills) |
+| `.stella/settings.json` | Project-scope [settings](/docs/configuration/settings) |
+| `.stella/mcp.toml` | [MCP servers](/docs/agent-tools/mcp) to connect at session start |
+| `.stella/tools/*.toml` | [Custom script tools](/docs/agent-tools/custom-tools) |
+| `.stella/commands/` · `.stella/agents/` | Custom [slash commands](/docs/agent-tools/commands) and agent definitions |
+| `.stella/fleet.db` | The [fleet](/docs/agent-fleets) ledger — runs, attempts, commits |
+| `.stella/exports/` | Session telemetry [exports](/docs/telemetry/dashboard) (ZIP + HTML) |
+
+User-scope counterparts live under `~/.config/stella/` (settings, skills,
+agents, credentials).
+
+### What to commit
+
+`.stella/domains.toml`, `.stella/memories/`, `.stella/rules/`,
+`.stella/skills/`, `.stella/settings.json`, `.stella/mcp.toml`, and
+`.stella/tools/` are team-shareable and version-control-friendly. The `.db`
+files are local state — add them to `.gitignore`:
+
+```text title=".gitignore"
+.stella/*.db
+.stella/*.db-*
+```
+
+## Verify the result
+
+```bash
+stella graph definitions <SomeSymbol>   # the index answers structural questions
+stella config                            # the resolved provider/model/workspace
+```
+
+Next: [configure your provider keys](/docs/getting-started/providers), then
+run your first task from the [quickstart](/docs/getting-started).

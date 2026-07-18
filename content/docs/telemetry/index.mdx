@@ -50,3 +50,20 @@ stella run "port the utils module to the new API"
 
 Every run ends with a cost summary derived from the same metering that feeds the local
 SQLite store, so the number you see matches what was recorded locally.
+
+## Seeing your usage
+
+Three ways to read the telemetry back, all local:
+
+- **[`stella observe`](/docs/telemetry/dashboard)** — the Observatory, a loopback-only web
+  dashboard (default `http://127.0.0.1:7787/`): runs, spend, resolve rates, **$/resolved**
+  per model, tool and file leaderboards, the memory plane, MCP traffic, and the fleet
+  ledger.
+- **[`stella stats`](/docs/commands/stats)** — the same per-provider/model aggregation in
+  the terminal, as a table, JSON, or CSV.
+- **`/export`** (in the Command Deck) — a portable ZIP with raw JSON dumps and a
+  self-contained `dashboard.html` report. See
+  [the dashboard page](/docs/telemetry/dashboard).
+
+Every file it reads, creates, updates, or deletes is also recorded per run — see
+[Files touched](/docs/telemetry/files-touched).

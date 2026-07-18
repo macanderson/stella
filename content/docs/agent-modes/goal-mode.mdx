@@ -15,7 +15,7 @@ stella goal "<objective>"
 
 Where `stella run` executes a single one-shot prompt, `stella goal` runs
 **judged rounds**. Each round the worker agent makes progress using the normal
-[agent step loop](/docs/agent-engine), and then a separate judge model reviews
+[agent step loop](/docs/inference-pipeline), and then a separate judge model reviews
 the evidence and decides whether the objective has been satisfied. The loop ends
 when the judge confirms — or when a backstop trips: a hard round cap (default
 **8** rounds), the `--budget` limit, or a worker-turn abort. Reaching a backstop

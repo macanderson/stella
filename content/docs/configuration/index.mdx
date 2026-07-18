@@ -14,10 +14,10 @@ key; teams and power users reach for `settings.json`.
 | `<workspace>/.stella/settings.json` | Project-scope settings (highest precedence) |
 | org-managed `settings.json` | Organization defaults ([see below](#the-settings-hierarchy)) |
 | `~/.config/stella/credentials.toml` | Stored [API keys](/docs/configuration/credentials) |
-| `<workspace>/.stella/mcp.toml` | [MCP servers](/docs/tools/mcp) to connect at session start |
-| `<workspace>/.stella/tools/*.toml` | [Custom script tools](/docs/tools/custom-tools) |
+| `<workspace>/.stella/mcp.toml` | [MCP servers](/docs/agent-tools/mcp) to connect at session start |
+| `<workspace>/.stella/tools/*.toml` | [Custom script tools](/docs/agent-tools/custom-tools) |
 | `<workspace>/.stella/domains.toml` | Domain taxonomy (from `stella init`) |
-| `<workspace>/.stella/memories/*.md` | Saved [workspace memories](/docs/memory) |
+| `<workspace>/.stella/memories/*.md` | Saved [workspace memories](/docs/context-engine) |
 | `<workspace>/.stella/store.db` | Local [telemetry &amp; store](/docs/telemetry) — embedded SQLite |
 
 ## The settings hierarchy
@@ -46,7 +46,7 @@ Two separate concerns:
 - **[credentials.toml](/docs/configuration/credentials)** stores *only* API keys, written
   with owner-only permissions.
 
-Both feed the [credential chain](/docs/providers#the-credential-chain).
+Both feed the [credential chain](/docs/getting-started/providers#the-credential-chain).
 
 ## Everything you can configure
 
@@ -62,11 +62,11 @@ is the complete map; each row links to its detail page.
 | A provider's display name | `settings.json` `providers.<id>.name` | see [settings.json](/docs/configuration/settings) |
 | Output format (text/json/stream-json) | `--output-format` flag · `STELLA_OUTPUT_FORMAT` | `stella --output-format json run "…"` |
 | A hard USD spend cap | `--budget` flag · `STELLA_BUDGET` | `stella --budget 2.00 goal "…"` |
-| Shell commands on lifecycle events | `settings.json` `hooks` key | [Hooks](/docs/tools/hooks) |
+| Shell commands on lifecycle events | `settings.json` `hooks` key | [Hooks](/docs/agent-tools/hooks) |
 | Org-managed defaults for a fleet | `STELLA_MANAGED_SETTINGS` → a `settings.json` | [settings hierarchy](#the-settings-hierarchy) |
-| MCP servers to connect | `<workspace>/.stella/mcp.toml` | [MCP](/docs/tools/mcp) |
-| Custom script tools | `<workspace>/.stella/tools/*.toml` | [Custom tools](/docs/tools/custom-tools) |
-| Per-tool permission gates | `settings.json` permission model | [Permissions](/docs/tools/permissions) |
+| MCP servers to connect | `<workspace>/.stella/mcp.toml` | [MCP](/docs/agent-tools/mcp) |
+| Custom script tools | `<workspace>/.stella/tools/*.toml` | [Custom tools](/docs/agent-tools/custom-tools) |
+| Per-tool permission gates | `settings.json` permission model | [Permissions](/docs/agent-tools/permissions) |
 | Force the plain REPL (no TUI) | `--plain` flag · `STELLA_PLAIN=1` | `stella --plain chat` |
 | Freeze TUI animation (CI/recordings) | `--no-anim` flag · `STELLA_NO_ANIM` · `NO_COLOR` | `stella --no-anim chat` |
 

@@ -30,7 +30,7 @@ Runs once before the turn begins. Anything the hook prints to **stdout is append
 
 ### `PreToolUse`
 
-Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool does not run, and the model receives the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/tools/permissions)). The matcher is a **glob over the tool name**, so you can target a single tool such as `bash` or a family of tools.
+Runs before a tool executes. A **non-zero exit status blocks the tool**: the tool does not run, and the model receives the hook's message instead. This is how you gate or veto tool calls (see [Permissions](/docs/agent-tools/permissions)). The matcher is a **glob over the tool name**, so you can target a single tool such as `bash` or a family of tools.
 
 ### `PostToolUse`
 

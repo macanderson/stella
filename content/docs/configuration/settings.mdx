@@ -31,7 +31,7 @@ default:
 | `id` | string | Optional restatement of the map key; if present it **must equal the key** — a mismatch is a hard, named load error (guards against copy-pasting the wrong provider) |
 | `name` | string | Display name shown by `stella config` / `stella models` |
 | `base_url` | string | Base URL requests go to (a coding-plan endpoint, a proxy, a gateway) |
-| `api_key` | string | API key for this provider (slots into the [credential chain](/docs/providers#the-credential-chain)) |
+| `api_key` | string | API key for this provider (slots into the [credential chain](/docs/getting-started/providers#the-credential-chain)) |
 | `api_key_env` | string | Name of an environment variable to read the key from — safer than an inline `api_key` in a committed project file |
 | `default_model` | string | Model used when none is pinned with `--model` |
 | `dialect` | string | Wire adapter for a **new** provider: `openai-compatible` (default) \| `openai-responses` \| `anthropic` \| `gemini` (`vertex`/`bedrock` are reserved to built-ins) |
@@ -130,7 +130,7 @@ The merged result for `zai`:
 
 **API key** — `--api-key` flag &gt; the provider's env var &gt; `settings.json`
 `api_key` &gt; `~/.config/stella/credentials.toml` &gt; interactive prompt. See the
-[credential chain](/docs/providers#the-credential-chain).
+[credential chain](/docs/getting-started/providers#the-credential-chain).
 
 An API key configured **only** in `settings.json` is enough for Stella to auto-detect and
 run that provider — no provider-specific environment variable required.
@@ -182,7 +182,7 @@ so a project can point at a different registry than the user default.
 ## Lifecycle hooks
 
 `settings.json` also carries `hooks` — shell commands that fire on agent lifecycle events.
-That schema is documented on the [Hooks](/docs/tools/hooks) page.
+That schema is documented on the [Hooks](/docs/agent-tools/hooks) page.
 
 Unlike `providers`, hooks **concatenate** across scopes — every scope can add matchers and
 none replaces another's. Hooks from the user and org-managed scopes always load, but hooks

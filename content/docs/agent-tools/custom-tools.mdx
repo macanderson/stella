@@ -3,7 +3,7 @@ title: Custom Tools
 description: Extend the Stella agent with your own script tools by dropping a TOML manifest into your workspace or user config directory.
 ---
 
-Beyond the [built-in tools](/docs/tools), you can give the agent your own developer-defined script tools. A custom tool is described by a small TOML manifest; once discovered, it appears alongside the built-ins and can be called by the agent like any other tool.
+Beyond the [built-in tools](/docs/agent-tools), you can give the agent your own developer-defined script tools. A custom tool is described by a small TOML manifest; once discovered, it appears alongside the built-ins and can be called by the agent like any other tool.
 
 ## Where manifests live
 
@@ -57,4 +57,4 @@ It parses each `<name>.toml` and reports **errors** (bad TOML, missing/invalid/r
 
 ## How custom tools appear
 
-Once a manifest is discovered, its tool is registered into the session and shows up next to the built-ins — including in the output of `stella tools`. The agent can then call it as part of its normal step loop. Like every other tool, a custom tool is subject to the [per-tool permission model](/docs/tools/permissions), and its calls can be gated or blocked with a [`PreToolUse` hook](/docs/tools/hooks).
+Once a manifest is discovered, its tool is registered into the session and shows up next to the built-ins — including in the output of `stella tools`. The agent can then call it as part of its normal step loop. Like every other tool, a custom tool is subject to the [per-tool permission model](/docs/agent-tools/permissions), and its calls can be gated or blocked with a [`PreToolUse` hook](/docs/agent-tools/hooks).

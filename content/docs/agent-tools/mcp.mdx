@@ -3,11 +3,11 @@ title: MCP Servers
 description: Connect Model Context Protocol servers to Stella so their tools merge into the agent at session start.
 ---
 
-Stella can connect to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and merge their tools into the agent. This lets you extend the agent with capabilities that live outside your workspace — without writing a [custom script tool](/docs/tools/custom-tools) for each one.
+Stella can connect to [Model Context Protocol](https://modelcontextprotocol.io) (MCP) servers and merge their tools into the agent. This lets you extend the agent with capabilities that live outside your workspace — without writing a [custom script tool](/docs/agent-tools/custom-tools) for each one.
 
 ## Configuration
 
-MCP servers are configured in `.stella/mcp.toml` in your workspace. Stella connects to each configured server at **session start** and merges the tools it exposes into the agent, alongside the [built-in tools](/docs/tools) and any custom tools.
+MCP servers are configured in `.stella/mcp.toml` in your workspace. Stella connects to each configured server at **session start** and merges the tools it exposes into the agent, alongside the [built-in tools](/docs/agent-tools) and any custom tools.
 
 The quickest way to add a server is the [`stella mcp`](/docs/commands/mcp) command family — `stella mcp search <query>` to find one in the registry, then `stella mcp install <name>` to write the `.stella/mcp.toml` entry for you (no hand-editing). `stella mcp list` shows what's configured, and `stella mcp remove <name>` drops one.
 
@@ -35,5 +35,5 @@ A stdio MCP subprocess runs with a **scrubbed environment** — ambient shell va
 </Callout>
 
 <Callout type="info">
-MCP tools are treated like any other tool once merged in: they follow the [per-tool permission model](/docs/tools/permissions) and their calls can be gated or blocked with a [`PreToolUse` hook](/docs/tools/hooks).
+MCP tools are treated like any other tool once merged in: they follow the [per-tool permission model](/docs/agent-tools/permissions) and their calls can be gated or blocked with a [`PreToolUse` hook](/docs/agent-tools/hooks).
 </Callout>

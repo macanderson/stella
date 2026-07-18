@@ -1,0 +1,99 @@
+---
+title: Agent Modes
+description: The ways to drive Stella — interactive Command Deck chat, one-shot pipeline runs, judged goal mode, CI monitoring, and parallel fleets — and how to pick between them.
+---
+
+# Agent Modes
+
+Stella has one engine and several ways to drive it. Pick the mode by how much
+autonomy you're delegating and how the work should be checked.
+
+| Mode | Command | Best for | Verification |
+| --- | --- | --- | --- |
+| Interactive chat | `stella` / `stella chat` | Exploring, iterating, supervising | You, live |
+| One-shot run | `stella run "…"` | Scripts, CI, a single well-defined task | The [staged pipeline](/docs/inference-pipeline) |
+| Raw step loop | `stella run --no-pipeline "…"` | Quick questions, cheap tasks | The model stops when done |
+| Goal mode | `stella goal "…"` | An outcome, not a task list | An independent [judge](/docs/agent-modes/goal-mode), in rounds |
+| CI monitor | `stella monitor` | "Make CI green and keep it green" | The latest CI run, all-green |
+| Fleet | `stella fleet …` | Many tasks in parallel | Per-task, in isolated [worktrees](/docs/agent-fleets) |
+
+## Interactive: the Command Deck
+
+Running `stella` with no subcommand opens the **Command Deck** — a tabbed
+terminal UI over the same engine. Type to send a prompt; slash commands open
+tabs and overlays:
+
+| Command | Does |
+| --- | --- |
+| `/help` | Show help |
+| `/models` | List providers and models |
+| `/files` · `/diff` | What this session changed, and the working diff |
+| `/graph` | The code-graph tab |
+| `/agents` · `/skills` · `/mcp` | Installed agents, skills, MCP servers |
+| `/engine` | The [agent-engine config](/docs/configuration/agent-engine-config) editor |
+| `/pipeline` | Toggle staged-pipeline turns (ON by default) |
+| `/sessions` · `/inbox` | Every session on this machine; notifications |
+| `/export` | Export session telemetry to a ZIP + [HTML dashboard](/docs/telemetry/dashboard) |
+| `/clear` | Reset the conversation |
+
+**⏎** inserts a line break; **⌘⏎ / ⌃⏎** submits. Prompts queue while a turn
+runs — you never wait for the agent to finish before typing the next thing
+(**Ctrl-T** opens the queue editor). A `!`-prefixed line runs a shell command
+immediately in its own lane, skipping the queue. A single **Esc** cancels the in-flight turn;
+**double-Esc** cancels *and holds* dispatch so what you type next runs first.
+Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
+
+Deck turns run the [staged pipeline](/docs/inference-pipeline) by default;
+`/pipeline` flips to the raw step loop.
+
+## One-shot: `stella run`
+
+The non-interactive workhorse: one prompt in, verified work out, exit code
+back. Defaults to the staged pipeline; `--test-command` arms the
+deterministic fail→pass flip oracle; `--no-pipeline` selects the raw loop.
+Combine with `--output-format json|stream-json` and `--budget` for headless
+automation — see [`stella run`](/docs/commands/run) and
+[Scripting](/docs/scripting).
+
+```bash
+stella run "add a --json flag to the export command and update the tests" \
+  --test-command "cargo test -p exporter"
+```
+
+## Outcome-driven: goal mode
+
+`stella goal` doesn't take a task — it takes an **objective**, and works in
+judged rounds until an independent judge (routed to a different model family
+than the worker whenever possible) confirms the objective is met *from
+evidence*. Backstops — a round cap, `--budget`, worker aborts — end the run
+honestly as "not met" rather than optimistically.
+
+```bash
+stella goal "the test suite passes and there are no clippy warnings"
+```
+
+→ [Goal mode in depth](/docs/agent-modes/goal-mode)
+
+`stella monitor` is goal mode specialized for CI: the objective is "the
+latest CI run is all-green", assessed through the `ci_status` tool.
+
+## Parallel: fleets
+
+When the work is many tasks rather than one, [`stella fleet`](/docs/agent-fleets)
+fans a dependency-ordered task DAG out to parallel workers, each in its own
+git worktree on its own branch — with cooperative file claims so two agents
+never fight over the same file.
+
+## Choosing
+
+- **You know the change and want to watch** → the Command Deck.
+- **You know the change and don't need to watch** → `stella run` (add
+  `--test-command` for the strongest verification).
+- **You know the outcome but not the steps** → `stella goal`.
+- **CI is red and you want it green** → `stella monitor`.
+- **You have a backlog** → `stella fleet --plan`.
+
+Every mode shares the same [tools](/docs/agent-tools), the same
+[configuration](/docs/configuration), the same
+[context engine](/docs/context-engine), and the same local-only
+[telemetry](/docs/telemetry).

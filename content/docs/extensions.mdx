@@ -9,7 +9,7 @@ policy-sensitive actions, to *intercept* it. Every event flows through one unifo
 envelope, and every subscription is disposable and cleanup-safe.
 
 <Callout type="info">
-  Two different things are both called "hooks" in Stella. **[Lifecycle hooks](/docs/tools/hooks)**
+  Two different things are both called "hooks" in Stella. **[Lifecycle hooks](/docs/agent-tools/hooks)**
   are shell commands you declare in `settings.json` — no code required. **Extension hooks**
   (this page) are the *programmatic* in-process bus you register handlers against when you
   embed Stella's engine as a library. They share the event vocabulary but not the wiring.
@@ -161,12 +161,12 @@ the catalog is the contract for what the *host* emits.
 ## Relationship to file-touch telemetry
 
 The bus is how you react to file changes *as they happen*: the same
-[file-touch telemetry](/docs/files-touched) that Stella records also drives `file.created`,
+[file-touch telemetry](/docs/telemetry/files-touched) that Stella records also drives `file.created`,
 `file.updated`, `file.deleted`, and `files_touched.updated` events, each carrying the path,
 reason, and line deltas of the touch (never the file contents).
 
 <Callout type="warn">
   The extension hook bus is the in-process API surfaced by `stella-core` for embedders. If
   you only need to run a shell command on a tool call, reach for the config-driven
-  [lifecycle hooks](/docs/tools/hooks) instead — no code, no build.
+  [lifecycle hooks](/docs/agent-tools/hooks) instead — no code, no build.
 </Callout>

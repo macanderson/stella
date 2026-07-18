@@ -1,0 +1,97 @@
+---
+title: Skills
+description: Reusable capabilities in SKILL.md files — project and user scopes, versioning and pinning, the public registry, and how skills reach the model through recall.
+---
+
+# Skills
+
+A **skill** is a reusable capability described in Markdown — a checklist, a
+workflow, a house style — that Stella injects when it's relevant and that you
+can invoke explicitly as a slash command.
+
+## The format
+
+A `SKILL.md` with frontmatter and a Markdown body:
+
+```md title=".stella/skills/release-checklist/SKILL.md"
+---
+name: release-checklist
+description: How we cut a release — versioning, changelog, tag, publish.
+domains: [build, ci]
+---
+
+1. Bump the workspace version…
+2. Regenerate the changelog…
+3. Tag `vX.Y.Z` and push — CI publishes.
+```
+
+Both layouts are accepted: nested `<slug>/SKILL.md` (the ecosystem layout)
+or a flat `<slug>.md`.
+
+## Scopes and precedence
+
+| Scope | Path | Travels with |
+| --- | --- | --- |
+| Project | `<workspace>/.stella/skills/` | The repo — commit it, the team shares it |
+| User | `~/.config/stella/skills/` | You, across every workspace |
+
+When both scopes define the same name, **project wins** for recall; the
+SKILLS tab lists both.
+
+## How skills reach the model
+
+- **Automatic recall.** Each turn, skill selection (lexical + domain
+  matching against your prompt) picks the relevant skills and renders them
+  into the [recall block](/docs/context-engine) — no invocation needed.
+- **Explicit invocation.** Every skill is also a ⚡ slash command:
+  `/release-checklist ship 1.4` wraps the skill body as explicit
+  instructions above your task.
+- **Auto-promotion.** Lessons that keep recurring in the
+  [reflection log](/docs/context-engine) are promoted into new skills
+  automatically — your agent literally writes its own playbook over time.
+
+## Versions and pinning
+
+Every edit bumps a version: history lives under `<slug>/versions/vN/SKILL.md`,
+and a state sidecar (`.stella-skills.json`) tracks which version is
+**pinned** (active) and which skills are **disabled** (kept on disk,
+excluded from recall). Pin an older version to roll back without losing the
+newer one.
+
+## The public registry
+
+Stella integrates with the community skills registry via `npx skills`:
+
+- **`search_skills`** (agent tool, read-only) / the SKILLS tab search — runs
+  `npx skills find <query>`.
+- **`install_skill`** (agent tool) — runs `npx skills add`, staging into a
+  private temp directory and adopting the produced `SKILL.md` into your
+  chosen scope. Installation **always requires your confirmation** — in a
+  headless run it fails loudly rather than installing unattended.
+
+The underlying commands are overridable (`STELLA_SKILLS_SEARCH_CMD`,
+`STELLA_SKILLS_INSTALL_CMD`, `STELLA_SKILLS_USE_CMD`) for private registries.
+
+## Managing skills in the Command Deck
+
+`/skills` opens the SKILLS tab:
+
+| Key | Does |
+| --- | --- |
+| `space` | Enable / disable the selected skill |
+| `e` | Edit (saves as a new version and pins it) |
+| `p` | Pin a specific version |
+| `n` | Create a new skill (LLM-drafted from a description) |
+| `ctrl+x` ×2 | Uninstall |
+| `←` / `→` | Switch panes (installed ↔ search) |
+
+`/context` shows which skills (and MCP servers) are active in the current
+session.
+
+<Callout type="info">
+  Skills are prompt-level guidance. For capabilities with hard boundaries —
+  new executable actions, blocked paths — reach for
+  [custom tools](/docs/agent-tools/custom-tools),
+  [hooks](/docs/agent-tools/hooks), or
+  [guard rules](/docs/agent-tools/permissions) instead.
+</Callout>

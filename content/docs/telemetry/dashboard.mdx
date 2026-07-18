@@ -1,0 +1,78 @@
+---
+title: The Observatory dashboard
+description: stella observe opens a local, loopback-only web dashboard over your workspace telemetry — runs, spend, models, tools, files, memory, MCP traffic, and the fleet ledger. Plus /export for a portable HTML report.
+---
+
+# The Observatory dashboard
+
+`stella observe` opens the **Observatory** — a local web dashboard over the
+telemetry your own runs recorded:
+
+```bash
+stella observe            # serves http://127.0.0.1:7787/
+stella observe --open     # …and opens your browser
+stella observe --port 0   # pick any free port
+```
+
+## Local by construction
+
+The Observatory is built to the same no-phone-home standard as the rest of
+Stella — not as a policy, as a construction:
+
+- **Loopback only.** It binds `127.0.0.1` and nothing else. There is no
+  remote mode, no auth because there is no exposure.
+- **Read-only.** Every database open is SQLite read-only — the dashboard can
+  never mutate your telemetry or block a live session (the store runs WAL, so
+  readers never block writers).
+- **Zero external references.** The page is a single embedded HTML file with
+  its assets inlined — no CDN, no web fonts, no analytics. A test in the
+  repository enforces that the served HTML contains no external URL at all.
+- **Graceful on empty.** A missing table or a workspace with no runs renders
+  as empty panels, never an error.
+
+## What you can see
+
+| View | Answers |
+| --- | --- |
+| **Overview** | Runs, resolve rate, total spend, tokens, prompt-cache read/write/miss, a per-execution timeline |
+| **Executions** | Every run: kind, prompt, provider, model, outcome, cost, steps, tokens, tool calls, files touched |
+| **Execution drill-down** | One run's per-step telemetry, every tool call, files touched, and the post-turn self-reflection |
+| **Models** | Per provider/model: runs, resolve rate, cost, **$/resolved task**, tokens, average duration |
+| **Tools** | The tool leaderboard: calls, errors, p50/max latency, bytes |
+| **Files** | The most-touched files across runs |
+| **Memory** | The memory plane: citations, reflections, promoted rules, skill usage |
+| **MCP** | Per-server / per-tool MCP traffic |
+| **Fleet** | The fleet ledger: runs, attempts, commits, spend |
+
+Everything is served from `<workspace>/.stella/store.db` (and
+`.stella/fleet.db` for the fleet view) — the same SQLite files you can query
+directly with any SQLite client.
+
+## `$/resolved` — the metric that matters
+
+The models view computes **dollars per resolved task** per provider/model —
+the honest unit price of your agent work. A cheap model that rarely resolves
+can cost more per outcome than an expensive one that resolves reliably; this
+is the number that tells you which. [`stella stats`](/docs/commands/stats)
+prints the same aggregation in the terminal (`table`, `json`, or `csv`).
+
+## Portable reports: `/export`
+
+Inside the [Command Deck](/docs/agent-modes), the `/export` slash command
+packages the session's telemetry into
+`.stella/exports/session-<timestamp>.zip`:
+
+- `raw/<table>.json` — a pretty-printed dump of every telemetry table
+  (executions, telemetry, tool calls, files touched, MCP usage, skill usage,
+  reflections, …)
+- `dashboard.html` — a **self-contained** HTML dashboard (no external CSS or
+  JS) with KPI insights, cost &amp; efficiency by model, token economy, tool
+  usage, files touched, and execution outcomes — openable offline, emailable,
+  or committable to a PR as the receipt for what an agent run did and cost
+- `manifest.json` — export time and per-table row counts
+
+<Callout type="info">
+  The Observatory is for *living* workspaces — point it at your repo and
+  watch spend and resolve rates as you work. `/export` is for *sharing* — a
+  frozen, portable snapshot anyone can open without Stella installed.
+</Callout>

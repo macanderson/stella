@@ -15,7 +15,7 @@ stella tools [--validate [DIR]] [global flags]
 
 `stella tools` prints the set of tools the agent can call this session:
 
-- **Built-in tools** — the always-available and conditionally-registered tools. See the full [Built-in Tools](/docs/tools) catalog for names and read-only/mutating flags.
+- **Built-in tools** — the always-available and conditionally-registered tools. See the full [Built-in Tools](/docs/agent-tools) catalog for names and read-only/mutating flags.
 - **Developer custom tools** — loaded from `<name>.toml` manifests.
 
 Custom tools come from a `<name>.toml` manifest dropped in `<workspace>/.stella/tools/` (workspace-scoped) or `~/.config/stella/tools/` (user-global). On a name collision, the workspace copy wins.

@@ -1,0 +1,178 @@
+---
+title: Agent engine config
+description: Configure each engine agent — default, worker, judge, triage — with its own model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config in settings.json, or interactively with /engine.
+---
+
+The `agent_engine_config` object in [`settings.json`](/docs/configuration/settings)
+configures the four engine agents individually:
+
+| Agent | Runs |
+| --- | --- |
+| `default` | The interactive / step-loop agent (`stella chat`, the Command Deck, `--no-pipeline`) |
+| `worker` | The [pipeline](/docs/inference-pipeline)'s execute turns (plan and witness ride its settings) |
+| `judge` | The pipeline's verify judge and [goal mode](/docs/agent-modes/goal-mode)'s round judge |
+| `triage` | The pipeline's fast task classifier |
+
+Every field is optional, and it merges across the same user → org-managed →
+project scope chain as the rest of `settings.json`, per field — a project can
+pin just the judge model while your user scope keeps everything else.
+
+## The full schema
+
+```jsonc title="settings.json"
+{
+  "agent_engine_config": {
+    // Flat per-role models ("provider/slug", or a bare catalog slug).
+    "default_model": "anthropic/claude-fable-5",
+    "pipeline_worker_model": "zai/glm-5.2",
+    "pipeline_judge_model": "openrouter/openai/gpt-5.5",
+    "pipeline_triage_model": "deepseek/deepseek-chat",
+
+    // The model vocabulary the TUI pickers offer and auto_mode selects from.
+    "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2",
+                        "openrouter/openai/gpt-5.5"],
+
+    // "on" = pick the judge automatically from allowed_models: prefer a
+    // different model family than the worker's, then the highest catalog
+    // price tier. You never worry about it.
+    "auto_mode": "off",
+    // "on" = per-agent effort chosen for you (judge high, worker medium,
+    // triage low), overriding any per-agent "effort".
+    "effort_auto": "off",
+    // "on" = thinking mode chosen for you (on everywhere except triage).
+    "reasoning_auto": "off",
+
+    // Per-agent deep config. Set a field and it goes on the wire; leave it
+    // out and the provider default applies.
+    "agents": {
+      "judge": {
+        "provider": "openrouter",          // gateway: the slug goes to THIS
+        "model": "openai/gpt-5.5",         // provider verbatim
+        "prompt": "You are a strict, evidence-first code judge.",
+        "effort": "high",                   // low | medium | high | xhigh | max
+        "reasoning": "on",                  // thinking mode on/off
+        "params": {
+          "temperature": 0.2, "top_p": 0.9, "top_k": 40,
+          "frequency_penalty": 0.0, "presence_penalty": 0.0,
+          "repetition_penalty": 1.0, "max_tokens": 4096, "seed": 7,
+          "verbosity": "low",               // low | medium | high
+          "service_tier": "priority"        // auto | default | flex | priority
+        }
+      }
+    }
+  }
+}
+```
+
+## Model precedence
+
+Per agent, first hit wins:
+
+1. The `--model` CLI flag (an explicit flag pins the run, always)
+2. `agents.<agent>.model`
+3. The flat field — `pipeline_worker_model` / `pipeline_judge_model` /
+   `pipeline_triage_model` (or `default_model` for the default agent)
+4. `default_model`
+5. The provider's own default / auto-detection
+
+## One gateway per agent (BYOK per agent)
+
+An agent's `provider` field routes its model slug through **that** provider
+verbatim — no prefix splitting. That is how you mix billing relationships in
+one pipeline:
+
+```jsonc
+{
+  "agent_engine_config": {
+    "pipeline_worker_model": "anthropic/claude-fable-5",     // your Anthropic key
+    "agents": {
+      "judge":  { "provider": "openrouter", "model": "openai/gpt-5.5" }, // your OpenRouter key
+      "triage": { "provider": "zai", "model": "glm-5.2" }               // your Z.ai key
+    }
+  }
+}
+```
+
+Without a `provider` field, model strings use `--model` semantics:
+`provider/slug` splits on the first `/` when the prefix names a known
+provider (so `openrouter/openai/gpt-5.5` routes `openai/gpt-5.5` through
+OpenRouter), and a bare slug resolves through the model catalog.
+
+## Auto modes
+
+Set any of the three autos to `"on"` and stop thinking about it:
+
+- **`auto_mode`** — the judge model is picked automatically from
+  `allowed_models`: prefer a candidate from a **different model family** than
+  the worker (an independent second opinion), then the highest catalog price
+  tier as a capability proxy, then list order. Candidates whose provider has
+  no resolvable credential are skipped.
+- **`effort_auto`** — reasoning effort per agent: judge `high`, worker and
+  default `medium`, triage `low`.
+- **`reasoning_auto`** — thinking mode on for judge/worker/default, off for
+  triage (a latency-bound, one-token classification).
+
+When an auto is `"on"` it overrides the corresponding per-agent setting —
+that is its contract.
+
+## Generation parameters
+
+Every entry under `params` follows **include-when-set** semantics: an absent
+field leaves the provider's own default untouched (the request body is
+byte-identical to having no config at all — which keeps prompt caching
+intact), and a set field goes on the wire.
+
+Each provider adapter forwards only the parameters its wire supports, and
+maps reasoning to the provider's native mechanism:
+
+| Provider | Reasoning maps to | Notes |
+| --- | --- | --- |
+| Z.ai (GLM) | `thinking: {"type": "enabled"\|"disabled"}` | |
+| OpenRouter | `reasoning` object (`effort` / `enabled`) | also accepts `top_k` and `repetition_penalty` |
+| Anthropic | extended thinking with an effort-tiered token budget | temperature is omitted while thinking is on (API rule) |
+| OpenAI | `reasoning.effort`, plus `text.verbosity` and `service_tier` | `temperature`/`top_p` are omitted for reasoning models (API rule) |
+| Gemini / Vertex | `thinkingLevel` | Gemini 3 cannot fully disable thinking; `"off"` maps to the lowest level |
+
+Parameters a provider cannot express are silently dropped — an unsupported
+knob never fails a request.
+
+## Custom prompts
+
+An agent's `prompt` **replaces the built-in base instructions** for that
+agent. Workspace memories and rules still append to it — they are workspace
+context, not part of the base persona. The pipeline's triage and judge keep
+their built-in output contracts (the classification token, the `PASS`/`FAIL`
+verdict line); a custom prompt for those agents is prepended as an extra
+system message rather than replacing the task prompt.
+
+## The `/engine` editor in the Command Deck
+
+Everything above is editable interactively. In the Command Deck:
+
+- **`/engine`** opens the agent-engine overlay — a tab per agent plus a
+  GLOBAL tab (auto modes, `allowed_models`). Navigate with ↑/↓, press ⏎ to
+  edit a row (enum rows cycle; numeric and text rows take inline input),
+  `x` clears a field back to "provider default".
+- **`/model-default`**, **`/model-worker`**, **`/model-judge`**,
+  **`/model-triage`** jump straight into a type-to-filter model picker for
+  that agent, listing your `allowed_models` (or the full catalog when the
+  list is empty).
+- **`s`** saves to your user settings (`~/.config/stella/settings.json`);
+  **`S`** saves to the project (`<workspace>/.stella/settings.json`). Saves
+  preserve every other key in the file, and apply to runs started from then
+  on.
+
+## Degradation is always soft
+
+Configuration can never turn a runnable pipeline into an error. A judge or
+triage model whose provider has no resolvable credential — or whose adapter
+fails to build — is skipped with a visible notice, and that role rides the
+worker's model exactly as it would with no config at all.
+
+<Callout type="info">
+  `agent_engine_config` carries no credential routing of its own — an
+  agent's `provider` references provider ids whose `base_url` and
+  `api_key_env` remain protected by the project-scope
+  [trust boundary](/docs/configuration/settings). A cloned repo can suggest
+  models, but it cannot redirect your keys.
+</Callout>

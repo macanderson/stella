@@ -1,0 +1,71 @@
+---
+title: Donate
+description: Stella is free, BYOK, phone-home-free, and vendor-agnostic — built and funded by one person. If it saves you time or money, consider sponsoring.
+---
+
+Stella is free software. There is no account, no subscription, no telemetry
+endpoint, and no upsell — and keeping it that way is the point.
+
+If Stella saves you time or money, please consider sponsoring its development:
+
+<Callout type="info">
+  **[Sponsor @macanderson on GitHub →](https://github.com/sponsors/macanderson)**
+</Callout>
+
+## Why sponsorship matters here
+
+Stella is not a thin wrapper around one vendor's API. It is a large, serious
+piece of systems engineering, built and maintained by one person:
+
+- **A workspace of focused Rust crates** — a deterministic agent engine, a
+  staged inference pipeline with independent judging, a tree-sitter code
+  graph, a bi-temporal context store, a multi-tab terminal UI, fleet
+  orchestration over git worktrees, and native wire adapters for nine hosted
+  providers plus any local OpenAI-compatible server.
+- **Verification you can trust** — witness tests replayed against the previous
+  code in a shadow worktree, fail→pass flip oracles, and cross-family judges
+  are much harder to build than "the model said it's done." They are also what
+  makes an agent worth using unattended.
+- **Real, ongoing costs.** Developing, benchmarking, and regression-testing an
+  agent against frontier models is paid for in real API bills — every
+  self-improvement benchmark run, every provider-adapter conformance pass,
+  every multi-model judge evaluation costs actual money. Sponsorship goes
+  directly to keeping that work funded.
+
+## What open source is supposed to look like
+
+Stella is built on a few non-negotiable principles:
+
+- **No phone-home.** The only network traffic Stella produces goes to the model
+  provider *you* chose. All telemetry — executions, tokens, cost, the
+  files-touched ledger — lands in a local SQLite database on your disk and
+  never leaves your machine.
+- **Bring your own key.** Your credentials, your provider relationship, your
+  bill. No middleman markup, no metered proxy, no lock-in.
+- **Model and vendor agnostic.** Anthropic, OpenAI, Google (Gemini and
+  Vertex), Amazon Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, or any local
+  OpenAI-compatible server — pick per agent, per role, per run. Stella has no
+  favorite and takes no rebate.
+- **Dual-licensed for everyone.** Stella is licensed under **MIT OR
+  Apache-2.0** — you choose the license that fits. Individuals typically take
+  MIT's simplicity; enterprises typically prefer Apache 2.0 for its explicit
+  patent grant. Either way it is free to use, fork, embed, and ship.
+
+That combination — local-first, BYOK, vendor-neutral, permissively licensed —
+is what open source is supposed to be like. It is also precisely the
+combination that no venture-funded agent product can offer you, because there
+is nothing to monetize in it.
+
+## Other ways to help
+
+Sponsorship is the most direct support, but not the only kind:
+
+- **Star and share** the repo — discovery is oxygen for independent projects.
+- **File sharp issues** with reproductions; fix one if you can.
+- **Write about your setup** — provider configs, fleet plans, and skills that
+  worked for you help the next person.
+
+Thank you for using Stella — and thank you for keeping independent,
+local-first developer tooling alive.
+
+**[github.com/sponsors/macanderson](https://github.com/sponsors/macanderson)**

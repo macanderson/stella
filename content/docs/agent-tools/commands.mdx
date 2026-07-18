@@ -1,0 +1,79 @@
+---
+title: Commands & custom agents
+description: Extend the slash menu with your own COMMAND.md templates and AGENT.md personas — adopted automatically from .claude/ and .agents/ directories you already have.
+---
+
+# Commands &amp; custom agents
+
+The Command Deck's slash menu is extensible: alongside the built-ins
+(`/help`, `/engine`, `/export`, …) and your ⚡
+[skills](/docs/agent-tools/skills), you can define **commands** (prompt
+templates) and **agents** (personas with an optional restricted toolbelt).
+
+## Custom commands
+
+A `COMMAND.md` (nested `<slug>/COMMAND.md` or flat `<slug>.md`) under
+`.stella/commands/` (project) or `~/.config/stella/commands/` (user):
+
+```md title=".stella/commands/review.md"
+---
+name: review
+description: Review the working diff like our team does.
+---
+
+Review the current diff for correctness first, style second.
+Focus areas: $ARGUMENTS
+
+- Flag any change without a matching test.
+- Check error paths before happy paths.
+```
+
+Typing `/review auth module` expands the template — `$ARGUMENTS` is replaced
+with whatever follows the command — and runs it as the prompt.
+
+## Custom agents
+
+An `AGENT.md` defines a persona the session can adopt with
+`/agent-name <task>`:
+
+```md title=".stella/agents/docs-writer.md"
+---
+name: docs-writer
+description: Writes end-user documentation in our house style.
+tools: [read_file, grep, glob, write_file, edit_file]
+---
+
+You are a technical writer. Prefer working examples over abstractions.
+Never document a flag you haven't verified against --help output.
+```
+
+The optional `tools:` frontmatter restricts the agent's toolbelt. `/agents`
+opens the Agents tab, which lists installed agents with versioned editing
+and pinning — like skills, every save is a new version you can roll back.
+
+## Adopted from tools you already use
+
+`stella init` (and `/init`) **adopts** definitions from other agent tools'
+directories as symlinks — your existing setup carries over instead of being
+rewritten:
+
+| Source | Destination |
+| --- | --- |
+| `<workspace>/.claude/{commands,skills,agents}` · `<workspace>/.agents/…` | `<workspace>/.stella/…` |
+| `~/.claude/…` · `~/.agents/…` | `~/.config/stella/…` |
+
+`.claude` wins over `.agents` on a name collision; existing Stella-side
+definitions are never clobbered; adoption is idempotent.
+
+## Precedence
+
+Definitions load user-global first, then workspace — **workspace wins** on a
+name collision. In the slash menu, built-ins can never be shadowed, and
+commands shadow skills shadow agents when names collide.
+
+<Callout type="info">
+  Commands and agents are prompt-level extensions — templates and personas.
+  To give the agent a genuinely new *action* (a deploy script, a database
+  query), define a [custom tool](/docs/agent-tools/custom-tools); to run
+  shell commands on lifecycle events, use [hooks](/docs/agent-tools/hooks).
+</Callout>
