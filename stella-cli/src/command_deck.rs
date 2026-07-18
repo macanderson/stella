@@ -444,7 +444,7 @@ pub async fn run_deck_session(
                 Some(WorkspaceInput::Enqueue { text })
                 | Some(WorkspaceInput::EnqueueFront { text })
                 | Some(WorkspaceInput::ToAgent {
-                    input: UserInput::Prompt { text },
+                    input: UserInput::Prompt { text, .. },
                     ..
                 }) => {
                     dispatch.release();
@@ -595,7 +595,9 @@ pub async fn run_deck_session(
         }
         let turn_base = messages.len();
         if !pipeline_on {
-            messages.push(CompletionMessage::user(&prompt));
+            // Attach any media files the prompt names (including `⌃V`
+            // clipboard images, which arrive as their stored payload path).
+            messages.push(crate::attachments::user_message(&prompt));
         }
         let reflect_start = messages.len();
 
@@ -676,7 +678,7 @@ pub async fn run_deck_session(
                         None | Some(WorkspaceInput::Quit) => break TurnEnd::Quit,
                         Some(WorkspaceInput::Enqueue { text })
                         | Some(WorkspaceInput::ToAgent {
-                            input: UserInput::Prompt { text }, ..
+                            input: UserInput::Prompt { text, .. }, ..
                         }) => queue.push_back(text),
                         // An explicit front-insert stays a front-insert even
                         // if a turn started before it arrived — the deck's
@@ -1126,6 +1128,7 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ("/graph", "open the code-graph tab"),
     ("/skills", "open the SKILLS tab: manage · search · create"),
     ("/mcp", "open the MCP servers tab"),
+    ("/mcp-search", "search the MCP registry & install servers"),
     ("/donate", "support stella — become a GitHub Sponsor"),
 ];
 
@@ -1849,7 +1852,7 @@ async fn run_deck_command(
         // tab, `/skills` and `/mcp` opening their tabs) are normally consumed
         // TUI-side, but a queued one reaches here — accept it as handled (a
         // no-op) rather than calling it "unknown".
-        "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" => {}
+        "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search" => {}
         _ => {
             // A custom command/skill/agent (⚡): expand its template —
             // arguments and all — into the prompt the model turn runs.
