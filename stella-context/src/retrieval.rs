@@ -429,22 +429,42 @@ fn rrf_fuse(lists: &[Vec<i64>], k: f64) -> HashMap<i64, f64> {
     scores
 }
 
+/// The dedup key for [`dedup_by_content_hash`]. Genuinely-identical non-empty
+/// content collapses under `Content`, while every empty-content node keeps its
+/// own identity under `Distinct`.
+#[derive(PartialEq, Eq, Hash)]
+enum DedupKey<'a> {
+    /// Real content: distinct nodes that share this hash are true duplicates
+    /// and collapse to the strongest one.
+    Content(&'a str),
+    /// Empty (or whitespace-only) content: these nodes all share `sha256("")`
+    /// yet are distinct identities — code-graph and taxonomy nodes routinely
+    /// carry no text. Keying on the node id keeps each as its own candidate so
+    /// the graph/taxonomy portion of recall is not silently collapsed.
+    Distinct(i64),
+}
+
 /// Collapse fused scores to one entry per content hash (keep the strongest),
 /// returning `(node_id, fused_score)` sorted by score descending. Dedup by
-/// content hash is step 4.
+/// content hash is step 4. Empty-content nodes are exempt from hash dedup —
+/// they share `sha256("")` despite being distinct identities, so merging them
+/// would destroy graph/taxonomy recall on any initialized workspace.
 fn dedup_by_content_hash(
     fused: &HashMap<i64, f64>,
     node_by_id: &HashMap<i64, &NodeRow>,
 ) -> Vec<(i64, f64)> {
-    // content_hash -> (best node_id, best score)
-    let mut best: HashMap<&str, (i64, f64)> = HashMap::new();
+    // dedup key -> (best node_id, best score)
+    let mut best: HashMap<DedupKey, (i64, f64)> = HashMap::new();
     for (&id, &score) in fused {
         let Some(node) = node_by_id.get(&id) else {
             continue;
         };
-        let entry = best
-            .entry(node.content_hash.as_str())
-            .or_insert((id, f64::MIN));
+        let key = if node.content.trim().is_empty() {
+            DedupKey::Distinct(id)
+        } else {
+            DedupKey::Content(node.content_hash.as_str())
+        };
+        let entry = best.entry(key).or_insert((id, f64::MIN));
         if score > entry.1 {
             *entry = (id, score);
         }
@@ -589,6 +609,48 @@ mod tests {
         assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
         assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
         assert_eq!(cosine(&[0.0, 0.0], &[1.0, 1.0]), 0.0);
+    }
+
+    fn node_row(id: i64, content: &str) -> NodeRow {
+        NodeRow {
+            id,
+            public_id: format!("nod_{id}"),
+            kind: crate::store::NodeKind::Concept,
+            display_name: format!("node {id}"),
+            content: content.into(),
+            content_hash: crate::store::sha256_hex(content),
+            uri: None,
+            recorded_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn dedup_keeps_distinct_empty_content_nodes_but_collapses_true_dupes() {
+        // Three distinct nodes with empty content (all share sha256("")) plus
+        // two nodes with identical non-empty content (a true duplicate pair).
+        let nodes = [
+            node_row(1, ""),
+            node_row(2, ""),
+            node_row(3, ""),
+            node_row(4, "the same body"),
+            node_row(5, "the same body"),
+        ];
+        let node_by_id: HashMap<i64, &NodeRow> = nodes.iter().map(|n| (n.id, n)).collect();
+        let fused: HashMap<i64, f64> = [(1, 0.5), (2, 0.4), (3, 0.3), (4, 0.9), (5, 0.8)]
+            .into_iter()
+            .collect();
+
+        let out = dedup_by_content_hash(&fused, &node_by_id);
+        let kept: HashSet<i64> = out.iter().map(|(id, _)| *id).collect();
+
+        // Every distinct empty-content node survives (the graph/taxonomy recall
+        // the old sha256("")-collapse destroyed).
+        assert!(kept.contains(&1) && kept.contains(&2) && kept.contains(&3));
+        // The true duplicate pair collapses to exactly the strongest (id 4).
+        assert!(kept.contains(&4));
+        assert!(!kept.contains(&5));
+        // 3 distinct empties + 1 survivor of the dup pair = 4.
+        assert_eq!(out.len(), 4);
     }
 
     #[test]
