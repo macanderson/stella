@@ -26,7 +26,7 @@ Installs the latest tagged release for your platform, verifies its SHA-256, and 
 back to `cargo install` where no prebuilt binary is published:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oxageninc/stella/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
 stella --version
 ```
 
@@ -36,9 +36,9 @@ Installs the prebuilt binary from the tap — no Rust toolchain needed. The rele
 keeps the formula in sync on every tag:
 
 ```bash
-brew install oxageninc/stella/stella
+brew install macanderson/tap/stella
 # equivalently:
-brew tap oxageninc/stella && brew install stella
+brew tap macanderson/tap && brew install stella
 ```
 
 ### From cargo
@@ -46,14 +46,14 @@ brew tap oxageninc/stella && brew install stella
 Requires Rust 1.90+ and git:
 
 ```bash
-cargo install --locked --git https://github.com/oxageninc/stella stella-cli
+cargo install --locked --git https://github.com/macanderson/stella stella-cli
 stella --version
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/oxageninc/stella.git
+git clone https://github.com/macanderson/stella.git
 cd stella
 cargo build --release
 ./target/release/stella --version

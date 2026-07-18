@@ -1,20 +1,22 @@
 ---
 title: Telemetry & budget
-description: Local-only token, cost, and step metering in DuckDB — and how --budget turns metering into a hard spend cap.
+description: Local-only token, cost, and step metering in a local SQLite store — and how --budget turns metering into a hard spend cap.
 ---
 
 Stella meters every run **locally**. Token usage, cost, and per-step accounting land in a
-DuckDB store on your disk — nothing is sent anywhere.
+SQLite store on your disk — nothing is sent anywhere.
 
 ## Local metering
 
 | What | Where |
 | --- | --- |
-| Token usage, cost, per-step metering | `<workspace>/.stella/stella.duckdb` (DuckDB) |
+| Token usage, cost, per-step metering | `<workspace>/.stella/store.db` (SQLite) |
 
-Because the store is a real DuckDB file, you can inspect it with any DuckDB client after a
-run — every execution, its model, and its cost are queryable on your own machine. Stella
-never transmits this data.
+Because the store is a real SQLite file, you can inspect it with any SQLite client after a
+run — e.g. `sqlite3 <workspace>/.stella/store.db` — and every execution, its model, and its
+cost are queryable on your own machine. WAL is enabled, so a read-only reader like
+[`stella stats`](/docs/commands/stats) is never blocked by a live session. Stella never
+transmits this data.
 
 ## Budget: observed vs. enforced
 
@@ -46,5 +48,5 @@ stella run "port the utils module to the new API"
 
 ## Cost summary
 
-Every run ends with a cost summary derived from the same metering that feeds the DuckDB
-store, so the number you see matches what was recorded locally.
+Every run ends with a cost summary derived from the same metering that feeds the local
+SQLite store, so the number you see matches what was recorded locally.
