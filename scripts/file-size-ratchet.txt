@@ -10,7 +10,7 @@ stella-core/src/rules.rs 1606
 stella-core/src/skills.rs 1518
 stella-model/src/anthropic.rs 2063
 stella-model/src/zai.rs 1992
-stella-pipeline/src/pipeline.rs 2634
+stella-pipeline/src/pipeline.rs 1921
 stella-store/src/lib.rs 3904
 stella-tools/src/registry.rs 2453
 stella-tools/src/scripts.rs 1643

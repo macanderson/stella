@@ -4180,15 +4180,7 @@ async fn run_lead_pipeline_turn(
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
 
-        let repo_structure = agent::GitRepoStructure {
-            root: cfg.workspace_root.clone(),
-        };
-        let repo_status = agent::GitRepoStatus {
-            root: cfg.workspace_root.clone(),
-        };
-        let command_runner = agent::ShellCommandRunner {
-            root: cfg.workspace_root.clone(),
-        };
+        let ws_ports = agent::workspace_ports(cfg.workspace_root.clone(), cfg);
         let no_recall = NoContextRecall;
         let recall: &dyn ContextRecallPort = match memory {
             Some(m) => m,
@@ -4200,15 +4192,16 @@ async fn run_lead_pipeline_turn(
             providers: &resolver,
             tools: &tapped,
             recall,
-            repo: &repo_structure,
-            repo_status: &repo_status,
-            commands: &command_runner,
+            repo: &ws_ports.repo_structure,
+            repo_status: &ws_ports.repo_status,
+            commands: &ws_ports.command_runner,
             approvals: &AutoApproveGate,
             sleeper: &TokioSleeper,
             hooks: cfg
                 .hooks
                 .as_ref()
                 .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
+            candidate_workspaces: Some(&ws_ports.candidate_workspaces),
         };
         let config = PipelineConfig {
             engine: agent::pipeline_engine_config_for(cfg),

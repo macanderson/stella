@@ -541,15 +541,9 @@ async fn run_task(
         );
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
-        let repo_structure = agent::GitRepoStructure {
-            root: root.to_path_buf(),
-        };
-        let repo_status = agent::GitRepoStatus {
-            root: root.to_path_buf(),
-        };
-        let command_runner = agent::ShellCommandRunner {
-            root: root.to_path_buf(),
-        };
+        // Rooted at the fleet worker's own worktree, so a candidate snapshot
+        // nests off that worktree's checkout, never the primary repo's.
+        let ws_ports = agent::workspace_ports(root.to_path_buf(), &cfg);
         let recall = NoContextRecall;
         let hook_runner = ShellHookRunner;
         let ports = PipelinePorts {
@@ -557,15 +551,16 @@ async fn run_task(
             providers: &resolver,
             tools: &claims,
             recall: &recall,
-            repo: &repo_structure,
-            repo_status: &repo_status,
-            commands: &command_runner,
+            repo: &ws_ports.repo_structure,
+            repo_status: &ws_ports.repo_status,
+            commands: &ws_ports.command_runner,
             approvals: &AutoApproveGate,
             sleeper: &TokioSleeper,
             hooks: cfg
                 .hooks
                 .as_ref()
                 .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
+            candidate_workspaces: Some(&ws_ports.candidate_workspaces),
         };
         let config = PipelineConfig {
             engine: agent::pipeline_engine_config_for(&cfg),

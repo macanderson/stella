@@ -20,6 +20,7 @@
 mod agent;
 mod agents_installed;
 mod attachments;
+mod candidate_ws;
 mod claims;
 mod command_deck;
 mod config;
