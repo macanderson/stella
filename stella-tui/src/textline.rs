@@ -78,6 +78,18 @@ pub fn retry(attempt: u32, reason: &str) -> EventLine {
     }
 }
 
+/// The step-boundary injection notice — the plain surface's record that a
+/// queued prompt was steered into the running turn.
+pub fn steered(text: &str) -> EventLine {
+    EventLine {
+        glyph: "↪",
+        tone: Tone::Info,
+        strong: true,
+        body: "steered into the running turn:".to_string(),
+        detail: Some(text.to_string()),
+    }
+}
+
 pub fn compaction(
     before_tokens: u64,
     after_tokens: u64,
@@ -402,6 +414,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         | AgentEvent::ToolStart { .. }
         | AgentEvent::ToolResult { .. } => None,
         AgentEvent::Retry { attempt, reason } => Some(retry(*attempt, reason)),
+        AgentEvent::Steered { text } => Some(steered(text)),
         AgentEvent::Compaction {
             before_tokens,
             after_tokens,

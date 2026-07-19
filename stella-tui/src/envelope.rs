@@ -525,8 +525,9 @@ pub enum WorkspaceInput {
     /// Double-Esc: cancel `agent`'s in-flight turn, return that turn's
     /// prompt to the FRONT of the queue, and HOLD dispatch until the user's
     /// next submission — "full stop; what I type next runs first". A single
-    /// Esc is the plain [`AgentControl::Stop`]: cancel, and the next queued
-    /// prompt dispatches automatically.
+    /// Esc is the plain [`AgentControl::Stop`]: the lead SOFT-stops at the
+    /// next step boundary (completed steps kept); worker lanes cancel
+    /// immediately, and the next queued prompt dispatches automatically.
     StopAndHold { agent: AgentId },
     /// Re-root the Graph tab on `file`: the deck's file picker sends this when
     /// the user selects a file, and the driver answers with a fresh

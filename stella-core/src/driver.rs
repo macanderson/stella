@@ -194,6 +194,12 @@ pub struct Engine<'a> {
     /// any model call — a paused turn parks at that safe boundary and
     /// spends nothing until resumed. `None` adds zero work.
     gate: Option<&'a dyn crate::ports::TurnGate>,
+    /// Step-boundary steering ([`crate::ports::TurnSteering`]), off by
+    /// default. Attached via [`Engine::with_steering`]; drained once per
+    /// step at the same boundary as the pause gate — queued user messages
+    /// become the model's next observation, and a latched soft stop ends
+    /// the turn keeping every completed step. `None` adds zero work.
+    steering: Option<&'a dyn crate::ports::TurnSteering>,
 }
 
 /// Upper bound on tool calls from one step executing concurrently. Tools
@@ -241,6 +247,7 @@ impl<'a> Engine<'a> {
             hooks: None,
             calibration: None,
             gate: None,
+            steering: None,
         }
     }
 
@@ -270,6 +277,13 @@ impl<'a> Engine<'a> {
     /// never mid-tool.
     pub fn with_gate(mut self, gate: &'a dyn crate::ports::TurnGate) -> Self {
         self.gate = Some(gate);
+        self
+    }
+
+    /// Attach step-boundary steering — mid-turn user messages and the soft
+    /// stop, at step granularity, never mid-tool.
+    pub fn with_steering(mut self, steering: &'a dyn crate::ports::TurnSteering) -> Self {
+        self.steering = Some(steering);
         self
     }
 
@@ -335,6 +349,26 @@ impl<'a> Engine<'a> {
             // boundary. Resuming continues the very same turn.
             if let Some(gate) = self.gate {
                 gate.wait_if_paused().await;
+            }
+            // Steering rides the same safe boundary as the pause gate:
+            // queued user messages land BEFORE compaction (so the pass sees
+            // them) and before the model call (so it answers them this
+            // step). Drain precedes the soft-stop check deliberately — a
+            // steer typed just before Esc is preserved in history for the
+            // next turn instead of evaporating with the per-turn tap.
+            if let Some(steering) = self.steering {
+                for text in steering.drain_steering() {
+                    let _ = events.send(AgentEvent::Steered { text: text.clone() });
+                    messages.push(CompletionMessage::user(text));
+                }
+                if steering.soft_stop_requested() {
+                    // A user choice, not a failure: no Error event, and the
+                    // caller keeps every completed step (unlike the hard
+                    // cancel, which drops the future and truncates).
+                    return TurnOutcome::Aborted {
+                        reason: SOFT_STOP_REASON.to_string(),
+                    };
+                }
             }
             total_cost_usd += self
                 .run_compaction_pass(messages, calibration_model.as_deref(), budget, events)
@@ -472,10 +506,10 @@ impl<'a> Engine<'a> {
         if end <= start || end - start < 4 {
             return 0.0;
         }
-        let rendered = render_span_for_summary(&messages[start..end]);
+        let rendered = crate::summarize::render_span_for_summary(&messages[start..end]);
         let request = CompletionRequest {
             messages: vec![
-                CompletionMessage::system(SUMMARIZE_SYSTEM),
+                CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
                 CompletionMessage::user(&rendered),
             ],
             max_output_tokens: Some(1_200),
@@ -1134,79 +1168,10 @@ fn recent_tool_calls(messages: &[CompletionMessage]) -> Vec<ToolCall> {
         .collect()
 }
 
-/// System prompt of the overflow summarizer. Byte-stable const: the
-/// summarizer's own request is tiny, but stability costs nothing and keeps
-/// its prefix cacheable across repeated overflow events in one session.
-const SUMMARIZE_SYSTEM: &str = "You are compacting an agent work log. Write a dense summary of \
-    the work so far that a coding agent can resume from: the goal, key decisions and why, files \
-    touched (exact paths) and what changed in each, commands run with outcomes, errors seen and \
-    how they were resolved, and anything explicitly left unresolved. Short bullet lines. No \
-    preamble — the summary text only.";
-
-/// Per-item caps for [`render_span_for_summary`]. The summarizer needs the
-/// shape of the work, not the bytes: full file dumps in tool results are
-/// exactly what overflowed in the first place.
-const SUMMARY_TEXT_CAP: usize = 600;
-const SUMMARY_RESULT_CAP: usize = 300;
-/// Whole-render cap — half of a typical small-model context, leaving room
-/// for the summarizer's own output.
-const SUMMARY_RENDER_CAP: usize = 60_000;
-
-/// Truncate `s` to `cap` chars on a char boundary with an elision marker.
-fn cap_chars(s: &str, cap: usize) -> String {
-    if s.len() <= cap {
-        return s.to_string();
-    }
-    let mut end = cap;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}[…]", &s[..end])
-}
-
-/// Flatten a message span into the summarizer's input: roles, text, tool
-/// calls with their inputs, and truncated results — enough to reconstruct
-/// WHAT happened without re-shipping the content that overflowed.
-fn render_span_for_summary(span: &[CompletionMessage]) -> String {
-    let mut out = String::new();
-    for message in span {
-        let role = match message.role {
-            MessageRole::System => "system",
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-            MessageRole::Tool => "tool",
-        };
-        if !message.content.trim().is_empty() {
-            out.push_str(&format!(
-                "{role}: {}\n",
-                cap_chars(message.content.trim(), SUMMARY_TEXT_CAP)
-            ));
-        }
-        for call in &message.tool_calls {
-            out.push_str(&format!(
-                "{role} → {}({})\n",
-                call.name,
-                cap_chars(&call.input.to_string(), SUMMARY_RESULT_CAP)
-            ));
-        }
-        for result in &message.tool_results {
-            let (tag, body) = match &result.output {
-                ToolOutput::Ok { content } => ("ok", content),
-                ToolOutput::Error { message } => ("error", message),
-            };
-            out.push_str(&format!(
-                "  ← {tag}: {}\n",
-                cap_chars(body.trim(), SUMMARY_RESULT_CAP)
-            ));
-        }
-        if out.len() > SUMMARY_RENDER_CAP {
-            out = cap_chars(&out, SUMMARY_RENDER_CAP);
-            out.push_str("\n[span truncated]");
-            break;
-        }
-    }
-    out
-}
+/// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
+/// callers match on this to render "stopped" rather than "failed", and to
+/// keep (never truncate) the turn's completed work.
+pub const SOFT_STOP_REASON: &str = "stopped at step boundary by user — completed steps kept";
 
 #[cfg(test)]
 mod tests {
@@ -1635,6 +1600,121 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A scripted [`crate::ports::TurnSteering`]: hands out its queue on
+    /// the first drain, and (optionally) latches the soft stop once
+    /// `stop_after_drains` boundaries have passed.
+    struct TestSteering {
+        queue: std::sync::Mutex<Vec<String>>,
+        stop_after_drains: Option<u32>,
+        drains: AtomicU32,
+    }
+    impl crate::ports::TurnSteering for TestSteering {
+        fn drain_steering(&self) -> Vec<String> {
+            self.drains.fetch_add(1, Ordering::SeqCst);
+            std::mem::take(&mut *self.queue.lock().unwrap())
+        }
+        fn soft_stop_requested(&self) -> bool {
+            match self.stop_after_drains {
+                Some(n) => self.drains.load(Ordering::SeqCst) > n,
+                None => false,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn steered_messages_inject_before_the_next_model_call() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![Ok(text_result("answered both"))]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let tools = CountingTools {
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let sleeper = NoopSleeper;
+        let steering = TestSteering {
+            queue: std::sync::Mutex::new(vec!["also check the tests".into()]),
+            stop_after_drains: None,
+            drains: AtomicU32::new(0),
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+            .with_steering(&steering);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        let steer_idx = messages
+            .iter()
+            .position(|m| m.role == MessageRole::User && m.content == "also check the tests")
+            .expect("steered text must enter the conversation as a user message");
+        let reply_idx = messages
+            .iter()
+            .position(|m| m.role == MessageRole::Assistant)
+            .expect("assistant reply");
+        assert!(
+            steer_idx < reply_idx,
+            "steer must precede the model call that answers it"
+        );
+        let events = drain_events(&mut rx);
+        assert!(
+            events.iter().any(
+                |e| matches!(e, AgentEvent::Steered { text } if text == "also check the tests")
+            ),
+            "steering must be visible in the event stream: {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn soft_stop_ends_the_turn_keeping_completed_steps() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![
+                Ok(tool_call_result("c1", "bash")),
+                Ok(text_result("never reached")),
+            ]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let provider_calls = provider.calls.clone();
+        let tool_calls = Arc::new(AtomicU32::new(0));
+        let tools = CountingTools {
+            calls: tool_calls.clone(),
+        };
+        let sleeper = NoopSleeper;
+        // Stop latches after the first boundary: step 0 runs fully (model
+        // call + tool), step 1's boundary honors the stop.
+        let steering = TestSteering {
+            queue: std::sync::Mutex::new(vec![]),
+            stop_after_drains: Some(1),
+            drains: AtomicU32::new(0),
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+            .with_steering(&steering);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        let before_len = messages.len();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        match outcome {
+            TurnOutcome::Aborted { reason } => assert_eq!(reason, SOFT_STOP_REASON),
+            other => panic!("expected soft-stop abort, got {other:?}"),
+        }
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 1, "one step ran");
+        assert_eq!(tool_calls.load(Ordering::SeqCst), 1, "its tool ran");
+        assert!(
+            messages.len() > before_len,
+            "completed work must be KEPT — soft stop never truncates"
+        );
     }
 
     #[tokio::test]
