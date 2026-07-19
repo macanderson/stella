@@ -1,96 +1,109 @@
-# Stella Brand Guidelines
+# Stella Brand Guidelines — the Laika system
 
-Stella's visual identity is **aurora light on navy black**: a near-black navy
-ground with cool, bright accents that sweep cyan → azure → violet. The single
-source of truth for the palette is the TUI theme
-([`stella-tui/src/theme.rs`](../../stella-tui/src/theme.rs)) — every other
-surface (CLI output, Observatory, docs site, brand assets) follows it. A
-regression test there (`no_ember_amber_survives_anywhere`) permanently retires
-the old ember-gold system.
+Stella's identity is **Laika, the astronaut pup**: a floppy-eared dog in a
+space helmet, drawn in warm cosmic sunset color on deep space plum. The name
+nods to the first dog in orbit; the star (stella) she's chasing sits in the
+wordmark and on her helmet glass.
+
+Every asset in this directory is **generated** — edit
+[`build.mjs`](build.mjs) and re-run it; never hand-edit the SVGs or PNGs:
+
+```sh
+node docs/brand/build.mjs            # full build (SVG + PNG, needs rsvg-convert)
+node docs/brand/build.mjs --svg-only # fast iteration
+```
 
 ## The mark
 
-The mark is a terminal prompt: a `>` chevron beside a 3×3 dot grid — a
-command line addressing a fleet. It renders in the aurora gradient on dark
-grounds, or as a flat single-color glyph where gradients can't be used.
+Laika's head inside her helmet: a gradient ring (the helmet), cream face with
+a caramel eye patch and floppy ears, a gold antenna bead, and a four-point
+gold star drifting across the glass. On light grounds the helmet interior
+stays deep-space plum — a porthole into space. In the mono variants the star
+is punched *through* the helmet ring as a knockout at 1:30.
 
-| Asset | Use |
+## Variants — every family ships six
+
+| Suffix | What it is |
 | --- | --- |
-| `marks/mark.svg` | Primary mark — aurora gradient. Default on any dark ground. |
-| `marks/mark-cells.svg` | Gradient variant with per-cell emphasis. |
-| `marks/mark-flat.svg` | Flat aurora-cyan mark for single-color contexts. |
-| `marks/mark-navy.svg` | Solid navy mark for light grounds. |
-| `marks/mark-ice.svg` | Solid ice mark for dark, low-chroma contexts. |
-| `wordmarks/wordmark-aurora.svg` | "stella" wordmark in aurora cyan. |
-| `wordmarks/wordmark-navy.svg` / `wordmarks/wordmark-ice.svg` | Wordmark for light / dark grounds. |
-| `lockups/stella-logo-dark.svg` | Mark + wordmark lockup for dark backgrounds (README hero). |
-| `lockups/stella-logo-light.svg` | Mark + wordmark lockup for light backgrounds. |
-| `icons/appicon.svg` | App icon — gradient mark on a navy tile. |
-| `icons/favicon.svg` | Favicon-scale mark. |
+| `-adaptive.svg` | Full-color; flips light↔dark automatically via `prefers-color-scheme`. Default for docs/web embeds. |
+| `-light.svg` / `-dark.svg` | Non-adaptive color variants for grounds you control. |
+| `-mono-light.svg` / `-mono-dark.svg` | Single-color line art (ink / milk) for engraving, embossing, single-color print, disabled states. |
+| `-mono-adaptive.svg` | Mono line art that flips ink↔milk with the OS theme. |
 
-## Palette
+Adaptive SVGs carry both concrete presentation attributes (the light state)
+and a `<style>` block whose `@media (prefers-color-scheme: dark)` rules
+override them. Rasterizers that ignore CSS (librsvg) therefore render the
+light state — **PNGs are only cut from the non-adaptive variants**, into
+`png/` mirroring the SVG tree, always with transparent backgrounds (except
+app icons, splash screens, wallpapers and the nebula wash, which own their
+grounds and ship light/dark only).
 
-### Grounds & text
+## Directory map
 
-| Token | Hex | Role |
-| --- | --- | --- |
-| `GROUND` | `#050A18` | App background — navy black. |
-| `SURFACE` | `#0A1226` | Cards, panels. |
-| `RAISED` | `#101A33` | Raised panels. |
-| `HAIRLINE` | `#1B2A4A` | Borders, rules. |
-| `TEXT_PRIMARY` | `#F2F6FF` | Primary text ("ice"). |
-| `TEXT_SECONDARY` | `#A9B7D6` | Secondary text. |
-| `TEXT_TERTIARY` | `#7285A8` | Labels, captions. |
-| `TEXT_DIM` | `#5D6C8A` | Quietest legible text. |
+| Path | Contents |
+| --- | --- |
+| `marks/` | The Laika mark, 6 variants + PNGs at 1024/512/256. |
+| `wordmarks/` | Monoline rounded `stella` + gold star, 6 variants. |
+| `lockups/` | Horizontal (mark + wordmark) and stacked lockups, 6 variants. |
+| `icons/` | `favicon-*` (simplified mark), `appicon-*` (rounded tile), `maskable-*` (full-bleed PWA icon, safe-zone compliant), `glyphs/` (24×24 UI icon set: star, sparkle, orbit, rocket, planet, paw, bone, helmet). |
+| `loader/` | Animated SVG loader — Laika assembles herself: helmet ring draws on, ears/head/patch/eyes/nose/mouth pop in, star sweeps in; loops. |
+| `splash/` | PWA loading screens, portrait 1320×2868 and landscape 2880×1800. |
+| `wallpapers/` | Desktop (16:9, PNG at 5120×2880) and phone (2880×6240), light + dark. |
+| `textures/` | 512-box overlay patterns: `starfield`, `constellation`, `paws`, `grain` (transparent, 6 variants) and the opaque `nebula` wash. |
+| `tokens.css` / `tokens.json` | The palette as CSS custom properties / JSON design tokens. |
+| `legacy/` | Retired systems: ember-gold (2025) and `aurora/` (cyan-on-navy, retired 2026-07). |
 
-### Aurora accents
+## Palette — warm cosmic sunset
 
-| Token | Hex | Role |
-| --- | --- | --- |
-| `AURORA_CYAN` (`ACCENT`) | `#3FE0FF` | The brand accent — glyphs, headers, the prompt `>>>`. |
-| `AURORA_AZURE` (`ACCENT_DEEP`) | `#4D9FFF` | Live/active states. |
-| `VIOLET` | `#A78BFA` | Interactive chrome, links, focus. |
-| `AGENT_ICE` | `#A8C7F0` | Agent transcript voice. |
-
-The **aurora gradient** runs `#3FE0FF → #4D9FFF → #A78BFA` (cyan → azure →
-violet) and is the brand's signature sweep — progress fills, the primary mark,
-the app icon.
-
-### Semantic colors
+No ice blue anywhere. The signature **nebula gradient** runs
+`corona → flare → orchid` at 135°.
 
 | Token | Hex | Role |
 | --- | --- | --- |
-| `SUCCESS` / `SUCCESS_BRIGHT` | `#1D9E75` / `#3FD69B` | Success. |
-| `WARNING` / `WARNING_BRIGHT` | `#BA7517` / `#F4B24A` | Warnings — the **only** permitted warm tones. |
-| `AURORA_MAGENTA` (`DANGER`) / `DANGER_BRIGHT` | `#E4408F` / `#FF5C8A` | Failure. |
+| `corona` | `#FF6D4D` | Coral orange — gradient start, energy accents. |
+| `flare` | `#F5487F` | Warm pink — gradient middle. |
+| `orchid` | `#A24BEA` | Violet — gradient end, interactive accents. |
+| `starlight` | `#FFC24D` | Gold — stars, the antenna bead, highlights. |
+| `caramel` | `#DE8F55` | Laika's ears and eye patch. |
+| `cream` | `#F9EDDC` | Laika's face. |
+| `ink` | `#2A1A35` | Warm plum-black — text/line art on light grounds. |
+| `milk` | `#FFF6E9` | Warm white — text/line art on dark grounds. |
 
-### The rule: no warm brand tones
+### Grounds
 
-Warm gold/amber/orange accents are **banned** as brand colors everywhere in
-Stella — TUI, CLI output, Observatory, docs styling, and these assets. Warm
-tones may appear only with *semantic warning* meaning (`WARNING` /
-`WARNING_BRIGHT`). The retired ember palette (`#FFD97A`, `#F5B33C`,
-`#E08A20`, `#FFAC26`, ink `#15120C`, paper `#FBF7EF`) must not be reintroduced;
-`theme.rs` enforces this with a test for the TUI.
+| Token | Hex | Role |
+| --- | --- | --- |
+| `void900` | `#0E0916` | Dark mode — deepest ground. |
+| `void800` | `#171021` | Dark mode — base ground. |
+| `void700` | `#241833` | Dark mode — raised surfaces, helmet interior. |
+| `cream50` | `#FFFAF0` | Light mode — highest ground. |
+| `cream100` | `#F9F0E1` | Light mode — base ground. |
+| `cream200` | `#EFE2CC` | Light mode — sunken surfaces. |
 
 ## Typography
 
-No webfonts. The brand is system-native:
+No webfonts required for product surfaces (system-native stacks stay), but
+the wordmark itself is drawn geometry — monoline rounded strokes, not a font.
 
 - **Sans:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Arial, sans-serif`
-- **Mono (code, terminal, the wordmark's voice):** `ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace`
+- **Mono (code, terminal):** `ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace`
 
-## Asset inventory & status
+## Usage rules
 
-- `marks/`, `wordmarks/`, `lockups/`, `icons/` — **current**, aurora-palette
-  SVGs. Use these.
-- `legacy/` — the retired ember-gold cuts (SV/PNG rasters and the old
-  `stella-logo.html` brand board), kept for provenance only. Do not ship them.
-  The gold rasters (`appicon-512.png`, `favicon-32.png`,
-  `lockup-horizontal-dark-2048.png`, `mark-primary-1600.png`) have no aurora
-  re-render yet — regenerate from the current SVGs when raster sizes are
-  needed.
-- The docs site keeps its own copies under `stella-docs/public/brand/` and
-  `stella-docs/public/icons/`, and the Observatory embeds
-  `stella-observatory/src/assets/mark.svg`. When brand art changes, update
-  those copies too.
+- Clear space around the mark: at least the helmet-ring stroke width (7/120
+  of mark height) on all sides.
+- Don't recolor Laika, tilt her more than the wallpapers' −6°, or separate
+  the gold star from the wordmark.
+- Mono variants are for single-color contexts only — never use them where
+  color is available.
+- The nebula gradient is for the helmet ring, progress fills, and hero
+  washes — not body text.
+
+## Scope note
+
+This directory is the brand source of truth. Product surfaces (TUI theme,
+docs site CSS, Observatory, `stella-docs/public/brand/` copies) still carry
+the aurora palette and migrate in follow-up changes; until then
+`stella-tui/src/theme.rs` remains authoritative for the TUI, including its
+regression test pinning the *2025 ember* hexes (none of which this palette
+reuses).
