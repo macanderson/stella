@@ -180,6 +180,40 @@ impl SubSessions {
 /// parks at its next step boundary while the driver holds `true` (Pause)
 /// and continues on `false` (Resume). A dropped sender (driver gone) reads
 /// as resumed — a worker must never park forever on teardown.
+/// The deck's [`stella_core::ports::TurnSteering`] implementation: a
+/// per-turn tap the input loop feeds (composer `>` steers, Esc soft-stops)
+/// and the lead engine drains at each step boundary. Interior mutability
+/// because the turn future and the input arms share it immutably across
+/// one `tokio::select!` loop.
+#[derive(Default)]
+pub(crate) struct SteeringTap {
+    queue: std::sync::Mutex<Vec<String>>,
+    soft_stop: std::sync::atomic::AtomicBool,
+}
+
+impl SteeringTap {
+    pub(crate) fn push(&self, text: String) {
+        self.queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(text);
+    }
+    pub(crate) fn request_soft_stop(&self) {
+        self.soft_stop
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl stella_core::ports::TurnSteering for SteeringTap {
+    fn drain_steering(&self) -> Vec<String> {
+        std::mem::take(&mut *self.queue.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+    fn soft_stop_requested(&self) -> bool {
+        // Latched: set once, read at every boundary until the turn ends.
+        self.soft_stop.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 struct WatchGate(watch::Receiver<bool>);
 
 #[async_trait::async_trait]

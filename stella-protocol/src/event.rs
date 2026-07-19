@@ -89,6 +89,12 @@ pub enum AgentEvent {
         attempt: u32,
         reason: String,
     },
+    /// A user message queued mid-turn was injected at a step boundary
+    /// (`stella-core` steering) — the transcript's record that the model
+    /// was steered, and when.
+    Steered {
+        text: String,
+    },
     /// A compaction pass ran (`stella-core::compaction`). Fields mirror
     /// `CompactionReport` — kept as a flat struct here (not a re-exported
     /// type) so `stella-protocol` never depends on `stella-core` (dependency
@@ -98,6 +104,17 @@ pub enum AgentEvent {
         after_tokens: u64,
         evicted: usize,
         deduped: usize,
+        /// Older results of a repeated identical call, stubbed as stale.
+        /// `serde(default)` so journals written before these fields parse.
+        #[serde(default)]
+        superseded: usize,
+        /// Large old outputs middle-out truncated instead of dropped whole.
+        #[serde(default)]
+        aged: usize,
+        /// Messages replaced by a model-written history summary — the
+        /// overflow fallback when eviction alone cannot reach budget.
+        #[serde(default)]
+        summarized: usize,
     },
     /// Emitted after every provider/media call that spends money
     /// The TUI HUD renders spend live from this
@@ -516,6 +533,9 @@ mod tests {
             after_tokens: 4_000,
             evicted: 3,
             deduped: 2,
+            superseded: 1,
+            aged: 1,
+            summarized: 0,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"compaction\""), "{json}");

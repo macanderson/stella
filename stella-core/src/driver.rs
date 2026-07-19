@@ -5,8 +5,8 @@
 //! wiring together every other module in this crate.
 //!
 //! `Engine` drives through `&dyn Provider` (`stella_protocol`) and
-//! `&dyn ToolExecutor` (`crate::ports`) — no adapter-specific code, no
-//! filesystem call, lives here. Everything
+//! `&dyn ToolExecutor` (`crate::ports`) — no adapter-specific code and no
+//! direct filesystem access live here. Everything
 //! *inside* one step (compaction, loop detection, budget evaluation) is the
 //! plain synchronous logic from the other modules in this crate; `run_turn`
 //! is the one place that sequences them against real I/O.
@@ -95,6 +95,16 @@ pub struct EngineConfig {
     /// drift-corrected estimate, so this budget is honored in the model's
     /// own observed tokens rather than raw heuristic tokens.
     pub compaction_budget_tokens: u64,
+    /// When eviction/dedup/aging alone cannot reach the compaction budget
+    /// (the oversized content is protected user/assistant text, or already
+    /// stubbed), replace the oldest span of the conversation with a
+    /// model-written summary instead of letting the next call overflow the
+    /// provider's context window. Costs one cheap completion, metered into
+    /// the same [`BudgetGuard`] as every other call.
+    pub summarize_overflow: bool,
+    /// Messages at the conversation tail the summarizer never touches —
+    /// the recent work the model is actively reasoning over.
+    pub summarize_keep_recent: usize,
     /// Hard backstop on step count, independent of loop detection — belt
     /// and suspenders, never the *primary* stuck-loop defense (that's
     /// `crate::loop_detect`).
@@ -125,6 +135,8 @@ impl Default for EngineConfig {
             retry_policy: RetryPolicy::standard(),
             loop_detection: LoopDetectionConfig::default(),
             compaction_budget_tokens: 150_000,
+            summarize_overflow: true,
+            summarize_keep_recent: 8,
             max_steps: 200,
             cwd: ".".to_string(),
         }
@@ -182,6 +194,12 @@ pub struct Engine<'a> {
     /// any model call — a paused turn parks at that safe boundary and
     /// spends nothing until resumed. `None` adds zero work.
     gate: Option<&'a dyn crate::ports::TurnGate>,
+    /// Step-boundary steering ([`crate::ports::TurnSteering`]), off by
+    /// default. Attached via [`Engine::with_steering`]; drained once per
+    /// step at the same boundary as the pause gate — queued user messages
+    /// become the model's next observation, and a latched soft stop ends
+    /// the turn keeping every completed step. `None` adds zero work.
+    steering: Option<&'a dyn crate::ports::TurnSteering>,
 }
 
 /// Upper bound on tool calls from one step executing concurrently. Tools
@@ -229,6 +247,7 @@ impl<'a> Engine<'a> {
             hooks: None,
             calibration: None,
             gate: None,
+            steering: None,
         }
     }
 
@@ -258,6 +277,13 @@ impl<'a> Engine<'a> {
     /// never mid-tool.
     pub fn with_gate(mut self, gate: &'a dyn crate::ports::TurnGate) -> Self {
         self.gate = Some(gate);
+        self
+    }
+
+    /// Attach step-boundary steering — mid-turn user messages and the soft
+    /// stop, at step granularity, never mid-tool.
+    pub fn with_steering(mut self, steering: &'a dyn crate::ports::TurnSteering) -> Self {
+        self.steering = Some(steering);
         self
     }
 
@@ -324,7 +350,29 @@ impl<'a> Engine<'a> {
             if let Some(gate) = self.gate {
                 gate.wait_if_paused().await;
             }
-            self.run_compaction_pass(messages, calibration_model.as_deref(), events);
+            // Steering rides the same safe boundary as the pause gate:
+            // queued user messages land BEFORE compaction (so the pass sees
+            // them) and before the model call (so it answers them this
+            // step). Drain precedes the soft-stop check deliberately — a
+            // steer typed just before Esc is preserved in history for the
+            // next turn instead of evaporating with the per-turn tap.
+            if let Some(steering) = self.steering {
+                for text in steering.drain_steering() {
+                    let _ = events.send(AgentEvent::Steered { text: text.clone() });
+                    messages.push(CompletionMessage::user(text));
+                }
+                if steering.soft_stop_requested() {
+                    // A user choice, not a failure: no Error event, and the
+                    // caller keeps every completed step (unlike the hard
+                    // cancel, which drops the future and truncates).
+                    return TurnOutcome::Aborted {
+                        reason: SOFT_STOP_REASON.to_string(),
+                    };
+                }
+            }
+            total_cost_usd += self
+                .run_compaction_pass(messages, calibration_model.as_deref(), budget, events)
+                .await;
 
             if let Some(aborted) = self.check_loop_detection(messages, events) {
                 return aborted;
@@ -379,12 +427,16 @@ impl<'a> Engine<'a> {
     /// under-estimate this model's tokenizer) shrinks the effective budget
     /// and compacts earlier; the factor's clamp (`crate::estimator`)
     /// bounds how far either way a noisy sample can move this.
-    fn run_compaction_pass(
+    ///
+    /// Returns the summarizer's spend (0.0 on the overwhelmingly common
+    /// no-summarization path) so `run_turn` folds it into the turn total.
+    async fn run_compaction_pass(
         &self,
-        messages: &mut [CompletionMessage],
+        messages: &mut Vec<CompletionMessage>,
         calibration_model: Option<&str>,
+        budget: &mut BudgetGuard,
         events: &UnboundedSender<AgentEvent>,
-    ) {
+    ) -> f64 {
         let compaction_budget = match self.calibration {
             Some(calibration) => {
                 (self.config.compaction_budget_tokens as f64
@@ -398,8 +450,108 @@ impl<'a> Engine<'a> {
                 after_tokens: report.after_tokens,
                 evicted: report.evicted,
                 deduped: report.deduped,
+                superseded: report.superseded,
+                aged: report.aged,
+                summarized: 0,
             });
         }
+        // Overflow fallback: still over budget after every pure pass means
+        // the weight is in PROTECTED content (user/assistant text, the
+        // latest tool result) — without this, the next provider call
+        // eventually hard-fails on context overflow.
+        if self.config.summarize_overflow
+            && crate::estimator::estimate_conversation_tokens(messages) > compaction_budget
+        {
+            return self.summarize_overflow_span(messages, budget, events).await;
+        }
+        0.0
+    }
+
+    /// Replace the oldest replaceable span of the conversation with one
+    /// model-written summary message. Best-effort by contract: any failure
+    /// (no viable span, provider error, empty summary) leaves the
+    /// conversation untouched and the turn proceeds exactly as before this
+    /// mechanism existed. Returns the summarizer call's spend.
+    async fn summarize_overflow_span(
+        &self,
+        messages: &mut Vec<CompletionMessage>,
+        budget: &mut BudgetGuard,
+        events: &UnboundedSender<AgentEvent>,
+    ) -> f64 {
+        let before_tokens = crate::estimator::estimate_conversation_tokens(messages);
+        // Span start: after the system prompt and the FIRST user message —
+        // the task statement anchors every later step and must survive
+        // verbatim. A Tool message can't open the kept tail either side of
+        // the span (its assistant partner would be summarized away and the
+        // provider rejects orphaned tool results), so both bounds walk off
+        // Tool messages.
+        let first_user = messages
+            .iter()
+            .position(|m| m.role == MessageRole::User)
+            .unwrap_or(0);
+        let mut start = first_user + 1;
+        while start < messages.len() && messages[start].role == MessageRole::Tool {
+            start += 1;
+        }
+        let mut end = messages
+            .len()
+            .saturating_sub(self.config.summarize_keep_recent);
+        while end > start && messages[end].role == MessageRole::Tool {
+            end -= 1;
+        }
+        // A tiny span isn't worth a model call — and this guard is also the
+        // convergence backstop: once a summary message occupies the span,
+        // the next over-budget step finds nothing left to replace and skips
+        // instead of summarizing its own summary every step.
+        if end <= start || end - start < 4 {
+            return 0.0;
+        }
+        let rendered = crate::summarize::render_span_for_summary(&messages[start..end]);
+        let request = CompletionRequest {
+            messages: vec![
+                CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
+                CompletionMessage::user(&rendered),
+            ],
+            max_output_tokens: Some(1_200),
+            temperature: Some(0.0),
+            effort: Some(ReasoningEffort::Low),
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        };
+        let result = match self.provider.complete(request).await {
+            Ok(result) => result,
+            // Best-effort: a summarizer outage must never fail the turn.
+            Err(_) => return 0.0,
+        };
+        let cost_usd = result.cost_usd;
+        // The call happened — meter it honestly even if the text is unusable.
+        budget.record_spend(cost_usd);
+        let _ = events.send(AgentEvent::BudgetTick {
+            spent_usd: budget.spent_usd(),
+            limit_usd: budget.turn_limit_usd(),
+            mode: budget.mode(),
+        });
+        if result.text.trim().is_empty() {
+            return cost_usd;
+        }
+        let replaced = end - start;
+        let summary = CompletionMessage::user(format!(
+            "[earlier history summarized to fit context — full detail was compacted away; \
+             re-read files or re-run tools for specifics]\n\n{}",
+            result.text.trim()
+        ));
+        messages.splice(start..end, std::iter::once(summary));
+        let _ = events.send(AgentEvent::Compaction {
+            before_tokens,
+            after_tokens: crate::estimator::estimate_conversation_tokens(messages),
+            evicted: 0,
+            deduped: 0,
+            superseded: 0,
+            aged: 0,
+            summarized: replaced,
+        });
+        cost_usd
     }
 
     /// Loop detection, before spending a model call on a step that's
@@ -1016,6 +1168,11 @@ fn recent_tool_calls(messages: &[CompletionMessage]) -> Vec<ToolCall> {
         .collect()
 }
 
+/// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
+/// callers match on this to render "stopped" rather than "failed", and to
+/// keep (never truncate) the turn's completed work.
+pub const SOFT_STOP_REASON: &str = "stopped at step boundary by user — completed steps kept";
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1403,6 +1560,365 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AgentEvent::Complete { .. }))
         );
+    }
+
+    /// ~900 chars of protected assistant text — compaction's pure passes
+    /// only touch tool outputs, so weight parked here can ONLY be reclaimed
+    /// by the summarization fallback.
+    fn big_assistant_text(tag: &str) -> CompletionMessage {
+        CompletionMessage {
+            role: MessageRole::Assistant,
+            content: format!("{tag}: {}", "analysis ".repeat(100)),
+            tool_calls: vec![],
+            tool_results: vec![],
+            attachments: Vec::new(),
+        }
+    }
+
+    fn overflow_config() -> EngineConfig {
+        EngineConfig {
+            compaction_budget_tokens: 500,
+            summarize_keep_recent: 2,
+            ..EngineConfig::default()
+        }
+    }
+
+    /// Every tool result's call_id must be answered by a PRECEDING
+    /// assistant tool_call — the provider-side pairing invariant that a
+    /// careless span cut would break.
+    fn assert_tool_pairing(messages: &[CompletionMessage]) {
+        let mut seen_calls: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for message in messages {
+            for call in &message.tool_calls {
+                seen_calls.insert(call.call_id.as_str());
+            }
+            for result in &message.tool_results {
+                assert!(
+                    seen_calls.contains(result.call_id.as_str()),
+                    "orphaned tool result `{}` after summarization",
+                    result.call_id
+                );
+            }
+        }
+    }
+
+    /// A scripted [`crate::ports::TurnSteering`]: hands out its queue on
+    /// the first drain, and (optionally) latches the soft stop once
+    /// `stop_after_drains` boundaries have passed.
+    struct TestSteering {
+        queue: std::sync::Mutex<Vec<String>>,
+        stop_after_drains: Option<u32>,
+        drains: AtomicU32,
+    }
+    impl crate::ports::TurnSteering for TestSteering {
+        fn drain_steering(&self) -> Vec<String> {
+            self.drains.fetch_add(1, Ordering::SeqCst);
+            std::mem::take(&mut *self.queue.lock().unwrap())
+        }
+        fn soft_stop_requested(&self) -> bool {
+            match self.stop_after_drains {
+                Some(n) => self.drains.load(Ordering::SeqCst) > n,
+                None => false,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn steered_messages_inject_before_the_next_model_call() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![Ok(text_result("answered both"))]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let tools = CountingTools {
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let sleeper = NoopSleeper;
+        let steering = TestSteering {
+            queue: std::sync::Mutex::new(vec!["also check the tests".into()]),
+            stop_after_drains: None,
+            drains: AtomicU32::new(0),
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+            .with_steering(&steering);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        let steer_idx = messages
+            .iter()
+            .position(|m| m.role == MessageRole::User && m.content == "also check the tests")
+            .expect("steered text must enter the conversation as a user message");
+        let reply_idx = messages
+            .iter()
+            .position(|m| m.role == MessageRole::Assistant)
+            .expect("assistant reply");
+        assert!(
+            steer_idx < reply_idx,
+            "steer must precede the model call that answers it"
+        );
+        let events = drain_events(&mut rx);
+        assert!(
+            events.iter().any(
+                |e| matches!(e, AgentEvent::Steered { text } if text == "also check the tests")
+            ),
+            "steering must be visible in the event stream: {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn soft_stop_ends_the_turn_keeping_completed_steps() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![
+                Ok(tool_call_result("c1", "bash")),
+                Ok(text_result("never reached")),
+            ]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let provider_calls = provider.calls.clone();
+        let tool_calls = Arc::new(AtomicU32::new(0));
+        let tools = CountingTools {
+            calls: tool_calls.clone(),
+        };
+        let sleeper = NoopSleeper;
+        // Stop latches after the first boundary: step 0 runs fully (model
+        // call + tool), step 1's boundary honors the stop.
+        let steering = TestSteering {
+            queue: std::sync::Mutex::new(vec![]),
+            stop_after_drains: Some(1),
+            drains: AtomicU32::new(0),
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+            .with_steering(&steering);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        let before_len = messages.len();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        match outcome {
+            TurnOutcome::Aborted { reason } => assert_eq!(reason, SOFT_STOP_REASON),
+            other => panic!("expected soft-stop abort, got {other:?}"),
+        }
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 1, "one step ran");
+        assert_eq!(tool_calls.load(Ordering::SeqCst), 1, "its tool ran");
+        assert!(
+            messages.len() > before_len,
+            "completed work must be KEPT — soft stop never truncates"
+        );
+    }
+
+    #[tokio::test]
+    async fn overflow_of_protected_content_is_summarized_and_metered() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![
+                Ok(text_result("SUMMARY: earlier steps established the plan")),
+                Ok(text_result("done!")),
+            ]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let tools = CountingTools {
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let sleeper = NoopSleeper;
+        let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        for i in 0..6 {
+            messages.push(big_assistant_text(&format!("t{i}")));
+        }
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        match outcome {
+            TurnOutcome::Completed { text, cost_usd } => {
+                assert_eq!(text, "done!");
+                // Turn cost folds the summarizer's call in (0.0001 each).
+                assert!(
+                    (cost_usd - 0.0002).abs() < 1e-9,
+                    "summarizer spend missing from turn cost: {cost_usd}"
+                );
+            }
+            other => panic!("expected completion, got {other:?}"),
+        }
+        let markers = messages
+            .iter()
+            .filter(|m| m.content.starts_with("[earlier history summarized"))
+            .count();
+        assert_eq!(markers, 1, "exactly one summary message");
+        assert_eq!(
+            messages[1].content, "the task",
+            "the task statement must survive verbatim"
+        );
+        assert!(
+            budget.spent_usd() >= 0.0001,
+            "summarizer spend must be metered into the guard"
+        );
+        let events = drain_events(&mut rx);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                AgentEvent::Compaction { summarized, .. } if *summarized > 0
+            )),
+            "summarization must be reported: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::BudgetTick { .. })),
+            "summarizer spend must tick the budget stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn summarization_disabled_leaves_history_untouched() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![Ok(text_result("done!"))]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let calls = provider.calls.clone();
+        let tools = CountingTools {
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let sleeper = NoopSleeper;
+        let config = EngineConfig {
+            summarize_overflow: false,
+            ..overflow_config()
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        for i in 0..6 {
+            messages.push(big_assistant_text(&format!("t{i}")));
+        }
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "no summarizer call");
+        assert!(
+            !messages
+                .iter()
+                .any(|m| m.content.starts_with("[earlier history summarized")),
+        );
+    }
+
+    #[tokio::test]
+    async fn summarizer_failure_is_non_fatal_and_leaves_history() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![
+                Err(ProviderError::Terminal("summarizer down".into())),
+                Ok(text_result("done!")),
+            ]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let tools = CountingTools {
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let sleeper = NoopSleeper;
+        let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        for i in 0..6 {
+            messages.push(big_assistant_text(&format!("t{i}")));
+        }
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed { .. }),
+            "a summarizer outage must never fail the turn: {outcome:?}"
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|m| m.content.starts_with("[earlier history summarized")),
+            "failed summarization must leave the conversation untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn summarization_never_orphans_tool_results_at_the_span_edge() {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![
+                Ok(text_result("SUMMARY of the early exploration")),
+                Ok(text_result("done!")),
+            ]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let tools = CountingTools {
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let sleeper = NoopSleeper;
+        let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+        // The naive span end (len - keep_recent) lands ON the tool-result
+        // message; the summarizer must walk back so the assistant call and
+        // its result stay together in the kept tail.
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("the task"),
+        ];
+        for i in 0..4 {
+            messages.push(big_assistant_text(&format!("t{i}")));
+        }
+        messages.push(CompletionMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_calls: vec![ToolCall {
+                call_id: "edge".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"cmd": "ls"}),
+            }],
+            tool_results: vec![],
+            attachments: Vec::new(),
+        });
+        messages.push(CompletionMessage {
+            role: MessageRole::Tool,
+            content: String::new(),
+            tool_calls: vec![],
+            tool_results: vec![stella_protocol::ToolResult {
+                call_id: "edge".into(),
+                output: ToolOutput::Ok {
+                    content: "small".into(),
+                },
+            }],
+            attachments: Vec::new(),
+        });
+        messages.push(big_assistant_text("tail"));
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.content.starts_with("[earlier history summarized")),
+            "summarization should have fired"
+        );
+        assert_tool_pairing(&messages);
     }
 
     fn empty_result(finish_reason: Option<FinishReason>) -> CompletionResultAlias {

@@ -405,11 +405,19 @@ impl SessionModel {
                     reason: reason.clone(),
                 });
             }
+            AgentEvent::Steered { text } => {
+                // A steered message IS a user message — it entered the
+                // conversation mid-turn; the prefix is what tells the
+                // reader (and a replay) it landed at a step boundary.
+                self.transcript
+                    .push(TranscriptEntry::User(format!("(steered mid-turn) {text}")));
+            }
             AgentEvent::Compaction {
                 before_tokens,
                 after_tokens,
                 evicted,
                 deduped,
+                ..
             } => {
                 self.transcript.push(TranscriptEntry::Compaction {
                     before_tokens: *before_tokens,

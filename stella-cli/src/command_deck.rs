@@ -43,9 +43,12 @@
 //!   truncates the partial turn out of the conversation so the next prompt
 //!   starts from the last committed state. Never a mid-await corruption — the
 //!   dropped future takes its channel senders with it and the forwarder
-//!   drains what was already emitted. After a plain cancel the loop pops the
-//!   next queued prompt as usual ("interrupt current, run next" — the deck's
-//!   single Esc). A double-Esc `StopAndHold` is the same clean cancel plus
+//!   drains what was already emitted. The deck's single Esc is the SOFT stop
+//!   for step-loop lead turns (the engine ends at the next step boundary,
+//!   keeping completed work — `stella_core::SOFT_STOP_REASON`); pipeline
+//!   turns and worker lanes cancel immediately. After a cancel the loop pops
+//!   the next queued prompt as usual ("interrupt current, run next").
+//!   A double-Esc `StopAndHold` is the immediate clean cancel plus
 //!   queue discipline: the interrupted prompt returns to the FRONT of the
 //!   backlog and dispatch parks until the user's next submission, which
 //!   arrives as `EnqueueFront` and runs ahead of it. The pair reaches the
@@ -1158,6 +1161,10 @@ pub async fn run_deck_session(
             });
         }
 
+        // Shared with the live input arms below: `>` steers, Esc soft-stops.
+        // Per-turn by construction — a stop latched here can't leak into
+        // the next turn.
+        let steering = subsession::SteeringTap::default();
         let end = {
             // Both arms return `Result<(), String>`, so one pinned future
             // drives either path through the same select loop.
@@ -1197,6 +1204,7 @@ pub async fn run_deck_session(
                         &sup_tx,
                         &lead_holder,
                         &discovery_activation,
+                        &steering,
                     )
                     .await
                 }
@@ -1241,6 +1249,16 @@ pub async fn run_deck_session(
                         | Some(WorkspaceInput::ToAgent {
                             input: UserInput::Prompt { text, .. }, ..
                         }) => {
+                            // `>`-prefix = steer THIS turn (step-boundary
+                            // injection; the `Steered` event is the ack).
+                            // Pipeline mode has no steering seam — there
+                            // the prefix stays an ordinary prompt.
+                            if !pipeline_on
+                                && let Some(steer) = text.trim_start().strip_prefix('>')
+                            {
+                                steering.push(steer.trim_start().to_string());
+                                continue;
+                            }
                             queue.push_back(text);
                             subsession::drain_queue(
                                 &mut queue,
@@ -1280,9 +1298,26 @@ pub async fn run_deck_session(
                             control: stella_tui::AgentControl::Stop, agent,
                         }) => {
                             if agent == LEAD {
-                                break TurnEnd::Cancelled { hold: false };
+                                // Pipeline turns have no steering seam (the
+                                // pipeline drives its own engines) — there
+                                // the plain stop stays the hard cancel.
+                                if pipeline_on {
+                                    break TurnEnd::Cancelled { hold: false };
+                                }
+                                // First Esc = SOFT stop: end at the next
+                                // boundary keeping completed steps. The
+                                // pair's second press (StopAndHold below)
+                                // stays the immediate hard cancel.
+                                steering.request_soft_stop();
+                                let _ = in_tx.send(Inbound::Event {
+                                    agent: LEAD.to_string(),
+                                    event: AgentEvent::Text {
+                                        delta: "\n[stopping at the next step boundary — Esc again to cancel immediately]\n".to_string(),
+                                    },
+                                });
+                            } else {
+                                subs.stop(&agent);
                             }
-                            subs.stop(&agent);
                         }
                         // Worker Pause/Resume/Restart while the lead works.
                         Some(WorkspaceInput::Control { agent, control }) if agent != LEAD => {
@@ -1451,15 +1486,27 @@ pub async fn run_deck_session(
         match end {
             TurnEnd::Finished(outcome) => {
                 if let Err(reason) = &outcome {
-                    // An aborted turn emits no `Complete`; this row flips the
-                    // dashboard to failed AND clears any pending gate.
-                    let _ = in_tx.send(Inbound::Event {
-                        agent: LEAD.to_string(),
-                        event: AgentEvent::Error {
-                            message: reason.clone(),
-                            retryable: false,
-                        },
-                    });
+                    if reason == stella_core::SOFT_STOP_REASON {
+                        // A user choice, not a failure: no Error row — the
+                        // work is kept and the next prompt continues from it.
+                        let _ = in_tx.send(Inbound::Event {
+                            agent: LEAD.to_string(),
+                            event: AgentEvent::Text {
+                                delta: "\n[stopped at the step boundary — completed work kept]\n"
+                                    .to_string(),
+                            },
+                        });
+                    } else {
+                        // An aborted turn emits no `Complete`; this row flips
+                        // the dashboard to failed AND clears any pending gate.
+                        let _ = in_tx.send(Inbound::Event {
+                            agent: LEAD.to_string(),
+                            event: AgentEvent::Error {
+                                message: reason.clone(),
+                                retryable: false,
+                            },
+                        });
+                    }
                 }
                 agent::record_turn_episode(
                     &memory,
@@ -3939,6 +3986,7 @@ async fn run_lead_turn(
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
+    steering: &subsession::SteeringTap,
 ) -> Result<(), String> {
     budget.begin_turn();
 
@@ -3995,7 +4043,8 @@ async fn run_lead_turn(
             agent::engine_config_for(cfg),
             &TokioSleeper,
         )
-        .with_calibration(calibration);
+        .with_calibration(calibration)
+        .with_steering(steering);
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
