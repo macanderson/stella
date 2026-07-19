@@ -228,8 +228,10 @@ fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
         }
         let (glyph, color, bold) = match state.segments[i] {
             SegState::Done => ("✓", theme::SUCCESS_BRIGHT, false),
-            SegState::Active if state.phase == RunPhase::Error => ("✗", theme::EMBER_CRIMSON, true),
-            SegState::Active => ("▸", theme::EMBER_FLAME, true),
+            SegState::Active if state.phase == RunPhase::Error => {
+                ("✗", theme::AURORA_MAGENTA, true)
+            }
+            SegState::Active => ("▸", theme::AURORA_AZURE, true),
             SegState::Pending => ("·", theme::TEXT_DIM, false),
         };
         let mut style = Style::default().fg(color);
@@ -261,7 +263,7 @@ fn telemetry_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
             vec![Span::styled(
                 "failed",
                 Style::default()
-                    .fg(theme::EMBER_CRIMSON)
+                    .fg(theme::AURORA_MAGENTA)
                     .add_modifier(Modifier::BOLD),
             )],
             6,
@@ -399,9 +401,9 @@ fn render_track(
                 0.0
             };
             let mut fg = if truecolor {
-                theme::ember_gradient(t)
+                theme::aurora_gradient(t)
             } else {
-                theme::EMBER_FLAME
+                theme::AURORA_AZURE
             };
 
             // Shimmer: a soft light band on truecolor (a lightened RGB has no
@@ -414,7 +416,7 @@ fn render_track(
                         fg = theme::lighten(fg, 0.4 * (1.0 - d / 2.5));
                     }
                 } else if i == center.round() as usize {
-                    fg = theme::EMBER_GOLD;
+                    fg = theme::AURORA_CYAN;
                 }
             }
 
@@ -422,11 +424,11 @@ fn render_track(
             // cell on truecolor, else a single bright cell.
             if i == head {
                 if state.phase == RunPhase::Error {
-                    fg = theme::EMBER_CRIMSON;
+                    fg = theme::AURORA_MAGENTA;
                 } else if truecolor {
                     fg = theme::lighten(fg, pulse);
                 } else {
-                    fg = theme::EMBER_GOLD;
+                    fg = theme::AURORA_CYAN;
                 }
             }
 
@@ -662,8 +664,8 @@ mod tests {
         // cleanly — an interpolated gradient RGB has no indexed fallback.
         render_track(&state, 1234, ColorMode::Ansi256, 0, 0, 40, &mut buf);
         let allowed = [
-            theme::EMBER_FLAME,
-            theme::EMBER_GOLD,
+            theme::AURORA_AZURE,
+            theme::AURORA_CYAN,
             theme::TEXT_DIM,
             theme::HAIRLINE,
             ratatui::style::Color::Reset,

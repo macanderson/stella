@@ -1317,7 +1317,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     }
 
     loop {
-        print!("{} ", ">".yellow().bold());
+        print!("{} ", ">".bright_cyan().bold());
         std::io::stdout().flush().map_err(|e| e.to_string())?;
 
         let mut input = String::new();
@@ -1982,7 +1982,7 @@ pub async fn run_init(
             let provider = build_provider(&cfg)?;
             println!(
                 "  {} inferring domains with {}/{}…",
-                "◈".yellow(),
+                "◈".bright_cyan(),
                 cfg.provider.id,
                 cfg.model_id
             );
@@ -2130,7 +2130,7 @@ pub(crate) async fn connect_mcp(
         if set.connected_count() > 0 {
             println!(
                 "  {} {} MCP server(s) connected",
-                "◆".yellow(),
+                "◆".bright_cyan(),
                 set.connected_count()
             );
         }
@@ -2826,7 +2826,7 @@ async fn run_goal_turn(
         println!(
             "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
              assessment\n",
-            "◆".yellow(),
+            "◆".bright_cyan(),
             cfg.provider.id.bright_magenta(),
             judge_id.bright_green(),
         );
@@ -2979,7 +2979,7 @@ async fn run_goal_pipeline_turn(
         println!(
             "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
              assessment\n",
-            "◆".yellow(),
+            "◆".bright_cyan(),
             cfg.provider.id.bright_magenta(),
             judge_id.bright_green(),
         );
@@ -3431,7 +3431,7 @@ fn resolve_cross_family_judge(
 }
 
 fn print_help() {
-    println!("  {}\n", "Stella Commands".yellow().bold());
+    println!("  {}\n", "Stella Commands".bright_cyan().bold());
     println!("  {}  Send a prompt to the agent", "type message".dimmed());
     println!(
         "  {}       List configured providers and models",

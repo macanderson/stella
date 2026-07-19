@@ -9,42 +9,47 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::deck::TraceKind;
 use crate::envelope::AgentStatus;
 
-// ── Oxagen palette — "ember heat on nocturne ground" ────────────────────────
+// ── Oxagen palette — "aurora light on navy black" ───────────────────────────
 //
-// The brand system (docs/brand `tokens.css`, dark mode): a cool deep-violet
-// ground framing a warm ember mark. Ember (gold→flame→crimson) is the *heat* —
-// reserved for live / active / brand, never body text. Violet is interactive
-// chrome (keybind glyphs, links, focus). Neutrals carry the text. Every token
-// here is 24-bit; [`degrade_buffer`] narrows it to 256- or 16-color, or strips
-// it for `NO_COLOR`, once per frame for terminals that can't render truecolor.
+// The brand system, recut cool: a navy-black ground framing an electric
+// aurora mark. Aurora (cyan→azure→violet) is the *light* — reserved for
+// live / active / brand, never body text. Violet stays the interactive
+// chrome (keybind glyphs, links, focus). Cool blue-grey neutrals carry the
+// text. No ember, no amber, no tequila sunrise — the only warm hue left is
+// the semantic WARNING pair, which means "warning" and nothing else. Every
+// token here is 24-bit; [`degrade_buffer`] narrows it to 256- or 16-color,
+// or strips it for `NO_COLOR`, once per frame for terminals that can't
+// render truecolor.
 
-// Grounds (dark → light lift).
-/// App background — near-black nocturne navy.
-pub const GROUND: Color = Color::Rgb(0x0B, 0x0D, 0x16);
+// Grounds (dark → light lift) — navy blacks, not violet-blacks.
+/// App background — navy black. Applied as a real frame fill by
+/// `render_deck`, not just assumed from the terminal.
+pub const GROUND: Color = Color::Rgb(0x05, 0x0A, 0x18);
 /// Card / panel surface.
-pub const SURFACE: Color = Color::Rgb(0x15, 0x13, 0x1F);
+pub const SURFACE: Color = Color::Rgb(0x0A, 0x12, 0x26);
 /// Raised panel (one step above surface).
-pub const RAISED: Color = Color::Rgb(0x1E, 0x1A, 0x2E);
-/// Hairline border / rule — a violet-black seam, not a grey line.
-pub const HAIRLINE: Color = Color::Rgb(0x24, 0x1B, 0x33);
+pub const RAISED: Color = Color::Rgb(0x10, 0x1A, 0x33);
+/// Hairline border / rule — a navy seam, not a grey line.
+pub const HAIRLINE: Color = Color::Rgb(0x1B, 0x2A, 0x4A);
 
-// Text tiers (primary → dim).
+// Text tiers (primary → dim) — cool, blue-leaning neutrals.
 /// Primary text.
-pub const TEXT_PRIMARY: Color = Color::Rgb(0xF5, 0xF4, 0xF2);
+pub const TEXT_PRIMARY: Color = Color::Rgb(0xF2, 0xF6, 0xFF);
 /// Secondary text.
-pub const TEXT_SECONDARY: Color = Color::Rgb(0xB6, 0xAF, 0xC9);
+pub const TEXT_SECONDARY: Color = Color::Rgb(0xA9, 0xB7, 0xD6);
 /// Tertiary text (labels, captions).
-pub const TEXT_TERTIARY: Color = Color::Rgb(0x7E, 0x77, 0x91);
+pub const TEXT_TERTIARY: Color = Color::Rgb(0x72, 0x85, 0xA8);
 /// Dim text (the quietest legible tier).
-pub const TEXT_DIM: Color = Color::Rgb(0x6E, 0x68, 0x80);
+pub const TEXT_DIM: Color = Color::Rgb(0x5D, 0x6C, 0x8A);
 
-// Ember — the heat. Live / active / brand only; never body text.
-/// Ember gold — the hottest, brightest stop; the prompt `>>>`.
-pub const EMBER_GOLD: Color = Color::Rgb(0xF9, 0xD4, 0x23);
-/// Ember flame — the mid stop; the active-stage label / live status.
-pub const EMBER_FLAME: Color = Color::Rgb(0xFF, 0x7E, 0x5F);
-/// Ember crimson — the coolest ember stop; the failure frontier.
-pub const EMBER_CRIMSON: Color = Color::Rgb(0xC2, 0x18, 0x5B);
+// Aurora — the light. Live / active / brand only; never body text.
+/// Aurora cyan — the brightest, most electric stop; the prompt `>>>` and
+/// the brand accent.
+pub const AURORA_CYAN: Color = Color::Rgb(0x3F, 0xE0, 0xFF);
+/// Aurora azure — the mid stop; the active-stage label / live status.
+pub const AURORA_AZURE: Color = Color::Rgb(0x4D, 0x9F, 0xFF);
+/// Aurora magenta — the hot-pink far stop; the failure frontier.
+pub const AURORA_MAGENTA: Color = Color::Rgb(0xE4, 0x40, 0x8F);
 
 /// Violet accent — interactive chrome, keybind glyphs, links, focus.
 pub const VIOLET: Color = Color::Rgb(0xA7, 0x8B, 0xFA);
@@ -52,30 +57,29 @@ pub const VIOLET: Color = Color::Rgb(0xA7, 0x8B, 0xFA);
 // Semantic (base + bright).
 /// Success (base).
 pub const SUCCESS: Color = Color::Rgb(0x1D, 0x9E, 0x75);
-/// Success (bright — text / completed fills).
+/// Success (bright — text / completed fills). A cool spring mint.
 pub const SUCCESS_BRIGHT: Color = Color::Rgb(0x3F, 0xD6, 0x9B);
-/// Warning (base).
+/// Warning (base). The one deliberately warm survivor — semantic only.
 pub const WARNING: Color = Color::Rgb(0xBA, 0x75, 0x17);
 /// Warning (bright — text).
 pub const WARNING_BRIGHT: Color = Color::Rgb(0xF4, 0xB2, 0x4A);
-/// Danger — reuses ember crimson.
-pub const DANGER: Color = EMBER_CRIMSON;
+/// Danger — reuses aurora magenta.
+pub const DANGER: Color = AURORA_MAGENTA;
 /// Danger (bright — legible removed-line / error text on the dark backdrop).
-pub const DANGER_BRIGHT: Color = Color::Rgb(0xE5, 0x53, 0x7B);
+pub const DANGER_BRIGHT: Color = Color::Rgb(0xFF, 0x5C, 0x8A);
 
-/// Warm amber kept for transcript agent body, to preserve the current feel
-/// (§1: body may keep a warm amber tint while chrome/status go true ember).
-pub const AGENT_AMBER: Color = Color::Rgb(0xE8, 0xA2, 0x4A);
+/// Ice tint for transcript agent body — a soft glacier blue that keeps the
+/// agent voice distinct from plain text without borrowing the accent.
+pub const AGENT_ICE: Color = Color::Rgb(0xA8, 0xC7, 0xF0);
 
 // ── Role aliases (what the rest of the crate references) ─────────────────────
-// Older token names remap onto the palette so existing call sites adopt the new
-// look without churn. New surfaces (progress bar, statline, composer) reference
-// the palette tokens above directly.
+// Role names remap onto the palette so call sites read as intent (accent,
+// ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// Stella brand accent — ember gold.
-pub const AMBER: Color = EMBER_GOLD;
-/// A deeper ember (gradient / pressed) — flame.
-pub const AMBER_DEEP: Color = EMBER_FLAME;
+/// Stella brand accent — aurora cyan.
+pub const ACCENT: Color = AURORA_CYAN;
+/// A deeper accent (gradient / pressed) — azure.
+pub const ACCENT_DEEP: Color = AURORA_AZURE;
 /// Near-white primary text.
 pub const INK: Color = TEXT_PRIMARY;
 /// Dimmed secondary text.
@@ -84,8 +88,8 @@ pub const MUTED: Color = TEXT_SECONDARY;
 pub const RULE: Color = HAIRLINE;
 
 /// Background tint for the transcript entry selected with the arrow keys —
-/// a barely-there violet lift so the highlight reads without shouting.
-pub const SELECT_BG: Color = Color::Rgb(0x25, 0x1F, 0x36);
+/// a barely-there navy lift so the highlight reads without shouting.
+pub const SELECT_BG: Color = Color::Rgb(0x14, 0x22, 0x4A);
 
 /// Success / positive / added lines.
 pub const OK: Color = SUCCESS_BRIGHT;
@@ -93,10 +97,10 @@ pub const OK: Color = SUCCESS_BRIGHT;
 pub const WARN: Color = WARNING_BRIGHT;
 /// Error / removed lines / failure.
 pub const BAD: Color = DANGER_BRIGHT;
-/// Structural / process accent — Stella's single cool anchor. Aliased to
-/// [`VIOLET`] (the brand's interactive-chrome / link hue) so no baby-blue cyan
-/// survives anywhere: every former "cool cyan" call site (links, diff hunk
-/// headers, graph relations, trace stage/tool/vcs) now reads violet.
+/// Structural / process accent — aliased to [`VIOLET`] (the brand's
+/// interactive-chrome / link hue) so process events (links, diff hunk
+/// headers, graph relations, trace stage/tool/vcs) stay distinct from the
+/// cyan brand accent instead of competing with it.
 pub const RUN: Color = VIOLET;
 /// Paused / held — violet.
 pub const HELD: Color = VIOLET;
@@ -115,29 +119,28 @@ pub const DIFF_DEL_BG: Color = Color::Rgb(52, 24, 26);
 // the `+`/`-` background always wins (add/remove is never lost — see
 // `crate::diff`), while a recognized token overrides only the foreground.
 // Every color is chosen to read on all three diff backdrops (add green, del
-// red, and the plain panel) and to stay inside the amber/ember brand family —
-// Keyword rides the brand amber so code structure pops the way the accent does
-// everywhere else; strings take a softer warm sand so they separate from
-// keywords without a second saturated hue; numbers take the cool [`VIOLET`]
-// anchor — the one non-warm principle color, and the counterpoint to the warm
-// keyword/string stops (reads on all three diff backdrops, no cyan); comments
-// dim toward [`MUTED`].
+// red, and the plain panel) and to stay inside the cool aurora family —
+// Keyword rides the brand cyan so code structure pops the way the accent
+// does everywhere else; strings take a soft spring green so they separate
+// from keywords without a second electric hue; numbers take the [`VIOLET`]
+// anchor as the counterpoint to the cyan/green stops; comments dim toward
+// [`MUTED`].
 
 /// Language keyword (`fn`/`let`/`def`/`import`/`return`…).
-pub const SYNTAX_KEYWORD: Color = AMBER;
+pub const SYNTAX_KEYWORD: Color = ACCENT;
 /// String / char literal.
-pub const SYNTAX_STRING: Color = Color::Rgb(214, 184, 120);
-/// Numeric literal — violet, the cool counterpoint to the warm keyword/string.
+pub const SYNTAX_STRING: Color = Color::Rgb(126, 231, 135);
+/// Numeric literal — violet, the counterpoint to the cyan keyword stop.
 pub const SYNTAX_NUMBER: Color = VIOLET;
 /// Line comment (rendered dimmed + italic).
 pub const SYNTAX_COMMENT: Color = Color::Rgb(118, 124, 134);
 
-// ── Ember gradient (the progress-bar fill) ──────────────────────────────────
+// ── Aurora gradient (the progress-bar fill) ─────────────────────────────────
 
-/// The ember gradient's three stops, left → right: gold → flame → crimson.
+/// The aurora gradient's three stops, left → right: cyan → azure → violet.
 /// The determinate progress fill interpolates across these per cell (truecolor
-/// only; lesser terminals collapse to a solid [`EMBER_FLAME`] fill).
-pub const EMBER_STOPS: [Color; 3] = [EMBER_GOLD, EMBER_FLAME, EMBER_CRIMSON];
+/// only; lesser terminals collapse to a solid [`AURORA_AZURE`] fill).
+pub const AURORA_STOPS: [Color; 3] = [AURORA_CYAN, AURORA_AZURE, VIOLET];
 
 /// Linear-interpolate two RGB colors at `t ∈ [0, 1]`. Non-RGB inputs return
 /// `a` unchanged (the gradient only ever feeds it `Color::Rgb` stops).
@@ -150,14 +153,15 @@ pub fn lerp_rgb(a: Color, b: Color, t: f64) -> Color {
     Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
 }
 
-/// The ember gradient sampled at `t ∈ [0, 1]`: gold at 0, flame at ½, crimson
-/// at 1, linearly interpolated between the two nearest [`EMBER_STOPS`].
-pub fn ember_gradient(t: f64) -> Color {
+/// The aurora gradient sampled at `t ∈ [0, 1]`: cyan at 0, azure at ½,
+/// violet at 1, linearly interpolated between the two nearest
+/// [`AURORA_STOPS`].
+pub fn aurora_gradient(t: f64) -> Color {
     let t = t.clamp(0.0, 1.0);
-    let span = (EMBER_STOPS.len() - 1) as f64; // 2 segments
+    let span = (AURORA_STOPS.len() - 1) as f64; // 2 segments
     let scaled = t * span;
-    let i = (scaled.floor() as usize).min(EMBER_STOPS.len() - 2);
-    lerp_rgb(EMBER_STOPS[i], EMBER_STOPS[i + 1], scaled - i as f64)
+    let i = (scaled.floor() as usize).min(AURORA_STOPS.len() - 2);
+    lerp_rgb(AURORA_STOPS[i], AURORA_STOPS[i + 1], scaled - i as f64)
 }
 
 /// Lighten `color` toward white by `amount ∈ [0, 1]` — the shimmer band and the
@@ -272,28 +276,28 @@ pub fn detect_color_mode() -> ColorMode {
 /// value in the palette. Role aliases share a value with a palette token, so
 /// one entry covers both — the table is keyed by value, first match wins.
 const FALLBACKS: &[(Color, u8, u8)] = &[
-    (GROUND, 233, 0),
-    (SURFACE, 234, 0),
-    (RAISED, 236, 8),
-    (HAIRLINE, 237, 8),
+    (GROUND, 232, 0),
+    (SURFACE, 233, 0),
+    (RAISED, 234, 8),
+    (HAIRLINE, 236, 8),
     (TEXT_PRIMARY, 231, 15),
     (TEXT_SECONDARY, 146, 7),
     (TEXT_TERTIARY, 103, 8),
     (TEXT_DIM, 60, 8),
-    (EMBER_GOLD, 220, 11),
-    (EMBER_FLAME, 209, 9),
-    (EMBER_CRIMSON, 161, 5),
+    (AURORA_CYAN, 81, 14),
+    (AURORA_AZURE, 75, 12),
+    (AURORA_MAGENTA, 168, 5),
     (VIOLET, 141, 13),
     (SUCCESS, 36, 2),
     (SUCCESS_BRIGHT, 79, 10),
     (WARNING, 136, 3),
     (WARNING_BRIGHT, 215, 11),
     (DANGER_BRIGHT, 204, 9),
-    (AGENT_AMBER, 179, 3),
+    (AGENT_ICE, 153, 12),
     (SELECT_BG, 235, 0),
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
-    (SYNTAX_STRING, 180, 3),
+    (SYNTAX_STRING, 114, 10),
     (SYNTAX_COMMENT, 244, 8),
 ];
 
@@ -342,7 +346,7 @@ pub fn degrade_buffer(buf: &mut ratatui::buffer::Buffer, mode: ColorMode) {
 
 /// Accent style for headings / the active tab.
 pub fn accent() -> Style {
-    Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
 }
 pub fn heading() -> Style {
     Style::default().fg(INK).add_modifier(Modifier::BOLD)
@@ -363,8 +367,8 @@ pub fn rule() -> Style {
 pub fn status_color(status: AgentStatus) -> Color {
     match status {
         AgentStatus::Queued => MUTED,
-        // Live work is ember — the one place the heat means "running now".
-        AgentStatus::Running => EMBER_FLAME,
+        // Live work is aurora — the one place the light means "running now".
+        AgentStatus::Running => AURORA_AZURE,
         AgentStatus::Paused => HELD,
         AgentStatus::WaitingInput => WARN,
         AgentStatus::Done => OK,
@@ -390,13 +394,14 @@ pub fn status_glyph(status: AgentStatus) -> &'static str {
 
 /// Color a [`crate::graph::GraphNode`] by its `kind`, so the Graph tab's node
 /// list, detail panel, and node-edge sketch all agree on one palette:
-/// function/method violet, struct/enum/trait green, file/module flame — three
-/// distinct on-brand hues, none of them the amber that carries the graph chrome.
+/// function/method violet, struct/enum/trait green, file/module azure —
+/// three distinct on-brand hues, none of them the cyan that carries the
+/// graph chrome.
 pub fn graph_kind_color(kind: &str) -> Color {
     match kind {
         "function" | "method" => RUN,
         "struct" | "enum" | "trait" => OK,
-        "file" | "module" => AMBER_DEEP,
+        "file" | "module" => ACCENT_DEEP,
         _ => MUTED,
     }
 }
@@ -439,10 +444,10 @@ pub fn spark_glyph(intensity: u8) -> char {
 /// A small rotating palette an agent id is hashed into. The point is
 /// stability, not per-color meaning: the same id always lands on the same
 /// slot, so an agent reads as one consistent color everywhere it appears.
-/// Five distinct on-brand hues — violet, gold, green, amber, flame — with no
-/// cyan and no crimson (crimson reads as failure elsewhere, so it never brands
-/// a healthy agent).
-const AGENT_PALETTE: [Color; 5] = [HELD, AMBER, OK, WARN, AMBER_DEEP];
+/// Five distinct on-brand cool hues — violet, cyan, mint, ice, azure — with
+/// no magenta (magenta reads as failure elsewhere, so it never brands a
+/// healthy agent) and nothing warm.
+const AGENT_PALETTE: [Color; 5] = [HELD, ACCENT, OK, AGENT_ICE, ACCENT_DEEP];
 
 /// A deterministic (not randomized — stable across processes and test runs)
 /// color for one agent id, picked from [`AGENT_PALETTE`] by hashing the id.
@@ -468,21 +473,22 @@ fn fnv1a(s: &str) -> u64 {
 
 /// A color per [`TraceKind`], for the Traces tab's kind chip. Grouped by
 /// meaning: `RUN` (violet) for process/action events (stage, tool, vcs),
-/// `AMBER`/`AMBER_DEEP` for produced artifacts (file, media), a dim neutral for
-/// quiet memory/context events, and the shared `OK`/`WARN`/`BAD` semantics for
-/// verdicts, spend, and errors. Memory drops to `TEXT_TERTIARY` rather than
-/// reuse violet — the process group already owns the deck's one cool anchor.
+/// `ACCENT`/`ACCENT_DEEP` (cyan/azure) for produced artifacts (file, media),
+/// a dim neutral for quiet memory/context events, and the shared
+/// `OK`/`WARN`/`BAD` semantics for verdicts, spend, and errors. Memory drops
+/// to `TEXT_TERTIARY` rather than reuse violet — the process group already
+/// owns that anchor.
 pub fn trace_kind_color(kind: TraceKind) -> Color {
     match kind {
         TraceKind::Stage => RUN,
         TraceKind::Text => INK,
         TraceKind::Reasoning => MUTED,
         TraceKind::Tool => RUN,
-        TraceKind::File => AMBER,
+        TraceKind::File => ACCENT,
         TraceKind::Budget => WARN,
         TraceKind::Context => TEXT_TERTIARY,
         TraceKind::Verdict => OK,
-        TraceKind::Media => AMBER_DEEP,
+        TraceKind::Media => ACCENT_DEEP,
         TraceKind::Vcs => RUN,
         TraceKind::Error => BAD,
         TraceKind::Complete => OK,
@@ -541,16 +547,16 @@ mod tests {
         TEXT_SECONDARY,
         TEXT_TERTIARY,
         TEXT_DIM,
-        EMBER_GOLD,
-        EMBER_FLAME,
-        EMBER_CRIMSON,
+        AURORA_CYAN,
+        AURORA_AZURE,
+        AURORA_MAGENTA,
         VIOLET,
         SUCCESS,
         SUCCESS_BRIGHT,
         WARNING,
         WARNING_BRIGHT,
         DANGER_BRIGHT,
-        AGENT_AMBER,
+        AGENT_ICE,
         SELECT_BG,
         DIFF_ADD_BG,
         DIFF_DEL_BG,
@@ -582,36 +588,51 @@ mod tests {
 
     #[test]
     fn role_aliases_track_their_palette_token() {
-        assert_eq!(AMBER, EMBER_GOLD);
+        assert_eq!(ACCENT, AURORA_CYAN);
         assert_eq!(INK, TEXT_PRIMARY);
         assert_eq!(MUTED, TEXT_SECONDARY);
         assert_eq!(RULE, HAIRLINE);
         assert_eq!(OK, SUCCESS_BRIGHT);
         assert_eq!(WARN, WARNING_BRIGHT);
         assert_eq!(BAD, DANGER_BRIGHT);
-        assert_eq!(DANGER, EMBER_CRIMSON);
+        assert_eq!(DANGER, AURORA_MAGENTA);
         assert_eq!(HELD, VIOLET);
-        // The two former baby-blue cyans now resolve onto the violet anchor.
         assert_eq!(RUN, VIOLET);
         assert_eq!(SYNTAX_NUMBER, VIOLET);
     }
 
-    /// Regression guard: the baby-blue cyans that used to fight the ember
-    /// palette (`RUN`'s `#60BFD6`, `SYNTAX_NUMBER`'s `#7EC5D6`) must never
-    /// reappear on any palette token or its aliases. Stella's only cool hue is
-    /// violet; every other principle color is warm.
+    /// Regression guard: the ember/amber "tequila sunrise" tones the deck
+    /// moved off (`EMBER_GOLD #F9D423`, `EMBER_FLAME #FF7E5F`,
+    /// `EMBER_CRIMSON #C2185B`, `AGENT_AMBER #E8A24A`) must never reappear
+    /// on any palette token or its aliases. The only deliberately warm
+    /// survivors are the semantic WARNING pair — warm because warnings are,
+    /// not because the brand is.
     #[test]
-    fn no_baby_blue_cyan_survives_anywhere() {
-        const OLD_RUN_CYAN: Color = Color::Rgb(0x60, 0xBF, 0xD6);
-        const OLD_NUMBER_CYAN: Color = Color::Rgb(126, 197, 214);
+    fn no_ember_amber_survives_anywhere() {
+        const OLD_EMBER_GOLD: Color = Color::Rgb(0xF9, 0xD4, 0x23);
+        const OLD_EMBER_FLAME: Color = Color::Rgb(0xFF, 0x7E, 0x5F);
+        const OLD_EMBER_CRIMSON: Color = Color::Rgb(0xC2, 0x18, 0x5B);
+        const OLD_AGENT_AMBER: Color = Color::Rgb(0xE8, 0xA2, 0x4A);
         let mut all: Vec<Color> = ALL_RGB_TOKENS.to_vec();
-        all.extend([RUN, SYNTAX_NUMBER, HELD, AMBER, OK, WARN, AMBER_DEEP]);
+        all.extend([
+            RUN,
+            SYNTAX_NUMBER,
+            SYNTAX_KEYWORD,
+            HELD,
+            ACCENT,
+            OK,
+            ACCENT_DEEP,
+        ]);
+        all.extend(AURORA_STOPS);
         for token in all {
-            assert_ne!(token, OLD_RUN_CYAN, "a token still holds the RUN cyan");
-            assert_ne!(
-                token, OLD_NUMBER_CYAN,
-                "a token still holds the number cyan"
-            );
+            for (old, name) in [
+                (OLD_EMBER_GOLD, "ember gold"),
+                (OLD_EMBER_FLAME, "ember flame"),
+                (OLD_EMBER_CRIMSON, "ember crimson"),
+                (OLD_AGENT_AMBER, "agent amber"),
+            ] {
+                assert_ne!(token, old, "a token still holds {name}");
+            }
         }
     }
 
@@ -666,7 +687,7 @@ mod tests {
 
     #[test]
     fn resolve_passes_through_when_truecolor() {
-        assert_eq!(resolve(EMBER_GOLD, ColorMode::Truecolor), EMBER_GOLD);
+        assert_eq!(resolve(AURORA_CYAN, ColorMode::Truecolor), AURORA_CYAN);
     }
 
     #[test]
@@ -679,7 +700,7 @@ mod tests {
 
     #[test]
     fn resolve_strips_color_under_no_color() {
-        assert_eq!(resolve(EMBER_GOLD, ColorMode::None), Color::Reset);
+        assert_eq!(resolve(AURORA_CYAN, ColorMode::None), Color::Reset);
         assert_eq!(resolve(Color::Indexed(9), ColorMode::None), Color::Reset);
         // A non-color (Reset) stays put — nothing to strip.
         assert_eq!(resolve(Color::Reset, ColorMode::None), Color::Reset);
@@ -697,25 +718,25 @@ mod tests {
     #[test]
     fn degrade_buffer_is_noop_when_truecolor() {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        buf.content[0].fg = EMBER_GOLD;
+        buf.content[0].fg = AURORA_CYAN;
         degrade_buffer(&mut buf, ColorMode::Truecolor);
-        assert_eq!(buf.content[0].fg, EMBER_GOLD);
+        assert_eq!(buf.content[0].fg, AURORA_CYAN);
     }
 
     #[test]
     fn degrade_buffer_resolves_every_cell_when_degraded() {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        buf.content[0].fg = EMBER_GOLD; // → 220 (256) / 11 (16)
+        buf.content[0].fg = AURORA_CYAN; // → 81 (256) / 14 (16)
         buf.content[0].bg = VIOLET; // → 141 (256) / 13 (16)
         degrade_buffer(&mut buf, ColorMode::Ansi256);
-        assert_eq!(buf.content[0].fg, Color::Indexed(220));
+        assert_eq!(buf.content[0].fg, Color::Indexed(81));
         assert_eq!(buf.content[0].bg, Color::Indexed(141));
     }
 
     #[test]
     fn degrade_buffer_strips_color_under_no_color() {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        buf.content[0].fg = EMBER_GOLD;
+        buf.content[0].fg = AURORA_CYAN;
         buf.content[0].bg = GROUND;
         degrade_buffer(&mut buf, ColorMode::None);
         assert_eq!(buf.content[0].fg, Color::Reset);
@@ -723,21 +744,21 @@ mod tests {
     }
 
     #[test]
-    fn ember_gradient_spans_gold_to_crimson() {
-        assert_eq!(ember_gradient(0.0), EMBER_GOLD);
-        assert_eq!(ember_gradient(1.0), EMBER_CRIMSON);
-        assert_eq!(ember_gradient(0.5), EMBER_FLAME);
+    fn aurora_gradient_spans_cyan_to_violet() {
+        assert_eq!(aurora_gradient(0.0), AURORA_CYAN);
+        assert_eq!(aurora_gradient(1.0), VIOLET);
+        assert_eq!(aurora_gradient(0.5), AURORA_AZURE);
         // Monotonic, clamped, never panics across the range.
         for i in 0..=20 {
-            let _ = ember_gradient(f64::from(i) / 20.0);
+            let _ = aurora_gradient(f64::from(i) / 20.0);
         }
-        assert_eq!(ember_gradient(-1.0), EMBER_GOLD);
-        assert_eq!(ember_gradient(2.0), EMBER_CRIMSON);
+        assert_eq!(aurora_gradient(-1.0), AURORA_CYAN);
+        assert_eq!(aurora_gradient(2.0), VIOLET);
     }
 
     #[test]
     fn lighten_moves_toward_white() {
-        assert_eq!(lighten(EMBER_GOLD, 0.0), EMBER_GOLD);
-        assert_eq!(lighten(EMBER_GOLD, 1.0), Color::Rgb(255, 255, 255));
+        assert_eq!(lighten(AURORA_CYAN, 0.0), AURORA_CYAN);
+        assert_eq!(lighten(AURORA_CYAN, 1.0), Color::Rgb(255, 255, 255));
     }
 }

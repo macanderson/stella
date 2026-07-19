@@ -357,7 +357,7 @@ fn run_install(workspace_root: &Path, name: &str, alias: Option<String>) -> Resu
     install(workspace_root, &alias, option.transport)?;
     println!(
         "  {} installed {} as {} ({})",
-        "◆".yellow(),
+        "◆".bright_cyan(),
         name.bright_magenta(),
         alias.bright_magenta(),
         option.label.dimmed()
@@ -383,7 +383,7 @@ fn run_install(workspace_root: &Path, name: &str, alias: Option<String>) -> Resu
 
 fn run_remove(workspace_root: &Path, name: &str) -> Result<(), String> {
     if remove(workspace_root, name)? {
-        println!("  {} removed {}", "◆".yellow(), name.bright_magenta());
+        println!("  {} removed {}", "◆".bright_cyan(), name.bright_magenta());
         Ok(())
     } else {
         Err(format!("no configured MCP server named `{name}`"))
@@ -400,7 +400,7 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
             stella_mcp::LoginEvent::AuthorizeUrl(url) => {
                 println!(
                     "  {} approve access in your browser (opened automatically):",
-                    "◆".yellow()
+                    "◆".bright_cyan()
                 );
                 println!("    {}", url.bright_magenta());
             }
@@ -408,7 +408,7 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
     ))?;
     println!(
         "  {} logged in — tokens in {} (auto-refreshed; `stella mcp logout {name}` to forget)",
-        "◆".yellow(),
+        "◆".bright_cyan(),
         oauth_store_path(workspace_root).display()
     );
     Ok(())
@@ -416,7 +416,11 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
 
 fn run_logout(workspace_root: &Path, name: &str) -> Result<(), String> {
     if oauth_logout(workspace_root, name)? {
-        println!("  {} logged out of {}", "◆".yellow(), name.bright_magenta());
+        println!(
+            "  {} logged out of {}",
+            "◆".bright_cyan(),
+            name.bright_magenta()
+        );
         Ok(())
     } else {
         Err(format!("no stored OAuth login for `{name}`"))

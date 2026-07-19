@@ -286,7 +286,7 @@ pub async fn run_deck_session(
     // Seed the SKILLS tab so it has data the instant it is opened (both scopes),
     // without waiting on a `/skills` round-trip.
     let _ = in_tx.send(skills_snapshot(&cfg.workspace_root, None));
-    // Seed the ENGINE overlay (`/engine`) the same way: the merged
+    // Seed the ENGINE panel the same way: the merged
     // agent_engine_config plus the picker vocabularies, ready before the
     // user first opens it.
     let _ = in_tx.send(engine_config_inbound(cfg, None));
@@ -1474,7 +1474,7 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ("/init", "index the workspace: domains + code graph"),
     (
         "/agents",
-        "open the Agents tab: executions & installed agents",
+        "open the AGENT ENGINE tab: executions, installed agents & engine config",
     ),
     (
         "/pipeline",
@@ -1499,10 +1499,9 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ),
     ("/inbox", "notifications — messages persist until read"),
     ("/mcp-search", "search the MCP registry & install servers"),
-    (
-        "/engine",
-        "configure the agent engine: models, prompts, effort & params per agent",
-    ),
+    // The engine-config editor lives permanently in the AGENT ENGINE tab's
+    // right column (no `/engine` popup anymore); the /model-* commands jump
+    // straight to it with that agent's model picker open.
     ("/model-default", "pick the default agent's model"),
     ("/model-worker", "pick the pipeline worker model"),
     ("/model-judge", "pick the pipeline judge model"),
@@ -1515,7 +1514,7 @@ fn deck_reserved() -> Vec<&'static str> {
     DECK_BUILTINS.iter().map(|(name, _)| *name).collect()
 }
 
-// ── Agent-engine config (the `/engine` overlay) ─────────────────────────────
+// ── Agent-engine config (the AGENT ENGINE panel) ──────────────────────────────
 
 /// Build an [`Inbound::EngineConfig`] snapshot: the freshly merged
 /// `agent_engine_config` from the settings scope chain, plus the picker

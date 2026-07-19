@@ -39,6 +39,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let area = frame.area();
     let buf = frame.buffer_mut();
 
+    // The navy-black ground is a real frame fill, not an assumption about
+    // the user's terminal background — the deck looks the same over a white
+    // terminal as over a black one. `degrade_buffer` narrows it per color
+    // depth, and NO_COLOR strips it entirely (structure survives).
+    buf.set_style(area, Style::default().bg(theme::GROUND));
+
     // The splash owns the whole frame until it finishes / is skipped.
     if !ui.splash.is_done() {
         splash::render(&ui.splash, area, buf);
@@ -108,12 +114,8 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if ui.context_open {
         render_context_overlay(ui, area, buf);
     }
-    // The ENGINE overlay draws last in the chain so it sits above the other
-    // popups (its model-picker sub-overlay draws above it in turn); the help
-    // overlay below still wins the very top.
-    if ui.engine.open {
-        views::engine::render_overlay(ui, area, buf);
-    }
+    // (The former ENGINE overlay is gone: the engine panel renders inside
+    // the AGENT ENGINE tab's right column — see `views::agents::render`.)
 
     // Deck motion (crate::fx), scrubbed like the splash: each frame builds a
     // fresh effect and processes it once at its wall-clock elapsed, so no
@@ -199,7 +201,7 @@ fn render_queue_popup(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
             .take((w as usize).saturating_sub(6))
             .collect();
         lines.push(Line::from(vec![
-            Span::styled(format!("{marker}{}. ", i + 1), style.fg(theme::AMBER)),
+            Span::styled(format!("{marker}{}. ", i + 1), style.fg(theme::ACCENT)),
             Span::styled(text, style),
         ]));
     }
@@ -632,7 +634,7 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
             .take((w as usize).saturating_sub(6))
             .collect::<String>();
         let mut spans = vec![
-            Span::styled(marker.to_string(), style.fg(theme::AMBER)),
+            Span::styled(marker.to_string(), style.fg(theme::ACCENT)),
             Span::styled(name, style),
         ];
         // Mark the file the neighborhood is currently rooted on (the default).
@@ -693,7 +695,7 @@ fn render_composer(
         // The gold `>>> ` prefix rides every row and scrolls with it.
         let mut spans = vec![Span::styled(
             PROMPT_PREFIX,
-            Style::default().fg(theme::EMBER_GOLD),
+            Style::default().fg(theme::AURORA_CYAN),
         )];
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
@@ -792,7 +794,7 @@ fn render_composer_footer(
     let (q_text, q_style) = if pending > 0 && ui.dispatch_held {
         (
             format!("{pending} held"),
-            Style::default().fg(theme::EMBER_CRIMSON),
+            Style::default().fg(theme::AURORA_MAGENTA),
         )
     } else if pending > 0 {
         (
@@ -872,9 +874,9 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
         .unwrap_or("idle");
     let dot_color = if ui.color_mode.is_truecolor() && !ui.no_anim {
         let t = (model.now_ms % 1200) as f64 / 1200.0;
-        theme::lighten(theme::EMBER_FLAME, (0.5 - (t - 0.5).abs()) * 0.7)
+        theme::lighten(theme::AURORA_AZURE, (0.5 - (t - 0.5).abs()) * 0.7)
     } else {
-        theme::EMBER_FLAME
+        theme::AURORA_AZURE
     };
 
     // CACHE: the session prompt-cache hit rate — cumulative cache-read (hit)
@@ -974,7 +976,7 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
         ),
         ("CACHE", cache_spans, 4),
         (
-            "AGENTS",
+            "ENGINE",
             vec![Span::styled(
                 format!("{} active", model.active_count()),
                 val,
@@ -1052,7 +1054,7 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
     let mut bot: Vec<Span<'static>> = vec![Span::styled(
         brand,
         Style::default()
-            .fg(theme::EMBER_GOLD)
+            .fg(theme::AURORA_CYAN)
             .add_modifier(Modifier::BOLD),
     )];
     for (i, (label, value, _)) in cells.into_iter().enumerate() {
@@ -1172,11 +1174,13 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),
             ("↑ ↓", "select an agent"),
+            ("e", "focus the engine panel — models, prompts & params"),
             ("s", "stop the selected running agent"),
             ("⏎", "edit the selected installed agent"),
             ("v", "show the selected agent's versions"),
             ("n", "new agent — drafted by the LLM"),
             ("r", "reload installed agents"),
+            ("esc", "in the engine panel: back to the left column"),
         ],
         DeckTab::Traces => &[
             ("↑ ↓ ⇞ ⇟", "scroll the event log"),
@@ -1501,7 +1505,7 @@ mod tests {
             "CONTEXT",
             "SPEND",
             "CACHE",
-            "AGENTS",
+            "ENGINE",
             "PIPELINE",
             "deterministic-first",
         ] {
@@ -1573,7 +1577,7 @@ mod tests {
     }
 
     #[test]
-    fn statline_cache_box_sits_after_spend_and_before_agents() {
+    fn statline_cache_box_sits_after_spend_and_before_engine() {
         let model = model_with_cache(1_000, 500);
         let ui = DeckUi::default();
         let area = Rect::new(0, 0, 200, 2);
@@ -1585,10 +1589,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {needle:?}:\n{text}"))
         };
         assert!(pos("SPEND") < pos("CACHE"), "CACHE after SPEND:\n{text}");
-        assert!(pos("CACHE") < pos("AGENTS"), "CACHE before AGENTS:\n{text}");
+        assert!(pos("CACHE") < pos("ENGINE"), "CACHE before ENGINE:\n{text}");
         assert!(
-            pos("AGENTS") < pos("PIPELINE"),
-            "PIPELINE after AGENTS:\n{text}"
+            pos("ENGINE") < pos("PIPELINE"),
+            "PIPELINE after ENGINE:\n{text}"
         );
     }
 

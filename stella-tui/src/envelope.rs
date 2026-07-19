@@ -233,7 +233,7 @@ pub enum Inbound {
     },
     /// A refreshed snapshot of the agent-engine configuration
     /// (`settings.json` → `agent_engine_config`) for the ENGINE overlay
-    /// (`/engine`). Out-of-band view state exactly like
+    /// (the AGENT ENGINE panel). Out-of-band view state exactly like
     /// [`Inbound::GraphSnapshot`]: applied straight to `DeckUi` by
     /// [`crate::deck_ui::ingest_inbound`], ignored by the model fold. The
     /// driver sends one at startup, after every

@@ -397,7 +397,7 @@ pub struct DeckUi {
     /// finished OAuth login refreshes the MCP snapshot). The shell drains
     /// this after every key/inbound and forwards each as a submission.
     pub pending_inputs: Vec<WorkspaceInput>,
-    /// The ENGINE overlay (`/engine`, `/model-*`): the editor for
+    /// The ENGINE panel (AGENT ENGINE tab, `/model-*`): the editor for
     /// `settings.json` → `agent_engine_config`, over a driver-owned snapshot
     /// ([`Inbound::EngineConfig`]). Modal while open.
     pub engine: crate::views::engine::EngineOverlay,
@@ -508,10 +508,11 @@ impl DeckUi {
             return;
         }
 
-        // 2b. The ENGINE overlay is modal while open: a paste belongs to its
-        //     inline edit (a prompt, a model list) or the picker filter —
-        //     and with neither active it is swallowed, never the composer's.
-        if self.engine.open {
+        // 2b. The ENGINE panel is modal while focused (AGENT ENGINE tab): a
+        //     paste belongs to its inline edit (a prompt, a model list) or
+        //     the picker filter — and with neither active it is swallowed,
+        //     never the composer's.
+        if self.tab == DeckTab::Agents && self.engine.focused {
             if let Some(edit) = self.engine.edit.as_mut() {
                 push_single_line(&mut edit.buffer, text);
             } else if let Some(picker) = self.engine.picker.as_mut() {
@@ -734,7 +735,7 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         return;
     }
     // The agent-engine configuration snapshot — out-of-band view state for
-    // the ENGINE overlay (`/engine`). Applied by the overlay's own ingest,
+    // the ENGINE panel. Applied by the overlay's own ingest,
     // which guards unsaved local edits; the model fold never sees it.
     if let Inbound::EngineConfig { state, status } = inbound {
         crate::views::engine::ingest_config(ui, state, status);
@@ -953,11 +954,12 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         return handle_graph_picker_key(key, ui);
     }
 
-    // The ENGINE overlay (`/engine`) is modal exactly like the queue editor
-    // while open: it owns the keyboard — its inline edit buffer, its model
-    // picker, and its letter verbs (`s`/`S`/`x`/`r`) must never leak into
-    // the composer behind the popup.
-    if ui.engine.open {
+    // The ENGINE panel (the AGENT ENGINE tab's right column) is modal
+    // exactly like the queue editor while focused: it owns the keyboard —
+    // its inline edit buffer, its model picker, and its letter verbs
+    // (`s`/`S`/`x`/`r`) must never leak into the composer. Scoped to its
+    // own tab so a stale focus flag can never trap the keyboard elsewhere.
+    if ui.tab == DeckTab::Agents && ui.engine.focused {
         return crate::views::engine::handle_engine_key(key, ui);
     }
 
@@ -1246,12 +1248,12 @@ fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Optio
             "/sessions" => open_sessions_overlay(ui),
             "/context" => open_context_overlay(ui),
             "/inbox" => open_inbox_overlay(ui),
-            // The ENGINE overlay: deck-local view state over a driver-owned
-            // settings snapshot. `/engine` lands on the GLOBAL tab; the four
-            // `/model-<agent>` commands jump straight to that agent's tab
-            // with the model picker already open. Intercepted here so these
-            // never get submitted as prompts (registration is driver-side).
-            "/engine" => crate::views::engine::open_overlay(ui),
+            // The ENGINE panel: deck-local view state over a driver-owned
+            // settings snapshot. The old `/engine` popup is gone — the panel
+            // lives permanently in the AGENT ENGINE tab's right column, and
+            // the four `/model-<agent>` commands jump straight there with
+            // that agent's model picker already open. Intercepted here so
+            // these never get submitted as prompts.
             "/model-default" => crate::views::engine::open_with_picker(ui, EngineRole::Default),
             "/model-worker" => crate::views::engine::open_with_picker(ui, EngineRole::Worker),
             "/model-judge" => crate::views::engine::open_with_picker(ui, EngineRole::Judge),
@@ -2411,6 +2413,12 @@ fn handle_agents_key(
     ui: &mut DeckUi,
     composer_empty: bool,
 ) -> Option<DeckAction> {
+    // `e` hands the keyboard to the engine panel (the right column) from
+    // either pane — the panel's own Esc hands it back.
+    if composer_empty && key.modifiers.is_empty() && matches!(key.code, KeyCode::Char('e')) {
+        return Some(crate::views::engine::focus_panel(ui));
+    }
+
     // The secondary nav: ←/→ switch EXECUTIONS ↔ INSTALLED AGENTS. These
     // only arrive here with a blank composer (a composer holding text claims
     // ←/→ for cursor motion first), same gate as every other tab key.

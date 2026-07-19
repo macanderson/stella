@@ -51,10 +51,12 @@ impl DeckTab {
 
     /// The tab-bar label. Deck tab labels are UPPERCASE by convention —
     /// every tab added later must follow (e.g. `SKILLS`, `MCP`).
+    /// `Agents` renders as AGENT ENGINE: the tab pairs the executions
+    /// dashboard with the permanent engine-config panel (60/40).
     pub fn title(self) -> &'static str {
         match self {
             DeckTab::Session => "SESSION",
-            DeckTab::Agents => "AGENTS",
+            DeckTab::Agents => "AGENT ENGINE",
             DeckTab::Traces => "TRACES",
             DeckTab::Graph => "GRAPH",
             DeckTab::Files => "FILES",

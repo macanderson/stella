@@ -9,7 +9,7 @@
 //! - `config.rs` consults [`AgentEngineConfig::model_for`] (via a combined
 //!   spec string) for the default agent's model precedence;
 //! - `command_deck.rs` maps settings ↔ the TUI's `EngineConfigState`
-//!   snapshot for the `/engine` overlay.
+//!   snapshot for the deck's engine panel.
 //!
 //! Everything here is pure functions over owned data (no I/O), so the
 //! precedence and auto-mode rules are unit-testable without a workspace.
@@ -329,7 +329,7 @@ fn flat_model(engine: &AgentEngineConfig, kind: EngineAgentKind) -> Option<&str>
     }
 }
 
-/// Build the `/engine` overlay's snapshot from the merged settings plus
+/// Build the engine panel's snapshot from the merged settings plus
 /// the picker vocabularies the driver knows (provider ids, catalog slugs).
 pub fn state_from_settings(
     engine: &AgentEngineConfig,

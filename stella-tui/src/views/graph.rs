@@ -279,7 +279,7 @@ fn render_sketch(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut 
                 {
                     let touches_cursor = edge.from == cursor || edge.to == cursor;
                     let color = if touches_cursor {
-                        theme::AMBER_DEEP
+                        theme::ACCENT_DEEP
                     } else {
                         theme::RULE
                     };
@@ -303,7 +303,7 @@ fn node_glyph_line(node: &GraphNode, is_cursor: bool) -> Line<'static> {
     if is_cursor {
         Line::from(Span::styled(
             format!("[{glyph}]"),
-            Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ))
     } else {
         Line::from(Span::styled(

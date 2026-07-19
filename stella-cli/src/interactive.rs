@@ -54,9 +54,9 @@ pub struct TtyAskUserIo;
 #[async_trait]
 impl AskUserIo for TtyAskUserIo {
     async fn prompt(&self, question: &str, options: &[String]) -> Result<String, String> {
-        println!("\n  {} {}", "?".yellow().bold(), question.bold());
+        println!("\n  {} {}", "?".bright_cyan().bold(), question.bold());
         for (i, option) in options.iter().enumerate() {
-            println!("    {} {}", format!("{})", i + 1).yellow(), option);
+            println!("    {} {}", format!("{})", i + 1).bright_cyan(), option);
         }
         print!("  {} ", "answer (number or text):".dimmed());
         std::io::stdout().flush().map_err(|e| e.to_string())?;

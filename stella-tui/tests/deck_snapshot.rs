@@ -61,7 +61,10 @@ fn deck_renders_every_tab_with_real_content() {
         );
         // The comfy-tabs bar labels are always present — UPPERCASE by the
         // deck's tab-label convention.
-        assert!(text.contains("AGENTS"), "tab bar should render on {tab:?}");
+        assert!(
+            text.contains("AGENT ENGINE"),
+            "tab bar should render on {tab:?}"
+        );
     }
 
     // Write all five tabs to a human-readable artifact at the repo root.
@@ -80,17 +83,35 @@ fn deck_renders_every_tab_with_real_content() {
 #[test]
 fn agents_dashboard_shows_status_and_spend_columns() {
     let model = folded_model();
-    // The dashboard is dense (11 columns) — render it at a roomy width so the
-    // rightmost columns aren't clipped (below ~150 cols the Table gracefully
-    // clips its tail rather than panicking).
-    let text = render_tab(&model, DeckTab::Agents, 160, 20);
-    // Column headers and at least one agent's live status render.
-    for needle in ["CPU%", "MEM", "In/Out", "Activity", "needs input"] {
+    // The dashboard is dense (11 columns) and shares the tab with the engine
+    // panel (60/40) — render at a roomy width so the executions table's left
+    // 60% still clears the full-column threshold; the engine panel must
+    // render beside it.
+    let text = render_tab(&model, DeckTab::Agents, 240, 20);
+    // Column headers, at least one agent's live status, and the engine
+    // panel's title all render.
+    for needle in [
+        "CPU%",
+        "MEM",
+        "In/Out",
+        "Activity",
+        "needs input",
+        "agent engine",
+    ] {
         assert!(
             text.contains(needle),
             "dashboard missing {needle:?}:\n{text}"
         );
     }
+
+    // At a typical terminal width the table drops to its compact column set
+    // (the Goal column must survive, the density columns go).
+    let text = render_tab(&model, DeckTab::Agents, 160, 20);
+    assert!(!text.contains("CPU%"), "compact set drops CPU%:\n{text}");
+    assert!(
+        text.contains("Goal"),
+        "compact set keeps the Goal column:\n{text}"
+    );
 }
 
 /// The `?` help overlay is context-aware: it lists the active tab's own keys

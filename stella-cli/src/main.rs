@@ -443,7 +443,7 @@ fn run_observe(port: u16, open: bool) -> Result<(), String> {
         let url = format!("http://{addr}/");
         println!();
         println!("  {} {}", "◆".bright_magenta(), "Stella Observatory".bold());
-        println!("  {} {}", "→".yellow(), url);
+        println!("  {} {}", "→".bright_cyan(), url);
         println!(
             "  {}",
             "reads .stella (read-only) · binds 127.0.0.1 only · Ctrl+C to stop".dimmed()
