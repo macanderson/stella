@@ -45,6 +45,9 @@ colored.workspace = true
 toml.workspace = true
 libc.workspace = true
 tempfile.workspace = true
+# Masked TTY prompt for `stella connect … --token` (same crate stella-model
+# uses for the interactive API-key prompt).
+rpassword.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

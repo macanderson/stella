@@ -620,6 +620,7 @@ mod tests {
             content: content.into(),
             content_hash: crate::store::sha256_hex(content),
             uri: None,
+            valid_from: None,
             recorded_at: "2026-01-01T00:00:00Z".into(),
         }
     }
@@ -690,6 +691,7 @@ mod tests {
             content: "body".into(),
             content_hash: "h".into(),
             uri: None,
+            valid_from: None,
             recorded_at: "2026-01-01T00:00:00Z".into(),
         };
         let err = frame_from_node(&node, 0.5, "fp", false, &[]).unwrap_err();
@@ -706,6 +708,7 @@ mod tests {
             content: "body".into(),
             content_hash: "h".into(),
             uri: None,
+            valid_from: None,
             recorded_at: "2026-01-01T00:00:00Z".into(),
         };
         let frame = frame_from_node(&node, 0.5, "fp", true, &["billing".to_string()]).unwrap();

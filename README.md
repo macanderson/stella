@@ -351,7 +351,7 @@ writes a failing test whose fail→pass flip proves the work (`docs/design/pipel
 | `ci_status` | CI runs + failure logs via `gh` |
 | `screenshot` | Capture the screen as verification evidence |
 | `generate_image` | Text-to-image via your provider key, saved under `.stella/artifacts/` — registered only when a media-capable key is set |
-| `create_issue` · `update_issue` · `close_issue` · `search_issues` · `start_work_on_issue` | Issue tracking — registered only when configured |
+| `create_issue` · `update_issue` · `close_issue` · `search_issues` · `get_issue` · `list_labels` · `list_members` · `start_work_on_issue` | Issue tracking (GitHub/Linear) — registered only when a tracker is connected (`stella connect github\|linear`, `LINEAR_API_KEY`, or `gh` auth) |
 
 All file tools are workspace-root-pinned, and every read/write/edit/delete is
 recorded in the Files-Touched ledger (shown per turn as `[C·R·U·D] path`, also

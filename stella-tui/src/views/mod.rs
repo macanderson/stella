@@ -11,6 +11,7 @@ pub mod engine;
 pub mod files;
 pub mod graph;
 pub mod installed;
+pub mod issues;
 pub mod mcp;
 pub mod session;
 pub mod skills;

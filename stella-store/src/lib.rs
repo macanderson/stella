@@ -73,16 +73,20 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use stella_protocol::{AgentEvent, ToolOutput};
 
+pub mod catalog;
 pub mod notify;
 pub mod sessions;
 pub mod usage;
 
+pub use catalog::CatalogStore;
 pub use notify::{Notification, NotificationStore};
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 
 /// FNV-1a/64 hex — a stable, dependency-free digest for prompt hashes and
-/// tool-arg fingerprints (loop detection, not security).
-fn fnv_hex(s: &str) -> String {
+/// tool-arg fingerprints (loop detection, not security). Also the
+/// model-card version content hash (`catalog`) — change detection, not
+/// security, there too.
+pub(crate) fn fnv_hex(s: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.as_bytes() {
         hash ^= *b as u64;

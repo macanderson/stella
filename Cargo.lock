@@ -2862,6 +2862,7 @@ dependencies = [
  "libc",
  "ocp-host",
  "ocp-types",
+ "rpassword",
  "serde",
  "serde_json",
  "stella-context",
@@ -3057,6 +3058,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stella-protocol",
+ "tempfile",
 ]
 
 [[package]]
@@ -3064,8 +3066,10 @@ name = "stella-tools"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "base64",
  "futures-util",
  "libc",
+ "rand 0.10.2",
  "reqwest",
  "serde",
  "serde_json",
@@ -3077,6 +3081,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "wiremock",
 ]
 
 [[package]]

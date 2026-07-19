@@ -15,14 +15,19 @@ stella-graph = { path = "../stella-graph" }
 stella-media = { path = "../stella-media" }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+# `net` for the tracker-OAuth loopback-redirect listener (127.0.0.1 callback).
+tokio = { workspace = true, features = ["net"] }
 async-trait.workspace = true
 futures-util.workspace = true
 libc.workspace = true
 reqwest = { workspace = true }
+# Tracker OAuth (PKCE S256, state) — same vetted crates as stella-mcp.
+base64.workspace = true
+rand.workspace = true
 sha2.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
 tempfile.workspace = true
+wiremock.workspace = true

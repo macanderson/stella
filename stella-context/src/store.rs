@@ -298,6 +298,10 @@ pub struct NodeRow {
     pub content: String,
     pub content_hash: String,
     pub uri: Option<String>,
+    /// Valid time: when the fact became true in the world — may precede
+    /// `recorded_at` (observation), never follows it. `None` = unknown,
+    /// treated as valid-since-observation.
+    pub valid_from: Option<String>,
     pub recorded_at: String,
 }
 
@@ -467,7 +471,7 @@ impl ContextStore {
     pub fn memory_nodes(&self) -> Result<Vec<NodeRow>, ContextError> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(
-            "SELECT id, public_id, kind, display_name, content, content_hash, uri, recorded_at
+            "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
              FROM node WHERE kind = 'memory' AND superseded_at IS NULL
              ORDER BY recorded_at DESC, id DESC",
         )?;
@@ -485,7 +489,7 @@ impl ContextStore {
         let conn = lock(&self.conn);
         let row = conn
             .query_row(
-                "SELECT id, public_id, kind, display_name, content, content_hash, uri, recorded_at
+                "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
                  FROM node WHERE public_id = ?1 AND superseded_at IS NULL",
                 params![public_id],
                 map_node_row,
@@ -709,6 +713,7 @@ fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
         content: row.get("content")?,
         content_hash: row.get("content_hash")?,
         uri: row.get("uri")?,
+        valid_from: row.get("valid_from")?,
         recorded_at: row.get("recorded_at")?,
     })
 }
@@ -716,7 +721,7 @@ fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
 /// Every live node (for recency scoring, lexical fallback, and warm scanning).
 pub(crate) fn live_nodes(conn: &Connection) -> Result<Vec<NodeRow>, ContextError> {
     let mut stmt = conn.prepare(
-        "SELECT id, public_id, kind, display_name, content, content_hash, uri, recorded_at
+        "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
          FROM node WHERE superseded_at IS NULL",
     )?;
     let rows = stmt.query_map([], map_node_row)?;
@@ -771,7 +776,7 @@ pub(crate) fn vectors_for_fingerprint(
 pub(crate) fn node_by_id(conn: &Connection, id: i64) -> Result<Option<NodeRow>, ContextError> {
     let row = conn
         .query_row(
-            "SELECT id, public_id, kind, display_name, content, content_hash, uri, recorded_at
+            "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
              FROM node WHERE id = ?1",
             params![id],
             map_node_row,

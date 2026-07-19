@@ -44,7 +44,7 @@ Tool names are their exact identifiers — the agent dispatches by name, and the
 | `generate_svg` | Generate an SVG asset. | Mutating |
 
 <Callout type="info">
-`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. The read-only partition is exactly: `read_file`, `grep`, `glob`, `explorations`, `ci_status`, `search_issues`, and (when present) `graph_query`.
+`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. The read-only partition is exactly: `read_file`, `grep`, `glob`, `gather_context`, `explorations`, `ci_status`, and (when present) `graph_query`, `search_issues`, `get_issue`, `list_labels`, `list_members`.
 </Callout>
 
 ### Conditionally registered
@@ -57,14 +57,17 @@ These appear only when their prerequisite is met:
 | `generate_image` | Generate an image. | Mutating | A media-capable provider key is configured. |
 | `generate_video` | Generate a video. | Mutating | A media-capable provider key is configured. |
 | `poll_video` | Poll a video-generation job. | Mutating | A media-capable provider key is configured. |
-| `create_issue` | Create an issue. | Mutating | An issue backend is configured (see below). |
-| `update_issue` | Update an issue. | Mutating | An issue backend is configured. |
-| `close_issue` | Close an issue. | Mutating | An issue backend is configured. |
-| `search_issues` | Search issues. | Read-only | An issue backend is configured. |
-| `start_work_on_issue` | Start work on an issue. | Mutating | An issue backend is configured. |
+| `create_issue` | Create an issue (title, body, labels, assignee, Linear team). | Mutating | An issue backend is configured (see below). |
+| `update_issue` | Update title/body, comment, change status, add labels, set the assignee. | Mutating | An issue backend is configured. |
+| `close_issue` | Close an issue, optionally with a closing comment. | Mutating | An issue backend is configured. |
+| `search_issues` | Search or list issues, with state/assignee/label filters. | Read-only | An issue backend is configured. |
+| `get_issue` | Read one issue in full, including its comment thread. | Read-only | An issue backend is configured. |
+| `list_labels` | Search labels by substring — no guessing exact names. | Read-only | An issue backend is configured. |
+| `list_members` | Search assignable people by login, name, or email substring. | Read-only | An issue backend is configured. |
+| `start_work_on_issue` | Move an issue to in-progress and check out its branch. | Mutating | An issue backend is configured. |
 
 <Callout type="info">
-The issue tools target **Linear** when `LINEAR_API_KEY` is set; otherwise **GitHub**, but only if the `gh` CLI is installed and authenticated. If neither is available, no issue tools are registered at all.
+The issue backend resolves in precedence order: `LINEAR_API_KEY` env → a stored **Linear** connection (`stella connect linear`) → a stored **GitHub** connection (`stella connect github`, runs over REST with no `gh` CLI needed) → ambient `gh` CLI auth. If none is available, no issue tools are registered at all. See [stella connect](/docs/commands/connect).
 </Callout>
 
 ## Where to go next

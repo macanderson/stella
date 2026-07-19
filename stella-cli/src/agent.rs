@@ -67,7 +67,7 @@ You have these tools available:
 - search_skills: Search the public skills registry for reusable skills you don't have locally
 - install_skill: Install a registry skill into the project (always requires the user's confirmation)
 
-Some tools have prerequisites: issue tracking (create_issue/update_issue/close_issue/search_issues/start_work_on_issue) appears only when configured; ci_status requires the gh CLI. Use them when present.
+Some tools have prerequisites: issue tracking (create_issue/update_issue/close_issue/search_issues/get_issue/list_labels/list_members/start_work_on_issue) appears only when a tracker is configured (`stella connect github|linear`, LINEAR_API_KEY, or gh auth) — search labels/members with list_labels/list_members before guessing names; ci_status requires the gh CLI. Use them when present.
 
 Rules:
 - For "where is X defined", "who calls/references X", or "what depends on this file" questions, reach for graph_query FIRST when it is available — it is precise and cheap. Fall back to grep/glob only when the graph can't answer (free-text search, a symbol the index doesn't carry, or no index yet).
@@ -99,7 +99,7 @@ You have these tools available:
 - search_skills: Search the public skills registry for reusable skills you don't have locally
 - install_skill: Install a registry skill into the project (always requires the user's confirmation)
 
-Some tools have prerequisites: issue tracking (create_issue/update_issue/close_issue/search_issues/start_work_on_issue) appears only when configured; ci_status requires the gh CLI. Use them when present.
+Some tools have prerequisites: issue tracking (create_issue/update_issue/close_issue/search_issues/get_issue/list_labels/list_members/start_work_on_issue) appears only when a tracker is configured (`stella connect github|linear`, LINEAR_API_KEY, or gh auth) — search labels/members with list_labels/list_members before guessing names; ci_status requires the gh CLI. Use them when present.
 
 Methodology (always follow in order):
 1. REPRODUCE: Run the failing test or reproduce the bug before touching any file. Never edit blind, you must see the actual error first.
@@ -2782,6 +2782,12 @@ pub(crate) fn persist_event(
                 },
             )
             .is_ok();
+        // Telemetry stores the wire string verbatim (above); this makes
+        // that string JOINABLE: an echoed form the catalog doesn't know
+        // yet (dated snapshot, region prefix, gateway-routed id) gets
+        // matched to its model card and registered as a learned alias.
+        // Best-effort and deduped in-process — never slows the write path.
+        crate::model_catalog::note_wire_model(provider_id, model);
     }
     recorded && telemetry_ok
 }
@@ -3223,15 +3229,13 @@ fn build_provider_parts(
 
     let provider_id = provider_config.id;
     let display_name = provider_config.display_name;
-    // `seeded` is false for `local` and for settings.json-defined providers
-    // (issue #44): their models are whatever the user's endpoint serves —
-    // the anti-phantom-slug rule exists to catch drift in OUR seed data,
-    // not to veto the user's own endpoint.
-    if provider_config.seeded {
-        stella_model::catalog::Catalog::seed()
-            .resolve_for(provider_id, model_id)
-            .map_err(|e| e.to_string())?;
-    }
+    // The anti-invalid-slug gate, for EVERY provider (not just seeded
+    // ones): the seed floor always passes; a provider whose master-list
+    // rows are synced (`stella models refresh`) gets hard validation with
+    // suggestions; `local` and never-synced custom endpoints keep their
+    // endpoint-is-the-authority posture. See
+    // `crate::model_catalog::validate_model_slug` for the full ladder.
+    crate::model_catalog::validate_model_slug(provider_config, model_id)?;
 
     match provider_config.dialect {
         Dialect::OpenaiResponses => {

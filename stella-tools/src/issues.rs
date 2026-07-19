@@ -1,8 +1,12 @@
-//! Issue-tracking tools with a configured backend: Linear (when
-//! `LINEAR_API_KEY` is set — it wins) or GitHub Issues (when the `gh` CLI
-//! is authenticated). If neither is configured the tools are NOT
-//! registered at all — no dead schema entries, no per-call token cost, no
-//! surface that errors on use (see `ToolRegistry::new`).
+//! Issue-tracking tools with a configured backend: Linear (`LINEAR_API_KEY`
+//! or a `stella connect linear` connection — Linear wins) or GitHub Issues
+//! (a `stella connect github` OAuth connection, else the authenticated `gh`
+//! CLI). If nothing is configured the tools are NOT registered at all — no
+//! dead schema entries, no per-call token cost, no surface that errors on
+//! use (see `ToolRegistry::new`).
+//!
+//! The operations themselves live in [`crate::issue_ops`] (shared with the
+//! Command Deck); this module is detection + the model-facing tool layer.
 
 use std::sync::Arc;
 
@@ -11,25 +15,34 @@ use serde_json::{Value, json};
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::exec;
+use crate::issue_ops::{self as ops, CreateParams, IssueFilters, quote};
 use crate::registry::Tool;
-
-const TIMEOUT_SECS: u64 = 60;
-const LINEAR_API_URL: &str = "https://api.linear.app/graphql";
+use crate::tracker_auth::{
+    TrackerProvider, TrackerStore, auth_header_value, github_api_base, linear_api_url, now_secs,
+    refresh_connection,
+};
 
 /// Which tracker the issue tools talk to.
 #[derive(Debug, Clone)]
 pub enum IssueBackend {
     /// GitHub Issues via the authenticated `gh` CLI.
     GitHub,
-    /// Linear via its GraphQL API.
-    Linear { api_key: String },
+    /// GitHub Issues via the REST API with a `stella connect github` token —
+    /// no `gh` binary required.
+    GitHubApi { token: String, api_base: String },
+    /// Linear via its GraphQL API. `api_key` is the full Authorization
+    /// header value: a personal API key verbatim, or `Bearer <token>` for an
+    /// OAuth connection.
+    Linear { api_key: String, api_url: String },
 }
 
 /// [`detect_issue_backend`] off the async executor: the `gh auth status`
 /// probe spawns a process (tens to hundreds of ms), which must not block a
 /// runtime worker thread (#64). The env-var fast path never reaches the
-/// blocking pool.
+/// blocking pool. Stale OAuth connections get a best-effort refresh first —
+/// the only context where refreshing is possible.
 pub async fn detect_issue_backend_async() -> Option<IssueBackend> {
+    refresh_stale_connections().await;
     if let Some(linear) = detect_linear_backend() {
         return Some(linear);
     }
@@ -38,18 +51,63 @@ pub async fn detect_issue_backend_async() -> Option<IssueBackend> {
         .unwrap_or(None)
 }
 
-fn detect_linear_backend() -> Option<IssueBackend> {
-    match std::env::var("LINEAR_API_KEY") {
-        Ok(key) if !key.trim().is_empty() => Some(IssueBackend::Linear { api_key: key }),
-        _ => None,
+/// Best-effort refresh of any stored OAuth connection near expiry; failures
+/// leave the stale token in place (its 401 error tells the user to
+/// re-connect).
+async fn refresh_stale_connections() {
+    let Some(store) = TrackerStore::open_default() else {
+        return;
+    };
+    let Ok(connections) = store.connections() else {
+        return;
+    };
+    let now = now_secs();
+    for (provider, connection) in connections {
+        if connection.needs_refresh(now)
+            && connection.refresh_token.is_some()
+            && let Ok(refreshed) = refresh_connection(&connection).await
+        {
+            let _ = store.put(provider, &refreshed);
+        }
     }
 }
 
-/// Detect the configured backend at startup: `LINEAR_API_KEY` beats an
-/// authenticated `gh`; neither → `None` and the tools stay unregistered.
+fn detect_linear_backend() -> Option<IssueBackend> {
+    if let Ok(key) = std::env::var("LINEAR_API_KEY")
+        && !key.trim().is_empty()
+    {
+        return Some(IssueBackend::Linear {
+            api_key: key,
+            api_url: linear_api_url(),
+        });
+    }
+    let store = TrackerStore::open_default()?;
+    let connection = store.get(TrackerProvider::Linear).ok()??;
+    Some(IssueBackend::Linear {
+        api_key: auth_header_value(TrackerProvider::Linear, &connection),
+        api_url: linear_api_url(),
+    })
+}
+
+fn detect_github_connected_backend() -> Option<IssueBackend> {
+    let store = TrackerStore::open_default()?;
+    let connection = store.get(TrackerProvider::GitHub).ok()??;
+    Some(IssueBackend::GitHubApi {
+        token: connection.access_token,
+        api_base: github_api_base(),
+    })
+}
+
+/// Detect the configured backend at startup: Linear (env key, then a stored
+/// connection) beats GitHub; a stored GitHub connection (explicit
+/// `stella connect`) beats ambient `gh` auth; neither → `None` and the
+/// tools stay unregistered.
 pub fn detect_issue_backend() -> Option<IssueBackend> {
     if let Some(linear) = detect_linear_backend() {
         return Some(linear);
+    }
+    if let Some(github) = detect_github_connected_backend() {
+        return Some(github);
     }
     let gh_authed = std::process::Command::new("gh")
         .args(["auth", "status"])
@@ -66,111 +124,9 @@ pub fn detect_issue_backend() -> Option<IssueBackend> {
 
 // ---- shared helpers --------------------------------------------------------
 
-async fn gh(args: String, root: &std::path::Path) -> ToolOutput {
-    match exec::run(&args, root, TIMEOUT_SECS).await {
-        Ok((0, output)) => ToolOutput::Ok { content: output },
-        Ok((code, output)) => ToolOutput::Error {
-            message: format!("gh failed (exit {code}): {output}"),
-        },
-        Err(e) => ToolOutput::Error { message: e },
-    }
-}
-
-fn quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
-
-async fn linear_graphql(api_key: &str, query: &str, variables: Value) -> Result<Value, String> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-    let response = client
-        .post(LINEAR_API_URL)
-        .header("Authorization", api_key)
-        .header("Content-Type", "application/json")
-        .json(&json!({ "query": query, "variables": variables }))
-        .send()
-        .await
-        .map_err(|e| format!("Linear request failed: {e}"))?;
-    let status = response.status();
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Linear returned non-JSON (HTTP {status}): {e}"))?;
-    if let Some(errors) = body.get("errors").and_then(|e| e.as_array())
-        && !errors.is_empty()
-    {
-        let messages: Vec<&str> = errors
-            .iter()
-            .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
-            .collect();
-        return Err(format!("Linear error: {}", messages.join("; ")));
-    }
-    body.get("data")
-        .cloned()
-        .ok_or_else(|| format!("Linear response had no data (HTTP {status})"))
-}
-
-/// Split a Linear identifier like `OXA-123` into (team key, number).
-fn parse_linear_identifier(identifier: &str) -> Option<(String, f64)> {
-    let (team, number) = identifier.rsplit_once('-')?;
-    let number: f64 = number.parse().ok()?;
-    if team.is_empty() {
-        return None;
-    }
-    Some((team.to_uppercase(), number))
-}
-
-/// Resolve a Linear issue's node id (and team id) from its identifier.
-async fn linear_issue_id(api_key: &str, identifier: &str) -> Result<(String, String), String> {
-    let Some((team, number)) = parse_linear_identifier(identifier) else {
-        return Err(format!(
-            "`{identifier}` is not a Linear identifier (expected e.g. ENG-123)"
-        ));
-    };
-    let data = linear_graphql(
-        api_key,
-        "query($team: String!, $number: Float!) {\
-           issues(filter: { team: { key: { eq: $team } }, number: { eq: $number } }, first: 1) {\
-             nodes { id team { id } } } }",
-        json!({ "team": team, "number": number }),
-    )
-    .await?;
-    let node = data["issues"]["nodes"]
-        .get(0)
-        .ok_or_else(|| format!("no Linear issue found for `{identifier}`"))?;
-    Ok((
-        node["id"].as_str().unwrap_or_default().to_string(),
-        node["team"]["id"].as_str().unwrap_or_default().to_string(),
-    ))
-}
-
-/// First workflow state of `state_type` for a team (e.g. "started",
-/// "completed").
-async fn linear_state_id(api_key: &str, team_id: &str, state_type: &str) -> Result<String, String> {
-    let data = linear_graphql(
-        api_key,
-        "query($team: String!) { team(id: $team) { states { nodes { id name type } } } }",
-        json!({ "team": team_id }),
-    )
-    .await?;
-    data["team"]["states"]["nodes"]
-        .as_array()
-        .and_then(|nodes| {
-            nodes
-                .iter()
-                .find(|n| n["type"].as_str() == Some(state_type))
-                .and_then(|n| n["id"].as_str())
-                .map(str::to_string)
-        })
-        .ok_or_else(|| format!("team has no workflow state of type `{state_type}`"))
-}
-
 fn issue_ref_description(backend: &IssueBackend) -> &'static str {
     match backend {
-        IssueBackend::GitHub => "GitHub issue number",
+        IssueBackend::GitHub | IssueBackend::GitHubApi { .. } => "GitHub issue number",
         IssueBackend::Linear { .. } => "Linear identifier, e.g. ENG-123",
     }
 }
@@ -200,7 +156,34 @@ fn require_issue_ref(input: &Value) -> Result<String, ToolOutput> {
     }
 }
 
-// ---- the five tools --------------------------------------------------------
+fn string_list(input: &Value, field: &str) -> Vec<String> {
+    input
+        .get(field)
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|i| i.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn format_summary(issue: &ops::IssueSummary) -> String {
+    let mut line = format!("{} [{}] {}", issue.key, issue.state, issue.title);
+    if let Some(assignee) = &issue.assignee {
+        line.push_str(&format!(" · {assignee}"));
+    }
+    if !issue.labels.is_empty() {
+        line.push_str(&format!(" · {}", issue.labels.join(", ")));
+    }
+    if !issue.url.is_empty() {
+        line.push_str(&format!(" — {}", issue.url));
+    }
+    line
+}
+
+// ---- the eight tools -------------------------------------------------------
 
 pub struct CreateIssue(pub Arc<IssueBackend>);
 #[async_trait]
@@ -208,13 +191,16 @@ impl Tool for CreateIssue {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "create_issue".into(),
-            description: "Create an issue in the configured tracker.".into(),
+            description: "Create an issue in the configured tracker. Labels and assignee must \
+                          exist — search them first with list_labels / list_members."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "title": { "type": "string" },
                     "body": { "type": "string" },
                     "labels": { "type": "array", "items": { "type": "string" } },
+                    "assignee": { "type": "string", "description": "@login (GitHub) or email/name (Linear)" },
                     "team": { "type": "string", "description": "Linear team key (defaults to the first team)" }
                 },
                 "required": ["title"]
@@ -228,69 +214,28 @@ impl Tool for CreateIssue {
                 message: "missing required field `title`".into(),
             };
         };
-        let body = input.get("body").and_then(|v| v.as_str()).unwrap_or("");
-        match self.0.as_ref() {
-            IssueBackend::GitHub => {
-                let mut cmd = format!(
-                    "gh issue create --title {} --body {}",
-                    quote(title),
-                    quote(body)
-                );
-                if let Some(labels) = input.get("labels").and_then(|v| v.as_array()) {
-                    for label in labels.iter().filter_map(|l| l.as_str()) {
-                        cmd.push_str(&format!(" --label {}", quote(label)));
-                    }
-                }
-                gh(cmd, root).await
-            }
-            IssueBackend::Linear { api_key } => {
-                // Resolve the team: input key, else the first team.
-                let team_id = async {
-                    let data = linear_graphql(
-                        api_key,
-                        "query { teams(first: 50) { nodes { id key } } }",
-                        json!({}),
-                    )
-                    .await?;
-                    let nodes = data["teams"]["nodes"]
-                        .as_array()
-                        .cloned()
-                        .unwrap_or_default();
-                    let wanted = input.get("team").and_then(|v| v.as_str());
-                    let team = match wanted {
-                        Some(key) => nodes
-                            .iter()
-                            .find(|n| n["key"].as_str() == Some(&key.to_uppercase()))
-                            .ok_or_else(|| format!("no Linear team with key `{key}`"))?,
-                        None => nodes.first().ok_or("no Linear teams visible to this key")?,
-                    };
-                    Ok::<String, String>(team["id"].as_str().unwrap_or_default().to_string())
-                }
-                .await;
-                let team_id = match team_id {
-                    Ok(id) => id,
-                    Err(e) => return ToolOutput::Error { message: e },
-                };
-                match linear_graphql(
-                    api_key,
-                    "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { \
-                       issue { identifier url } } }",
-                    json!({ "input": { "teamId": team_id, "title": title, "description": body } }),
-                )
-                .await
-                {
-                    Ok(data) => ToolOutput::Ok {
-                        content: format!(
-                            "created {} {}",
-                            data["issueCreate"]["issue"]["identifier"]
-                                .as_str()
-                                .unwrap_or("?"),
-                            data["issueCreate"]["issue"]["url"].as_str().unwrap_or("")
-                        ),
-                    },
-                    Err(e) => ToolOutput::Error { message: e },
-                }
-            }
+        let params = CreateParams {
+            title: title.to_string(),
+            body: input
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            labels: string_list(input, "labels"),
+            assignee: input
+                .get("assignee")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            team: input
+                .get("team")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        };
+        match ops::create_issue(&self.0, root, &params).await {
+            Ok(issue) => ToolOutput::Ok {
+                content: format!("created {} {}", issue.key, issue.url),
+            },
+            Err(e) => ToolOutput::Error { message: e },
         }
     }
 }
@@ -301,14 +246,19 @@ impl Tool for UpdateIssue {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "update_issue".into(),
-            description: "Update an issue's title/body or add a comment.".into(),
+            description: "Update an issue: title/body, add a comment, change status, add \
+                          labels, or set the assignee — any combination."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "issue": { "type": "string", "description": issue_ref_description(&self.0) },
                     "title": { "type": "string" },
                     "body": { "type": "string" },
-                    "comment": { "type": "string" }
+                    "comment": { "type": "string" },
+                    "status": { "type": "string", "description": "GitHub: open|closed. Linear: a workflow state name or type (backlog, in progress, done, …)" },
+                    "labels": { "type": "array", "items": { "type": "string" }, "description": "Labels to ADD (existing labels are kept)" },
+                    "assignee": { "type": "string", "description": "@login (GitHub) or email/name (Linear)" }
                 },
                 "required": ["issue"]
             }),
@@ -320,77 +270,32 @@ impl Tool for UpdateIssue {
             Ok(i) => i,
             Err(e) => return e,
         };
-        let title = input.get("title").and_then(|v| v.as_str());
-        let body = input.get("body").and_then(|v| v.as_str());
-        let comment = input.get("comment").and_then(|v| v.as_str());
-        match self.0.as_ref() {
-            IssueBackend::GitHub => {
-                if let Some(comment) = comment {
-                    let out = gh(
-                        format!(
-                            "gh issue comment {} --body {}",
-                            quote(&issue),
-                            quote(comment)
-                        ),
-                        root,
-                    )
-                    .await;
-                    if out.is_error() {
-                        return out;
-                    }
-                }
-                let mut edits = String::new();
-                if let Some(title) = title {
-                    edits.push_str(&format!(" --title {}", quote(title)));
-                }
-                if let Some(body) = body {
-                    edits.push_str(&format!(" --body {}", quote(body)));
-                }
-                if edits.is_empty() {
-                    return ToolOutput::Ok {
-                        content: format!("issue {issue} updated"),
-                    };
-                }
-                gh(format!("gh issue edit {}{edits}", quote(&issue)), root).await
-            }
-            IssueBackend::Linear { api_key } => {
-                let (id, _team) = match linear_issue_id(api_key, &issue).await {
-                    Ok(pair) => pair,
-                    Err(e) => return ToolOutput::Error { message: e },
-                };
-                if let Some(comment) = comment
-                    && let Err(e) = linear_graphql(
-                        api_key,
-                        "mutation($input: CommentCreateInput!) { commentCreate(input: $input) { \
-                           success } }",
-                        json!({ "input": { "issueId": id, "body": comment } }),
-                    )
-                    .await
-                {
-                    return ToolOutput::Error { message: e };
-                }
-                let mut update = serde_json::Map::new();
-                if let Some(title) = title {
-                    update.insert("title".into(), json!(title));
-                }
-                if let Some(body) = body {
-                    update.insert("description".into(), json!(body));
-                }
-                if !update.is_empty()
-                    && let Err(e) = linear_graphql(
-                        api_key,
-                        "mutation($id: String!, $input: IssueUpdateInput!) { \
-                           issueUpdate(id: $id, input: $input) { success } }",
-                        json!({ "id": id, "input": update }),
-                    )
-                    .await
-                {
-                    return ToolOutput::Error { message: e };
-                }
-                ToolOutput::Ok {
-                    content: format!("updated {issue}"),
-                }
-            }
+        if let Some(comment) = input.get("comment").and_then(|v| v.as_str())
+            && let Err(e) = ops::add_comment(&self.0, root, &issue, comment).await
+        {
+            return ToolOutput::Error { message: e };
+        }
+        let labels = string_list(input, "labels");
+        if let Err(e) = ops::update_issue(
+            &self.0,
+            root,
+            &issue,
+            input.get("title").and_then(|v| v.as_str()),
+            input.get("body").and_then(|v| v.as_str()),
+            &labels,
+            input.get("assignee").and_then(|v| v.as_str()),
+        )
+        .await
+        {
+            return ToolOutput::Error { message: e };
+        }
+        if let Some(status) = input.get("status").and_then(|v| v.as_str())
+            && let Err(e) = ops::set_status(&self.0, root, &issue, status).await
+        {
+            return ToolOutput::Error { message: e };
+        }
+        ToolOutput::Ok {
+            content: format!("updated {issue}"),
         }
     }
 }
@@ -418,48 +323,16 @@ impl Tool for CloseIssue {
             Ok(i) => i,
             Err(e) => return e,
         };
-        match self.0.as_ref() {
-            IssueBackend::GitHub => {
-                let mut cmd = format!("gh issue close {}", quote(&issue));
-                if let Some(comment) = input.get("comment").and_then(|v| v.as_str()) {
-                    cmd.push_str(&format!(" --comment {}", quote(comment)));
-                }
-                gh(cmd, root).await
-            }
-            IssueBackend::Linear { api_key } => {
-                let (id, team) = match linear_issue_id(api_key, &issue).await {
-                    Ok(pair) => pair,
-                    Err(e) => return ToolOutput::Error { message: e },
-                };
-                if let Some(comment) = input.get("comment").and_then(|v| v.as_str())
-                    && let Err(e) = linear_graphql(
-                        api_key,
-                        "mutation($input: CommentCreateInput!) { commentCreate(input: $input) { \
-                           success } }",
-                        json!({ "input": { "issueId": id, "body": comment } }),
-                    )
-                    .await
-                {
-                    return ToolOutput::Error { message: e };
-                }
-                let state = match linear_state_id(api_key, &team, "completed").await {
-                    Ok(state) => state,
-                    Err(e) => return ToolOutput::Error { message: e },
-                };
-                match linear_graphql(
-                    api_key,
-                    "mutation($id: String!, $input: IssueUpdateInput!) { \
-                       issueUpdate(id: $id, input: $input) { success } }",
-                    json!({ "id": id, "input": { "stateId": state } }),
-                )
-                .await
-                {
-                    Ok(_) => ToolOutput::Ok {
-                        content: format!("closed {issue}"),
-                    },
-                    Err(e) => ToolOutput::Error { message: e },
-                }
-            }
+        if let Some(comment) = input.get("comment").and_then(|v| v.as_str())
+            && let Err(e) = ops::add_comment(&self.0, root, &issue, comment).await
+        {
+            return ToolOutput::Error { message: e };
+        }
+        match ops::set_status(&self.0, root, &issue, "closed").await {
+            Ok(_) => ToolOutput::Ok {
+                content: format!("closed {issue}"),
+            },
+            Err(e) => ToolOutput::Error { message: e },
         }
     }
 }
@@ -470,12 +343,16 @@ impl Tool for SearchIssues {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "search_issues".into(),
-            description: "Search issues in the configured tracker.".into(),
+            description: "Search or list issues in the configured tracker, with optional \
+                          state/assignee/label filters."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
                     "state": { "type": "string", "enum": ["open", "closed", "all"] },
+                    "assignee": { "type": "string" },
+                    "label": { "type": "string" },
                     "limit": { "type": "integer" }
                 }
             }),
@@ -483,75 +360,163 @@ impl Tool for SearchIssues {
         }
     }
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
-        match self.0.as_ref() {
-            IssueBackend::GitHub => {
-                let state = input
-                    .get("state")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("open");
-                let mut cmd = format!(
-                    "gh issue list --state {} --limit {limit} \
-                     --json number,title,state,labels,updatedAt",
-                    quote(state)
-                );
-                if let Some(query) = input.get("query").and_then(|v| v.as_str()) {
-                    cmd.push_str(&format!(" --search {}", quote(query)));
+        let filters = IssueFilters {
+            query: input
+                .get("query")
+                .and_then(|v| v.as_str())
+                .filter(|q| !q.is_empty())
+                .map(str::to_string),
+            state: input
+                .get("state")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            assignee: input
+                .get("assignee")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            label: input
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            limit: input.get("limit").and_then(|v| v.as_u64()).unwrap_or(20),
+        };
+        match ops::list_issues(&self.0, root, &filters).await {
+            Ok(issues) if issues.is_empty() => ToolOutput::Ok {
+                content: "no issues matched".into(),
+            },
+            Ok(issues) => ToolOutput::Ok {
+                content: issues
+                    .iter()
+                    .map(format_summary)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            },
+            Err(e) => ToolOutput::Error { message: e },
+        }
+    }
+}
+
+pub struct GetIssue(pub Arc<IssueBackend>);
+#[async_trait]
+impl Tool for GetIssue {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "get_issue".into(),
+            description: "Read one issue in full: title, body, state, labels, assignee, and \
+                          the comment thread."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "issue": { "type": "string", "description": issue_ref_description(&self.0) }
+                },
+                "required": ["issue"]
+            }),
+            read_only: true,
+        }
+    }
+    async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
+        let issue = match require_issue_ref(input) {
+            Ok(i) => i,
+            Err(e) => return e,
+        };
+        match ops::get_issue(&self.0, root, &issue).await {
+            Ok(detail) => {
+                let mut content = format_summary(&detail.summary);
+                if !detail.body.is_empty() {
+                    content.push_str(&format!("\n\n{}", detail.body));
                 }
-                gh(cmd, root).await
-            }
-            IssueBackend::Linear { api_key } => {
-                let term = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                let result = if term.is_empty() {
-                    linear_graphql(
-                        api_key,
-                        "query($first: Int!) { issues(first: $first, orderBy: updatedAt) { \
-                           nodes { identifier title state { name } url } } }",
-                        json!({ "first": limit }),
-                    )
-                    .await
-                    .map(|d| d["issues"]["nodes"].clone())
-                } else {
-                    linear_graphql(
-                        api_key,
-                        "query($term: String!, $first: Int!) { \
-                           searchIssues(term: $term, first: $first) { \
-                             nodes { identifier title state { name } url } } }",
-                        json!({ "term": term, "first": limit }),
-                    )
-                    .await
-                    .map(|d| d["searchIssues"]["nodes"].clone())
-                };
-                match result {
-                    Ok(nodes) => {
-                        let lines: Vec<String> = nodes
-                            .as_array()
-                            .map(|nodes| {
-                                nodes
-                                    .iter()
-                                    .map(|n| {
-                                        format!(
-                                            "{} [{}] {} — {}",
-                                            n["identifier"].as_str().unwrap_or("?"),
-                                            n["state"]["name"].as_str().unwrap_or("?"),
-                                            n["title"].as_str().unwrap_or(""),
-                                            n["url"].as_str().unwrap_or("")
-                                        )
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        ToolOutput::Ok {
-                            content: if lines.is_empty() {
-                                "no issues matched".into()
-                            } else {
-                                lines.join("\n")
-                            },
-                        }
-                    }
-                    Err(e) => ToolOutput::Error { message: e },
+                for comment in &detail.comments {
+                    content.push_str(&format!(
+                        "\n\n--- comment · {} · {}\n{}",
+                        comment.author, comment.created_at, comment.body
+                    ));
                 }
+                ToolOutput::Ok { content }
             }
+            Err(e) => ToolOutput::Error { message: e },
+        }
+    }
+}
+
+pub struct ListLabels(pub Arc<IssueBackend>);
+#[async_trait]
+impl Tool for ListLabels {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "list_labels".into(),
+            description: "Search the tracker's labels by substring (empty query lists all) — \
+                          use before adding labels so exact names aren't guessed."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "integer" }
+                }
+            }),
+            read_only: true,
+        }
+    }
+    async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
+        let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+        let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(30);
+        match ops::search_labels(&self.0, root, query, limit).await {
+            Ok(labels) if labels.is_empty() => ToolOutput::Ok {
+                content: "no labels matched".into(),
+            },
+            Ok(labels) => ToolOutput::Ok {
+                content: labels
+                    .iter()
+                    .map(|l| match &l.description {
+                        Some(description) => format!("{} — {description}", l.name),
+                        None => l.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            },
+            Err(e) => ToolOutput::Error { message: e },
+        }
+    }
+}
+
+pub struct ListMembers(pub Arc<IssueBackend>);
+#[async_trait]
+impl Tool for ListMembers {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "list_members".into(),
+            description: "Search assignable people by login, name, or email substring (empty \
+                          query lists all) — use before setting an assignee."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "limit": { "type": "integer" }
+                }
+            }),
+            read_only: true,
+        }
+    }
+    async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
+        let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+        let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(30);
+        match ops::search_members(&self.0, root, query, limit).await {
+            Ok(members) if members.is_empty() => ToolOutput::Ok {
+                content: "no members matched".into(),
+            },
+            Ok(members) => ToolOutput::Ok {
+                content: members
+                    .iter()
+                    .map(|m| match &m.name {
+                        Some(name) => format!("{} — {name}", m.handle),
+                        None => m.handle.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            },
+            Err(e) => ToolOutput::Error { message: e },
         }
     }
 }
@@ -585,17 +550,40 @@ impl Tool for StartWorkOnIssue {
                 if let Some(branch) = input.get("branch").and_then(|v| v.as_str()) {
                     cmd.push_str(&format!(" --name {}", quote(branch)));
                 }
-                gh(cmd, root).await
+                match exec::run(&cmd, root, 60).await {
+                    Ok((0, output)) => ToolOutput::Ok { content: output },
+                    Ok((code, output)) => ToolOutput::Error {
+                        message: format!("gh failed (exit {code}): {output}"),
+                    },
+                    Err(e) => ToolOutput::Error { message: e },
+                }
             }
-            IssueBackend::Linear { api_key } => {
-                let (id, team) = match linear_issue_id(api_key, &issue).await {
+            IssueBackend::GitHubApi { .. } => {
+                // No `gh issue develop` without the CLI: derive a branch name
+                // and check it out locally. GitHub has no in-progress state
+                // to move to.
+                let number = issue.trim_start_matches('#');
+                let branch = match input.get("branch").and_then(|v| v.as_str()) {
+                    Some(branch) => branch.to_string(),
+                    None => format!("issue-{number}"),
+                };
+                match checkout_branch(&branch, root).await {
+                    Ok(()) => ToolOutput::Ok {
+                        content: format!("started {issue} on branch {branch}"),
+                    },
+                    Err(message) => ToolOutput::Error { message },
+                }
+            }
+            IssueBackend::Linear { api_key, api_url } => {
+                let (id, team) = match ops::linear_issue_id(api_url, api_key, &issue).await {
                     Ok(pair) => pair,
                     Err(e) => return ToolOutput::Error { message: e },
                 };
                 // Linear supplies the canonical branch name per issue.
                 let branch = match input.get("branch").and_then(|v| v.as_str()) {
                     Some(branch) => branch.to_string(),
-                    None => match linear_graphql(
+                    None => match ops::linear_graphql(
+                        api_url,
                         api_key,
                         "query($id: String!) { issue(id: $id) { branchName } }",
                         json!({ "id": id }),
@@ -611,31 +599,23 @@ impl Tool for StartWorkOnIssue {
                         message: "could not determine a branch name — pass `branch`".into(),
                     };
                 }
-                let checkout = format!(
-                    "git checkout -b {b} 2>/dev/null || git checkout {b}",
-                    b = quote(&branch)
-                );
-                // `exec::run` returns Ok((exit_code, _)) on any completion, so
-                // checking only its Err (spawn/timeout) let a FAILED checkout
-                // (non-zero exit — dirty tree, protected branch) slip through
-                // and still move the issue to in-progress. Gate on the code.
-                match exec::run(&checkout, root, 30).await {
-                    Ok((0, _)) => {}
-                    Ok((code, output)) => {
-                        return ToolOutput::Error {
-                            message: format!(
-                                "git checkout of `{branch}` failed (exit {code}) — \
-                                 issue left unchanged: {output}"
-                            ),
-                        };
-                    }
-                    Err(e) => return ToolOutput::Error { message: e },
+                if let Err(message) = checkout_branch(&branch, root).await {
+                    return ToolOutput::Error { message };
                 }
-                let state = match linear_state_id(api_key, &team, "started").await {
+                let state = match ops::linear_state_id(
+                    api_url,
+                    api_key,
+                    &team,
+                    Some("started"),
+                    None,
+                )
+                .await
+                {
                     Ok(state) => state,
                     Err(e) => return ToolOutput::Error { message: e },
                 };
-                match linear_graphql(
+                match ops::linear_graphql(
+                    api_url,
                     api_key,
                     "mutation($id: String!, $input: IssueUpdateInput!) { \
                        issueUpdate(id: $id, input: $input) { success } }",
@@ -653,6 +633,22 @@ impl Tool for StartWorkOnIssue {
     }
 }
 
+/// Create-or-checkout a branch, gating on the exit code — a failed checkout
+/// (dirty tree, protected branch) must not be silently ignored.
+async fn checkout_branch(branch: &str, root: &std::path::Path) -> Result<(), String> {
+    let checkout = format!(
+        "git checkout -b {b} 2>/dev/null || git checkout {b}",
+        b = quote(branch)
+    );
+    match exec::run(&checkout, root, 30).await {
+        Ok((0, _)) => Ok(()),
+        Ok((code, output)) => Err(format!(
+            "git checkout of `{branch}` failed (exit {code}) — issue left unchanged: {output}"
+        )),
+        Err(e) => Err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,6 +660,9 @@ mod tests {
     #[test]
     fn schemas_partition_correctly() {
         assert!(SearchIssues(backend()).schema().read_only);
+        assert!(GetIssue(backend()).schema().read_only);
+        assert!(ListLabels(backend()).schema().read_only);
+        assert!(ListMembers(backend()).schema().read_only);
         assert!(!CreateIssue(backend()).schema().read_only);
         assert!(!UpdateIssue(backend()).schema().read_only);
         assert!(!CloseIssue(backend()).schema().read_only);
@@ -682,6 +681,7 @@ mod tests {
         for tool_output in [
             UpdateIssue(backend()).execute(&json!({}), &root).await,
             CloseIssue(backend()).execute(&json!({}), &root).await,
+            GetIssue(backend()).execute(&json!({}), &root).await,
             StartWorkOnIssue(backend()).execute(&json!({}), &root).await,
         ] {
             match tool_output {
@@ -694,13 +694,16 @@ mod tests {
     #[test]
     fn linear_identifiers_parse_and_reject() {
         assert_eq!(
-            parse_linear_identifier("OXA-123"),
+            ops::parse_linear_identifier("OXA-123"),
             Some(("OXA".into(), 123.0))
         );
-        assert_eq!(parse_linear_identifier("eng-7"), Some(("ENG".into(), 7.0)));
-        assert!(parse_linear_identifier("123").is_none());
-        assert!(parse_linear_identifier("-123").is_none());
-        assert!(parse_linear_identifier("OXA-").is_none());
+        assert_eq!(
+            ops::parse_linear_identifier("eng-7"),
+            Some(("ENG".into(), 7.0))
+        );
+        assert!(ops::parse_linear_identifier("123").is_none());
+        assert!(ops::parse_linear_identifier("-123").is_none());
+        assert!(ops::parse_linear_identifier("OXA-").is_none());
     }
 
     #[test]
@@ -730,5 +733,25 @@ mod tests {
             "#123"
         );
         assert_eq!(require_issue_ref(&json!({ "issue": 123 })).unwrap(), "123");
+    }
+
+    #[test]
+    fn summaries_format_with_assignee_and_labels() {
+        let issue = ops::IssueSummary {
+            key: "ENG-42".into(),
+            title: "Fix flaky test".into(),
+            state: "In Progress".into(),
+            labels: vec!["bug".into(), "ci".into()],
+            assignee: Some("mona@example.com".into()),
+            url: "https://linear.app/x/issue/ENG-42".into(),
+            updated_at: None,
+        };
+        let line = format_summary(&issue);
+        assert!(
+            line.contains("ENG-42 [In Progress] Fix flaky test"),
+            "{line}"
+        );
+        assert!(line.contains("mona@example.com"), "{line}");
+        assert!(line.contains("bug, ci"), "{line}");
     }
 }

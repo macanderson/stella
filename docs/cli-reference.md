@@ -187,6 +187,26 @@ in the deck's MCP tab.
 | `mcp remove` | `name` | Remove a configured server. |
 | `mcp usage` | (none) | Show MCP tool-usage telemetry: calls per server/tool. |
 
+### `stella connect <CMD>`
+
+Connect an issue tracker so the issue tools (`search_issues`, `get_issue`,
+`create_issue`, `update_issue`, `close_issue`, `list_labels`, `list_members`,
+`start_work_on_issue`) and the deck's Issues tab light up. Credentials land
+owner-only (0600) in `~/.config/stella/integrations.json`; needs no model API
+key. Connecting is the explicit opt-in — Stella never calls a tracker
+otherwise.
+
+| Subcommand | Arg hint | Description |
+|------------|----------|-------------|
+| `connect github` | `[--token]` | OAuth device flow (shows a code to enter on github.com). `--token` pastes a PAT at a masked prompt instead. Once connected, GitHub works over REST — no `gh` CLI needed. |
+| `connect linear` | `[--api-key]` | Browser OAuth + PKCE when a Linear app is configured (`STELLA_LINEAR_CLIENT_ID`), else a masked personal-API-key prompt. |
+| `connect status` | (none) | Stored connections (account, kind, age, expiry) + credential precedence. |
+| `connect remove` | `github\|linear` | Forget a stored connection. |
+
+Backend precedence: `LINEAR_API_KEY` env → Linear connection → GitHub
+connection → ambient `gh` auth. Device-flow client id: `STELLA_GITHUB_CLIENT_ID`
+(a public client — no secret in the binary).
+
 ### `stella config`
 
 Show current configuration.
@@ -408,6 +428,26 @@ Three sub-modes: **Browse**, **Search** (modal), **Auth** (modal).
 | (type) | Auth | Field name, then value (two-step, value masked). |
 | `⏎` | Auth | Advance field → value → submit credential. |
 | `Esc` | Auth | Cancel. |
+
+### ISSUES tab
+
+Tracker-backed issue panel (needs a connection — see [`stella connect`](#stella-connect-cmd)).
+Sub-modes (search line, create form, comment, set-status) are modal and own
+the keyboard; `Esc` returns to Browse.
+
+| Key | Mode | Description |
+|-----|------|-------------|
+| `↑` `↓` | Browse | Select an issue. |
+| `r` | Browse | Refresh the list. |
+| `/` | Browse | Search the tracker (query line, `⏎` runs it). |
+| `n` | Browse | Open the create-issue form. |
+| `c` | Browse | Comment on the selected issue. |
+| `s` | Browse | Set the selected issue's status (a status word, e.g. `done`, `in progress`, or a Linear state name). |
+| `w` | Browse | Start work: move the selected issue to in-progress. |
+| `Tab`/`⇧Tab` | Create form | Cycle fields (Title · Body · Labels · Assignee). |
+| `Ctrl-S` | Create form | Submit from any field (`⏎` on the last field submits too). |
+| (type) | Assignee / Labels | The type-ahead popup opens on the first keypress (`@` included) and re-searches per keystroke: people from the tracker, installed agents, workspace memories (with observed/valid-from provenance + citation stats), and code-graph symbols, each rendered `Kind: label — description`. |
+| `↑` `↓` / `⏎` or `Tab` / `Esc` | Type-ahead | Select · insert the hit into the field · close keeping typed text. |
 
 ### Session tab
 

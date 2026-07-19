@@ -1,0 +1,65 @@
+---
+title: stella connect
+description: Connect GitHub or Linear via OAuth (or a pasted key) so the issue tools and the deck's Issues tab light up.
+---
+
+Establish a tracker connection so Stella can search, read, create, comment on, label, assign, and change the status of issues — from the agent's tools (`search_issues`, `get_issue`, `create_issue`, `update_issue`, `close_issue`, `list_labels`, `list_members`, `start_work_on_issue`) and from the Command Deck's **Issues** tab.
+
+Connecting is explicit and opt-in: Stella never talks to a tracker unless you ran `stella connect` (or configured `LINEAR_API_KEY` / the `gh` CLI yourself). Credentials are stored **owner-only (0600)** in `~/.config/stella/integrations.json` — user-global, like `credentials.toml`, because an account connection belongs to you, not to one workspace.
+
+## Synopsis
+
+```bash
+stella connect <github|linear|status|remove> [flags]
+```
+
+Needs no model API key.
+
+## Subcommands
+
+### `stella connect github`
+
+Runs the OAuth **device flow**: Stella shows a short code and a `github.com` URL; you enter the code in the browser and approve. Device-flow apps are public clients, so no client secret exists anywhere in the binary.
+
+```bash
+stella connect github            # device flow
+stella connect github --token    # paste a personal access token instead
+```
+
+The device flow needs a GitHub OAuth app client id with *device flow* enabled — set `STELLA_GITHUB_CLIENT_ID` (or use the built-in Stella app id when shipped). `--token` always works: paste a PAT with `repo` scope at a masked prompt.
+
+Once connected, GitHub issue operations run over the REST API directly — the `gh` CLI is **not** required.
+
+### `stella connect linear`
+
+With a Linear OAuth app configured (`STELLA_LINEAR_CLIENT_ID`, optionally `STELLA_LINEAR_CLIENT_SECRET`), runs browser OAuth with PKCE over a loopback redirect. Without one, it prompts for a personal API key (create at `linear.app/settings/api`) at a masked prompt — same storage, same capabilities.
+
+```bash
+stella connect linear            # OAuth if an app is configured, else API key
+stella connect linear --api-key  # force the API-key prompt
+```
+
+### `stella connect status`
+
+Show stored connections — provider, auth kind, verified account, age, expiry — plus which credential wins when several exist.
+
+### `stella connect remove <github|linear>`
+
+Forget a stored connection.
+
+## Credential precedence
+
+When more than one credential is available, the issue backend resolves in this order:
+
+1. `LINEAR_API_KEY` environment variable
+2. Stored Linear connection (`stella connect linear`)
+3. Stored GitHub connection (`stella connect github`)
+4. Ambient `gh` CLI authentication
+
+Linear beats GitHub deliberately: an explicitly-set Linear credential is a stronger signal than ambient GitHub auth. If nothing is configured, the issue tools are simply not registered — no dead schema entries, no token cost.
+
+## Security notes
+
+- Tokens live in one owner-only JSON file, written atomically, never logged; `Debug` output redacts them.
+- OAuth refresh tokens (when the provider issues them) are refreshed automatically at session start.
+- The only network calls this feature makes are to the tracker you connected, and only when you (or the agent you invoked) use an issue tool. Stella's no-phone-home invariant is unchanged.
