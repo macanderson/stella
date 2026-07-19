@@ -1533,7 +1533,7 @@ fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inbound {
         .into_iter()
         .map(|p| p.config.id.to_string())
         .collect();
-    let catalog_models: Vec<String> = stella_model::catalog::Catalog::seed()
+    let catalog_models: Vec<String> = stella_model::catalog::Catalog::current()
         .entries()
         .iter()
         .map(|entry| format!("{}/{}", entry.provider, entry.id))

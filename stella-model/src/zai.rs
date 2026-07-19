@@ -59,7 +59,8 @@ pub struct ZaiProvider {
 impl ZaiProvider {
     pub fn new(api_key: ApiKey, model: impl Into<String>) -> Self {
         let model = model.into();
-        let pricing = Catalog::seed().resolve(&model).ok().map(|e| e.pricing);
+        let catalog = Catalog::current();
+        let pricing = catalog.resolve(&model).ok().map(|e| e.pricing);
         // Use the coding plan endpoint when ZAI_GLM_CODING_PLAN=1 is set
         let base_url = if std::env::var("ZAI_GLM_CODING_PLAN").as_deref() == Ok("1") {
             CODING_PLAN_BASE_URL
@@ -118,6 +119,15 @@ impl ZaiProvider {
     pub fn with_identity(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
         self.id = id.into();
         self.label = label.into();
+        // Re-resolve pricing scoped to the real provider id: the same bare
+        // slug can exist on more than one provider, and a provider-scoped
+        // catalog row (e.g. an xAI or DeepSeek row from `stella models
+        // refresh`) is authoritative over whatever the unscoped constructor
+        // lookup found — or didn't find — under the default `zai` identity.
+        let catalog = Catalog::current();
+        if let Ok(entry) = catalog.resolve_for(&self.id, &self.model) {
+            self.pricing = Some(entry.pricing);
+        }
         self
     }
 }

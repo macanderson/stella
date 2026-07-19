@@ -32,6 +32,7 @@ mod interactive;
 mod mcp_cmd;
 mod memory;
 mod memory_cmd;
+mod model_catalog;
 mod ocp;
 mod rules;
 mod runtime;
@@ -244,7 +245,10 @@ enum Command {
     },
 
     /// List configured providers and available models
-    Models,
+    Models {
+        #[command(subcommand)]
+        cmd: Option<ModelsCmd>,
+    },
 
     /// Summarize cost, tokens, and resolve rate per provider/model from
     /// local telemetry (.stella/store.db) — $/resolved-task receipts
@@ -297,6 +301,31 @@ enum Command {
 
     /// Print the version and exit
     Version,
+}
+
+/// `stella models` subcommands — the model-catalog surface. A bare
+/// `stella models` keeps its provider/key listing; these manage the
+/// on-disk master list every slug validates against.
+#[derive(Subcommand)]
+enum ModelsCmd {
+    /// Sync the master list of valid provider/model slugs and pricing from
+    /// models.dev (public, no API key). Incremental: an unchanged list is
+    /// one conditional request (ETag) and zero writes; pricing changes
+    /// append a new model-card version (the latest version is what
+    /// displays everywhere).
+    Refresh {
+        /// Re-download even when the server says the list is unchanged
+        /// (recovery hatch for a corrupted local catalog)
+        #[arg(long)]
+        force: bool,
+    },
+    /// List the model catalog: every known provider/model slug with its
+    /// latest pricing (USD per Mtok), context window, and model maker
+    List {
+        /// Only this provider id (e.g. anthropic, openrouter)
+        #[arg(long)]
+        provider: Option<String>,
+    },
 }
 
 /// `stella mcp` subcommands — the scriptable half of the MCP management surface
@@ -506,9 +535,22 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), String> {
     // Models and Version don't need a configured provider/key.
     match &cli.command {
-        Some(Command::Models) => {
-            config::Config::print_available_models();
-            return Ok(());
+        Some(Command::Models { cmd }) => {
+            return match cmd {
+                None => {
+                    config::Config::print_available_models();
+                    model_catalog::print_catalog_status();
+                    Ok(())
+                }
+                // Needs a runtime for the HTTP fetch — built here because
+                // this arm runs before the shared `rt` closure exists.
+                Some(ModelsCmd::Refresh { force }) => tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("failed to start runtime: {e}"))?
+                    .block_on(model_catalog::run_refresh(*force)),
+                Some(ModelsCmd::List { provider }) => model_catalog::run_list(provider.as_deref()),
+            };
         }
         Some(Command::Tools { validate }) => {
             return match validate {
@@ -561,6 +603,13 @@ fn run(cli: Cli) -> Result<(), String> {
             .build()
             .map_err(|e| format!("failed to start runtime: {e}"))
     };
+
+    // Everything past here resolves a provider (and may build one), so the
+    // model catalog must be live first: open catalog.db, refresh a stale
+    // master list (only ever after the user's first explicit
+    // `stella models refresh` — the no-phone-home rule), and install the
+    // runtime catalog that slug validation and pricing resolve against.
+    model_catalog::bootstrap();
 
     // `init` works offline (heuristic fallback), so config resolution
     // failure downgrades rather than aborting.
@@ -653,7 +702,7 @@ fn run(cli: Cli) -> Result<(), String> {
         | Command::Memory { .. }
         | Command::Mcp { .. }
         | Command::Observe { .. }
-        | Command::Models
+        | Command::Models { .. }
         | Command::Version => {
             unreachable!("handled before provider resolution")
         }

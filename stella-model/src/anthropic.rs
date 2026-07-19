@@ -33,7 +33,8 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: ApiKey, model: impl Into<String>) -> Self {
         let model = model.into();
-        let pricing = Catalog::seed().resolve(&model).ok().map(|e| e.pricing);
+        let catalog = Catalog::current();
+        let pricing = catalog.resolve(&model).ok().map(|e| e.pricing);
         Self {
             client: http::client(),
             api_key,

@@ -9,6 +9,14 @@ at. The source of these figures is **Stella's seed catalog (v0.3.0)**; prices ar
 **$/Mtok** (input / output / cached-input). Verify with your provider before budgeting —
 prices and lineups drift.
 
+<Callout type="info">
+  The seed below is only the offline floor. `stella models refresh` syncs the **live
+  master list** — every valid provider/model slug and its current pricing, from the
+  public [models.dev](https://models.dev) catalog (no API key) — into a local model-card
+  database, and `stella models list` browses it. See
+  [the live model catalog](#the-live-model-catalog-stella-models-refresh) below.
+</Callout>
+
 ## The catalog
 
 | Model | Provider | Context | In $/Mtok | Out $/Mtok | Cached-in $/Mtok | Released | Best for |
@@ -50,6 +58,39 @@ Three named lineups, ready to copy:
 Each links to a worked `settings.json` profile in [Examples](/docs/examples); wire any of
 them up per agent with
 [`agent_engine_config`](/docs/configuration/agent-engine-config).
+
+## The live model catalog (`stella models refresh`)
+
+The seed table above can't keep up with weekly model launches — and it used to mean an
+invalid slug was only caught for seeded providers (OpenRouter and custom gateways
+accepted anything and failed later, mid-run, on the wire). The live catalog fixes both:
+
+```bash
+stella models refresh                      # sync the master list (models.dev, no API key)
+stella models list --provider anthropic    # browse valid slugs + live pricing
+```
+
+- **Master list, locally.** One public, unauthenticated document covering every provider
+  Stella can select (plus ~160 more) lands in a user-tier SQLite catalog
+  (`catalog.db`, next to `usage.db`): **model cards** keyed per API provider, and
+  **model card versions** holding each pricing configuration. A refresh appends a new
+  version only when pricing actually changed — the version history is real change
+  history, and **the latest version is the pricing that displays everywhere** (cost
+  metering, `stella models list`, the deck's model picker).
+- **Incremental.** The HTTP `ETag` is persisted and replayed; an unchanged list is one
+  conditional request, zero writes. After your first explicit refresh, Stella re-syncs a
+  stale list (>24h) automatically at startup — never before your first refresh (the
+  no-phone-home rule), and `STELLA_CATALOG_AUTO_REFRESH=0` turns the re-sync off.
+- **Strict slug validation, everywhere.** Once a provider's master-list rows are synced,
+  an invalid `--model` slug is a hard, immediate, named error with did-you-mean
+  suggestions — before any wire call, for **every** provider including OpenRouter and
+  settings.json-defined gateways. The seed always passes, and a custom endpoint the
+  master list doesn't know stays endpoint-authoritative, exactly as before.
+- **Exact telemetry.** A **model_aliases** table joins every string form a model travels
+  under — bare slug, `provider/slug`, date-stamped snapshots, region-prefixed Bedrock
+  profiles, and any id a provider echoes on the wire (learned automatically from
+  telemetry) — to `(api provider, model provider, model version, model card)`, so
+  per-model cost analytics never split one model across its spellings.
 
 ## Prompt caching changes the math
 

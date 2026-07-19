@@ -57,7 +57,7 @@ pub fn parse_model_spec(raw: &str, is_provider: &dyn Fn(&str) -> bool) -> Option
             model: rest.to_string(),
         });
     }
-    stella_model::catalog::Catalog::seed()
+    stella_model::catalog::Catalog::current()
         .resolve(raw)
         .ok()
         .map(|entry| ModelSpec {
@@ -129,7 +129,7 @@ pub fn auto_judge_spec(
     worker_family: &str,
     configured: &dyn Fn(&str) -> bool,
 ) -> Option<ModelSpec> {
-    let catalog = stella_model::catalog::Catalog::seed();
+    let catalog = stella_model::catalog::Catalog::current();
     let mut best: Option<(bool, f64, usize, ModelSpec)> = None;
     for (index, raw) in engine.allowed_models().iter().enumerate() {
         let Some(spec) = parse_model_spec(raw, &|id| configured(id)) else {

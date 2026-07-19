@@ -2782,6 +2782,12 @@ pub(crate) fn persist_event(
                 },
             )
             .is_ok();
+        // Telemetry stores the wire string verbatim (above); this makes
+        // that string JOINABLE: an echoed form the catalog doesn't know
+        // yet (dated snapshot, region prefix, gateway-routed id) gets
+        // matched to its model card and registered as a learned alias.
+        // Best-effort and deduped in-process — never slows the write path.
+        crate::model_catalog::note_wire_model(provider_id, model);
     }
     recorded && telemetry_ok
 }
@@ -3223,15 +3229,13 @@ fn build_provider_parts(
 
     let provider_id = provider_config.id;
     let display_name = provider_config.display_name;
-    // `seeded` is false for `local` and for settings.json-defined providers
-    // (issue #44): their models are whatever the user's endpoint serves —
-    // the anti-phantom-slug rule exists to catch drift in OUR seed data,
-    // not to veto the user's own endpoint.
-    if provider_config.seeded {
-        stella_model::catalog::Catalog::seed()
-            .resolve_for(provider_id, model_id)
-            .map_err(|e| e.to_string())?;
-    }
+    // The anti-invalid-slug gate, for EVERY provider (not just seeded
+    // ones): the seed floor always passes; a provider whose master-list
+    // rows are synced (`stella models refresh`) gets hard validation with
+    // suggestions; `local` and never-synced custom endpoints keep their
+    // endpoint-is-the-authority posture. See
+    // `crate::model_catalog::validate_model_slug` for the full ladder.
+    crate::model_catalog::validate_model_slug(provider_config, model_id)?;
 
     match provider_config.dialect {
         Dialect::OpenaiResponses => {
