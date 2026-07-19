@@ -324,12 +324,12 @@ pub async fn run_deck_session(
             std::mem::take(&mut rs.history).unwrap_or_default(),
             &system_prompt,
         );
-        // Session spend stays monotone across interruptions, and a
-        // `--budget` keeps meaning "this session" — the guard resumes from
-        // what the session had already spent.
-        if let Some(spent) = rs.spent_usd {
-            let _ = budget.record_spend(spent);
-        }
+        // `--budget` means THIS session on every resume path: the guard's
+        // session accumulator reseeds to exactly what the session had
+        // already spent (its journal's last `BudgetTick`), so spend stays
+        // monotone across interruptions. Same seam as the in-deck session
+        // switch (`SessionResume` in the driver loop below).
+        budget.reseed_session_spend(rs.spent_usd.unwrap_or(0.0));
     }
 
     // ── Channels: engine → deck (Inbound) and deck → driver (WorkspaceInput)
@@ -365,8 +365,13 @@ pub async fn run_deck_session(
     // Replay a resumed session's journal straight onto the deck BEFORE the
     // first live send, so the restored transcript precedes everything this
     // run adds. (The fresh `Register` below then restamps the lead's meta —
-    // pid, model, clock — over the replayed one.)
+    // pid, model, clock — over the replayed one.) The non-lead lanes the
+    // replay puts on the dashboard are remembered so an in-deck session
+    // switch can deregister them — rows of a session left behind must not
+    // linger on the next session's dashboard.
+    let mut replayed_lanes: Vec<String> = Vec::new();
     if let Some(rs) = &mut resume_state {
+        replayed_lanes = crate::session_persist::journal_lanes(&rs.records, LEAD);
         crate::session_persist::replay_session(
             std::mem::take(&mut rs.records),
             now_ms(),
@@ -820,6 +825,25 @@ pub async fn run_deck_session(
                                     let _ = session_registry.upsert(&session_record);
                                 }
 
+                                // Clear the departing session's worker rows
+                                // off the dashboard before the target's
+                                // replay claims it: every non-lead lane is
+                                // terminal here (the switch refuses while
+                                // workers are live), so each one — spawned
+                                // this tenancy or replayed at the last
+                                // adoption — gets a `Deregister`. Direct
+                                // sends (deck_tx): the removal is part of
+                                // THIS process's dashboard handover and is
+                                // never journaled, so resuming the departing
+                                // session later still shows its worker rows.
+                                let mut stale_lanes = subs.lanes();
+                                stale_lanes.append(&mut replayed_lanes);
+                                stale_lanes.sort();
+                                stale_lanes.dedup();
+                                for lane in stale_lanes {
+                                    let _ = deck_tx.send(Inbound::Deregister { agent: lane });
+                                }
+
                                 // Adopt the target: same id, this pid, waiting.
                                 // Re-key everything that names the session —
                                 // the lead's claim holder and the PR monitor's
@@ -854,13 +878,14 @@ pub async fn run_deck_session(
                                 // transcript in its place (direct sends — a
                                 // replay must never re-journal itself), then
                                 // restore conversation, backlog, and pipeline.
-                                // (Terminal worker rows from the session left
-                                // behind keep their lanes on the dashboard —
-                                // there is no unregister envelope — as visible
-                                // residue of where the process has been.)
+                                // (The departing session's worker rows were
+                                // deregistered above; the lanes THIS replay
+                                // creates are remembered for the next switch.)
                                 let _ = deck_tx.send(Inbound::SessionReset {
                                     agent: LEAD.to_string(),
                                 });
+                                replayed_lanes =
+                                    crate::session_persist::journal_lanes(&rs.records, LEAD);
                                 crate::session_persist::replay_session(
                                     std::mem::take(&mut rs.records),
                                     now_ms(),
@@ -887,6 +912,16 @@ pub async fn run_deck_session(
                                 queue.adopt(sidecar_dir.clone(), restored);
                                 pipeline_on = rs.pipeline.unwrap_or(true);
                                 let _ = in_tx.send(Inbound::Pipeline(pipeline_on));
+                                // `--budget` means THIS session, decided and
+                                // implemented on both resume paths: reseed
+                                // the guard's session accumulator to what
+                                // the adopted session had journaled
+                                // (`ResumeState::spent_usd`, its last
+                                // `BudgetTick` — the same derivation the
+                                // startup resume uses). No synthetic tick is
+                                // emitted; the next real turn's ticks
+                                // reflect the reseeded guard naturally.
+                                budget.reseed_session_spend(rs.spent_usd.unwrap_or(0.0));
 
                                 // Fresh meta over the replayed one (pid, model,
                                 // clock), back to waiting-on-you, and a fresh
