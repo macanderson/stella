@@ -95,6 +95,7 @@ venv/
 # Benchmark results
 bench/results*/
 bench/warm-memory/
+arena/results/
 
 # Release artifacts
 *.tar.gz
