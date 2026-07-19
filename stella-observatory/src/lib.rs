@@ -13,13 +13,22 @@
 //! 3. **No new dependencies.** The HTTP layer is a deliberately tiny
 //!    GET-only HTTP/1.1 responder over `tokio`'s `TcpListener` — the
 //!    workspace already ships everything required. A router the size of a
-//!    web framework would be bloat for nine read-only JSON routes.
+//!    web framework would be bloat for a handful of read-only JSON routes.
 //!
 //! The server speaks just enough HTTP for every browser: request line +
 //! headers (discarded beyond the path), `Connection: close`, explicit
 //! `Content-Length`.
+//!
+//! Every `/api/*` route accepts `?project=<id>`: the id is resolved against
+//! the cross-project rollup's `projects` table ([`global`]) and, when known,
+//! that project's workspace root replaces the serving root for the request —
+//! the dashboard's project switcher. Unknown ids fall back to the serving
+//! workspace rather than erroring, so a stale dropdown never breaks the page.
 
+mod codegraph;
 mod db;
+mod fsview;
+mod global;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -83,7 +92,15 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         Some((r, q)) => (r, Some(q)),
         None => (path, None),
     };
-    let obs = Observatory::new(workspace_root);
+    // `?project=<id>` re-points the whole request at another registered
+    // workspace (resolved from the rollup's own table — never a raw path
+    // from the client). Unknown or vanished projects fall back to the
+    // serving workspace.
+    let effective_root = query_param(query, "project")
+        .and_then(|id| global::resolve_project_root(&id))
+        .unwrap_or_else(|| workspace_root.to_path_buf());
+    let root = effective_root.as_path();
+    let obs = Observatory::new(root);
     let result = match route {
         "/" | "/index.html" => {
             return Response {
@@ -102,7 +119,7 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/meta" => Ok(obs.meta()),
         "/api/overview" => obs.overview(),
         "/api/executions" => obs.executions(),
-        "/api/execution" => match query_id(query) {
+        "/api/execution" => match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
             Some(id) => obs.execution(id),
             None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
         },
@@ -112,6 +129,25 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/memory" => obs.memory(),
         "/api/mcp" => obs.mcp(),
         "/api/fleet" => obs.fleet(),
+        "/api/activity" => obs.activity(),
+        "/api/projects" => Ok(global::projects(workspace_root)),
+        "/api/codegraph" => Ok(codegraph::snapshot(root)),
+        "/api/skills" => Ok(fsview::skills(root)),
+        "/api/mcp-servers" => Ok(fsview::mcp_servers(root)),
+        "/api/config" => Ok(fsview::config(root)),
+        "/api/memories" => Ok(fsview::memories(root)),
+        "/api/rules" => obs.memory().map(|m| {
+            serde_json::json!({
+                "db": m["rules"].clone(),
+                "files": fsview::rules_files(root),
+            })
+        }),
+        "/api/reflections" => obs.reflection_ratings().map(|ratings| {
+            serde_json::json!({
+                "lessons": fsview::lessons(root),
+                "ratings": ratings,
+            })
+        }),
         _ => return Response::error("404 Not Found", "no such route"),
     };
     match result {
@@ -120,12 +156,14 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
     }
 }
 
-/// Parse `id=<i64>` out of a query string.
-fn query_id(query: Option<&str>) -> Option<i64> {
+/// Pull one `key=value` pair out of a query string.
+fn query_param(query: Option<&str>, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
     query?
         .split('&')
-        .find_map(|pair| pair.strip_prefix("id="))
-        .and_then(|v| v.parse().ok())
+        .find_map(|pair| pair.strip_prefix(prefix.as_str()))
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 /// Bind the observatory on `127.0.0.1:port` and serve until the process
@@ -258,10 +296,106 @@ mod tests {
                (1, 2, 'edit_file', 1, '', 64, 3),
                (2, 1, 'bash', 0, 'exit 1', 0, 40);
              INSERT INTO files_touched VALUES
-               (1, 'src/lib.rs', 'RU', 4, 1, '[]');",
+               (1, 'src/lib.rs', 'RU', 4, 1, '[]');
+             CREATE TABLE execution_reflection (
+               execution_id INTEGER PRIMARY KEY,
+               prompt TEXT NOT NULL DEFAULT '',
+               delivered INTEGER, self_rating INTEGER,
+               what_went_well TEXT NOT NULL DEFAULT '',
+               what_to_improve TEXT NOT NULL DEFAULT '',
+               critique TEXT NOT NULL DEFAULT '',
+               produced_output INTEGER NOT NULL DEFAULT 0,
+               wrote_files INTEGER NOT NULL DEFAULT 0,
+               truncated INTEGER NOT NULL DEFAULT 0,
+               recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+             INSERT INTO execution_reflection
+               (execution_id, delivered, self_rating, what_to_improve)
+             VALUES (1, 1, 8, 'read the failing test first');
+             CREATE TABLE rules (
+               rule_id TEXT PRIMARY KEY, contents TEXT NOT NULL,
+               source TEXT NOT NULL,
+               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+             INSERT INTO rules (rule_id, contents, source)
+             VALUES ('no-vacuous-fixes', 'a fix must change production code', 'reflection');",
         )
         .unwrap();
         dir
+    }
+
+    /// Layer the filesystem-backed surfaces (skills, memories, rules,
+    /// lessons, mcp.toml, settings.json, codegraph.db) onto a seeded
+    /// workspace.
+    fn seed_fs_surfaces(dir: &TempDir) {
+        let dot = dir.path().join(".stella");
+        std::fs::create_dir_all(dot.join("skills/my-skill")).unwrap();
+        std::fs::write(
+            dot.join("skills/my-skill/SKILL.md"),
+            "---\nname: my-skill\ndescription: does the thing\n---\n# body",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dot.join("skills/learned")).unwrap();
+        std::fs::write(
+            dot.join("skills/learned/hard-won.md"),
+            "---\nname: hard-won\ndescription: extracted from a failure\n---\n# lesson",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dot.join("memories")).unwrap();
+        std::fs::write(
+            dot.join("memories/build-quirk.md"),
+            "The build needs -p flags.",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dot.join("rules")).unwrap();
+        std::fs::write(dot.join("rules/style.md"), "Prefer witness tests.").unwrap();
+        std::fs::write(
+            dot.join("reflections.jsonl"),
+            r#"{"lesson":"check the test's invariant first","domains":["testing"],"occurred_at":1700000000}
+{"lesson":"verify dependency chains before citing them","domains":["docs"],"occurred_at":1700000100}
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dot.join("mcp.toml"),
+            "[servers.github]\ntransport = \"stdio\"\ncmd = \"gh-mcp\"\nargs = [\"--stdio\"]\n\
+             [servers.github.env]\nGITHUB_TOKEN = \"ghp_supersecret\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dot.join("settings.json"),
+            r#"{"providers":{"zai":{"api_key":"sk-live-topsecret","api_key_env":"ZAI_KEY"}},"agent_engine_config":{"agents":{"judge":{"model":"glm-5.2"}}}}"#,
+        )
+        .unwrap();
+        let graph = Connection::open(dot.join("codegraph.db")).unwrap();
+        graph
+            .execute_batch(
+                "CREATE TABLE code_graph_files (
+                   id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE,
+                   language TEXT NOT NULL, content_sha256 TEXT NOT NULL,
+                   mtime_ns INTEGER NOT NULL, indexed_at INTEGER NOT NULL);
+                 CREATE TABLE code_graph_symbols (
+                   id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL,
+                   name TEXT NOT NULL, kind TEXT NOT NULL,
+                   start_line INTEGER NOT NULL, end_line INTEGER NOT NULL);
+                 CREATE TABLE code_graph_imports (
+                   id INTEGER PRIMARY KEY, from_file_id INTEGER NOT NULL,
+                   specifier TEXT NOT NULL, to_path TEXT, kind TEXT NOT NULL);
+                 INSERT INTO code_graph_files VALUES
+                   (1, 'crate-a/src/lib.rs',  'rust', 'x', 0, 0),
+                   (2, 'crate-a/src/util.rs', 'rust', 'x', 0, 0),
+                   (3, 'crate-b/src/lib.rs',  'rust', 'x', 0, 0),
+                   (4, 'tools/x.py', 'python', 'x', 0, 0),
+                   (5, 'tools/y.py', 'python', 'x', 0, 0);
+                 INSERT INTO code_graph_symbols VALUES
+                   (1, 1, 'run', 'function', 1, 9),
+                   (2, 2, 'Util', 'struct', 1, 5);
+                 INSERT INTO code_graph_imports VALUES
+                   (1, 3, 'crate_a::util::Util', NULL, 'absolute'),
+                   (2, 2, 'crate::run',          NULL, 'absolute'),
+                   (3, 2, 'std::fs',             NULL, 'absolute'),
+                   (4, 4, './y', 'tools/y.py',   'relative');",
+            )
+            .unwrap();
     }
 
     #[test]
@@ -299,7 +433,14 @@ mod tests {
         assert_eq!(v["steps"].as_array().unwrap().len(), 1);
         assert_eq!(v["tools"].as_array().unwrap().len(), 2);
         assert_eq!(v["files"][0]["path"], "src/lib.rs");
-        assert_eq!(v["reflection"], serde_json::Value::Null);
+        assert_eq!(v["reflection"]["self_rating"], 8);
+        let none = respond(ws.path(), "/api/execution?id=2");
+        let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
+        assert_eq!(
+            v["reflection"],
+            serde_json::Value::Null,
+            "unreflected runs stay null"
+        );
     }
 
     #[test]
@@ -329,10 +470,183 @@ mod tests {
             "/api/memory",
             "/api/mcp",
             "/api/fleet",
+            "/api/activity",
+            "/api/projects",
+            "/api/codegraph",
+            "/api/skills",
+            "/api/mcp-servers",
+            "/api/config",
+            "/api/memories",
+            "/api/rules",
+            "/api/reflections",
         ] {
             let response = respond(ws.path(), route);
             assert_eq!(response.status, "200 OK", "route {route}");
         }
+    }
+
+    #[test]
+    fn activity_rolls_up_runs_tokens_and_tool_calls_by_day() {
+        let ws = seeded_workspace();
+        let response = respond(ws.path(), "/api/activity");
+        let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let days = v.as_array().unwrap();
+        assert_eq!(days.len(), 1, "everything seeded lands on today");
+        let d = &days[0];
+        assert_eq!(d["runs"], 2);
+        assert_eq!(d["resolved"], 1);
+        assert_eq!(d["input_tokens"], 3000);
+        assert_eq!(d["tool_calls"], 3);
+        assert_eq!(d["tool_errors"], 1);
+    }
+
+    #[test]
+    fn codegraph_resolves_rust_specifiers_and_relative_imports() {
+        let ws = seeded_workspace();
+        seed_fs_surfaces(&ws);
+        let response = respond(ws.path(), "/api/codegraph");
+        let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let nodes = v["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 5);
+        assert_eq!(v["total_symbols"], 2);
+        let path_of = |i: usize| nodes[i]["path"].as_str().unwrap();
+        let edges: Vec<(usize, usize)> = v["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e[0].as_u64().unwrap() as usize,
+                    e[1].as_u64().unwrap() as usize,
+                )
+            })
+            .collect();
+        let has = |from: &str, to: &str| {
+            edges
+                .iter()
+                .any(|&(a, b)| path_of(a) == from && path_of(b) == to)
+        };
+        // Cross-crate `crate_a::util::Util`, crate-local `crate::run`, and
+        // the indexer-resolved Python relative import.
+        assert!(has("crate-b/src/lib.rs", "crate-a/src/util.rs"));
+        assert!(has("crate-a/src/util.rs", "crate-a/src/lib.rs"));
+        assert!(has("tools/x.py", "tools/y.py"));
+        // `std::fs` resolves to nothing.
+        assert_eq!(edges.len(), 3);
+    }
+
+    #[test]
+    fn skills_list_project_scope_and_learned_flags() {
+        let ws = seeded_workspace();
+        seed_fs_surfaces(&ws);
+        let response = respond(ws.path(), "/api/skills");
+        let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let rows = v.as_array().unwrap();
+        let find = |name: &str| rows.iter().find(|r| r["name"] == name);
+        let skill = find("my-skill").expect("project skill listed");
+        assert_eq!(skill["scope"], "project");
+        assert_eq!(skill["learned"], false);
+        assert_eq!(skill["description"], "does the thing");
+        let learned = find("hard-won").expect("learned skill listed");
+        assert_eq!(learned["learned"], true);
+    }
+
+    #[test]
+    fn mcp_servers_expose_names_but_never_credential_values() {
+        let ws = seeded_workspace();
+        seed_fs_surfaces(&ws);
+        let response = respond(ws.path(), "/api/mcp-servers");
+        let body = String::from_utf8(response.body).unwrap();
+        assert!(body.contains("github"));
+        assert!(body.contains("GITHUB_TOKEN"), "env var names are shown");
+        assert!(
+            !body.contains("ghp_supersecret"),
+            "env var values must never be served"
+        );
+    }
+
+    #[test]
+    fn config_serves_scope_chain_with_secrets_redacted() {
+        let ws = seeded_workspace();
+        seed_fs_surfaces(&ws);
+        let response = respond(ws.path(), "/api/config");
+        let body = String::from_utf8(response.body).unwrap();
+        assert!(!body.contains("sk-live-topsecret"), "api keys are redacted");
+        assert!(body.contains("ZAI_KEY"), "env var *names* survive");
+        assert!(body.contains("glm-5.2"), "engine config is visible");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let scopes = v["scopes"].as_array().unwrap();
+        assert_eq!(scopes.len(), 3);
+        let project = scopes.iter().find(|s| s["scope"] == "project").unwrap();
+        assert_eq!(project["exists"], true);
+    }
+
+    #[test]
+    fn memories_rules_and_reflections_come_from_disk_and_db() {
+        let ws = seeded_workspace();
+        seed_fs_surfaces(&ws);
+        let memories: serde_json::Value =
+            serde_json::from_slice(&respond(ws.path(), "/api/memories").body).unwrap();
+        assert_eq!(memories[0]["name"], "build-quirk");
+        let rules: serde_json::Value =
+            serde_json::from_slice(&respond(ws.path(), "/api/rules").body).unwrap();
+        assert_eq!(rules["db"][0]["rule_id"], "no-vacuous-fixes");
+        assert_eq!(rules["files"][0]["name"], "style");
+        let refl: serde_json::Value =
+            serde_json::from_slice(&respond(ws.path(), "/api/reflections").body).unwrap();
+        assert_eq!(refl["lessons"].as_array().unwrap().len(), 2);
+        let ratings = refl["ratings"].as_array().unwrap();
+        assert_eq!(ratings.len(), 1);
+        assert_eq!(ratings[0]["self_rating"], 8);
+        assert_eq!(ratings[0]["what_to_improve"], "read the failing test first");
+    }
+
+    #[test]
+    fn project_param_drills_into_another_registered_workspace() {
+        // Two workspaces: `home` is empty, `other` is seeded. A usage.db in a
+        // private STELLA_DATA_DIR registers `other`; ?project= must re-point
+        // the request at it, and unknown ids must fall back to `home`.
+        let home = TempDir::new().unwrap();
+        let other = seeded_workspace();
+        let data = TempDir::new().unwrap();
+        let usage = Connection::open(data.path().join("usage.db")).unwrap();
+        usage
+            .execute_batch(&format!(
+                "CREATE TABLE projects (
+                   project_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                   root_path TEXT NOT NULL, first_seen_at TEXT NOT NULL,
+                   last_seen_at TEXT NOT NULL);
+                 CREATE TABLE execution_rollup (
+                   project_id TEXT NOT NULL, execution_id INTEGER NOT NULL,
+                   kind TEXT NOT NULL, prompt_digest TEXT NOT NULL,
+                   prompt_preview TEXT NOT NULL DEFAULT '',
+                   model TEXT NOT NULL, provider TEXT NOT NULL,
+                   outcome TEXT NOT NULL, cost_usd REAL NOT NULL,
+                   input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+                   duration_ms INTEGER NOT NULL, tool_calls INTEGER NOT NULL,
+                   files_written INTEGER NOT NULL, produced_output INTEGER NOT NULL,
+                   self_rating INTEGER, started_at TEXT NOT NULL,
+                   PRIMARY KEY (project_id, execution_id));
+                 INSERT INTO projects VALUES
+                   ('feedbeef00000001', 'other', '{}', '2026-01-01', '2026-01-02');",
+                other.path().display()
+            ))
+            .unwrap();
+        // SAFETY: env mutation in tests — this is the only test that sets
+        // STELLA_DATA_DIR, and every assertion runs before it's removed.
+        unsafe { std::env::set_var("STELLA_DATA_DIR", data.path()) };
+        let drilled = respond(home.path(), "/api/overview?project=feedbeef00000001");
+        let unknown = respond(home.path(), "/api/overview?project=doesnotexist");
+        let listed = respond(home.path(), "/api/projects");
+        unsafe { std::env::remove_var("STELLA_DATA_DIR") };
+        let v: serde_json::Value = serde_json::from_slice(&drilled.body).unwrap();
+        assert_eq!(v["runs"], 2, "?project= reads the other workspace");
+        let v: serde_json::Value = serde_json::from_slice(&unknown.body).unwrap();
+        assert_eq!(v["runs"], 0, "unknown ids fall back to the serving root");
+        let v: serde_json::Value = serde_json::from_slice(&listed.body).unwrap();
+        assert_eq!(v["available"], true);
+        assert_eq!(v["projects"][0]["name"], "other");
+        assert_eq!(v["projects"][0]["has_store"], true);
     }
 
     #[test]

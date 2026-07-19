@@ -1,6 +1,6 @@
 [package]
 name = "stella-observatory"
-description = "Local telemetry dashboard: a loopback-only web view over the workspace's .stella SQLite stores (executions, tokens, cost, tools, memory, fleet). Read-only; serves embedded assets; no outbound traffic ever."
+description = "Local telemetry dashboard: a loopback-only web view over the workspace's .stella stores — executions, tokens, cost, tools, memory, rules, reflections, skills, MCP, the code graph, the settings scope chain, and every other stella project on the machine. Read-only; serves embedded assets; no outbound traffic ever."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,6 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net"] }
+toml.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

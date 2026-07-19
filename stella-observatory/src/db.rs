@@ -505,6 +505,124 @@ impl Observatory {
         }))
     }
 
+    /// Daily activity rollup: runs, resolutions, spend, tokens, tool calls
+    /// per UTC day — the timeframe charts' raw material. Days are merged
+    /// across the three tables in Rust (a day may have tool calls but no
+    /// finished executions, or vice versa).
+    pub fn activity(&self) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(json!([]));
+        };
+        use std::collections::BTreeMap;
+        fn day_slot<'a>(days: &'a mut BTreeMap<String, Value>, day: &str) -> &'a mut Value {
+            days.entry(day.to_string()).or_insert_with(|| {
+                json!({
+                    "day": day, "runs": 0, "resolved": 0, "cost_usd": 0.0,
+                    "input_tokens": 0, "output_tokens": 0, "model_ms": 0,
+                    "tool_calls": 0, "tool_errors": 0,
+                })
+            })
+        }
+        let mut days: BTreeMap<String, Value> = BTreeMap::new();
+        for row in collect_rows(
+            &conn,
+            "SELECT date(started_at), count(*),
+                    count(*) FILTER (WHERE outcome = 'completed'),
+                    coalesce(sum(cost_usd), 0)
+             FROM executions GROUP BY 1",
+            |r| {
+                Ok(json!({
+                    "day": r.get::<_, String>(0)?,
+                    "runs": r.get::<_, i64>(1)?,
+                    "resolved": r.get::<_, i64>(2)?,
+                    "cost_usd": r.get::<_, f64>(3)?,
+                }))
+            },
+        )? {
+            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let entry = day_slot(&mut days, &day);
+            entry["runs"] = row["runs"].clone();
+            entry["resolved"] = row["resolved"].clone();
+            entry["cost_usd"] = row["cost_usd"].clone();
+        }
+        for row in collect_rows(
+            &conn,
+            "SELECT date(e.started_at),
+                    coalesce(sum(t.input_tokens), 0),
+                    coalesce(sum(t.output_tokens), 0),
+                    coalesce(sum(t.duration_ms), 0)
+             FROM telemetry t JOIN executions e ON e.id = t.execution_id
+             GROUP BY 1",
+            |r| {
+                Ok(json!({
+                    "day": r.get::<_, String>(0)?,
+                    "input_tokens": r.get::<_, i64>(1)?,
+                    "output_tokens": r.get::<_, i64>(2)?,
+                    "model_ms": r.get::<_, i64>(3)?,
+                }))
+            },
+        )? {
+            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let entry = day_slot(&mut days, &day);
+            entry["input_tokens"] = row["input_tokens"].clone();
+            entry["output_tokens"] = row["output_tokens"].clone();
+            entry["model_ms"] = row["model_ms"].clone();
+        }
+        for row in collect_rows(
+            &conn,
+            "SELECT date(ts), count(*), count(*) FILTER (WHERE ok = 0)
+             FROM tool_calls GROUP BY 1",
+            |r| {
+                Ok(json!({
+                    "day": r.get::<_, String>(0)?,
+                    "tool_calls": r.get::<_, i64>(1)?,
+                    "tool_errors": r.get::<_, i64>(2)?,
+                }))
+            },
+        )? {
+            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let entry = day_slot(&mut days, &day);
+            entry["tool_calls"] = row["tool_calls"].clone();
+            entry["tool_errors"] = row["tool_errors"].clone();
+        }
+        Ok(Value::Array(days.into_values().collect()))
+    }
+
+    /// Every post-turn self-reflection joined to its execution: the
+    /// self-improvement tab's ratings feed.
+    pub fn reflection_ratings(&self) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(json!([]));
+        };
+        let rows = collect_rows(
+            &conn,
+            "SELECT er.execution_id, e.kind, e.outcome, e.model,
+                    coalesce(nullif(er.prompt, ''), e.prompt),
+                    er.delivered, er.self_rating,
+                    er.what_went_well, er.what_to_improve, er.critique,
+                    er.recorded_at
+             FROM execution_reflection er
+             LEFT JOIN executions e ON e.id = er.execution_id
+             ORDER BY er.execution_id ASC",
+            |r| {
+                Ok(json!({
+                    "execution_id": r.get::<_, i64>(0)?,
+                    "kind": r.get::<_, Option<String>>(1)?,
+                    "outcome": r.get::<_, Option<String>>(2)?,
+                    "model": r.get::<_, Option<String>>(3)?,
+                    "prompt": truncate(r.get::<_, Option<String>>(4)?.unwrap_or_default(), 140),
+                    "delivered": r.get::<_, Option<i64>>(5)?,
+                    "self_rating": r.get::<_, Option<i64>>(6)?,
+                    "what_went_well": truncate(r.get::<_, String>(7)?, 280),
+                    "what_to_improve": truncate(r.get::<_, String>(8)?, 280),
+                    "critique": truncate(r.get::<_, String>(9)?, 280),
+                    "recorded_at": r.get::<_, String>(10)?,
+                }))
+            },
+        )?;
+        Ok(Value::Array(rows))
+    }
+
     /// MCP tool traffic per (server, tool).
     pub fn mcp(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {

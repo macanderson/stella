@@ -33,27 +33,53 @@ body{
   background-repeat:no-repeat,repeat,repeat,repeat,repeat,repeat;
   min-height:100vh; line-height:1.5;
 }
-.wrap{max-width:1280px;margin:0 auto;padding:0 24px 80px}
+.wrap{max-width:1360px;margin:0 auto;padding:0 24px 80px}
 
 /* ── Header ───────────────────────────────────────────────────────────── */
-header{display:flex;align-items:center;gap:14px;padding:26px 0 22px}
+header{display:flex;align-items:center;gap:14px;padding:22px 0 14px;flex-wrap:wrap}
 header img{width:44px;height:auto}
 .title{display:flex;flex-direction:column}
 .title b{font-size:19px;letter-spacing:.14em;font-family:var(--mono)}
 .title b em{color:var(--gold);font-style:normal}
 .title span{font:11px var(--mono);letter-spacing:.3em;text-transform:uppercase;color:var(--amber)}
-.headmeta{margin-left:auto;display:flex;align-items:center;gap:16px;font:12px var(--mono);color:var(--text-3)}
+.headmeta{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--text-3);flex-wrap:wrap}
 .live{display:inline-flex;align-items:center;gap:7px;color:var(--text-2)}
 .live i{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pulse 2.4s infinite}
 .live.paused i{background:var(--text-3);animation:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+select{background:var(--raised);color:var(--text);border:1px solid var(--hairline);
+       border-radius:8px;font:12px var(--mono);padding:6px 10px;max-width:280px}
+select:focus{outline:1px solid var(--gold)}
+
+/* ── Nav tabs & timeframe pills ───────────────────────────────────────── */
+nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:4px;
+        padding:8px 0;margin-bottom:16px;flex-wrap:wrap;
+        background:linear-gradient(180deg,rgba(11,10,8,.96),rgba(11,10,8,.88));
+        border-bottom:1px solid var(--hairline-dim);backdrop-filter:blur(6px)}
+nav.bar button.tab{background:none;border:none;color:var(--text-3);cursor:pointer;
+  font:12px var(--mono);letter-spacing:.08em;padding:7px 12px;border-radius:8px}
+nav.bar button.tab:hover{color:var(--text-2);background:rgba(245,179,60,.06)}
+nav.bar button.tab.on{color:var(--gold);background:rgba(245,179,60,.1)}
+.tf{margin-left:auto;display:flex;gap:4px;align-items:center}
+.tf span{font:10px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--text-3);margin-right:4px}
+.tf button{background:none;border:1px solid var(--hairline);color:var(--text-3);cursor:pointer;
+  font:11px var(--mono);padding:3px 10px;border-radius:999px}
+.tf button.on{color:var(--night);background:var(--gold);border-color:var(--gold);font-weight:600}
+section[data-tab]{display:none}
+section[data-tab].on{display:block}
 
 /* ── Cards & grid ─────────────────────────────────────────────────────── */
 .grid{display:grid;gap:14px}
 .kpis{grid-template-columns:repeat(6,1fr);margin-bottom:14px}
+.kpis4{grid-template-columns:repeat(4,1fr);margin-bottom:14px}
 .cols-2{grid-template-columns:3fr 2fr;margin-bottom:14px}
 .cols-2b{grid-template-columns:2fr 3fr;margin-bottom:14px}
-@media(max-width:980px){.kpis{grid-template-columns:repeat(3,1fr)}.cols-2,.cols-2b{grid-template-columns:1fr}}
+.cols-2e{grid-template-columns:1fr 1fr;margin-bottom:14px}
+.cols-graph{grid-template-columns:1fr 300px;margin-bottom:14px}
+.cols-3{grid-template-columns:repeat(3,1fr);margin-bottom:14px}
+@media(max-width:980px){.kpis{grid-template-columns:repeat(3,1fr)}
+  .kpis4{grid-template-columns:repeat(2,1fr)}
+  .cols-2,.cols-2b,.cols-2e,.cols-3,.cols-graph{grid-template-columns:1fr}}
 .card{
   background:linear-gradient(180deg,var(--raised),var(--surface));
   border:1px solid var(--hairline); border-radius:14px; padding:18px 20px;
@@ -75,35 +101,73 @@ th{font:10px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var
 td{padding:7px 10px;border-bottom:1px solid var(--hairline-dim);color:var(--text-2);white-space:nowrap}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.main{color:var(--text)}
+td.wrap-txt{white-space:normal}
 tr.click{cursor:pointer}
 tr.click:hover td{background:rgba(245,179,60,.05)}
 .scroll-x{overflow-x:auto}
 .scroll-y{max-height:340px;overflow-y:auto}
+.scroll-y-tall{max-height:520px;overflow-y:auto}
 
-/* ── Badges ───────────────────────────────────────────────────────────── */
+/* ── Badges & chips ───────────────────────────────────────────────────── */
 .badge{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;
        font:11px var(--mono);border:1px solid}
 .badge.ok{color:var(--ok);border-color:rgba(63,214,155,.4)}
 .badge.bad{color:var(--bad);border-color:rgba(229,83,123,.4)}
 .badge.warn{color:var(--warn);border-color:rgba(244,178,74,.4)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline)}
+.badge.gold{color:var(--gold);border-color:rgba(245,179,60,.45)}
+.chip{display:inline-block;font:10px var(--mono);color:var(--text-3);
+      border:1px solid var(--hairline-dim);border-radius:999px;padding:0 7px;margin:1px 2px}
 
 /* ── Charts ───────────────────────────────────────────────────────────── */
 svg text{font:10px var(--mono);fill:var(--text-3)}
 svg .lbl{fill:var(--text-2)}
-.legend{display:flex;gap:16px;font:11px var(--mono);color:var(--text-2);margin:6px 0 2px}
+.legend{display:flex;gap:16px;font:11px var(--mono);color:var(--text-2);margin:6px 0 2px;flex-wrap:wrap}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.hbar{display:grid;grid-template-columns:120px 1fr 84px;align-items:center;gap:10px;
+.hbar{display:grid;grid-template-columns:120px 1fr auto;align-items:center;gap:10px;
       font:12px var(--mono);color:var(--text-2);padding:4px 0}
 .hbar .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
-.hbar .track{height:14px;border-radius:0 4px 4px 0;background:var(--c1);min-width:2px}
-.hbar .val{text-align:right;color:var(--text-3)}
+.hbar .track{display:block;height:14px;border-radius:0 4px 4px 0;background:var(--c1);min-width:2px}
+.hbar .val{text-align:right;color:var(--text-3);white-space:nowrap}
+
+/* ── Feed items (lessons, memories) ───────────────────────────────────── */
+.feed-item{padding:9px 0;border-bottom:1px solid var(--hairline-dim);
+           font:12px var(--mono);color:var(--text-2)}
+.feed-item b{color:var(--text);font-weight:600}
+.feed-item .when{color:var(--text-3);font-size:10px;margin-left:6px}
+.mem-card{border:1px solid var(--hairline-dim);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.mem-card .name{font:600 12px var(--mono);color:var(--gold)}
+.mem-card .snip{font:11px var(--mono);color:var(--text-2);margin-top:4px;line-height:1.55}
+pre.cfg{font:11px var(--mono);color:var(--text-2);background:rgba(0,0,0,.28);
+        border:1px solid var(--hairline-dim);border-radius:10px;padding:12px;
+        overflow-x:auto;max-height:400px;line-height:1.5;white-space:pre}
+
+/* ── Code graph ───────────────────────────────────────────────────────── */
+#gwrap{position:relative;height:600px;border:1px solid var(--hairline-dim);
+       border-radius:10px;overflow:hidden;background:rgba(0,0,0,.22)}
+#gcanvas{width:100%;height:100%;display:block;cursor:grab}
+#gcanvas.dragging{cursor:grabbing}
+.gctl{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.gctl input{background:var(--raised);border:1px solid var(--hairline);color:var(--text);
+            border-radius:8px;font:12px var(--mono);padding:6px 10px;width:230px}
+.gctl input:focus{outline:1px solid var(--gold)}
+.gctl button{background:none;border:1px solid var(--hairline);color:var(--text-2);cursor:pointer;
+             font:11px var(--mono);padding:5px 12px;border-radius:8px}
+.gctl button:hover{color:var(--gold);border-color:var(--gold)}
+.gstats{font:11px var(--mono);color:var(--text-3);margin-left:auto}
+.gside .row{display:flex;justify-content:space-between;font:11px var(--mono);
+            color:var(--text-2);padding:3px 0}
+.gside .row .k{color:var(--text-3)}
+.gfile{font:11px var(--mono);color:var(--text-2);padding:3px 0;cursor:pointer;
+       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gfile:hover{color:var(--gold)}
+.gfile i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
 
 /* ── Tooltip ──────────────────────────────────────────────────────────── */
 #tip{position:fixed;pointer-events:none;z-index:50;display:none;background:var(--ink);
      border:1px solid var(--hairline);border-radius:8px;padding:8px 11px;
-     font:11px var(--mono);color:var(--text-2);max-width:320px;box-shadow:0 8px 28px rgba(0,0,0,.5)}
-#tip b{color:var(--text);display:block;margin-bottom:2px}
+     font:11px var(--mono);color:var(--text-2);max-width:340px;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+#tip b{color:var(--text);display:block;margin-bottom:2px;white-space:normal;word-break:break-all}
 
 /* ── Drawer ───────────────────────────────────────────────────────────── */
 #drawer{position:fixed;inset:0 0 0 auto;width:min(680px,94vw);background:var(--ink);
@@ -125,6 +189,10 @@ svg .lbl{fill:var(--text-2)}
 .empty{padding:34px 10px;text-align:center;color:var(--text-3);font:13px var(--mono)}
 .empty code{color:var(--gold);background:rgba(245,179,60,.08);padding:2px 8px;border-radius:6px}
 .section-gap{margin-bottom:14px}
+.loop-strip{display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+            font:11px var(--mono);color:var(--text-3);margin-bottom:14px}
+.loop-strip b{color:var(--gold);font-weight:600}
+.loop-strip em{color:var(--text-3);font-style:normal}
 footer{margin-top:26px;font:11px var(--mono);color:var(--text-3);display:flex;gap:8px;align-items:center}
 footer b{color:var(--text-2)}
 </style>
@@ -138,59 +206,228 @@ footer b{color:var(--text-2)}
       <span>local telemetry · reads .stella only · nothing leaves this machine</span>
     </div>
     <div class="headmeta">
+      <select id="proj" title="project — every stella workspace on this machine"></select>
       <span id="ws" title="workspace root"></span>
       <span class="live" id="live"><i></i><span>LIVE</span></span>
     </div>
   </header>
 
-  <div class="grid kpis" id="kpis"></div>
+  <nav class="bar" id="tabs">
+    <button class="tab" data-tab="overview">overview</button>
+    <button class="tab" data-tab="activity">activity</button>
+    <button class="tab" data-tab="graph">code graph</button>
+    <button class="tab" data-tab="skills">skills</button>
+    <button class="tab" data-tab="mcp">mcp</button>
+    <button class="tab" data-tab="memory">memory &amp; rules</button>
+    <button class="tab" data-tab="improve">self-improve</button>
+    <button class="tab" data-tab="config">config</button>
+    <div class="tf" id="tf">
+      <span>window</span>
+      <button data-tf="24h">24h</button>
+      <button data-tf="7d">7d</button>
+      <button data-tf="30d">30d</button>
+      <button data-tf="all" class="on">all</button>
+    </div>
+  </nav>
 
-  <div class="grid cols-2">
-    <div class="card">
-      <div class="kick">Spend &amp; volume</div>
-      <h2>Tokens per run</h2>
-      <div class="legend"><span><i style="background:var(--c1)"></i>input</span>
-        <span><i style="background:var(--c2)"></i>output</span></div>
-      <div id="timeline"></div>
+  <!-- ══ OVERVIEW ══════════════════════════════════════════════════════ -->
+  <section data-tab="overview" class="on">
+    <div class="grid kpis" id="kpis"></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="kick">Spend &amp; volume</div>
+        <h2>Tokens per run</h2>
+        <div class="legend"><span><i style="background:var(--c1)"></i>input</span>
+          <span><i style="background:var(--c2)"></i>output</span></div>
+        <div id="timeline"></div>
+      </div>
+      <div class="card">
+        <div class="kick">$ / resolved task · all-time</div>
+        <h2>Models</h2>
+        <div class="scroll-x" id="models"></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="kick">$ / resolved task</div>
-      <h2>Models</h2>
-      <div class="scroll-x" id="models"></div>
+    <div class="grid cols-2b">
+      <div class="card">
+        <div class="kick">Tool traffic · all-time</div>
+        <h2>Tool calls</h2>
+        <div id="tools"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Blast radius · all-time</div>
+        <h2>Files touched</h2>
+        <div id="files"></div>
+      </div>
     </div>
-  </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="kick">Fan-out &amp; MCP · all-time</div>
+        <h2>Fleet runs · MCP traffic</h2>
+        <div id="fleetmcp"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Self-improvement · all-time</div>
+        <h2>Memory · reflections · skills</h2>
+        <div id="memory"></div>
+      </div>
+    </div>
+    <div class="card section-gap">
+      <div class="kick">Every run, receipted</div>
+      <h2>Executions</h2>
+      <div class="scroll-x scroll-y" id="executions"></div>
+    </div>
+  </section>
 
-  <div class="grid cols-2b">
-    <div class="card">
-      <div class="kick">Tool traffic</div>
-      <h2>Tool calls</h2>
-      <div id="tools"></div>
+  <!-- ══ ACTIVITY ══════════════════════════════════════════════════════ -->
+  <section data-tab="activity">
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Spend</div>
+        <h2>Cost per day</h2>
+        <div id="ch-cost"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Volume</div>
+        <h2>Tokens per day</h2>
+        <div class="legend"><span><i style="background:var(--c1)"></i>input</span>
+          <span><i style="background:var(--c2)"></i>output</span></div>
+        <div id="ch-tokens"></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="kick">Self-improvement</div>
-      <h2>Memory · reflections · skills</h2>
-      <div id="memory"></div>
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Throughput</div>
+        <h2>Runs per day</h2>
+        <div class="legend"><span><i style="background:var(--c1)"></i>resolved</span>
+          <span><i style="background:#8D8474"></i>other outcomes</span></div>
+        <div id="ch-runs"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Tooling</div>
+        <h2>Tool calls per day</h2>
+        <div class="legend"><span><i style="background:var(--c2)"></i>calls</span>
+          <span><i style="background:var(--bad)"></i>errors</span></div>
+        <div id="ch-toolcalls"></div>
+      </div>
     </div>
-  </div>
+  </section>
 
-  <div class="grid cols-2">
-    <div class="card">
-      <div class="kick">Blast radius</div>
-      <h2>Files touched</h2>
-      <div id="files"></div>
+  <!-- ══ CODE GRAPH ════════════════════════════════════════════════════ -->
+  <section data-tab="graph">
+    <div class="grid cols-graph">
+      <div class="card">
+        <div class="kick">stella-graph · tree-sitter index of this workspace</div>
+        <h2>Code graph</h2>
+        <div class="gctl" style="margin-top:8px">
+          <input id="gsearch" type="search" placeholder="search files… (enter selects)" autocomplete="off">
+          <button id="gfit">fit</button>
+          <button id="gclear">clear</button>
+          <span class="gstats" id="gstats"></span>
+        </div>
+        <div class="legend" id="glegend"></div>
+        <div id="gwrap"><canvas id="gcanvas"></canvas></div>
+      </div>
+      <div class="card gside">
+        <div class="kick" id="gside-kick">selection</div>
+        <div id="gside"></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="kick">Fan-out &amp; MCP</div>
-      <h2>Fleet runs · MCP traffic</h2>
-      <div id="fleetmcp"></div>
-    </div>
-  </div>
+  </section>
 
-  <div class="card section-gap">
-    <div class="kick">Every run, receipted</div>
-    <h2>Executions</h2>
-    <div class="scroll-x scroll-y" id="executions"></div>
-  </div>
+  <!-- ══ SKILLS ════════════════════════════════════════════════════════ -->
+  <section data-tab="skills">
+    <div class="grid kpis4" id="skill-kpis"></div>
+    <div class="card section-gap">
+      <div class="kick">Installed &amp; learned</div>
+      <h2>Skills</h2>
+      <div class="scroll-x scroll-y-tall" id="skills-table"></div>
+    </div>
+  </section>
+
+  <!-- ══ MCP ═══════════════════════════════════════════════════════════ -->
+  <section data-tab="mcp">
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">.stella/mcp.toml</div>
+        <h2>Configured servers</h2>
+        <div class="scroll-x" id="mcp-servers"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Observed traffic · all-time</div>
+        <h2>MCP calls</h2>
+        <div id="mcp-traffic"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ MEMORY & RULES ════════════════════════════════════════════════ -->
+  <section data-tab="memory">
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">.stella/memories</div>
+        <h2>Memories</h2>
+        <div class="scroll-y-tall" id="mem-files"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Recall receipts</div>
+        <h2>Citations · were memories useful &amp; truthful?</h2>
+        <div class="scroll-x" id="mem-citations"></div>
+        <div class="kick" style="margin-top:18px">Promoted rules</div>
+        <div id="rules-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ SELF-IMPROVE ══════════════════════════════════════════════════ -->
+  <section data-tab="improve">
+    <div class="loop-strip">
+      <b>the stella way</b><em>·</em> run <em>→</em> reflect <em>→</em> lesson
+      <em>→</em> learned skill <em>→</em> promoted rule <em>·</em>
+      every step below is receipted from .stella, not claimed
+    </div>
+    <div class="grid kpis4" id="imp-kpis"></div>
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Post-turn self-review</div>
+        <h2>Self-rating per reflection</h2>
+        <div id="ch-ratings"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Owned shortcomings</div>
+        <h2>What to improve</h2>
+        <div class="scroll-y" id="imp-improve"></div>
+      </div>
+    </div>
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Distilled lessons · reflections.jsonl</div>
+        <h2>Lessons stella taught itself</h2>
+        <div class="scroll-y-tall" id="imp-lessons"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Auto-extracted</div>
+        <h2>Learned skills</h2>
+        <div class="scroll-y-tall" id="imp-learned"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
+  <section data-tab="config">
+    <div class="grid cols-2e">
+      <div class="card">
+        <div class="kick">Engine · merged view (user → org → project)</div>
+        <h2>Agent engine config</h2>
+        <div class="scroll-x" id="cfg-engine"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Where everything lives</div>
+        <h2>Stores &amp; databases</h2>
+        <div id="cfg-stores"></div>
+      </div>
+    </div>
+    <div class="grid cols-3" id="cfg-scopes"></div>
+  </section>
 
   <footer><b>stella</b> · verified done, not claimed done · dashboard refreshes every 5s while visible</footer>
 </div>
@@ -210,14 +447,15 @@ const fmtTok = (v) => v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v >= 1e3 ? (v / 1e
 const fmtMs = (v) => v >= 60000 ? (v / 60000).toFixed(1) + "m" : v >= 1000 ? (v / 1000).toFixed(1) + "s" : (v ?? 0) + "ms";
 const pct = (v) => (100 * (v ?? 0)).toFixed(0) + "%";
 const utc = (s) => s ? new Date(s.replace(" ", "T") + "Z") : null;
-const ago = (s) => {
-  const d = utc(s); if (!d) return "—";
-  const sec = Math.max(0, (Date.now() - d.getTime()) / 1000);
+const agoMs = (ms) => {
+  const sec = Math.max(0, (Date.now() - ms) / 1000);
   if (sec < 90) return Math.round(sec) + "s ago";
   if (sec < 5400) return Math.round(sec / 60) + "m ago";
   if (sec < 129600) return Math.round(sec / 3600) + "h ago";
   return Math.round(sec / 86400) + "d ago";
 };
+const ago = (s) => { const d = utc(s); return d ? agoMs(d.getTime()) : "—"; };
+const agoUnix = (u) => u ? agoMs(u * 1000) : "—";
 const OUTCOME = {
   completed: ["ok", "✓ completed"], resolved: ["ok", "✓ resolved"],
   aborted: ["bad", "✕ aborted"], error: ["bad", "✕ error"],
@@ -236,37 +474,65 @@ function showTip(ev, html) {
 }
 function hideTip() { tip.style.display = "none"; }
 
+/* ── state ───────────────────────────────────────────────────────────── */
+const state = { project: "", tf: "all", tab: "overview" };
+const TF_MS = { "24h": 864e5, "7d": 7 * 864e5, "30d": 30 * 864e5 };
+const D = {};            // core payloads, refreshed every 5s
+const lazyCache = {};    // per-tab payloads keyed `${tab}:${project}`
+const api = (u) => {
+  const sep = u.includes("?") ? "&" : "?";
+  return fetch(state.project ? u + sep + "project=" + encodeURIComponent(state.project) : u)
+    .then(r => r.json());
+};
+const inTf = (startedAt) => {
+  if (state.tf === "all") return true;
+  const d = utc(startedAt);
+  return d && (Date.now() - d.getTime()) <= TF_MS[state.tf];
+};
+const inTfDay = (day) => {
+  if (state.tf === "all") return true;
+  const d = new Date(day + "T00:00:00Z");
+  return d && (Date.now() - d.getTime()) <= (TF_MS[state.tf] + 864e5);
+};
+
 /* ── stat tiles ──────────────────────────────────────────────────────── */
 function tile(k, v, sub, gold) {
   return `<div class="card tile"><div class="k">${k}</div>
     <div class="v${gold ? " gold" : ""}">${v}</div>
     ${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
-function renderKpis(o) {
-  const runs = o.runs ?? 0, resolved = o.resolved ?? 0;
+function renderKpis() {
+  const o = D.overview ?? {};
+  const all = state.tf === "all";
+  const rows = (D.executions ?? []).filter(r => inTf(r.started_at));
+  const sum = (k) => rows.reduce((a, r) => a + (r[k] ?? 0), 0);
+  const runs = all ? (o.runs ?? 0) : rows.length;
+  const resolved = all ? (o.resolved ?? 0)
+    : rows.filter(r => r.outcome === "completed").length;
+  const cost = all ? (o.cost_usd ?? 0) : sum("cost_usd");
+  const tin = all ? (o.input_tokens ?? 0) : sum("input_tokens");
+  const tout = all ? (o.output_tokens ?? 0) : sum("output_tokens");
+  const modelMs = all ? (o.model_ms ?? 0) : sum("model_ms");
+  const steps = all ? (o.steps ?? 0) : sum("steps");
   const cacheDen = (o.cache_read_tokens ?? 0) + (o.cache_miss_tokens ?? 0);
   const cacheHit = cacheDen ? (o.cache_read_tokens / cacheDen) : null;
-  const avgStep = o.steps ? o.model_ms / o.steps : 0;
   $("kpis").innerHTML =
     tile("runs", String(runs), resolved + " resolved") +
-    tile("resolve rate", runs ? pct(resolved / runs) : "—",
-         "outcome = completed") +
-    tile("total spend", fmtUsd(o.cost_usd ?? 0),
-         resolved ? fmtUsd((o.cost_usd ?? 0) / resolved) + " / resolved" : "&nbsp;", true) +
-    tile("tokens in", fmtTok(o.input_tokens ?? 0),
-         fmtTok(o.output_tokens ?? 0) + " out") +
+    tile("resolve rate", runs ? pct(resolved / runs) : "—", "outcome = completed") +
+    tile("total spend", fmtUsd(cost),
+         resolved ? fmtUsd(cost / resolved) + " / resolved" : "&nbsp;", true) +
+    tile("tokens in", fmtTok(tin), fmtTok(tout) + " out") +
     tile("cache hits", cacheHit === null ? "—" : pct(cacheHit),
-         fmtTok(o.cache_read_tokens ?? 0) + " read") +
-    tile("model time", fmtMs(o.model_ms ?? 0),
-         o.steps ? fmtMs(avgStep) + " avg / step" : "&nbsp;");
+         fmtTok(o.cache_read_tokens ?? 0) + " read · all-time") +
+    tile("model time", fmtMs(modelMs), steps ? fmtMs(modelMs / steps) + " avg / step" : "&nbsp;");
 }
 
 /* ── timeline chart (grouped thin bars, input+output per run) ─────────── */
-function renderTimeline(o) {
-  const t = o.timeline ?? [];
+function renderTimeline() {
+  const t = (D.overview?.timeline ?? []).filter(r => inTf(r.started_at));
   if (!t.length) {
     $("timeline").innerHTML =
-      `<div class="empty">no runs yet — try <code>stella run "fix the failing test"</code></div>`;
+      `<div class="empty">no runs in this window — try <code>stella run "fix the failing test"</code></div>`;
     return;
   }
   const W = 640, H = 190, padL = 44, padB = 26, padT = 12;
@@ -308,6 +574,78 @@ function renderTimeline(o) {
   });
 }
 
+/* ── daily bar charts (activity tab) ─────────────────────────────────── */
+function renderDaily(elId, days, series, fmt, stacked) {
+  const el = $(elId);
+  if (!days.length) {
+    el.innerHTML = `<div class="empty">nothing recorded in this window</div>`;
+    return;
+  }
+  const W = 620, H = 180, padL = 46, padB = 24, padT = 10;
+  const innerW = W - padL - 8, innerH = H - padT - padB;
+  const total = (d) => stacked
+    ? series.reduce((a, s) => a + (d[s.key] ?? 0), 0)
+    : Math.max(...series.map(s => d[s.key] ?? 0));
+  const max = Math.max(...days.map(total), 1e-9);
+  const group = innerW / days.length;
+  const bw = stacked
+    ? Math.min(22, Math.max(4, group * 0.6))
+    : Math.min(14, Math.max(3, group / (series.length + 0.8)));
+  let bars = "", labels = "";
+  days.forEach((d, i) => {
+    const x0 = padL + i * group + group / 2;
+    if (stacked) {
+      let yCursor = padT + innerH;
+      series.forEach(s => {
+        const h = innerH * (d[s.key] ?? 0) / max;
+        yCursor -= h;
+        if (h > 0.2) bars += `<rect x="${(x0 - bw / 2).toFixed(1)}" y="${(yCursor + 1).toFixed(1)}"
+          width="${bw}" height="${Math.max(h - 2, 1).toFixed(1)}" rx="2" fill="${s.color}"/>`;
+      });
+    } else {
+      const span = series.length * (bw + 2);
+      series.forEach((s, si) => {
+        const h = innerH * (d[s.key] ?? 0) / max;
+        const x = x0 - span / 2 + si * (bw + 2);
+        bars += `<rect x="${x.toFixed(1)}" y="${(padT + innerH - h).toFixed(1)}"
+          width="${bw}" height="${Math.max(h, d[s.key] ? 1 : 0).toFixed(1)}" rx="2" fill="${s.color}"/>`;
+      });
+    }
+    bars += `<rect class="hit" data-i="${i}" x="${(x0 - group / 2).toFixed(1)}" y="0"
+      width="${group.toFixed(1)}" height="${H}" fill="transparent"/>`;
+    if (days.length <= 12 || i % Math.ceil(days.length / 12) === 0)
+      labels += `<text x="${x0.toFixed(1)}" y="${H - 6}" text-anchor="middle">${d.day.slice(5)}</text>`;
+  });
+  const grid = [0, .5, 1].map(f => {
+    const y = padT + innerH * (1 - f);
+    return `<line x1="${padL}" y1="${y}" x2="${W - 8}" y2="${y}" stroke="var(--hairline-dim)"/>
+      <text x="${padL - 6}" y="${y + 3}" text-anchor="end">${fmt(max * f)}</text>`;
+  }).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img">${grid}${bars}${labels}</svg>`;
+  el.querySelectorAll("rect.hit").forEach(r => {
+    const d = days[+r.dataset.i];
+    r.addEventListener("mousemove", ev => showTip(ev,
+      `<b>${esc(d.day)}</b>` +
+      series.map(s => `${esc(s.label)}: ${fmt(d[s.key] ?? 0)}`).join("<br>")));
+    r.addEventListener("mouseleave", hideTip);
+  });
+}
+function renderActivity() {
+  const days = (D.activity ?? []).filter(d => inTfDay(d.day));
+  const withOther = days.map(d => ({ ...d, other: (d.runs ?? 0) - (d.resolved ?? 0) }));
+  renderDaily("ch-cost", days,
+    [{ key: "cost_usd", label: "spend", color: "var(--c1)" }], fmtUsd, false);
+  renderDaily("ch-tokens", days,
+    [{ key: "input_tokens", label: "input", color: "var(--c1)" },
+     { key: "output_tokens", label: "output", color: "var(--c2)" }], fmtTok, false);
+  renderDaily("ch-runs", withOther,
+    [{ key: "resolved", label: "resolved", color: "var(--c1)" },
+     { key: "other", label: "other outcomes", color: "#8D8474" }], v => String(Math.round(v)), true);
+  renderDaily("ch-toolcalls", days,
+    [{ key: "tool_calls", label: "calls", color: "var(--c2)" },
+     { key: "tool_errors", label: "errors", color: "var(--bad)" }], v => String(Math.round(v)), false);
+}
+
 /* ── models table ────────────────────────────────────────────────────── */
 function renderModels(rows) {
   if (!rows.length) {
@@ -329,7 +667,7 @@ function renderModels(rows) {
 }
 
 /* ── horizontal bars (tools / files) ─────────────────────────────────── */
-function hbars(rows, name, value, valueLabel, tipHtml) {
+function hbars(rows, name, value, valueLabel) {
   const max = Math.max(...rows.map(value), 1);
   return rows.map((r, i) => `<div class="hbar" data-i="${i}">
       <span class="name" title="${esc(name(r))}">${esc(name(r))}</span>
@@ -365,7 +703,7 @@ function renderFiles(rows) {
   });
 }
 
-/* ── memory / self-improvement ───────────────────────────────────────── */
+/* ── memory / self-improvement (overview card) ───────────────────────── */
 function renderMemory(m) {
   const cites = m.citations ?? [], refl = m.reflections ?? [];
   const rules = m.rules ?? [], skills = m.skills ?? [];
@@ -394,8 +732,8 @@ function renderMemory(m) {
   if (refl.length) {
     html += `<div class="kick" style="margin-top:14px">latest reflections</div>` +
       refl.slice(0, 3).map(r =>
-        `<div style="font:11px var(--mono);color:var(--text-2);padding:4px 0;border-bottom:1px solid var(--hairline-dim)">
-         <span class="badge dim">${esc(r.kind)}</span> ${esc(r.content.slice(0, 130))}${r.content.length > 130 ? "…" : ""}</div>`).join("");
+        `<div class="feed-item"><span class="badge dim">${esc(r.kind)}</span>
+         ${esc(r.content.slice(0, 130))}${r.content.length > 130 ? "…" : ""}</div>`).join("");
   }
   if (rules.length) {
     html += `<div class="kick" style="margin-top:14px">promoted rules</div>` +
@@ -406,7 +744,7 @@ function renderMemory(m) {
   $("memory").innerHTML = html;
 }
 
-/* ── fleet + mcp ─────────────────────────────────────────────────────── */
+/* ── fleet + mcp (overview card) ─────────────────────────────────────── */
 function renderFleetMcp(fleet, mcp) {
   let html = "";
   if (fleet.length) {
@@ -430,9 +768,10 @@ function renderFleetMcp(fleet, mcp) {
 }
 
 /* ── executions table ────────────────────────────────────────────────── */
-function renderExecutions(rows) {
+function renderExecutions() {
+  const rows = (D.executions ?? []).filter(r => inTf(r.started_at));
   if (!rows.length) {
-    $("executions").innerHTML = `<div class="empty">nothing recorded yet — every
+    $("executions").innerHTML = `<div class="empty">nothing in this window — every
       <code>stella run</code>, <code>goal</code>, chat turn and pipeline lands here</div>`;
     return;
   }
@@ -459,7 +798,7 @@ function renderExecutions(rows) {
 
 /* ── drawer ──────────────────────────────────────────────────────────── */
 async function openDrawer(id) {
-  const d = await fetch(`/api/execution?id=${id}`).then(r => r.json()).catch(() => null);
+  const d = await api(`/api/execution?id=${id}`).catch(() => null);
   if (!d) return;
   const maxTok = Math.max(...(d.steps ?? []).map(s => s.input_tokens + s.output_tokens), 1);
   const steps = (d.steps ?? []).map(s => {
@@ -508,22 +847,656 @@ function closeDrawer() {
 $("scrim").addEventListener("click", closeDrawer);
 addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
-/* ── refresh loop ────────────────────────────────────────────────────── */
+/* ── projects switcher ───────────────────────────────────────────────── */
+function renderProjects(p) {
+  const sel = $("proj");
+  const current = (p.projects ?? []).find(x => x.is_current);
+  const opts = [];
+  opts.push(`<option value="">${esc(current ? current.name : "this workspace")} · current</option>`);
+  (p.projects ?? []).filter(x => !x.is_current && x.has_store).forEach(x => {
+    opts.push(`<option value="${esc(x.project_id)}"${x.project_id === state.project ? " selected" : ""}>
+      ${esc(x.name)} · ${x.runs} runs</option>`);
+  });
+  if (sel.dataset.sig !== opts.join()) {   // avoid resetting an open dropdown
+    sel.dataset.sig = opts.join();
+    sel.innerHTML = opts.join("");
+    sel.value = state.project;
+  }
+}
+$("proj").addEventListener("change", () => {
+  state.project = $("proj").value;
+  Object.keys(lazyCache).forEach(k => delete lazyCache[k]);
+  refresh().then(() => loadTab(state.tab, true));
+});
+
+/* ── skills tab ──────────────────────────────────────────────────────── */
+function renderSkills(rows) {
+  const uses = {};
+  (D.memory?.skills ?? []).forEach(s => { uses[s.skill] = s; });
+  const learned = rows.filter(r => r.learned);
+  $("skill-kpis").innerHTML =
+    tile("skills", String(rows.length), "visible to this workspace") +
+    tile("project scope", String(rows.filter(r => r.scope === "project").length), ".stella/skills") +
+    tile("user scope", String(rows.filter(r => r.scope === "user").length), "~/.config/stella/skills") +
+    tile("learned", String(learned.length), "auto-extracted by stella", true);
+  if (!rows.length) {
+    $("skills-table").innerHTML =
+      `<div class="empty">no skills installed — <code>stella skills find</code> searches the registry,
+       and stella promotes its own lessons into <code>skills/learned/</code></div>`;
+    return;
+  }
+  $("skills-table").innerHTML = `<table><thead><tr>
+    <th>skill</th><th>scope</th><th>description</th>
+    <th class="num">uses</th><th class="num">updated</th></tr></thead><tbody>` +
+    rows.map(r => {
+      const u = uses[r.name];
+      return `<tr>
+      <td class="main">${r.learned ? `<span class="badge gold" title="auto-extracted from stella's own reflections">◆ learned</span> ` : ""}${esc(r.name)}</td>
+      <td><span class="badge dim">${esc(r.scope)}</span></td>
+      <td class="wrap-txt" style="max-width:520px;color:var(--text-2)">${esc(r.description || "—")}</td>
+      <td class="num">${u ? u.uses + "×" : "—"}</td>
+      <td class="num">${agoUnix(r.modified_unix)}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+}
+
+/* ── mcp tab ─────────────────────────────────────────────────────────── */
+function renderMcpTab(cfg) {
+  const servers = cfg?.servers ?? [];
+  $("mcp-servers").innerHTML = servers.length
+    ? `<table><thead><tr><th>server</th><th>transport</th><th>target</th><th>env</th></tr></thead><tbody>` +
+      servers.map(s => `<tr>
+        <td class="main">${esc(s.name)}</td>
+        <td><span class="badge dim">${esc(s.transport)}</span></td>
+        <td class="wrap-txt" style="max-width:340px">${esc(s.target || "—")}</td>
+        <td>${(s.env_keys ?? []).concat(s.header_keys ?? []).map(k => `<span class="chip">${esc(k)}</span>`).join("") || "—"}</td>
+      </tr>`).join("") + `</tbody></table>`
+    : `<div class="empty">no MCP servers configured in this workspace —<br>
+       <code>stella mcp add &lt;name&gt;</code> installs one from the registry</div>`;
+  const traffic = D.mcp ?? [];
+  $("mcp-traffic").innerHTML = traffic.length
+    ? hbars(traffic.slice(0, 14),
+        r => `${r.server}/${r.tool}`, r => r.calls,
+        r => `${r.calls}× · ${r.last_called_ms ? agoMs(r.last_called_ms) : "—"}`)
+    : `<div class="empty">no MCP calls recorded yet — traffic appears once an agent uses a connected server</div>`;
+}
+
+/* ── memory & rules tab ──────────────────────────────────────────────── */
+function renderMemoryTab(files, rules) {
+  $("mem-files").innerHTML = (files ?? []).length
+    ? files.map(f => `<div class="mem-card">
+        <span class="name">${esc(f.name)}</span>
+        <span class="when" style="font:10px var(--mono);color:var(--text-3)"> · ${agoUnix(f.modified_unix)} · ${fmtTok(f.bytes)}B</span>
+        <div class="snip">${esc(f.snippet)}</div></div>`).join("")
+    : `<div class="empty">no memories yet — stella writes durable, citable memories to
+       <code>.stella/memories/</code> as it learns this codebase</div>`;
+  const cites = D.memory?.citations ?? [];
+  $("mem-citations").innerHTML = cites.length
+    ? `<table><thead><tr><th>memory</th><th class="num">cites</th>
+        <th class="num">useful</th><th class="num">truthful</th><th class="num">last cited</th></tr></thead><tbody>` +
+      cites.slice(0, 12).map(c => `<tr>
+        <td class="main" title="${esc(c.memory_id)}">${esc(c.memory_id)}</td>
+        <td class="num">${c.citations}</td>
+        <td class="num">${(c.avg_useful ?? 0).toFixed(1)}</td>
+        <td class="num">${pct(c.truthful_rate)}</td>
+        <td class="num">${ago(c.last_cited)}</td></tr>`).join("") + `</tbody></table>`
+    : `<div class="empty">no citations yet — every time a recalled memory is used,
+       stella records whether it was useful and truthful</div>`;
+  const db = rules?.db ?? [], fileRules = rules?.files ?? [];
+  let html = "";
+  if (db.length) {
+    html += db.map(r => `<div class="feed-item">
+      <b><span style="color:var(--gold)">§</span> ${esc(r.rule_id)}</b>
+      <span class="badge dim">${esc(r.source)}</span><span class="when">${ago(r.created_at)}</span>
+      <div>${esc(r.contents)}</div></div>`).join("");
+  }
+  if (fileRules.length) {
+    html += fileRules.map(f => `<div class="feed-item">
+      <b><span style="color:var(--gold)">§</span> ${esc(f.name)}</b>
+      <span class="when">${agoUnix(f.modified_unix)}</span>
+      <div>${esc(f.snippet)}</div></div>`).join("");
+  }
+  $("rules-list").innerHTML = html ||
+    `<div class="empty">no promoted rules yet — lessons that keep proving true get promoted here</div>`;
+}
+
+/* ── self-improve tab ────────────────────────────────────────────────── */
+function renderImprove(skills) {
+  const refl = D.reflections ?? {};
+  const lessons = refl.lessons ?? [];
+  const ratings = (refl.ratings ?? []).filter(r => r.self_rating != null || r.delivered != null);
+  const rated = ratings.filter(r => r.self_rating != null);
+  const delivered = ratings.filter(r => r.delivered != null);
+  const learned = (skills ?? []).filter(s => s.learned);
+  const avg = rated.length
+    ? (rated.reduce((a, r) => a + r.self_rating, 0) / rated.length) : null;
+  $("imp-kpis").innerHTML =
+    tile("avg self-rating", avg == null ? "—" : avg.toFixed(1) + "<small>/10</small>",
+      rated.length + " rated reflections") +
+    tile("delivered", delivered.length
+        ? pct(delivered.filter(r => r.delivered).length / delivered.length) : "—",
+      "by stella's own account") +
+    tile("lessons", String(lessons.length), "distilled into reflections.jsonl") +
+    tile("learned skills", String(learned.length), "promoted from lessons", true);
+
+  renderRatingsChart(ratings);
+
+  const improves = (refl.ratings ?? []).filter(r => r.what_to_improve)
+    .slice(-14).reverse();
+  $("imp-improve").innerHTML = improves.length
+    ? improves.map(r => `<div class="feed-item">
+        <b>#${r.execution_id}</b> ${badge(r.outcome)}
+        <span class="when">${ago(r.recorded_at)}</span>
+        <div>${esc(r.what_to_improve)}</div></div>`).join("")
+    : `<div class="empty">nothing owned yet — after every turn stella critiques its own work here</div>`;
+
+  $("imp-lessons").innerHTML = lessons.length
+    ? lessons.map(l => `<div class="feed-item">
+        ${esc(l.lesson)}
+        <div style="margin-top:3px">${(Array.isArray(l.domains) ? l.domains : [])
+          .map(d => `<span class="chip">${esc(d)}</span>`).join("")}
+          <span class="when">${l.occurred_at ? agoMs(l.occurred_at * 1000) : ""}</span></div>
+      </div>`).join("")
+    : `<div class="empty">no distilled lessons yet — failed and hard-won turns are mined
+       into <code>.stella/reflections.jsonl</code></div>`;
+
+  $("imp-learned").innerHTML = learned.length
+    ? learned.map(s => `<div class="mem-card">
+        <span class="badge gold">◆ learned</span> <span class="name">${esc(s.name)}</span>
+        <span class="when" style="font:10px var(--mono);color:var(--text-3)"> · ${agoUnix(s.modified_unix)}</span>
+        <div class="snip">${esc(s.description || "")}</div></div>`).join("")
+    : `<div class="empty">none yet — when a lesson generalizes, stella writes it into
+       <code>skills/learned/</code> and starts using it in future runs</div>`;
+}
+function renderRatingsChart(ratings) {
+  const el = $("ch-ratings");
+  const pts = ratings.filter(r => r.self_rating != null);
+  if (!pts.length) {
+    el.innerHTML = `<div class="empty">no self-ratings yet — stella scores each turn 0–10 after finishing</div>`;
+    return;
+  }
+  const W = 620, H = 170, padL = 34, padB = 22, padT = 10, padR = 10;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const x = (i) => padL + (pts.length === 1 ? innerW / 2 : innerW * i / (pts.length - 1));
+  const y = (v) => padT + innerH * (1 - v / 10);
+  const grid = [0, 5, 10].map(v =>
+    `<line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" stroke="var(--hairline-dim)"/>
+     <text x="${padL - 6}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join("");
+  const line = pts.length > 1
+    ? `<polyline fill="none" stroke="var(--c2)" stroke-width="2"
+        points="${pts.map((r, i) => `${x(i).toFixed(1)},${y(r.self_rating).toFixed(1)}`).join(" ")}"/>`
+    : "";
+  const dots = pts.map((r, i) =>
+    `<circle class="dot" data-i="${i}" cx="${x(i).toFixed(1)}" cy="${y(r.self_rating).toFixed(1)}"
+      r="4.5" fill="var(--c2)" stroke="var(--surface)" stroke-width="2"/>`).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto" role="img"
+    aria-label="self-rating out of ten per reflection">${grid}${line}${dots}</svg>`;
+  el.querySelectorAll("circle.dot").forEach(c => {
+    const r = pts[+c.dataset.i];
+    c.addEventListener("mousemove", ev => showTip(ev,
+      `<b>#${r.execution_id} · rated ${r.self_rating}/10</b>` +
+      `${esc((r.prompt || "").slice(0, 120))}<br>` +
+      `${r.delivered != null ? (r.delivered ? "delivered" : "not delivered") + " · " : ""}${ago(r.recorded_at)}`));
+    c.addEventListener("mouseleave", hideTip);
+  });
+}
+
+/* ── config tab ──────────────────────────────────────────────────────── */
+function deepMerge(a, b) {
+  if (a == null || typeof a !== "object" || Array.isArray(a)) return b;
+  if (b == null || typeof b !== "object" || Array.isArray(b)) return b;
+  const out = { ...a };
+  for (const k of Object.keys(b)) out[k] = k in out ? deepMerge(out[k], b[k]) : b[k];
+  return out;
+}
+function renderConfig(cfg) {
+  const scopes = cfg?.scopes ?? [];
+  $("cfg-scopes").innerHTML = scopes.map(s => `
+    <div class="card">
+      <div class="kick">${esc(s.scope)} scope</div>
+      <div style="font:11px var(--mono);color:var(--text-3);margin-bottom:8px;word-break:break-all">
+        ${esc(s.path)} ·
+        ${s.exists ? `<span class="badge ok">present</span>` : `<span class="badge dim">absent</span>`}
+        ${s.parse_error ? `<span class="badge bad">parse error</span>` : ""}
+      </div>
+      ${s.exists && !s.parse_error && s.settings != null
+        ? `<pre class="cfg">${esc(JSON.stringify(s.settings, null, 2))}</pre>`
+        : `<div class="empty" style="padding:16px">${s.exists ? "unreadable" : "not configured"}</div>`}
+    </div>`).join("");
+  const engine = scopes.reduce((acc, s) =>
+    s.settings && s.settings.agent_engine_config
+      ? deepMerge(acc, s.settings.agent_engine_config) : acc, {});
+  const agents = engine.agents ?? {};
+  const names = ["default", "worker", "judge", "triage"].filter(n => agents[n]);
+  $("cfg-engine").innerHTML = names.length
+    ? `<table><thead><tr><th>agent</th><th>model</th><th>effort</th><th>reasoning</th><th>params</th></tr></thead><tbody>` +
+      names.map(n => {
+        const a = agents[n] ?? {};
+        const params = Object.keys(a.params ?? {});
+        return `<tr><td class="main">${esc(n)}</td>
+          <td>${esc(a.model ?? "auto")}</td>
+          <td>${esc(a.effort ?? "—")}</td>
+          <td>${esc(String(a.reasoning ?? "—"))}</td>
+          <td>${params.length ? params.map(p => `<span class="chip">${esc(p)}</span>`).join("") : "—"}</td></tr>`;
+      }).join("") + `</tbody></table>` +
+      (engine.allowed_models
+        ? `<div class="kick" style="margin-top:12px">allowed models</div>
+           ${engine.allowed_models.map(m => `<span class="chip">${esc(m)}</span>`).join("")}` : "")
+    : `<div class="empty">no agent_engine_config in any scope —
+       the <code>/engine</code> command in stella's deck edits it interactively</div>`;
+  const stores = cfg?.stores ?? {};
+  $("cfg-stores").innerHTML = Object.entries(stores).map(([k, v]) => `
+    <div class="hbar" style="grid-template-columns:110px 1fr 80px">
+      <span class="name">${esc(k.replace("_", "."))}</span>
+      <span style="font:11px var(--mono);color:var(--text-3);overflow:hidden;text-overflow:ellipsis" title="${esc(v.path)}">${esc(v.path)}</span>
+      <span class="val">${v.exists ? `<span class="badge ok">live</span>` : `<span class="badge dim">absent</span>`}</span>
+    </div>`).join("");
+}
+
+/* ── code graph ──────────────────────────────────────────────────────── */
+/* Validated 8-slot categorical palette (dataviz six checks, dark surface).
+   Assigned to crates in fixed file-count order; the long tail is neutral. */
+const GP = ["#3987e5", "#008300", "#D14E7C", "#C68524",
+            "#199e70", "#E8654B", "#8F70E8", "#e66767"];
+const G_OTHER = "#8D8474";
+const graph = {
+  nodes: [], edges: [], groupColor: {}, adj: [],
+  t: { x: 0, y: 0, k: 1 }, alpha: 0, selected: -1, hover: -1,
+  matched: null, raf: 0, ready: false,
+};
+function groupColorFor(g) { return graph.groupColor[g] ?? G_OTHER; }
+function nodeRadius(n) {
+  return Math.min(4 + (n.in + n.out) * 0.7 + Math.sqrt(n.symbols || 0) * 0.25, 18);
+}
+function initGraph(data) {
+  const nodes = (data.nodes ?? []).map((n, i) => ({ ...n, i, x: 0, y: 0, vx: 0, vy: 0 }));
+  const edges = (data.edges ?? []).map(([a, b, w]) => ({ a, b, w }));
+  graph.groupColor = {};
+  (data.groups ?? []).slice(0, GP.length).forEach((g, i) => {
+    graph.groupColor[g.name] = GP[i];
+  });
+  // Deterministic initial layout: crates clustered around a ring.
+  const groups = [...new Set(nodes.map(n => n.group))];
+  const gIndex = {};
+  groups.forEach((g, i) => { gIndex[g] = i; });
+  nodes.forEach((n, i) => {
+    const ga = 2 * Math.PI * gIndex[n.group] / Math.max(groups.length, 1);
+    const r1 = ((i * 2654435761 % 1000) / 1000 - 0.5) * 320;
+    const r2 = ((i * 1597334677 % 1000) / 1000 - 0.5) * 320;
+    n.x = Math.cos(ga) * 420 + r1;
+    n.y = Math.sin(ga) * 420 + r2;
+  });
+  graph.nodes = nodes;
+  graph.edges = edges;
+  graph.adj = nodes.map(() => []);
+  edges.forEach((e, ei) => {
+    graph.adj[e.a].push({ n: e.b, e: ei });
+    graph.adj[e.b].push({ n: e.a, e: ei });
+  });
+  graph.selected = -1; graph.hover = -1; graph.matched = null;
+  graph.alpha = 1; graph.ready = true;
+  $("gstats").textContent =
+    `${data.total_files} files · ${edges.length} import edges · ${fmtTok(data.total_symbols)} symbols` +
+    (data.truncated ? ` · ${data.truncated} low-degree files folded` : "");
+  $("glegend").innerHTML = (data.groups ?? []).slice(0, GP.length).map(g =>
+    `<span><i style="background:${groupColorFor(g.name)}"></i>${esc(g.name)} (${g.files})</span>`).join("") +
+    ((data.groups ?? []).length > GP.length ? `<span><i style="background:${G_OTHER}"></i>other</span>` : "");
+  renderGraphSide();
+  fitGraph();
+  kickGraph();
+}
+function kickGraph() {
+  if (graph.raf) return;
+  const step = () => {
+    graph.raf = 0;
+    if (!graph.ready) return;
+    if (graph.alpha > 0.02) { tickGraph(); tickGraph(); graph.raf = requestAnimationFrame(step); }
+    drawGraph();
+  };
+  graph.raf = requestAnimationFrame(step);
+}
+function tickGraph() {
+  const N = graph.nodes;
+  const alpha = graph.alpha;
+  // Pairwise repulsion (N ≤ 600 — brute force is fine and predictable).
+  for (let i = 0; i < N.length; i++) {
+    const a = N[i];
+    for (let j = i + 1; j < N.length; j++) {
+      const b = N[j];
+      let dx = a.x - b.x, dy = a.y - b.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 < 1) { dx = (i % 7) - 3; dy = (j % 7) - 3; d2 = dx * dx + dy * dy + 1; }
+      if (d2 > 160000) continue;
+      const f = 1400 * alpha / d2;
+      const fx = dx * f, fy = dy * f;
+      a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+    }
+  }
+  // Springs along import edges.
+  for (const e of graph.edges) {
+    const a = graph.nodes[e.a], b = graph.nodes[e.b];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const rest = 60 + nodeRadius(a) + nodeRadius(b);
+    const f = 0.05 * alpha * (d - rest) / d * Math.min(e.w, 3);
+    a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
+  }
+  // Gentle gravity to the origin + integrate.
+  for (const n of graph.nodes) {
+    n.vx -= n.x * 0.012 * alpha;
+    n.vy -= n.y * 0.012 * alpha;
+    if (n.pin) { n.vx = 0; n.vy = 0; continue; }
+    n.vx *= 0.82; n.vy *= 0.82;
+    const v = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+    if (v > 14) { n.vx *= 14 / v; n.vy *= 14 / v; }
+    n.x += n.vx; n.y += n.vy;
+  }
+  graph.alpha *= 0.985;
+}
+function graphCanvas() {
+  const c = $("gcanvas");
+  const dpr = devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr || c.height !== h * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const ctx = c.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { c, ctx, w, h };
+}
+function focusSet() {
+  if (graph.selected < 0) return null;
+  const set = new Set([graph.selected]);
+  graph.adj[graph.selected].forEach(({ n }) => set.add(n));
+  return set;
+}
+function drawGraph() {
+  if (!graph.ready) return;
+  const { ctx, w, h } = graphCanvas();
+  const { x, y, k } = graph.t;
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.translate(w / 2 + x, h / 2 + y);
+  ctx.scale(k, k);
+  const focus = focusSet();
+  const q = graph.matched;
+  const dimmed = (i) =>
+    (focus && !focus.has(i)) || (q && !graph.nodes[i].path.toLowerCase().includes(q));
+  // Edges under nodes.
+  for (const e of graph.edges) {
+    const a = graph.nodes[e.a], b = graph.nodes[e.b];
+    const lit = focus && (e.a === graph.selected || e.b === graph.selected);
+    if (focus && !lit) { ctx.globalAlpha = 0.04; }
+    else if (q) { ctx.globalAlpha = 0.06; }
+    else { ctx.globalAlpha = lit ? 0.75 : 0.16; }
+    if (lit) ctx.globalAlpha = 0.75;
+    ctx.strokeStyle = lit ? "#F5B33C" : "#B7AD98";
+    ctx.lineWidth = (lit ? 1.6 : 0.7) / k;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  // Nodes.
+  for (const n of graph.nodes) {
+    const r = nodeRadius(n);
+    const dim = dimmed(n.i);
+    ctx.globalAlpha = dim ? 0.13 : 1;
+    ctx.fillStyle = groupColorFor(n.group);
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.fill();
+    if (n.i === graph.selected || n.i === graph.hover) {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "#F5B33C"; ctx.lineWidth = 2 / k;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r + 2 / k, 0, 2 * Math.PI); ctx.stroke();
+    }
+  }
+  // Labels: hubs, the focused neighborhood, search hits when zoomed.
+  ctx.font = `${10 / k}px SFMono-Regular,Menlo,monospace`;
+  ctx.textAlign = "center";
+  for (const n of graph.nodes) {
+    const deg = n.in + n.out;
+    const inFocus = focus?.has(n.i);
+    const hit = q && n.path.toLowerCase().includes(q);
+    if (!(inFocus || hit || n.i === graph.hover || (!focus && !q && (deg >= 10 || k >= 1.6))))
+      continue;
+    ctx.globalAlpha = 1;
+    const label = n.path.split("/").pop();
+    const ly = n.y - nodeRadius(n) - 5 / k;
+    ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(11,10,8,.85)";
+    ctx.strokeText(label, n.x, ly);
+    ctx.fillStyle = inFocus || hit || n.i === graph.hover ? "#F2EDE3" : "#B7AD98";
+    ctx.fillText(label, n.x, ly);
+  }
+  ctx.restore();
+}
+function fitGraph() {
+  if (!graph.nodes.length) return;
+  const { w, h } = graphCanvas();
+  let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+  for (const n of graph.nodes) {
+    minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x);
+    minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y);
+  }
+  const k = Math.min(2.2, 0.9 * Math.min(w / Math.max(maxX - minX, 60), h / Math.max(maxY - minY, 60)));
+  graph.t = { x: -k * (minX + maxX) / 2, y: -k * (minY + maxY) / 2, k };
+  drawGraph();
+}
+function worldPos(ev) {
+  const rect = $("gcanvas").getBoundingClientRect();
+  const { x, y, k } = graph.t;
+  return {
+    x: (ev.clientX - rect.left - rect.width / 2 - x) / k,
+    y: (ev.clientY - rect.top - rect.height / 2 - y) / k,
+  };
+}
+function nodeAt(ev) {
+  const p = worldPos(ev);
+  let best = -1, bestD = 1e9;
+  for (const n of graph.nodes) {
+    const dx = n.x - p.x, dy = n.y - p.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const r = nodeRadius(n) + 5 / graph.t.k;
+    if (d < r && d < bestD) { best = n.i; bestD = d; }
+  }
+  return best;
+}
+function selectNode(i, center) {
+  graph.selected = i;
+  renderGraphSide();
+  if (center && i >= 0) {
+    const n = graph.nodes[i];
+    graph.t.x = -n.x * graph.t.k;
+    graph.t.y = -n.y * graph.t.k;
+  }
+  drawGraph();
+}
+function renderGraphSide() {
+  const el = $("gside");
+  if (!graph.ready || !graph.nodes.length) {
+    $("gside-kick").textContent = "selection";
+    el.innerHTML = `<div class="empty">no code graph yet —<br>stella indexes this workspace
+      with tree-sitter as it works; run <code>stella</code> here first</div>`;
+    return;
+  }
+  if (graph.selected < 0) {
+    $("gside-kick").textContent = "busiest files · click to focus";
+    const top = [...graph.nodes].sort((a, b) => (b.in + b.out) - (a.in + a.out)).slice(0, 14);
+    el.innerHTML = top.map(n =>
+      `<div class="gfile" data-i="${n.i}" title="${esc(n.path)}">
+        <i style="background:${groupColorFor(n.group)}"></i>${esc(n.path)}
+        <span style="color:var(--text-3)"> · ${n.in + n.out}</span></div>`).join("");
+    el.querySelectorAll(".gfile").forEach(f =>
+      f.addEventListener("click", () => selectNode(+f.dataset.i, true)));
+    return;
+  }
+  const n = graph.nodes[graph.selected];
+  $("gside-kick").textContent = "selected file";
+  const outs = graph.edges.filter(e => e.a === n.i).map(e => graph.nodes[e.b]);
+  const ins = graph.edges.filter(e => e.b === n.i).map(e => graph.nodes[e.a]);
+  const fileRow = (m) =>
+    `<div class="gfile" data-i="${m.i}" title="${esc(m.path)}">
+      <i style="background:${groupColorFor(m.group)}"></i>${esc(m.path)}</div>`;
+  el.innerHTML = `
+    <div style="font:600 12px var(--mono);color:var(--gold);word-break:break-all">${esc(n.path)}</div>
+    <div class="row"><span class="k">crate / group</span><span>${esc(n.group)}</span></div>
+    <div class="row"><span class="k">language</span><span>${esc(n.lang)}</span></div>
+    <div class="row"><span class="k">symbols</span><span>${n.symbols}</span></div>
+    <div class="row"><span class="k">imports / imported by</span><span>${n.out} / ${n.in}</span></div>
+    ${outs.length ? `<div class="kick" style="margin-top:12px">imports</div>` + outs.slice(0, 12).map(fileRow).join("") : ""}
+    ${ins.length ? `<div class="kick" style="margin-top:12px">imported by</div>` + ins.slice(0, 12).map(fileRow).join("") : ""}`;
+  el.querySelectorAll(".gfile").forEach(f =>
+    f.addEventListener("click", () => selectNode(+f.dataset.i, true)));
+}
+function bindGraphEvents() {
+  const c = $("gcanvas");
+  let dragNode = -1, panning = false, moved = false, last = null;
+  c.addEventListener("mousedown", ev => {
+    moved = false; last = { x: ev.clientX, y: ev.clientY };
+    dragNode = nodeAt(ev);
+    panning = dragNode < 0;
+    c.classList.add("dragging");
+    if (dragNode >= 0) { graph.nodes[dragNode].pin = true; graph.alpha = Math.max(graph.alpha, 0.25); kickGraph(); }
+  });
+  addEventListener("mousemove", ev => {
+    if (last && (dragNode >= 0 || panning)) {
+      const dx = ev.clientX - last.x, dy = ev.clientY - last.y;
+      if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+      if (dragNode >= 0) {
+        const p = worldPos(ev);
+        graph.nodes[dragNode].x = p.x; graph.nodes[dragNode].y = p.y;
+        graph.alpha = Math.max(graph.alpha, 0.12); kickGraph();
+      } else if (panning) {
+        graph.t.x += dx; graph.t.y += dy; drawGraph();
+      }
+      last = { x: ev.clientX, y: ev.clientY };
+    } else if (ev.target === c && graph.ready) {
+      const h = nodeAt(ev);
+      if (h !== graph.hover) { graph.hover = h; drawGraph(); }
+      if (h >= 0) {
+        const n = graph.nodes[h];
+        showTip(ev, `<b>${esc(n.path)}</b>${esc(n.group)} · ${esc(n.lang)} ·
+          ${n.symbols} symbols<br>imports ${n.out} · imported by ${n.in}`);
+        c.style.cursor = "pointer";
+      } else { hideTip(); c.style.cursor = "grab"; }
+    }
+  });
+  addEventListener("mouseup", ev => {
+    if (dragNode >= 0) graph.nodes[dragNode].pin = false;
+    if (last && !moved && ev.target === c) {
+      selectNode(nodeAt(ev), false);
+    }
+    dragNode = -1; panning = false; last = null;
+    c.classList.remove("dragging");
+  });
+  c.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    const rect = c.getBoundingClientRect();
+    const mx = ev.clientX - rect.left - rect.width / 2;
+    const my = ev.clientY - rect.top - rect.height / 2;
+    const factor = Math.exp(-ev.deltaY * 0.0016);
+    const k2 = Math.min(5, Math.max(0.15, graph.t.k * factor));
+    const real = k2 / graph.t.k;
+    graph.t.x = mx - (mx - graph.t.x) * real;
+    graph.t.y = my - (my - graph.t.y) * real;
+    graph.t.k = k2;
+    drawGraph();
+  }, { passive: false });
+  c.addEventListener("dblclick", () => fitGraph());
+  $("gfit").addEventListener("click", () => fitGraph());
+  $("gclear").addEventListener("click", () => {
+    $("gsearch").value = ""; graph.matched = null; selectNode(-1, false);
+  });
+  $("gsearch").addEventListener("input", () => {
+    const v = $("gsearch").value.trim().toLowerCase();
+    graph.matched = v || null;
+    drawGraph();
+  });
+  $("gsearch").addEventListener("keydown", ev => {
+    if (ev.key !== "Enter") return;
+    const v = $("gsearch").value.trim().toLowerCase();
+    if (!v) return;
+    const hit = graph.nodes.find(n => n.path.toLowerCase().includes(v));
+    if (hit) selectNode(hit.i, true);
+  });
+  new ResizeObserver(() => { if (graph.ready) drawGraph(); }).observe(c);
+}
+
+/* ── tabs, lazy loads, refresh loop ──────────────────────────────────── */
+async function loadTab(tab, force) {
+  const key = `${tab}:${state.project}`;
+  // null (not false) when absent/forced: `??` below must fall through to fetch.
+  const cached = force ? null : (lazyCache[key] ?? null);
+  try {
+    if (tab === "graph") {
+      const data = cached ?? await api("/api/codegraph");
+      lazyCache[key] = data;
+      if (!cached || force) initGraph(data); else drawGraph();
+    } else if (tab === "skills") {
+      const data = cached ?? await api("/api/skills");
+      lazyCache[key] = data;
+      renderSkills(data ?? []);
+    } else if (tab === "mcp") {
+      const data = cached ?? await api("/api/mcp-servers");
+      lazyCache[key] = data;
+      renderMcpTab(data);
+    } else if (tab === "memory") {
+      const data = cached ?? await Promise.all([api("/api/memories"), api("/api/rules")]);
+      lazyCache[key] = data;
+      renderMemoryTab(data[0], data[1]);
+    } else if (tab === "improve") {
+      const data = cached ?? await api("/api/skills");
+      lazyCache[`skills:${state.project}`] = data;
+      lazyCache[key] = data;
+      renderImprove(data ?? []);
+    } else if (tab === "config") {
+      const data = cached ?? await api("/api/config");
+      lazyCache[key] = data;
+      renderConfig(data);
+    }
+  } catch { /* section keeps its previous contents; the LIVE dot reports */ }
+}
+function switchTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll("nav.bar button.tab").forEach(b =>
+    b.classList.toggle("on", b.dataset.tab === tab));
+  document.querySelectorAll("section[data-tab]").forEach(s =>
+    s.classList.toggle("on", s.dataset.tab === tab));
+  if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
+  loadTab(tab, false);
+}
+document.querySelectorAll("nav.bar button.tab").forEach(b =>
+  b.addEventListener("click", () => switchTab(b.dataset.tab)));
+addEventListener("hashchange", () => {
+  const tab = location.hash.slice(1);
+  if (document.querySelector(`section[data-tab="${tab}"]`)) switchTab(tab);
+});
+$("tf").querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+  state.tf = b.dataset.tf;
+  $("tf").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  renderKpis(); renderTimeline(); renderExecutions(); renderActivity();
+}));
+
 async function refresh() {
   try {
-    const [meta, o, ex, models, tools, files, memory, mcp, fleet] = await Promise.all([
-      "/api/meta", "/api/overview", "/api/executions", "/api/models", "/api/tools",
-      "/api/files", "/api/memory", "/api/mcp", "/api/fleet",
-    ].map(u => fetch(u).then(r => r.json())));
+    const [meta, o, ex, models, tools, files, memory, mcp, fleet, activity, reflections, projects]
+      = await Promise.all([
+        "/api/meta", "/api/overview", "/api/executions", "/api/models", "/api/tools",
+        "/api/files", "/api/memory", "/api/mcp", "/api/fleet", "/api/activity",
+        "/api/reflections", "/api/projects",
+      ].map(api));
+    Object.assign(D, { meta, overview: o, executions: ex, models, tools, files,
+      memory, mcp, fleet, activity, reflections, projects });
     $("ws").textContent = meta.workspace.split("/").slice(-2).join("/");
     $("ws").title = meta.workspace;
-    renderKpis(o); renderTimeline(o); renderModels(models); renderTools(tools);
+    renderProjects(projects);
+    renderKpis(); renderTimeline(); renderModels(models); renderTools(tools);
     renderFiles(files); renderMemory(memory); renderFleetMcp(fleet, mcp);
-    renderExecutions(ex);
+    renderExecutions(); renderActivity();
+    if (state.tab === "improve") renderImprove(lazyCache[`skills:${state.project}`] ?? []);
+    if (state.tab === "mcp") loadTab("mcp", false);
     $("live").classList.remove("paused");
   } catch {
     $("live").classList.add("paused");
   }
+}
+bindGraphEvents();
+if (location.hash.length > 1 &&
+    document.querySelector(`section[data-tab="${location.hash.slice(1)}"]`)) {
+  switchTab(location.hash.slice(1));
 }
 refresh();
 setInterval(() => { if (!document.hidden) refresh(); }, 5000);
