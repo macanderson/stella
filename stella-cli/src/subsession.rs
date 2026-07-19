@@ -290,10 +290,7 @@ async fn run_worker(
 
     let store = agent::open_store(&cfg.workspace_root);
     let calibration = agent::seed_calibration(&store, cfg);
-    let execution = agent::begin_execution(&store, "deck-sub", &spec.prompt, cfg);
-    if let Some((store, id)) = &execution {
-        let _ = store.set_execution_session(*id, session_id);
-    }
+    let execution = agent::begin_execution(&store, "deck-sub", &spec.prompt, cfg, Some(session_id));
     let execution_id = execution.as_ref().map(|(_, id)| *id);
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();

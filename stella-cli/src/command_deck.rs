@@ -724,18 +724,16 @@ pub async fn run_deck_session(
 
         // The execution record outlives the turn future so a cancelled turn
         // can still be closed out in the store.
+        // The session link (store schema v8) is what lets the SESSIONS
+        // overlay's `Enter` reassemble and replay the full journal long
+        // after this process is gone.
         let execution = agent::begin_execution(
             &store,
             if pipeline_on { "deck-pipeline" } else { "deck" },
             &prompt,
             cfg,
+            Some(&session_record.id),
         );
-        // Link the turn to this session (store schema v8) — what lets the
-        // SESSIONS overlay's `Enter` reassemble and replay the full journal
-        // long after this process is gone.
-        if let Some((store, id)) = &execution {
-            let _ = store.set_execution_session(*id, &session_record.id);
-        }
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
 
