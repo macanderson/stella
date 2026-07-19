@@ -82,3 +82,23 @@ pub trait Clock: Send + Sync {
 pub trait TurnGate: Send + Sync {
     async fn wait_if_paused(&self);
 }
+
+/// Step-boundary steering — polled by the engine at the same safe boundary
+/// as [`TurnGate`] (L-E6: never mid-tool). Turns "wait, pause, or kill"
+/// into "steer": user messages queued while a turn runs are injected as
+/// the model's next observation instead of waiting for the turn to end,
+/// and a soft stop ends the turn at the boundary KEEPING the work so far —
+/// unlike the caller-side hard cancel, which drops the turn future and
+/// truncates the whole turn (all paid tokens) out of history. A port so
+/// `stella-core` stays I/O-free — the CLI implements it over shared state
+/// fed by the deck's input loop.
+pub trait TurnSteering: Send + Sync {
+    /// Drain the user messages queued since the last boundary, oldest
+    /// first. Non-destructive peeks are deliberately not offered: whatever
+    /// this returns WILL be injected, so the implementation owns dedup.
+    fn drain_steering(&self) -> Vec<String>;
+    /// True when the user asked to end the turn at the next boundary. The
+    /// engine reads this once per step; the implementation should latch it
+    /// (a stop request must not evaporate between steps).
+    fn soft_stop_requested(&self) -> bool;
+}

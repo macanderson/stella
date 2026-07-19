@@ -210,6 +210,9 @@ pub fn event_signature(event: &AgentEvent) -> String {
         }
         AgentEvent::Retry { .. } => "retry".to_string(),
         AgentEvent::Compaction { .. } => "compaction".to_string(),
+        // Steering text is user-authored free text; only its occurrence is
+        // structural (same posture as budget ticks).
+        AgentEvent::Steered { .. } => "steered".to_string(),
         // Budget ticks vary in magnitude every run; only their occurrence is
         // structural.
         AgentEvent::BudgetTick { mode, .. } => format!("budget_tick:{mode:?}"),
