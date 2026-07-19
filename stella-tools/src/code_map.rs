@@ -6,8 +6,10 @@
 //! (Field Manual Part 4: "code is a graph, not text"), yet agents keep
 //! grepping instead of asking it. So the search tools bring the graph to the
 //! agent: every successful result carries a compact per-file map (symbols,
-//! import edges) drawn from `.stella/codegraph.db`, plus a pointer at
-//! `graph_query` for the precise follow-up.
+//! import edges) drawn from `.stella/codegraph.db`. The session's FIRST
+//! mapped search additionally carries a one-line pointer at `graph_query`
+//! (the [`TipOnce`] latch, shared by grep and glob) — taught once, then out
+//! of the way.
 //!
 //! Strictly additive and strictly best-effort: no index, an unopenable
 //! store, or files the graph doesn't know all mean "no footer", never an
@@ -16,6 +18,8 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Files mapped per search result — enough to orient, small enough that the
 /// footer never rivals the matches themselves.
@@ -25,12 +29,29 @@ const MAX_SYMBOLS: usize = 6;
 /// Importer paths listed per file before collapsing to a count.
 const MAX_IMPORTERS: usize = 3;
 
+/// Once-per-session latch for the footer's `graph_query` tip line. The
+/// registry constructs one and hands clones to `grep` AND `glob`, so the
+/// tip appears on the session's first mapped search — whichever tool runs
+/// it — and never again; repeating it on every result is teaching that
+/// decays into noise. Consumed only when a footer actually renders: a
+/// search before the index exists doesn't burn the one showing.
+#[derive(Clone, Default)]
+pub struct TipOnce(Arc<AtomicBool>);
+
+impl TipOnce {
+    /// True exactly once, on the first call — atomic, so concurrent
+    /// read-only searches race to exactly one tip.
+    fn take(&self) -> bool {
+        !self.0.swap(true, Ordering::Relaxed)
+    }
+}
+
 /// Render the code-map footer for the files a search touched, or `None`
 /// when there is nothing to say (no index, store unopenable, or none of the
 /// candidates are in the graph). `candidates` may repeat and may mix
 /// absolute and root-relative paths — both resolve; order of first
 /// appearance is kept, so the map follows the result's own ranking.
-pub fn for_files<'a, I>(root: &Path, candidates: I) -> Option<String>
+pub fn for_files<'a, I>(root: &Path, candidates: I, tip: &TipOnce) -> Option<String>
 where
     I: IntoIterator<Item = &'a str>,
 {
@@ -68,10 +89,12 @@ where
     }
     let mut out = String::from("\n\ncode map (from the code graph):\n");
     out.push_str(&lines.join("\n"));
-    out.push_str(
-        "\ntip: graph_query answers symbol/dependency questions directly \
-         (op=definitions|references|imports|importers|neighbors).",
-    );
+    if tip.take() {
+        out.push_str(
+            "\ntip: graph_query answers symbol/dependency questions directly \
+             (op=definitions|references|imports|importers|neighbors).",
+        );
+    }
     Some(out)
 }
 
@@ -149,13 +172,14 @@ mod tests {
     fn no_index_means_no_footer() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").expect("write");
-        assert_eq!(for_files(dir.path(), ["lib.rs"]), None);
+        assert_eq!(for_files(dir.path(), ["lib.rs"], &TipOnce::default()), None);
     }
 
     #[test]
     fn maps_an_indexed_file_with_symbols_and_a_graph_query_tip() {
         let dir = indexed_workspace();
-        let map = for_files(dir.path(), ["lib.rs"]).expect("footer for an indexed file");
+        let map = for_files(dir.path(), ["lib.rs"], &TipOnce::default())
+            .expect("footer for an indexed file");
         assert!(map.contains("code map"), "labeled: {map}");
         assert!(map.contains("lib.rs"), "names the file: {map}");
         assert!(map.contains("function greet:1"), "cites the symbol: {map}");
@@ -173,7 +197,8 @@ mod tests {
             .join("lib.rs")
             .to_string_lossy()
             .into_owned();
-        let map = for_files(dir.path(), [abs.as_str(), "lib.rs"]).expect("footer");
+        let map =
+            for_files(dir.path(), [abs.as_str(), "lib.rs"], &TipOnce::default()).expect("footer");
         assert_eq!(
             map.matches("function greet:1").count(),
             1,
@@ -185,10 +210,74 @@ mod tests {
     fn unknown_files_are_skipped_not_rendered_empty() {
         let dir = indexed_workspace();
         assert_eq!(
-            for_files(dir.path(), ["README.md", "no/such/file.rs"]),
+            for_files(
+                dir.path(),
+                ["README.md", "no/such/file.rs"],
+                &TipOnce::default()
+            ),
             None,
             "files the graph doesn't know produce no footer at all"
         );
+    }
+
+    #[test]
+    fn the_tip_renders_once_then_footers_stay_map_only() {
+        let dir = indexed_workspace();
+        let tip = TipOnce::default();
+        let first = for_files(dir.path(), ["lib.rs"], &tip).expect("first footer");
+        assert!(first.contains("tip: graph_query"), "teaches once: {first}");
+        let second = for_files(dir.path(), ["lib.rs"], &tip).expect("second footer");
+        assert!(second.contains("code map"), "the map stays: {second}");
+        assert!(
+            !second.contains("tip: graph_query"),
+            "already taught: {second}"
+        );
+    }
+
+    /// The one showing must land where it can teach: a search that renders
+    /// no footer (nothing mapped) leaves the latch unspent.
+    #[test]
+    fn a_search_without_a_footer_does_not_consume_the_tip() {
+        let dir = indexed_workspace();
+        let tip = TipOnce::default();
+        assert_eq!(for_files(dir.path(), ["README.md"], &tip), None);
+        let mapped = for_files(dir.path(), ["lib.rs"], &tip).expect("footer");
+        assert!(
+            mapped.contains("tip: graph_query"),
+            "still unspent after a footer-less search: {mapped}"
+        );
+    }
+
+    /// The session-level contract: grep and glob share one latch through the
+    /// registry, so whichever searches first carries the tip and the other
+    /// never repeats it.
+    #[tokio::test]
+    async fn the_tip_shows_once_per_session_across_grep_and_glob() {
+        let dir = indexed_workspace();
+        let reg = crate::ToolRegistry::with_issue_backend(dir.path().to_path_buf(), None);
+        let first = reg
+            .execute("grep", &serde_json::json!({"pattern": "greet"}))
+            .await;
+        let second = reg
+            .execute("glob", &serde_json::json!({"pattern": "*.rs"}))
+            .await;
+        match (first, second) {
+            (
+                stella_protocol::tool::ToolOutput::Ok { content: grep_out },
+                stella_protocol::tool::ToolOutput::Ok { content: glob_out },
+            ) => {
+                assert!(
+                    grep_out.contains("tip: graph_query"),
+                    "the session's first mapped search teaches: {grep_out}"
+                );
+                assert!(glob_out.contains("code map"), "later maps stay: {glob_out}");
+                assert!(
+                    !glob_out.contains("tip: graph_query"),
+                    "taught once per session, across tools: {glob_out}"
+                );
+            }
+            other => panic!("expected two ok results, got: {other:?}"),
+        }
     }
 
     #[test]
@@ -208,7 +297,12 @@ mod tests {
         graph.shutdown();
 
         let names: Vec<String> = (0..(MAX_FILES + 3)).map(|i| format!("m{i}.rs")).collect();
-        let map = for_files(dir.path(), names.iter().map(String::as_str)).expect("footer");
+        let map = for_files(
+            dir.path(),
+            names.iter().map(String::as_str),
+            &TipOnce::default(),
+        )
+        .expect("footer");
         assert_eq!(
             map.matches("- m").count(),
             MAX_FILES,

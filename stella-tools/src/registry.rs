@@ -138,6 +138,7 @@ impl ToolRegistry {
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
+        let code_map_tip = crate::code_map::TipOnce::default();
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
         let mut entries: Vec<Arc<dyn Tool>> = vec![
             Arc::new(crate::read::ReadFile::default()),
@@ -145,8 +146,11 @@ impl ToolRegistry {
             Arc::new(crate::edit::EditFile),
             Arc::new(crate::delete::DeleteFile),
             Arc::new(crate::bash::Bash),
-            Arc::new(crate::grep::Grep),
-            Arc::new(crate::glob::Glob),
+            // One shared tip latch: the session's first mapped search —
+            // grep or glob, whichever comes first — carries the graph_query
+            // pointer; every later footer is map-only.
+            Arc::new(crate::grep::Grep::with_code_map(code_map_tip.clone())),
+            Arc::new(crate::glob::Glob::with_code_map(code_map_tip)),
             Arc::new(crate::gather::GatherContext),
             Arc::new(crate::exploration::Explorations),
             Arc::new(crate::exploration::SaveExploration),

@@ -10,7 +10,34 @@ use crate::registry::Tool;
 
 const MAX_RESULTS: usize = 500;
 
-pub struct Glob;
+pub struct Glob {
+    /// Code-map footer state; `None` disables the footer entirely (the
+    /// embedded sweeps in `gather_context` — see [`crate::grep::Grep`]).
+    code_map: Option<crate::code_map::TipOnce>,
+}
+
+impl Glob {
+    /// The model-facing tool: footer on, `graph_query` tip latch shared
+    /// with `grep` (the registry passes both clones of one
+    /// [`crate::code_map::TipOnce`]).
+    pub fn with_code_map(tip: crate::code_map::TipOnce) -> Self {
+        Self {
+            code_map: Some(tip),
+        }
+    }
+
+    /// Footer-less instance for embedded use.
+    pub fn bare() -> Self {
+        Self { code_map: None }
+    }
+}
+
+impl Default for Glob {
+    /// Footer on with a private latch — the standalone shape tests use.
+    fn default() -> Self {
+        Self::with_code_map(crate::code_map::TipOnce::default())
+    }
+}
 
 #[async_trait]
 impl Tool for Glob {
@@ -86,7 +113,7 @@ impl Tool for Glob {
                     .collect::<Vec<_>>()
                     .join("\n");
                 ToolOutput::Ok {
-                    content: with_code_map(content, root),
+                    content: with_code_map(content, root, self.code_map.as_ref()),
                 }
             }
             Err(_) => {
@@ -113,7 +140,7 @@ impl Tool for Glob {
                                 .collect::<Vec<_>>()
                                 .join("\n");
                             ToolOutput::Ok {
-                                content: with_code_map(content, root),
+                                content: with_code_map(content, root, self.code_map.as_ref()),
                             }
                         }
                     }
@@ -126,11 +153,19 @@ impl Tool for Glob {
     }
 }
 
-/// Append the code-map footer for these matched paths, when the graph has
-/// one to give (see [`crate::code_map`]). Bound separately from the `if let`
-/// so the `content.lines()` borrow ends before `content` is mutated.
-fn with_code_map(mut content: String, root: &std::path::Path) -> String {
-    let map = crate::code_map::for_files(root, content.lines());
+/// Append the code-map footer for these matched paths, when a footer is
+/// enabled and the graph has one to give (see [`crate::code_map`]). Bound
+/// separately from the `if let` so the `content.lines()` borrow ends before
+/// `content` is mutated.
+fn with_code_map(
+    mut content: String,
+    root: &std::path::Path,
+    tip: Option<&crate::code_map::TipOnce>,
+) -> String {
+    let Some(tip) = tip else {
+        return content;
+    };
+    let map = crate::code_map::for_files(root, content.lines(), tip);
     if let Some(map) = map {
         content.push_str(&map);
     }
@@ -168,7 +203,7 @@ mod tests {
 
         // Use a glob pattern (not regex) so both `fd` and `find -name`
         // handle it identically across platforms.
-        let result = Glob
+        let result = Glob::default()
             .execute(
                 &serde_json::json!({"pattern": "*.rs", "path": &subdir}),
                 &dir,
@@ -197,7 +232,7 @@ mod tests {
         graph.index_all().expect("index");
         graph.shutdown();
 
-        let result = Glob
+        let result = Glob::default()
             .execute(&serde_json::json!({"pattern": "*.rs"}), dir.path())
             .await;
         match result {
@@ -216,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn no_files_returns_ok() {
         let dir = std::env::temp_dir();
-        let result = Glob
+        let result = Glob::default()
             .execute(&serde_json::json!({"pattern": "*.nonexistent"}), &dir)
             .await;
         match result {
