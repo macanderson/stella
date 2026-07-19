@@ -22,7 +22,7 @@
 //! skipped in favor of latency, and delegation is not recursive — a worker's
 //! own `task_assign` requests are reported on its lane instead of spawning.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
@@ -30,6 +30,7 @@ use stella_protocol::{AgentEvent, CompletionMessage, TaskItem};
 use stella_tools::ToolRegistry;
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::oneshot;
 
 use crate::agent;
 use crate::command_deck::{now_ms, prompt_line, spawn_forwarder};
@@ -40,6 +41,17 @@ use crate::runtime::TokioSleeper;
 /// assignments) beyond this wait in the driver's backlog and dispatch as
 /// slots free — the cap bounds provider concurrency and CPU, not the queue.
 pub(crate) const MAX_CONCURRENT: usize = 3;
+
+/// How a worker ended — the supervisor's bookkeeping distinguishes the user
+/// stopping a worker from the worker failing (a stop must not read as a
+/// failure, must not auto-complete a task, and needs no inbox notification —
+/// the user was there).
+pub(crate) enum WorkerEnd {
+    Done,
+    Failed(String),
+    /// Stopped by the user (Agents tab `s`, or Esc on the worker's lane).
+    Stopped,
+}
 
 /// Messages the driver's supervisor channel carries. Spawn requests travel
 /// tap → driver (a tool call cannot spawn a thread that outlives its turn);
@@ -53,15 +65,20 @@ pub(crate) enum SupervisorMsg {
         /// The worker's execution row, when the store recorded one — the
         /// driver stamps the post-completion board mirror against it.
         execution_id: Option<i64>,
-        outcome: Result<(), String>,
+        /// USD the worker's turn spent — metered into the session's parent
+        /// budget guard by the driver (the L-E9 discipline: child spend
+        /// always reaches the parent's ledger).
+        cost_usd: f64,
+        end: WorkerEnd,
     },
 }
 
-/// Driver-side sub-session bookkeeping: the live-worker count and the lane
-/// counter for `req:<n>` prompt workers.
+/// Driver-side sub-session bookkeeping: the live-worker count, the lane
+/// counter for `req:<n>` prompt workers, and each live worker's stop signal.
 pub(crate) struct SubSessions {
     active: usize,
     next_req: u64,
+    stops: HashMap<String, oneshot::Sender<()>>,
 }
 
 impl SubSessions {
@@ -69,6 +86,7 @@ impl SubSessions {
         Self {
             active: 0,
             next_req: 0,
+            stops: HashMap::new(),
         }
     }
 
@@ -76,12 +94,24 @@ impl SubSessions {
         self.active < MAX_CONCURRENT
     }
 
-    pub(crate) fn started(&mut self) {
+    fn started(&mut self, lane: &str, stop: oneshot::Sender<()>) {
         self.active += 1;
+        self.stops.insert(lane.to_string(), stop);
     }
 
-    pub(crate) fn ended(&mut self) {
+    pub(crate) fn ended(&mut self, lane: &str) {
         self.active = self.active.saturating_sub(1);
+        self.stops.remove(lane);
+    }
+
+    /// Signal one worker to stop (clean cancel: its turn future drops at the
+    /// next await point, exactly the lead's cancel semantics). `false` when
+    /// no such worker is live — a stale stop is a no-op, never an error.
+    pub(crate) fn stop(&mut self, lane: &str) -> bool {
+        match self.stops.remove(lane) {
+            Some(tx) => tx.send(()).is_ok(),
+            None => false,
+        }
     }
 
     /// The next prompt-worker lane id (`req:1`, `req:2`, …).
@@ -129,6 +159,10 @@ pub(crate) fn task_prompt(req: &SpawnRequest) -> String {
 /// Spawn one worker. Registers its deck lane immediately (the sub-second
 /// acknowledgement — the row exists before any heavy setup), then runs the
 /// session on a dedicated OS thread. Never blocks the caller.
+// A worker genuinely needs every one of these (identity, budget, session
+// link, both channels, stop signal) — bundling them into a struct would just
+// move the field list one hop away from the one call shape.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn(
     cfg: &Config,
     spec: SubSessionSpec,
@@ -137,6 +171,7 @@ pub(crate) fn spawn(
     workspace_name: String,
     in_tx: UnboundedSender<Inbound>,
     sup_tx: UnboundedSender<SupervisorMsg>,
+    stop_rx: oneshot::Receiver<()>,
 ) {
     let mut meta = AgentMeta::new(spec.lane.clone(), spec.title.clone(), now_ms())
         .with_role("subagent")
@@ -151,24 +186,36 @@ pub(crate) fn spawn(
     let cfg = cfg.clone();
     std::thread::spawn(move || {
         let lane = spec.lane.clone();
-        let (execution_id, outcome) = match tokio::runtime::Builder::new_current_thread()
+        let (execution_id, cost_usd, end) = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
         {
-            Ok(rt) => rt.block_on(run_worker(&cfg, &spec, budget_limit, &session_id, &in_tx)),
-            Err(e) => (None, Err(format!("worker runtime failed to start: {e}"))),
+            Ok(rt) => rt.block_on(run_worker(
+                &cfg,
+                &spec,
+                budget_limit,
+                &session_id,
+                &in_tx,
+                stop_rx,
+            )),
+            Err(e) => (
+                None,
+                0.0,
+                WorkerEnd::Failed(format!("worker runtime failed to start: {e}")),
+            ),
         };
 
         // Terminal lane status. On failure the Error event (already on the
         // lane via the forwarder or below) carries the reason.
         let _ = in_tx.send(Inbound::Status {
             agent: lane.clone(),
-            status: match &outcome {
-                Ok(()) => AgentStatus::Done,
-                Err(_) => AgentStatus::Failed,
+            status: match &end {
+                WorkerEnd::Done => AgentStatus::Done,
+                WorkerEnd::Failed(_) => AgentStatus::Failed,
+                WorkerEnd::Stopped => AgentStatus::Killed,
             },
         });
-        if let Err(reason) = &outcome {
+        if let WorkerEnd::Failed(reason) = &end {
             let _ = in_tx.send(Inbound::Event {
                 agent: lane.clone(),
                 event: AgentEvent::Error {
@@ -178,45 +225,54 @@ pub(crate) fn spawn(
             });
         }
 
-        // The `/inbox` flow: every worker ending lands a persist-until-read
-        // notification linked to this session, so the user finds the result
-        // (and can open the session, replaying it if needed) without having
-        // watched the lane.
-        let notification = stella_store::Notification::new(
-            match &outcome {
-                Ok(()) => format!("{workspace_name}: {}", spec.notify_title),
-                Err(_) => format!("{workspace_name}: {} — FAILED", spec.notify_title),
-            },
-            match &outcome {
-                Ok(()) => prompt_line(&spec.prompt, 160),
-                Err(reason) => format!("{} — {reason}", prompt_line(&spec.prompt, 80)),
-            },
-            session_id.clone(),
-        )
-        .with_session_id(session_id.clone());
-        let _ = stella_store::NotificationStore::open_default().push(&notification);
+        // The `/inbox` flow: a worker finishing (or failing) lands a
+        // persist-until-read notification linked to this session, so the
+        // user finds the result — and can open the session, replaying it if
+        // needed — without having watched the lane. A user-initiated stop
+        // lands none: the user was there.
+        let notification = match &end {
+            WorkerEnd::Done => Some((
+                format!("{workspace_name}: {}", spec.notify_title),
+                prompt_line(&spec.prompt, 160),
+            )),
+            WorkerEnd::Failed(reason) => Some((
+                format!("{workspace_name}: {} — FAILED", spec.notify_title),
+                format!("{} — {reason}", prompt_line(&spec.prompt, 80)),
+            )),
+            WorkerEnd::Stopped => None,
+        };
+        if let Some((title, body)) = notification {
+            let _ = stella_store::NotificationStore::open_default().push(
+                &stella_store::Notification::new(title, body, session_id.clone())
+                    .with_session_id(session_id.clone()),
+            );
+        }
 
         let _ = sup_tx.send(SupervisorMsg::Ended {
             lane,
             execution_id,
-            outcome,
+            cost_usd,
+            end,
         });
     });
 }
 
 /// One worker session, on the calling thread's runtime: fresh provider +
 /// registry + budget, its own execution row linked to the deck session, the
-/// shared persist-and-forward event path, one raw engine turn.
+/// shared persist-and-forward event path, one raw engine turn raced against
+/// the driver's stop signal (the same clean drop-at-await cancel the lead
+/// uses). Returns `(execution_id, cost_usd, end)`.
 async fn run_worker(
     cfg: &Config,
     spec: &SubSessionSpec,
     budget_limit: Option<f64>,
     session_id: &str,
     in_tx: &UnboundedSender<Inbound>,
-) -> (Option<i64>, Result<(), String>) {
+    stop_rx: oneshot::Receiver<()>,
+) -> (Option<i64>, f64, WorkerEnd) {
     let provider = match agent::build_provider(cfg) {
         Ok(p) => p,
-        Err(e) => return (None, Err(e)),
+        Err(e) => return (None, 0.0, WorkerEnd::Failed(e)),
     };
     let registry = ToolRegistry::new_detected(cfg.workspace_root.clone()).await;
     agent::populate_schema_index(&registry, &cfg.workspace_root);
@@ -249,7 +305,12 @@ async fn run_worker(
         spec.lane.clone(),
     );
 
-    let outcome = {
+    /// How the raced turn resolved, before store closeout.
+    enum RacedTurn {
+        Outcome(stella_core::TurnOutcome),
+        Stopped,
+    }
+    let raced = {
         let engine = Engine::with_sleeper(
             &*provider,
             &registry,
@@ -257,7 +318,19 @@ async fn run_worker(
             &TokioSleeper,
         )
         .with_calibration(&calibration);
-        engine.run_turn(&mut messages, &mut budget, &tx).await
+        let turn = engine.run_turn(&mut messages, &mut budget, &tx);
+        // A dropped sender (driver gone at session teardown) must not read
+        // as a stop — only an actual signal cancels, so the wait parks
+        // forever on a closed channel and the turn always wins the race.
+        let stop_wait = async move {
+            if stop_rx.await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        };
+        tokio::select! {
+            outcome = turn => RacedTurn::Outcome(outcome),
+            _ = stop_wait => RacedTurn::Stopped,
+        }
     };
     drop(tx);
     let _ = forwarder.await;
@@ -279,9 +352,14 @@ async fn run_worker(
         });
     }
 
-    let (label, cost, result) = match outcome {
-        stella_core::TurnOutcome::Completed { cost_usd, .. } => ("completed", cost_usd, Ok(())),
-        stella_core::TurnOutcome::Aborted { reason } => ("aborted", 0.0, Err(reason)),
+    let (label, cost, end) = match raced {
+        RacedTurn::Outcome(stella_core::TurnOutcome::Completed { cost_usd, .. }) => {
+            ("completed", cost_usd, WorkerEnd::Done)
+        }
+        RacedTurn::Outcome(stella_core::TurnOutcome::Aborted { reason }) => {
+            ("aborted", 0.0, WorkerEnd::Failed(reason))
+        }
+        RacedTurn::Stopped => ("cancelled", 0.0, WorkerEnd::Stopped),
     };
     if let Some((store, id)) = &execution {
         let _ = agent::record_execution_end(store, *id, &registry, label, cost);
@@ -297,7 +375,7 @@ async fn run_worker(
             let _ = store.record_task_board(*id, Some(session_id), &items, now_ms());
         }
     }
-    (execution_id, result)
+    (execution_id, cost, end)
 }
 
 /// Drain the driver's prompt backlog into free worker slots, oldest first.
@@ -331,7 +409,8 @@ pub(crate) fn drain_queue(
             agent: lane.clone(),
             text: text.clone(),
         });
-        subs.started();
+        let (stop_tx, stop_rx) = oneshot::channel();
+        subs.started(&lane, stop_tx);
         spawn(
             cfg,
             SubSessionSpec {
@@ -345,6 +424,7 @@ pub(crate) fn drain_queue(
             workspace_name.to_string(),
             in_tx.clone(),
             sup_tx.clone(),
+            stop_rx,
         );
     }
 }
@@ -362,11 +442,13 @@ pub(crate) fn spawn_task_worker(
     in_tx: &UnboundedSender<Inbound>,
     sup_tx: &UnboundedSender<SupervisorMsg>,
 ) {
-    subs.started();
+    let lane = format!("sub:{}", req.task_id);
+    let (stop_tx, stop_rx) = oneshot::channel();
+    subs.started(&lane, stop_tx);
     spawn(
         cfg,
         SubSessionSpec {
-            lane: format!("sub:{}", req.task_id),
+            lane,
             title: format!("task #{}: {}", req.task_id, prompt_line(&req.subject, 40)),
             prompt: task_prompt(req),
             notify_title: format!(
@@ -380,6 +462,7 @@ pub(crate) fn spawn_task_worker(
         workspace_name.to_string(),
         in_tx.clone(),
         sup_tx.clone(),
+        stop_rx,
     );
 }
 
@@ -390,17 +473,29 @@ mod tests {
     #[test]
     fn slot_bookkeeping_caps_and_recovers() {
         let mut subs = SubSessions::new();
-        for _ in 0..MAX_CONCURRENT {
+        for i in 0..MAX_CONCURRENT {
             assert!(subs.has_slot());
-            subs.started();
+            let (stop_tx, _stop_rx) = oneshot::channel();
+            subs.started(&format!("req:{i}"), stop_tx);
         }
         assert!(!subs.has_slot());
-        subs.ended();
+        subs.ended("req:0");
         assert!(subs.has_slot());
         // ended() below zero must not underflow.
         let mut fresh = SubSessions::new();
-        fresh.ended();
+        fresh.ended("req:none");
         assert!(fresh.has_slot());
+    }
+
+    #[test]
+    fn stop_signals_a_live_worker_once_and_only_once() {
+        let mut subs = SubSessions::new();
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+        subs.started("req:1", stop_tx);
+        assert!(subs.stop("req:1"), "a live worker accepts the signal");
+        assert_eq!(stop_rx.try_recv(), Ok(()));
+        assert!(!subs.stop("req:1"), "a second stop is a stale no-op");
+        assert!(!subs.stop("req:404"), "an unknown lane is a no-op");
     }
 
     #[test]
