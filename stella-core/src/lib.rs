@@ -27,6 +27,7 @@ pub mod router;
 pub mod rules;
 pub mod skills;
 pub(crate) mod speculation;
+mod summarize;
 pub mod tasks;
 
 pub use budget::{BudgetGuard, BudgetOutcome};

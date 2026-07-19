@@ -1249,12 +1249,10 @@ pub async fn run_deck_session(
                         | Some(WorkspaceInput::ToAgent {
                             input: UserInput::Prompt { text, .. }, ..
                         }) => {
-                            // `>`-prefixed while the lead works = steer THIS
-                            // turn: injected at the next step boundary as
-                            // the model's next observation (the engine's
-                            // `Steered` event is the transcript ack). No
-                            // steering seam in pipeline mode — there the
-                            // prefix stays an ordinary prompt.
+                            // `>`-prefix = steer THIS turn (step-boundary
+                            // injection; the `Steered` event is the ack).
+                            // Pipeline mode has no steering seam — there
+                            // the prefix stays an ordinary prompt.
                             if !pipeline_on
                                 && let Some(steer) = text.trim_start().strip_prefix('>')
                             {
@@ -1306,11 +1304,10 @@ pub async fn run_deck_session(
                                 if pipeline_on {
                                     break TurnEnd::Cancelled { hold: false };
                                 }
-                                // First Esc is the SOFT stop: end at the
-                                // next step boundary keeping every completed
-                                // step — paid tokens survive. The pair's
-                                // second press (StopAndHold below) remains
-                                // the immediate hard cancel.
+                                // First Esc = SOFT stop: end at the next
+                                // boundary keeping completed steps. The
+                                // pair's second press (StopAndHold below)
+                                // stays the immediate hard cancel.
                                 steering.request_soft_stop();
                                 let _ = in_tx.send(Inbound::Event {
                                     agent: LEAD.to_string(),
