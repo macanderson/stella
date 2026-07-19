@@ -5,7 +5,7 @@ stella-cli/src/agent.rs 4262
 stella-cli/src/command_deck.rs 5199
 stella-context/src/store.rs 1677
 stella-core/src/bus.rs 1671
-stella-core/src/driver.rs 2555
+stella-core/src/driver.rs 3071
 stella-core/src/rules.rs 1606
 stella-core/src/skills.rs 1518
 stella-model/src/anthropic.rs 2063

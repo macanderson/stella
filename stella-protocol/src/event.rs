@@ -89,6 +89,12 @@ pub enum AgentEvent {
         attempt: u32,
         reason: String,
     },
+    /// A user message queued mid-turn was injected at a step boundary
+    /// (`stella-core` steering) — the transcript's record that the model
+    /// was steered, and when.
+    Steered {
+        text: String,
+    },
     /// A compaction pass ran (`stella-core::compaction`). Fields mirror
     /// `CompactionReport` — kept as a flat struct here (not a re-exported
     /// type) so `stella-protocol` never depends on `stella-core` (dependency

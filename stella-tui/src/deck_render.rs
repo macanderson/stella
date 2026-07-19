@@ -1354,10 +1354,17 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),
     ("ctrl-v", "paste — a copied image is attached to the prompt"),
     ("ctrl-t", "open the queue editor"),
-    ("esc", "stop the running turn (next queued prompt runs)"),
+    (
+        ">text",
+        "steer the running turn — lands at the next step boundary",
+    ),
+    (
+        "esc",
+        "soft-stop at the next step boundary — completed work kept",
+    ),
     (
         "esc esc",
-        "stop & hold — nothing runs until your next prompt",
+        "cancel NOW & hold — nothing runs until your next prompt",
     ),
     ("ctrl-c", "quit stella"),
 ];

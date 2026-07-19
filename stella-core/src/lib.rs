@@ -27,6 +27,7 @@ pub mod router;
 pub mod rules;
 pub mod skills;
 pub(crate) mod speculation;
+mod summarize;
 pub mod tasks;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
@@ -37,7 +38,7 @@ pub use bus::{
     ExtensionFailure, HookBus, HookDecision, HookEventDraft, HookSubscription, PolicyOutcome,
 };
 pub use discovery::{Candidate, DiscoveryQuery, QueryTerm, RankedMatch, parse_query, rank};
-pub use driver::{Engine, EngineConfig, TurnOutcome};
+pub use driver::{Engine, EngineConfig, SOFT_STOP_REASON, TurnOutcome};
 pub use estimator::{Calibration, CalibrationMap};
 pub use extensions::{
     AgentDef, CommandDef, ExistingTargets, ExtensionDiagnostic, ExtensionKind, ExtensionProblem,
