@@ -24,6 +24,7 @@ mod claims;
 mod command_deck;
 mod config;
 mod connect_cmd;
+mod discovery;
 mod domains;
 mod engine_config;
 mod export;
@@ -270,7 +271,7 @@ enum Command {
     /// List or run the project's package-manager scripts — deterministic
     /// static detection (cargo/npm/uv/go/make/just/…) mapped onto canonical
     /// verbs (install/build/start/test/lint/format). Offline: manifest
-    /// parsing plus a local argv-exec subprocess, needs no API key.
+    /// parsing plus a local subprocess, needs no API key.
     Scripts {
         #[command(subcommand)]
         cmd: ScriptsCmd,
@@ -617,13 +618,12 @@ enum ScriptsCmd {
         #[arg(long)]
         dir: Option<String>,
     },
-    /// Run a script by canonical verb, qualified id, or declared name
+    /// Run a script by canonical verb or qualified id (e.g. test, pnpm:build)
     Run {
-        /// install|build|start|test|lint|format, a qualified id like
-        /// pnpm:build, or a declared script/target/alias name
-        name: String,
+        /// install|build|start|test|lint|format, or a qualified id
+        script: String,
 
-        /// Package dir when the name exists in several packages
+        /// Package dir when the id exists in several packages
         #[arg(long)]
         dir: Option<String>,
 
@@ -631,20 +631,20 @@ enum ScriptsCmd {
         #[arg(long, default_value_t = 600)]
         timeout_secs: u64,
 
-        /// Extra args, passed argv-style to the runner (never a shell)
+        /// Extra args appended runner-natively (after `--` for npm-family)
         #[arg(last = true)]
         args: Vec<String>,
     },
 }
 
 /// `stella scripts …` — the human door to the project scripts index.
-/// Detection is static manifest parsing; `run` execs one indexed entry.
+/// Detection is static manifest parsing; `run` executes one indexed entry.
 fn run_scripts(cmd: &ScriptsCmd) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     match cmd {
         ScriptsCmd::List { json, dir } => {
-            let index = stella_tools::script::ScriptIndex::detect_blocking(&root);
+            let index = stella_tools::scripts::ScriptIndex::detect_blocking(&root);
             if *json {
                 println!(
                     "{}",
@@ -657,7 +657,7 @@ fn run_scripts(cmd: &ScriptsCmd) -> Result<(), String> {
             Ok(())
         }
         ScriptsCmd::Run {
-            name,
+            script,
             dir,
             timeout_secs,
             args,
@@ -666,9 +666,9 @@ fn run_scripts(cmd: &ScriptsCmd) -> Result<(), String> {
                 .enable_all()
                 .build()
                 .map_err(|e| format!("failed to start runtime: {e}"))?;
-            let output = rt.block_on(stella_tools::script::run_by_name(
+            let output = rt.block_on(stella_tools::scripts::run_by_name(
                 &root,
-                name,
+                script,
                 dir.as_deref(),
                 args,
                 *timeout_secs,
@@ -772,8 +772,8 @@ fn run(cli: Cli) -> Result<(), String> {
             return run_graph(*op, target);
         }
         Some(Command::Scripts { cmd }) => {
-            // Static manifest parsing plus a local argv-exec subprocess —
-            // works with zero API keys.
+            // Static manifest parsing plus a local subprocess — works with
+            // zero API keys.
             return run_scripts(cmd);
         }
         Some(Command::Stats { format, provider }) => {

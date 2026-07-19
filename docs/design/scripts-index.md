@@ -135,9 +135,9 @@ below.
 ```json
 {
   "type": "object",
-  "required": ["name"],
+  "required": ["script"],
   "properties": {
-    "name": { "type": "string", "description": "Canonical verb (install|build|start|test|lint|format), qualified id like pnpm:build, or declared script/target/alias name" },
+    "script": { "type": "string", "description": "Canonical verb (install|build|start|test|lint|format), qualified id like pnpm:build, or unique declared script/target/alias name" },
     "dir": { "type": "string", "description": "Package dir when the id exists in several packages; default workspace root" },
     "args": { "type": "array", "items": { "type": "string" }, "description": "Appended runner-natively (after `--` for npm-family)" },
     "timeout_secs": { "type": "integer" }
@@ -241,7 +241,7 @@ Stella's own workspace (`Cargo.toml` + `package.json`/pnpm + `Makefile`):
 
 The agent turn that motivated this spec — "install this project" — becomes:
 the model already sees `install → cargo fetch` in its stable prefix and
-issues one `run_script {"name": "install"}` call. No manifest reads, no
+issues one `run_script {"script": "install"}` call. No manifest reads, no
 package-manager guessing, no bash composition.
 
 ## Configuration
@@ -261,11 +261,13 @@ merge applies):
 
 ## Delivery
 
-1. `stella-tools/src/script.rs`: `ScriptIndex::detect(root)` + rendering +
-   resolution, superseding the module's original three-source vocabulary
+1. `stella-tools/src/scripts.rs`: `ScriptIndex::detect(root)` + rendering +
+   resolution, superseding `script.rs`'s original three-source vocabulary
    (Makefile / package.json / cargo aliases) with the full ecosystem table
-   while keeping its contracts: the `name` input field, argv exec, and the
-   unknown-name-lists-the-vocabulary discovery error. ✅ shipped
+   while keeping its contracts: argv exec and the
+   unknown-name-lists-the-vocabulary discovery error; `project.rs`
+   (`build_project`/`run_tests`) rewired onto it so one detection code
+   path remains. ✅ shipped
 2. Register `list_scripts` beside `run_script`; extend `RESERVED_NAMES`
    (the collision test in `stella-tools/src/registry.rs` enforces it);
    gate `run_script` on the `command.started` chain with its resolved
@@ -273,7 +275,5 @@ merge applies):
 3. `stella scripts` subcommand + offline short-circuit; prompt section in
    `assemble_system_prompt` with a byte-stability test (two builds, same
    fixture ⇒ identical bytes). ✅ shipped
-4. Follow-ups: rewire `project.rs`'s private `detect()` (build/test/lint/
-   format verb tools) onto the index so one detection code path remains;
-   the optional `scripts` settings section; a docs page under
+4. Follow-ups: the optional `scripts` settings section; a docs page under
    `stella-docs`.

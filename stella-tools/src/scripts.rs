@@ -1,22 +1,15 @@
-//! The project scripts index — `run_script` / `list_scripts`: run a verb
-//! the project itself declares, and nothing else.
+//! Project scripts index — static, deterministic detection of
+//! package-manager scripts across ecosystems, mapped onto six canonical
+//! verbs (`install`, `build`, `start`, `test`, `lint`, `format`).
 //!
-//! Spec: `docs/design/scripts-index.md`. The index is a static,
-//! deterministic detection of package-manager scripts across ecosystems
-//! (cargo, npm/pnpm/yarn/bun, deno, uv/poetry, go, make, just, task,
-//! composer), mapped onto six canonical verbs — `install`, `build`,
-//! `start`, `test`, `lint`, `format`. Three surfaces share this module:
+//! Spec: `docs/design/scripts-index.md`. Three surfaces share this module:
 //! the byte-stable `## Project scripts` prompt section, the
 //! `list_scripts`/`run_script` tools, and the `stella scripts` subcommand.
-//!
 //! Detection never invokes a package-manager binary and persists nothing —
 //! it is a handful of manifest reads, cheap enough to recompute on every
 //! call, so there is no cache file, no database, and no watcher to go
 //! stale. Same workspace state ⇒ byte-identical output (entries sort by
-//! `(dir, id)`, verbs render in fixed order). Execution is argv-exec via
-//! [`exec::run_argv`] — no `sh -c`, no shell interpretation anywhere — and
-//! an unknown name is a named error that LISTS the discovered vocabulary,
-//! so the error itself is a discovery surface.
+//! `(dir, id)`, verbs render in fixed order).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -38,12 +31,9 @@ const MAX_WORKSPACE_MEMBERS: usize = 50;
 const PROMPT_SECTION_CHAR_CAP: usize = 1_500;
 /// Per-command cap inside the prompt section.
 const PROMPT_COMMAND_CHAR_CAP: usize = 120;
-/// Unknown-name errors list at most this many ids before deferring to
-/// `list_scripts`.
-const ERROR_VOCABULARY_CAP: usize = 40;
 
-/// One indexed script: a qualified id (`<runner>:<name>`), the exact argv
-/// `run_script` execs (cwd = `dir`), and where it came from.
+/// One indexed script: a qualified id (`<runner>:<name>`), the exact command
+/// `run_script` executes (cwd = `dir`), and where it came from.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ScriptEntry {
     /// Qualified id, unique per package dir: `pnpm:build`, `make:lint`.
@@ -52,10 +42,7 @@ pub struct ScriptEntry {
     pub runner: &'static str,
     /// The script/target/recipe name inside its ecosystem.
     pub name: String,
-    /// The exec'd argv — never shell-interpreted.
-    #[serde(skip)]
-    pub argv: Vec<String>,
-    /// Human-readable command line (`argv` joined), for frames and hooks.
+    /// Exact command executed, with cwd = `dir`.
     pub command: String,
     /// Workspace-relative package dir; `"."` = root.
     pub dir: String,
@@ -181,76 +168,82 @@ impl ScriptIndex {
         self.scripts.iter().find(|e| e.dir == "." && &e.id == id)
     }
 
+    /// The rank-lowest runner among root-package entries — the workspace's
+    /// primary ecosystem (what `run_tests` keys its kind mapping on).
+    pub fn primary_runner(&self) -> Option<&'static str> {
+        self.scripts
+            .iter()
+            .filter(|e| e.dir == ".")
+            .min_by_key(|e| runner_rank(e.runner))
+            .map(|e| e.runner)
+    }
+
+    /// Explicit (non-synthesized) script names at the root for `runner`.
+    pub fn root_script_names(&self, runner: &str) -> BTreeSet<&str> {
+        self.scripts
+            .iter()
+            .filter(|e| e.dir == "." && e.runner == runner && !e.synthesized())
+            .map(|e| e.name.as_str())
+            .collect()
+    }
+
     /// Resolve a `run_script` input: a canonical verb, a qualified id, or a
     /// unique bare name. `dir` narrows to one package when the same id
     /// exists in several.
-    pub fn resolve(&self, name: &str, dir: Option<&str>) -> Result<&ScriptEntry, String> {
+    pub fn resolve(&self, script: &str, dir: Option<&str>) -> Result<&ScriptEntry, String> {
         if self.is_empty() {
             return Err(no_scripts_message());
         }
-        if VERBS.contains(&name) {
-            return self.verb_entry(name).ok_or_else(|| {
-                format!(
-                    "no `{name}` script detected in this workspace — {}",
-                    self.vocabulary_line()
-                )
+        if VERBS.contains(&script) {
+            return self.verb_entry(script).ok_or_else(|| {
+                format!("no `{script}` script detected in this workspace — run list_scripts for what exists")
             });
         }
         let dir_matches = |e: &&ScriptEntry| dir.is_none_or(|d| e.dir == d.trim_end_matches('/'));
         let mut pool: Vec<&ScriptEntry> = self
             .scripts
             .iter()
-            .filter(|e| e.id == name)
+            .filter(|e| e.id == script)
             .filter(dir_matches)
             .collect();
         if pool.is_empty() {
             pool = self
                 .scripts
                 .iter()
-                .filter(|e| e.name == name)
+                .filter(|e| e.name == script)
                 .filter(dir_matches)
                 .collect();
         }
         match pool.len() {
             1 => Ok(pool[0]),
-            0 => Err(format!(
-                "unknown script `{name}` — {}",
-                self.vocabulary_line()
-            )),
+            0 => {
+                let near: Vec<&str> = self
+                    .scripts
+                    .iter()
+                    .filter(|e| e.id.contains(script) || script.contains(e.name.as_str()))
+                    .map(|e| e.id.as_str())
+                    .take(5)
+                    .collect();
+                let hint = if near.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Close matches: {}.", near.join(", "))
+                };
+                Err(format!(
+                    "unknown script `{script}` — nothing indexed matches.{hint} Run list_scripts for the full list."
+                ))
+            }
             _ => {
                 let ids: Vec<String> = pool
                     .iter()
                     .map(|e| format!("{} ({})", e.id, e.dir))
                     .collect();
                 Err(format!(
-                    "`{name}` is ambiguous — matches {}; pass the qualified id and a `dir`",
+                    "`{script}` is ambiguous — matches {}; pass the qualified id and a `dir`",
                     ids.join(", ")
                 ))
             }
         }
-    }
-
-    /// The unknown-name discovery line: canonical verbs plus the qualified
-    /// vocabulary (capped) — the error itself teaches the project's real
-    /// commands.
-    fn vocabulary_line(&self) -> String {
-        let verbs: Vec<&str> = VERBS
-            .iter()
-            .copied()
-            .filter(|v| self.verbs.contains_key(v))
-            .collect();
-        let ids: Vec<&str> = self.scripts.iter().map(|e| e.id.as_str()).collect();
-        let shown = ids.len().min(ERROR_VOCABULARY_CAP);
-        let more = if ids.len() > shown {
-            format!(" (+{} more via list_scripts)", ids.len() - shown)
-        } else {
-            String::new()
-        };
-        format!(
-            "this project declares verbs [{}] and scripts: {}{more}",
-            verbs.join(", "),
-            ids[..shown].join(", ")
-        )
     }
 
     /// The `## Project scripts` block for the byte-stable system prompt:
@@ -263,7 +256,7 @@ impl ScriptIndex {
         let mut s = String::from("## Project scripts\n\nDetected: ");
         s.push_str(&self.detected_runners().join(", "));
         s.push_str(
-            ". Run these with the run_script tool — do not rediscover them by reading manifests.\n\n",
+            ". Run these with the run_script tool — do not rediscover them with bash/cat.\n\n",
         );
         for verb in VERBS {
             if let Some(entry) = self.verb_entry(verb) {
@@ -373,72 +366,68 @@ fn no_scripts_message() -> String {
         .to_string()
 }
 
-/// The full argv actually exec'd: the entry's argv plus the caller's extra
-/// args, joined runner-natively (`--` separator before args for npm-family
-/// script runs, plain append otherwise). Never shell-interpreted.
-pub fn compose_argv(entry: &ScriptEntry, args: &[String]) -> Vec<String> {
-    let mut argv = entry.argv.clone();
-    if !args.is_empty() {
-        if is_npm_family(entry.runner) && !entry.synthesized() {
-            argv.push("--".into());
-        }
-        argv.extend(args.iter().cloned());
+/// Compose the command actually executed: the entry's command plus
+/// shell-quoted extra args, joined runner-natively (`--` separator for
+/// npm-family script runs, plain append otherwise).
+pub fn compose_command(entry: &ScriptEntry, args: &[String]) -> String {
+    if args.is_empty() {
+        return entry.command.clone();
     }
-    argv
+    let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
+    let sep = if is_npm_family(entry.runner) && !entry.synthesized() {
+        " -- "
+    } else {
+        " "
+    };
+    format!("{}{sep}{}", entry.command, quoted.join(" "))
+}
+
+/// Single-quote an argument unless it is a plain word — the composed line
+/// runs through `bash -c` (crate::exec), so args must never re-tokenize.
+fn shell_quote(s: &str) -> String {
+    let plain = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-/:=@%+,".contains(c));
+    if plain {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
 }
 
 /// Resolve `run_script`'s command line for the registry's `command.started`
 /// policy chain — best-effort: `None` (no gating) when the input or index
 /// can't resolve, in which case the tool itself returns the named error.
 pub(crate) async fn resolve_command_for_gate(root: &Path, input: &Value) -> Option<String> {
-    let name = script_name(input)?;
+    let script = input.get("script")?.as_str()?;
     let dir = input.get("dir").and_then(|v| v.as_str());
     let args = string_args(input);
     let index = ScriptIndex::detect(root).await;
-    let entry = index.resolve(name, dir).ok()?;
-    Some(compose_argv(entry, &args).join(" "))
+    let entry = index.resolve(script, dir).ok()?;
+    Some(compose_command(entry, &args))
 }
 
 /// Resolve and run one script — the single execution path shared by the
-/// `run_script` tool and `stella scripts run`. Argv exec, cwd = the
-/// entry's package dir.
+/// `run_script` tool and `stella scripts run`.
 pub async fn run_by_name(
     root: &Path,
-    name: &str,
+    script: &str,
     dir: Option<&str>,
     args: &[String],
     timeout_secs: u64,
 ) -> ToolOutput {
     let index = ScriptIndex::detect(root).await;
-    let entry = match index.resolve(name, dir) {
+    let entry = match index.resolve(script, dir) {
         Ok(entry) => entry,
         Err(message) => return ToolOutput::Error { message },
     };
-    let argv = compose_argv(entry, args);
-    let display = argv.join(" ");
+    let command = compose_command(entry, args);
     let cwd = if entry.dir == "." {
         root.to_path_buf()
     } else {
         root.join(&entry.dir)
     };
-    match exec::run_argv(&argv[0], &argv[1..], &cwd, timeout_secs).await {
-        Ok((0, output)) => ToolOutput::Ok {
-            content: format!("`{display}` PASSED (exit 0)\n{output}"),
-        },
-        Ok((code, output)) => ToolOutput::Error {
-            message: format!("`{display}` FAILED (exit {code})\n{output}"),
-        },
-        Err(e) => ToolOutput::Error { message: e },
-    }
-}
-
-/// The script name from a `run_script` input — `name` per the advertised
-/// schema; `script` accepted as a spec-parity alias.
-fn script_name(input: &Value) -> Option<&str> {
-    input
-        .get("name")
-        .or_else(|| input.get("script"))
-        .and_then(|v| v.as_str())
+    exec::run_and_report(&command, &cwd, timeout_secs).await
 }
 
 fn string_args(input: &Value) -> Vec<String> {
@@ -475,12 +464,16 @@ fn detect_package(
     if is_root {
         detect_cargo(&dir, out);
     }
-    let pm = if is_root {
-        root_pm
-    } else {
-        node_pm(&dir, Some(root_pm))
-    };
-    detect_node(&dir, rel, pm, out);
+    detect_node(
+        &dir,
+        rel,
+        if is_root {
+            root_pm
+        } else {
+            node_pm(&dir, Some(root_pm))
+        },
+        out,
+    );
     detect_deno(&dir, rel, out);
     detect_python(&dir, rel, out);
     detect_go(&dir, rel, out);
@@ -501,18 +494,16 @@ fn manifest_path(rel: &str, name: &str) -> String {
 fn entry(
     runner: &'static str,
     name: &str,
-    argv: Vec<&str>,
+    command: String,
     rel: &str,
     source: String,
     raw: Option<String>,
 ) -> ScriptEntry {
-    let argv: Vec<String> = argv.into_iter().map(String::from).collect();
     ScriptEntry {
         id: format!("{runner}:{name}"),
         runner,
         name: name.to_string(),
-        command: argv.join(" "),
-        argv,
+        command,
         dir: rel.to_string(),
         source,
         verb: None,
@@ -520,8 +511,21 @@ fn entry(
     }
 }
 
-fn synthesized(runner: &'static str, name: &str, argv: Vec<&str>, rel: &str) -> ScriptEntry {
-    entry(runner, name, argv, rel, "synthesized".into(), None)
+fn synthesized(runner: &'static str, name: &str, command: &str, rel: &str) -> ScriptEntry {
+    entry(
+        runner,
+        name,
+        command.to_string(),
+        rel,
+        "synthesized".into(),
+        None,
+    )
+}
+
+/// A script/target name that would re-tokenize under `bash -c` gets quoted
+/// inside the composed command.
+fn quoted_name(name: &str) -> String {
+    shell_quote(name)
 }
 
 /// The package manager for a dir with `package.json`, from its lockfile —
@@ -554,14 +558,14 @@ fn detect_node(dir: &Path, rel: &str, pm: &'static str, out: &mut Vec<ScriptEntr
             out.push(entry(
                 pm,
                 name,
-                vec![pm, "run", name],
+                format!("{pm} run {}", quoted_name(name)),
                 rel,
                 source.clone(),
                 body.as_str().map(String::from),
             ));
         }
     }
-    out.push(synthesized(pm, "install", vec![pm, "install"], rel));
+    out.push(synthesized(pm, "install", &format!("{pm} install"), rel));
 }
 
 fn detect_deno(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
@@ -581,14 +585,14 @@ fn detect_deno(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
             out.push(entry(
                 "deno",
                 task,
-                vec!["deno", "task", task],
+                format!("deno task {}", quoted_name(task)),
                 rel,
                 source.clone(),
                 body.as_str().map(String::from),
             ));
         }
     }
-    out.push(synthesized("deno", "install", vec!["deno", "install"], rel));
+    out.push(synthesized("deno", "install", "deno install", rel));
 }
 
 fn detect_python(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
@@ -616,30 +620,26 @@ fn detect_python(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
             out.push(entry(
                 runner,
                 name,
-                vec![runner, "run", name],
+                format!("{runner} run {}", quoted_name(name)),
                 rel,
                 source.clone(),
                 target.as_str().map(String::from),
             ));
         }
     }
-    if runner == "poetry" {
-        out.push(synthesized(
-            runner,
-            "install",
-            vec!["poetry", "install"],
-            rel,
-        ));
+    let install = if runner == "poetry" {
+        "poetry install"
     } else {
-        out.push(synthesized(runner, "install", vec!["uv", "sync"], rel));
-    }
+        "uv sync"
+    };
+    out.push(synthesized(runner, "install", install, rel));
     // Test/lint/format synthesize only when the tool is actually declared —
     // `uv run pytest` in a pytest-less project is a guess, not a script.
     if has_python_dep(&doc, "pytest") {
         out.push(synthesized(
             runner,
             "test",
-            vec![runner, "run", "pytest"],
+            &format!("{runner} run pytest"),
             rel,
         ));
     }
@@ -647,13 +647,13 @@ fn detect_python(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
         out.push(synthesized(
             runner,
             "lint",
-            vec![runner, "run", "ruff", "check"],
+            &format!("{runner} run ruff check"),
             rel,
         ));
         out.push(synthesized(
             runner,
             "format",
-            vec![runner, "run", "ruff", "format"],
+            &format!("{runner} run ruff format"),
             rel,
         ));
     }
@@ -665,13 +665,13 @@ fn detect_python(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
 /// `[tool.poetry.group.*.dependencies]`.
 fn has_python_dep(doc: &toml::Value, tool_name: &str) -> bool {
     let mut names: Vec<String> = Vec::new();
+    let mut push_reqs = |value: Option<&toml::Value>| {
+        if let Some(reqs) = value.and_then(|v| v.as_array()) {
+            names.extend(reqs.iter().filter_map(|r| r.as_str()).map(req_name));
+        }
+    };
     let project = doc.get("project");
-    if let Some(reqs) = project
-        .and_then(|p| p.get("dependencies"))
-        .and_then(|v| v.as_array())
-    {
-        names.extend(reqs.iter().filter_map(|r| r.as_str()).map(req_name));
-    }
+    push_reqs(project.and_then(|p| p.get("dependencies")));
     if let Some(extras) = project
         .and_then(|p| p.get("optional-dependencies"))
         .and_then(|o| o.as_table())
@@ -726,21 +726,11 @@ fn detect_go(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
     if !dir.join("go.mod").exists() {
         return;
     }
-    out.push(synthesized(
-        "go",
-        "install",
-        vec!["go", "mod", "download"],
-        rel,
-    ));
-    out.push(synthesized(
-        "go",
-        "build",
-        vec!["go", "build", "./..."],
-        rel,
-    ));
-    out.push(synthesized("go", "test", vec!["go", "test", "./..."], rel));
-    out.push(synthesized("go", "lint", vec!["go", "vet", "./..."], rel));
-    out.push(synthesized("go", "format", vec!["go", "fmt", "./..."], rel));
+    out.push(synthesized("go", "install", "go mod download", rel));
+    out.push(synthesized("go", "build", "go build ./...", rel));
+    out.push(synthesized("go", "test", "go test ./...", rel));
+    out.push(synthesized("go", "lint", "go vet ./...", rel));
+    out.push(synthesized("go", "format", "go fmt ./...", rel));
 }
 
 fn detect_cargo(root: &Path, out: &mut Vec<ScriptEntry>) {
@@ -771,33 +761,28 @@ fn detect_cargo(root: &Path, out: &mut Vec<ScriptEntry>) {
             out.push(entry(
                 "cargo",
                 alias,
-                vec!["cargo", alias],
+                format!("cargo {}", quoted_name(alias)),
                 ".",
                 ".cargo/config.toml".into(),
                 raw,
             ));
         }
     }
-    out.push(synthesized("cargo", "install", vec!["cargo", "fetch"], "."));
+    out.push(synthesized("cargo", "install", "cargo fetch", "."));
     out.push(synthesized(
         "cargo",
         "build",
-        vec!["cargo", "build", "--workspace"],
+        "cargo build --workspace",
         ".",
     ));
-    out.push(synthesized(
-        "cargo",
-        "test",
-        vec!["cargo", "test", "--workspace"],
-        ".",
-    ));
+    out.push(synthesized("cargo", "test", "cargo test --workspace", "."));
     out.push(synthesized(
         "cargo",
         "lint",
-        vec!["cargo", "clippy", "--workspace", "--all-targets"],
+        "cargo clippy --workspace --all-targets",
         ".",
     ));
-    out.push(synthesized("cargo", "format", vec!["cargo", "fmt"], "."));
+    out.push(synthesized("cargo", "format", "cargo fmt", "."));
     // `start` only when there is something to run: an explicit default-run
     // binary, or a root src/main.rs.
     let has_default_run = doc
@@ -805,7 +790,7 @@ fn detect_cargo(root: &Path, out: &mut Vec<ScriptEntry>) {
         .and_then(|p| p.get("default-run"))
         .is_some();
     if has_default_run || root.join("src/main.rs").exists() {
-        out.push(synthesized("cargo", "start", vec!["cargo", "run"], "."));
+        out.push(synthesized("cargo", "start", "cargo run", "."));
     }
 }
 
@@ -844,7 +829,7 @@ fn detect_make(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
                 out.push(entry(
                     "make",
                     name,
-                    vec!["make", name],
+                    format!("make {}", quoted_name(name)),
                     rel,
                     source.clone(),
                     None,
@@ -894,7 +879,7 @@ fn detect_just(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
             out.push(entry(
                 "just",
                 recipe,
-                vec!["just", recipe],
+                format!("just {}", quoted_name(recipe)),
                 rel,
                 source.clone(),
                 None,
@@ -948,7 +933,7 @@ fn detect_taskfile(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
             out.push(entry(
                 "task",
                 task,
-                vec!["task", task],
+                format!("task {}", quoted_name(task)),
                 rel,
                 source.clone(),
                 None,
@@ -981,19 +966,14 @@ fn detect_composer(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
             out.push(entry(
                 "composer",
                 name,
-                vec!["composer", "run", name],
+                format!("composer run {}", quoted_name(name)),
                 rel,
                 source.clone(),
                 raw,
             ));
         }
     }
-    out.push(synthesized(
-        "composer",
-        "install",
-        vec!["composer", "install"],
-        rel,
-    ));
+    out.push(synthesized("composer", "install", "composer install", rel));
 }
 
 /// Strip `//` and `/* */` comments from JSONC, string-aware.
@@ -1233,7 +1213,6 @@ impl Tool for ListScripts {
     }
 }
 
-/// `run_script` — see the module doc.
 pub struct RunScript;
 
 #[async_trait]
@@ -1241,30 +1220,29 @@ impl Tool for RunScript {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "run_script".into(),
-            description: "Run a script this project itself declares, by canonical verb \
-                          (install|build|start|test|lint|format), qualified id (e.g. \
-                          pnpm:build, make:lint), or declared name. args are passed \
-                          argv-style (never through a shell). An unknown name returns the \
-                          declared vocabulary — see also list_scripts."
+            description: "Run an indexed project script by canonical verb \
+                          (install|build|start|test|lint|format) or qualified id (e.g. \
+                          pnpm:build, make:lint — see list_scripts). Executes only indexed \
+                          entries; for arbitrary shell, use bash."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
+                "required": ["script"],
                 "properties": {
-                    "name": { "type": "string", "description": "Canonical verb, qualified id, or declared script/target/alias name" },
-                    "dir": { "type": "string", "description": "Package dir when the name exists in several packages" },
-                    "args": { "type": "array", "items": { "type": "string" }, "description": "Extra arguments, passed argv-style to the runner (after `--` for npm-family scripts)" },
+                    "script": { "type": "string", "description": "Canonical verb or qualified id like pnpm:build" },
+                    "dir": { "type": "string", "description": "Package dir when the id exists in several packages" },
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Appended runner-natively (after `--` for npm-family)" },
                     "timeout_secs": { "type": "integer" }
-                },
-                "required": ["name"]
+                }
             }),
             read_only: false,
         }
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let Some(name) = script_name(input) else {
+        let Some(script) = input.get("script").and_then(|v| v.as_str()) else {
             return ToolOutput::Error {
-                message: "missing required field `name`".into(),
+                message: "`script` is required — a canonical verb or qualified id".into(),
             };
         };
         let dir = input.get("dir").and_then(|v| v.as_str());
@@ -1273,7 +1251,7 @@ impl Tool for RunScript {
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_TIMEOUT_SECS);
-        run_by_name(root, name, dir, &args, timeout_secs).await
+        run_by_name(root, script, dir, &args, timeout_secs).await
     }
 }
 
@@ -1305,9 +1283,8 @@ mod tests {
         assert_eq!(index.verbs.get("install").unwrap(), "pnpm:install");
         let build = index.verb_entry("build").unwrap();
         assert_eq!(build.command, "pnpm run build");
-        assert_eq!(build.argv, vec!["pnpm", "run", "build"]);
         assert_eq!(build.raw.as_deref(), Some("next build"));
-        assert_eq!(index.verb_entry("install").unwrap().command, "pnpm install");
+        assert_eq!(index.verb_entry("install").unwrap().command, "pnpm install",);
         // watch/deploy names are listed but never verb-bound.
         for entry in &index.scripts {
             if entry.name == "test:watch" || entry.name == "deploy" {
@@ -1340,7 +1317,7 @@ mod tests {
         // No default-run bin and no src/main.rs → no start verb.
         assert!(!index.verbs.contains_key("start"));
         let alias = index.scripts.iter().find(|e| e.id == "cargo:xt").unwrap();
-        assert_eq!(alias.argv, vec!["cargo", "xt"]);
+        assert_eq!(alias.command, "cargo xt");
         assert_eq!(alias.raw.as_deref(), Some("test --workspace"));
         assert_eq!(alias.source, ".cargo/config.toml");
     }
@@ -1582,7 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_accepts_verb_id_and_unique_name_and_lists_vocabulary() {
+    fn resolve_accepts_verb_id_and_unique_name_and_names_near_misses() {
         let dir = tempfile::tempdir().unwrap();
         write(
             dir.path(),
@@ -1596,18 +1573,14 @@ mod tests {
             index.resolve("typecheck", None).unwrap().id,
             "npm:typecheck"
         );
-        // The unknown-name error IS the discovery surface: it lists the
-        // bound verbs and the qualified vocabulary.
         let err = index.resolve("typechek", None).unwrap_err();
-        assert!(err.contains("unknown script `typechek`"), "{err}");
-        assert!(err.contains("npm:typecheck"), "{err}");
-        assert!(err.contains("build"), "{err}");
+        assert!(err.contains("unknown script"), "{err}");
         let err = index.resolve("lint", None).unwrap_err();
         assert!(err.contains("no `lint` script detected"), "{err}");
     }
 
     #[test]
-    fn compose_argv_is_shell_free_and_uses_npm_family_separator() {
+    fn compose_command_quotes_args_and_uses_npm_family_separator() {
         let dir = tempfile::tempdir().unwrap();
         write(
             dir.path(),
@@ -1619,20 +1592,16 @@ mod tests {
 
         let test = index.resolve("test", None).unwrap();
         assert_eq!(
-            compose_argv(test, &["--run".into(), "my file".into()]).join("|"),
-            "npm|run|test|--|--run|my file",
-            "args reach the child verbatim — no shell, no quoting"
+            compose_command(test, &["--run".into(), "my file".into()]),
+            "npm run test -- --run 'my file'"
         );
         let lint = index.resolve("make:lint", None).unwrap();
-        assert_eq!(
-            compose_argv(lint, &["V=1".into()]).join("|"),
-            "make|lint|V=1"
-        );
+        assert_eq!(compose_command(lint, &["V=1".into()]), "make lint V=1");
         // Synthesized npm install takes plain args (no `--`).
         let install = index.resolve("install", None).unwrap();
         assert_eq!(
-            compose_argv(install, &["--frozen-lockfile".into()]).join("|"),
-            "npm|install|--frozen-lockfile"
+            compose_command(install, &["--frozen-lockfile".into()]),
+            "npm install --frozen-lockfile"
         );
     }
 
@@ -1651,7 +1620,7 @@ mod tests {
         write(dir.path(), "Makefile", "greet:\n\t@echo hello-from-make\n");
 
         let out = RunScript
-            .execute(&serde_json::json!({"name": "make:greet"}), dir.path())
+            .execute(&serde_json::json!({"script": "make:greet"}), dir.path())
             .await;
         match &out {
             ToolOutput::Ok { content } => {
@@ -1662,7 +1631,7 @@ mod tests {
         }
 
         let out = RunScript
-            .execute(&serde_json::json!({"name": "rm -rf /"}), dir.path())
+            .execute(&serde_json::json!({"script": "rm -rf /"}), dir.path())
             .await;
         assert!(out.is_error(), "non-indexed input must be refused: {out:?}");
 

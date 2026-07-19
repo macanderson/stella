@@ -102,8 +102,6 @@ pub const RESERVED_NAMES: &[&str] = &[
     // Manifest-verb execution (argv, no shell)
     "run_lint",
     "format_code",
-    "run_script",
-    "list_scripts",
     // The long-running process group
     "start_process",
     "read_output",
@@ -125,6 +123,9 @@ pub const RESERVED_NAMES: &[&str] = &[
     "verify_done",
     "build_project",
     "run_tests",
+    // The project scripts index (docs/design/scripts-index.md)
+    "list_scripts",
+    "run_script",
     // CI & evidence
     "ci_status",
     "screenshot",
@@ -161,6 +162,10 @@ pub const RESERVED_NAMES: &[&str] = &[
     "ask_user",
     "search_skills",
     "install_skill",
+    // CLI discovery layer (tool/skill/MCP-server search — stella-cli::discovery)
+    "tool_search",
+    "skill_search",
+    "mcp_search",
 ];
 
 /// Timeout applied when a manifest omits `timeout_ms`. Public so
