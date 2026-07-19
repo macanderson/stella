@@ -34,7 +34,7 @@ pub mod repo;
 pub mod sandbox;
 pub mod schema_gate;
 pub mod screenshot;
-pub mod script;
+pub mod scripts;
 pub mod tasks;
 pub mod tracker_auth;
 pub mod validate;
