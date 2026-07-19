@@ -45,15 +45,16 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// Selectable accent palette — `/color` switches the session's accent so
 /// multiple terminal windows running stella are visually distinct at a
 /// glance (see [`set_accent`], and [`rename_tab`] for the `/rename` sibling).
-// Only Stella's principle hues (plus the shared success green) — no cyan, no
-// blue. `colored`'s named ANSI colors are the portable stand-ins for the brand
-// palette: violet≈bright-magenta, gold≈yellow, ember≈bright-red, crimson≈magenta.
+// Only Stella's principle cool hues (plus the shared success green) — no
+// ember, no amber. `colored`'s named ANSI colors are the portable stand-ins
+// for the aurora palette: cyan≈bright-cyan, azure≈bright-blue,
+// violet≈bright-magenta, magenta≈magenta, mint≈green.
 const PALETTE: [(&str, Color); 5] = [
+    ("cyan", Color::BrightCyan),
+    ("azure", Color::BrightBlue),
     ("violet", Color::BrightMagenta),
-    ("gold", Color::Yellow),
-    ("ember", Color::BrightRed),
-    ("crimson", Color::Magenta),
-    ("green", Color::Green),
+    ("magenta", Color::Magenta),
+    ("mint", Color::Green),
 ];
 
 static ACCENT: AtomicUsize = AtomicUsize::new(0);
@@ -288,7 +289,7 @@ pub fn welcome_banner(provider: &str, model: &str, workspace: &str) {
     );
     println!(
         "  {} {} · {} · {}",
-        "◆".yellow(),
+        "◆".bright_cyan(),
         format!("{provider}/{model}").bright_magenta(),
         workspace.dimmed(),
         "type your prompt, Ctrl+D to exit".dimmed(),

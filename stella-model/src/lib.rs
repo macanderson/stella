@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod credential;
 pub mod gemini;
 pub(crate) mod http;
+pub mod modelsdev;
 pub mod openai;
 pub mod provider;
 pub mod sse;

@@ -97,13 +97,13 @@ fn render_list(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
 
 fn agent_row(entry: &InstalledAgentEntry, is_selected: bool) -> Row<'static> {
     let caret = if is_selected {
-        Span::styled("> ", Style::default().fg(theme::AMBER))
+        Span::styled("> ", Style::default().fg(theme::ACCENT))
     } else {
         Span::raw("  ")
     };
     let name_cell = Cell::from(Line::from(vec![
         caret,
-        Span::styled(entry.name.clone(), Style::default().fg(theme::AMBER)),
+        Span::styled(entry.name.clone(), Style::default().fg(theme::ACCENT)),
     ]));
     let scope_cell = Cell::from(entry.scope.label()).style(theme::muted());
     let ver_cell = Cell::from(format!("v{}", entry.version)).style(theme::body());
@@ -142,7 +142,7 @@ fn render_editor(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(theme::AMBER));
+        .border_style(Style::default().fg(theme::ACCENT));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -176,7 +176,7 @@ fn render_create_describe(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" New Agent — describe what it should do · ⏎ next · esc cancel ")
-        .border_style(Style::default().fg(theme::AMBER));
+        .border_style(Style::default().fg(theme::ACCENT));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.height == 0 {
@@ -202,7 +202,7 @@ fn render_create_scope(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" New Agent — install scope · ↑/↓ choose · ⏎ create · esc back ")
-        .border_style(Style::default().fg(theme::AMBER));
+        .border_style(Style::default().fg(theme::ACCENT));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.height == 0 {
@@ -220,7 +220,7 @@ fn render_create_scope(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
         let line = format!("{} {option}", if selected { ">" } else { " " });
         let style = if selected {
             Style::default()
-                .fg(theme::AMBER)
+                .fg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme::body()
@@ -244,7 +244,7 @@ fn render_version_picker(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(theme::AMBER));
+        .border_style(Style::default().fg(theme::ACCENT));
     let inner = block.inner(area);
     block.render(area, buf);
     for (i, info) in entry.versions.iter().enumerate() {
@@ -269,7 +269,7 @@ fn render_version_picker(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
             theme::body()
         };
         if info.version == entry.version {
-            style = style.fg(theme::AMBER);
+            style = style.fg(theme::ACCENT);
         }
         Paragraph::new(line)
             .style(style)

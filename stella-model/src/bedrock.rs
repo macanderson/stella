@@ -63,7 +63,8 @@ impl BedrockProvider {
         model: impl Into<String>,
     ) -> Self {
         let model = model.into();
-        let pricing = Catalog::seed()
+        let catalog = Catalog::current();
+        let pricing = catalog
             .resolve_for("bedrock", &model)
             .ok()
             .map(|e| e.pricing);

@@ -3,23 +3,25 @@
 //! in the catalog is a hard, immediate, named error, never a silent
 //! fallback** (the TS-era phantom `glm-5.2-turbo` slug and gateway
 //! slug-drift lessons, L-M1/L-M2). The seed below covers every provider
-//! `crates/stella-cli/src/config.rs`'s `PROVIDERS` table can select — the
-//! two used to be all that existed, which meant the hard-error rule above
-//! was silently unenforced for 5 of 7 configured providers (any of their
-//! default models would fail this lookup were it ever wired in). `stella
-//! models refresh` (a real network call against each provider's `/models`
-//! endpoint that grows this catalog with live data) is future work; the
-//! shape does not change, only the row count.
+//! `crates/stella-cli/src/config.rs`'s `PROVIDERS` table can select — it is
+//! the compile-time floor, always accepted. `stella models refresh` pulls
+//! the live master list (models.dev) into the on-disk catalog
+//! (`stella-store`'s model cards), and `stella-cli` installs the merged
+//! result here via [`Catalog::install_runtime`] so every consumer —
+//! adapters resolving pricing, the deck's model picker, the engine config —
+//! sees one catalog through [`Catalog::current`].
+
+use std::sync::{Arc, OnceLock, RwLock};
 
 use stella_protocol::{CompletionUsage, ProviderError};
 
 /// Per-model list pricing in USD per million tokens.
 /// Seed values below are day-0 offline approximations of each
-/// provider's published list price; `stella models refresh` (future work)
-/// overwrites them with live data. Cached input is billed at its own,
-/// cheaper rate — cached tokens are a *subset* of `input_tokens` in the
-/// normalized [`CompletionUsage`] envelope, so cost accounting must not
-/// double-charge them.
+/// provider's published list price; `stella models refresh` overlays them
+/// with live data (the latest model-card version's pricing configuration).
+/// Cached input is billed at its own, cheaper rate — cached tokens are a
+/// *subset* of `input_tokens` in the normalized [`CompletionUsage`]
+/// envelope, so cost accounting must not double-charge them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pricing {
     pub input_usd_per_mtok: f64,
@@ -40,7 +42,7 @@ impl Pricing {
     /// input — e.g. Anthropic 1.25x), and those tokens are reported outside
     /// `input_tokens`, so today they contribute $0 here. Adding a
     /// `cache_write_usd_per_mtok` column is the staged follow-up to
-    /// issue #97.
+    /// issue #97 (the on-disk model-card versions already record the rate).
     pub fn cost_usd(&self, usage: &CompletionUsage) -> f64 {
         let cached = usage.cached_input_tokens.min(usage.input_tokens);
         let uncached_input = usage.input_tokens - cached;
@@ -84,7 +86,12 @@ pub enum ToolDialect {
 }
 
 /// One catalog row — provider-native slug, verified against the provider's
-/// own `/models` endpoint (seed data below is the day-0 offline fallback).
+/// own `/models` endpoint (seed data below is the day-0 offline fallback;
+/// refreshed rows carry the latest model-card version's pricing).
+///
+/// Fields are owned `String`s (not `&'static str`): rows come from two
+/// sources now — the compile-time seed and the on-disk model-card catalog
+/// installed at startup — and only one of those can borrow from the binary.
 ///
 /// `Eq` is intentionally *not* derived: [`Pricing`] carries `f64` fields, and
 /// exact float equality is not a meaningful identity for a catalog row (rows
@@ -92,9 +99,9 @@ pub enum ToolDialect {
 /// kept for tests that compare whole entries.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogEntry {
-    pub id: &'static str,
-    pub provider: &'static str,
-    pub family: &'static str,
+    pub id: String,
+    pub provider: String,
+    pub family: String,
     pub context_window: u32,
     pub tool_dialect: ToolDialect,
     /// List pricing used to compute `CompletionResult::cost_usd` on the real
@@ -102,7 +109,43 @@ pub struct CatalogEntry {
     pub pricing: Pricing,
 }
 
-/// The in-binary seed catalog. Curated, versioned data — not code that
+impl CatalogEntry {
+    /// A catalog row without the field-by-field ceremony — the seed table
+    /// below, the runtime-catalog assembly in `stella-cli`, and tests all
+    /// build entries through this.
+    pub fn new(
+        id: &str,
+        provider: &str,
+        family: &str,
+        context_window: u32,
+        tool_dialect: ToolDialect,
+        pricing: Pricing,
+    ) -> Self {
+        Self {
+            id: id.to_string(),
+            provider: provider.to_string(),
+            family: family.to_string(),
+            context_window,
+            tool_dialect,
+            pricing,
+        }
+    }
+}
+
+/// The process-wide catalog installed by `stella-cli` at startup (seed rows
+/// merged with the on-disk model-card catalog). `None` until installed;
+/// [`Catalog::current`] falls back to the seed so library consumers and
+/// tests behave identically without an install.
+static RUNTIME_CATALOG: RwLock<Option<Arc<Catalog>>> = RwLock::new(None);
+
+/// The seed, built once — [`Catalog::current`]'s fallback must not
+/// reallocate the table on every adapter construction.
+fn seed_arc() -> &'static Arc<Catalog> {
+    static SEED: OnceLock<Arc<Catalog>> = OnceLock::new();
+    SEED.get_or_init(|| Arc::new(Catalog::seed()))
+}
+
+/// The model catalog. Curated, versioned data — not code that
 /// call sites reach past. `Catalog::resolve` is the only sanctioned way to
 /// turn a user-supplied slug into a usable model reference.
 pub struct Catalog {
@@ -112,159 +155,179 @@ pub struct Catalog {
 impl Catalog {
     /// The in-binary seed: one row per provider `config.rs::PROVIDERS` can
     /// select, keyed to that table's `default_model`. `stella models
-    /// refresh` (future work) grows this with live `/models` data; the
-    /// shape does not change, only the row count.
+    /// refresh` grows the *runtime* catalog with live master-list data; the
+    /// seed stays the offline floor.
     pub fn seed() -> Self {
         Self {
             entries: vec![
-                CatalogEntry {
-                    id: "glm-5.2",
-                    provider: "zai",
-                    family: "glm",
-                    context_window: 200_000,
-                    tool_dialect: ToolDialect::OpenaiJson,
-                    pricing: Pricing {
+                CatalogEntry::new(
+                    "glm-5.2",
+                    "zai",
+                    "glm",
+                    200_000,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
                         input_usd_per_mtok: 0.60,
                         output_usd_per_mtok: 2.20,
                         cached_input_usd_per_mtok: 0.11,
                     },
-                },
-                CatalogEntry {
-                    id: "claude-fable-5",
-                    provider: "anthropic",
-                    family: "claude",
-                    context_window: 200_000,
-                    tool_dialect: ToolDialect::AnthropicTools,
-                    pricing: Pricing {
+                ),
+                CatalogEntry::new(
+                    "claude-fable-5",
+                    "anthropic",
+                    "claude",
+                    200_000,
+                    ToolDialect::AnthropicTools,
+                    Pricing {
                         input_usd_per_mtok: 3.00,
                         output_usd_per_mtok: 15.00,
                         cached_input_usd_per_mtok: 0.30,
                     },
-                },
-                CatalogEntry {
-                    id: "gpt-5.5",
-                    provider: "openai",
-                    family: "gpt",
-                    context_window: 400_000,
-                    // Real adapter now exists (stella_model::openai) —
-                    // this used to be OpenaiJson, which was wrong: OpenAI
-                    // was never routed through Chat Completions, only
-                    // through the generic ZaiProvider pointed at OpenAI's
-                    // base URL as a stand-in until the Responses API
-                    // adapter landed.
-                    tool_dialect: ToolDialect::OpenaiResponses,
-                    pricing: Pricing {
+                ),
+                // Real adapter now exists (stella_model::openai) — this row
+                // used to be OpenaiJson, which was wrong: OpenAI was never
+                // routed through Chat Completions, only through the generic
+                // ZaiProvider pointed at OpenAI's base URL as a stand-in
+                // until the Responses API adapter landed.
+                CatalogEntry::new(
+                    "gpt-5.5",
+                    "openai",
+                    "gpt",
+                    400_000,
+                    ToolDialect::OpenaiResponses,
+                    Pricing {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
                         cached_input_usd_per_mtok: 0.125,
                     },
-                },
-                CatalogEntry {
-                    id: "grok-4",
-                    provider: "xai",
-                    family: "grok",
-                    context_window: 256_000,
-                    tool_dialect: ToolDialect::OpenaiJson,
-                    pricing: Pricing {
+                ),
+                CatalogEntry::new(
+                    "grok-4",
+                    "xai",
+                    "grok",
+                    256_000,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
                         input_usd_per_mtok: 3.00,
                         output_usd_per_mtok: 15.00,
                         cached_input_usd_per_mtok: 0.75,
                     },
-                },
-                CatalogEntry {
-                    id: "deepseek-chat",
-                    provider: "deepseek",
-                    family: "deepseek",
-                    context_window: 128_000,
-                    tool_dialect: ToolDialect::OpenaiJson,
-                    pricing: Pricing {
+                ),
+                CatalogEntry::new(
+                    "deepseek-chat",
+                    "deepseek",
+                    "deepseek",
+                    128_000,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
                         input_usd_per_mtok: 0.27,
                         output_usd_per_mtok: 1.10,
                         cached_input_usd_per_mtok: 0.07,
                     },
-                },
-                CatalogEntry {
-                    id: "gemini-3-pro",
-                    provider: "gemini",
-                    family: "gemini",
-                    context_window: 1_000_000,
-                    // The native Gemini-direct adapter
-                    // (stella_model::gemini) — this row used to be
-                    // OpenaiJson while requests routed through Google's
-                    // OpenAI-compatibility shim as a stand-in.
-                    tool_dialect: ToolDialect::GeminiFunctions,
-                    pricing: Pricing {
+                ),
+                // The native Gemini-direct adapter (stella_model::gemini) —
+                // this row used to be OpenaiJson while requests routed
+                // through Google's OpenAI-compatibility shim as a stand-in.
+                CatalogEntry::new(
+                    "gemini-3-pro",
+                    "gemini",
+                    "gemini",
+                    1_000_000,
+                    ToolDialect::GeminiFunctions,
+                    Pricing {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
                         cached_input_usd_per_mtok: 0.31,
                     },
-                },
-                CatalogEntry {
-                    // The same Google model surfaced through Vertex AI —
-                    // one model genuinely existing on two providers is why
-                    // uniqueness (and `resolve_for`) is keyed on
-                    // (provider, id), not id alone. Same list price as the
-                    // Gemini-direct row above.
-                    id: "gemini-3-pro",
-                    provider: "vertex",
-                    family: "gemini",
-                    context_window: 1_000_000,
-                    tool_dialect: ToolDialect::GeminiFunctions,
-                    pricing: Pricing {
+                ),
+                // The same Google model surfaced through Vertex AI — one
+                // model genuinely existing on two providers is why
+                // uniqueness (and `resolve_for`) is keyed on
+                // (provider, id), not id alone. Same list price as the
+                // Gemini-direct row above.
+                CatalogEntry::new(
+                    "gemini-3-pro",
+                    "vertex",
+                    "gemini",
+                    1_000_000,
+                    ToolDialect::GeminiFunctions,
+                    Pricing {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
                         cached_input_usd_per_mtok: 0.31,
                     },
-                },
-                CatalogEntry {
-                    // A cross-region inference profile, not a bare model id
-                    // — Bedrock rejects on-demand invocation of newer
-                    // Anthropic models without one. Priced as Claude Sonnet
-                    // 4.5 (Bedrock on-demand list price).
-                    id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-                    provider: "bedrock",
-                    family: "claude",
-                    context_window: 200_000,
-                    tool_dialect: ToolDialect::BedrockConverse,
-                    pricing: Pricing {
+                ),
+                // A cross-region inference profile, not a bare model id —
+                // Bedrock rejects on-demand invocation of newer Anthropic
+                // models without one. Priced as Claude Sonnet 4.5 (Bedrock
+                // on-demand list price).
+                CatalogEntry::new(
+                    "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    "bedrock",
+                    "claude",
+                    200_000,
+                    ToolDialect::BedrockConverse,
+                    Pricing {
                         input_usd_per_mtok: 3.00,
                         output_usd_per_mtok: 15.00,
                         cached_input_usd_per_mtok: 0.30,
                     },
-                },
-                CatalogEntry {
-                    // OpenRouter's fully-qualified slug for its own
-                    // meta-router. The gateway's model ids are ALL
-                    // `vendor/model` — a bare `auto` is not a model there,
-                    // so this row must carry the wire-true id (it is sent
-                    // verbatim as the request's `model`).
-                    id: "openrouter/auto",
-                    provider: "openrouter",
-                    family: "openrouter",
-                    // OpenRouter's own meta-routing model — a real,
-                    // provider-native catalog entry, not our internal
-                    // `Option<ModelRef>` "auto" sentinel (L-M3 is about
-                    // OUR resolver never using a string for "no pin"; this
-                    // is a third party's own product feature we pass
-                    // through verbatim).
-                    context_window: 128_000,
-                    tool_dialect: ToolDialect::OpenaiJson,
-                    // OpenRouter's `auto` meta-model routes to whichever
-                    // underlying model it picks, so the effective price
-                    // varies per request and the gateway reports it back on
-                    // its own usage/generation endpoint — we cannot know it
-                    // from the slug alone. Left at zero deliberately: a wrong
-                    // fixed estimate is worse than a zero the metering layer
-                    // can flag as "gateway-priced, reconcile from the
-                    // provider's usage record."
-                    pricing: Pricing {
+                ),
+                // OpenRouter's fully-qualified slug for its own meta-router.
+                // The gateway's model ids are ALL `vendor/model` — a bare
+                // `auto` is not a model there, so this row must carry the
+                // wire-true id (it is sent verbatim as the request's
+                // `model`). A real, provider-native catalog entry, not our
+                // internal `Option<ModelRef>` "auto" sentinel (L-M3 is
+                // about OUR resolver never using a string for "no pin";
+                // this is a third party's own product feature we pass
+                // through verbatim).
+                //
+                // OpenRouter's `auto` meta-model routes to whichever
+                // underlying model it picks, so the effective price varies
+                // per request and the gateway reports it back on its own
+                // usage/generation endpoint — we cannot know it from the
+                // slug alone. Left at zero deliberately: a wrong fixed
+                // estimate is worse than a zero the metering layer can flag
+                // as "gateway-priced, reconcile from the provider's usage
+                // record."
+                CatalogEntry::new(
+                    "openrouter/auto",
+                    "openrouter",
+                    "openrouter",
+                    128_000,
+                    ToolDialect::OpenaiJson,
+                    Pricing {
                         input_usd_per_mtok: 0.0,
                         output_usd_per_mtok: 0.0,
                         cached_input_usd_per_mtok: 0.0,
                     },
-                },
+                ),
             ],
         }
+    }
+
+    /// A catalog over explicit rows — how `stella-cli` assembles the runtime
+    /// catalog (seed rows first, then the on-disk model-card rows, so seed
+    /// lookups keep their exact pre-refresh results).
+    pub fn with_entries(entries: Vec<CatalogEntry>) -> Self {
+        Self { entries }
+    }
+
+    /// Install the process-wide catalog [`Catalog::current`] serves.
+    /// Idempotent and replaceable — the last install wins (a mid-session
+    /// `stella models refresh` re-installs with the new rows).
+    pub fn install_runtime(catalog: Catalog) {
+        let mut slot = RUNTIME_CATALOG.write().unwrap_or_else(|e| e.into_inner());
+        *slot = Some(Arc::new(catalog));
+    }
+
+    /// The catalog every consumer resolves against: the installed runtime
+    /// catalog when `stella-cli` has loaded one, otherwise the seed. Library
+    /// users (and tests) that never install see exactly the seed.
+    pub fn current() -> Arc<Catalog> {
+        let slot = RUNTIME_CATALOG.read().unwrap_or_else(|e| e.into_inner());
+        slot.clone().unwrap_or_else(|| Arc::clone(seed_arc()))
     }
 
     /// Resolve a slug against the catalog. Returns `ProviderError::UnknownModel`
@@ -332,7 +395,7 @@ mod tests {
         let mut pairs: Vec<(&str, &str)> = catalog
             .entries()
             .iter()
-            .map(|e| (e.provider, e.id))
+            .map(|e| (e.provider.as_str(), e.id.as_str()))
             .collect();
         let before = pairs.len();
         pairs.sort_unstable();
@@ -362,6 +425,36 @@ mod tests {
             }
             other => panic!("expected UnknownModel, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn install_runtime_extends_current_without_disturbing_seed_rows() {
+        // The runtime catalog is a process-global; this test installs a
+        // strict SUPERSET of the seed so any concurrently-running test that
+        // resolves seed rows through `current()` sees identical results
+        // regardless of test ordering.
+        let mut entries = Catalog::seed().entries.clone();
+        entries.push(CatalogEntry::new(
+            "test-only-model",
+            "anthropic",
+            "claude",
+            100_000,
+            ToolDialect::AnthropicTools,
+            Pricing {
+                input_usd_per_mtok: 1.0,
+                output_usd_per_mtok: 2.0,
+                cached_input_usd_per_mtok: 0.1,
+            },
+        ));
+        Catalog::install_runtime(Catalog::with_entries(entries));
+
+        let current = Catalog::current();
+        // Seed row unchanged, new row visible.
+        assert_eq!(
+            current.resolve_for("zai", "glm-5.2").unwrap().pricing,
+            Catalog::seed().resolve("glm-5.2").unwrap().pricing,
+        );
+        assert!(current.resolve_for("anthropic", "test-only-model").is_ok());
     }
 
     #[test]

@@ -132,7 +132,7 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     if let Some(status) = &state.status {
         lines.push(Line::from(Span::styled(
             format!("  {status}"),
-            Style::default().fg(theme::EMBER_GOLD),
+            Style::default().fg(theme::AURORA_CYAN),
         )));
     }
     lines.push(footer(state.mode));
@@ -212,7 +212,7 @@ fn render_browse(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
         ));
         spans.push(Span::styled(
             format!("  · {}×", server.calls),
-            Style::default().fg(theme::EMBER_GOLD),
+            Style::default().fg(theme::AURORA_CYAN),
         ));
         lines.push(Line::from(spans));
     }
@@ -222,7 +222,7 @@ fn render_search(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
     let query_line = Line::from(vec![
         Span::styled("  search ", theme::accent()),
         Span::styled(state.query.clone(), Style::default().fg(theme::INK)),
-        Span::styled("▏", Style::default().fg(theme::EMBER_GOLD)),
+        Span::styled("▏", Style::default().fg(theme::AURORA_CYAN)),
     ]);
     lines.push(query_line);
     lines.push(Line::default());
@@ -329,7 +329,7 @@ fn prompt_line(label: &str, value: &str, active: bool, mask: bool) -> Line<'stat
         Span::styled(shown, value_style),
     ];
     if active {
-        spans.push(Span::styled("▏", Style::default().fg(theme::EMBER_GOLD)));
+        spans.push(Span::styled("▏", Style::default().fg(theme::AURORA_CYAN)));
     }
     Line::from(spans)
 }

@@ -41,6 +41,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let area = frame.area();
     let buf = frame.buffer_mut();
 
+    // The navy-black ground is a real frame fill, not an assumption about
+    // the user's terminal background — the deck looks the same over a white
+    // terminal as over a black one. `degrade_buffer` narrows it per color
+    // depth, and NO_COLOR strips it entirely (structure survives).
+    buf.set_style(area, Style::default().bg(theme::GROUND));
+
     // The splash owns the whole frame until it finishes / is skipped.
     if !ui.splash.is_done() {
         splash::render(&ui.splash, area, buf);
@@ -59,6 +65,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view
+        Constraint::Length(2),          // trace micro-summary strip (rule + line)
         Constraint::Length(1),          // run progress bar
         Constraint::Length(composer_h), // composer
         Constraint::Length(1),          // composer footer (keys + line counter)
@@ -78,19 +85,21 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Files => views::files::render(model, ui, content, buf),
         DeckTab::Skills => views::skills::render(model, ui, content, buf),
         DeckTab::Mcp => views::mcp::render(model, ui, content, buf),
+        DeckTab::Issues => views::issues::render(model, ui, content, buf),
     }
 
-    crate::progress::render(model, ui, bands[2], buf);
-    render_composer(ui, &c_layout, model.now_ms, bands[3], buf);
-    render_composer_footer(model, ui, &c_layout, bands[4], buf);
-    render_status_bar(model, ui, bands[5], buf);
+    render_trace_strip(model, bands[2], buf);
+    crate::progress::render(model, ui, bands[3], buf);
+    render_composer(ui, &c_layout, model.now_ms, bands[4], buf);
+    render_composer_footer(model, ui, &c_layout, bands[5], buf);
+    render_status_bar(model, ui, bands[6], buf);
 
     // Floating popups sit above the chrome: the slash menu anchors to the
     // composer; the queue editor centers over the content.
     let slash = ui.composer.slash_menu(&ui.slash_commands);
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
-        let popup = slash_popup_area(area, bands[3], menu.matches.len());
+        let popup = slash_popup_area(area, bands[4], menu.matches.len());
         render_slash_popup(&menu, selected, popup, buf);
     }
     if ui.queue_open {
@@ -110,12 +119,8 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if ui.context_open {
         render_context_overlay(ui, area, buf);
     }
-    // The ENGINE overlay draws last in the chain so it sits above the other
-    // popups (its model-picker sub-overlay draws above it in turn); the help
-    // overlay below still wins the very top.
-    if ui.engine.open {
-        views::engine::render_overlay(ui, area, buf);
-    }
+    // (The former ENGINE overlay is gone: the engine panel renders inside
+    // the AGENT ENGINE tab's right column — see `views::agents::render`.)
 
     // Deck motion (crate::fx), scrubbed like the splash: each frame builds a
     // fresh effect and processes it once at its wall-clock elapsed, so no
@@ -201,7 +206,7 @@ fn render_queue_popup(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
             .take((w as usize).saturating_sub(6))
             .collect();
         lines.push(Line::from(vec![
-            Span::styled(format!("{marker}{}. ", i + 1), style.fg(theme::AMBER)),
+            Span::styled(format!("{marker}{}. ", i + 1), style.fg(theme::ACCENT)),
             Span::styled(text, style),
         ]));
     }
@@ -642,7 +647,7 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
             .take((w as usize).saturating_sub(6))
             .collect::<String>();
         let mut spans = vec![
-            Span::styled(marker.to_string(), style.fg(theme::AMBER)),
+            Span::styled(marker.to_string(), style.fg(theme::ACCENT)),
             Span::styled(name, style),
         ];
         // Mark the file the neighborhood is currently rooted on (the default).
@@ -666,6 +671,47 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         .border_style(theme::accent())
         .title(format!(" files · {} indexed ", graph.files.len()));
     Paragraph::new(lines).block(block).render(popup, buf);
+}
+
+/// The deck-wide transcript micro-summary strip: a hairline rule with, under
+/// it, one dimmed line summarizing the NEWEST entry of the cross-agent trace
+/// ([`WorkspaceModel::trace`]) — a glanceable "what just happened" on every
+/// tab, refreshed naturally every frame. Sits directly above the composer
+/// chrome (two rows: rule + summary).
+fn render_trace_strip(model: &WorkspaceModel, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let rule: String = "─".repeat(area.width as usize);
+    Paragraph::new(Line::from(Span::styled(rule, theme::rule())))
+        .render(Rect { height: 1, ..area }, buf);
+    if area.height < 2 {
+        return;
+    }
+    let line = match model.trace.rows.back() {
+        Some(row) => Line::from(vec![
+            Span::styled(
+                format!(" {} ", row.kind.label()),
+                Style::default().fg(theme::trace_kind_color(row.kind)),
+            ),
+            Span::styled(
+                truncate_chars(&row.summary, (area.width as usize).saturating_sub(10)),
+                Style::default().fg(theme::TEXT_TERTIARY),
+            ),
+        ]),
+        None => Line::from(Span::styled(
+            " · no activity yet",
+            Style::default().fg(theme::TEXT_TERTIARY),
+        )),
+    };
+    Paragraph::new(line).render(
+        Rect {
+            y: area.y + 1,
+            height: 1,
+            ..area
+        },
+        buf,
+    );
 }
 
 /// Cap on the deck composer's visible rows — it grows with the prompt up to
@@ -703,7 +749,7 @@ fn render_composer(
         // The gold `>>> ` prefix rides every row and scrolls with it.
         let mut spans = vec![Span::styled(
             PROMPT_PREFIX,
-            Style::default().fg(theme::EMBER_GOLD),
+            Style::default().fg(theme::AURORA_CYAN),
         )];
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
@@ -802,7 +848,7 @@ fn render_composer_footer(
     let (q_text, q_style) = if pending > 0 && ui.dispatch_held {
         (
             format!("{pending} held"),
-            Style::default().fg(theme::EMBER_CRIMSON),
+            Style::default().fg(theme::AURORA_MAGENTA),
         )
     } else if pending > 0 {
         (
@@ -882,9 +928,9 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
         .unwrap_or("idle");
     let dot_color = if ui.color_mode.is_truecolor() && !ui.no_anim {
         let t = (model.now_ms % 1200) as f64 / 1200.0;
-        theme::lighten(theme::EMBER_FLAME, (0.5 - (t - 0.5).abs()) * 0.7)
+        theme::lighten(theme::AURORA_AZURE, (0.5 - (t - 0.5).abs()) * 0.7)
     } else {
-        theme::EMBER_FLAME
+        theme::AURORA_AZURE
     };
 
     // CACHE: the session prompt-cache hit rate — cumulative cache-read (hit)
@@ -984,7 +1030,7 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
         ),
         ("CACHE", cache_spans, 4),
         (
-            "AGENTS",
+            "ENGINE",
             vec![Span::styled(
                 format!("{} active", model.active_count()),
                 val,
@@ -1073,7 +1119,7 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
     let mut bot: Vec<Span<'static>> = vec![Span::styled(
         brand,
         Style::default()
-            .fg(theme::EMBER_GOLD)
+            .fg(theme::AURORA_CYAN)
             .add_modifier(Modifier::BOLD),
     )];
     for (i, (label, value, _)) in cells.into_iter().enumerate() {
@@ -1173,15 +1219,16 @@ fn pr_cell(pr: &PrInfo) -> Vec<Span<'static>> {
     spans
 }
 
-/// The transcript's PR ember ramp — `render`'s `pr_status_color` is private
-/// to that module, so the statline replicates it: quiet amber draft, flame
-/// while open, gold on merge, crimson on close.
+/// The transcript's PR aurora ramp — `render`'s `pr_status_color` is private
+/// to that module, so the statline replicates it: quiet amber draft (the one
+/// semantic-warning exception), azure while open, cyan on merge, magenta on
+/// close.
 fn pr_status_color(status: PrStatus) -> ratatui::style::Color {
     match status {
         PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::EMBER_FLAME,
-        PrStatus::Merged => theme::EMBER_GOLD,
-        PrStatus::Closed => theme::EMBER_CRIMSON,
+        PrStatus::Open => theme::AURORA_AZURE,
+        PrStatus::Merged => theme::AURORA_CYAN,
+        PrStatus::Closed => theme::AURORA_MAGENTA,
     }
 }
 
@@ -1239,11 +1286,13 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),
             ("↑ ↓", "select an agent"),
+            ("e", "focus the engine panel — models, prompts & params"),
             ("s", "stop the selected running agent"),
             ("⏎", "edit the selected installed agent"),
             ("v", "show the selected agent's versions"),
             ("n", "new agent — drafted by the LLM"),
             ("r", "reload installed agents"),
+            ("esc", "in the engine panel: back to the left column"),
         ],
         DeckTab::Traces => &[
             ("↑ ↓ ⇞ ⇟", "scroll the event log"),
@@ -1273,6 +1322,15 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("s", "search the registry"),
             ("x", "remove the server"),
             ("r", "refresh"),
+        ],
+        DeckTab::Issues => &[
+            ("↑ ↓", "select an issue"),
+            ("r", "refresh the list"),
+            ("/", "search the tracker"),
+            ("n", "new issue — tab cycles fields · ctrl-s creates"),
+            ("c", "comment on the selected issue"),
+            ("s", "set the selected issue's status"),
+            ("w", "start work on the selected issue"),
         ],
     }
 }
@@ -1441,6 +1499,38 @@ mod tests {
             .join("\n")
     }
 
+    #[test]
+    fn trace_strip_shows_a_rule_and_the_newest_trace_entry() {
+        let mut model = running_model_with_queue();
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Text {
+                delta: "Found the root cause.".into(),
+            },
+        });
+        let area = Rect::new(0, 0, 60, 2);
+        let mut buf = Buffer::empty(area);
+        render_trace_strip(&model, area, &mut buf);
+        let text = buffer_text(&buf);
+        let rows: Vec<&str> = text.lines().collect();
+        assert!(
+            rows[0].starts_with("──"),
+            "hairline rule on top: {:?}",
+            rows[0]
+        );
+        assert!(rows[1].contains("text"), "kind label shown:\n{text}");
+        assert!(
+            rows[1].contains("Found the root cause."),
+            "newest entry summarized:\n{text}"
+        );
+
+        // No trace yet → a quiet idle line, never a panic.
+        let empty = WorkspaceModel::new();
+        let mut buf = Buffer::empty(area);
+        render_trace_strip(&empty, area, &mut buf);
+        assert!(buffer_text(&buf).contains("no activity yet"));
+    }
+
     fn running_model_with_queue() -> WorkspaceModel {
         let mut m = WorkspaceModel::new();
         m.now_ms = 1_000;
@@ -1568,7 +1658,7 @@ mod tests {
             "CONTEXT",
             "SPEND",
             "CACHE",
-            "AGENTS",
+            "ENGINE",
             "PIPELINE",
             "deterministic-first",
         ] {
@@ -1640,7 +1730,7 @@ mod tests {
     }
 
     #[test]
-    fn statline_cache_box_sits_after_spend_and_before_agents() {
+    fn statline_cache_box_sits_after_spend_and_before_engine() {
         let model = model_with_cache(1_000, 500);
         let ui = DeckUi::default();
         let area = Rect::new(0, 0, 200, 2);
@@ -1652,10 +1742,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {needle:?}:\n{text}"))
         };
         assert!(pos("SPEND") < pos("CACHE"), "CACHE after SPEND:\n{text}");
-        assert!(pos("CACHE") < pos("AGENTS"), "CACHE before AGENTS:\n{text}");
+        assert!(pos("CACHE") < pos("ENGINE"), "CACHE before ENGINE:\n{text}");
         assert!(
-            pos("AGENTS") < pos("PIPELINE"),
-            "PIPELINE after AGENTS:\n{text}"
+            pos("ENGINE") < pos("PIPELINE"),
+            "PIPELINE after ENGINE:\n{text}"
         );
     }
 

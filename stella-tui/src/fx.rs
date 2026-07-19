@@ -64,7 +64,7 @@ pub fn tab_switch(ms: u32) -> Effect {
         Motion::LeftToRight,
         10,
         3,
-        theme::AMBER_DEEP,
+        theme::ACCENT_DEEP,
         EffectTimer::from_ms(ms, Interpolation::CircOut),
     )
     .with_rng(SimpleRng::new(FX_SEED))

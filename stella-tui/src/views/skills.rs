@@ -82,7 +82,7 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         let marker = if is_sel { "▸ " } else { "  " };
         let boxed = if row.enabled { "[x] " } else { "[ ] " };
         let box_style = if row.enabled {
-            Style::default().fg(theme::AMBER)
+            Style::default().fg(theme::ACCENT)
         } else {
             theme::muted()
         };
@@ -101,7 +101,7 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
             String::new()
         };
         let mut line = Line::from(vec![
-            Span::styled(marker, Style::default().fg(theme::AMBER)),
+            Span::styled(marker, Style::default().fg(theme::ACCENT)),
             Span::styled(boxed, box_style),
             Span::styled(row.name.clone(), theme::body()),
             Span::styled(ver, theme::muted()),
@@ -139,7 +139,7 @@ fn render_search(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     lines.push(Line::from(vec![
         Span::styled("find: ", theme::muted()),
         Span::styled(ui.skills.query.clone(), theme::body()),
-        Span::styled(caret.to_string(), Style::default().fg(theme::AMBER)),
+        Span::styled(caret.to_string(), Style::default().fg(theme::ACCENT)),
     ]));
     if ui.skills.searching {
         lines.push(Line::from(Span::styled("working…", theme::muted())));
@@ -189,14 +189,14 @@ fn render_search(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 .saturating_sub(marker.len() + name.chars().count() + right_w)
                 .max(1);
             let mut spans = vec![
-                Span::styled(marker, Style::default().fg(theme::AMBER)),
+                Span::styled(marker, Style::default().fg(theme::ACCENT)),
                 Span::styled(name, theme::body()),
                 Span::styled(" ".repeat(pad), theme::muted()),
             ];
             if !bar.is_empty() {
                 spans.push(Span::styled(
                     format!("{bar} "),
-                    Style::default().fg(theme::AMBER),
+                    Style::default().fg(theme::ACCENT),
                 ));
             }
             if !metric.is_empty() {
@@ -248,7 +248,7 @@ fn render_status(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let line = match &ui.skills.status {
         Some(status) => Line::from(Span::styled(
             format!(" {status}"),
-            theme::body().fg(theme::AMBER),
+            theme::body().fg(theme::ACCENT),
         )),
         None => Line::from(Span::styled(format!(" {legend}"), theme::muted())),
     };
@@ -266,12 +266,12 @@ fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
             let choose = |label: &str, hint: &str, selected: bool| {
                 let marker = if selected { "▸ " } else { "  " };
                 let style = if selected {
-                    theme::body().fg(theme::AMBER).add_modifier(Modifier::BOLD)
+                    theme::body().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
                 } else {
                     theme::body()
                 };
                 Line::from(vec![
-                    Span::styled(marker, Style::default().fg(theme::AMBER)),
+                    Span::styled(marker, Style::default().fg(theme::ACCENT)),
                     Span::styled(label.to_string(), style),
                     Span::styled(format!("  {hint}"), theme::muted()),
                 ])
@@ -306,9 +306,9 @@ fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 )),
                 Line::default(),
                 Line::from(vec![
-                    Span::styled("> ", Style::default().fg(theme::AMBER)),
+                    Span::styled("> ", Style::default().fg(theme::ACCENT)),
                     Span::styled(buffer.clone(), theme::body()),
-                    Span::styled("▌", Style::default().fg(theme::AMBER)),
+                    Span::styled("▌", Style::default().fg(theme::ACCENT)),
                 ]),
                 Line::default(),
                 Line::from(Span::styled("⏎ continue · esc cancel", theme::muted())),
@@ -330,12 +330,12 @@ fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 let marker = if selected { "▸ " } else { "  " };
                 let tag = if v == *latest { "  (latest)" } else { "" };
                 let style = if selected {
-                    theme::body().fg(theme::AMBER).add_modifier(Modifier::BOLD)
+                    theme::body().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
                 } else {
                     theme::body()
                 };
                 lines.push(Line::from(vec![
-                    Span::styled(marker, Style::default().fg(theme::AMBER)),
+                    Span::styled(marker, Style::default().fg(theme::ACCENT)),
                     Span::styled(format!("v{v}{tag}"), style),
                 ]));
             }
@@ -386,7 +386,7 @@ fn render_edit_overlay(name: &str, buffer: &str, area: Rect, buf: &mut Buffer) {
         if is_last {
             lines.push(Line::from(vec![
                 Span::styled((*l).to_string(), theme::body()),
-                Span::styled("▌", Style::default().fg(theme::AMBER)),
+                Span::styled("▌", Style::default().fg(theme::ACCENT)),
             ]));
         } else {
             lines.push(Line::from(Span::styled((*l).to_string(), theme::body())));

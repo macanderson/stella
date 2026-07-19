@@ -64,7 +64,8 @@ impl GeminiProvider {
         // Scope the lookup to the `gemini` provider: `gemini-3-pro` is seeded
         // under both `gemini` and `vertex`, so a bare `resolve` would be
         // ambiguous (see `Catalog::resolve_for`).
-        let pricing = Catalog::seed()
+        let catalog = Catalog::current();
+        let pricing = catalog
             .resolve_for("gemini", &model)
             .ok()
             .map(|e| e.pricing);

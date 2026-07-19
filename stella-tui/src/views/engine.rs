@@ -1,7 +1,9 @@
-//! ENGINE overlay — the `/engine` editor for `settings.json` →
-//! `agent_engine_config`: the global routing toggles plus the per-agent
-//! model / prompt / sampling overrides for the four pipeline agents
-//! (default · worker · judge · triage).
+//! The ENGINE panel — the AGENT ENGINE tab's permanent right column, the
+//! editor for `settings.json` → `agent_engine_config`: the global routing
+//! toggles plus the per-agent model / prompt / sampling overrides for the
+//! four pipeline agents (default · worker · judge · triage). Formerly the
+//! `/engine` popup; the command and the popup are gone — the same content
+//! now lives beside the executions dashboard in a 60/40 split.
 //!
 //! Ownership mirrors the MCP and SKILLS surfaces: the **driver** owns the
 //! settings files on disk and pushes [`crate::envelope::Inbound::EngineConfig`]
@@ -11,16 +13,17 @@
 //! `agent_engine_config` object into the chosen scope's `settings.json`
 //! (preserving every other key) and answers with a fresh snapshot whose
 //! `status` carries the outcome. A `pristine` twin of the last adopted
-//! snapshot gives the overlay an honest "modified" marker and lets
+//! snapshot gives the panel an honest "modified" marker and lets
 //! [`ingest_config`] tell a benign refresh (safe to adopt) from one that
-//! would clobber unsaved edits (kept until saved — or until the overlay is
-//! closed and the next snapshot arrives, which is the deliberate discard
+//! would clobber unsaved edits (kept until saved — or until focus leaves
+//! the panel and the next snapshot arrives, which is the deliberate discard
 //! path).
 //!
-//! Interaction follows the queue-editor contract: **modal while open**.
-//! Every key is claimed by [`handle_engine_key`], so the letter verbs
-//! (`s`/`S`/`x`/`r`), the inline edit buffer, and the model-picker filter
-//! can never leak a keystroke into the global composer behind the popup.
+//! Interaction follows the queue-editor contract: **modal while focused**
+//! (`e` on the AGENT ENGINE tab focuses; Esc returns focus to the left
+//! column). Every key is claimed by [`handle_engine_key`] while focused, so
+//! the letter verbs (`s`/`S`/`x`/`r`), the inline edit buffer, and the
+//! model-picker filter can never leak a keystroke into the global composer.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
@@ -29,6 +32,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
+use crate::deck::DeckTab;
 use crate::deck_ui::{DeckAction, DeckUi};
 use crate::envelope::{
     AgentScope, EngineAgentState, EngineConfigState, EngineRole, WorkspaceInput,
@@ -50,7 +54,7 @@ const NO_SNAPSHOT_HINT: &str = "waiting for the engine config snapshot — r to 
 
 /// Which tab of the overlay has the keyboard: the GLOBAL toggles or one of
 /// the four per-agent override pages. GLOBAL comes first — the cross-agent
-/// switches are what `/engine` is usually opened for.
+/// switches are what the panel usually opens on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EngineTab {
     #[default]
@@ -206,14 +210,17 @@ pub struct ModelPicker {
     pub sel: usize,
 }
 
-/// All ENGINE-overlay view state (a field on [`DeckUi`]). The config itself
+/// All engine-panel view state (a field on [`DeckUi`]). The config itself
 /// is driver-owned — `state` is the working copy being edited and `pristine`
 /// the last snapshot adopted from the driver; everything else is ephemeral
-/// interaction state.
+/// interaction state. The panel lives permanently in the AGENT ENGINE tab's
+/// right column (no popup, no `/engine` command): `focused` is what routes
+/// the keyboard to it.
 #[derive(Debug, Clone, Default)]
 pub struct EngineOverlay {
-    /// Whether the overlay is open (modal while set).
-    pub open: bool,
+    /// Whether the panel owns the keyboard (modal while set, on the AGENT
+    /// ENGINE tab only — `e` focuses, Esc returns focus to the left column).
+    pub focused: bool,
     /// The working copy being edited. `None` until the first snapshot lands.
     pub state: Option<EngineConfigState>,
     /// The last driver snapshot adopted verbatim — `state != pristine` is
@@ -269,7 +276,7 @@ impl EngineOverlay {
 pub fn ingest_config(ui: &mut DeckUi, state: &EngineConfigState, status: &Option<String>) {
     let e = &mut ui.engine;
     let echoes_working = e.state.as_ref() == Some(state);
-    if !e.open || !e.dirty() || echoes_working {
+    if !e.focused || !e.dirty() || echoes_working {
         e.state = Some(state.clone());
         e.pristine = Some(state.clone());
     }
@@ -279,15 +286,16 @@ pub fn ingest_config(ui: &mut DeckUi, state: &EngineConfigState, status: &Option
     e.busy = false;
 }
 
-// ── openers (the deck-local slash commands land here) ───────────────────────
+// ── focusers (`e` on the AGENT ENGINE tab, and `/model-*`) ─────────────────
 
-/// `/engine`: open the overlay on the GLOBAL tab and ask the driver to
-/// re-read the settings chain so the popup reflects disk truth (the reply is
-/// dirty-guarded by [`ingest_config`], so reopening over unsaved edits is
-/// safe).
-pub fn open_overlay(ui: &mut DeckUi) -> DeckAction {
+/// Focus the engine panel (switching to the AGENT ENGINE tab if needed) on
+/// the GLOBAL tab, and ask the driver to re-read the settings chain so the
+/// panel reflects disk truth (the reply is dirty-guarded by
+/// [`ingest_config`], so refocusing over unsaved edits is safe).
+pub fn focus_panel(ui: &mut DeckUi) -> DeckAction {
+    ui.set_tab(DeckTab::Agents);
     let e = &mut ui.engine;
-    e.open = true;
+    e.focused = true;
     e.tab = EngineTab::Global;
     e.row = 0;
     e.edit = None;
@@ -296,11 +304,13 @@ pub fn open_overlay(ui: &mut DeckUi) -> DeckAction {
     DeckAction::Send(WorkspaceInput::EngineConfigRefresh)
 }
 
-/// `/model-<agent>`: open the overlay on that agent's tab with the model
-/// picker already up — the one-keystroke "change this agent's model" path.
+/// `/model-<agent>`: jump to the AGENT ENGINE tab, focus the panel on that
+/// agent's tab with the model picker already up — the one-keystroke "change
+/// this agent's model" path.
 pub fn open_with_picker(ui: &mut DeckUi, role: EngineRole) -> DeckAction {
+    ui.set_tab(DeckTab::Agents);
     let e = &mut ui.engine;
-    e.open = true;
+    e.focused = true;
     e.tab = EngineTab::Agent(role);
     // Row 0 is the model row (AgentField::ALL[0]) — where the picker's ⏎
     // will land its slug.
@@ -355,7 +365,7 @@ fn picker_matches(state: &EngineConfigState, query: &str) -> Vec<String> {
 // ── key handling ────────────────────────────────────────────────────────────
 
 /// The overlay's modal key map, dispatched by [`crate::deck_ui::handle_deck_key`]
-/// while `ui.engine.open`. Precedence within the overlay: the picker owns the
+/// while `ui.engine.focused`. Precedence within the overlay: the picker owns the
 /// keyboard when open, then an active inline edit, then navigation — the same
 /// innermost-context-first ladder the deck itself uses.
 pub fn handle_engine_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
@@ -507,17 +517,17 @@ fn commit_inline(ui: &mut DeckUi) -> DeckAction {
     DeckAction::Handled
 }
 
-/// The overlay's navigation/verb keys (no picker, no edit active).
+/// The panel's navigation/verb keys (no picker, no edit active).
 fn handle_nav_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let plain = !key
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META);
     match key.code {
-        // Close the overlay. The working copy stays in memory (reopening
-        // resumes the edits) until the next driver snapshot replaces a
-        // closed overlay's state — see `ingest_config`.
+        // Return focus to the tab's left column. The working copy stays in
+        // memory (refocusing resumes the edits) until the next driver
+        // snapshot replaces an unfocused panel's state — see `ingest_config`.
         KeyCode::Esc => {
-            ui.engine.open = false;
+            ui.engine.focused = false;
             DeckAction::Handled
         }
         KeyCode::Tab | KeyCode::Right => switch_tab(ui, true),
@@ -860,25 +870,19 @@ fn cycle_enum(current: &mut Option<String>, values: &[&str]) {
 /// Label column width — fits the longest key (`repetition_penalty`, 18).
 const LABEL_W: usize = 19;
 
-/// Render the ENGINE overlay: a centered popup (the graph-picker pattern —
-/// `Clear`, accent border, windowed rows with the selection reversed), with
-/// the model-picker sub-overlay drawn on top when open. Called last in
-/// `render_deck`'s overlay chain so it sits above the other popups (help
-/// still wins the very top).
-pub fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+/// Render the ENGINE panel into the AGENT ENGINE tab's right column: an
+/// area-filling bordered panel (accent border while it owns the keyboard,
+/// hairline otherwise), windowed rows with the selection reversed, and the
+/// model-picker sub-overlay centered over the panel when open. This is the
+/// exact content the old `/engine` popup carried — permanent now, so the
+/// engine config is always in view beside the executions it drives.
+pub fn render_panel(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let e = &ui.engine;
-    let w = area.width.min(72);
-    let h = area.height.saturating_sub(2).min(26);
+    let (w, h) = (area.width, area.height);
     if w < 4 || h < 4 {
-        return; // no readable popup fits — draw nothing rather than garbage
+        return; // no readable panel fits — draw nothing rather than garbage
     }
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
-    Clear.render(popup, buf);
+    let popup = area;
 
     let inner_h = (h as usize).saturating_sub(2);
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -929,12 +933,18 @@ pub fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     lines.push(match status {
         Some(s) => Line::from(Span::styled(
             format!(" {s}"),
-            Style::default().fg(theme::EMBER_GOLD),
+            Style::default().fg(theme::ACCENT),
         )),
         None => Line::default(),
     });
+    // The legend tracks focus: while the panel owns the keyboard it teaches
+    // its verbs; otherwise it teaches the one key that grants focus.
     lines.push(Line::from(Span::styled(
-        " tab agent · ⏎ edit · space toggle · x clear · s save user · S save project · r reload · esc close",
+        if e.focused {
+            " tab agent · ⏎ edit · space toggle · x clear · s save user · S save project · r reload · esc done"
+        } else {
+            " e edit engine config"
+        },
         theme::muted(),
     )));
 
@@ -944,7 +954,11 @@ pub fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     );
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::accent())
+        .border_style(if e.focused {
+            theme::accent()
+        } else {
+            theme::rule()
+        })
         .title(title);
     Paragraph::new(lines).block(block).render(popup, buf);
 
@@ -998,7 +1012,7 @@ fn render_row(
     let mut spans = vec![
         Span::styled(
             marker.to_string(),
-            Style::default().fg(theme::AMBER).add_modifier(sel_mod),
+            Style::default().fg(theme::ACCENT).add_modifier(sel_mod),
         ),
         Span::styled(
             format!("{label:<LABEL_W$}"),
@@ -1096,7 +1110,7 @@ fn render_model_picker(e: &EngineOverlay, area: Rect, buf: &mut Buffer) {
         }
         let shown = truncate_chars(slug, (w as usize).saturating_sub(6));
         let mut spans = vec![
-            Span::styled(marker.to_string(), style.fg(theme::AMBER)),
+            Span::styled(marker.to_string(), style.fg(theme::ACCENT)),
             Span::styled(shown, style),
         ];
         if current.as_deref() == Some(slug.as_str()) {
@@ -1187,34 +1201,36 @@ mod tests {
         }
     }
 
-    /// A deck with the overlay already open over a loaded snapshot — the
-    /// state most key tests start from.
+    /// A deck on the AGENT ENGINE tab with the panel already focused over a
+    /// loaded snapshot — the state most key tests start from.
     fn open_ui() -> (WorkspaceModel, DeckUi) {
         let model = WorkspaceModel::new();
         let mut ui = ready_ui();
-        ui.engine.open = true;
+        ui.set_tab(DeckTab::Agents);
+        ui.engine.focused = true;
         ui.engine.state = Some(sample_state());
         ui.engine.pristine = Some(sample_state());
         (model, ui)
     }
 
     #[test]
-    fn slash_engine_opens_the_overlay_on_the_global_tab() {
+    fn e_on_the_agent_engine_tab_focuses_the_panel_and_esc_unfocuses() {
         let model = WorkspaceModel::new();
         let mut ui = ready_ui();
-        ui.slash_commands = vec![SlashCommand::new("/engine", "agent engine config")];
-        for c in "/engine".chars() {
-            handle_deck_key(ch(c), &model, &mut ui);
-        }
-        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        ui.set_tab(DeckTab::Agents);
+        let action = handle_deck_key(ch('e'), &model, &mut ui);
         assert_eq!(
             action,
             DeckAction::Send(WorkspaceInput::EngineConfigRefresh),
-            "/engine is deck-local and asks the driver for a fresh snapshot"
+            "focusing the panel asks the driver for a fresh snapshot"
         );
-        assert!(ui.engine.open);
+        assert!(ui.engine.focused);
         assert_eq!(ui.engine.tab, EngineTab::Global);
         assert!(ui.engine.picker.is_none());
+
+        // Esc hands the keyboard back to the tab's left column.
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+        assert!(!ui.engine.focused, "esc returns focus to the left column");
     }
 
     #[test]
@@ -1230,7 +1246,7 @@ mod tests {
             action,
             DeckAction::Send(WorkspaceInput::EngineConfigRefresh)
         );
-        assert!(ui.engine.open);
+        assert!(ui.engine.focused);
         assert_eq!(ui.engine.tab, EngineTab::Agent(EngineRole::Worker));
         assert_eq!(ui.engine.row, 0, "the model row is preselected");
         assert!(ui.engine.picker.is_some(), "the picker is already open");
@@ -1350,7 +1366,7 @@ mod tests {
         // Esc abandons the bad buffer.
         handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
         assert_eq!(ui.engine.edit, None);
-        assert!(ui.engine.open, "esc closed the edit, not the overlay");
+        assert!(ui.engine.focused, "esc closed the edit, not the overlay");
     }
 
     #[test]
@@ -1449,7 +1465,7 @@ mod tests {
         assert!(!ui.engine.dirty());
 
         // A refresh over an OPEN, dirty overlay must not eat local edits…
-        ui.engine.open = true;
+        ui.engine.focused = true;
         ui.engine.state.as_mut().unwrap().auto_mode = true;
         let mut other = sample_state();
         other.effort_auto = true;
@@ -1481,7 +1497,7 @@ mod tests {
 
         // A CLOSED overlay always adopts the next snapshot (the deliberate
         // discard path for edits abandoned by closing).
-        ui.engine.open = false;
+        ui.engine.focused = false;
         ui.engine.state.as_mut().unwrap().auto_mode = false; // stale local edit
         let mut newest = sample_state();
         newest.reasoning_auto = true;
@@ -1514,7 +1530,7 @@ mod tests {
         ui.engine.tab = EngineTab::Agent(EngineRole::Default);
         let area = Rect::new(0, 0, 80, 30);
         let mut buf = Buffer::empty(area);
-        render_overlay(&ui, area, &mut buf);
+        render_panel(&ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("agent engine"), "title drawn");
         assert!(text.contains("temperature"), "agent rows drawn");
@@ -1523,7 +1539,7 @@ mod tests {
         // The picker draws over the popup.
         ui.engine.picker = Some(ModelPicker::default());
         let mut buf = Buffer::empty(area);
-        render_overlay(&ui, area, &mut buf);
+        render_panel(&ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("filter"), "picker filter line drawn");
         assert!(text.contains("claude-fable-5"), "allowed models listed");

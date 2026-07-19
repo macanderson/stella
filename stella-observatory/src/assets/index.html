@@ -8,12 +8,12 @@
 <style>
 /* ── Brand tokens (assets/stella-logo.html is the source of truth) ────── */
 :root{
-  --night:#0B0A08; --ink:#15120C; --surface:#14100B; --raised:#1C1610;
-  --hairline:rgba(245,179,60,.13); --hairline-dim:rgba(245,179,60,.07);
-  --paper:#FBF7EF; --text:#F2EDE3; --text-2:#B7AD98; --text-3:#8D8474;
-  --gold:#F5B33C; --gold-hi:#FFD97A; --amber:#E08A20;
+  --night:#050A18; --ink:#0C1424; --surface:#0A1226; --raised:#101A33;
+  --hairline:rgba(63,224,255,.13); --hairline-dim:rgba(63,224,255,.07);
+  --paper:#F4F8FF; --text:#E9F0FE; --text-2:#A9B7D6; --text-3:#7285A8;
+  --accent:#3FE0FF; --accent-hi:#8FEBFF; --accent-2:#4D9FFF;
   /* Data-mark palette — validated (dataviz six checks, dark surface) */
-  --c1:#C68524; --c2:#8F70E8; --c3:#E8654B; --c4:#D14E7C;
+  --c1:#4D9FFF; --c2:#8F70E8; --c3:#E4408F; --c4:#2FD3C6;
   /* Status — always paired with a label, never color alone */
   --ok:#3FD69B; --warn:#F4B24A; --bad:#E5537B;
   --mono:"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
@@ -24,12 +24,12 @@ html{color-scheme:dark}
 body{
   font-family:var(--sans); color:var(--text); background:var(--night);
   background-image:
-    radial-gradient(60% 42% at 50% -6%, rgba(245,179,60,.14), rgba(0,0,0,0) 64%),
-    radial-gradient(1px 1px at 12% 18%, rgba(255,217,122,.35) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 78% 9%,  rgba(255,217,122,.28) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 33% 6%,  rgba(251,247,239,.20) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 61% 22%, rgba(251,247,239,.16) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 90% 30%, rgba(255,217,122,.20) 0 1px, transparent 1px);
+    radial-gradient(60% 42% at 50% -6%, rgba(63,224,255,.14), rgba(0,0,0,0) 64%),
+    radial-gradient(1px 1px at 12% 18%, rgba(143,235,255,.35) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 78% 9%,  rgba(143,235,255,.28) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 33% 6%,  rgba(244,248,255,.20) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 61% 22%, rgba(244,248,255,.16) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 90% 30%, rgba(143,235,255,.20) 0 1px, transparent 1px);
   background-repeat:no-repeat,repeat,repeat,repeat,repeat,repeat;
   min-height:100vh; line-height:1.5;
 }
@@ -40,8 +40,8 @@ header{display:flex;align-items:center;gap:14px;padding:22px 0 14px;flex-wrap:wr
 header img{width:44px;height:auto}
 .title{display:flex;flex-direction:column}
 .title b{font-size:19px;letter-spacing:.14em;font-family:var(--mono)}
-.title b em{color:var(--gold);font-style:normal}
-.title span{font:11px var(--mono);letter-spacing:.3em;text-transform:uppercase;color:var(--amber)}
+.title b em{color:var(--accent);font-style:normal}
+.title span{font:11px var(--mono);letter-spacing:.3em;text-transform:uppercase;color:var(--accent-2)}
 .headmeta{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--text-3);flex-wrap:wrap}
 .live{display:inline-flex;align-items:center;gap:7px;color:var(--text-2)}
 .live i{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pulse 2.4s infinite}
@@ -49,22 +49,22 @@ header img{width:44px;height:auto}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 select{background:var(--raised);color:var(--text);border:1px solid var(--hairline);
        border-radius:8px;font:12px var(--mono);padding:6px 10px;max-width:280px}
-select:focus{outline:1px solid var(--gold)}
+select:focus{outline:1px solid var(--accent)}
 
 /* ── Nav tabs & timeframe pills ───────────────────────────────────────── */
 nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:4px;
         padding:8px 0;margin-bottom:16px;flex-wrap:wrap;
-        background:linear-gradient(180deg,rgba(11,10,8,.96),rgba(11,10,8,.88));
+        background:linear-gradient(180deg,rgba(5,10,24,.96),rgba(5,10,24,.88));
         border-bottom:1px solid var(--hairline-dim);backdrop-filter:blur(6px)}
 nav.bar button.tab{background:none;border:none;color:var(--text-3);cursor:pointer;
   font:12px var(--mono);letter-spacing:.08em;padding:7px 12px;border-radius:8px}
-nav.bar button.tab:hover{color:var(--text-2);background:rgba(245,179,60,.06)}
-nav.bar button.tab.on{color:var(--gold);background:rgba(245,179,60,.1)}
+nav.bar button.tab:hover{color:var(--text-2);background:rgba(63,224,255,.06)}
+nav.bar button.tab.on{color:var(--accent);background:rgba(63,224,255,.1)}
 .tf{margin-left:auto;display:flex;gap:4px;align-items:center}
 .tf span{font:10px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--text-3);margin-right:4px}
 .tf button{background:none;border:1px solid var(--hairline);color:var(--text-3);cursor:pointer;
   font:11px var(--mono);padding:3px 10px;border-radius:999px}
-.tf button.on{color:var(--night);background:var(--gold);border-color:var(--gold);font-weight:600}
+.tf button.on{color:var(--night);background:var(--accent);border-color:var(--accent);font-weight:600}
 section[data-tab]{display:none}
 section[data-tab].on{display:block}
 
@@ -84,7 +84,7 @@ section[data-tab].on{display:block}
   background:linear-gradient(180deg,var(--raised),var(--surface));
   border:1px solid var(--hairline); border-radius:14px; padding:18px 20px;
 }
-.kick{font:10px var(--mono);letter-spacing:.28em;text-transform:uppercase;color:var(--amber);margin-bottom:10px}
+.kick{font:10px var(--mono);letter-spacing:.28em;text-transform:uppercase;color:var(--accent-2);margin-bottom:10px}
 .card h2{font-size:14px;letter-spacing:-.01em;margin-bottom:2px}
 
 /* ── Stat tiles ───────────────────────────────────────────────────────── */
@@ -92,7 +92,7 @@ section[data-tab].on{display:block}
 .tile .v small{font-size:14px;color:var(--text-3)}
 .tile .k{font:10px var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--text-3)}
 .tile .sub{font:11px var(--mono);color:var(--text-2);margin-top:4px}
-.tile .v.gold{color:var(--gold)}
+.tile .v.accent{color:var(--accent)}
 
 /* ── Tables ───────────────────────────────────────────────────────────── */
 table{width:100%;border-collapse:collapse;font:12px var(--mono)}
@@ -103,7 +103,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.main{color:var(--text)}
 td.wrap-txt{white-space:normal}
 tr.click{cursor:pointer}
-tr.click:hover td{background:rgba(245,179,60,.05)}
+tr.click:hover td{background:rgba(63,224,255,.05)}
 .scroll-x{overflow-x:auto}
 .scroll-y{max-height:340px;overflow-y:auto}
 .scroll-y-tall{max-height:520px;overflow-y:auto}
@@ -115,7 +115,7 @@ tr.click:hover td{background:rgba(245,179,60,.05)}
 .badge.bad{color:var(--bad);border-color:rgba(229,83,123,.4)}
 .badge.warn{color:var(--warn);border-color:rgba(244,178,74,.4)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline)}
-.badge.gold{color:var(--gold);border-color:rgba(245,179,60,.45)}
+.badge.accent{color:var(--accent);border-color:rgba(63,224,255,.45)}
 .chip{display:inline-block;font:10px var(--mono);color:var(--text-3);
       border:1px solid var(--hairline-dim);border-radius:999px;padding:0 7px;margin:1px 2px}
 
@@ -136,7 +136,7 @@ svg .lbl{fill:var(--text-2)}
 .feed-item b{color:var(--text);font-weight:600}
 .feed-item .when{color:var(--text-3);font-size:10px;margin-left:6px}
 .mem-card{border:1px solid var(--hairline-dim);border-radius:10px;padding:12px 14px;margin-bottom:10px}
-.mem-card .name{font:600 12px var(--mono);color:var(--gold)}
+.mem-card .name{font:600 12px var(--mono);color:var(--accent)}
 .mem-card .snip{font:11px var(--mono);color:var(--text-2);margin-top:4px;line-height:1.55}
 pre.cfg{font:11px var(--mono);color:var(--text-2);background:rgba(0,0,0,.28);
         border:1px solid var(--hairline-dim);border-radius:10px;padding:12px;
@@ -150,17 +150,17 @@ pre.cfg{font:11px var(--mono);color:var(--text-2);background:rgba(0,0,0,.28);
 .gctl{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
 .gctl input{background:var(--raised);border:1px solid var(--hairline);color:var(--text);
             border-radius:8px;font:12px var(--mono);padding:6px 10px;width:230px}
-.gctl input:focus{outline:1px solid var(--gold)}
+.gctl input:focus{outline:1px solid var(--accent)}
 .gctl button{background:none;border:1px solid var(--hairline);color:var(--text-2);cursor:pointer;
              font:11px var(--mono);padding:5px 12px;border-radius:8px}
-.gctl button:hover{color:var(--gold);border-color:var(--gold)}
+.gctl button:hover{color:var(--accent);border-color:var(--accent)}
 .gstats{font:11px var(--mono);color:var(--text-3);margin-left:auto}
 .gside .row{display:flex;justify-content:space-between;font:11px var(--mono);
             color:var(--text-2);padding:3px 0}
 .gside .row .k{color:var(--text-3)}
 .gfile{font:11px var(--mono);color:var(--text-2);padding:3px 0;cursor:pointer;
        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.gfile:hover{color:var(--gold)}
+.gfile:hover{color:var(--accent)}
 .gfile i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
 
 /* ── Tooltip ──────────────────────────────────────────────────────────── */
@@ -179,7 +179,7 @@ pre.cfg{font:11px var(--mono);color:var(--text-2);background:rgba(0,0,0,.28);
 #scrim.open{opacity:1;pointer-events:auto}
 #drawer .close{position:absolute;top:18px;right:18px;background:none;border:1px solid var(--hairline);
                border-radius:8px;color:var(--text-2);font:14px var(--mono);padding:4px 10px;cursor:pointer}
-#drawer .close:hover{color:var(--gold)}
+#drawer .close:hover{color:var(--accent)}
 #drawer h3{font:600 15px var(--sans);margin:4px 0 2px;max-width:85%}
 #drawer .sect{margin-top:20px}
 .step-row{display:grid;grid-template-columns:34px 1fr 150px;gap:10px;align-items:center;
@@ -187,11 +187,11 @@ pre.cfg{font:11px var(--mono);color:var(--text-2);background:rgba(0,0,0,.28);
 .tokbar{display:flex;height:12px;border-radius:0 3px 3px 0;overflow:hidden;gap:2px}
 .tokbar i{display:block;height:100%}
 .empty{padding:34px 10px;text-align:center;color:var(--text-3);font:13px var(--mono)}
-.empty code{color:var(--gold);background:rgba(245,179,60,.08);padding:2px 8px;border-radius:6px}
+.empty code{color:var(--accent);background:rgba(63,224,255,.08);padding:2px 8px;border-radius:6px}
 .section-gap{margin-bottom:14px}
 .loop-strip{display:flex;gap:8px;align-items:center;flex-wrap:wrap;
             font:11px var(--mono);color:var(--text-3);margin-bottom:14px}
-.loop-strip b{color:var(--gold);font-weight:600}
+.loop-strip b{color:var(--accent);font-weight:600}
 .loop-strip em{color:var(--text-3);font-style:normal}
 footer{margin-top:26px;font:11px var(--mono);color:var(--text-3);display:flex;gap:8px;align-items:center}
 footer b{color:var(--text-2)}
@@ -299,7 +299,7 @@ footer b{color:var(--text-2)}
         <div class="kick">Throughput</div>
         <h2>Runs per day</h2>
         <div class="legend"><span><i style="background:var(--c1)"></i>resolved</span>
-          <span><i style="background:#8D8474"></i>other outcomes</span></div>
+          <span><i style="background:#7285A8"></i>other outcomes</span></div>
         <div id="ch-runs"></div>
       </div>
       <div class="card">
@@ -496,9 +496,9 @@ const inTfDay = (day) => {
 };
 
 /* ── stat tiles ──────────────────────────────────────────────────────── */
-function tile(k, v, sub, gold) {
+function tile(k, v, sub, accent) {
   return `<div class="card tile"><div class="k">${k}</div>
-    <div class="v${gold ? " gold" : ""}">${v}</div>
+    <div class="v${accent ? " accent" : ""}">${v}</div>
     ${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
 function renderKpis() {
@@ -640,7 +640,7 @@ function renderActivity() {
      { key: "output_tokens", label: "output", color: "var(--c2)" }], fmtTok, false);
   renderDaily("ch-runs", withOther,
     [{ key: "resolved", label: "resolved", color: "var(--c1)" },
-     { key: "other", label: "other outcomes", color: "#8D8474" }], v => String(Math.round(v)), true);
+     { key: "other", label: "other outcomes", color: "#7285A8" }], v => String(Math.round(v)), true);
   renderDaily("ch-toolcalls", days,
     [{ key: "tool_calls", label: "calls", color: "var(--c2)" },
      { key: "tool_errors", label: "errors", color: "var(--bad)" }], v => String(Math.round(v)), false);
@@ -739,7 +739,7 @@ function renderMemory(m) {
     html += `<div class="kick" style="margin-top:14px">promoted rules</div>` +
       rules.slice(0, 3).map(r =>
         `<div style="font:11px var(--mono);color:var(--text-2);padding:3px 0">
-         <span style="color:var(--gold)">§</span> ${esc(r.rule_id)}</div>`).join("");
+         <span style="color:var(--accent)">§</span> ${esc(r.rule_id)}</div>`).join("");
   }
   $("memory").innerHTML = html;
 }
@@ -891,7 +891,7 @@ function renderSkills(rows) {
     rows.map(r => {
       const u = uses[r.name];
       return `<tr>
-      <td class="main">${r.learned ? `<span class="badge gold" title="auto-extracted from stella's own reflections">◆ learned</span> ` : ""}${esc(r.name)}</td>
+      <td class="main">${r.learned ? `<span class="badge accent" title="auto-extracted from stella's own reflections">◆ learned</span> ` : ""}${esc(r.name)}</td>
       <td><span class="badge dim">${esc(r.scope)}</span></td>
       <td class="wrap-txt" style="max-width:520px;color:var(--text-2)">${esc(r.description || "—")}</td>
       <td class="num">${u ? u.uses + "×" : "—"}</td>
@@ -945,13 +945,13 @@ function renderMemoryTab(files, rules) {
   let html = "";
   if (db.length) {
     html += db.map(r => `<div class="feed-item">
-      <b><span style="color:var(--gold)">§</span> ${esc(r.rule_id)}</b>
+      <b><span style="color:var(--accent)">§</span> ${esc(r.rule_id)}</b>
       <span class="badge dim">${esc(r.source)}</span><span class="when">${ago(r.created_at)}</span>
       <div>${esc(r.contents)}</div></div>`).join("");
   }
   if (fileRules.length) {
     html += fileRules.map(f => `<div class="feed-item">
-      <b><span style="color:var(--gold)">§</span> ${esc(f.name)}</b>
+      <b><span style="color:var(--accent)">§</span> ${esc(f.name)}</b>
       <span class="when">${agoUnix(f.modified_unix)}</span>
       <div>${esc(f.snippet)}</div></div>`).join("");
   }
@@ -1001,7 +1001,7 @@ function renderImprove(skills) {
 
   $("imp-learned").innerHTML = learned.length
     ? learned.map(s => `<div class="mem-card">
-        <span class="badge gold">◆ learned</span> <span class="name">${esc(s.name)}</span>
+        <span class="badge accent">◆ learned</span> <span class="name">${esc(s.name)}</span>
         <span class="when" style="font:10px var(--mono);color:var(--text-3)"> · ${agoUnix(s.modified_unix)}</span>
         <div class="snip">${esc(s.description || "")}</div></div>`).join("")
     : `<div class="empty">none yet — when a lesson generalizes, stella writes it into
@@ -1095,9 +1095,9 @@ function renderConfig(cfg) {
 /* ── code graph ──────────────────────────────────────────────────────── */
 /* Validated 8-slot categorical palette (dataviz six checks, dark surface).
    Assigned to crates in fixed file-count order; the long tail is neutral. */
-const GP = ["#3987e5", "#008300", "#D14E7C", "#C68524",
-            "#199e70", "#E8654B", "#8F70E8", "#e66767"];
-const G_OTHER = "#8D8474";
+const GP = ["#3987e5", "#008300", "#2FD3C6", "#4D9FFF",
+            "#199e70", "#E4408F", "#8F70E8", "#e66767"];
+const G_OTHER = "#7285A8";
 const graph = {
   nodes: [], edges: [], groupColor: {}, adj: [],
   t: { x: 0, y: 0, k: 1 }, alpha: 0, selected: -1, hover: -1,
@@ -1227,7 +1227,7 @@ function drawGraph() {
     else if (q) { ctx.globalAlpha = 0.06; }
     else { ctx.globalAlpha = lit ? 0.75 : 0.16; }
     if (lit) ctx.globalAlpha = 0.75;
-    ctx.strokeStyle = lit ? "#F5B33C" : "#B7AD98";
+    ctx.strokeStyle = lit ? "#3FE0FF" : "#A9B7D6";
     ctx.lineWidth = (lit ? 1.6 : 0.7) / k;
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
@@ -1240,7 +1240,7 @@ function drawGraph() {
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.fill();
     if (n.i === graph.selected || n.i === graph.hover) {
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = "#F5B33C"; ctx.lineWidth = 2 / k;
+      ctx.strokeStyle = "#3FE0FF"; ctx.lineWidth = 2 / k;
       ctx.beginPath(); ctx.arc(n.x, n.y, r + 2 / k, 0, 2 * Math.PI); ctx.stroke();
     }
   }
@@ -1256,9 +1256,9 @@ function drawGraph() {
     ctx.globalAlpha = 1;
     const label = n.path.split("/").pop();
     const ly = n.y - nodeRadius(n) - 5 / k;
-    ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(11,10,8,.85)";
+    ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(5,10,24,.85)";
     ctx.strokeText(label, n.x, ly);
-    ctx.fillStyle = inFocus || hit || n.i === graph.hover ? "#F2EDE3" : "#B7AD98";
+    ctx.fillStyle = inFocus || hit || n.i === graph.hover ? "#E9F0FE" : "#A9B7D6";
     ctx.fillText(label, n.x, ly);
   }
   ctx.restore();
@@ -1331,7 +1331,7 @@ function renderGraphSide() {
     `<div class="gfile" data-i="${m.i}" title="${esc(m.path)}">
       <i style="background:${groupColorFor(m.group)}"></i>${esc(m.path)}</div>`;
   el.innerHTML = `
-    <div style="font:600 12px var(--mono);color:var(--gold);word-break:break-all">${esc(n.path)}</div>
+    <div style="font:600 12px var(--mono);color:var(--accent);word-break:break-all">${esc(n.path)}</div>
     <div class="row"><span class="k">crate / group</span><span>${esc(n.group)}</span></div>
     <div class="row"><span class="k">language</span><span>${esc(n.lang)}</span></div>
     <div class="row"><span class="k">symbols</span><span>${n.symbols}</span></div>

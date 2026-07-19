@@ -1,11 +1,16 @@
-//! AGENTS tab — a two-pane view behind a one-line secondary nav
-//! (EXECUTIONS | INSTALLED AGENTS, switched with ←/→):
+//! AGENT ENGINE tab — a 60/40 two-column grid. The left 60% is the two-pane
+//! view behind a one-line secondary nav (EXECUTIONS | INSTALLED AGENTS,
+//! switched with ←/→); the right 40% is the permanent engine-config panel
+//! ([`crate::views::engine`]) that used to live behind the `/engine` popup:
 //!
 //! - **EXECUTIONS** (this module): the flagship `htop`/`claudectl`-style
 //!   dashboard — one dense row per ACTIVE agent with live status, spend,
 //!   resource usage, and activity.
 //! - **INSTALLED AGENTS** ([`crate::views::installed`]): the agents
 //!   configured on disk at the user/project level.
+//! - **ENGINE** (right column): the `agent_engine_config` editor — global
+//!   routing toggles plus per-agent model / prompt / sampling overrides.
+//!   `e` focuses it; its Esc hands the keyboard back.
 //!
 //! Every color comes from [`crate::theme`]; every number is read straight off
 //! [`crate::deck::AgentEntry`] (no shadow state, no re-derivation of what the
@@ -33,6 +38,11 @@ const HEADERS: [&str; 11] = [
 /// cut wherever the terminal happens to clip the column.
 const GOAL_MAX_CHARS: usize = 56;
 
+/// Below this width a 40% engine column is too narrow to read — the left
+/// view takes the whole tab and the engine panel steps aside (still one
+/// `e` press away: focusing re-renders, and wider terminals show it live).
+const ENGINE_COLUMN_MIN_WIDTH: u16 = 90;
+
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
@@ -40,14 +50,28 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // The one-line secondary nav, then the active pane below it.
     let bands = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
     render_pane_nav(ui.agents_pane, bands[0], buf);
+
+    // The 60/40 grid: left — executions / installed; right — the permanent
+    // engine-config panel (the old `/engine` popup's content, always on).
+    let body = bands[1];
+    let (left, engine_col) = if body.width >= ENGINE_COLUMN_MIN_WIDTH {
+        let cols = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(body);
+        (cols[0], Some(cols[1]))
+    } else {
+        (body, None)
+    };
     match ui.agents_pane {
-        AgentsPane::Executions => render_executions(model, ui, bands[1], buf),
-        AgentsPane::Installed => crate::views::installed::render(ui, bands[1], buf),
+        AgentsPane::Executions => render_executions(model, ui, left, buf),
+        AgentsPane::Installed => crate::views::installed::render(ui, left, buf),
+    }
+    if let Some(engine_col) = engine_col {
+        crate::views::engine::render_panel(ui, engine_col, buf);
     }
 }
 
 /// The secondary nav line: the two pane labels (UPPERCASE, like the deck's
-/// tab labels), active in amber, plus the switch hint.
+/// tab labels), active in the accent cyan, plus the switch hint.
 fn render_pane_nav(pane: AgentsPane, area: Rect, buf: &mut Buffer) {
     if area.height == 0 {
         return;
@@ -55,7 +79,7 @@ fn render_pane_nav(pane: AgentsPane, area: Rect, buf: &mut Buffer) {
     let style_for = |active: bool| {
         if active {
             Style::default()
-                .fg(theme::AMBER)
+                .fg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD)
         } else {
             theme::muted()
@@ -66,10 +90,21 @@ fn render_pane_nav(pane: AgentsPane, area: Rect, buf: &mut Buffer) {
         Span::styled("EXECUTIONS", style_for(pane == AgentsPane::Executions)),
         Span::styled("  │  ", theme::muted()),
         Span::styled("INSTALLED AGENTS", style_for(pane == AgentsPane::Installed)),
-        Span::styled("   ←/→", theme::muted()),
+        Span::styled("   ←/→ · e engine", theme::muted()),
     ]);
     Paragraph::new(line).render(area, buf);
 }
+
+/// Below this pane width the 11-column table starves the Goal column (the
+/// only Fill), so the dashboard drops to the compact column set — the
+/// normal case for the left 60% of the grid on an ordinary terminal.
+const COMPACT_TABLE_WIDTH: u16 = 140;
+
+/// The columns the compact set keeps, as indices into [`HEADERS`] (and the
+/// full width/cell arrays): Agent, Goal, Status, Ctx%, Cost, Elapsed,
+/// In/Out. What goes ($/hr, CPU%, MEM, Activity) is density signal, not
+/// identity — the wide layout still shows everything.
+const COMPACT_COLUMNS: [usize; 7] = [0, 1, 2, 3, 4, 6, 9];
 
 /// The EXECUTIONS pane — the pre-existing active-agents dashboard.
 fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
@@ -85,20 +120,29 @@ fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &
     );
     let block = Block::default().borders(Borders::ALL).title(title);
 
-    let header = Row::new(HEADERS.iter().copied().map(Cell::from)).style(theme::accent());
+    let compact = area.width < COMPACT_TABLE_WIDTH;
+    let keep = |i: usize| !compact || COMPACT_COLUMNS.contains(&i);
+
+    let header_cells: Vec<Cell> = HEADERS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| keep(*i))
+        .map(|(_, h)| Cell::from(*h))
+        .collect();
+    let header = Row::new(header_cells).style(theme::accent());
 
     let rows: Vec<Row> = model
         .agents
         .iter()
         .enumerate()
-        .map(|(i, entry)| agent_row(entry, model.now_ms, i == ui.focused))
+        .map(|(i, entry)| agent_row(entry, model.now_ms, i == ui.focused, compact))
         .collect();
 
     // Fixed widths for every column except Goal, which fills whatever is
     // left — this is what keeps the row dense on a wide terminal and never
     // overflows on a narrow one (the Table constraint solver shrinks Fill
     // first, then compresses the rest, but never draws past `area`).
-    let widths = [
+    let full_widths = [
         Constraint::Length(18),                     // Agent
         Constraint::Fill(1),                        // Goal
         Constraint::Length(12),                     // Status
@@ -111,6 +155,12 @@ fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &
         Constraint::Length(14),                     // In/Out
         Constraint::Length(ACTIVITY_WINDOW as u16), // Activity
     ];
+    let widths: Vec<Constraint> = full_widths
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| keep(*i))
+        .map(|(_, w)| *w)
+        .collect();
 
     Table::new(rows, widths)
         .header(header)
@@ -120,8 +170,9 @@ fn render_executions(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &
 }
 
 /// Build one dashboard row for `entry`. Every cell owns its content, so the
-/// returned row is fully decoupled from `entry`'s borrow.
-fn agent_row(entry: &AgentEntry, now_ms: u64, is_focused: bool) -> Row<'static> {
+/// returned row is fully decoupled from `entry`'s borrow. `compact` keeps
+/// only the [`COMPACT_COLUMNS`] cells — index-for-index with the headers.
+fn agent_row(entry: &AgentEntry, now_ms: u64, is_focused: bool, compact: bool) -> Row<'static> {
     let status = entry.status;
     let status_color = theme::status_color(status);
 
@@ -129,7 +180,7 @@ fn agent_row(entry: &AgentEntry, now_ms: u64, is_focused: bool) -> Row<'static> 
     // and doubling it up when the focused agent happens to be running reads
     // as a rendering glitch rather than a deliberate highlight.
     let caret = if is_focused {
-        Span::styled("> ", Style::default().fg(theme::AMBER))
+        Span::styled("> ", Style::default().fg(theme::ACCENT))
     } else {
         Span::raw("  ")
     };
@@ -187,9 +238,9 @@ fn agent_row(entry: &AgentEntry, now_ms: u64, is_focused: bool) -> Row<'static> 
         .iter()
         .map(|&intensity| theme::spark_glyph(intensity))
         .collect();
-    let activity_cell = Cell::from(spark).style(Style::default().fg(theme::AMBER));
+    let activity_cell = Cell::from(spark).style(Style::default().fg(theme::ACCENT));
 
-    let mut row = Row::new(vec![
+    let cells = vec![
         agent_cell,
         goal_cell,
         status_cell,
@@ -201,7 +252,14 @@ fn agent_row(entry: &AgentEntry, now_ms: u64, is_focused: bool) -> Row<'static> 
         mem_cell,
         io_cell,
         activity_cell,
-    ]);
+    ];
+    let cells: Vec<Cell> = cells
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !compact || COMPACT_COLUMNS.contains(i))
+        .map(|(_, cell)| cell)
+        .collect();
+    let mut row = Row::new(cells);
     if is_focused {
         // Reverses whatever fg/bg each cell resolved to above — a bg tint
         // that needs no new color, layered on top of the amber caret so

@@ -328,9 +328,7 @@ fn task_row(task: &TaskItem) -> Line<'static> {
         ),
         TaskStatus::Cancelled => (
             "✗",
-            Style::new()
-                .fg(theme::EMBER_CRIMSON)
-                .add_modifier(Modifier::DIM),
+            Style::new().fg(theme::DANGER).add_modifier(Modifier::DIM),
             Style::new().fg(theme::TEXT_TERTIARY),
         ),
     };

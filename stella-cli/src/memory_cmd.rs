@@ -509,6 +509,7 @@ mod tests {
             content: content.into(),
             content_hash: "h".into(),
             uri: None,
+            valid_from: None,
             recorded_at: "2026-01-01T00:00:00Z".into(),
         }
     }

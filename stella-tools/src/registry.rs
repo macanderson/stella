@@ -195,6 +195,9 @@ impl ToolRegistry {
             entries.push(Arc::new(crate::issues::UpdateIssue(backend.clone())));
             entries.push(Arc::new(crate::issues::CloseIssue(backend.clone())));
             entries.push(Arc::new(crate::issues::SearchIssues(backend.clone())));
+            entries.push(Arc::new(crate::issues::GetIssue(backend.clone())));
+            entries.push(Arc::new(crate::issues::ListLabels(backend.clone())));
+            entries.push(Arc::new(crate::issues::ListMembers(backend.clone())));
             entries.push(Arc::new(crate::issues::StartWorkOnIssue(backend)));
         }
         for tool in entries {
@@ -977,11 +980,14 @@ mod tests {
             "update_issue",
             "close_issue",
             "search_issues",
+            "get_issue",
+            "list_labels",
+            "list_members",
             "start_work_on_issue",
         ] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
-        assert_eq!(names.len(), 29, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 32, "unexpected tool count: {names:?}");
     }
 
     /// The schema list is serialized verbatim into the prompt prefix; a
@@ -1006,6 +1012,9 @@ mod tests {
             "update_issue",
             "close_issue",
             "search_issues",
+            "get_issue",
+            "list_labels",
+            "list_members",
             "start_work_on_issue",
         ] {
             assert!(
@@ -1134,6 +1143,9 @@ mod tests {
                     | "ci_status"
                     | "search_issues"
                     | "task_list"
+                    | "get_issue"
+                    | "list_labels"
+                    | "list_members"
             );
             assert_eq!(
                 schema.read_only, expected,

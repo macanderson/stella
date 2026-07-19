@@ -317,7 +317,7 @@ pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
         Span::styled("stage: ", Style::new().fg(theme::MUTED)),
         Span::styled(
             hud.stage.map(stage_label).unwrap_or("—").to_string(),
-            Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ),
         Span::raw("   "),
         Span::styled("model: ", Style::new().fg(Color::DarkGray)),
@@ -507,7 +507,7 @@ pub(crate) fn render_scope_review(
     });
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(Color::Yellow))
+        .border_style(Style::new().fg(Color::Cyan))
         .title(" scope review ");
     Paragraph::new(Text::from(lines))
         .block(block)
@@ -531,7 +531,7 @@ pub(crate) fn render_ask_user(
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {}. ", i + 1),
-                Style::new().fg(theme::AMBER).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
             ),
             Span::raw(option.clone()),
         ]));
@@ -553,7 +553,7 @@ pub(crate) fn render_ask_user(
     });
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(theme::AMBER))
+        .border_style(Style::new().fg(theme::ACCENT))
         .title(" question ");
     Paragraph::new(Text::from(lines))
         .block(block)
@@ -910,7 +910,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::Stage(name) => {
             let style = Style::new()
-                .fg(theme::EMBER_FLAME)
+                .fg(theme::AURORA_AZURE)
                 .add_modifier(Modifier::BOLD);
             push_labeled(
                 "stage",
@@ -933,7 +933,7 @@ pub(crate) fn entry_lines(
             let total_lines = text.lines().count().max(1);
             let show_all = expand_thinking || expanded;
             let chevron = if show_all { "⏶" } else { "⏵" };
-            let header_style = Style::new().fg(theme::AGENT_AMBER);
+            let header_style = Style::new().fg(theme::AGENT_ICE);
             let reasoning_style = Style::new()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC);
@@ -978,7 +978,7 @@ pub(crate) fn entry_lines(
             push_labeled(
                 name,
                 Style::new()
-                    .fg(theme::EMBER_FLAME)
+                    .fg(theme::AURORA_AZURE)
                     .add_modifier(Modifier::BOLD),
                 vec![Span::styled(
                     input.clone(),
@@ -1009,9 +1009,9 @@ pub(crate) fn entry_lines(
             ..
         } => {
             let (glyph, color) = if *ok {
-                ("✓", theme::EMBER_GOLD)
+                ("✓", theme::AURORA_CYAN)
             } else {
-                ("✗", theme::EMBER_CRIMSON)
+                ("✗", theme::AURORA_MAGENTA)
             };
             // The result labels itself with the tool it answers (resolved
             // from the start entry) so call/result rows read as a pair.
@@ -1081,7 +1081,7 @@ pub(crate) fn entry_lines(
             evicted,
             deduped,
         } => {
-            let style = Style::new().fg(theme::EMBER_FLAME);
+            let style = Style::new().fg(theme::AURORA_AZURE);
             push_labeled(
                 "⇣ compacted",
                 style,
@@ -1114,7 +1114,7 @@ pub(crate) fn entry_lines(
             );
         }
         TranscriptEntry::ProviderFallback { from, to, reason } => {
-            let style = Style::new().fg(theme::EMBER_FLAME);
+            let style = Style::new().fg(theme::AURORA_AZURE);
             push_labeled(
                 "⚡ fallback",
                 style,
@@ -1129,7 +1129,7 @@ pub(crate) fn entry_lines(
             labels,
         } => {
             let cited = labels.join(", ");
-            let style = Style::new().fg(theme::EMBER_FLAME);
+            let style = Style::new().fg(theme::AURORA_AZURE);
             push_labeled(
                 "◉ recalled",
                 style,
@@ -1146,7 +1146,7 @@ pub(crate) fn entry_lines(
             upserts,
             superseded,
         } => {
-            let style = Style::new().fg(theme::EMBER_FLAME);
+            let style = Style::new().fg(theme::AURORA_AZURE);
             push_labeled(
                 "✎ memory",
                 style,
@@ -1163,7 +1163,7 @@ pub(crate) fn entry_lines(
             kind,
             state,
         } => {
-            let style = Style::new().fg(theme::EMBER_FLAME);
+            let style = Style::new().fg(theme::AURORA_AZURE);
             push_labeled(
                 "🎞 media",
                 style,
@@ -1181,7 +1181,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::MediaComplete { label, path, kind } => {
             let style = Style::new()
-                .fg(theme::EMBER_FLAME)
+                .fg(theme::AURORA_AZURE)
                 .add_modifier(Modifier::BOLD);
             push_labeled(
                 "🎨 media",
@@ -1200,9 +1200,9 @@ pub(crate) fn entry_lines(
             deterministic,
         } => {
             let (glyph, color) = if *passed {
-                ("✓", theme::EMBER_GOLD)
+                ("✓", theme::AURORA_CYAN)
             } else {
-                ("✗", theme::EMBER_CRIMSON)
+                ("✗", theme::AURORA_MAGENTA)
             };
             let tag = if *deterministic {
                 "deterministic"
@@ -1256,7 +1256,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::Commit { sha, message } => {
             let short = sha.chars().take(9).collect::<String>();
-            let style = Style::new().fg(theme::EMBER_FLAME);
+            let style = Style::new().fg(theme::AURORA_AZURE);
             push_labeled(
                 "● commit",
                 style,
@@ -1311,7 +1311,7 @@ pub(crate) fn entry_lines(
         TranscriptEntry::Error { message, retryable } => {
             let tag = if *retryable { " (retryable)" } else { "" };
             let style = Style::new()
-                .fg(theme::EMBER_CRIMSON)
+                .fg(theme::AURORA_MAGENTA)
                 .add_modifier(Modifier::BOLD);
             push_labeled(
                 "✗ error",
@@ -1342,9 +1342,9 @@ fn pr_status_color(status: PrStatus) -> Color {
     // crimson on close.
     match status {
         PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::EMBER_FLAME,
-        PrStatus::Merged => theme::EMBER_GOLD,
-        PrStatus::Closed => theme::EMBER_CRIMSON,
+        PrStatus::Open => theme::AURORA_AZURE,
+        PrStatus::Merged => theme::AURORA_CYAN,
+        PrStatus::Closed => theme::AURORA_MAGENTA,
     }
 }
 
@@ -2208,7 +2208,7 @@ mod tests {
                     span.content
                 );
                 // Belt and suspenders: no ember heat anywhere on the entry.
-                for banned in [theme::EMBER_GOLD, theme::EMBER_CRIMSON, theme::WARN] {
+                for banned in [theme::AURORA_CYAN, theme::AURORA_MAGENTA, theme::WARN] {
                     assert_ne!(
                         span.style.fg,
                         Some(banned),
@@ -2239,7 +2239,7 @@ mod tests {
                 message: "boom".into(),
                 retryable: false,
             }),
-            Some(theme::EMBER_CRIMSON),
+            Some(theme::AURORA_MAGENTA),
             "error prefix is crimson",
         );
         assert_eq!(
@@ -2253,7 +2253,7 @@ mod tests {
                 speculated: false,
                 diff: None,
             }),
-            Some(theme::EMBER_GOLD),
+            Some(theme::AURORA_CYAN),
             "successful tool-result prefix is gold",
         );
         assert_eq!(
@@ -2267,13 +2267,13 @@ mod tests {
                 speculated: false,
                 diff: None,
             }),
-            Some(theme::EMBER_CRIMSON),
+            Some(theme::AURORA_MAGENTA),
             "failed tool-result prefix is crimson",
         );
         // The stage marker moved off raw cyan onto ember flame.
         assert_eq!(
             prefix_fg(&TranscriptEntry::Stage(StageKind::Execute)),
-            Some(theme::EMBER_FLAME),
+            Some(theme::AURORA_AZURE),
             "stage prefix is ember flame",
         );
     }

@@ -136,6 +136,9 @@ pub const RESERVED_NAMES: &[&str] = &[
     "update_issue",
     "close_issue",
     "search_issues",
+    "get_issue",
+    "list_labels",
+    "list_members",
     "start_work_on_issue",
     // CLI interactive layer
     "ask_user",
