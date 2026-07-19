@@ -57,7 +57,8 @@ You have these tools available:
 - edit_file: Replace an exact substring in a file (use replace_all for multiple)
 - delete_file: Delete a file within the workspace
 - run_lint / format_code: Run the project's own linter/formatter (cargo clippy/fmt, or the package.json lint/format scripts)
-- run_script: Run a verb the project itself declares — a Makefile target, package.json script, or cargo alias; args are passed argv-style and an unknown name lists the declared vocabulary
+- run_script: Run a script the project itself declares, by canonical verb (install/build/start/test/lint/format), qualified id (pnpm:build, make:lint), or declared name; args are passed argv-style and an unknown name lists the declared vocabulary
+- list_scripts: The full project scripts index — every detected script and its canonical verb binding; read-only, nothing executes
 - start_process / read_output / send_stdin / stop_process: Manage long-running processes (dev servers, REPLs, watchers) from an argv vector; one-shot commands belong in build_project/run_tests/run_script
 - repo_status / repo_commit / repo_push / repo_pull / repo_rollback: Version-control status, pathspec-explicit commits, guarded pushes (never the default branch, never forced), fast-forward-only pulls, and restoring named files to their last committed state
 - graph_query: Query the workspace's indexed code graph — where a symbol is defined or referenced, what a file imports, which files import it, or a file's neighborhood. The index is built automatically at session start and refreshes live as files change.
@@ -95,7 +96,8 @@ You have these tools available:
 - edit_file: Replace an exact substring in a file (use replace_all for multiple)
 - delete_file: Delete a file within the workspace
 - run_lint / format_code: Run the project's own linter/formatter (cargo clippy/fmt, or the package.json lint/format scripts)
-- run_script: Run a verb the project itself declares — a Makefile target, package.json script, or cargo alias; args are passed argv-style and an unknown name lists the declared vocabulary
+- run_script: Run a script the project itself declares, by canonical verb (install/build/start/test/lint/format), qualified id (pnpm:build, make:lint), or declared name; args are passed argv-style and an unknown name lists the declared vocabulary
+- list_scripts: The full project scripts index — every detected script and its canonical verb binding; read-only, nothing executes
 - start_process / read_output / send_stdin / stop_process: Manage long-running processes (dev servers, REPLs, watchers) from an argv vector; one-shot commands belong in build_project/run_tests/run_script
 - repo_status / repo_commit / repo_push / repo_pull / repo_rollback: Version-control status, pathspec-explicit commits, guarded pushes (never the default branch, never forced), fast-forward-only pulls, and restoring named files to their last committed state
 - graph_query: Query the workspace's indexed code graph — where a symbol is defined or referenced, what a file imports, which files import it, or a file's neighborhood. The index is built automatically at session start and refreshes live as files change. For symbol and dependency questions it is precise and cheaper than grep.
@@ -132,6 +134,12 @@ Rules:
 /// the prompt cache on every call, so they must stay dense.
 const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
 
+/// Cap on the workspace-maps index appended to the system prompt
+/// (`docs/design/exploration-sharing.md` §4a): metadata only — slice,
+/// title, freshness verdict, age — never map bodies, which stay one cheap
+/// `explorations` tool call away.
+const EXPLORATION_INDEX_BUDGET_CHARS: usize = 2_000;
+
 /// A/B recall measurement rate (Proposal 4): `1/N` turns suppress recall
 /// entirely so the outcome can be compared against recalled turns. 10 means
 /// ~10% of turns are control turns. 0 disables the A/B mechanism.
@@ -152,7 +160,9 @@ const STELLA_AB_RECALL_RATE: u32 = 10;
 /// `crate::rules::enforce_workspace_rules` arms at the tool boundary.
 fn assemble_system_prompt(base: &str, workspace_root: &std::path::Path) -> String {
     let mut prompt = base.to_string();
+    append_project_scripts(&mut prompt, workspace_root);
     append_workspace_memories(&mut prompt, workspace_root);
+    append_exploration_index(&mut prompt, workspace_root);
     let rules_section = stella_core::rules::render_rules_section(
         &crate::rules::load_workspace_rules(workspace_root),
     );
@@ -161,6 +171,39 @@ fn assemble_system_prompt(base: &str, workspace_root: &std::path::Path) -> Strin
         prompt.push_str(&rules_section);
     }
     prompt
+}
+
+/// The workspace-maps half of [`assemble_system_prompt`]: the exploration
+/// store's index — every saved map with its per-file freshness verdict, plus
+/// in-progress drafts with producer liveness — so orientation is pushed at
+/// turn 1 instead of waiting for the model to think of pulling it. Computed
+/// ONCE per session (freshness verdicts included) for the same prompt-cache
+/// byte-stability reason as memories; maps saved mid-session by other
+/// sessions surface through the registry's coverage hints instead.
+fn append_exploration_index(prompt: &mut String, workspace_root: &std::path::Path) {
+    let summaries = stella_tools::exploration::summaries_sync(workspace_root);
+    if let Some(index) =
+        stella_tools::exploration::render_index(&summaries, EXPLORATION_INDEX_BUDGET_CHARS)
+    {
+        prompt.push('\n');
+        prompt.push_str(&index);
+    }
+}
+
+/// The project-scripts section of [`assemble_system_prompt`]: the scripts
+/// index's canonical verb → command bindings, rendered once at session
+/// start right after the base instructions (project ground truth before
+/// recalled lessons). Detection is static manifest parsing
+/// (`stella_tools::scripts`, docs/design/scripts-index.md) and the section
+/// is byte-stable for the same workspace state, so "install this project"
+/// costs one `run_script` call and zero discovery turns. Empty workspaces
+/// render nothing.
+fn append_project_scripts(prompt: &mut String, workspace_root: &std::path::Path) {
+    let index = stella_tools::scripts::ScriptIndex::detect_blocking(workspace_root);
+    if let Some(section) = index.render_prompt_section() {
+        prompt.push_str("\n\n");
+        prompt.push_str(&section);
+    }
 }
 
 /// The memories half of [`assemble_system_prompt`]: append the workspace's
@@ -2043,22 +2086,14 @@ pub(crate) fn graph_snapshot_focus(
     })
 }
 
-/// Open the code graph (read-only) and populate the tool registry's schema
-/// index with all known table/type/view names. Best-effort: if the graph
-/// can't open (no `.stella/codegraph.db`), the schema gate runs with an
-/// empty index — it just won't catch conflicts until `stella init` runs.
+/// Seed the tool registry's storage-gate baseline with the assembled
+/// storage map (persisted index + `stella.storage.toml`). Best-effort: with
+/// no `.stella/codegraph.db` and no manifest the snapshot is empty and every
+/// gate mechanism is a no-op until `stella init` runs. The gate also
+/// re-reads the persisted map per gated write, so this baseline only has to
+/// cover session start.
 pub(crate) fn populate_schema_index(registry: &ToolRegistry, workspace_root: &std::path::Path) {
-    let db_path = workspace_root.join(".stella").join("codegraph.db");
-    if !db_path.exists() {
-        return;
-    }
-    let graph = match stella_graph::CodeGraph::open(workspace_root, &db_path) {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-    let (tables, types, views) = graph.schema_names();
-    registry.update_schema_index(tables, types, views);
-    graph.shutdown();
+    registry.update_storage_index(stella_graph::load_storage_snapshot(workspace_root));
 }
 
 /// `stella init` — infer the workspace's domain taxonomy, build the code-graph
@@ -3789,6 +3824,35 @@ mod tests {
         );
     }
 
+    /// The scripts section rides the byte-stable prompt prefix: two
+    /// assemblies over the same workspace must be byte-identical, the verb
+    /// bindings must be present, and a scriptless workspace must add
+    /// nothing (docs/design/scripts-index.md).
+    #[test]
+    fn assemble_system_prompt_carries_a_byte_stable_scripts_section() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"scripts": {"build": "next build", "test": "vitest"}}"#,
+        )
+        .unwrap();
+        std::fs::write(root.path().join("pnpm-lock.yaml"), "").unwrap();
+
+        let first = assemble_system_prompt(SYSTEM_PROMPT, root.path());
+        let second = assemble_system_prompt(SYSTEM_PROMPT, root.path());
+        assert_eq!(first, second, "same workspace state ⇒ identical bytes");
+        assert!(first.contains("## Project scripts"), "section present");
+        assert!(first.contains("build → pnpm run build"), "{first}");
+        assert!(first.contains("install → pnpm install"), "{first}");
+
+        let empty = tempfile::tempdir().expect("tempdir");
+        let bare = assemble_system_prompt(SYSTEM_PROMPT, empty.path());
+        assert!(
+            !bare.contains("## Project scripts"),
+            "no scripts → no section, no noise"
+        );
+    }
+
     /// Build a real code-graph index in a tempdir: `hub.rs` (three symbols) is
     /// busiest, `leaf.rs` (one) is not. Returns the workspace root tempdir.
     fn graph_fixture() -> tempfile::TempDir {
@@ -3959,6 +4023,39 @@ mod tests {
             prompt.contains("Never force-push.  [enforced]"),
             "a guarded rule must render with the enforced marker: {prompt}"
         );
+    }
+
+    #[test]
+    fn system_prompt_carries_the_workspace_maps_index() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join(".stella/explorations");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("cli.json"),
+            serde_json::json!({
+                "slice": "cli", "title": "CLI surface", "summary": "maps the CLI",
+                "content": "big body that must NOT be in the prompt",
+                "files": [], "created_at_ms": 1u64
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let prompt = build_system_prompt(&cfg_for("zai"), root.path());
+        assert!(
+            prompt.contains("## Workspace maps"),
+            "index section missing"
+        );
+        assert!(prompt.contains("`cli`") && prompt.contains("CLI surface"));
+        assert!(
+            !prompt.contains("big body"),
+            "map bodies must stay pull-only, never in the prompt"
+        );
+
+        // No maps → no section, no tokens.
+        let bare = tempfile::tempdir().expect("tempdir");
+        let empty = build_system_prompt(&cfg_for("zai"), bare.path());
+        assert!(!empty.contains("## Workspace maps"));
     }
 
     /// A `Config` selecting `provider_id` at its default model, with a dummy
@@ -4147,4 +4244,5 @@ mod tests {
             "a judge adapter that fails to build must fall back to the worker provider"
         );
     }
+}
 }

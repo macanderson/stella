@@ -78,21 +78,67 @@ pub struct ToolRegistry {
     /// [`ToolRegistry::take_spawn_requests`] — exactly the citation-ledger
     /// drain discipline, so no request is dispatched twice.
     spawn_queue: crate::tasks::SpawnQueue,
+    storage_index: std::sync::Mutex<StorageIndex>,
     schema_index: std::sync::Mutex<SchemaIndex>,
+    /// Which workspace paths are covered by a FRESH saved exploration map —
+    /// the read-side analogue of `schema_index` (`docs/design/
+    /// exploration-sharing.md` §6). Built once at construction, refreshed
+    /// after every `save_exploration`; drives the once-per-session
+    /// "this area is already mapped" hints on search-tool results.
+    exploration_coverage: std::sync::Mutex<ExplorationCoverage>,
     /// The session's extension hook bus, once a host attaches one
     /// ([`ToolRegistry::attach_bus`]). Every emission is `None`-guarded, so
     /// a bus-less registry behaves exactly as it did before hooks existed.
     bus: std::sync::RwLock<Option<HookBus>>,
 }
 
+/// The session's storage-map state for the pre-write gate
+/// (`docs/design/storage-map.md` §8): a host-seeded baseline snapshot plus
+/// the relations created by writes this session — which the on-disk index
+/// may not have re-indexed yet. The gate merges both over a fresh read of
+/// the persisted index on every gated write.
+/// Path-coverage of fresh exploration maps plus the hint dedup set.
+#[derive(Debug, Default)]
+struct ExplorationCoverage {
+    /// Workspace-relative path → slices of fresh, complete maps covering it.
+    by_path: HashMap<String, Vec<String>>,
+    /// Slices already hinted this session — each map is suggested at most
+    /// once, so the nudge can never become nagging.
+    hinted: HashSet<String>,
+}
+
+impl ExplorationCoverage {
+    /// Scan the exploration store; only fresh, complete maps generate
+    /// coverage (a drifted or draft map must not suppress real exploration).
+    fn rebuild(root: &std::path::Path) -> Self {
+        let mut by_path: HashMap<String, Vec<String>> = HashMap::new();
+        for summary in crate::exploration::summaries_sync(root) {
+            if summary.status != crate::exploration::ExplorationStatus::Complete
+                || !summary.freshness.is_fresh()
+            {
+                continue;
+            }
+            for path in &summary.covered {
+                by_path
+                    .entry(path.clone())
+                    .or_default()
+                    .push(summary.slice.clone());
+            }
+        }
+        Self {
+            by_path,
+            hinted: HashSet::new(),
+        }
+    }
+}
+
 /// The known schema objects in the workspace, used by the schema gate to
 /// prevent duplicate table/type/view creation. Populated from the code graph
 /// or empty when no graph is open.
 #[derive(Debug, Clone, Default)]
-pub struct SchemaIndex {
-    pub tables: HashSet<String>,
-    pub types: HashSet<String>,
-    pub views: HashSet<String>,
+pub struct StorageIndex {
+    baseline: stella_graph::StorageSnapshot,
+    session: Vec<stella_graph::storage::RelationEntry>,
 }
 
 /// Host-decided feature switches for registry construction. `Default` is
@@ -194,7 +240,8 @@ impl ToolRegistry {
             Arc::new(crate::project::RunTests),
             Arc::new(crate::project::RunLint),
             Arc::new(crate::project::FormatCode),
-            Arc::new(crate::script::RunScript),
+            Arc::new(crate::scripts::ListScripts),
+            Arc::new(crate::scripts::RunScript),
             // The process group shares one table; it lives exactly as long
             // as the registry and its Drop reaps anything still running.
             Arc::new(crate::process::StartProcess(processes.clone())),
@@ -263,6 +310,7 @@ impl ToolRegistry {
             let name = tool.schema().name;
             tools.insert(name, tool);
         }
+        let exploration_coverage = std::sync::Mutex::new(ExplorationCoverage::rebuild(&root));
         Self {
             tools,
             late_tools: std::sync::RwLock::new(HashMap::new()),
@@ -273,7 +321,9 @@ impl ToolRegistry {
             mcp_usage,
             task_board,
             spawn_queue,
+            storage_index: std::sync::Mutex::new(StorageIndex::default()),
             schema_index: std::sync::Mutex::new(SchemaIndex::default()),
+            exploration_coverage,
             bus: std::sync::RwLock::new(None),
         }
     }
@@ -357,6 +407,42 @@ impl ToolRegistry {
         }
         let input: &Value = modified_input.as_ref().unwrap_or(input);
 
+        // A save_exploration's staleness manifest is built from the map's
+        // actual evidence: pass the session's read paths from the file-touch
+        // ledger through the internal input key (spec §3d). The model never
+        // authors this field; a value it did author is replaced.
+        let mut ledger_augmented: Option<Value> = None;
+        if name == "save_exploration"
+            && let Value::Object(map) = input
+        {
+            let read_paths: Vec<String> = self
+                .files_touched()
+                .into_iter()
+                .filter(|(_, letters)| letters.contains('R'))
+                .map(|(path, _)| path)
+                .collect();
+            if !read_paths.is_empty() {
+                let mut map = map.clone();
+                map.insert(
+                    crate::exploration::LEDGER_FILES_KEY.to_string(),
+                    serde_json::json!(read_paths),
+                );
+                ledger_augmented = Some(Value::Object(map));
+            }
+        }
+        let input: &Value = ledger_augmented.as_ref().unwrap_or(input);
+        // `run_script` composes its command from the scripts index at
+        // execute time; resolve it up front (best-effort) so the
+        // `command.started` policy chain and the command.* observer events
+        // carry the real command line, exactly like `bash`. A failed
+        // resolution is not gated — the tool itself returns the named error.
+        let resolved_script_command: Option<String> = match (&bus, name) {
+            (Some(_), "run_script") => {
+                crate::scripts::resolve_command_for_gate(&self.root, input).await
+            }
+            _ => None,
+        };
+
         // Classify the file op BEFORE executing: create-vs-update depends
         // on whether the file exists now, not after the write.
         let pending_op = self.classify_file_op(name, input);
@@ -372,53 +458,48 @@ impl ToolRegistry {
             _ => None,
         };
 
-        // Schema gate: if the target is a SQL file, parse the proposed
-        // content for DDL objects and check them against the known schema
-        // index before the write/edit lands. Objects the target file already
-        // defines on disk are exempt — rewriting an existing migration in
-        // place is not a duplicate.
-        let mut pending_schema: Vec<crate::schema_gate::DdlObject> = Vec::new();
+        // Storage gate (docs/design/storage-map.md §8): if the target is a
+        // storage-definition file, parse the proposed content with the SAME
+        // adapter extraction the indexer uses and judge it against the live
+        // storage map before the write/edit lands. Objects the target file
+        // already defines on disk are exempt — rewriting an existing
+        // migration in place is not a duplicate.
+        let mut pending_storage: Option<crate::schema_gate::GatePass> = None;
+        let mut declared_intent: Option<String> = None;
         if let Some(path) = input.get("path").and_then(|v| v.as_str())
             && matches!(name, "write_file" | "edit_file")
             && crate::schema_gate::is_schema_file(path)
+            && let Some(extractor) = crate::schema_gate::extractor()
         {
             // write_file carries the full file in `content`; edit_file
-            // introduces new DDL only through `new_string`.
+            // introduces new schema only through `new_string`.
             let proposed_src = match name {
                 "write_file" => input.get("content").and_then(|v| v.as_str()),
                 _ => input.get("new_string").and_then(|v| v.as_str()),
             };
             let proposed = proposed_src
-                .map(crate::schema_gate::extract_ddl_objects)
+                .map(|src| extractor.extract_sql(src))
                 .unwrap_or_default();
             if !proposed.is_empty() {
-                let own: HashSet<String> = crate::resolve_within_root(&self.root, path)
+                let own = crate::resolve_within_root(&self.root, path)
                     .and_then(|p| std::fs::read_to_string(p).ok())
-                    .map(|current| {
-                        crate::schema_gate::extract_ddl_objects(&current)
-                            .into_iter()
-                            .map(|o| o.name.to_lowercase())
-                            .collect()
-                    })
+                    .map(|current| extractor.extract_sql(&current))
                     .unwrap_or_default();
-                let fresh: Vec<crate::schema_gate::DdlObject> = proposed
-                    .into_iter()
-                    .filter(|o| !own.contains(&o.name.to_lowercase()))
-                    .collect();
-                if !fresh.is_empty() {
-                    let index = self.schema_index.lock().unwrap_or_else(|p| p.into_inner());
-                    let conflicts = crate::schema_gate::find_conflicts(
-                        &fresh,
-                        &index.tables,
-                        &index.types,
-                        &index.views,
-                    );
-                    if !conflicts.is_empty() {
-                        return ToolOutput::Error {
-                            message: crate::schema_gate::format_conflicts(&conflicts),
-                        };
+                let snapshot = self.storage_snapshot();
+                let layer = crate::schema_gate::layer_for(&self.root, path);
+                let intent = input.get("storage_intent").and_then(|v| v.as_str());
+                match crate::schema_gate::check(&crate::schema_gate::GateRequest {
+                    layer: &layer,
+                    proposed: &proposed,
+                    own: &own,
+                    snapshot: &snapshot,
+                    storage_intent: intent,
+                }) {
+                    Ok(pass) => {
+                        declared_intent = intent.map(str::to_string);
+                        pending_storage = Some(pass);
                     }
-                    pending_schema = fresh;
+                    Err(message) => return ToolOutput::Error { message },
                 }
             }
         }
@@ -428,7 +509,13 @@ impl ToolRegistry {
         // plus the payload-hygiene detectors, then the observable
         // `tool.call.started` (with content-bearing fields sanitized).
         if let Some(bus) = &bus {
-            if let Err(denied) = self.gate_side_effects(bus, name, input, pending_op.as_ref()) {
+            if let Err(denied) = self.gate_side_effects(
+                bus,
+                name,
+                input,
+                pending_op.as_ref(),
+                resolved_script_command.as_deref(),
+            ) {
                 return denied;
             }
             bus.emit_named(
@@ -447,7 +534,7 @@ impl ToolRegistry {
                 .get(name)
                 .cloned()
         });
-        let output = match tool {
+        let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
             None => ToolOutput::Error {
                 message: format!(
@@ -458,7 +545,13 @@ impl ToolRegistry {
         };
         if let Some(bus) = &bus {
             let duration_ms = started_at.elapsed().as_millis() as u64;
-            let command = || input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            // The command line the tool actually ran: bash's own input, or
+            // run_script's index-resolved command.
+            let command_line: Option<&str> = match name {
+                "bash" => Some(input.get("command").and_then(|v| v.as_str()).unwrap_or("")),
+                "run_script" => resolved_script_command.as_deref(),
+                _ => None,
+            };
             match &output {
                 ToolOutput::Error { message } => {
                     bus.emit_named(
@@ -467,10 +560,10 @@ impl ToolRegistry {
                             "tool": name, "error": message, "duration_ms": duration_ms,
                         }),
                     );
-                    if name == "bash" {
+                    if let Some(command) = command_line {
                         bus.emit_named(
                             hook_names::COMMAND_FAILED,
-                            serde_json::json!({ "command": command(), "error": message }),
+                            serde_json::json!({ "command": command, "error": message }),
                         );
                     }
                 }
@@ -479,10 +572,10 @@ impl ToolRegistry {
                         hook_names::TOOL_CALL_COMPLETED,
                         serde_json::json!({ "tool": name, "duration_ms": duration_ms }),
                     );
-                    if name == "bash" {
+                    if let Some(command) = command_line {
                         bus.emit_named(
                             hook_names::COMMAND_COMPLETED,
-                            serde_json::json!({ "command": command() }),
+                            serde_json::json!({ "command": command }),
                         );
                     }
                 }
@@ -490,13 +583,79 @@ impl ToolRegistry {
         }
         if !output.is_error() {
             // The write landed, so the objects it creates now exist: grow
-            // the index so a duplicate later this session conflicts even
-            // before any re-index from the code graph.
-            if !pending_schema.is_empty() {
-                self.record_schema_objects(&pending_schema);
+            // the session overlay so a duplicate later this session
+            // conflicts even before any re-index from the code graph.
+            if let Some(pass) = pending_storage {
+                self.record_storage_objects(&pass, declared_intent.as_deref());
             }
             if let Some(pending) = pending_op {
                 self.record_touch(pending, pre_content, name, input, bus.as_ref());
+            }
+            // A new/updated map changes what is covered — rebuild (also
+            // resets nothing: the hinted set survives via re-insertion
+            // below being per-slice, and a freshly saved map needs no hint
+            // for its own author).
+            if name == "save_exploration" {
+                let mut refreshed = ExplorationCoverage::rebuild(&self.root);
+                let mut coverage = self
+                    .exploration_coverage
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                refreshed.hinted = std::mem::take(&mut coverage.hinted);
+                // The author of a map never needs a hint about it.
+                if let Some(slice) = input.get("slice").and_then(|v| v.as_str()) {
+                    refreshed.hinted.insert(slice.to_string());
+                }
+                *coverage = refreshed;
+            }
+        }
+
+        // Coverage hints (spec §6b): when a search/read touches territory a
+        // FRESH map covers, say so once per (session, slice) — meeting the
+        // grep habit where it lives. Appended to the result text, outside
+        // the cached prompt prefix, so the hint costs no cache stability.
+        if matches!(name, "grep" | "glob" | "read_file" | "graph_query")
+            && let ToolOutput::Ok { content } = &mut output
+        {
+            let mut haystack = String::new();
+            for key in ["path", "target", "pattern"] {
+                if let Some(v) = input.get(key).and_then(|v| v.as_str()) {
+                    haystack.push_str(v);
+                    haystack.push('\n');
+                }
+            }
+            // Cap the scan window (char-boundary-safe) — a huge grep dump
+            // is already summarizing many files; the head names them.
+            let mut cap = content.len().min(20_000);
+            while cap < content.len() && !content.is_char_boundary(cap) {
+                cap += 1;
+            }
+            haystack.push_str(&content[..cap]);
+            let mut fresh_hits: Vec<String> = {
+                let mut coverage = self
+                    .exploration_coverage
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                let mut hits: Vec<String> = coverage
+                    .by_path
+                    .iter()
+                    .filter(|(path, _)| haystack.contains(path.as_str()))
+                    .flat_map(|(_, slices)| slices.iter().cloned())
+                    .filter(|slice| !coverage.hinted.contains(slice))
+                    .collect();
+                hits.sort();
+                hits.dedup();
+                hits.truncate(3);
+                for slice in &hits {
+                    coverage.hinted.insert(slice.clone());
+                }
+                hits
+            };
+            for slice in fresh_hits.drain(..) {
+                content.push_str(&format!(
+                    "\n\nnote: saved exploration `{slice}` covers this area (fresh) — \
+                     explorations({{\"slice\": \"{slice}\"}}) may already answer this"
+                ));
             }
         }
         output
@@ -553,7 +712,9 @@ impl ToolRegistry {
     /// detectors for one already-final input: `sensitive_operation.detected`
     /// and `secret.detected` observers first (an auditor sees the attempt
     /// even when a policy then denies it), then the `file.*` chain for a
-    /// classified C/U/D op and the `command.started` chain for `bash`.
+    /// classified C/U/D op and the `command.started` chain for `bash` and
+    /// `run_script` (`resolved_command` is the latter's index-resolved
+    /// command line).
     /// These chains gate — `modify` decisions are recorded but not honored
     /// here, because the input was already final after
     /// `tool.call.requested`. Reads are observable but never interceptable.
@@ -563,6 +724,7 @@ impl ToolRegistry {
         name: &str,
         input: &Value,
         pending: Option<&PendingTouch>,
+        resolved_command: Option<&str>,
     ) -> Result<(), ToolOutput> {
         if let Some(pending) = pending {
             if bus::is_sensitive_path(&pending.path) {
@@ -628,8 +790,12 @@ impl ToolRegistry {
                 }
             }
         }
-        if name == "bash" {
-            let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let command_line: Option<&str> = match name {
+            "bash" => Some(input.get("command").and_then(|v| v.as_str()).unwrap_or("")),
+            "run_script" => resolved_command,
+            _ => None,
+        };
+        if let Some(command) = command_line {
             let outcome = bus.emit_blocking(HookEventDraft::new(
                 hook_names::COMMAND_STARTED,
                 serde_json::json!({ "command": command }),
@@ -651,18 +817,61 @@ impl ToolRegistry {
         Ok(())
     }
 
-    /// Merge just-created DDL objects into the schema index (lowercased —
-    /// `find_conflicts` matches case-insensitively against lowercase names).
-    fn record_schema_objects(&self, objects: &[crate::schema_gate::DdlObject]) {
-        let mut index = self.schema_index.lock().unwrap_or_else(|p| p.into_inner());
-        for obj in objects {
-            let name = obj.name.to_lowercase();
-            match obj.kind {
-                crate::schema_gate::DdlKind::Table => index.tables.insert(name),
-                crate::schema_gate::DdlKind::Type => index.types.insert(name),
-                crate::schema_gate::DdlKind::View => index.views.insert(name),
-            };
+    /// The live storage map for the gate: the persisted index + manifest,
+    /// re-read per gated write (so a mid-session `stella init` or manifest
+    /// edit is seen immediately), merged with the host-seeded baseline and
+    /// the objects created by earlier writes this session (covers the
+    /// watcher's re-index lag).
+    fn storage_snapshot(&self) -> stella_graph::StorageSnapshot {
+        let mut snapshot = stella_graph::load_storage_snapshot(&self.root);
+        let index = self.storage_index.lock().unwrap_or_else(|p| p.into_inner());
+        for rel in index.baseline.relations.iter().chain(index.session.iter()) {
+            if let Some(existing) = snapshot
+                .relations
+                .iter_mut()
+                .find(|r| r.address == rel.address)
+            {
+                // Same relation known from disk: union in any fields the
+                // overlay knows about that the index hasn't caught up on.
+                for field in &rel.fields {
+                    let key = stella_graph::storage::normalize_name(&field.name);
+                    if !existing
+                        .fields
+                        .iter()
+                        .any(|f| stella_graph::storage::normalize_name(&f.name) == key)
+                    {
+                        existing.fields.push(field.clone());
+                    }
+                }
+            } else {
+                snapshot.relations.push(rel.clone());
+            }
         }
+        snapshot
+    }
+
+    /// Record what a landed write created: grow the session overlay, and —
+    /// when the model declared a `storage_intent` — append it to
+    /// `stella.storage.toml` (origin `declared`). The gate's justification
+    /// path is what populates the map: every challenged object is born
+    /// documented (spec §8 ring 3).
+    fn record_storage_objects(&self, pass: &crate::schema_gate::GatePass, intent: Option<&str>) {
+        if let Some(intent) = intent {
+            for address in &pass.intent_addresses {
+                let _ = stella_graph::manifest::append_meaning(
+                    &self.root,
+                    "relations",
+                    address,
+                    intent,
+                    "declared",
+                );
+            }
+        }
+        if pass.created.is_empty() {
+            return;
+        }
+        let mut index = self.storage_index.lock().unwrap_or_else(|p| p.into_inner());
+        index.session.extend(pass.created.iter().cloned());
     }
 
     /// `[C|R|U|D]`-classify a call: reads → R, writes → C (new) or U
@@ -905,19 +1114,13 @@ impl ToolRegistry {
         &self.root
     }
 
-    /// Update the known schema index from the code graph. Called at session
-    /// start and whenever schema files are re-indexed. The schema gate uses
-    /// this to prevent duplicate table/type/view creation.
-    pub fn update_schema_index(
-        &self,
-        tables: HashSet<String>,
-        types: HashSet<String>,
-        views: HashSet<String>,
-    ) {
-        let mut index = self.schema_index.lock().unwrap_or_else(|p| p.into_inner());
-        index.tables = tables;
-        index.types = types;
-        index.views = views;
+    /// Seed the gate's baseline storage map. Called at session start with
+    /// the assembled snapshot; the gate additionally re-reads the persisted
+    /// index on every gated write, so the baseline mainly serves hosts and
+    /// tests that inject a map without an on-disk index.
+    pub fn update_storage_index(&self, snapshot: stella_graph::StorageSnapshot) {
+        let mut index = self.storage_index.lock().unwrap_or_else(|p| p.into_inner());
+        index.baseline = snapshot;
     }
 }
 
@@ -968,6 +1171,97 @@ mod tests {
         let (_root, reg) = bare_registry(None);
         let result = reg.execute("nonexistent", &Value::Null).await;
         assert!(result.is_error());
+    }
+
+    #[tokio::test]
+    async fn session_reads_flow_into_saved_exploration_manifest() {
+        let (root, reg) = bare_registry(None);
+        std::fs::write(root.path().join("evidence.rs"), "fn seen() {}").unwrap();
+
+        // Read through the registry so the file-touch ledger records it.
+        let read = reg
+            .execute(
+                "read_file",
+                &serde_json::json!({"path": "evidence.rs", "reason": "test"}),
+            )
+            .await;
+        assert!(!read.is_error(), "{read:?}");
+
+        // Save WITHOUT declaring the file — the ledger must supply it.
+        let saved = reg
+            .execute(
+                "save_exploration",
+                &serde_json::json!({
+                    "slice": "auto", "title": "Auto", "summary": "s", "content": "map"
+                }),
+            )
+            .await;
+        match &saved {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("1 files tracked"), "{content}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_map_hints_once_on_covering_search_results() {
+        let (root, reg) = bare_registry(None);
+        std::fs::write(root.path().join("covered.rs"), "fn mapped() {}").unwrap();
+        let saved = reg
+            .execute(
+                "save_exploration",
+                &serde_json::json!({
+                    "slice": "zone", "title": "Zone", "summary": "s", "content": "map",
+                    "files": ["covered.rs"]
+                }),
+            )
+            .await;
+        assert!(!saved.is_error(), "{saved:?}");
+        // The author never needs a hint about its own map — simulate a new
+        // session (fresh registry, same workspace) which does.
+        let reg2 = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+        let hit = reg2
+            .execute("grep", &serde_json::json!({"pattern": "mapped"}))
+            .await;
+        match &hit {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains("saved exploration `zone`"),
+                    "first covering search must carry the hint: {content}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // Once per session: the second covering search stays clean.
+        let again = reg2
+            .execute("grep", &serde_json::json!({"pattern": "mapped"}))
+            .await;
+        match &again {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    !content.contains("saved exploration `zone`"),
+                    "hint must not repeat: {content}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // And the author's own registry was seeded as already-hinted.
+        let author_search = reg
+            .execute("grep", &serde_json::json!({"pattern": "mapped"}))
+            .await;
+        match &author_search {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    !content.contains("saved exploration `zone`"),
+                    "author must not be hinted about its own map: {content}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1028,6 +1322,7 @@ mod tests {
             "run_tests",
             "run_lint",
             "format_code",
+            "list_scripts",
             "run_script",
             "start_process",
             "read_output",
@@ -1060,7 +1355,7 @@ mod tests {
         }
         // `bash` is NOT in the default surface — it is the settings opt-in.
         assert!(!names.contains(&"bash".to_string()), "{names:?}");
-        assert_eq!(names.len(), 43, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 44, "unexpected tool count: {names:?}");
     }
 
     // ---- bash opt-in (default OFF everywhere) -------------------------
@@ -1128,7 +1423,7 @@ mod tests {
     fn issue_tools_absent_without_a_configured_backend() {
         let (_root, reg) = bare_registry(None);
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        assert_eq!(names.len(), 35, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 36, "unexpected tool count: {names:?}");
         for absent in [
             "create_issue",
             "update_issue",
@@ -1262,6 +1557,7 @@ mod tests {
                     | "glob"
                     | "gather_context"
                     | "explorations"
+                    | "list_scripts"
                     | "ci_status"
                     | "search_issues"
                     | "task_list"
@@ -1278,16 +1574,46 @@ mod tests {
         }
     }
 
+    /// A baseline snapshot with the given tables in the implicit `sql`
+    /// layer, `default` namespace — the shape `stella init` would seed.
+    fn seeded_snapshot(tables: &[&str]) -> stella_graph::StorageSnapshot {
+        stella_graph::StorageSnapshot {
+            layers: vec![],
+            relations: tables
+                .iter()
+                .map(|name| stella_graph::storage::RelationEntry {
+                    address: stella_graph::storage::relation_address("sql", "default", name),
+                    layer: "sql".into(),
+                    namespace: "default".into(),
+                    name: name.to_string(),
+                    kind: "table".into(),
+                    fields: vec![stella_graph::storage::FieldEntry {
+                        name: "id".into(),
+                        data_type: Some("INT".into()),
+                        nullable: false,
+                        default_value: None,
+                        constraints: vec!["PRIMARY KEY".into()],
+                        references: None,
+                        intent: None,
+                        line: 1,
+                    }],
+                    enum_values: vec![],
+                    intent: None,
+                    boundary: None,
+                    redirects: vec![],
+                    source: Some("migrations/001.sql:1".into()),
+                })
+                .collect(),
+            orphaned_meanings: vec![],
+        }
+    }
+
     #[tokio::test]
     async fn schema_gate_blocks_duplicate_table_on_write() {
         let dir = std::env::temp_dir().join(format!("stella_gate_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let reg = ToolRegistry::with_issue_backend(dir.clone(), None);
-
-        // Populate the schema index with a known table.
-        let mut tables = HashSet::new();
-        tables.insert("users".to_string());
-        reg.update_schema_index(tables, HashSet::new(), HashSet::new());
+        reg.update_storage_index(seeded_snapshot(&["users"]));
 
         // Attempt to write a SQL file that creates `users` again.
         let result = reg
@@ -1302,8 +1628,15 @@ mod tests {
         assert!(result.is_error());
         match result {
             ToolOutput::Error { message } => {
-                assert!(message.contains("Table `users` already exists"));
-                assert!(message.contains("ALTER"));
+                assert!(
+                    message.contains("Table `users` already exists"),
+                    "{message}"
+                );
+                assert!(message.contains("ALTER"), "{message}");
+                // Gate v2: the conflict cites the canonical address and the
+                // existing columns, so the model can decide without a read.
+                assert!(message.contains("store://sql/default/users"), "{message}");
+                assert!(message.contains("columns: id INT"), "{message}");
             }
             _ => panic!("expected error"),
         }
@@ -1315,12 +1648,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("stella_gate_ok_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let reg = ToolRegistry::with_issue_backend(dir.clone(), None);
+        reg.update_storage_index(seeded_snapshot(&["users"]));
 
-        let mut tables = HashSet::new();
-        tables.insert("users".to_string());
-        reg.update_schema_index(tables, HashSet::new(), HashSet::new());
-
-        // Write a SQL file with a genuinely new table.
+        // Write a SQL file with a genuinely new, dissimilar table.
         let result = reg
             .execute(
                 "write_file",
@@ -1335,6 +1665,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_gate_blocks_normalized_duplicate_and_column_dup() {
+        let dir = std::env::temp_dir().join(format!("stella_gate_norm_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let reg = ToolRegistry::with_issue_backend(dir.clone(), None);
+        reg.update_storage_index(seeded_snapshot(&["user_profiles"]));
+
+        // `UserProfile` is the same relation as `user_profiles` after
+        // normalization + plural folding.
+        let camel = reg
+            .execute(
+                "write_file",
+                &serde_json::json!({
+                    "path": "migrations/004.sql",
+                    "content": "CREATE TABLE UserProfile (id INT);\n"
+                }),
+            )
+            .await;
+        assert!(camel.is_error(), "normalized duplicate must be blocked");
+
+        // Adding a column that already exists (id) is column-level drift.
+        let column = reg
+            .execute(
+                "write_file",
+                &serde_json::json!({
+                    "path": "migrations/005.sql",
+                    "content": "ALTER TABLE user_profiles ADD COLUMN Id BIGINT;\n"
+                }),
+            )
+            .await;
+        assert!(column.is_error(), "duplicate column must be blocked");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn schema_gate_challenge_passes_with_declared_intent_and_records_it() {
+        let dir = std::env::temp_dir().join(format!("stella_gate_intent_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let reg = ToolRegistry::with_issue_backend(dir.clone(), None);
+        reg.update_storage_index(seeded_snapshot(&["payments"]));
+
+        // `payment_records` is not a name duplicate, but it resembles
+        // `payments` — withheld once with the evidence.
+        let call = serde_json::json!({
+            "path": "migrations/006.sql",
+            "content": "CREATE TABLE payment_records (id INT);\n"
+        });
+        let challenged = reg.execute("write_file", &call).await;
+        match &challenged {
+            ToolOutput::Error { message } => {
+                assert!(message.contains("write withheld"), "{message}");
+                assert!(message.contains("storage_intent"), "{message}");
+            }
+            _ => panic!("expected the similarity challenge"),
+        }
+
+        // Retrying with a declared intent passes, lands the file, and
+        // records the sentence in stella.storage.toml (origin `declared`).
+        let mut with_intent = call.clone();
+        with_intent["storage_intent"] = serde_json::json!(
+            "Immutable ledger of imported legacy charges; payments holds live charges."
+        );
+        let passed = reg.execute("write_file", &with_intent).await;
+        assert!(!passed.is_error(), "declared intent must pass: {passed:?}");
+        let manifest = std::fs::read_to_string(dir.join("stella.storage.toml")).unwrap();
+        assert!(
+            manifest.contains("sql/default/payment_records"),
+            "{manifest}"
+        );
+        assert!(manifest.contains("Immutable ledger"), "{manifest}");
+        assert!(manifest.contains("origin = \"declared\""), "{manifest}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
     async fn schema_gate_exempts_rewriting_a_files_own_objects() {
         let dir = std::env::temp_dir().join(format!("stella_gate_own_{}", std::process::id()));
         std::fs::create_dir_all(dir.join("migrations")).unwrap();
@@ -1344,10 +1748,7 @@ mod tests {
         )
         .unwrap();
         let reg = ToolRegistry::with_issue_backend(dir.clone(), None);
-
-        let mut tables = HashSet::new();
-        tables.insert("users".to_string());
-        reg.update_schema_index(tables, HashSet::new(), HashSet::new());
+        reg.update_storage_index(seeded_snapshot(&["users"]));
 
         // Rewriting the file that defines `users` is an in-place change to
         // the existing object, not a duplicate creation.
@@ -1403,10 +1804,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("migrations")).unwrap();
         std::fs::write(dir.join("migrations/002.sql"), "-- add payments\n").unwrap();
         let reg = ToolRegistry::with_issue_backend(dir.clone(), None);
-
-        let mut tables = HashSet::new();
-        tables.insert("users".to_string());
-        reg.update_schema_index(tables, HashSet::new(), HashSet::new());
+        reg.update_storage_index(seeded_snapshot(&["users"]));
 
         // An edit whose replacement introduces a duplicate CREATE is gated
         // exactly like a write.
@@ -1432,10 +1830,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("stella_gate_nosql_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let reg = ToolRegistry::with_issue_backend(dir.clone(), None);
-
-        let mut tables = HashSet::new();
-        tables.insert("users".to_string());
-        reg.update_schema_index(tables, HashSet::new(), HashSet::new());
+        reg.update_storage_index(seeded_snapshot(&["users"]));
 
         // Writing a Rust file should never trigger the schema gate.
         let result = reg
@@ -1976,5 +2371,38 @@ mod tests {
         std::fs::write(dir2.path().join("f.txt"), "hi\n").unwrap();
         exec_ok(&plain, "read_file", serde_json::json!({"path": "f.txt"})).await;
         assert_eq!(plain.file_touch_telemetry().files_touched.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_command_chain_gates_run_script_with_its_resolved_command() {
+        // `run_script` composes its command from the scripts index, so the
+        // same `command.started` policy that fences `bash` must fence it —
+        // with the resolved command line, not the script name.
+        let (dir, reg) = telemetry_fixture();
+        std::fs::write(dir.path().join("Makefile"), "greet:\n\t@echo hi\n").unwrap();
+        let bus = HookBus::new("sess");
+        let denied_command = StdArc::new(StdMutex::new(String::new()));
+        let sink = denied_command.clone();
+        bus.on_blocking(hook_names::COMMAND_STARTED, move |event| {
+            *sink.lock().unwrap() = event.payload["command"].as_str().unwrap_or("").to_string();
+            HookDecision::Deny {
+                reason: "no shell".into(),
+            }
+        })
+        .detach();
+        reg.attach_bus(bus);
+
+        let out = reg
+            .execute("run_script", &serde_json::json!({"script": "make:greet"}))
+            .await;
+        assert!(
+            out.is_error(),
+            "denied run_script must not execute: {out:?}"
+        );
+        assert_eq!(
+            *denied_command.lock().unwrap(),
+            "make greet",
+            "the chain must see the index-resolved command line"
+        );
     }
 }

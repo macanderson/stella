@@ -268,6 +268,23 @@ enum Command {
         target: String,
     },
 
+    /// List or run the project's package-manager scripts — deterministic
+    /// static detection (cargo/npm/uv/go/make/just/…) mapped onto canonical
+    /// verbs (install/build/start/test/lint/format). Offline: manifest
+    /// parsing plus a local subprocess, needs no API key.
+    Scripts {
+        #[command(subcommand)]
+        cmd: ScriptsCmd,
+    },
+
+    /// Inspect the storage map — every storage layer, namespace, relation,
+    /// and field, with intent/boundaries from stella.storage.toml. Offline:
+    /// reads .stella/codegraph.db + the manifest, needs no API key.
+    Storage {
+        #[command(subcommand)]
+        cmd: StorageCmd,
+    },
+
     /// List configured providers and available models
     Models {
         #[command(subcommand)]
@@ -562,6 +579,20 @@ impl GraphOp {
     }
 }
 
+#[derive(Subcommand)]
+enum StorageCmd {
+    /// The full map: layer → namespace → relation tree with intents
+    Tree,
+    /// One relation's card: fields, constraints, meaning, provenance.
+    /// Accepts a store:// address, a bare address, or a relation name.
+    Show { address: String },
+    /// Find relations and fields whose (normalized) name contains the query
+    Grep { name: String },
+    /// Drift report: near-duplicate relations, orphaned manifest meanings,
+    /// and intent coverage. Report-only — nothing is changed.
+    Drift,
+}
+
 /// `stella observe` — serve the Observatory dashboard for this workspace on
 /// `127.0.0.1` until interrupted. Telemetry stores are opened read-only; the
 /// page and its assets are embedded, so nothing is fetched from anywhere.
@@ -594,6 +625,87 @@ fn run_observe(port: u16, open: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// The `stella scripts` surface, mirroring the `list_scripts`/`run_script`
+/// tools one-for-one so a human at the CLI and the model inside a turn see
+/// the same frames (docs/design/scripts-index.md).
+#[derive(Subcommand)]
+enum ScriptsCmd {
+    /// List detected scripts and their canonical verb bindings
+    List {
+        /// Emit the index as JSON (schema_version 1)
+        #[arg(long)]
+        json: bool,
+
+        /// Narrow to one workspace package dir
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Run a script by canonical verb or qualified id (e.g. test, pnpm:build)
+    Run {
+        /// install|build|start|test|lint|format, or a qualified id
+        script: String,
+
+        /// Package dir when the id exists in several packages
+        #[arg(long)]
+        dir: Option<String>,
+
+        /// Timeout in seconds
+        #[arg(long, default_value_t = 600)]
+        timeout_secs: u64,
+
+        /// Extra args appended runner-natively (after `--` for npm-family)
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+}
+
+/// `stella scripts …` — the human door to the project scripts index.
+/// Detection is static manifest parsing; `run` executes one indexed entry.
+fn run_scripts(cmd: &ScriptsCmd) -> Result<(), String> {
+    let root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    match cmd {
+        ScriptsCmd::List { json, dir } => {
+            let index = stella_tools::scripts::ScriptIndex::detect_blocking(&root);
+            if *json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&index.to_json())
+                        .map_err(|e| format!("serialize index: {e}"))?
+                );
+            } else {
+                println!("{}", index.render_list(dir.as_deref()));
+            }
+            Ok(())
+        }
+        ScriptsCmd::Run {
+            script,
+            dir,
+            timeout_secs,
+            args,
+        } => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| format!("failed to start runtime: {e}"))?;
+            let output = rt.block_on(stella_tools::scripts::run_by_name(
+                &root,
+                script,
+                dir.as_deref(),
+                args,
+                *timeout_secs,
+            ));
+            match output {
+                stella_protocol::tool::ToolOutput::Ok { content } => {
+                    println!("{content}");
+                    Ok(())
+                }
+                stella_protocol::tool::ToolOutput::Error { message } => Err(message),
+            }
+        }
+    }
+}
+
 /// `stella graph <op> <target>` — the human door to the same query surface
 /// the `graph_query` tool gives the agent. Frames print exactly as the model
 /// would receive them.
@@ -607,6 +719,185 @@ fn run_graph(op: GraphOp, target: &str) -> Result<(), String> {
         }
         stella_protocol::tool::ToolOutput::Error { message } => Err(message),
     }
+}
+
+/// `stella storage <cmd>` — the human door to the storage map the pre-write
+/// gate enforces (docs/design/storage-map.md). Reads the persisted index +
+/// stella.storage.toml; empty output means `stella init` hasn't indexed any
+/// storage yet.
+fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
+    use stella_graph::storage::{dedup_key, display_address, embed_card, normalize_name};
+    let root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    let snapshot = stella_graph::load_storage_snapshot(&root);
+    if snapshot.relations.is_empty() && snapshot.layers.is_empty() {
+        println!(
+            "{}",
+            "storage map is empty — run `stella init` to index the workspace, and/or \
+             declare layers in stella.storage.toml"
+                .dimmed()
+        );
+        return Ok(());
+    }
+    match cmd {
+        StorageCmd::Tree => {
+            for layer in &snapshot.layers {
+                println!(
+                    "{} {} {}",
+                    "◆".bright_magenta(),
+                    layer.key.bold(),
+                    format!("({}, {}, {})", layer.engine, layer.class, layer.durability).dimmed()
+                );
+                if let Some(boundary) = &layer.boundary {
+                    println!("  {}", boundary.dimmed());
+                }
+                let mut namespaces: Vec<&str> = snapshot
+                    .relations
+                    .iter()
+                    .filter(|r| r.layer == layer.key)
+                    .map(|r| r.namespace.as_str())
+                    .collect();
+                namespaces.sort_unstable();
+                namespaces.dedup();
+                for ns in namespaces {
+                    println!("  {}", ns.bright_cyan());
+                    for rel in snapshot
+                        .relations
+                        .iter()
+                        .filter(|r| r.layer == layer.key && r.namespace == ns)
+                    {
+                        let meta = match &rel.intent {
+                            Some(intent) => format!(" — {intent}"),
+                            None => String::new(),
+                        };
+                        println!(
+                            "    {} {} ({} {}){}",
+                            "·".dimmed(),
+                            rel.name,
+                            rel.fields.len(),
+                            if rel.fields.len() == 1 {
+                                "field"
+                            } else {
+                                "fields"
+                            },
+                            meta.dimmed()
+                        );
+                    }
+                }
+            }
+        }
+        StorageCmd::Show { address } => {
+            let needle = address.trim_start_matches("store://");
+            let normalized = needle
+                .split('/')
+                .map(normalize_name)
+                .collect::<Vec<_>>()
+                .join("/");
+            let found = snapshot
+                .relations
+                .iter()
+                .find(|r| r.address == normalized)
+                .or_else(|| {
+                    // Fall back to a bare relation-name lookup.
+                    snapshot
+                        .relations
+                        .iter()
+                        .find(|r| dedup_key(&r.name) == dedup_key(needle))
+                })
+                .ok_or_else(|| format!("no relation at `{address}` in the storage map"))?;
+            let layer = snapshot.layers.iter().find(|l| l.key == found.layer);
+            print!("{}", embed_card(layer, found));
+        }
+        StorageCmd::Grep { name } => {
+            let needle = normalize_name(name);
+            let mut hits = 0usize;
+            for rel in &snapshot.relations {
+                if normalize_name(&rel.name).contains(&needle) {
+                    hits += 1;
+                    println!(
+                        "{} ({}){}",
+                        display_address(&rel.address).bold(),
+                        rel.kind,
+                        rel.source
+                            .as_deref()
+                            .map(|s| format!("  {s}"))
+                            .unwrap_or_default()
+                            .dimmed()
+                    );
+                }
+                for field in &rel.fields {
+                    if normalize_name(&field.name).contains(&needle) {
+                        hits += 1;
+                        println!(
+                            "{}/{} {}",
+                            display_address(&rel.address),
+                            field.name.bold(),
+                            field.data_type.as_deref().unwrap_or("").dimmed()
+                        );
+                    }
+                }
+            }
+            if hits == 0 {
+                println!("{}", format!("no storage object matches `{name}`").dimmed());
+            }
+        }
+        StorageCmd::Drift => {
+            let mut findings = 0usize;
+            // Near-duplicate relations: same layer, similar token sets.
+            for (i, a) in snapshot.relations.iter().enumerate() {
+                for b in snapshot.relations.iter().skip(i + 1) {
+                    if a.layer != b.layer || dedup_key(&a.name) == dedup_key(&b.name) {
+                        continue;
+                    }
+                    let key_a = dedup_key(&a.name);
+                    let key_b = dedup_key(&b.name);
+                    let set_a: std::collections::HashSet<&str> =
+                        key_a.split('_').filter(|t| !t.is_empty()).collect();
+                    let set_b: std::collections::HashSet<&str> =
+                        key_b.split('_').filter(|t| !t.is_empty()).collect();
+                    if set_a.is_empty() || set_b.is_empty() {
+                        continue;
+                    }
+                    let overlap = set_a.intersection(&set_b).count() as f64
+                        / set_a.union(&set_b).count() as f64;
+                    if overlap >= 0.5 {
+                        findings += 1;
+                        println!(
+                            "{} {} ≈ {}",
+                            "near-duplicate:".yellow().bold(),
+                            display_address(&a.address),
+                            display_address(&b.address)
+                        );
+                    }
+                }
+            }
+            for orphan in &snapshot.orphaned_meanings {
+                findings += 1;
+                println!(
+                    "{} {} {}",
+                    "orphaned meaning:".yellow().bold(),
+                    display_address(orphan),
+                    "(manifest entry with no parsed entity — entity deleted, or address typo)"
+                        .dimmed()
+                );
+            }
+            let with_intent = snapshot
+                .relations
+                .iter()
+                .filter(|r| r.intent.is_some())
+                .count();
+            println!(
+                "{} {}/{} relations carry an intent sentence",
+                "coverage:".bold(),
+                with_intent,
+                snapshot.relations.len()
+            );
+            if findings == 0 {
+                println!("{}", "no drift signals".dimmed());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `--budget` must be a positive, finite dollar amount — a NaN or negative
@@ -680,6 +971,15 @@ fn run(cli: Cli) -> Result<(), String> {
         Some(Command::Graph { op, target }) => {
             // Reads the local index only — works with zero API keys.
             return run_graph(*op, target);
+        }
+        Some(Command::Scripts { cmd }) => {
+            // Static manifest parsing plus a local subprocess — works with
+            // zero API keys.
+            return run_scripts(cmd);
+        }
+        Some(Command::Storage { cmd }) => {
+            // Reads the local index + manifest only — zero API keys.
+            return run_storage(cmd);
         }
         Some(Command::Stats { format, provider }) => {
             // Reads local telemetry only — works with zero API keys.
@@ -849,6 +1149,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Init
         | Command::Tools { .. }
         | Command::Graph { .. }
+        | Command::Scripts { .. }
+        | Command::Storage { .. }
         | Command::Stats { .. }
         | Command::Memory { .. }
         | Command::Mcp { .. }
