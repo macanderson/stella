@@ -13,9 +13,20 @@ name: auto-tag
 # `release:major`/`release.major` are both accepted. Add `[skip release]` to
 # the title to land a change without cutting a release (docs/chore merges).
 #
-# No commit is pushed back to main — the tag is the source of truth, so this
-# never fights branch protection. release.yml injects the tag's version into
-# the build so `stella --version` is correct.
+# The tag is cut on the exact commit CI validated — nothing is force-pushed to
+# main. release.yml injects the tag's version into the build so
+# `stella --version` is correct regardless of what Cargo.toml says at the tag.
+#
+# AFTER tagging, the released version is written back to main so the Cargo
+# manifests always match the newest release: a `bot/version-sync` branch bumps
+# `[workspace.package].version` (every crate inherits it), the workspace-member
+# entries in Cargo.lock, and the local build-from-source Homebrew formula, then
+# lands via a tiny auto-merge PR. A PR (not a direct push) because branch
+# protection requires changes to arrive by PR with the required `ci` checks
+# green; those checks are dispatched onto the branch explicitly because pushes
+# made with GITHUB_TOKEN never trigger `on: push`/`on: pull_request` workflows.
+# The bump commit carries `[skip release]`, so its merge can never cut another
+# release — the loop terminates after exactly one sync per release.
 #
 # GATED ON GREEN CI. This runs via `workflow_run` after the `ci` workflow
 # finishes on main, and only tags when that run *succeeded* — a commit that
@@ -35,8 +46,9 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # push the tag
-  actions: write # dispatch release.yml
+  contents: write # push the tag + the version-sync branch
+  actions: write # dispatch release.yml + ci.yml
+  pull-requests: write # open/auto-merge the version-sync PR
 
 jobs:
   tag:
@@ -114,3 +126,78 @@ jobs:
         # A tag pushed with GITHUB_TOKEN does not itself trigger `on: push:
         # tags`, so dispatch release.yml explicitly at the tag ref.
         run: gh workflow run release.yml --ref "${{ steps.ver.outputs.tag }}"
+
+      # ── Write the released version back to main ──────────────────────────
+
+      - name: Install Rust (Cargo.lock sync)
+        if: steps.ver.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Open the version-sync PR
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          branch="bot/version-sync"
+          export NEW_VERSION="${version}"
+
+          # Base on the current tip of main, not head_sha: if another merge
+          # already landed, the bump must apply cleanly on top of it. Rapid
+          # merges converge — each serialized run force-updates this same
+          # branch to the newest tag's version.
+          git fetch origin main
+          git checkout -B "${branch}" FETCH_HEAD
+
+          # The one `^version = ` line is [workspace.package].version; every
+          # crate inherits it. perl, not `sed -i "0,/re/"`, for the same
+          # BSD-sed reason as release.yml's stamp step.
+          perl -pi -e 's/^version = "[^"]*"/version = "$ENV{NEW_VERSION}"/' Cargo.toml
+          grep -m1 '^version = ' Cargo.toml | grep -q "\"${version}\"" \
+            || { echo "::error::workspace version bump did not take"; exit 1; }
+
+          # Sync the lockfile's workspace-member entries; registry and git
+          # pins are untouched (cargo only rewrites the member versions).
+          cargo update --workspace
+
+          # Keep the local build-from-source formula pointing at the release.
+          perl -pi -e 's/tag: "v[^"]*"/tag: "v$ENV{NEW_VERSION}"/; s/^  version "[^"]*"/  version "$ENV{NEW_VERSION}"/' packaging/homebrew/stella.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock packaging/homebrew/stella.rb
+          if git diff --cached --quiet; then
+            echo "manifests already at ${version}; nothing to sync."
+            exit 0
+          fi
+
+          # Squash merges use the commit title here (single-commit PR,
+          # COMMIT_OR_PR_TITLE), so [skip release] survives onto main and this
+          # merge can never cut another release.
+          title="chore(release): sync versions to ${version} [skip release]"
+          git commit -m "${title}"
+          git push -f origin "HEAD:refs/heads/${branch}"
+
+          body="Automated write-back from auto-tag.yml: ${TAG} was just released, and this PR records that version everywhere the sources carry one —
+
+          - \`[workspace.package].version\` in \`Cargo.toml\` (inherited by every crate)
+          - the workspace-member entries in \`Cargo.lock\`
+          - \`packaging/homebrew/stella.rb\` (build-from-source formula)
+
+          The workflow dispatches the required \`ci\` checks onto this branch and enables auto-merge; no action is needed unless a check fails."
+
+          existing="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "${existing}" ]; then
+            gh pr edit "${existing}" --title "${title}" --body "${body}"
+          else
+            gh pr create --base main --head "${branch}" --title "${title}" --body "${body}"
+          fi
+
+          # Start the required checks — a GITHUB_TOKEN push doesn't — then arm
+          # auto-merge. If arming fails (e.g. auto-merge disabled repo-side),
+          # warn instead of failing: the release itself already shipped.
+          gh workflow run ci.yml --ref "${branch}"
+          gh pr merge "${branch}" --squash --auto \
+            || echo "::warning::could not enable auto-merge — merge the ${branch} PR manually once checks are green."

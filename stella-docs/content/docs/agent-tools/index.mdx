@@ -49,7 +49,7 @@ These 18 tools register in every session:
 | `generate_svg` | Validate, sanitize, and save an SVG the agent authored into `.stella/artifacts/` — scripts, event handlers, and external references are stripped. | Mutating |
 
 <Callout type="info">
-`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. The read-only partition is exactly: `read_file`, `grep`, `glob`, `gather_context`, `explorations`, `ci_status`, and (when present) `graph_query`, `search_issues`, `get_issue`, `list_labels`, `list_members` — plus `search_skills` at the session layer.
+`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. The read-only partition is exactly: `read_file`, `grep`, `glob`, `gather_context`, `explorations`, `ci_status`, and (when present) `graph_query`, `search_issues`, `get_issue`, `list_labels`, `list_members`.
 </Callout>
 
 ### Conditionally registered
@@ -75,23 +75,12 @@ These appear only when their prerequisite is met:
 The issue backend resolves in precedence order: `LINEAR_API_KEY` env → a stored **Linear** connection (`stella connect linear`) → a stored **GitHub** connection (`stella connect github`, runs over REST with no `gh` CLI needed) → ambient `gh` CLI auth. If none is available, no issue tools are registered at all. See [stella connect](/docs/commands/connect).
 </Callout>
 
-### Interactive session tools
-
-Interactive CLI sessions layer three more tools on top of the native registry:
-
-| Tool | Description | Access |
-| --- | --- | --- |
-| `ask_user` | Ask the user a multiple-choice question when a decision is genuinely theirs to make — 2–6 short options, and the UI always adds a free-text option. In a headless run it returns a named error instead of hanging on stdin. | Mutating |
-| `search_skills` | Search the public skills registry for reusable agent [skills](/docs/agent-tools/skills) matching a topic. | Read-only |
-| `install_skill` | Install a skill from the registry into the project's `.stella/skills/` — always asks for confirmation first. | Mutating |
-
-All told: 18 always-on tools, up to 30 native tools with the code graph, media keys, and an issue backend, plus the three session tools — before any custom script tools or MCP servers merge in.
-
 ## Where to go next
 
-- [Skills](/docs/agent-tools/skills) — reusable SKILL.md capabilities, versioned and registry-installable.
-- [Commands &amp; custom agents](/docs/agent-tools/commands) — extend the slash menu with templates and personas.
+- [Agent Skills](/docs/agent-tools/skills) — reusable SKILL.md capabilities, versioned and registry-installable.
+- [Custom Commands](/docs/agent-tools/commands) — extend the slash menu with your own prompt templates.
+- [Custom Agents](/docs/agent-tools/custom-agents) — reusable personas with an optional restricted toolbelt, adopted from `.claude/` and `.agents/`.
 - [Permissions](/docs/agent-tools/permissions) — how read-only and mutating tools are gated, and how hooks can block tool calls.
-- [Custom tools](/docs/agent-tools/custom-tools) — add your own script tools with a TOML manifest.
-- [MCP servers](/docs/agent-tools/mcp) — merge tools from Model Context Protocol servers.
+- [Custom Tools](/docs/agent-tools/custom-tools) — add your own script tools with a TOML manifest.
+- [MCP Servers](/docs/agent-tools/mcp) — merge tools from Model Context Protocol servers.
 - [Hooks](/docs/agent-tools/hooks) — run shell commands on agent lifecycle events.

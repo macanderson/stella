@@ -10,6 +10,28 @@ is retained for a possible future migration to
 [`dist`](https://axodotdev.github.io/cargo-dist) but is **not** the active
 pipeline today; the source of truth is `.github/workflows/release.yml`.
 
+## The default path: every merge to main is a release
+
+[`auto-tag.yml`](.github/workflows/auto-tag.yml) runs after `ci` goes green on
+main and does everything — no manual steps:
+
+1. **Tags** the merge commit with the next version — `+1 patch` by default;
+   start the PR title with `release:minor` / `release:major` for bigger bumps,
+   or include `[skip release]` to land without releasing.
+2. **Dispatches** `release.yml` at the tag (binaries, GitHub Release, tap
+   formula — the tag's version is stamped into the build, so
+   `stella --version` always matches the tag).
+3. **Writes the version back to main** so the Cargo manifests stay in sync
+   with the newest tag: a `bot/version-sync` PR bumps
+   `[workspace.package].version` in `Cargo.toml` (every crate inherits it),
+   the workspace-member entries in `Cargo.lock`, and
+   `packaging/homebrew/stella.rb`, then auto-merges once the required checks
+   pass. Its commit carries `[skip release]`, so the sync itself never cuts a
+   release. If a sync PR is ever left open (red check, race with another
+   merge), the next release supersedes it automatically — no cleanup needed.
+
+Manual version bumps are therefore only needed for the hand-cut flows below.
+
 ## One-time setup
 
 The tag-triggered workflow publishes the Homebrew formula to a **tap repo**.
