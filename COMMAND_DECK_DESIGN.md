@@ -228,7 +228,7 @@ resuming is replaying it.
   `StepUsage`/`Complete`, graph via `CodeGraph::neighbors`, CPU/MEM via sysinfo.
 - Live now: **staged pipeline routing** — `/pipeline` toggles the lead's turns
   between the raw `Engine::run_turn` loop and `stella-pipeline`'s staged flow
-  (triage → witness → execute → verify → judge; `docs/pipeline.md`), mirrored
+  (triage → witness → execute → verify → judge; `stella-docs/content/docs/inference-pipeline.mdx`), mirrored
   to the `PIPELINE` stat box via `Inbound::Pipeline`. Named seam inside it:
   scope review **auto-approves** in the deck (the `ScopeReview` event is
   narrated in the transcript, not gated) — a deck-native scope-review card is
