@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="256" height="256">
+
+  <style>
+    .ld-ring{stroke-dasharray:251.33;animation:ld-draw 3.4s cubic-bezier(.6,.05,.3,1) infinite}
+    .ld-pop{transform-box:fill-box;transform-origin:center;animation:ld-pop 3.4s cubic-bezier(.34,1.56,.64,1) infinite}
+    .ld-ant{animation-name:ld-ant}
+    .ld-p1{animation-delay:.12s}.ld-p2{animation-delay:.2s}.ld-p3{animation-delay:.3s}
+    .ld-p4{animation-delay:.42s}.ld-p5{animation-delay:.48s}.ld-p6{animation-delay:.55s}
+    .ld-star{transform-box:fill-box;transform-origin:center;animation:ld-star 3.4s ease-in-out infinite}
+    .ld-scene{animation:ld-fade 3.4s linear infinite}
+    @keyframes ld-draw{0%{stroke-dashoffset:251.33}22%,100%{stroke-dashoffset:0}}
+    @keyframes ld-pop{0%,20%{transform:scale(0)}34%,100%{transform:scale(1)}}
+    @keyframes ld-ant{0%,22%{transform:scale(0)}32%,100%{transform:scale(1)}}
+    @keyframes ld-star{0%,58%{transform:scale(0) rotate(-90deg);opacity:0}70%{transform:scale(1.25) rotate(8deg);opacity:1}78%,100%{transform:scale(1) rotate(0deg);opacity:1}}
+    @keyframes ld-fade{0%,88%{opacity:1}97%,100%{opacity:0}}
+  </style><defs><linearGradient id="nebula" x1="20" y1="23" x2="100" y2="103" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FF6D4D"/><stop offset=".55" stop-color="#F5487F"/><stop offset="1" stop-color="#A24BEA"/></linearGradient></defs><g class="ld-scene"><circle class="ch-glass" cx="60" cy="63" r="40" fill="#FFF6E9" fill-opacity="0.07"/><g class="ld-pop ld-p1" fill="#DE8F55"><rect x="34.5" y="40" width="14" height="37" rx="7" transform="rotate(16 41.5 58)"/><rect x="71.5" y="40" width="14" height="37" rx="7" transform="rotate(-16 78.5 58)"/></g><circle class="ld-pop ld-p2" cx="60" cy="64" r="24" fill="#F2BD79"/><ellipse class="ld-pop ld-p3" cx="60" cy="71.5" rx="11.5" ry="9" fill="#F9EDDC"/>
+    <circle class="ld-pop ld-p4 ch-cf" cx="51" cy="60" r="3.3" fill="#2A1A35"/>
+    <circle class="ld-pop ld-p4 ch-cf" cx="69" cy="60" r="3.3" fill="#2A1A35"/>
+    <ellipse class="ld-pop ld-p5 ch-cf" cx="60" cy="69.5" rx="4.6" ry="3.6" fill="#2A1A35"/>
+    <path class="ld-pop ld-p6 ch-cs" d="M60 72.5 L60 76.5 M60 76.5 C57 79.6 54 78.6 53 76.4 M60 76.5 C63 79.6 66 78.6 67 76.4" fill="none" stroke="#2A1A35" stroke-width="1.8" stroke-linecap="round"/><path class="ld-pop ld-p6" d="M31 43 A 34 34 0 0 1 46 29" fill="none" stroke="#FFF6E9" stroke-opacity="0.4" stroke-width="4" stroke-linecap="round"/><circle class="ld-ring" cx="60" cy="63" r="40" fill="none" stroke="url(#nebula)" stroke-width="7"/><g class="ld-pop ld-ant"><rect x="40" y="94" width="40" height="16" rx="7" fill="url(#nebula)"/><line x1="60" y1="20" x2="60" y2="12" stroke="url(#nebula)" stroke-width="4" stroke-linecap="round"/><circle cx="60" cy="9.5" r="3.4" fill="#FFC24D"/></g><path class="ld-star" d="M 75.5 28.5 L 78.2 33.3 L 83 36 L 78.2 38.7 L 75.5 43.5 L 72.8 38.7 L 68 36 L 72.8 33.3 Z" fill="#FFC24D"/></g>
+</svg>
