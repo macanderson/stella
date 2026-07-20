@@ -50,22 +50,26 @@ fn first_error_line(stderr: &str) -> String {
 }
 
 /// The code-map footer for these `path:line:text` matches (see
-/// [`crate::code_map`]), or `None` for a footer-less instance. A directory
+/// [`crate::code_map`]), or `None` when disabled or nothing maps. A directory
 /// search prints an absolute path before the first `:`; a single-file
 /// search omits the filename entirely (rg and grep both do), so there the
 /// search target itself is the mapped file. Non-path prefixes (a bare line
 /// number, a match containing `:`) simply miss in the graph — best-effort
-/// by construction.
+/// by construction. `show_tip` appends the `graph_query` pointer, set by the
+/// caller from whether the *pattern* is symbol-shaped.
 fn code_map_for(
-    tip: Option<&crate::code_map::TipOnce>,
+    enabled: bool,
+    show_tip: bool,
     search_dir: &std::path::Path,
     root: &std::path::Path,
     lines: &[&str],
 ) -> Option<String> {
-    let tip = tip?;
+    if !enabled {
+        return None;
+    }
     if search_dir.is_file() {
         let target = search_dir.to_string_lossy();
-        return crate::code_map::for_files(root, [target.as_ref()], tip);
+        return crate::code_map::for_files(root, [target.as_ref()], show_tip);
     }
     crate::code_map::for_files(
         root,
@@ -73,36 +77,35 @@ fn code_map_for(
             .iter()
             .filter_map(|l| l.split(':').next())
             .filter(|p| std::path::Path::new(p).is_absolute()),
-        tip,
+        show_tip,
     )
 }
 
 pub struct Grep {
-    /// Code-map footer state; `None` disables the footer entirely (the
-    /// embedded sweeps in `gather_context`, whose packs run their own graph
-    /// queries — a per-section footer there is duplication, not context).
-    code_map: Option<crate::code_map::TipOnce>,
+    /// Whether results carry the code-map footer. Off for the embedded sweeps
+    /// in `gather_context`, whose packs run their own graph queries — a
+    /// per-section footer there is duplication, not context.
+    footer: bool,
 }
 
 impl Grep {
-    /// The model-facing tool: footer on, `graph_query` tip latch shared
-    /// with `glob` (the registry passes both clones of one [`TipOnce`]).
-    pub fn with_code_map(tip: crate::code_map::TipOnce) -> Self {
-        Self {
-            code_map: Some(tip),
-        }
+    /// The model-facing tool: footer on. The `graph_query` tip rides a footer
+    /// whenever the search pattern is symbol-shaped — a per-call decision, no
+    /// shared state (see [`crate::code_map::is_symbol_shaped`]).
+    pub fn with_code_map() -> Self {
+        Self { footer: true }
     }
 
     /// Footer-less instance for embedded use.
     pub fn bare() -> Self {
-        Self { code_map: None }
+        Self { footer: false }
     }
 }
 
 impl Default for Grep {
-    /// Footer on with a private latch — the standalone shape tests use.
+    /// Footer on — the standalone shape tests use.
     fn default() -> Self {
-        Self::with_code_map(crate::code_map::TipOnce::default())
+        Self::with_code_map()
     }
 }
 
@@ -136,6 +139,9 @@ impl Tool for Grep {
         };
         let search_path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let glob_filter = input.get("glob").and_then(|v| v.as_str());
+        // The `graph_query` pointer rides a footer only when the pattern reads
+        // like a definition/reference hunt — the case the graph serves better.
+        let show_tip = self.footer && crate::code_map::is_symbol_shaped(pattern);
 
         // Confine `path` to the workspace root — `Path::join` would otherwise
         // let an absolute or `../..` path escape it. `.`/empty resolve to the
@@ -179,7 +185,7 @@ impl Tool for Grep {
                         result.push_str(&format!("\n... (showing first {MAX_RESULTS} matches)"));
                     }
                     if let Some(map) =
-                        code_map_for(self.code_map.as_ref(), &search_dir, root, &lines)
+                        code_map_for(self.footer, show_tip, &search_dir, root, &lines)
                     {
                         result.push_str(&map);
                     }
@@ -218,7 +224,7 @@ impl Tool for Grep {
                             let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
                             let mut result = lines.join("\n");
                             if let Some(map) =
-                                code_map_for(self.code_map.as_ref(), &search_dir, root, &lines)
+                                code_map_for(self.footer, show_tip, &search_dir, root, &lines)
                             {
                                 result.push_str(&map);
                             }
@@ -398,6 +404,42 @@ mod tests {
                 assert!(
                     content.contains("function greet:1"),
                     "single-file searches map the target: {content}"
+                );
+            }
+            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+        }
+    }
+
+    /// A symbol-shaped pattern carries the `graph_query` pointer; a free-text
+    /// scan gets the map bare — the nudge lands only where the graph wins.
+    #[tokio::test]
+    async fn the_graph_tip_rides_symbol_shaped_searches_only() {
+        let dir = indexed_workspace();
+        let symbol = Grep::default()
+            .execute(&serde_json::json!({"pattern": "greet"}), dir.path())
+            .await;
+        match symbol {
+            ToolOutput::Ok { content } => assert!(
+                content.contains("graph_query"),
+                "a bare-identifier search nudges: {content}"
+            ),
+            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+        }
+
+        // A regex text pattern that still matches the file but isn't a symbol
+        // hunt: map yes, tip no.
+        let text = Grep::default()
+            .execute(&serde_json::json!({"pattern": "gr.*t"}), dir.path())
+            .await;
+        match text {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains("code map"),
+                    "map still attaches: {content}"
+                );
+                assert!(
+                    !content.contains("graph_query"),
+                    "no nudge on a text scan: {content}"
                 );
             }
             ToolOutput::Error { message } => panic!("expected matches, got: {message}"),

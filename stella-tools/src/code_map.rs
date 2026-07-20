@@ -6,10 +6,12 @@
 //! (Field Manual Part 4: "code is a graph, not text"), yet agents keep
 //! grepping instead of asking it. So the search tools bring the graph to the
 //! agent: every successful result carries a compact per-file map (symbols,
-//! import edges) drawn from `.stella/codegraph.db`. The session's FIRST
-//! mapped search additionally carries a one-line pointer at `graph_query`
-//! (the [`TipOnce`] latch, shared by grep and glob) — taught once, then out
-//! of the way.
+//! import edges) drawn from `.stella/codegraph.db`. A search whose *pattern is
+//! symbol-shaped* — a definition/reference hunt graph_query serves better —
+//! additionally carries a one-line pointer at the tool ([`is_symbol_shaped`]
+//! decides). Not once-per-session: the nudge fires on every symbol-shaped
+//! search, because that is exactly the moment it corrects, and stays silent on
+//! free-text scans (grep's own job) so it never decays into noise.
 //!
 //! Strictly additive and strictly best-effort: no index, an unopenable
 //! store, or files the graph doesn't know all mean "no footer", never an
@@ -18,8 +20,6 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Files mapped per search result — enough to orient, small enough that the
 /// footer never rivals the matches themselves.
@@ -29,21 +29,107 @@ const MAX_SYMBOLS: usize = 6;
 /// Importer paths listed per file before collapsing to a count.
 const MAX_IMPORTERS: usize = 3;
 
-/// Once-per-session latch for the footer's `graph_query` tip line. The
-/// registry constructs one and hands clones to `grep` AND `glob`, so the
-/// tip appears on the session's first mapped search — whichever tool runs
-/// it — and never again; repeating it on every result is teaching that
-/// decays into noise. Consumed only when a footer actually renders: a
-/// search before the index exists doesn't burn the one showing.
-#[derive(Clone, Default)]
-pub struct TipOnce(Arc<AtomicBool>);
+/// The one-line pointer at `graph_query`, appended to a footer (and to a
+/// bash result carrying a symbol-shaped `grep`/`rg`) when the search looks
+/// like a definition/reference hunt. Shared so every surface teaches the
+/// same tool the same way.
+pub const GRAPH_QUERY_TIP: &str = "tip: this looks like a symbol/dependency lookup — graph_query answers it \
+     directly (op=definitions|references|imports|importers|neighbors), precise \
+     and cheaper than a text scan.";
 
-impl TipOnce {
-    /// True exactly once, on the first call — atomic, so concurrent
-    /// read-only searches race to exactly one tip.
-    fn take(&self) -> bool {
-        !self.0.swap(true, Ordering::Relaxed)
+/// Declaration keywords that, leading a query, mark it a definition hunt
+/// (`struct Foo`, `pub fn bar`, `class Baz`, `def qux`). Cross-language on
+/// purpose — this is a nudge heuristic, not a parser.
+const DECL_KEYWORDS: &[&str] = &[
+    "struct",
+    "enum",
+    "trait",
+    "impl",
+    "fn",
+    "func",
+    "function",
+    "class",
+    "def",
+    "interface",
+    "type",
+    "const",
+    "static",
+    "mod",
+    "module",
+    "pub",
+    "public",
+    "private",
+    "protected",
+    "use",
+    "import",
+    "let",
+    "var",
+    "val",
+    "namespace",
+];
+
+/// Does this regex look like the agent hunting for where a symbol is defined
+/// or used — the case `graph_query` serves better than a text scan? Applied
+/// to every `|`-alternation branch (so a multi-symbol `struct A|struct B`
+/// still counts), each branch must be one of two shapes:
+///   * a lone identifier or `::`/`.`-path — `ReadOnlyTools`, `stella::graph::Foo`
+///   * a declaration-keyword-led identifier — `struct Foo`, `pub fn bar`
+///
+/// A single leading `^` / trailing `$` anchor is tolerated (the everyday
+/// `^pub fn` definition search); any other regex machinery — quantifiers,
+/// char classes, wildcards, embedded metacharacters — means a genuine text
+/// pattern, grep's own job, and does NOT trip the nudge. Deliberately errs
+/// toward missing over false-firing; a stray tip line is cheap, but nudging
+/// on a real text scan is the noise the once-latch existed to avoid.
+pub fn is_symbol_shaped(pattern: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return false;
     }
+    // `\|` (escaped, from a shell-quoted rg) and `|` (raw regex) both mean
+    // alternation here; normalize, then every branch must be a symbol.
+    let normalized = pattern.replace("\\|", "|");
+    let mut branches = 0usize;
+    for branch in normalized.split('|') {
+        branches += 1;
+        if !branch_is_symbol(branch) {
+            return false;
+        }
+    }
+    branches > 0
+}
+
+/// One alternation branch: an optional run of declaration keywords followed
+/// by a single identifier/path. `^`/`$` anchors are stripped first.
+fn branch_is_symbol(branch: &str) -> bool {
+    let branch = branch
+        .trim()
+        .trim_start_matches('^')
+        .trim_end_matches('$')
+        .trim();
+    let tokens: Vec<&str> = branch.split_whitespace().collect();
+    let Some((ident, keywords)) = tokens.split_last() else {
+        return false;
+    };
+    keywords
+        .iter()
+        .all(|k| DECL_KEYWORDS.contains(&k.to_ascii_lowercase().as_str()))
+        && is_identifier_or_path(ident)
+}
+
+/// A bare identifier or a `::`/`.`-separated path of them — how a symbol name
+/// is written. Each segment starts alphabetic/underscore and is otherwise
+/// alphanumeric/underscore; the whole must contain at least one letter, so a
+/// bare number never counts as a symbol.
+fn is_identifier_or_path(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    s.split("::").flat_map(|p| p.split('.')).all(|seg| {
+        let mut chars = seg.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+            && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }) && s.chars().any(|c| c.is_ascii_alphabetic())
 }
 
 /// Render the code-map footer for the files a search touched, or `None`
@@ -51,7 +137,7 @@ impl TipOnce {
 /// candidates are in the graph). `candidates` may repeat and may mix
 /// absolute and root-relative paths — both resolve; order of first
 /// appearance is kept, so the map follows the result's own ranking.
-pub fn for_files<'a, I>(root: &Path, candidates: I, tip: &TipOnce) -> Option<String>
+pub fn for_files<'a, I>(root: &Path, candidates: I, show_tip: bool) -> Option<String>
 where
     I: IntoIterator<Item = &'a str>,
 {
@@ -89,11 +175,9 @@ where
     }
     let mut out = String::from("\n\ncode map (from the code graph):\n");
     out.push_str(&lines.join("\n"));
-    if tip.take() {
-        out.push_str(
-            "\ntip: graph_query answers symbol/dependency questions directly \
-             (op=definitions|references|imports|importers|neighbors).",
-        );
+    if show_tip {
+        out.push('\n');
+        out.push_str(GRAPH_QUERY_TIP);
     }
     Some(out)
 }
@@ -169,19 +253,37 @@ mod tests {
     fn no_index_means_no_footer() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").expect("write");
-        assert_eq!(for_files(dir.path(), ["lib.rs"], &TipOnce::default()), None);
+        assert_eq!(for_files(dir.path(), ["lib.rs"], true), None);
     }
 
     #[test]
-    fn maps_an_indexed_file_with_symbols_and_a_graph_query_tip() {
+    fn maps_an_indexed_file_with_symbols() {
         let dir = indexed_workspace();
-        let map = for_files(dir.path(), ["lib.rs"], &TipOnce::default())
-            .expect("footer for an indexed file");
+        let map = for_files(dir.path(), ["lib.rs"], false).expect("footer for an indexed file");
         assert!(map.contains("code map"), "labeled: {map}");
         assert!(map.contains("lib.rs"), "names the file: {map}");
         assert!(map.contains("function greet:1"), "cites the symbol: {map}");
         assert!(map.contains("struct Greeter:2"), "cites the struct: {map}");
-        assert!(map.contains("graph_query"), "nudges at the tool: {map}");
+    }
+
+    /// `show_tip` is the only thing that gates the pointer — the map itself is
+    /// unconditional. A symbol-shaped search (tip on) teaches; a free-text one
+    /// (tip off) gets the map bare.
+    #[test]
+    fn the_tip_follows_show_tip_not_a_latch() {
+        let dir = indexed_workspace();
+        let with = for_files(dir.path(), ["lib.rs"], true).expect("footer");
+        assert!(with.contains("graph_query"), "tip on nudges: {with}");
+        // Persistent, not once-per-session: a second symbol-shaped search
+        // teaches again — no shared latch survives between calls.
+        let again = for_files(dir.path(), ["lib.rs"], true).expect("footer");
+        assert!(again.contains("graph_query"), "tip fires again: {again}");
+        let without = for_files(dir.path(), ["lib.rs"], false).expect("footer");
+        assert!(without.contains("code map"), "map stays: {without}");
+        assert!(
+            !without.contains("graph_query"),
+            "tip off stays quiet: {without}"
+        );
     }
 
     #[test]
@@ -194,8 +296,7 @@ mod tests {
             .join("lib.rs")
             .to_string_lossy()
             .into_owned();
-        let map =
-            for_files(dir.path(), [abs.as_str(), "lib.rs"], &TipOnce::default()).expect("footer");
+        let map = for_files(dir.path(), [abs.as_str(), "lib.rs"], false).expect("footer");
         assert_eq!(
             map.matches("function greet:1").count(),
             1,
@@ -207,74 +308,10 @@ mod tests {
     fn unknown_files_are_skipped_not_rendered_empty() {
         let dir = indexed_workspace();
         assert_eq!(
-            for_files(
-                dir.path(),
-                ["README.md", "no/such/file.rs"],
-                &TipOnce::default()
-            ),
+            for_files(dir.path(), ["README.md", "no/such/file.rs"], true),
             None,
             "files the graph doesn't know produce no footer at all"
         );
-    }
-
-    #[test]
-    fn the_tip_renders_once_then_footers_stay_map_only() {
-        let dir = indexed_workspace();
-        let tip = TipOnce::default();
-        let first = for_files(dir.path(), ["lib.rs"], &tip).expect("first footer");
-        assert!(first.contains("tip: graph_query"), "teaches once: {first}");
-        let second = for_files(dir.path(), ["lib.rs"], &tip).expect("second footer");
-        assert!(second.contains("code map"), "the map stays: {second}");
-        assert!(
-            !second.contains("tip: graph_query"),
-            "already taught: {second}"
-        );
-    }
-
-    /// The one showing must land where it can teach: a search that renders
-    /// no footer (nothing mapped) leaves the latch unspent.
-    #[test]
-    fn a_search_without_a_footer_does_not_consume_the_tip() {
-        let dir = indexed_workspace();
-        let tip = TipOnce::default();
-        assert_eq!(for_files(dir.path(), ["README.md"], &tip), None);
-        let mapped = for_files(dir.path(), ["lib.rs"], &tip).expect("footer");
-        assert!(
-            mapped.contains("tip: graph_query"),
-            "still unspent after a footer-less search: {mapped}"
-        );
-    }
-
-    /// The session-level contract: grep and glob share one latch through the
-    /// registry, so whichever searches first carries the tip and the other
-    /// never repeats it.
-    #[tokio::test]
-    async fn the_tip_shows_once_per_session_across_grep_and_glob() {
-        let dir = indexed_workspace();
-        let reg = crate::ToolRegistry::with_issue_backend(dir.path().to_path_buf(), None);
-        let first = reg
-            .execute("grep", &serde_json::json!({"pattern": "greet"}))
-            .await;
-        let second = reg
-            .execute("glob", &serde_json::json!({"pattern": "*.rs"}))
-            .await;
-        match (first, second) {
-            (
-                stella_protocol::tool::ToolOutput::Ok { content: grep_out },
-                stella_protocol::tool::ToolOutput::Ok { content: glob_out },
-            ) => {
-                assert!(
-                    grep_out.contains("tip: graph_query"),
-                    "the session's first mapped search teaches: {grep_out}"
-                );
-                assert!(glob_out.contains("code map"), "later maps stay: {glob_out}");
-                assert!(
-                    !glob_out.contains("tip: graph_query"),
-                    "taught once per session, across tools: {glob_out}"
-                );
-            }
-            other => panic!("expected two ok results, got: {other:?}"),
-        }
     }
 
     #[test]
@@ -294,16 +331,54 @@ mod tests {
         graph.shutdown();
 
         let names: Vec<String> = (0..(MAX_FILES + 3)).map(|i| format!("m{i}.rs")).collect();
-        let map = for_files(
-            dir.path(),
-            names.iter().map(String::as_str),
-            &TipOnce::default(),
-        )
-        .expect("footer");
+        let map = for_files(dir.path(), names.iter().map(String::as_str), false).expect("footer");
         assert_eq!(
             map.matches("- m").count(),
             MAX_FILES,
             "caps at {MAX_FILES}: {map}"
         );
+    }
+
+    #[test]
+    fn symbol_shaped_accepts_definition_hunts() {
+        // Lone identifiers and paths — the "where is X / who calls X" case.
+        for p in [
+            "ReadOnlyTools",
+            "DeckProviderResolver",
+            "stella::graph::CodeGraph",
+            "graph.file_neighborhood",
+        ] {
+            assert!(is_symbol_shaped(p), "identifier should count: {p}");
+        }
+        // Declaration-keyword-led, including anchored and multi-symbol.
+        for p in [
+            "struct DeckProviderResolver",
+            "pub fn run_goal",
+            "pub mod ports",
+            "^impl Tool",
+            "^pub fn resolve$",
+            "struct GoalConfig|fn run_goal|GoalOutcome",
+        ] {
+            assert!(is_symbol_shaped(p), "declaration hunt should count: {p}");
+        }
+    }
+
+    #[test]
+    fn symbol_shaped_rejects_text_patterns() {
+        for p in [
+            "",
+            "   ",
+            "hello world",
+            "foo.*bar",
+            "[a-z]+",
+            "TODO:",
+            "->",
+            "unwrap\\(\\)",
+            "0x1234",
+            "a|.*b",
+            "let mut x =",
+        ] {
+            assert!(!is_symbol_shaped(p), "text pattern should not count: {p:?}");
+        }
     }
 }
