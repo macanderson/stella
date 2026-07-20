@@ -1,7 +1,7 @@
 # file-size-ratchet allowlist — see scripts/check-file-sizes.sh.
 # One entry per line: <repo-relative path> <line count when recorded>.
 # Entries may only shrink or disappear; never raise a count.
-stella-cli/src/agent.rs 4343
+stella-cli/src/agent.rs 2161
 stella-cli/src/command_deck.rs 5292
 stella-context/src/store.rs 1677
 stella-core/src/bus.rs 1671
