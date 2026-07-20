@@ -43,6 +43,7 @@ mod rules;
 mod runtime;
 mod session_persist;
 mod settings;
+mod settings_check;
 mod skill_manager;
 mod stats;
 mod subsession;
@@ -1076,6 +1077,14 @@ fn run(cli: Cli) -> Result<(), String> {
         cli.api_key.as_deref(),
         cli.base_url.as_deref(),
     )?;
+
+    // Correctness pass over the resolved settings — model-slug problems (an
+    // unknown provider, a typo, an over-qualified slug that would 400 on the
+    // first call) surface here, before the TUI's alternate screen hides
+    // stderr, as advisory warnings that never block the run.
+    for issue in settings_check::validate_at_launch(&cfg) {
+        eprintln!("⚠ settings: {}", issue.line());
+    }
 
     match cli.command.unwrap_or(Command::Chat) {
         Command::Run {
