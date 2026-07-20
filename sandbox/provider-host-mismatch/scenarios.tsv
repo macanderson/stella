@@ -1,0 +1,22 @@
+# Credential / host mismatch scenario dataset.
+# Tab-separated. Lines starting with '#' are comments.
+#
+# columns:
+#   name        short scenario id
+#   model_arg   the --model flag passed to stella ("" = auto-detect by key)
+#   host_key    which fake key the mock host accepts: openrouter | zai
+#   mangle      corruption applied to the OpenRouter env key: none | trailing_space | quoted
+#   expect      expected HTTP from the host: 200 | 401
+#   note        human explanation
+#
+# The two fake keys the runner exports (never real secrets):
+#   OPENROUTER_API_KEY = sk-or-FAKE-openrouter
+#   ZAI_API_KEY        = zai-FAKE-key
+#
+# name	model_arg	host_key	mangle	expect	note
+matched-openrouter	--model openrouter/auto	openrouter	none	200	control: provider, key and host all agree -> works
+mismatch-or-to-zai	--model openrouter/auto	zai	none	401	THE REPORTED BUG: valid OpenRouter key sent to a Z.ai host
+matched-zai-pinned	--model zai/glm-4.6	zai	none	200	THE FIX: pin the zai provider so key+host agree
+autodetect-to-zai-host	(auto)	zai	none	401	no --model: auto-detect picks a provider that may not match the forced host
+trailing-space-key	--model openrouter/auto	openrouter	trailing_space	401	footgun: a trailing space/newline in the key is sent verbatim (env path never trims)
+quoted-key	--model openrouter/auto	openrouter	quoted	401	footgun: a dotenv value kept its surrounding quotes
