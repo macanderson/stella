@@ -82,33 +82,97 @@ struct AnthropicRequest<'a> {
     top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_k: Option<u32>,
-    /// Extended thinking (`{"type":"enabled","budget_tokens":N}`), set only
-    /// for `CompletionRequest.reasoning == Some(true)`. `Some(false)` and
-    /// `None` both omit the block — thinking is opt-in per request on this
-    /// API, so "off" and "provider default" are the same wire shape (which
-    /// keeps the pre-field bytes stable).
+    /// Extended thinking, set only for `CompletionRequest.reasoning ==
+    /// Some(true)`. Its wire shape depends on the model generation — adaptive
+    /// (`{"type":"adaptive"}`) on current models, `{"type":"enabled",
+    /// "budget_tokens":N}` on legacy ones — see [`AnthropicThinking`] and
+    /// [`uses_adaptive_thinking`]. `Some(false)`/`None` omit it (thinking is
+    /// opt-in per request), keeping the pre-field bytes stable.
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<AnthropicThinking>,
+    /// Output controls (`{"effort":"low|…|max"}`). On current models this is
+    /// the depth/spend knob that replaced `thinking.budget_tokens`; omitted on
+    /// legacy models, which reject the field. See [`AnthropicOutputConfig`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<AnthropicOutputConfig>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<AnthropicToolSchema>,
 }
 
-/// The Messages API's extended-thinking switch. `budget_tokens` is a hard
-/// cap on thinking output and must satisfy `1024 <= budget < max_tokens` —
-/// [`thinking_budget_tokens`] maps the engine's effort tiers and the caller
-/// in `complete_inner` clamps against the request's actual `max_tokens`.
+/// The Messages API's thinking switch, in one of two wire shapes chosen by the
+/// model generation:
+///   * `{"type":"adaptive"}` — current models (Claude 4.6+, the 5-family). The
+///     model picks its own depth; [`AnthropicOutputConfig`]'s `effort` tunes
+///     it. Sending `budget_tokens` here is an HTTP 400.
+///   * `{"type":"enabled","budget_tokens":N}` — legacy models (≤ 4.5), where
+///     `N` must satisfy `1024 <= N < max_tokens` (see [`thinking_budget_tokens`]).
 #[derive(Serialize)]
 struct AnthropicThinking {
     #[serde(rename = "type")]
     kind: &'static str,
-    budget_tokens: u32,
+    /// Present only on the legacy `enabled` shape; omitted (and rejected) on
+    /// the adaptive shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_tokens: Option<u32>,
 }
 
-/// Map the engine's effort tiers onto thinking budgets. Anthropic has no
-/// named levels — the budget IS the level — so the tiers are spaced roughly
-/// geometrically from the API's 1024-token floor up to a Max that still
-/// leaves headroom under typical output caps. `None` defaults to Medium, the
-/// same middle-tier default posture as `openai.rs` ("effort":"medium").
+impl AnthropicThinking {
+    /// `{"type":"adaptive"}` — the current-model shape (no budget field).
+    const fn adaptive() -> Self {
+        Self {
+            kind: "adaptive",
+            budget_tokens: None,
+        }
+    }
+
+    /// `{"type":"enabled","budget_tokens":N}` — the legacy-model shape.
+    const fn enabled(budget_tokens: u32) -> Self {
+        Self {
+            kind: "enabled",
+            budget_tokens: Some(budget_tokens),
+        }
+    }
+}
+
+/// The Messages API's `output_config` object. Only `effort` is modeled — the
+/// GA depth/spend control on current models (no beta header), which replaces
+/// the legacy per-request thinking budget. Rejected by legacy models.
+#[derive(Serialize)]
+struct AnthropicOutputConfig {
+    effort: &'static str,
+}
+
+/// Whether `model` speaks the current adaptive-thinking wire shape
+/// (`thinking:{type:"adaptive"}` + `output_config.effort`, with `temperature`/
+/// `top_p`/`top_k` rejected) rather than the legacy
+/// `{type:"enabled",budget_tokens}` shape (which accepts sampling).
+///
+/// Claude 4.6+ and the "5" family (Fable 5, Mythos 5, Sonnet 5, …) **require**
+/// the adaptive shape and answer a stray `budget_tokens` — or any sampling
+/// parameter — with an HTTP 400. That 400 is exactly the failure this classifier
+/// exists to prevent. The 4.5-and-older generations still use `budget_tokens`.
+///
+/// The legacy set is closed and shrinking; the modern set is open and growing.
+/// So we **denylist** the known legacy generations and default everything else
+/// — including models released after this code was written — to the modern
+/// shape. An allowlist would silently 400 the next launch (fable-6, opus-5),
+/// which is precisely how this bug reached production.
+fn uses_adaptive_thinking(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    // Version markers unique to the ≤ 4.5 / 3.x / 2.x generations. `-4-5`
+    // cleanly separates 4.5 (opus/sonnet/haiku) from 4.6+/…-8; `-4-2025`
+    // catches dated 4.0 snapshots (`claude-*-4-20250514`), which `-4-0` misses.
+    const LEGACY_MARKERS: &[&str] = &["-4-5", "-4-1", "-4-0", "-4-2025", "claude-3", "claude-2"];
+    !LEGACY_MARKERS.iter().any(|marker| m.contains(marker))
+}
+
+/// Map the engine's effort tiers onto thinking budgets, for the **legacy**
+/// `budget_tokens` shape only. Anthropic's older models had no named levels —
+/// the budget IS the level — so the tiers are spaced roughly geometrically from
+/// the API's 1024-token floor up to a Max that still leaves headroom under
+/// typical output caps. `None` defaults to Medium, the same middle-tier default
+/// posture as `openai.rs` ("effort":"medium"). Current models use
+/// [`map_effort`] instead.
 fn thinking_budget_tokens(effort: Option<stella_protocol::ReasoningEffort>) -> u32 {
     use stella_protocol::ReasoningEffort::*;
     match effort {
@@ -117,6 +181,20 @@ fn thinking_budget_tokens(effort: Option<stella_protocol::ReasoningEffort>) -> u
         Some(High) => 16_384,
         Some(Xhigh) => 32_768,
         Some(Max) => 49_152,
+    }
+}
+
+/// Map the engine's effort tiers onto the Messages API's `output_config.effort`
+/// levels for the current adaptive shape. The vocabularies line up 1:1, so this
+/// is a direct rename (unlike the legacy [`thinking_budget_tokens`] mapping).
+fn map_effort(effort: stella_protocol::ReasoningEffort) -> &'static str {
+    use stella_protocol::ReasoningEffort::*;
+    match effort {
+        Low => "low",
+        Medium => "medium",
+        High => "high",
+        Xhigh => "xhigh",
+        Max => "max",
     }
 }
 
@@ -533,32 +611,79 @@ impl AnthropicProvider {
     ) -> Result<CompletionResult, ProviderError> {
         let (system, mut messages) = to_anthropic_messages(&req.messages);
         stamp_tail_cache_breakpoint(&mut messages);
-        // Thinking budget, resolved before max_tokens because the two are
-        // coupled: the API requires budget < max_tokens, and this adapter's
-        // 4096-token max_tokens default would leave no room for any budget
-        // above Low. So when thinking is on and the CALLER didn't set an
-        // output cap, the default floor rises to budget + 8192 (thinking
-        // spends from the same output allowance as the answer — a budget
-        // that consumes the whole cap yields a truncated or empty turn).
-        // A caller-set cap is honored as-is and the budget clamps to it:
-        // at most max_tokens - 1024, never below the API's 1024 floor — and
-        // a cap at or below the floor leaves NO legal budget (the API
-        // requires 1024 <= budget < max_tokens), so thinking is omitted
-        // entirely rather than sent as a request the API rejects with 400.
-        let thinking_budget =
-            (req.reasoning == Some(true)).then(|| thinking_budget_tokens(req.effort));
-        let max_tokens = match (req.max_output_tokens, thinking_budget) {
-            (Some(cap), _) => cap,
-            (None, Some(budget)) => budget + 8_192,
-            (None, None) => 4096,
-        };
-        let thinking = thinking_budget.and_then(|budget| {
-            (max_tokens > 1024).then(|| AnthropicThinking {
-                kind: "enabled",
-                budget_tokens: budget.min(max_tokens - 1024).max(1024),
-            })
-        });
+        let reasoning_on = req.reasoning == Some(true);
         let params = req.params.unwrap_or_default();
+
+        // Two thinking dialects, chosen by model generation. Current models
+        // (Claude 4.6+, the 5-family) take `thinking:{type:"adaptive"}` plus
+        // `output_config.effort`, and REJECT `budget_tokens` and every sampling
+        // parameter with a 400 — the failure this fix repairs. Legacy models
+        // (≤ 4.5) keep the old `{type:"enabled",budget_tokens}` shape and accept
+        // sampling. `uses_adaptive_thinking` denylists the closed legacy set and
+        // defaults everything else (incl. future launches) to the modern shape.
+        let (max_tokens, thinking, output_config, temperature, top_p, top_k) =
+            if uses_adaptive_thinking(&self.model) {
+                // Adaptive thinking spends from the SAME output allowance as the
+                // answer, so an un-capped reasoning turn needs far more headroom
+                // than the old 4096 no-thinking default — 4096 would truncate a
+                // max-effort judge mid-verdict (returning empty text with
+                // stop_reason=max_tokens). We already stream, so a high ceiling
+                // costs nothing; a caller-set cap is still honored as-is.
+                let max_tokens =
+                    req.max_output_tokens
+                        .unwrap_or(if reasoning_on { 32_000 } else { 4096 });
+                (
+                    max_tokens,
+                    reasoning_on.then(AnthropicThinking::adaptive),
+                    // Effort is a GA control independent of thinking; forward it
+                    // whenever the caller pinned one, defaulting to the API's own
+                    // (high) when unset.
+                    req.effort.map(|effort| AnthropicOutputConfig {
+                        effort: map_effort(effort),
+                    }),
+                    // Sampling params 400 on these models — never send them.
+                    None,
+                    None,
+                    None,
+                )
+            } else {
+                // Legacy shape: budget_tokens is coupled to max_tokens (the API
+                // requires budget < max_tokens), and the 4096 default would leave
+                // no room for any budget above Low — so when thinking is on and
+                // the caller set no cap, the floor rises to budget + 8192. A
+                // caller-set cap is honored and the budget clamps to it: at most
+                // max_tokens - 1024, never below the 1024 floor; a cap at or below
+                // the floor leaves NO legal budget, so thinking is omitted rather
+                // than sent as a 400.
+                let thinking_budget = reasoning_on.then(|| thinking_budget_tokens(req.effort));
+                let max_tokens = match (req.max_output_tokens, thinking_budget) {
+                    (Some(cap), _) => cap,
+                    (None, Some(budget)) => budget + 8_192,
+                    (None, None) => 4096,
+                };
+                let thinking = thinking_budget.and_then(|budget| {
+                    (max_tokens > 1024).then(|| {
+                        AnthropicThinking::enabled(budget.min(max_tokens - 1024).max(1024))
+                    })
+                });
+                // The API rejects temperature != 1 with thinking enabled; omit it
+                // entirely (rather than special-casing 1.0) and let the API apply
+                // its own thinking-compatible default.
+                let temperature = if thinking.is_some() {
+                    None
+                } else {
+                    req.temperature
+                };
+                (
+                    max_tokens,
+                    thinking,
+                    None,
+                    temperature,
+                    params.top_p,
+                    params.top_k,
+                )
+            };
+
         let body = AnthropicRequest {
             model: &self.model,
             max_tokens,
@@ -571,17 +696,11 @@ impl AnthropicProvider {
             }),
             messages,
             stream: true,
-            // The API rejects temperature != 1 with thinking enabled; rather
-            // than special-casing 1.0, omit the field entirely and let the
-            // API apply its own thinking-compatible default.
-            temperature: if thinking.is_some() {
-                None
-            } else {
-                req.temperature
-            },
-            top_p: params.top_p,
-            top_k: params.top_k,
+            temperature,
+            top_p,
+            top_k,
             thinking,
+            output_config,
             tools: req
                 .tools
                 .iter()
@@ -1323,6 +1442,7 @@ mod tests {
             top_p: None,
             top_k: None,
             thinking: None,
+            output_config: None,
             tools: vec![],
         };
         let v = serde_json::to_value(&body).expect("request serializes");
@@ -1346,9 +1466,159 @@ mod tests {
         // The optional params/thinking fields must vanish when unset — the
         // byte-stability contract for requests without overrides.
         let body_json = serde_json::to_string(&v).unwrap();
-        for key in ["top_p", "top_k", "thinking"] {
+        for key in ["top_p", "top_k", "thinking", "output_config"] {
             assert!(!body_json.contains(key), "unexpected `{key}`: {body_json}");
         }
+    }
+
+    #[test]
+    fn uses_adaptive_thinking_classifies_current_vs_legacy_models() {
+        // Current generation (4.6+, the 5-family) → adaptive shape. Unknown /
+        // future models default to modern so the next launch doesn't silently
+        // 400 on the legacy `budget_tokens` shape (how this bug shipped).
+        for model in [
+            "claude-fable-5",
+            "claude-mythos-5",
+            "claude-sonnet-5",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-fable-6",
+            "claude-opus-5",
+            "some-future-model",
+        ] {
+            assert!(
+                uses_adaptive_thinking(model),
+                "expected adaptive shape for `{model}`"
+            );
+        }
+        // Legacy generations (≤ 4.5 / 3.x / 2.x) → enabled+budget_tokens shape.
+        for model in [
+            "claude-opus-4-5",
+            "claude-sonnet-4-5",
+            "claude-haiku-4-5",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-1",
+            "claude-opus-4-0",
+            "claude-opus-4-20250514",
+            "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
+            "claude-2.1",
+        ] {
+            assert!(
+                !uses_adaptive_thinking(model),
+                "expected legacy shape for `{model}`"
+            );
+        }
+    }
+
+    /// The reported regression: a current-generation model (`claude-fable-5`)
+    /// with reasoning on must send the ADAPTIVE thinking shape plus
+    /// `output_config.effort`, and must NOT send `budget_tokens` or any sampling
+    /// parameter — the live API rejects all three with a 400. Also pins the
+    /// raised default `max_tokens` (adaptive thinking shares the answer's budget,
+    /// so the old 4096 default would truncate a max-effort turn).
+    #[tokio::test]
+    async fn fable5_sends_adaptive_shape_and_drops_budget_tokens_and_sampling() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+            .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("say ok")],
+                max_output_tokens: None,
+                // Passed by the caller but MUST be dropped on this model family.
+                temperature: Some(0.0),
+                effort: Some(stella_protocol::ReasoningEffort::Max),
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("adaptive request should match and stream a reply");
+
+        let requests = server
+            .received_requests()
+            .await
+            .expect("mock server records requests");
+        let body: serde_json::Value =
+            serde_json::from_slice(&requests[0].body).expect("request body is JSON");
+        assert_eq!(body["thinking"]["type"], "adaptive", "{body}");
+        assert!(
+            body["thinking"].get("budget_tokens").is_none(),
+            "budget_tokens must not be sent on current models: {body}"
+        );
+        assert_eq!(body["output_config"]["effort"], "max", "{body}");
+        assert!(
+            body.get("temperature").is_none(),
+            "sampling params 400 on current models and must be dropped: {body}"
+        );
+        assert_eq!(
+            body["max_tokens"], 32_000,
+            "un-capped adaptive reasoning turn gets the raised default: {body}"
+        );
+    }
+
+    /// Legacy models keep the old contract: `{type:"enabled",budget_tokens}` and
+    /// no `output_config` (which they reject).
+    #[tokio::test]
+    async fn legacy_model_still_sends_budget_tokens_and_no_output_config() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-haiku-4-5")
+            .with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("say ok")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: Some(stella_protocol::ReasoningEffort::High),
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("legacy request should stream a reply");
+
+        let requests = server
+            .received_requests()
+            .await
+            .expect("mock server records requests");
+        let body: serde_json::Value =
+            serde_json::from_slice(&requests[0].body).expect("request body is JSON");
+        assert_eq!(body["thinking"]["type"], "enabled", "{body}");
+        assert!(
+            body["thinking"]["budget_tokens"].as_u64().unwrap() >= 1024,
+            "legacy models still use budget_tokens: {body}"
+        );
+        assert!(
+            body.get("output_config").is_none(),
+            "output_config is rejected by legacy models: {body}"
+        );
     }
 
     #[tokio::test]
@@ -1877,8 +2147,10 @@ mod tests {
             "event: content_block_delta\n",
             "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
         );
-        // The mock only matches if the serialized body carries the
-        // temperature — proving the adapter no longer drops it.
+        // Legacy models accept sampling params; the mock only matches if the
+        // serialized body carries the temperature — proving it isn't dropped on
+        // that path. (Current models reject temperature — covered separately by
+        // `fable5_sends_adaptive_shape_and_drops_budget_tokens_and_sampling`.)
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
             .and(body_string_contains("\"temperature\":0.3"))
@@ -1886,7 +2158,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-opus-4-5")
             .with_base_url(server.uri());
         let req = CompletionRequest {
             messages: vec![CompletionMessage::user("hi")],
@@ -1994,13 +2266,14 @@ mod tests {
         String::from_utf8_lossy(&requests[0].body).into_owned()
     }
 
+    // Legacy models accept sampling params, so top_p/top_k forward on that path.
     #[tokio::test]
     async fn generation_params_forward_top_p_and_top_k_and_drop_the_rest() {
         use stella_protocol::GenerationParams;
         let server = MockServer::start().await;
         mock_ok(&server).await;
 
-        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-opus-4-5")
             .with_base_url(server.uri());
         provider
             .complete(CompletionRequest {
@@ -2038,16 +2311,16 @@ mod tests {
         }
     }
 
-    /// `reasoning: Some(true)` with no caller output cap: the budget maps
-    /// from effort, the defaulted max_tokens rises to budget + 8192 so
-    /// thinking can't consume the whole output allowance, and temperature is
+    /// Legacy path — `reasoning: Some(true)` with no caller output cap: the
+    /// budget maps from effort, the defaulted max_tokens rises to budget + 8192
+    /// so thinking can't consume the whole output allowance, and temperature is
     /// omitted entirely (the API rejects temperature != 1 with thinking).
     #[tokio::test]
     async fn reasoning_true_enables_thinking_raises_max_tokens_and_omits_temperature() {
         let server = MockServer::start().await;
         mock_ok(&server).await;
 
-        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-opus-4-5")
             .with_base_url(server.uri());
         provider
             .complete(CompletionRequest {
@@ -2074,14 +2347,14 @@ mod tests {
         assert!(!body.contains("temperature"), "{body}");
     }
 
-    /// A caller-set max_tokens is honored, and the budget clamps under it:
-    /// at most max_tokens - 1024 (the API requires budget < max_tokens).
+    /// Legacy path — a caller-set max_tokens is honored, and the budget clamps
+    /// under it: at most max_tokens - 1024 (the API requires budget < max_tokens).
     #[tokio::test]
     async fn thinking_budget_clamps_under_a_caller_set_max_tokens() {
         let server = MockServer::start().await;
         mock_ok(&server).await;
 
-        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-opus-4-5")
             .with_base_url(server.uri());
         provider
             .complete(CompletionRequest {
@@ -2104,15 +2377,15 @@ mod tests {
         );
     }
 
-    /// `Some(false)` and `None` are the same wire shape: no thinking block
-    /// (thinking is opt-in on this API), temperature forwarded as always —
-    /// i.e. exactly today's request bytes.
+    /// Legacy path — `Some(false)` and `None` are the same wire shape: no
+    /// thinking block (thinking is opt-in on this API), temperature forwarded as
+    /// always.
     #[tokio::test]
     async fn reasoning_false_sends_no_thinking_block_and_keeps_temperature() {
         let server = MockServer::start().await;
         mock_ok(&server).await;
 
-        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5")
+        let provider = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-opus-4-5")
             .with_base_url(server.uri());
         provider
             .complete(CompletionRequest {
