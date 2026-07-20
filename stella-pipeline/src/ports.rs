@@ -16,7 +16,7 @@
 //! [`ApprovalGate`]). None of these belong inside the step-driver.
 
 use async_trait::async_trait;
-use stella_protocol::{ModelRef, Provider, ScopeProposal};
+use stella_protocol::{FileChangeKind, ModelRef, Provider, ScopeProposal};
 
 /// Maps a router-resolved [`ModelRef`] to the concrete provider adapter that
 /// serves it. This is the one seam that connects `stella-core`'s
@@ -146,6 +146,85 @@ pub trait CommandRunner: Send + Sync {
     /// `exit_code` with the reason in `stderr_tail`, never an `Err`, so the
     /// ladder always has evidence to reason over.
     async fn run(&self, cmd: &str) -> CmdOutcome;
+}
+
+/// One file the winning best-of-N candidate changed, as applied to the real
+/// tree by [`CandidateWorkspace::adopt`]. Paths are repo-relative; the kind
+/// feeds the `FileChange` events the pipeline emits for adopted work (the
+/// session's own file tracking never saw the winner's edits — they happened
+/// inside the snapshot).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdoptedChange {
+    pub path: String,
+    pub kind: FileChangeKind,
+}
+
+/// A typed candidate-isolation failure.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum WorkspaceError {
+    /// The current tree state could not be snapshotted (not a git repository,
+    /// no commits yet, git unavailable, worktree creation failed). The
+    /// pipeline scores the affected candidate as aborted — it never falls
+    /// back to running that candidate in the shared tree.
+    #[error("could not snapshot the working tree: {reason}")]
+    Snapshot { reason: String },
+    /// Applying the winning candidate's changes to the real tree failed —
+    /// typically because the user edited the same files mid-run. Adoption is
+    /// all-or-nothing: NOTHING was applied, `paths` names the conflicts, and
+    /// the candidate workspace is preserved at `workspace` so the winning
+    /// work is recoverable by hand.
+    #[error(
+        "adopting the winning candidate's changes failed ({reason}); conflicting paths: {}; \
+         nothing was applied — the candidate's work is preserved at `{workspace}`",
+        paths.join(", ")
+    )]
+    Adopt {
+        reason: String,
+        paths: Vec<String>,
+        workspace: String,
+    },
+}
+
+/// One isolated best-of-N candidate workspace: a snapshot of the working
+/// tree's *current* state (HEAD plus uncommitted and untracked files) that a
+/// candidate executes and verifies inside, so sibling candidates never see
+/// each other's edits and losers leave no residue in the real tree. The
+/// bundled ports are rooted at the snapshot — the pipeline threads them (not
+/// the session ports) through the candidate's engine turns and verification
+/// runs.
+#[async_trait]
+pub trait CandidateWorkspace: Send + Sync {
+    /// The tool executor rooted at this workspace: every engine-turn tool
+    /// call (read/edit/shell) lands in the snapshot, never in the real tree.
+    fn tools(&self) -> &dyn stella_core::ToolExecutor;
+    /// Runs the verification ladder's test/diff commands inside the snapshot.
+    fn commands(&self) -> &dyn CommandRunner;
+    /// Untracked-file fingerprints of the snapshot, mirroring the real
+    /// tree's semantics (the tamper watchlist and zero-diff guard must keep
+    /// working unchanged inside a candidate).
+    fn repo_status(&self) -> &dyn RepoStatusPort;
+    /// Apply this workspace's changes — relative to its starting snapshot —
+    /// to the real tree. All-or-nothing: on conflict the real tree is left
+    /// byte-identical and the error names the conflicting paths
+    /// ([`WorkspaceError::Adopt`]); the user's index and stash are never
+    /// touched on any path.
+    async fn adopt(&self) -> Result<Vec<AdoptedChange>, WorkspaceError>;
+    /// Remove the workspace. Best-effort and infallible — the cleanup
+    /// discipline is the pipeline's (every workspace is removed on every
+    /// path, except a winner whose adoption failed, which is preserved for
+    /// recovery).
+    async fn remove(&self);
+}
+
+/// Best-of-N candidate isolation (L-E7): snapshots the current working-tree
+/// state into one isolated [`CandidateWorkspace`] per candidate. Only wired
+/// when a real git tree exists; the pipeline never calls it on single-shot
+/// runs (`candidates <= 1`), and degrades multi-candidate runs to the shared
+/// tree — loudly — when it is absent.
+#[async_trait]
+pub trait CandidateWorkspacePort: Send + Sync {
+    /// Snapshot the current tree state into a fresh isolated workspace.
+    async fn create(&self) -> Result<Box<dyn CandidateWorkspace>, WorkspaceError>;
 }
 
 /// A human's decision at the scope-review gate (L-E5). `Trim` carries the

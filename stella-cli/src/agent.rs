@@ -495,15 +495,7 @@ async fn run_pipeline_one_shot(
         let tools =
             crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone());
 
-        let repo_structure = GitRepoStructure {
-            root: cfg.workspace_root.clone(),
-        };
-        let repo_status = GitRepoStatus {
-            root: cfg.workspace_root.clone(),
-        };
-        let command_runner = ShellCommandRunner {
-            root: cfg.workspace_root.clone(),
-        };
+        let ws_ports = workspace_ports(cfg.workspace_root.clone(), cfg);
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
@@ -537,9 +529,9 @@ async fn run_pipeline_one_shot(
             providers: &resolver,
             tools: &tools,
             recall,
-            repo: &repo_structure,
-            repo_status: &repo_status,
-            commands: &command_runner,
+            repo: &ws_ports.repo_structure,
+            repo_status: &ws_ports.repo_status,
+            commands: &ws_ports.command_runner,
             approvals: if is_text {
                 &stdio_gate
             } else {
@@ -550,6 +542,7 @@ async fn run_pipeline_one_shot(
                 .hooks
                 .as_ref()
                 .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
+            candidate_workspaces: Some(&ws_ports.candidate_workspaces),
         };
 
         let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
@@ -983,25 +976,58 @@ impl RepoStatusPort for GitRepoStatus {
             .split('\0')
             .filter(|p| !p.is_empty())
         {
-            // Fingerprint = size:mtime_nanos — changes whenever the file is
-            // written, without reading (and hashing) potentially large
-            // untracked files on every snapshot. Unreadable metadata → a
-            // sentinel so the file still registers as present.
-            let fingerprint = match std::fs::metadata(self.root.join(rel)) {
-                Ok(meta) => {
-                    let mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0);
-                    format!("{}:{mtime}", meta.len())
-                }
-                Err(_) => "unreadable".to_string(),
-            };
+            // Unreadable metadata → a sentinel so the file still registers
+            // as present.
+            let fingerprint =
+                fs_fingerprint(&self.root.join(rel)).unwrap_or_else(|| "unreadable".to_string());
             out.insert(rel.to_string(), fingerprint);
         }
         out
+    }
+}
+
+/// The pipeline's untracked-file fingerprint: `len:mtime_nanos` — changes
+/// whenever the file is written, without reading (and hashing) potentially
+/// large files on every snapshot. `None` when the file's metadata cannot be
+/// read (absent or unreadable). One definition, shared with the best-of-N
+/// candidate snapshot ports, so fingerprints from the real tree and a
+/// snapshot are comparable (the witness tamper watchlist depends on it).
+pub(crate) fn fs_fingerprint(path: &std::path::Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Some(format!("{}:{mtime}", meta.len()))
+}
+
+/// The workspace-rooted pipeline ports every session driver constructs the
+/// same way — repo structure/status, the verification command runner, and
+/// best-of-N candidate isolation, all rooted at the same tree. One bundle
+/// and one constructor so the four drivers (one-shot, goal loop, deck,
+/// fleet worker) can never drift apart on the wiring.
+pub(crate) struct WorkspacePorts {
+    pub(crate) repo_structure: GitRepoStructure,
+    pub(crate) repo_status: GitRepoStatus,
+    pub(crate) command_runner: ShellCommandRunner,
+    /// Inert unless `candidates > 1` — the pipeline never calls it on
+    /// single-shot runs.
+    pub(crate) candidate_workspaces: crate::candidate_ws::GitCandidateWorkspaces,
+}
+
+/// Build the [`WorkspacePorts`] bundle rooted at `root` (the session
+/// workspace, or a fleet worker's own worktree).
+pub(crate) fn workspace_ports(root: std::path::PathBuf, cfg: &Config) -> WorkspacePorts {
+    WorkspacePorts {
+        repo_structure: GitRepoStructure { root: root.clone() },
+        repo_status: GitRepoStatus { root: root.clone() },
+        command_runner: ShellCommandRunner { root: root.clone() },
+        candidate_workspaces: crate::candidate_ws::GitCandidateWorkspaces::new(
+            root,
+            registry_options(cfg),
+        ),
     }
 }
 
@@ -3321,15 +3347,7 @@ async fn run_goal_pipeline_turn(
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
 
-        let repo_structure = GitRepoStructure {
-            root: cfg.workspace_root.clone(),
-        };
-        let repo_status = GitRepoStatus {
-            root: cfg.workspace_root.clone(),
-        };
-        let command_runner = ShellCommandRunner {
-            root: cfg.workspace_root.clone(),
-        };
+        let ws_ports = workspace_ports(cfg.workspace_root.clone(), cfg);
         let no_recall = NoContextRecall;
         let recall: &dyn ContextRecallPort = &no_recall;
         let hook_runner = ShellHookRunner;
@@ -3364,15 +3382,16 @@ async fn run_goal_pipeline_turn(
                 providers: &resolver,
                 tools: &tools,
                 recall,
-                repo: &repo_structure,
-                repo_status: &repo_status,
-                commands: &command_runner,
+                repo: &ws_ports.repo_structure,
+                repo_status: &ws_ports.repo_status,
+                commands: &ws_ports.command_runner,
                 approvals: &AutoApproveGate,
                 sleeper: &TokioSleeper,
                 hooks: cfg
                     .hooks
                     .as_ref()
                     .map(|h| (h, &hook_runner as &dyn stella_core::hooks::HookRunner)),
+                candidate_workspaces: Some(&ws_ports.candidate_workspaces),
             };
             let pipeline = Pipeline::new(ports, tx.clone(), pipeline_config);
             let round_goal = format!(

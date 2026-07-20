@@ -120,7 +120,14 @@ letting the worker keep digging the same hole.
 
 The pipeline can generate N candidate executions and select the best by
 verification score — paid for with N× the execution cost, so it is strictly
-opt-in.
+opt-in. Each candidate runs in an **isolated snapshot** of the current tree
+state (HEAD plus your uncommitted and untracked files, via a detached git
+worktree), and its engine turns and test runs execute inside that snapshot.
+Only the winner's changes are applied back to the real tree — atomically,
+failing loudly with the conflicting paths named if you edited the same files
+mid-run — and losing candidates leave no residue. Your index and stash are
+never touched. Outside a git repository, candidates degrade to sharing the
+working tree, with a loud warning.
 
 ## End to end: one verified run
 
