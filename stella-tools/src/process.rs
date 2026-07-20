@@ -9,7 +9,10 @@
 //! Contracts:
 //! - `start_process` spawns an **argv vector directly** (no shell), cwd
 //!   pinned to the workspace root, in its own process group, with
-//!   `kill_on_drop`. It returns a handle id (`proc-N`).
+//!   `kill_on_drop`. It returns a handle id (`proc-N`). "No shell" is a
+//!   quoting guarantee, not a power bound — argv[0] may itself be a shell —
+//!   so the registry gates the joined argv through the same
+//!   `command.started` policy chain as `bash` before the spawn.
 //! - Output (stdout + stderr, interleaved by arrival) accumulates in a
 //!   capped ring buffer per process; when the cap overflows the oldest
 //!   bytes are dropped and the drop is FLAGGED on the next read.

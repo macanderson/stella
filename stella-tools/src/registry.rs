@@ -540,13 +540,11 @@ impl ToolRegistry {
         };
         if let Some(bus) = &bus {
             let duration_ms = started_at.elapsed().as_millis() as u64;
-            // The command line the tool actually ran: bash's own input, or
-            // run_script's index-resolved command.
-            let command_line: Option<&str> = match name {
-                "bash" => Some(input.get("command").and_then(|v| v.as_str()).unwrap_or("")),
-                "run_script" => resolved_script_command.as_deref(),
-                _ => None,
-            };
+            // The command line the tool actually ran: bash's own input,
+            // run_script's index-resolved command, or start_process's
+            // joined argv.
+            let command_line =
+                Self::command_line_for(name, input, resolved_script_command.as_deref());
             match &output {
                 ToolOutput::Error { message } => {
                     bus.emit_named(
@@ -555,7 +553,7 @@ impl ToolRegistry {
                             "tool": name, "error": message, "duration_ms": duration_ms,
                         }),
                     );
-                    if let Some(command) = command_line {
+                    if let Some(command) = command_line.as_deref() {
                         bus.emit_named(
                             hook_names::COMMAND_FAILED,
                             serde_json::json!({ "command": command, "error": message }),
@@ -567,7 +565,7 @@ impl ToolRegistry {
                         hook_names::TOOL_CALL_COMPLETED,
                         serde_json::json!({ "tool": name, "duration_ms": duration_ms }),
                     );
-                    if let Some(command) = command_line {
+                    if let Some(command) = command_line.as_deref() {
                         bus.emit_named(
                             hook_names::COMMAND_COMPLETED,
                             serde_json::json!({ "command": command }),
@@ -707,9 +705,10 @@ impl ToolRegistry {
     /// detectors for one already-final input: `sensitive_operation.detected`
     /// and `secret.detected` observers first (an auditor sees the attempt
     /// even when a policy then denies it), then the `file.*` chain for a
-    /// classified C/U/D op and the `command.started` chain for `bash` and
-    /// `run_script` (`resolved_command` is the latter's index-resolved
-    /// command line).
+    /// classified C/U/D op and the `command.started` chain for `bash`,
+    /// `run_script`, and `start_process` (`resolved_command` is
+    /// `run_script`'s index-resolved command line; see
+    /// [`Self::command_line_for`]).
     /// These chains gate — `modify` decisions are recorded but not honored
     /// here, because the input was already final after
     /// `tool.call.requested`. Reads are observable but never interceptable.
@@ -785,12 +784,8 @@ impl ToolRegistry {
                 }
             }
         }
-        let command_line: Option<&str> = match name {
-            "bash" => Some(input.get("command").and_then(|v| v.as_str()).unwrap_or("")),
-            "run_script" => resolved_command,
-            _ => None,
-        };
-        if let Some(command) = command_line {
+        let command_line = Self::command_line_for(name, input, resolved_command);
+        if let Some(command) = command_line.as_deref() {
             let outcome = bus.emit_blocking(HookEventDraft::new(
                 hook_names::COMMAND_STARTED,
                 serde_json::json!({ "command": command }),
@@ -810,6 +805,45 @@ impl ToolRegistry {
             }
         }
         Ok(())
+    }
+
+    /// The effective command line of one tool call, feeding both the
+    /// blocking `command.started` policy chain and the `command.*`
+    /// observer events: `bash`'s own input, `run_script`'s index-resolved
+    /// command (`None` when resolution failed — the tool returns the named
+    /// error itself, ungated), or `start_process`'s space-joined argv. The
+    /// argv spawn MUST ride the same fence as `bash`: it sits in the
+    /// default surface while `bash` is opt-in, and argv[0] may itself be a
+    /// shell (`["bash", "-c", …]`), so leaving it out hands ambient shell
+    /// execution to the very posture that turned `bash` off.
+    fn command_line_for(
+        name: &str,
+        input: &Value,
+        resolved_script: Option<&str>,
+    ) -> Option<String> {
+        match name {
+            "bash" => Some(
+                input
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            ),
+            "run_script" => resolved_script.map(str::to_string),
+            "start_process" => Some(
+                input
+                    .get("argv")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default(),
+            ),
+            _ => None,
+        }
     }
 
     /// The live storage map for the gate: the persisted index + manifest,
@@ -2448,6 +2482,50 @@ mod tests {
             *denied_command.lock().unwrap(),
             "make greet",
             "the chain must see the index-resolved command line"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_command_chain_gates_start_process_with_its_joined_argv() {
+        // `start_process` sits in the DEFAULT surface while `bash` is
+        // opt-in, and argv[0] may itself be a shell — so the same
+        // `command.started` policy that fences `bash` must fence the argv
+        // spawn, seeing the joined argv, before anything runs.
+        let (_dir, reg) = telemetry_fixture();
+        let bus = HookBus::new("sess");
+        let denied_command = StdArc::new(StdMutex::new(String::new()));
+        let sink = denied_command.clone();
+        bus.on_blocking(hook_names::COMMAND_STARTED, move |event| {
+            *sink.lock().unwrap() = event.payload["command"].as_str().unwrap_or("").to_string();
+            HookDecision::Deny {
+                reason: "no shell".into(),
+            }
+        })
+        .detach();
+        reg.attach_bus(bus);
+
+        let out = reg
+            .execute(
+                "start_process",
+                &serde_json::json!({"argv": ["bash", "-c", "echo hi"]}),
+            )
+            .await;
+        assert!(
+            out.is_error(),
+            "denied start_process must not spawn: {out:?}"
+        );
+        assert_eq!(
+            *denied_command.lock().unwrap(),
+            "bash -c echo hi",
+            "the chain must see the joined argv as the command line"
+        );
+        // The denial fired before the spawn: no handle may exist.
+        let read = reg
+            .execute("read_output", &serde_json::json!({"handle": "proc-1"}))
+            .await;
+        assert!(
+            read.is_error(),
+            "no process may exist after a denied spawn: {read:?}"
         );
     }
 }
