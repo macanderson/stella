@@ -217,7 +217,6 @@ impl ToolRegistry {
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
-        let code_map_tip = crate::code_map::TipOnce::default();
         let processes: crate::process::ProcessTableHandle = Arc::default();
         let repo_backend: Arc<dyn crate::repo::RepoBackend> = Arc::new(crate::repo::GitCli);
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
@@ -226,11 +225,11 @@ impl ToolRegistry {
             Arc::new(crate::write::WriteFile),
             Arc::new(crate::edit::EditFile),
             Arc::new(crate::delete::DeleteFile),
-            // One shared tip latch: the session's first mapped search —
-            // grep or glob, whichever comes first — carries the graph_query
-            // pointer; every later footer is map-only.
-            Arc::new(crate::grep::Grep::with_code_map(code_map_tip.clone())),
-            Arc::new(crate::glob::Glob::with_code_map(code_map_tip)),
+            // Search results carry a code-map footer; a symbol-shaped grep
+            // pattern additionally carries the graph_query pointer, decided
+            // per-call from the pattern (crate::code_map::is_symbol_shaped).
+            Arc::new(crate::grep::Grep::with_code_map()),
+            Arc::new(crate::glob::Glob::with_code_map()),
             Arc::new(crate::gather::GatherContext),
             Arc::new(crate::exploration::Explorations),
             Arc::new(crate::exploration::SaveExploration),

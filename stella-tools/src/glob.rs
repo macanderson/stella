@@ -11,31 +11,29 @@ use crate::registry::Tool;
 const MAX_RESULTS: usize = 500;
 
 pub struct Glob {
-    /// Code-map footer state; `None` disables the footer entirely (the
-    /// embedded sweeps in `gather_context` — see [`crate::grep::Grep`]).
-    code_map: Option<crate::code_map::TipOnce>,
+    /// Whether results carry the code-map footer. Off for the embedded sweeps
+    /// in `gather_context` — see [`crate::grep::Grep`].
+    footer: bool,
 }
 
 impl Glob {
-    /// The model-facing tool: footer on, `graph_query` tip latch shared
-    /// with `grep` (the registry passes both clones of one
-    /// [`crate::code_map::TipOnce`]).
-    pub fn with_code_map(tip: crate::code_map::TipOnce) -> Self {
-        Self {
-            code_map: Some(tip),
-        }
+    /// The model-facing tool: footer on. A glob is a file-name match, not a
+    /// symbol hunt, so it never carries the `graph_query` tip (that rides
+    /// symbol-shaped `grep` searches — see [`crate::code_map::is_symbol_shaped`]).
+    pub fn with_code_map() -> Self {
+        Self { footer: true }
     }
 
     /// Footer-less instance for embedded use.
     pub fn bare() -> Self {
-        Self { code_map: None }
+        Self { footer: false }
     }
 }
 
 impl Default for Glob {
-    /// Footer on with a private latch — the standalone shape tests use.
+    /// Footer on — the standalone shape tests use.
     fn default() -> Self {
-        Self::with_code_map(crate::code_map::TipOnce::default())
+        Self::with_code_map()
     }
 }
 
@@ -113,7 +111,7 @@ impl Tool for Glob {
                     .collect::<Vec<_>>()
                     .join("\n");
                 ToolOutput::Ok {
-                    content: with_code_map(content, root, self.code_map.as_ref()),
+                    content: with_code_map(content, root, self.footer),
                 }
             }
             Err(_) => {
@@ -140,7 +138,7 @@ impl Tool for Glob {
                                 .collect::<Vec<_>>()
                                 .join("\n");
                             ToolOutput::Ok {
-                                content: with_code_map(content, root, self.code_map.as_ref()),
+                                content: with_code_map(content, root, self.footer),
                             }
                         }
                     }
@@ -153,19 +151,16 @@ impl Tool for Glob {
     }
 }
 
-/// Append the code-map footer for these matched paths, when a footer is
-/// enabled and the graph has one to give (see [`crate::code_map`]). Bound
-/// separately from the `if let` so the `content.lines()` borrow ends before
-/// `content` is mutated.
-fn with_code_map(
-    mut content: String,
-    root: &std::path::Path,
-    tip: Option<&crate::code_map::TipOnce>,
-) -> String {
-    let Some(tip) = tip else {
+/// Append the code-map footer for these matched paths, when the footer is
+/// enabled and the graph has one to give (see [`crate::code_map`]). The
+/// `graph_query` tip never rides a glob (`show_tip = false`) — it belongs on
+/// symbol-shaped `grep` searches. Bound separately from the `if let` so the
+/// `content.lines()` borrow ends before `content` is mutated.
+fn with_code_map(mut content: String, root: &std::path::Path, footer: bool) -> String {
+    if !footer {
         return content;
-    };
-    let map = crate::code_map::for_files(root, content.lines(), tip);
+    }
+    let map = crate::code_map::for_files(root, content.lines(), false);
     if let Some(map) = map {
         content.push_str(&map);
     }

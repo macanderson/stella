@@ -17,6 +17,7 @@
 //! silently running unsandboxed. See [`crate::sandbox`] for the full
 //! safety/capability tradeoff discussion.
 
+use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,6 +29,137 @@ use crate::registry::Tool;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const MAX_OUTPUT_BYTES: usize = 100_000;
+
+/// grep-family commands whose first positional arg is a search pattern.
+const GREP_CMDS: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep", "ag"];
+
+/// A quote-aware word split — enough to pull a `cd` target or a `grep`
+/// pattern out of the common command shapes, returning each word already
+/// unquoted. NOT a shell parser: it respects `'…'` and `"…"` (so a pattern or
+/// path with spaces stays one word) and preserves backslash escapes like
+/// `\|` (so an alternation survives into [`is_symbol_shaped`]); bare
+/// operators (`&&`, `|`, `;`) come back as their own words to bound a scan.
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut has_word = false;
+    let (mut in_single, mut in_double) = (false, false);
+    let mut chars = command.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                has_word = true;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                has_word = true;
+            }
+            '\\' if in_double => {
+                // Keep the escape literal (covers `\|`, `\"`, …); we don't
+                // interpret it, just preserve it for the symbol test.
+                cur.push('\\');
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+                has_word = true;
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if has_word {
+                    words.push(std::mem::take(&mut cur));
+                    has_word = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                has_word = true;
+            }
+        }
+    }
+    if has_word {
+        words.push(cur);
+    }
+    words
+}
+
+/// If the command `cd`s somewhere outside the workspace `root`, return that
+/// target — the graph indexes only `root`, so a search or edit under a
+/// drifted tree is silently ungraphed (the cross-tree gap the telemetry
+/// showed). Targets we can't resolve (`$VAR`, `~`, `-`, a flag) are skipped:
+/// better a missed note than a wrong one.
+fn cd_escape_target(command: &str, root: &Path) -> Option<String> {
+    let words = shell_words(command);
+    for pair in words.windows(2) {
+        if pair[0] != "cd" {
+            continue;
+        }
+        let target = pair[1].as_str();
+        if target.is_empty()
+            || target == "-"
+            || target.starts_with('$')
+            || target.starts_with('~')
+            || target.starts_with('-')
+        {
+            continue;
+        }
+        if crate::resolve_within_root(root, target).is_none() {
+            return Some(target.to_string());
+        }
+    }
+    None
+}
+
+/// Does the command run a grep-family search whose pattern is symbol-shaped —
+/// the `grep -rn "struct X"` that graph_query answers better? The dominant
+/// path in the telemetry (symbol searches ran through bash, not the native
+/// grep tool), so the same nudge has to reach here. First positional after a
+/// grep word is the pattern; flags are skipped, a pipeline boundary ends the
+/// scan.
+fn bash_grep_is_symbol_shaped(command: &str) -> bool {
+    let words = shell_words(command);
+    for (i, w) in words.iter().enumerate() {
+        if !GREP_CMDS.contains(&w.as_str()) {
+            continue;
+        }
+        for next in &words[i + 1..] {
+            if matches!(next.as_str(), "|" | "||" | "&&" | ";") {
+                break;
+            }
+            if next.starts_with('-') {
+                continue; // a flag, not the pattern
+            }
+            if crate::code_map::is_symbol_shaped(next) {
+                return true;
+            }
+            break; // first positional was the pattern; it wasn't symbol-shaped
+        }
+    }
+    false
+}
+
+/// The advisory footer for a bash result, when the code graph exists (so its
+/// advice is actionable): a cross-root `cd` warning takes precedence — under a
+/// drifted tree graph_query can't help — otherwise a symbol-shaped grep gets
+/// the same `graph_query` pointer the native search tools carry.
+fn graph_advisory(command: &str, root: &Path) -> Option<String> {
+    if !crate::graph::graph_available(root) {
+        return None;
+    }
+    if let Some(target) = cd_escape_target(command, root) {
+        return Some(format!(
+            "\n\nnote: this cd'd to `{target}`, outside the session root `{}` — \
+             graph_query and the grep/glob code-map footers index only this root, so \
+             work under `{target}` isn't covered by the code graph. To use the \
+             structural tools there, re-root the session on that tree (run stella from \
+             it).",
+            root.display()
+        ));
+    }
+    if bash_grep_is_symbol_shaped(command) {
+        return Some(format!("\n\n{}", crate::code_map::GRAPH_QUERY_TIP));
+    }
+    None
+}
 
 pub struct Bash;
 
@@ -183,6 +315,13 @@ impl Tool for Bash {
             combined = format!("{head_str}\n... [truncated {truncated} bytes] ...\n{tail_str}");
         }
 
+        // Append after truncation so the steer is never the part that gets
+        // cut: a cross-root `cd` warning or a symbol-shaped-grep graph_query
+        // nudge, when an index exists.
+        if let Some(note) = graph_advisory(command, root) {
+            combined.push_str(&note);
+        }
+
         if output.status.success() {
             ToolOutput::Ok { content: combined }
         } else {
@@ -287,6 +426,117 @@ mod tests {
             }
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
+    }
+
+    /// An indexed workspace — a source file plus a built `.stella/codegraph.db`,
+    /// exactly what `stella init` leaves so `graph_available` is true.
+    fn indexed_tempdir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "pub struct Greeter;\npub fn greet() {}\n",
+        )
+        .expect("write");
+        let db = crate::graph::graph_db_path(dir.path());
+        std::fs::create_dir_all(db.parent().expect("parent")).expect("mkdir");
+        let graph = stella_graph::CodeGraph::open(dir.path(), &db).expect("open");
+        graph.index_all().expect("index");
+        graph.shutdown();
+        dir
+    }
+
+    fn text_of(out: ToolOutput) -> String {
+        match out {
+            ToolOutput::Ok { content } => content,
+            ToolOutput::Error { message } => message,
+        }
+    }
+
+    #[test]
+    fn cd_escape_target_flags_out_of_root_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        // In-root cd — no drift.
+        assert_eq!(cd_escape_target("cd sub && ls", dir.path()), None);
+        assert_eq!(cd_escape_target("cd . && cargo build", dir.path()), None);
+        // Out-of-root — the target is returned.
+        assert_eq!(
+            cd_escape_target("cd / && grep -rn x .", dir.path()).as_deref(),
+            Some("/")
+        );
+        assert!(cd_escape_target("cd ../.. && ls", dir.path()).is_some());
+        // Unresolvable / no cd — skipped.
+        assert_eq!(cd_escape_target("cd $HOME && ls", dir.path()), None);
+        assert_eq!(cd_escape_target("cd ~/foo && ls", dir.path()), None);
+        assert_eq!(cd_escape_target("grep -rn x .", dir.path()), None);
+    }
+
+    #[test]
+    fn bash_grep_symbol_detection() {
+        assert!(bash_grep_is_symbol_shaped(
+            r#"grep -rn "struct DeckProviderResolver" stella-tools/"#
+        ));
+        assert!(bash_grep_is_symbol_shaped("grep -n ReadOnlyTools src/"));
+        assert!(bash_grep_is_symbol_shaped(r#"rg -e "pub fn resolve" ."#));
+        assert!(bash_grep_is_symbol_shaped(
+            r#"grep -rn "pub mod ports\|pub use ports" src/"#
+        ));
+        // free-text / non-symbol patterns — no nudge
+        assert!(!bash_grep_is_symbol_shaped(r#"grep -rn "unwrap()" src/"#));
+        assert!(!bash_grep_is_symbol_shaped(r#"grep -rn "TODO:" ."#));
+        assert!(!bash_grep_is_symbol_shaped("ls -la && cargo build"));
+        assert!(!bash_grep_is_symbol_shaped("cat foo.rs"));
+    }
+
+    #[tokio::test]
+    async fn a_cross_root_cd_warns_when_indexed() {
+        let dir = indexed_tempdir();
+        let out = Bash
+            .execute(&serde_json::json!({"command": "cd / && pwd"}), dir.path())
+            .await;
+        let text = text_of(out);
+        assert!(
+            text.contains("outside the session root"),
+            "drift warned: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_symbol_shaped_bash_grep_gets_the_graph_tip_when_indexed() {
+        let dir = indexed_tempdir();
+        let out = Bash
+            .execute(
+                &serde_json::json!({"command": "grep -rn \"struct Greeter\" ."}),
+                dir.path(),
+            )
+            .await;
+        let text = text_of(out);
+        assert!(text.contains("graph_query"), "grep nudged: {text}");
+    }
+
+    #[tokio::test]
+    async fn a_plain_command_gets_no_advisory() {
+        let dir = indexed_tempdir();
+        let text = text_of(
+            Bash.execute(&serde_json::json!({"command": "echo hi"}), dir.path())
+                .await,
+        );
+        assert!(!text.contains("graph_query"), "{text}");
+        assert!(!text.contains("outside the session root"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn no_index_means_no_advisory() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = text_of(
+            Bash.execute(
+                &serde_json::json!({"command": "grep -rn \"struct Foo\" . ; cd /"}),
+                dir.path(),
+            )
+            .await,
+        );
+        assert!(!text.contains("graph_query"), "{text}");
+        assert!(!text.contains("outside the session root"), "{text}");
     }
 
     /// End-to-end Seatbelt check — spawns real `sandbox-exec`. Ignored by
