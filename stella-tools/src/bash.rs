@@ -94,8 +94,8 @@ fn cd_escape_target(command: &str, root: &Path) -> Option<String> {
             continue;
         }
         let target = pair[1].as_str();
+        // `-` (cd to previous dir) is caught by the `-` prefix below.
         if target.is_empty()
-            || target == "-"
             || target.starts_with('$')
             || target.starts_with('~')
             || target.starts_with('-')
@@ -498,6 +498,35 @@ mod tests {
         assert!(
             text.contains("outside the session root"),
             "drift warned: {text}"
+        );
+    }
+
+    /// The motivating shape from the telemetry: `cd` to a sibling checkout AND
+    /// a symbol-shaped grep in one command. Drift takes precedence — under a
+    /// tree the graph doesn't index, the grep tip would be misleading, so only
+    /// the drift warning fires.
+    #[tokio::test]
+    async fn drift_wins_over_the_grep_tip_when_both_fire() {
+        let dir = indexed_tempdir();
+        // Grep /dev/null (instant, hermetic) — the advisory keys off the
+        // command string's `cd` + grep pattern, not what grep actually reads,
+        // so this exercises the precedence without walking `/`.
+        let out = Bash
+            .execute(
+                &serde_json::json!({"command": "cd / && grep -rn \"struct Greeter\" /dev/null"}),
+                dir.path(),
+            )
+            .await;
+        let text = text_of(out);
+        assert!(
+            text.contains("outside the session root"),
+            "drift warned: {text}"
+        );
+        // The drift note names graph_query (to explain coverage); the *tip* is
+        // the thing suppressed. Its distinctive phrase must be absent.
+        assert!(
+            !text.contains("symbol/dependency lookup"),
+            "the grep tip is suppressed under a drifted tree: {text}"
         );
     }
 
