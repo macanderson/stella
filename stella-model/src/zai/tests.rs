@@ -930,7 +930,9 @@ async fn absent_params_and_reasoning_add_no_keys_to_the_body() {
         "seed",
         "thinking",
         "reasoning",
+        "reasoning_effort",
         "cache_control",
+        "session_id",
     ] {
         assert!(!body.contains(key), "unexpected `{key}` in: {body}");
     }
@@ -966,6 +968,116 @@ async fn openrouter_identity_sends_root_level_cache_control() {
     assert!(
         body.contains("\"cache_control\":{\"type\":\"ephemeral\"}"),
         "{body}"
+    );
+}
+
+/// OpenRouter routes each request to whichever upstream wins at that moment,
+/// so without a pinned key consecutive turns of one session can hit different
+/// endpoints and miss the prompt cache the previous turn paid to write. The
+/// adapter sends a session-stable top-level `session_id` — identical across
+/// every turn of one provider instance — so the gateway pins the whole
+/// session to one upstream + cache shard. Parity with the OpenAI adapter's
+/// `prompt_cache_key`.
+#[tokio::test]
+async fn openrouter_identity_sends_a_session_stable_session_id() {
+    let server = MockServer::start().await;
+    mock_ok(&server).await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "anthropic/claude-sonnet-5")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+    let req = || CompletionRequest {
+        messages: vec![CompletionMessage::user("hi")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+    provider.complete(req()).await.expect("first turn");
+    provider.complete(req()).await.expect("second turn");
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    let needle = format!("\"session_id\":\"{}\"", provider.session_id());
+    let first = String::from_utf8_lossy(&requests[0].body);
+    let second = String::from_utf8_lossy(&requests[1].body);
+    assert!(
+        provider.session_id().starts_with("stella-"),
+        "session id shape: {}",
+        provider.session_id()
+    );
+    assert!(
+        first.contains(&needle),
+        "turn 1 missing session_id: {first}"
+    );
+    assert!(
+        second.contains(&needle),
+        "turn 2 must reuse the SAME session_id: {second}"
+    );
+}
+
+/// A pinned effort/reasoning on OpenRouter is normalized to the gateway's
+/// `reasoning` object — session_id rides alongside it without disturbing the
+/// other identity-gated fields. Non-OpenRouter identities never see it: the
+/// field is a 400 risk on servers that don't model it, same gating as
+/// `reasoning`/`cache_control`.
+#[tokio::test]
+async fn non_openrouter_identities_never_send_session_id() {
+    let server = MockServer::start().await;
+    mock_ok(&server).await;
+
+    // xAI and DeepSeek both ride the shared adapter but are not OpenRouter.
+    for (id, label, model) in [
+        ("xai", "xAI", "grok-4"),
+        ("deepseek", "DeepSeek", "deepseek-chat"),
+    ] {
+        let provider = ZaiProvider::new(ApiKey::new("sk-test"), model)
+            .with_base_url(server.uri())
+            .with_identity(id, label);
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+    }
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    for req in &requests {
+        let body = String::from_utf8_lossy(&req.body);
+        assert!(
+            !body.contains("session_id"),
+            "unexpected session_id: {body}"
+        );
+    }
+}
+
+/// A fleet of agents constructs one provider per sibling; each must get a
+/// DISTINCT session id, or OpenRouter serializes the whole fleet onto one
+/// upstream + cache shard — the opposite of the point. Tested on the builder
+/// (three constructions), not a live gateway.
+#[test]
+fn distinct_provider_constructions_get_distinct_session_ids() {
+    let ids: Vec<String> = (0..3)
+        .map(|_| {
+            ZaiProvider::new(ApiKey::new("sk-or-test"), "anthropic/claude-sonnet-5")
+                .with_identity("openrouter", "OpenRouter")
+                .session_id()
+                .to_string()
+        })
+        .collect();
+    let unique: std::collections::BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "fleet siblings must not share a session id: {ids:?}"
     );
 }
 

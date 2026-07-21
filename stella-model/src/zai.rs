@@ -5,6 +5,7 @@
 //! — it must work first, not last.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,34 @@ pub struct ZaiProvider {
     /// carries a cost, it overrides catalog list pricing — the gateway
     /// routed the call, only it knows what the call cost.
     usage_accounting: bool,
+    /// Session-stable sticky-routing key, sent as OpenRouter's top-level
+    /// `session_id` (only for the `openrouter` identity — see the field on
+    /// [`ZaiRequest`]). One id per provider construction = one id per agent
+    /// run, so every turn of a session pins to the same upstream provider and
+    /// reuses the prompt cache the previous turn paid to write; distinct per
+    /// construction, so fleet siblings don't serialize on one shard. Mirrors
+    /// the OpenAI adapter's `prompt_cache_key` lifecycle. Volatile by design:
+    /// it rides as a request parameter and never enters the cached bytes.
+    session_id: String,
+}
+
+/// Process-wide monotonic suffix guaranteeing two [`ZaiProvider`]
+/// constructions in the same process — fleet siblings built back-to-back —
+/// get distinct session ids even when the nanosecond clock reads identically
+/// for both. Without it, a tight builder loop could mint colliding ids and
+/// serialize the whole fleet onto one cache shard, the opposite of the point.
+static SESSION_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A fresh session id, `stella-<pid>-<nanos>-<seq>`. Well under OpenRouter's
+/// 256-char limit. The pid+nanos pair scopes it to this run; the atomic seq
+/// makes same-nanos siblings provably distinct.
+fn new_session_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = SESSION_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("stella-{}-{nanos:x}-{seq:x}", std::process::id())
 }
 
 impl ZaiProvider {
@@ -77,7 +106,17 @@ impl ZaiProvider {
             label: "Z.ai".to_string(),
             extra_headers: Vec::new(),
             usage_accounting: false,
+            session_id: new_session_id(),
         }
+    }
+
+    /// The session-stable sticky-routing id minted for this construction.
+    /// Test-only: the fleet-distinctness witness inspects it on the builder
+    /// (no live gateway), and the wire-gating tests assert it appears only on
+    /// the `openrouter` identity's body.
+    #[cfg(test)]
+    pub(crate) fn session_id(&self) -> &str {
+        &self.session_id
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -196,6 +235,19 @@ struct ZaiRequest<'a> {
     /// it, so any other identity keeps it off the wire.
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_control: Option<ZaiCacheControl>,
+    /// OpenRouter's session-stable sticky-routing key (top-level `session_id`,
+    /// ≤256 chars): the gateway routes every request carrying the same id to
+    /// the same upstream provider + cache shard, so consecutive agent turns
+    /// reuse the prompt cache instead of landing on a fresh endpoint that
+    /// re-bills the whole prefix. Without it OpenRouter derives a routing key
+    /// from message hashing, which drifts as the conversation grows — the
+    /// exact reason a session's later turns miss the cache the earlier ones
+    /// wrote. Sent only for the `openrouter` identity (same 400-risk gating as
+    /// `reasoning`/`cache_control`); every other identity keeps it off the
+    /// wire. See the field on [`ZaiProvider`] for the one-per-session,
+    /// distinct-per-sibling lifecycle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<&'a str>,
 }
 
 /// GLM's request-level thinking object: `{"type": "enabled"}` /
@@ -746,6 +798,7 @@ impl ZaiProvider {
                 .then_some(ZaiUsageInclude { include: true }),
             cache_control: (self.id == "openrouter")
                 .then_some(ZaiCacheControl { kind: "ephemeral" }),
+            session_id: (self.id == "openrouter").then_some(self.session_id.as_str()),
         };
 
         let mut request = self

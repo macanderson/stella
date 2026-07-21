@@ -72,7 +72,9 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
         "openrouter",
         CachePosture::OptIn {
             mechanism: "request-root cache_control {type: ephemeral} — required for Claude \
-                        routes, ignored by implicit-cache upstreams",
+                        routes, ignored by implicit-cache upstreams — plus a session-stable \
+                        top-level session_id that pins every turn of a session to the same \
+                        upstream provider + cache shard (sticky routing)",
             witness: "openrouter_identity_sends_root_level_cache_control",
         },
     ),
