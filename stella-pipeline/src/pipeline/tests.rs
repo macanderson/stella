@@ -984,7 +984,11 @@ async fn gather_diff_counts_real_new_file_lines_and_excludes_pre_existing() {
 fn assemble_user_message_puts_recall_before_the_task() {
     let frames = vec![RecalledFrame {
         citation_label: "driver.rs".into(),
+        provider: "code-graph".into(),
         source: "code-graph".into(),
+        kind: "symbol".into(),
+        uri: None,
+        method: None,
         content: "run_turn".into(),
         token_cost: 5,
         id: None,

@@ -26,6 +26,10 @@ use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 use crate::config::Dialect;
 
 mod authority;
+mod private;
+#[cfg(test)]
+#[path = "settings/private_state_tests.rs"]
+mod private_state_tests;
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 use authority::{apply_tool_ceiling, restore_project_prompts, restore_project_tools};
 
@@ -450,6 +454,7 @@ impl AgentEngineConfig {
     /// forward-compat keys survive a TUI save untouched). Creates the file
     /// (and parent directories) when absent.
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        private::reject_symlink(path)?;
         let mut root: serde_json::Value = match std::fs::read_to_string(path) {
             Ok(contents) => serde_json::from_str(&contents)
                 .map_err(|e| format!("invalid settings file {}: {e}", path.display()))?,
@@ -462,14 +467,13 @@ impl AgentEngineConfig {
         let value = serde_json::to_value(self)
             .map_err(|e| format!("cannot serialize agent_engine_config: {e}"))?;
         object.insert("agent_engine_config".to_string(), value);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-        }
         let mut rendered = serde_json::to_string_pretty(&root)
             .map_err(|e| format!("cannot render settings: {e}"))?;
         rendered.push('\n');
-        std::fs::write(path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display()))
+        let user_private = user_settings_path().as_deref() == Some(path);
+        // Project settings are canonical committable configuration: the
+        // persistence layer reserves owner-only atomic writes for user scope.
+        private::write_settings(path, rendered.as_bytes(), user_private)
     }
 }
 

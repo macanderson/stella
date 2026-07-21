@@ -88,12 +88,6 @@ pub struct SessionMemory {
     workspace_root: PathBuf,
     include_workspace_skills: bool,
     skills_created: usize,
-    /// Memory ids (`nod_…`) quarantined from recall: cited untruthful ≥
-    /// [`stella_store::QUARANTINE_NEGATIVES_THRESHOLD`] times (Proposal 3).
-    /// Loaded once at session open and filtered from every recall_block so a
-    /// stale/wrong memory stops misleading future turns. Best-effort: an
-    /// empty set (no store.db, no citations yet) means no filtering.
-    quarantined_ids: std::collections::HashSet<String>,
     /// A/B recall control (Proposal 4): when true, recall is suppressed
     /// entirely on this turn so the outcome can be compared against recalled
     /// turns. Set by `maybe_suppress_recall()` from the turn counter below.
@@ -209,10 +203,16 @@ impl SessionMemory {
         warn: bool,
         include_workspace_skills: bool,
     ) -> Option<Self> {
-        let db_path = workspace_root.join(".stella").join("context.db");
-        if let Some(parent) = db_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        // Store::open establishes the mixed `.stella` directory safely
+        // (0700 from birth when new, existing project mode untouched, no
+        // symlink). The context DB itself is private even when that mixed
+        // directory is intentionally permissive.
+        let privacy_guard = stella_store::Store::open(workspace_root).ok()?;
+        drop(privacy_guard);
+        let db_path = stella_store::prepare_private_sqlite_path(
+            &workspace_root.join(".stella").join("context.db"),
+        )
+        .ok()?;
         match ContextStore::open_and_warm(
             &db_path,
             std::sync::Arc::new(HashEmbedder::default()),
@@ -229,13 +229,6 @@ impl SessionMemory {
                     domains.names(),
                     workspace_root.to_path_buf(),
                 );
-                // Proposal 3: load quarantined memory ids from store.db so
-                // they are filtered from recall for the entire session. A
-                // missing store or a query failure degrades to no filtering.
-                let quarantined_ids = stella_store::Store::open(workspace_root)
-                    .ok()
-                    .map(|s| std::sync::Arc::new(s).quarantined_memory_ids())
-                    .unwrap_or_default();
                 Some(Self {
                     store,
                     host,
@@ -243,7 +236,6 @@ impl SessionMemory {
                     workspace_root: workspace_root.to_path_buf(),
                     include_workspace_skills,
                     skills_created: 0,
-                    quarantined_ids,
                     ab_suppressed: false,
                     ab_turn: 0,
                 })
@@ -283,29 +275,8 @@ impl SessionMemory {
     /// deterministic coin flip), recall returns `None` so the turn runs
     /// without context — the outcome is then comparable to recalled turns.
     pub async fn recall_block(&self, prompt: &str) -> Option<String> {
-        if self.ab_suppressed {
-            return None;
-        }
-
         let mut sections: Vec<String> = Vec::new();
-
-        let query = ContextQuery {
-            goal: prompt.to_string(),
-            query_text: Some(prompt.to_string()),
-            embedding: None,
-            kinds: vec![],
-            anchors: vec![],
-            max_frames: 5,
-            max_tokens: 1200,
-            as_of: None,
-        };
-        // Routed through the session's OCP host: workspace memory + the
-        // code graph answer concurrently, isolated and budget-audited.
-        let mut frames = crate::ocp::recall_via_host(&self.host, &query).await;
-        // Proposal 3: drop quarantined memories before rendering.
-        if !self.quarantined_ids.is_empty() {
-            frames.retain(|f| !self.quarantined_ids.contains(&f.id));
-        }
+        let frames = self.recalled_frames(prompt).await;
         if let Some(section) = render_context_section(&frames) {
             sections.push(section);
         }
@@ -665,16 +636,15 @@ impl SessionMemory {
             }
         }
     }
-}
 
-/// The pipeline's context-recall port over the workspace memory store: the
-/// split-context planner (L-E6) receives the same durable lessons the
-/// worker's injected recall block carries, as structured frames instead of a
-/// rendered string. Frames without a citation label are dropped (L-C4), and
-/// a failed recall degrades to no frames, never an error (L-C6).
-#[async_trait::async_trait]
-impl ContextRecallPort for SessionMemory {
-    async fn recall(&self, goal: &str) -> Vec<RecalledFrame> {
+    /// The single authoritative recall operation for both prompt rendering
+    /// and the staged pipeline. It owns host fan-out, provenance projection,
+    /// A/B suppression, and a FRESH quarantine read so feedback written by a
+    /// previous turn takes effect on the very next recall.
+    async fn recalled_frames(&self, goal: &str) -> Vec<RecalledFrame> {
+        if self.ab_suppressed {
+            return Vec::new();
+        }
         let query = ContextQuery {
             goal: goal.to_string(),
             query_text: Some(goal.to_string()),
@@ -685,20 +655,65 @@ impl ContextRecallPort for SessionMemory {
             max_tokens: 1200,
             as_of: None,
         };
+        let quarantined = stella_store::Store::open(&self.workspace_root)
+            .map(|store| store.quarantined_memory_ids())
+            .unwrap_or_default();
         crate::ocp::recall_via_host(&self.host, &query)
             .await
             .into_iter()
-            .filter_map(|f| {
-                let citation_label = f.citation_label.clone()?;
-                Some(RecalledFrame {
-                    citation_label,
-                    source: "memory".to_string(),
-                    content: f.content.trim().to_string(),
-                    token_cost: f.token_cost,
-                    id: Some(f.id),
-                })
-            })
+            .filter_map(project_recalled_frame)
+            .filter(|frame| frame.id.as_ref().is_none_or(|id| !quarantined.contains(id)))
             .collect()
+    }
+}
+
+/// Lossless projection from the OCP frame plus host-owned provider identity
+/// into the pipeline port shape. The source and method come from the most
+/// derived provenance entries; no frame kind is relabeled as memory.
+fn project_recalled_frame(attributed: crate::ocp::AttributedContextFrame) -> Option<RecalledFrame> {
+    let frame = attributed.frame;
+    let citation_label = frame.citation_label.clone()?;
+    let source = frame
+        .provenance
+        .iter()
+        .rev()
+        .find_map(|entry| entry.by.clone())
+        .unwrap_or_else(|| attributed.provider.clone());
+    let method = frame
+        .provenance
+        .iter()
+        .rev()
+        .find_map(|entry| entry.method.clone());
+    let uri = frame
+        .uri
+        .clone()
+        .or_else(|| frame.provenance.iter().find_map(|entry| entry.uri.clone()));
+    let kind = serde_json::to_value(frame.kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_default();
+    Some(RecalledFrame {
+        citation_label,
+        provider: attributed.provider,
+        source,
+        kind,
+        uri,
+        method,
+        content: frame.content.trim().to_string(),
+        token_cost: frame.token_cost,
+        id: Some(frame.id),
+    })
+}
+
+/// The pipeline's context-recall port over the workspace memory store: the
+/// split-context planner (L-E6) receives the same durable lessons the
+/// worker's injected recall block carries, as structured frames instead of a
+/// rendered string. Frames without a citation label are dropped (L-C4), and
+/// a failed recall degrades to no frames, never an error (L-C6).
+#[async_trait::async_trait]
+impl ContextRecallPort for SessionMemory {
+    async fn recall(&self, goal: &str) -> Vec<RecalledFrame> {
+        self.recalled_frames(goal).await
     }
 }
 
@@ -710,16 +725,16 @@ impl ContextRecallPort for SessionMemory {
 /// episodes) keep the plain label form: they are grounding, not memories,
 /// and never enter the citation → promotion loop. `None` when no frame has
 /// a citation label (L-C4 filters the rest).
-fn render_context_section(frames: &[ocp_types::ContextFrame]) -> Option<String> {
+fn render_context_section(frames: &[RecalledFrame]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut citable = false;
     for f in frames {
-        let Some(label) = f.citation_label.as_deref() else {
-            continue;
-        };
-        if f.kind == ocp_types::FrameKind::Memory {
+        let label = &f.citation_label;
+        if f.kind == "memory" {
             citable = true;
-            lines.push(format!("- [{}] {} — {}", f.id, label, f.content.trim()));
+            if let Some(id) = &f.id {
+                lines.push(format!("- [{id}] {label} — {}", f.content.trim()));
+            }
         } else {
             lines.push(format!("- {} — {}", label, f.content.trim()));
         }
@@ -1062,7 +1077,26 @@ mod tests {
         assert_eq!(before, after, "suppressed recall leaves history untouched");
     }
 
-    fn frame(
+    fn frame(id: &str, kind: ocp_types::FrameKind, label: &str, content: &str) -> RecalledFrame {
+        let kind = serde_json::to_value(kind)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        RecalledFrame {
+            citation_label: label.into(),
+            provider: "workspace-memory".into(),
+            source: "stella-context".into(),
+            kind,
+            uri: None,
+            method: None,
+            content: content.into(),
+            token_cost: 10,
+            id: Some(id.into()),
+        }
+    }
+
+    fn ocp_frame(
         id: &str,
         kind: ocp_types::FrameKind,
         label: &str,
@@ -1131,9 +1165,149 @@ mod tests {
 
         // No labeled frames at all → no section (an empty block only burns
         // cache).
-        let mut unlabeled = frame("nod_ddd", ocp_types::FrameKind::Memory, "x", "y");
-        unlabeled.citation_label = None;
-        assert!(render_context_section(&[unlabeled]).is_none());
+        assert!(render_context_section(&[]).is_none());
+    }
+
+    #[test]
+    fn graph_frame_projection_preserves_provider_and_origin_provenance() {
+        let mut graph = ocp_frame(
+            "code-graph:sym:src/lib.rs:7:run",
+            ocp_types::FrameKind::Symbol,
+            "fn run (src/lib.rs:7)",
+            "fn run() {}",
+        );
+        graph.uri = Some("file:///repo/src/lib.rs".into());
+        graph.provenance = vec![
+            ocp_types::Provenance {
+                kind: "file".into(),
+                uri: graph.uri.clone(),
+                range: Some("L7-9".into()),
+                digest: None,
+                method: None,
+                by: None,
+            },
+            ocp_types::Provenance {
+                kind: "derivation".into(),
+                uri: None,
+                range: None,
+                digest: None,
+                method: Some("tree-sitter/symbol-extract".into()),
+                by: Some("code-graph".into()),
+            },
+        ];
+
+        let recalled = project_recalled_frame(crate::ocp::AttributedContextFrame {
+            provider: "code-graph".into(),
+            frame: graph,
+        })
+        .expect("labeled graph frame projects");
+
+        assert_eq!(recalled.provider, "code-graph");
+        assert_eq!(recalled.source, "code-graph");
+        assert_eq!(recalled.kind, "symbol");
+        assert_eq!(recalled.uri.as_deref(), Some("file:///repo/src/lib.rs"));
+        assert_eq!(
+            recalled.method.as_deref(),
+            Some("tree-sitter/symbol-extract")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fresh_quarantine_filters_rendered_and_pipeline_recall_next_time() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
+        let memory = SessionMemory::open(dir.path(), false).expect("session memory");
+        let lesson = "always use the obsolete frobnicator for database migrations";
+        memory
+            .store
+            .upsert(ContextDelta {
+                memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+                ..ContextDelta::default()
+            })
+            .await
+            .unwrap();
+
+        let before = ContextRecallPort::recall(&memory, lesson).await;
+        let memory_id = before
+            .iter()
+            .find(|frame| frame.content.contains("frobnicator"))
+            .and_then(|frame| frame.id.clone())
+            .expect("new memory is recallable before feedback");
+        let rendered_before = memory.recall_block(lesson).await.expect("recall block");
+        assert!(rendered_before.contains("frobnicator"));
+
+        let feedback = stella_store::Store::open(dir.path()).unwrap();
+        for turn in 0..2 {
+            let execution = feedback
+                .begin_execution("test", &format!("turn {turn}"), "local", "test")
+                .unwrap();
+            feedback
+                .record_memory_citations(
+                    execution,
+                    &[stella_store::MemoryCitationRow {
+                        memory_id: memory_id.clone(),
+                        useful_score: 1,
+                        truthful: false,
+                        remark: "verified stale".into(),
+                    }],
+                )
+                .unwrap();
+        }
+
+        let pipeline_after = ContextRecallPort::recall(&memory, lesson).await;
+        assert!(
+            pipeline_after
+                .iter()
+                .all(|frame| frame.id.as_deref() != Some(&memory_id)),
+            "pipeline recall must apply quarantine written after session open"
+        );
+        let rendered_after = memory.recall_block(lesson).await;
+        assert!(
+            rendered_after
+                .as_deref()
+                .is_none_or(|block| !block.contains("frobnicator")),
+            "rendered recall must use the same freshly quarantined frame set"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn context_database_is_private_inside_permissive_dot_stella() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let dot = dir.path().join(".stella");
+        std::fs::create_dir_all(&dot).unwrap();
+        std::fs::set_permissions(&dot, std::fs::Permissions::from_mode(0o777)).unwrap();
+        drop(SessionMemory::open(dir.path(), false).expect("memory opens"));
+
+        let mode = |path: &Path| {
+            std::fs::symlink_metadata(path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode(&dot), 0o777, "mixed project directory is untouched");
+        assert_eq!(mode(&dot.join("context.db")), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn context_database_symlink_is_rejected_without_touching_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let dot = dir.path().join(".stella");
+        std::fs::create_dir_all(&dot).unwrap();
+        let target = dir.path().join("outside.db");
+        let external = ContextStore::open(&target).unwrap();
+        drop(external);
+        let before = std::fs::read(&target).unwrap();
+        symlink(&target, dot.join("context.db")).unwrap();
+
+        assert!(SessionMemory::open(dir.path(), false).is_none());
+        assert_eq!(std::fs::read(&target).unwrap(), before);
     }
 
     #[test]

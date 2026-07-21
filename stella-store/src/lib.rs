@@ -93,6 +93,9 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //   usage      `usage.db` — user-tier cross-project telemetry aggregate
 mod ddl;
 mod migrations;
+mod private;
+#[cfg(test)]
+mod private_state_tests;
 
 pub mod catalog;
 pub mod journal;
@@ -114,6 +117,11 @@ pub use catalog::CatalogStore;
 // natural name. Reach the writer through its module.
 pub use journal::JournalRecord;
 pub use notify::{Notification, NotificationStore};
+pub use private::prepare_private_sqlite_path;
+pub(crate) use private::{
+    ensure_private_dir, open_private_file, open_private_sqlite, read_private_to_string,
+    write_private_atomic,
+};
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 
 /// FNV-1a/64 hex — a stable, dependency-free digest for prompt hashes and
@@ -495,14 +503,20 @@ impl UsageStatsRow {
 ///   ignored (the DB open right after surfaces a genuinely unusable
 ///   directory).
 fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(dir)
+        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", dir.display())))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StoreError(format!(
+            "workspace state path {} is not a real directory",
+            dir.display()
+        )));
+    }
     #[cfg(unix)]
     if created {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
             StoreError(format!(
-                "could not restrict permissions on freshly created {} (chmod 0700 failed: {e}); \
-                 refusing transcript persistence rather than writing sensitive session data \
-                 into a world-readable directory",
+                "could not restrict freshly created {}: {e}",
                 dir.display()
             ))
         })?;
@@ -536,11 +550,34 @@ impl Store {
     /// and apply the schema.
     pub fn open(workspace_root: &Path) -> Result<Self> {
         let dir = workspace_root.join(".stella");
-        let created = !dir.exists();
-        std::fs::create_dir_all(&dir).map_err(|e| StoreError(e.to_string()))?;
+        let created = match std::fs::symlink_metadata(&dir) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(StoreError(format!(
+                        "workspace state path {} is not a real directory",
+                        dir.display()
+                    )));
+                }
+                false
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut builder = std::fs::DirBuilder::new();
+                builder.recursive(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::DirBuilderExt;
+                    builder.mode(0o700);
+                }
+                builder
+                    .create(&dir)
+                    .map_err(|e| StoreError(e.to_string()))?;
+                true
+            }
+            Err(error) => return Err(StoreError(error.to_string())),
+        };
         harden_workspace_dir(&dir, created)?;
         Self::init(
-            Connection::open(dir.join("store.db"))?,
+            open_private_sqlite(&dir.join("store.db"))?,
             Some(workspace_root.to_path_buf()),
         )
     }

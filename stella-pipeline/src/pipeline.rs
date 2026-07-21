@@ -1842,11 +1842,11 @@ impl<'a> Pipeline<'a> {
         let tokens: u32 = frames.iter().map(|f| f.token_cost).sum();
         let mut mix: Vec<ProviderShare> = Vec::new();
         for f in frames {
-            if let Some(share) = mix.iter_mut().find(|s| s.provider == f.source) {
+            if let Some(share) = mix.iter_mut().find(|s| s.provider == f.provider) {
                 share.frames += 1;
             } else {
                 mix.push(ProviderShare {
-                    provider: f.source.clone(),
+                    provider: f.provider.clone(),
                     frames: 1,
                 });
             }
@@ -1856,7 +1856,11 @@ impl<'a> Pipeline<'a> {
             .map(|f| ContextFrameRef {
                 id: f.id.clone(),
                 citation_label: f.citation_label.clone(),
+                provider: f.provider.clone(),
                 source: f.source.clone(),
+                kind: f.kind.clone(),
+                uri: f.uri.clone(),
+                method: f.method.clone(),
                 token_cost: f.token_cost,
             })
             .collect();

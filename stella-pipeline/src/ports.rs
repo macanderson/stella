@@ -47,9 +47,17 @@ pub trait ProviderResolver: Send + Sync {
 pub struct RecalledFrame {
     /// Human-readable citation, never a raw id (L-C4).
     pub citation_label: String,
-    /// Which provider produced the frame (`"code-graph"`, `"memory"`,
-    /// `"git-history"`, or an external OCP provider id).
+    /// The OCP provider leg that returned this frame.
+    pub provider: String,
+    /// The record's original source from its provenance chain. This can
+    /// differ from `provider` when an adapter fronts another context store.
     pub source: String,
+    /// Protocol frame kind (`symbol`, `memory`, `graph`, ...).
+    pub kind: String,
+    /// Canonical source URI, when declared.
+    pub uri: Option<String>,
+    /// Most-derived provenance method, when declared.
+    pub method: Option<String>,
     /// The actual text injected into the volatile recall message.
     pub content: String,
     /// Token cost of this frame, for the `ContextRecall` event's budget

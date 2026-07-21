@@ -715,7 +715,11 @@ mod tests {
     fn witness_prompt_carries_goal_structure_recall_and_marker() {
         let recall = vec![RecalledFrame {
             citation_label: "memory: retries".to_string(),
+            provider: "workspace-memory".to_string(),
             source: "memory".to_string(),
+            kind: "memory".to_string(),
+            uri: None,
+            method: None,
             content: "retry policy is deterministic".to_string(),
             token_cost: 4,
             id: None,
