@@ -161,6 +161,23 @@ def _write_claim_elf(path: Path, source_commit: str = _TEST_SOURCE_COMMIT) -> Pa
     return path
 
 
+def _write_runtime_assembled_claim_elf(
+    path: Path, source_commit: str = _TEST_SOURCE_COMMIT
+) -> Path:
+    """Model the old Rust binary, whose version pieces were separate literals."""
+    header = bytearray(64)
+    header[:7] = b"\x7fELF\x02\x01\x01"
+    header[18:20] = (62).to_bytes(2, "little")
+    path.write_bytes(
+        bytes(header)
+        + b"0.4.49-dev.\0"
+        + source_commit.encode("ascii")
+        + b"\0stella v\0"
+    )
+    path.chmod(0o755)
+    return path
+
+
 def _claim_environment(binary: Path, **overrides: str) -> dict[str, str]:
     environment = {
         "OPENROUTER_API_KEY": "test-secret",
@@ -1609,6 +1626,17 @@ def test_claim_environment_accepts_only_frozen_controls_and_stamped_elf(
         binary,
         _TEST_SOURCE_COMMIT,
     )
+
+
+def test_claim_environment_rejects_runtime_assembled_version_literals(
+    tmp_path: Path,
+) -> None:
+    binary = _write_runtime_assembled_claim_elf(tmp_path / "stella")
+
+    assert _binary_version_source_commits(binary) == set()
+    assert launcher_module._binary_version_texts(binary) == set()
+    with pytest.raises(RuntimeError, match="compile-time version bytes"):
+        _validate_claim_environment(_claim_environment(binary))
 
 
 @pytest.mark.parametrize(

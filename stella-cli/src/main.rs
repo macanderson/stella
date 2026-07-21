@@ -523,23 +523,22 @@ enum MemoryCmd {
     Validate,
 }
 
-/// The version string shown by `--version` and `stella version`: the crate
-/// version, plus the git sha stamped by dev-mode builds (`scripts/dev.sh`
-/// sets `STELLA_BUILD_GIT_SHA` at compile time) so a `stella-dev` binary
-/// always names the exact checkout it was built from. Release builds carry
-/// no stamp and print the bare semver, unchanged.
-fn version_string() -> String {
-    match option_env!("STELLA_BUILD_GIT_SHA") {
-        Some(sha) if !sha.is_empty() => format!("{}-dev.{sha}", env!("CARGO_PKG_VERSION")),
-        _ => env!("CARGO_PKG_VERSION").to_string(),
-    }
+/// NUL boundaries prevent LLVM's string pooling from adjoining identifier
+/// characters to the version bytes. The claim launcher can therefore attest
+/// the full compile-time identity without executing the binary.
+const BUILD_VERSION_IDENTITY: &str = concat!("\0", env!("STELLA_BUILD_VERSION"), "\0");
+
+/// The version string shown by `--version` and `stella version`. `build.rs`
+/// turns an optional compile-time `STELLA_BUILD_GIT_SHA` into one contiguous
+/// literal; this returns the interior of the deliberately delimited identity.
+/// Ordinary release builds still carry the bare package version.
+fn version_string() -> &'static str {
+    &BUILD_VERSION_IDENTITY[1..BUILD_VERSION_IDENTITY.len() - 1]
 }
 
-/// clap's `version` attribute needs a `'static` string, but the dev stamp is
-/// assembled at runtime — leak it once at parse time (a few bytes, once per
-/// process).
+/// clap's `version` attribute needs a `'static` string.
 fn version_static() -> &'static str {
-    version_string().leak()
+    version_string()
 }
 
 /// Whether `chat` should launch the Command Deck: an explicit `--plain` or
