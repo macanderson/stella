@@ -324,6 +324,30 @@ fn openrouter_reasoning(
     }
 }
 
+/// Whether an xAI model accepts the `reasoning_effort` parameter. Verified
+/// against xAI docs (2026-07): the ORIGINAL `grok-4` (and its dated snapshots,
+/// `grok-4-<date>`) reasons but rejects the param with a hard 400 ("does not
+/// support parameter reasoning_effort") — while grok-3-mini, the grok-4 point
+/// releases (`grok-4.1`/`.3`/`.5`), and the `grok-4-fast*` variants all accept
+/// it. Sending it to the original grok-4 (the currently-seeded xai default,
+/// deprecated and retiring 2026-08-15) would 400 every reasoning turn, so it is
+/// gated out here — grok-4 keeps the pre-wiring behaviour (reasons at its own
+/// fixed depth, effort dropped) instead of erroring. Fail-safe direction is to
+/// send: the fleet has trended toward universal support, and only the retiring
+/// original is denied.
+fn xai_supports_reasoning_effort(model: &str) -> bool {
+    if model == "grok-4" {
+        return false;
+    }
+    // A dated snapshot of the original (`grok-4-0709`) is digits after the
+    // `grok-4-` stem; named variants (`grok-4-fast-reasoning`) are not, and the
+    // point releases (`grok-4.5`) don't match the `grok-4-` prefix at all.
+    if let Some(rest) = model.strip_prefix("grok-4-") {
+        return !(!rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()));
+    }
+    true
+}
+
 /// Map the engine's one `ReasoningEffort` enum to xAI's chat-completions
 /// `reasoning_effort`, which documents `low`/`medium`/`high`. Same collapse
 /// posture as `openai.rs::map_reasoning_effort`: never drop the hint, never
@@ -840,8 +864,10 @@ impl ZaiProvider {
             // (OpenAI-compatible), which the shared adapter used to drop
             // silently for the xai identity. Gated exactly like `reasoning` is
             // to openrouter: only the xai identity sends it, so no other
-            // OpenAI-compatible server sees a key it might reject.
-            reasoning_effort: (self.id == "xai")
+            // OpenAI-compatible server sees a key it might reject — and, within
+            // xai, only for models that accept the param (the original grok-4
+            // 400s on it; see [`xai_supports_reasoning_effort`]).
+            reasoning_effort: (self.id == "xai" && xai_supports_reasoning_effort(&self.model))
                 .then(|| xai_reasoning_effort(req.reasoning, req.effort))
                 .flatten(),
             tools: to_zai_tools(&req.tools),

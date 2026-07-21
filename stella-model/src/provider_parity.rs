@@ -260,7 +260,8 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
         "xai",
         ReasoningPosture::Controllable {
             mechanism: "chat-completions top-level reasoning_effort (low/medium/high), gated to \
-                        the xai identity on the shared adapter",
+                        the xai identity on the shared adapter — and, within xai, skipped for the \
+                        original grok-4, which reasons but 400s on the param (retiring 2026-08-15)",
             witness: "xai_identity_maps_effort_to_reasoning_effort",
         },
     ),

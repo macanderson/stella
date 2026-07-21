@@ -1282,13 +1282,15 @@ async fn other_identities_ignore_reasoning_entirely() {
 /// a pinned effort silently for the xai identity; now it maps `effort`
 /// (low/medium/high, finer tiers collapsing to high) and honors an explicit
 /// on/off, gated to the xai identity exactly like `reasoning` is gated to
-/// openrouter. This is the reasoning-parity-matrix witness for `xai`.
+/// openrouter. Uses `grok-4.5` (a point release that accepts the param — the
+/// original `grok-4` 400s on it and is covered separately). This is the
+/// reasoning-parity-matrix witness for `xai`.
 #[tokio::test]
 async fn xai_identity_maps_effort_to_reasoning_effort() {
     let server = MockServer::start().await;
     mock_ok(&server).await;
 
-    let provider = ZaiProvider::new(ApiKey::new("xai-test"), "grok-4")
+    let provider = ZaiProvider::new(ApiKey::new("xai-test"), "grok-4.5")
         .with_base_url(server.uri())
         .with_identity("xai", "xAI");
     let req = |reasoning, effort| CompletionRequest {
@@ -1352,6 +1354,57 @@ async fn xai_identity_maps_effort_to_reasoning_effort() {
     // xAI never speaks GLM's `thinking` object or OpenRouter's `reasoning`.
     assert!(!bodies[0].contains("thinking"), "{}", bodies[0]);
     assert!(!bodies[0].contains("\"reasoning\":"), "{}", bodies[0]);
+}
+
+/// Regression guard for the one xAI reasoning model that 400s on the param:
+/// the ORIGINAL `grok-4` (deprecated, retiring 2026-08-15, and the currently-
+/// seeded xai default) reasons but rejects `reasoning_effort`. Sending it on
+/// every auto-mode turn would break the default path, so the adapter gates it
+/// out for grok-4 while still sending it for the models that accept it —
+/// grok-4 keeps the pre-wiring behaviour (reasons at its own depth, effort
+/// dropped) instead of erroring. A dated snapshot (`grok-4-0709`) is exempt the
+/// same way; the point releases and fast variants are not.
+#[tokio::test]
+async fn xai_original_grok4_omits_reasoning_effort_it_would_reject() {
+    let server = MockServer::start().await;
+    mock_ok(&server).await;
+
+    for model in ["grok-4", "grok-4-0709"] {
+        let provider = ZaiProvider::new(ApiKey::new("xai-test"), model)
+            .with_base_url(server.uri())
+            .with_identity("xai", "xAI");
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: Some(ReasoningEffort::High),
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+    }
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    for req in &requests {
+        let body = String::from_utf8_lossy(&req.body);
+        assert!(!body.contains("reasoning_effort"), "{body}");
+    }
+}
+
+/// Unit cover for the model gate that keeps the original grok-4 from a 400.
+#[test]
+fn xai_reasoning_effort_support_denies_only_the_original_grok4() {
+    // Rejects the param → gated out.
+    assert!(!xai_supports_reasoning_effort("grok-4"));
+    assert!(!xai_supports_reasoning_effort("grok-4-0709"));
+    // Accepts the param → sent.
+    assert!(xai_supports_reasoning_effort("grok-4.5"));
+    assert!(xai_supports_reasoning_effort("grok-4.1"));
+    assert!(xai_supports_reasoning_effort("grok-4-fast-reasoning"));
+    assert!(xai_supports_reasoning_effort("grok-3-mini"));
 }
 
 /// The byte-stability contract for `reasoning_effort`: the field is xai-only,
