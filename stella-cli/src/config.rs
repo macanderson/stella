@@ -478,7 +478,11 @@ impl Config {
             settings,
             workspace_root,
         )?;
-        cfg.hooks = settings.hooks.clone();
+        cfg.hooks = if crate::enterprise_telemetry::process_free_authority_active() {
+            None
+        } else {
+            settings.hooks.clone()
+        };
         cfg.engine_settings = settings.agent_engine_config.clone();
         cfg.authority = settings.authority_policy;
         cfg.tools_bash = settings.bash_tool_enabled() && cfg.authority.bash_allowed;

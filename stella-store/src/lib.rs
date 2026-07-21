@@ -173,6 +173,10 @@ fn validate_json_properties(properties: &str) -> Result<()> {
         .map_err(|e| StoreError(format!("graph properties are not valid JSON: {e}")))
 }
 
+fn sqlite_i64(name: &str, value: u64) -> Result<i64> {
+    i64::try_from(value).map_err(|_| StoreError(format!("{name} exceeds SQLite INTEGER range")))
+}
+
 /// One StepUsage-shaped telemetry record (mirrors the event, plus the
 /// derived cache-miss column so analytics never re-derive it).
 #[derive(Debug, Clone, PartialEq)]
@@ -583,6 +587,9 @@ impl Store {
             root,
         };
         store.migrate()?;
+        store
+            .lock()
+            .execute_batch(enterprise_telemetry::STORE_EXPORT_TABLES_DDL)?;
         Ok(store)
     }
 
@@ -684,11 +691,9 @@ impl Store {
         Ok(())
     }
 
-    /// Append one event to the execution's stream. `seq` is the caller's
-    /// monotonically increasing counter (the event drain loop owns order).
-    /// `(execution_id, seq)` is UNIQUE — a double-write of the same stream
-    /// position errors instead of silently corrupting the replay.
+    /// Append one uniquely sequenced event to the execution stream.
     pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
+        let seq = sqlite_i64("event sequence", seq)?;
         let payload = serde_json::to_string(event).map_err(|e| StoreError(e.to_string()))?;
         // Read the internally-tagged `type` from the parsed value rather than
         // string-scanning for the first `"type":"` literal — the scan silently
@@ -700,15 +705,26 @@ impl Store {
             .unwrap_or_else(|| "unknown".into());
         self.lock().execute(
             "INSERT INTO events (execution_id, seq, event_type, payload) VALUES (?, ?, ?, ?)",
-            params![execution_id, seq as i64, event_type, payload],
+            params![execution_id, seq, event_type, payload],
         )?;
         Ok(())
     }
 
-    /// Record one model call's telemetry. `(execution_id, step)` is UNIQUE —
-    /// `StepUsage` lands exactly once per step, and a double-write would
-    /// double-count tokens and cost in `usage_stats`.
+    /// Record one uniquely stepped model call's telemetry.
     pub fn record_telemetry(&self, execution_id: i64, row: &TelemetryRow) -> Result<()> {
+        let step = sqlite_i64("telemetry step", row.step)?;
+        let input_tokens = sqlite_i64("telemetry input tokens", row.input_tokens)?;
+        let estimated_input_tokens = sqlite_i64(
+            "telemetry estimated input tokens",
+            row.estimated_input_tokens,
+        )?;
+        let output_tokens = sqlite_i64("telemetry output tokens", row.output_tokens)?;
+        let cache_read_tokens = sqlite_i64("telemetry cache-read tokens", row.cache_read_tokens)?;
+        let cache_miss_tokens = sqlite_i64("telemetry cache-miss tokens", row.cache_miss_tokens)?;
+        let cache_write_tokens =
+            sqlite_i64("telemetry cache-write tokens", row.cache_write_tokens)?;
+        let duration_ms = sqlite_i64("telemetry duration", row.duration_ms)?;
+        let tool_calls = sqlite_i64("telemetry tool calls", row.tool_calls)?;
         self.lock().execute(
             "INSERT INTO telemetry (execution_id, step, provider, model, input_tokens, \
              estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
@@ -716,19 +732,19 @@ impl Store {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
-                row.step as i64,
+                step,
                 row.provider,
                 row.model,
-                row.input_tokens as i64,
-                row.estimated_input_tokens as i64,
-                row.output_tokens as i64,
-                row.cache_read_tokens as i64,
-                row.cache_miss_tokens as i64,
-                row.cache_write_tokens as i64,
+                input_tokens,
+                estimated_input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_miss_tokens,
+                cache_write_tokens,
                 row.cost_usd,
-                row.duration_ms as i64,
+                duration_ms,
                 row.retries,
-                row.tool_calls as i64,
+                tool_calls,
             ],
         )?;
         Ok(())
@@ -775,12 +791,12 @@ impl Store {
         Ok(samples)
     }
 
-    /// Persist the file-touch telemetry for an execution: one row per
-    /// normalized path. UNIQUE (execution_id, path) makes a duplicate record
-    /// for the same path an error instead of a silent double-count.
+    /// Persist one file-touch row per normalized execution path.
     pub fn record_files_touched(&self, execution_id: i64, files: &[FileTouchRow]) -> Result<()> {
         let conn = self.lock();
         for row in files {
+            let lines_added = sqlite_i64("file lines added", row.lines_added)?;
+            let lines_removed = sqlite_i64("file lines removed", row.lines_removed)?;
             conn.execute(
                 "INSERT INTO files_touched \
                  (execution_id, path, ops, lines_added, lines_removed, events) \
@@ -789,8 +805,8 @@ impl Store {
                     execution_id,
                     row.path,
                     row.ops,
-                    row.lines_added as i64,
-                    row.lines_removed as i64,
+                    lines_added,
+                    lines_removed,
                     row.events_json,
                 ],
             )?;
@@ -798,11 +814,7 @@ impl Store {
         Ok(())
     }
 
-    /// Persist the memory citations for an execution: one row per cited
-    /// memory. UNIQUE (execution_id, memory_id) makes a duplicate citation of
-    /// the same memory within one execution an error instead of a silent
-    /// double-count — the session ledger already collapses re-cites to the
-    /// model's latest judgment before handing rows in.
+    /// Persist one citation row per execution/memory pair.
     pub fn record_memory_citations(
         &self,
         execution_id: i64,
@@ -826,8 +838,7 @@ impl Store {
         Ok(())
     }
 
-    /// Record the agent invocations drained from one execution's ledger —
-    /// one row per invocation, never aggregated (see [`AgentUseRow`]).
+    /// Record non-aggregated agent invocations from one execution.
     pub fn record_agent_uses(&self, execution_id: i64, uses: &[AgentUseRow]) -> Result<()> {
         let conn = self.lock();
         for row in uses {

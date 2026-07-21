@@ -3271,6 +3271,7 @@ version = "0.4.49"
 dependencies = [
  "base64",
  "libc",
+ "rand 0.10.2",
  "rusqlite",
  "serde",
  "serde_json",

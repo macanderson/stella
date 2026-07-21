@@ -119,6 +119,16 @@ pub fn scrub_sensitive_env(cmd: &mut Command) {
     }
 }
 
+/// Synchronous-command counterpart used by fixed helper probes.
+pub fn scrub_sensitive_std_env(cmd: &mut std::process::Command) {
+    let registered = sensitive_env_names()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for name in registered.iter() {
+        cmd.env_remove(name);
+    }
+}
+
 /// Run `command` via `bash -c` in `dir`. Returns `(exit_code, combined
 /// stdout+stderr)`; `Err` is spawn failure or timeout (the process group is
 /// killed on timeout so nothing lingers).

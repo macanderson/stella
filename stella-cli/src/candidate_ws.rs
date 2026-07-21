@@ -104,6 +104,7 @@ async fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
 /// env, no prompt.
 async fn git_stdout_to_file(repo: &Path, args: &[&str], out: &Path) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new("git");
+    stella_tools::exec::scrub_sensitive_env(&mut cmd);
     cmd.arg("-C").arg(repo).args(args);
     cmd.env("GIT_TERMINAL_PROMPT", "0");
     for var in stella_tools::exec::GIT_REPO_ENV_VARS {
@@ -726,6 +727,7 @@ mod tests {
     /// return stdout. Panics on failure: these are test fixtures.
     fn scratch_git(root: &Path, args: &[&str]) -> String {
         let mut cmd = std::process::Command::new("git");
+        stella_tools::exec::scrub_sensitive_std_env(&mut cmd);
         cmd.args(args).current_dir(root);
         for var in stella_tools::exec::GIT_REPO_ENV_VARS {
             cmd.env_remove(var);

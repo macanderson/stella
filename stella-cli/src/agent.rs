@@ -1235,9 +1235,10 @@ pub(crate) enum McpPlan {
     Servers(Vec<McpServerConfig>),
 }
 
-/// Stage 1 of MCP assembly: read and parse the workspace config. Local file
-/// I/O only — never touches the network.
 pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
+    if crate::enterprise_telemetry::process_free_authority_active() {
+        return McpPlan::None;
+    }
     let path = cfg.workspace_root.join(".stella").join("mcp.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return McpPlan::None;
@@ -1344,14 +1345,13 @@ pub(crate) async fn connect_mcp(
     Ok(Some(set))
 }
 
-/// Discover developer-defined custom script tools (.stella/tools/*.toml,
-/// then ~/.config/stella/tools/*.toml — workspace wins on collision; see
-/// stella_tools::custom). Broken manifests never abort a session: their
-/// diagnostics print once (text mode) and show up in `stella tools`.
 pub(crate) async fn discover_custom_tools(
     cfg: &Config,
     print_diagnostics: bool,
 ) -> Vec<CustomTool> {
+    if crate::enterprise_telemetry::process_free_authority_active() {
+        return Vec::new();
+    }
     // The manifest walk is synchronous directory I/O — off the runtime
     // worker thread it goes (#64).
     let root = cfg.workspace_root.clone();

@@ -11,8 +11,9 @@ use stella_store::enterprise_telemetry::StellaOperationalEventV1;
 use stella_store::usage::ExecutionRollupRow;
 
 use crate::enterprise_telemetry::{
-    BatchSender, build_runtime_from_managed, host_spool_path, register_project_env_names,
-    validate_response_status, verify_managed_enrollment,
+    BatchSender, StartupAuthoritySnapshot, build_runtime_from_managed, canonical_enrollment_bytes,
+    host_spool_path, prove_process_free_surface, validate_response_status,
+    verify_managed_enrollment,
 };
 use crate::settings::Settings;
 use crate::{Cli, Command, TelemetryCmd};
@@ -28,6 +29,56 @@ impl EnvRestore {
                 .map(|name| ((*name).to_string(), std::env::var_os(name)))
                 .collect(),
         )
+    }
+}
+
+#[test]
+fn process_free_surface_enumeration_omits_every_spawn_and_extension_action() {
+    use stella_core::ports::ToolExecutor;
+    use stella_tools::media::HostDataIsolation;
+
+    let dir = tempfile::tempdir().unwrap();
+    prove_process_free_surface(dir.path()).unwrap();
+    let registry = stella_tools::ToolRegistry::with_backends_and_options(
+        dir.path().to_path_buf(),
+        None,
+        None,
+        stella_tools::RegistryOptions {
+            bash: true,
+            web: false,
+            media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
+            ..Default::default()
+        },
+    );
+    assert!(registry.is_process_free());
+    let (events, _) = tokio::sync::mpsc::unbounded_channel();
+    let interactive = crate::interactive::InteractiveToolSet::new(
+        &registry,
+        events,
+        Box::new(crate::interactive::HeadlessAskUserIo),
+    );
+    let names: std::collections::BTreeSet<String> = interactive
+        .schemas()
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect();
+    for forbidden in [
+        "bash",
+        "grep",
+        "glob",
+        "gather_context",
+        "process_start",
+        "process_write",
+        "process_poll",
+        "test_start",
+        "test_poll",
+        "search_skills",
+        "install_skill",
+    ] {
+        assert!(
+            !names.contains(forbidden),
+            "process action exposed: {forbidden}"
+        );
     }
 }
 
@@ -55,12 +106,21 @@ struct TestClaims {
     endpoint: &'static str,
     credential_env: &'static str,
     event_classes: Vec<&'static str>,
+    host_data_isolation: &'static str,
+    model_catalog: Vec<TestModelDimension>,
     issued_at_unix_s: i64,
     expires_at_unix_s: i64,
 }
 
+#[derive(Clone, Serialize)]
+struct TestModelDimension {
+    provider: &'static str,
+    model: &'static str,
+}
+
 fn signed_managed(secret_env: &str, secret: &[u8], claims: TestClaims) -> Value {
-    let bytes = serde_json::to_vec(&claims).unwrap();
+    let claims_value = serde_json::to_value(&claims).unwrap();
+    let bytes = canonical_enrollment_bytes(&claims_value).unwrap();
     let mut mac = Hmac::<Sha256>::new_from_slice(secret).unwrap();
     mac.update(&bytes);
     let signature_hex: String = mac
@@ -74,6 +134,7 @@ fn signed_managed(secret_env: &str, secret: &[u8], claims: TestClaims) -> Value 
         "allowed_issuers": ["oxagen-enterprise"],
         "allowed_audiences": ["stella-cli"],
         "allowed_endpoints": ["https://telemetry.oxagen.test/v1/events"],
+        "host_data_isolation": "process_free",
         "enrollment": {
             "claims": claims,
             "signature_hex": signature_hex
@@ -92,6 +153,11 @@ fn valid_claims() -> TestClaims {
         endpoint: "https://telemetry.oxagen.test/v1/events",
         credential_env: "STELLA_TEST_TELEMETRY_TOKEN",
         event_classes: vec!["execution_rollup"],
+        host_data_isolation: "process_free",
+        model_catalog: vec![TestModelDimension {
+            provider: "anthropic",
+            model: "anthropic/claude-sonnet-4",
+        }],
         issued_at_unix_s: 1_700_000_000,
         expires_at_unix_s: 1_700_003_600,
     }
@@ -173,6 +239,7 @@ fn telemetry_status_and_flush_are_explicit_provider_free_commands() {
     for (name, expected) in [
         ("status", TelemetryCmd::Status),
         ("flush", TelemetryCmd::Flush),
+        ("rollover-discard", TelemetryCmd::RolloverDiscard),
     ] {
         let cli = Cli::try_parse_from(["stella", "telemetry", name]).unwrap();
         assert!(matches!(
@@ -192,18 +259,24 @@ fn redirects_and_non_success_http_responses_remain_retryable_failures() {
 #[test]
 fn enrollment_is_strict_signed_current_https_and_operational_only() {
     let _env = crate::test_env::lock();
-    let _restore = EnvRestore::capture(&["STELLA_TEST_VERIFY_SECRET"]);
+    let _restore =
+        EnvRestore::capture(&["STELLA_TEST_VERIFY_SECRET", "STELLA_TEST_TELEMETRY_TOKEN"]);
     let secret = b"0123456789abcdef0123456789abcdef";
     unsafe {
         std::env::set_var(
             "STELLA_TEST_VERIFY_SECRET",
             "0123456789abcdef0123456789abcdef",
-        )
+        );
+        std::env::set_var("STELLA_TEST_TELEMETRY_TOKEN", "separate-bearer-token")
     };
     let now = 1_700_000_001;
 
     let valid = signed_managed("STELLA_TEST_VERIFY_SECRET", secret, valid_claims());
     assert!(verify_managed_enrollment(&valid, now).is_ok());
+
+    let mut no_confinement = valid.clone();
+    no_confinement["host_data_isolation"] = json!("process_capable");
+    assert!(verify_managed_enrollment(&no_confinement, now).is_err());
 
     let mut malformed_allowlist = valid.clone();
     malformed_allowlist["allowed_endpoints"] = json!([
@@ -265,7 +338,92 @@ fn enrollment_is_strict_signed_current_https_and_operational_only() {
     let mut unknown = valid;
     unknown["enrollment"]["claims"]["prompt"] = json!("must reject unknown content");
     assert!(verify_managed_enrollment(&unknown, now).is_err());
-    unsafe { std::env::remove_var("STELLA_TEST_VERIFY_SECRET") };
+    unsafe {
+        std::env::remove_var("STELLA_TEST_VERIFY_SECRET");
+        std::env::remove_var("STELLA_TEST_TELEMETRY_TOKEN");
+    }
+}
+
+#[test]
+fn identical_signing_and_bearer_rotation_domains_are_rejected() {
+    let _env = crate::test_env::lock();
+    let shared = "STELLA_TEST_SHARED_TELEMETRY_SECRET";
+    let separate = "STELLA_TEST_SEPARATE_TELEMETRY_TOKEN";
+    let _restore = EnvRestore::capture(&[shared, separate]);
+    let secret = b"0123456789abcdef0123456789abcdef";
+    unsafe {
+        std::env::set_var(shared, std::str::from_utf8(secret).unwrap());
+        std::env::set_var(separate, std::str::from_utf8(secret).unwrap());
+    }
+    let same_ref = signed_managed(
+        shared,
+        secret,
+        TestClaims {
+            credential_env: shared,
+            ..valid_claims()
+        },
+    );
+    assert!(verify_managed_enrollment(&same_ref, 1_700_000_001).is_err());
+    let same_value = signed_managed(
+        shared,
+        secret,
+        TestClaims {
+            credential_env: separate,
+            ..valid_claims()
+        },
+    );
+    assert!(verify_managed_enrollment(&same_value, 1_700_000_001).is_err());
+}
+
+#[test]
+fn pre_dotenv_snapshot_restores_every_privileged_control_and_credential_ref() {
+    let _env = crate::test_env::lock();
+    let names = [
+        "STELLA_DATA_DIR",
+        "STELLA_TRUST_PROJECT",
+        "STELLA_BASH_SANDBOX",
+        "STELLA_SKILLS_SEARCH_CMD",
+        "HTTPS_PROXY",
+        "STELLA_TEST_VERIFY_SECRET",
+        "STELLA_TEST_TELEMETRY_TOKEN",
+    ];
+    let _restore = EnvRestore::capture(&names);
+    for name in names {
+        unsafe { std::env::remove_var(name) };
+    }
+    let managed = signed_managed(
+        "STELLA_TEST_VERIFY_SECRET",
+        b"0123456789abcdef0123456789abcdef",
+        valid_claims(),
+    );
+    let snapshot = StartupAuthoritySnapshot::capture(Some(&managed));
+    for name in names {
+        unsafe { std::env::set_var(name, format!("project-{name}")) };
+    }
+    let rejected = snapshot.restore_after_project_env(&names.map(str::to_string));
+    assert_eq!(rejected.len(), names.len());
+    for name in names {
+        assert!(
+            std::env::var_os(name).is_none(),
+            "project value survived: {name}"
+        );
+    }
+}
+
+#[test]
+fn invalid_enrollment_cannot_register_arbitrary_scrub_names() {
+    let arbitrary = "STELLA_ATTACKER_CHOSEN_SCRUB_TARGET";
+    assert!(!stella_tools::exec::is_sensitive_env_name(arbitrary));
+    let invalid = json!({
+        "verification_secret_env": arbitrary,
+        "allowed_issuers": [],
+        "allowed_audiences": [],
+        "allowed_endpoints": [],
+        "host_data_isolation": "process_free",
+        "enrollment": {"claims": {}, "signature_hex": "bad"}
+    });
+    assert!(verify_managed_enrollment(&invalid, 1_700_000_001).is_err());
+    assert!(!stella_tools::exec::is_sensitive_env_name(arbitrary));
 }
 
 #[test]
@@ -275,11 +433,6 @@ fn project_dotenv_cannot_supply_either_managed_credential() {
     let token_ref = "STELLA_PROJECT_DOTENV_BEARER_TOKEN";
     let _restore = EnvRestore::capture(&[verify_ref, token_ref]);
     let secret = b"fedcba9876543210fedcba9876543210";
-    unsafe {
-        std::env::set_var(verify_ref, "fedcba9876543210fedcba9876543210");
-        std::env::set_var(token_ref, "project-controlled-token");
-    }
-    register_project_env_names([verify_ref.to_string(), token_ref.to_string()]);
     let managed = signed_managed(
         verify_ref,
         secret,
@@ -288,6 +441,18 @@ fn project_dotenv_cannot_supply_either_managed_credential() {
             ..valid_claims()
         },
     );
+    unsafe {
+        std::env::remove_var(verify_ref);
+        std::env::remove_var(token_ref);
+    }
+    let snapshot = StartupAuthoritySnapshot::capture(Some(&managed));
+    unsafe {
+        std::env::set_var(verify_ref, "fedcba9876543210fedcba9876543210");
+        std::env::set_var(token_ref, "project-controlled-token");
+    }
+    let rejected =
+        snapshot.restore_after_project_env(&[verify_ref.to_string(), token_ref.to_string()]);
+    assert_eq!(rejected.len(), 2);
     let Err(error) = verify_managed_enrollment(&managed, 1_700_000_001) else {
         panic!("project dotenv credentials were accepted");
     };
@@ -360,6 +525,34 @@ fn only_the_managed_settings_snapshot_can_supply_enrollment() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn managed_settings_reject_symlinks_and_group_or_other_writable_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _env = crate::test_env::lock();
+    let _restore = EnvRestore::capture(&["HOME", "STELLA_MANAGED_SETTINGS"]);
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+    let managed = dir.path().join("managed.json");
+    std::fs::write(&managed, "{}").unwrap();
+    std::fs::set_permissions(&managed, std::fs::Permissions::from_mode(0o666)).unwrap();
+    unsafe {
+        std::env::set_var("HOME", &home);
+        std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
+    }
+    assert!(Settings::load(&workspace).is_err());
+
+    std::fs::set_permissions(&managed, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let linked = dir.path().join("managed-link.json");
+    std::os::unix::fs::symlink(&managed, &linked).unwrap();
+    unsafe { std::env::set_var("STELLA_MANAGED_SETTINGS", &linked) };
+    assert!(Settings::load(&workspace).is_err());
+}
+
 #[test]
 fn failed_delivery_stays_retryable_and_success_acks_the_same_event() {
     let _env = crate::test_env::lock();
@@ -414,6 +607,51 @@ fn failed_delivery_stays_retryable_and_success_acks_the_same_event() {
         std::env::remove_var("STELLA_TEST_VERIFY_SECRET");
         std::env::remove_var("STELLA_TEST_TELEMETRY_TOKEN");
     }
+}
+
+#[test]
+fn credential_rotation_failure_releases_the_claim_to_retry_state() {
+    let _env = crate::test_env::lock();
+    let names = [
+        "STELLA_DATA_DIR",
+        "STELLA_TEST_VERIFY_SECRET",
+        "STELLA_TEST_TELEMETRY_TOKEN",
+    ];
+    let _restore = EnvRestore::capture(&names);
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    unsafe {
+        std::env::set_var("STELLA_DATA_DIR", dir.path().join("host-data"));
+        std::env::set_var(
+            "STELLA_TEST_VERIFY_SECRET",
+            "0123456789abcdef0123456789abcdef",
+        );
+        std::env::set_var("STELLA_TEST_TELEMETRY_TOKEN", "bearer-secret");
+    }
+    let managed = signed_managed(
+        "STELLA_TEST_VERIFY_SECRET",
+        b"0123456789abcdef0123456789abcdef",
+        valid_claims(),
+    );
+    let sender = Arc::new(Sender {
+        attempts: AtomicUsize::new(0),
+        fail: Mutex::new(false),
+    });
+    let runtime = build_runtime_from_managed(Some(&managed), &workspace, 1_700_000_001, || {
+        Ok(sender.clone() as Arc<dyn BatchSender>)
+    })
+    .unwrap()
+    .unwrap();
+    runtime.enqueue_rollup(&rollup(8), 10).unwrap();
+    unsafe { std::env::remove_var("STELLA_TEST_VERIFY_SECRET") };
+    let handle = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    assert!(handle.block_on(runtime.flush(20)).is_err());
+    assert_eq!(runtime.status().unwrap().pending_rows, 1);
+    assert_eq!(sender.attempts.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -480,16 +718,28 @@ fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
         "STELLA_MANAGED_SETTINGS",
         "STELLA_DATA_DIR",
         "STELLA_TEST_VERIFY_SECRET",
+        "STELLA_TEST_TELEMETRY_TOKEN",
     ]);
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("workspace");
     let home = dir.path().join("home");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::create_dir_all(&home).unwrap();
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap();
     let managed_value = signed_managed(
         "STELLA_TEST_VERIFY_SECRET",
         b"0123456789abcdef0123456789abcdef",
-        valid_claims(),
+        TestClaims {
+            issued_at_unix_s: now - 1,
+            expires_at_unix_s: now + 3_600,
+            ..valid_claims()
+        },
     );
     let managed_path = dir.path().join("managed.json");
     std::fs::write(
@@ -508,8 +758,13 @@ fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
             "STELLA_TEST_VERIFY_SECRET",
             "0123456789abcdef0123456789abcdef",
         );
+        std::env::set_var("STELLA_TEST_TELEMETRY_TOKEN", "separate-bearer-token");
     }
     let store = stella_store::Store::open(&workspace).unwrap();
+    let enrollment = verify_managed_enrollment(&managed_value, now).unwrap();
+    store
+        .begin_enterprise_enrollment(enrollment.sink_fingerprint())
+        .unwrap();
     let id = store
         .begin_execution("run", "private prompt", "anthropic", "claude-sonnet-4")
         .unwrap();
@@ -535,10 +790,18 @@ fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
             .join("model-visible-data/enterprise-telemetry.db")
             .exists()
     );
+    assert_eq!(
+        store
+            .pending_enterprise_exports(enrollment.sink_fingerprint())
+            .unwrap(),
+        vec![id],
+        "fail-open spool rejection must remain durably visible for backfill"
+    );
     unsafe {
         std::env::remove_var("HOME");
         std::env::remove_var("STELLA_MANAGED_SETTINGS");
         std::env::remove_var("STELLA_DATA_DIR");
         std::env::remove_var("STELLA_TEST_VERIFY_SECRET");
+        std::env::remove_var("STELLA_TEST_TELEMETRY_TOKEN");
     }
 }

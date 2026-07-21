@@ -87,10 +87,8 @@ pub struct ToolRegistry {
     /// after every `save_exploration`; drives the once-per-session
     /// "this area is already mapped" hints on search-tool results.
     exploration_coverage: std::sync::Mutex<ExplorationCoverage>,
-    /// The session's extension hook bus, once a host attaches one
-    /// ([`ToolRegistry::attach_bus`]). Every emission is `None`-guarded, so
-    /// a bus-less registry behaves exactly as it did before hooks existed.
     bus: std::sync::RwLock<Option<HookBus>>,
+    process_free: bool,
 }
 
 /// Path-coverage of fresh exploration maps plus the hint dedup set.
@@ -349,7 +347,12 @@ impl ToolRegistry {
             storage_index: std::sync::Mutex::new(StorageIndex::default()),
             exploration_coverage,
             bus: std::sync::RwLock::new(None),
+            process_free,
         }
+    }
+
+    pub fn is_process_free(&self) -> bool {
+        self.process_free
     }
 
     /// Attach the session's extension hook bus. From this point every tool

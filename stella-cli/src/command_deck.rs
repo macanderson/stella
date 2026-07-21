@@ -97,7 +97,6 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use crate::agent;
 use crate::claims::ClaimTap;
 use crate::config::Config;
-use crate::enterprise_telemetry::finish_cancelled_execution;
 use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRegistry};
 use crate::memory::{SessionMemory, inject_recall_block, turn_warrants_reflection};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -1642,14 +1641,18 @@ pub async fn run_deck_session(
                     requeue_front(&mut queue, &in_tx, dispatch.stop_and_hold(Some(&submitted)));
                 } else {
                     // A plain cancel: retain the dropped prompt so the
-                    // pair's escalation — which always arrives after this
-                    // point (the channel is FIFO) — can still requeue it.
                     dispatch.cancelled(&submitted);
                 }
                 let cancelled_cost =
                     agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
                 if let Some((store, id)) = &execution
-                    && finish_cancelled_execution(store, *id, cancelled_cost).is_err()
+                    && !agent::record_execution_end(
+                        store,
+                        *id,
+                        registry.as_ref(),
+                        "cancelled",
+                        cancelled_cost,
+                    )
                 {
                     let _ = in_tx.send(Inbound::Event {
                         agent: LEAD.to_string(),
@@ -2537,11 +2540,10 @@ fn ci_status_token(ci: CiStatus) -> &'static str {
     }
 }
 
-/// One `gh` JSON read in `root`. For `gh pr checks`, pending checks exit
-/// non-zero (code 8) while still printing the JSON — so parse whatever
-/// stdout holds instead of gating on exit status.
 async fn gh_json(root: &std::path::Path, args: &[&str]) -> Option<Value> {
-    let output = tokio::process::Command::new("gh")
+    let mut command = tokio::process::Command::new("gh");
+    stella_tools::exec::scrub_sensitive_env(&mut command);
+    let output = command
         .args(args)
         .current_dir(root)
         .kill_on_drop(true)

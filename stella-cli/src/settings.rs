@@ -26,12 +26,14 @@ use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 use crate::config::Dialect;
 
 mod authority;
+mod managed;
 mod private;
 #[cfg(test)]
 #[path = "settings/private_state_tests.rs"]
 mod private_state_tests;
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 use authority::{apply_tool_ceiling, restore_project_prompts, restore_project_tools};
+use managed::managed_settings_path;
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in
@@ -731,7 +733,7 @@ impl Settings {
             None => Self::default(),
         };
         let managed_path = managed_settings_path();
-        let managed = Self::load_scope(&managed_path)?;
+        let managed = Self::load_managed_scope(&managed_path)?;
         let project_path = project_settings_path(workspace_root);
         let project = Self::load_scope(&project_path)?;
         let trust = project_trust();
@@ -821,20 +823,6 @@ fn project_trust() -> ProjectTrust {
 /// `STELLA_TRUST_PROJECT=1` (or the legacy hooks-only `STELLA_PROJECT_HOOKS=1`).
 pub(crate) fn project_code_execution_trusted() -> bool {
     project_trust().hooks
-}
-
-/// The org-managed scope path. `STELLA_MANAGED_SETTINGS` overrides the
-/// platform default so fleets can mount it anywhere (and tests can point at
-/// a fixture instead of `/etc`).
-fn managed_settings_path() -> PathBuf {
-    if let Some(p) = std::env::var_os("STELLA_MANAGED_SETTINGS") {
-        return PathBuf::from(p);
-    }
-    if cfg!(target_os = "macos") {
-        PathBuf::from("/Library/Application Support/stella/settings.json")
-    } else {
-        PathBuf::from("/etc/stella/settings.json")
-    }
 }
 
 #[cfg(test)]

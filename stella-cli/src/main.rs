@@ -402,6 +402,8 @@ enum TelemetryCmd {
     Status,
     /// Attempt one bounded delivery batch now.
     Flush,
+    /// Explicitly discard rows bound to a superseded enrolled sink.
+    RolloverDiscard,
 }
 
 /// `stella models` subcommands — the model-catalog surface. A bare
@@ -1009,11 +1011,16 @@ fn main() -> ExitCode {
     // resolution see project keys. Runs here at single-threaded startup where
     // mutating the process environment is safe. The live shell always wins;
     // `STELLA_NO_ENV_FILE=1` opts out entirely.
+    let managed_snapshot = settings::Settings::load_managed_telemetry_snapshot()
+        .ok()
+        .flatten();
+    let authority_snapshot =
+        enterprise_telemetry::StartupAuthoritySnapshot::capture(managed_snapshot.as_ref());
     let mut loaded_env = env_files::maybe_load();
+    let _rejected_privileged = authority_snapshot.restore_after_project_env(&loaded_env.names);
 
     let cli = Cli::parse();
 
-    enterprise_telemetry::register_project_env_names(loaded_env.names.iter().cloned());
     enterprise_telemetry::start_best_effort_flush();
     loaded_env
         .names

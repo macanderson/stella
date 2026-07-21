@@ -20,6 +20,7 @@ pub(crate) struct GitRepoStructure {
 impl RepoStructurePort for GitRepoStructure {
     async fn structure_summary(&self) -> String {
         let mut cmd = tokio::process::Command::new("git");
+        stella_tools::exec::scrub_sensitive_env(&mut cmd);
         cmd.args(["ls-files"]).current_dir(&self.root);
         // Hook-exported GIT_* vars must not re-target this at another repo.
         for var in stella_tools::exec::GIT_REPO_ENV_VARS {
@@ -52,6 +53,7 @@ impl RepoStatusPort for GitRepoStatus {
         // `-z` NUL-delimits paths (robust to spaces/newlines); quotePath off
         // keeps non-ASCII literal. Full stdout is read — never truncated.
         let mut cmd = tokio::process::Command::new("git");
+        stella_tools::exec::scrub_sensitive_env(&mut cmd);
         cmd.args([
             "-c",
             "core.quotePath=false",
@@ -88,6 +90,7 @@ impl RepoStatusPort for GitRepoStatus {
     async fn tracked_fingerprints(&self) -> std::collections::HashMap<String, String> {
         let mut out = std::collections::HashMap::new();
         let mut cmd = tokio::process::Command::new("git");
+        stella_tools::exec::scrub_sensitive_env(&mut cmd);
         cmd.args([
             "-c",
             "core.quotePath=false",
@@ -300,6 +303,7 @@ impl TestRunner for TypedTestRunner {
 
 fn test_process(invocation: &TestInvocation, root: &std::path::Path) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(&invocation.program);
+    stella_tools::exec::scrub_sensitive_env(&mut cmd);
     cmd.args(&invocation.args)
         .current_dir(root)
         .env("PWD", root);
@@ -314,6 +318,7 @@ fn test_process(invocation: &TestInvocation, root: &std::path::Path) -> tokio::p
 impl DiagnosticRunner for GitDiagnosticRunner {
     async fn run_diagnostic(&self, invocation: &DiagnosticInvocation) -> CmdOutcome {
         let mut cmd = tokio::process::Command::new("git");
+        stella_tools::exec::scrub_sensitive_env(&mut cmd);
         match invocation {
             DiagnosticInvocation::GitDiff => {
                 cmd.args(["diff"]);
@@ -423,12 +428,15 @@ fn truncate_tail(s: &str, max_bytes: usize) -> String {
 /// interactive, deck, sub-session workers, fleet workers) builds its
 /// registry through this, so no path can quietly re-enable the shell.
 pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
+    let process_free = crate::enterprise_telemetry::process_free_authority_active();
     let media_operation_journal = host_media_operation_journal(&cfg.workspace_root);
     stella_tools::RegistryOptions {
-        bash: cfg.tools_bash,
-        web: cfg.tools_web,
+        bash: cfg.tools_bash && !process_free,
+        web: cfg.tools_web && !process_free,
         media_requires_host_approval: cfg.authority.media_requires_host_approval,
         media_operation_journal,
+        media_host_data_isolation: process_free
+            .then_some(stella_tools::media::HostDataIsolation::ProcessFree),
         ..Default::default()
     }
 }
@@ -565,11 +573,9 @@ mod tests {
     async fn repo_status_hashes_tracked_working_tree_mutations() {
         let dir = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
-            let output = std::process::Command::new("git")
-                .args(args)
-                .current_dir(dir.path())
-                .output()
-                .unwrap();
+            let mut command = std::process::Command::new("git");
+            stella_tools::exec::scrub_sensitive_std_env(&mut command);
+            let output = command.args(args).current_dir(dir.path()).output().unwrap();
             assert!(
                 output.status.success(),
                 "{}",

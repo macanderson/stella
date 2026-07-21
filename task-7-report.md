@@ -8,12 +8,14 @@ in only with a currently valid HMAC-SHA256-signed enrollment whose issuer,
 audience, exact HTTPS endpoint, event class, organization, workspace, and
 credential references satisfy managed allowlists and the closed schema.
 
-After local execution finalization, Stella derives one content-free
+After every centralized terminal closeout, Stella derives one content-free
 `StellaOperationalEventV1` and durably inserts it into a separate owner-only,
 host-data SQLite spool. Delivery is at-least-once with deterministic event IDs,
-bounded claims, leases, retry backoff, hard row/byte capacity, oldest-unleased
-eviction, and a durable drop counter. `stella telemetry status` reports local
-health and `stella telemetry flush` performs one explicit bounded delivery.
+sink-scoped claims/acks/retries, leases, jittered retry backoff, hard row/byte
+capacity, oldest-unleased eviction, and durable drop/rollover counters.
+`stella telemetry status` reports payload and physical SQLite/WAL/SHM health,
+`flush` performs one explicit bounded delivery, and `rollover-discard` is the
+only path that discards rows stranded by sink rotation.
 
 Graceful shutdown guarantees durable local enqueue, not network delivery. A
 detached bounded startup flush and the explicit command retry pending events;
@@ -28,8 +30,11 @@ part of the design contract.
 - Events contain only bounded managed identifiers, provider/model dimensions,
   finalized outcome, duration, token/cost totals, tool-call/file-change counts,
   and whether output was produced.
-- The deterministic event ID hashes length-prefixed enrollment and local
-  identity inputs; those local inputs are never serialized.
+- The deterministic event ID hashes a domain-separated framed schema/class,
+  enrollment/tenant, persistent random installation/store UUIDs, and execution
+  row identity; local inputs are never serialized.
+- Provider/model dimensions come from a signed closed catalog. Unknown or
+  custom values serialize only as `other`.
 - Enrollment is accepted only from the managed settings snapshot. User and
   project copies cannot opt in, redirect the endpoint, or add event classes.
 - Every endpoint allowlist entry and the enrolled endpoint must be exact,
@@ -40,13 +45,24 @@ part of the design contract.
   configuration values. Both references must resolve from the host environment;
   a project `.env`/`.env.local` origin is rejected even when the enrollment is
   otherwise valid and correctly signed.
-- Declared verification/token names are registered before model-controlled
-  tools or hooks can spawn. Shared execution, shell, custom-tool, hook,
-  background-process, and typed-test paths remove registered credentials from
-  child environments. Status, warnings, and errors do not print those names or
-  values.
+- The managed file is no-follow, owner/root-controlled, and not group/other
+  writable. Privileged controls and credential references are captured before
+  project dotenv loading and restored afterward. Only a fully verified
+  enrollment may register scrub names.
+- Active enrollment requires signed and host-permitted `process_free`
+  authority. Stella proves the registry before constructing a client and
+  removes subprocess/search controls, hooks, MCP, custom commands, and skill
+  search/install from the active agent surface.
+- All session/model-controlled child spawns scrub registered credentials.
+  Scrubbing is not a same-user boundary: production enrollment requires an OS
+  account/container boundary from untrusted co-tenants; a request-scoped
+  credential broker remains the preferred follow-on.
 - Host delivery may fail, retry, or lose an oldest record under the explicit
   capacity policy, but it never changes a completed agent outcome.
+- Signing and bearer references and values must be distinct. Enrollment expiry
+  is checked again on every send, and HTTP ignores ambient proxy variables.
+- A persistent post-enrollment export ledger records retry intent before spool
+  I/O and backfills missed enqueues without exporting pre-enrollment history.
 
 ## TDD evidence
 
@@ -58,6 +74,12 @@ redirect helper. Focused regressions then established and closed these cases:
   invalid or unfinished rollups;
 - row/byte eviction, durable drops, owner-only permissions, disjoint concurrent
   claims, retry backoff, lease recovery, and hard batch-request bounds;
+- immutable sink fingerprints, rotation stranding, explicit rollover discard,
+  legacy-spool migration, clock rollback repair, FIFO insertion sequencing,
+  retry jitter, and physical disk accounting;
+- persistent random installation/store identity boundaries, closed managed
+  model dimensions, exhaustive runtime terminal outcomes, and checked SQLite
+  integer conversions;
 - absent, invalid, expired, wrongly signed, wrong issuer/audience/schema,
   forbidden-scheme, non-allowlisted, and unsupported compliance enrollments;
 - rejection of the entire endpoint allowlist when any entry violates the
@@ -73,6 +95,11 @@ redirect helper. Focused regressions then established and closed these cases:
 - the project-dotenv credential provenance witness is GREEN: enrollment is
   rejected when either the HMAC verification secret or bearer token came from
   project dotenv state, with neither reference disclosed in the error.
+- the process-free surface enumeration is GREEN: every built-in process/search
+  action and `search_skills`/`install_skill` is absent; and
+- the export-ledger witness is GREEN: pre-enrollment executions are excluded,
+  post-enrollment pending intent survives reopen, and startup backfill retains
+  it in the sink-scoped spool.
 
 ## Implementation notes
 
@@ -80,7 +107,7 @@ redirect helper. Focused regressions then established and closed these cases:
   spool. The CLI adapter alone owns enrollment verification and HTTP.
 - The spool defaults to 10,000 rows and 16 MiB. Claims are additionally capped
   at 1,000 events and 16 MiB; production delivery uses 50 events and 256 KiB.
-- HTTP disables redirects, uses 2-second connect and 5-second total timeouts,
+- HTTP disables proxies and redirects, uses 2-second connect and 5-second total timeouts,
   and caps response bodies at 64 KiB while streaming.
 - SQLite uses a 100 ms busy timeout so telemetry contention fails open quickly.
 - New direct dependencies are existing workspace crates: `sha2` for event IDs,
@@ -89,12 +116,12 @@ redirect helper. Focused regressions then established and closed these cases:
 
 ## Verification
 
-- `cargo test -p stella-store`: 87 unit and 7 enterprise telemetry integration
+- `cargo test -p stella-store`: 87 unit and 17 enterprise telemetry integration
   tests passed.
 - `cargo test -p stella-tools`: 335 unit tests passed; 1 existing sandbox test
   remained ignored; 4 media replay tests passed. The 6 tracker and 8 web
   localhost integration tests passed outside the restricted network sandbox.
-- `cargo test -p stella-cli`: 362 tests passed, including the project-dotenv
+- `cargo test -p stella-cli`: 368 tests passed, including the project-dotenv
   provenance and credential non-disclosure witnesses.
 - `cargo clippy -p stella-store -p stella-tools -p stella-cli --all-targets --
   -D warnings`: passed.

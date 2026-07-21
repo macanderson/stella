@@ -5,11 +5,11 @@
 //! managed document, a pinned verification-secret environment reference, an
 //! exact HTTPS endpoint allowlist, and a bearer-token environment reference.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,10 +18,10 @@ use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use stella_store::enterprise_telemetry::{
-    EnterpriseTelemetrySpool, OperationalEventContext, SpoolLimits, SpoolStatus,
-    StellaOperationalEventV1,
+    EnqueueOutcome, EnterpriseTelemetrySpool, ManagedModelDimension, OperationalEventContext,
+    OperationalIdentity, SpoolLimits, SpoolStatus, StellaOperationalEventV1,
 };
 #[cfg(test)]
 use stella_store::usage::ExecutionRollupRow;
@@ -39,7 +39,35 @@ const MAX_BATCH_EVENTS: usize = 50;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const LEASE_MS: i64 = 30_000;
-static PROJECT_ENV_NAMES: OnceLock<RwLock<BTreeSet<String>>> = OnceLock::new();
+static PROCESS_FREE_AUTHORITY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+const PRIVILEGED_ENV_NAMES: &[&str] = &[
+    "STELLA_MANAGED_SETTINGS",
+    "STELLA_DATA_DIR",
+    "STELLA_TRUST_PROJECT",
+    "STELLA_PROJECT_HOOKS",
+    "STELLA_BASH_SANDBOX",
+    "STELLA_BASE_URL",
+    "STELLA_BUDGET",
+    "STELLA_WEB_AUTH_FILE",
+    "STELLA_INTEGRATIONS_FILE",
+    "STELLA_GITHUB_API_URL",
+    "STELLA_LINEAR_API_URL",
+    "STELLA_LINEAR_CLIENT_ID",
+    "STELLA_LINEAR_CLIENT_SECRET",
+    "STELLA_SKILLS_SEARCH_CMD",
+    "STELLA_SKILLS_INSTALL_CMD",
+    "STELLA_SKILLS_USE_CMD",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +76,7 @@ struct ManagedTelemetrySettings {
     allowed_issuers: Vec<String>,
     allowed_audiences: Vec<String>,
     allowed_endpoints: Vec<String>,
+    host_data_isolation: HostDataIsolation,
     enrollment: SignedEnrollment,
 }
 
@@ -70,8 +99,16 @@ struct EnrollmentClaims {
     endpoint: String,
     credential_env: String,
     event_classes: Vec<EnrollmentEventClass>,
+    host_data_isolation: HostDataIsolation,
+    model_catalog: Vec<ManagedModelDimension>,
     issued_at_unix_s: i64,
     expires_at_unix_s: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HostDataIsolation {
+    ProcessFree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,10 +118,203 @@ enum EnrollmentEventClass {
     ComplianceAudit,
 }
 
+fn frame(bytes: &mut Vec<u8>, value: &[u8]) -> Result<(), String> {
+    let len = u32::try_from(value.len())
+        .map_err(|_| "enterprise telemetry enrollment field is too large".to_string())?;
+    bytes.extend_from_slice(&len.to_be_bytes());
+    bytes.extend_from_slice(value);
+    Ok(())
+}
+
+/// Stable, domain-separated signing bytes independent of serde map ordering.
+pub(crate) fn canonical_enrollment_bytes(value: &Value) -> Result<Vec<u8>, String> {
+    let claims: EnrollmentClaims = serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid enterprise telemetry claims: {error}"))?;
+    let mut bytes = b"stella.enterprise.telemetry.enrollment-signature.v1".to_vec();
+    for scalar in [
+        claims.schema.as_str(),
+        claims.issuer.as_str(),
+        claims.audience.as_str(),
+        claims.enrollment_id.as_str(),
+        claims.organization_id.as_str(),
+        claims.workspace_id.as_str(),
+        claims.endpoint.as_str(),
+        claims.credential_env.as_str(),
+    ] {
+        frame(&mut bytes, scalar.as_bytes())?;
+    }
+    frame(
+        &mut bytes,
+        u32::try_from(claims.event_classes.len())
+            .map_err(|_| "too many enrollment event classes".to_string())?
+            .to_be_bytes()
+            .as_slice(),
+    )?;
+    for class in &claims.event_classes {
+        let label = match class {
+            EnrollmentEventClass::ExecutionRollup => "execution_rollup",
+            EnrollmentEventClass::ComplianceAudit => "compliance_audit",
+        };
+        frame(&mut bytes, label.as_bytes())?;
+    }
+    frame(&mut bytes, b"process_free")?;
+    frame(
+        &mut bytes,
+        u32::try_from(claims.model_catalog.len())
+            .map_err(|_| "too many enrollment model dimensions".to_string())?
+            .to_be_bytes()
+            .as_slice(),
+    )?;
+    for dimension in &claims.model_catalog {
+        frame(&mut bytes, dimension.provider().as_bytes())?;
+        frame(&mut bytes, dimension.model().as_bytes())?;
+    }
+    frame(&mut bytes, &claims.issued_at_unix_s.to_be_bytes())?;
+    frame(&mut bytes, &claims.expires_at_unix_s.to_be_bytes())?;
+    Ok(bytes)
+}
+
 pub(crate) struct VerifiedEnrollment {
-    context: OperationalEventContext,
+    enrollment_id: String,
+    organization_id: String,
+    workspace_id: String,
+    model_catalog: Vec<ManagedModelDimension>,
     endpoint: Url,
     credential_env: String,
+    verification_secret_env: String,
+    expires_at_unix_s: i64,
+    sink_fingerprint: String,
+}
+
+impl VerifiedEnrollment {
+    fn context(&self, identity: OperationalIdentity) -> Result<OperationalEventContext, String> {
+        OperationalEventContext::new(
+            self.enrollment_id.clone(),
+            self.organization_id.clone(),
+            self.workspace_id.clone(),
+            identity,
+            self.model_catalog.clone(),
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sink_fingerprint(&self) -> &str {
+        &self.sink_fingerprint
+    }
+}
+
+pub(crate) fn process_free_authority_active() -> bool {
+    PROCESS_FREE_AUTHORITY.load(Ordering::Acquire)
+}
+
+fn activate_process_free_authority(enrollment: &VerifiedEnrollment) {
+    PROCESS_FREE_AUTHORITY.store(true, Ordering::Release);
+    register_verified_credentials(enrollment);
+}
+
+fn register_verified_credentials(enrollment: &VerifiedEnrollment) {
+    stella_tools::exec::register_sensitive_env_names([
+        enrollment.verification_secret_env.clone(),
+        enrollment.credential_env.clone(),
+    ]);
+}
+
+pub(crate) fn prove_process_free_surface(workspace_root: &Path) -> Result<(), String> {
+    let registry = stella_tools::ToolRegistry::with_backends_and_options(
+        workspace_root.to_path_buf(),
+        None,
+        None,
+        stella_tools::RegistryOptions {
+            bash: false,
+            web: false,
+            media_host_data_isolation: Some(stella_tools::media::HostDataIsolation::ProcessFree),
+            ..Default::default()
+        },
+    );
+    if !registry.is_process_free() {
+        return Err("enterprise telemetry process-free registry proof failed".into());
+    }
+    let names: BTreeSet<String> = registry
+        .schemas()
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect();
+    let forbidden = [
+        "bash",
+        "grep",
+        "glob",
+        "gather_context",
+        "process_start",
+        "process_write",
+        "process_poll",
+        "test_start",
+        "test_poll",
+        "search_skills",
+        "install_skill",
+    ];
+    if let Some(name) = forbidden.iter().find(|name| names.contains(**name)) {
+        return Err(format!(
+            "enterprise telemetry process-free registry exposes `{name}`"
+        ));
+    }
+    Ok(())
+}
+
+/// Host authority captured before a project dotenv file is allowed to run.
+/// The snapshot is local process state only; invalid enrollment bytes never
+/// mutate the global spawn scrub registry.
+pub(crate) struct StartupAuthoritySnapshot {
+    values: BTreeMap<String, Option<OsString>>,
+}
+
+impl StartupAuthoritySnapshot {
+    pub(crate) fn capture(managed: Option<&Value>) -> Self {
+        let mut names: BTreeSet<String> = PRIVILEGED_ENV_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
+        if let Some(raw) = managed {
+            for pointer in [
+                "/verification_secret_env",
+                "/enrollment/claims/credential_env",
+            ] {
+                if let Some(name) = raw.pointer(pointer).and_then(Value::as_str)
+                    && validate_env_ref(name, "credential").is_ok()
+                {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        Self {
+            values: names
+                .into_iter()
+                .map(|name| {
+                    let value = std::env::var_os(&name);
+                    (name, value)
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn restore_after_project_env(&self, loaded: &[String]) -> Vec<String> {
+        let loaded: BTreeSet<&str> = loaded.iter().map(String::as_str).collect();
+        let mut rejected = Vec::new();
+        for (name, value) in &self.values {
+            if loaded.contains(name.as_str()) {
+                rejected.push(name.clone());
+            }
+            // Restoring all privileged values also closes loaders which do not
+            // report a complete set of parsed names.
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+        rejected
+    }
 }
 
 /// Verify one managed enrollment without constructing persistence or HTTP.
@@ -92,7 +322,6 @@ pub(crate) fn verify_managed_enrollment(
     raw: &Value,
     now_unix_s: i64,
 ) -> Result<VerifiedEnrollment, String> {
-    register_declared_sensitive_env_refs(raw);
     let managed: ManagedTelemetrySettings = serde_json::from_value(raw.clone())
         .map_err(|error| format!("invalid managed enterprise telemetry settings: {error}"))?;
     validate_env_ref(&managed.verification_secret_env, "verification secret")?;
@@ -105,14 +334,13 @@ pub(crate) fn verify_managed_enrollment(
 
     let claims = &managed.enrollment.claims;
     validate_env_ref(&claims.credential_env, "bearer credential")?;
-    let project_names = project_env_names();
-    if project_names.contains(&managed.verification_secret_env)
-        || project_names.contains(&claims.credential_env)
+    if managed.verification_secret_env == claims.credential_env {
+        return Err("enterprise telemetry signing and bearer references must be distinct".into());
+    }
+    if managed.host_data_isolation != HostDataIsolation::ProcessFree
+        || claims.host_data_isolation != HostDataIsolation::ProcessFree
     {
-        return Err(
-            "enterprise telemetry credentials must come from the host environment, not project dotenv"
-                .into(),
-        );
+        return Err("enterprise telemetry requires signed process-free host isolation".into());
     }
     if claims.schema != ENROLLMENT_SCHEMA {
         return Err("unsupported enterprise telemetry enrollment schema".into());
@@ -150,6 +378,17 @@ pub(crate) fn verify_managed_enrollment(
         }
         return Err("enterprise telemetry enrollment event class is not supported".into());
     }
+    if claims.model_catalog.is_empty() || claims.model_catalog.len() > 64 {
+        return Err("enterprise telemetry model catalog must contain 1..=64 entries".into());
+    }
+    let distinct: BTreeSet<(&str, &str)> = claims
+        .model_catalog
+        .iter()
+        .map(|item| (item.provider(), item.model()))
+        .collect();
+    if distinct.len() != claims.model_catalog.len() {
+        return Err("enterprise telemetry model catalog contains duplicate entries".into());
+    }
 
     let endpoint = strict_https_url(&claims.endpoint)?;
     let allowed_endpoints = managed
@@ -167,62 +406,58 @@ pub(crate) fn verify_managed_enrollment(
     if secret.len() < 32 || secret.len() > MAX_SECRET_BYTES {
         return Err("enterprise telemetry verification secret must be 32..=4096 bytes".into());
     }
+    let bearer = std::env::var(&claims.credential_env)
+        .map_err(|_| "enterprise telemetry bearer credential is unavailable".to_string())?;
+    if bearer.is_empty() || bearer.len() > MAX_BEARER_BYTES {
+        return Err("enterprise telemetry bearer credential is invalid".into());
+    }
+    if secret.as_bytes() == bearer.as_bytes() {
+        return Err("enterprise telemetry signing and bearer values must be distinct".into());
+    }
     let signature = decode_signature(&managed.enrollment.signature_hex)?;
-    let canonical = serde_json::to_vec(claims)
-        .map_err(|error| format!("cannot canonicalize telemetry enrollment: {error}"))?;
+    let canonical = canonical_enrollment_bytes(
+        &serde_json::to_value(claims)
+            .map_err(|error| format!("cannot canonicalize telemetry enrollment: {error}"))?,
+    )?;
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
         .map_err(|_| "invalid telemetry verification secret".to_string())?;
     mac.update(&canonical);
     mac.verify_slice(&signature)
         .map_err(|_| "enterprise telemetry enrollment signature mismatch".to_string())?;
 
-    let context = OperationalEventContext::new(
-        claims.enrollment_id.clone(),
-        claims.organization_id.clone(),
-        claims.workspace_id.clone(),
-    )
-    .map_err(|error| error.to_string())?;
+    let mut sink = Sha256::new();
+    sink.update(b"stella.enterprise.telemetry.sink.v1");
+    for value in [
+        claims.schema.as_str(),
+        claims.issuer.as_str(),
+        claims.audience.as_str(),
+        claims.enrollment_id.as_str(),
+        claims.organization_id.as_str(),
+        claims.workspace_id.as_str(),
+        claims.endpoint.as_str(),
+    ] {
+        let len = u32::try_from(value.len()).map_err(|_| "telemetry sink field too large")?;
+        sink.update(len.to_be_bytes());
+        sink.update(value.as_bytes());
+    }
+    let sink_fingerprint = format!(
+        "sink_{}",
+        sink.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
     Ok(VerifiedEnrollment {
-        context,
+        enrollment_id: claims.enrollment_id.clone(),
+        organization_id: claims.organization_id.clone(),
+        workspace_id: claims.workspace_id.clone(),
+        model_catalog: claims.model_catalog.clone(),
         endpoint,
         credential_env: claims.credential_env.clone(),
+        verification_secret_env: managed.verification_secret_env.clone(),
+        expires_at_unix_s: claims.expires_at_unix_s,
+        sink_fingerprint,
     })
-}
-
-fn project_env_names() -> std::sync::RwLockReadGuard<'static, BTreeSet<String>> {
-    PROJECT_ENV_NAMES
-        .get_or_init(|| RwLock::new(BTreeSet::new()))
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Record which environment values came from model-writable project files.
-pub(crate) fn register_project_env_names<I>(names: I)
-where
-    I: IntoIterator<Item = String>,
-{
-    PROJECT_ENV_NAMES
-        .get_or_init(|| RwLock::new(BTreeSet::new()))
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .extend(names);
-}
-
-fn register_declared_sensitive_env_refs(raw: &Value) {
-    let verification = raw
-        .get("verification_secret_env")
-        .and_then(Value::as_str)
-        .filter(|value| validate_env_ref(value, "verification secret").is_ok());
-    let credential = raw
-        .pointer("/enrollment/claims/credential_env")
-        .and_then(Value::as_str)
-        .filter(|value| validate_env_ref(value, "bearer credential").is_ok());
-    stella_tools::exec::register_sensitive_env_names(
-        verification
-            .into_iter()
-            .chain(credential)
-            .map(str::to_string),
-    );
 }
 
 fn validate_policy_list(values: &[String], label: &str) -> Result<(), String> {
@@ -298,8 +533,8 @@ pub(crate) fn host_spool_path(workspace_root: &Path) -> Result<PathBuf, String> 
     if data.starts_with(&workspace) {
         return Err("enterprise telemetry host data directory is inside the workspace".into());
     }
-    std::fs::create_dir_all(&data)
-        .map_err(|error| format!("cannot create enterprise telemetry host data: {error}"))?;
+    stella_store::enterprise_telemetry::ensure_trusted_host_data_dir(&data)
+        .map_err(|error| error.to_string())?;
     let data = data
         .canonicalize()
         .map_err(|error| format!("cannot canonicalize enterprise telemetry host data: {error}"))?;
@@ -326,6 +561,7 @@ struct ReqwestBatchSender {
 impl ReqwestBatchSender {
     fn new() -> Result<Self, String> {
         let client = Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(2))
             .timeout(Duration::from_secs(5))
@@ -410,8 +646,18 @@ pub(crate) fn validate_response_status(status: reqwest::StatusCode) -> Result<()
 /// Verified enrollment plus its bounded spool and delivery adapter.
 pub(crate) struct EnterpriseTelemetryRuntime {
     enrollment: VerifiedEnrollment,
+    context: OperationalEventContext,
     spool: EnterpriseTelemetrySpool,
     sender: Arc<dyn BatchSender>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FinalizationEnqueueOutcome {
+    Disabled,
+    Ineligible,
+    Retained,
+    Duplicate,
+    DroppedNew,
 }
 
 /// Build only after a managed enrollment exists; `None` performs zero I/O.
@@ -428,15 +674,69 @@ where
         return Ok(None);
     };
     let enrollment = verify_managed_enrollment(managed, now_unix_s)?;
+    prove_process_free_surface(workspace_root)?;
     let spool_path = host_spool_path(workspace_root)?;
+    let store = stella_store::Store::open(workspace_root).map_err(|error| error.to_string())?;
+    store
+        .begin_enterprise_enrollment(&enrollment.sink_fingerprint)
+        .map_err(|error| error.to_string())?;
+    let identity = operational_identity(&store, &spool_path)?;
+    let context = enrollment.context(identity)?;
     let spool = EnterpriseTelemetrySpool::open_at(&spool_path, SpoolLimits::default())
         .map_err(|error| error.to_string())?;
+    register_verified_credentials(&enrollment);
     let sender = build_sender()?;
-    Ok(Some(EnterpriseTelemetryRuntime {
+    let runtime = EnterpriseTelemetryRuntime {
         enrollment,
+        context,
         spool,
         sender,
-    }))
+    };
+    // Replay durable fail-open intents from earlier post-enrollment closeout.
+    for execution_id in store
+        .pending_enterprise_exports(&runtime.enrollment.sink_fingerprint)
+        .map_err(|error| error.to_string())?
+    {
+        let Some(rollup) = store
+            .execution_rollup(execution_id, workspace_root)
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
+        };
+        let event = StellaOperationalEventV1::from_finalized_rollup(&runtime.context, &rollup)
+            .map_err(|error| error.to_string())?;
+        match runtime
+            .spool
+            .enqueue(
+                &runtime.enrollment.sink_fingerprint,
+                &event,
+                now_unix_s.saturating_mul(1_000),
+            )
+            .map_err(|error| error.to_string())?
+        {
+            EnqueueOutcome::Retained | EnqueueOutcome::Duplicate => store
+                .mark_enterprise_export_spooled(&runtime.enrollment.sink_fingerprint, execution_id)
+                .map_err(|error| error.to_string())?,
+            EnqueueOutcome::DroppedNew => {}
+        }
+    }
+    Ok(Some(runtime))
+}
+
+fn operational_identity(
+    store: &stella_store::Store,
+    spool_path: &Path,
+) -> Result<OperationalIdentity, String> {
+    let installation_uuid = stella_store::enterprise_telemetry::load_or_create_installation_uuid(
+        spool_path
+            .parent()
+            .ok_or_else(|| "enterprise telemetry spool has no parent".to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let store_uuid = store
+        .enterprise_store_uuid()
+        .map_err(|error| error.to_string())?;
+    OperationalIdentity::new(&installation_uuid, &store_uuid).map_err(|error| error.to_string())
 }
 
 impl EnterpriseTelemetryRuntime {
@@ -445,26 +745,32 @@ impl EnterpriseTelemetryRuntime {
         &self,
         rollup: &ExecutionRollupRow,
         now_ms: i64,
-    ) -> Result<bool, String> {
-        let event =
-            StellaOperationalEventV1::from_finalized_rollup(&self.enrollment.context, rollup)
-                .map_err(|error| error.to_string())?;
+    ) -> Result<EnqueueOutcome, String> {
+        let event = StellaOperationalEventV1::from_finalized_rollup(&self.context, rollup)
+            .map_err(|error| error.to_string())?;
         self.spool
-            .enqueue(&event, now_ms)
+            .enqueue(&self.enrollment.sink_fingerprint, &event, now_ms)
             .map_err(|error| error.to_string())
     }
 
     pub(crate) fn status(&self) -> Result<SpoolStatus, String> {
-        self.spool.status().map_err(|error| error.to_string())
+        self.spool
+            .status_for_sink(&self.enrollment.sink_fingerprint)
+            .map_err(|error| error.to_string())
     }
 
     pub(crate) async fn flush(&self, now_ms: i64) -> Result<usize, String> {
+        let now_s = now_ms.div_euclid(1_000);
+        if now_s >= self.enrollment.expires_at_unix_s {
+            return Err("enterprise telemetry enrollment expired before delivery".into());
+        }
         static CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
         let sequence = CLAIM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let owner = format!("pid-{}-{now_ms}-{sequence}", std::process::id());
         let claimed = self
             .spool
             .claim_batch(
+                &self.enrollment.sink_fingerprint,
                 &owner,
                 now_ms,
                 LEASE_MS,
@@ -479,13 +785,28 @@ impl EnterpriseTelemetryRuntime {
             Ok(value) if !value.is_empty() && value.len() <= MAX_BEARER_BYTES => value,
             _ => {
                 self.spool
-                    .retry(&owner, &claimed, now_ms)
+                    .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
                     .map_err(|error| error.to_string())?;
                 return Err(
                     "enterprise telemetry bearer credential is unavailable or invalid".into(),
                 );
             }
         };
+        let signing_secret = match std::env::var(&self.enrollment.verification_secret_env) {
+            Ok(value) if (32..=MAX_SECRET_BYTES).contains(&value.len()) => value,
+            _ => {
+                self.spool
+                    .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
+                    .map_err(|error| error.to_string())?;
+                return Err("enterprise telemetry verification secret is unavailable".into());
+            }
+        };
+        if signing_secret.as_bytes() == token.as_bytes() {
+            self.spool
+                .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
+                .map_err(|error| error.to_string())?;
+            return Err("enterprise telemetry signing and bearer values must be distinct".into());
+        }
         let events: Vec<_> = claimed.iter().map(|item| item.event.clone()).collect();
         match self
             .sender
@@ -494,13 +815,13 @@ impl EnterpriseTelemetryRuntime {
         {
             Ok(()) => {
                 self.spool
-                    .ack(&owner, &claimed)
+                    .ack(&self.enrollment.sink_fingerprint, &owner, &claimed)
                     .map_err(|error| error.to_string())?;
                 Ok(claimed.len())
             }
             Err(error) => {
                 self.spool
-                    .retry(&owner, &claimed, now_ms)
+                    .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
                     .map_err(|retry_error| {
                         format!("{error}; retry persistence failed: {retry_error}")
                     })?;
@@ -548,16 +869,24 @@ pub(crate) fn run_command(command: TelemetryCmd) -> Result<(), String> {
     let (now_s, now_ms) = unix_time()?;
     match command {
         TelemetryCmd::Status => {
-            let Some((_, spool)) =
+            let Some((enrollment, spool)) =
                 enrolled_spool(settings.managed_enterprise_telemetry(), &workspace, now_s)?
             else {
                 println!("enterprise telemetry: disabled (no managed enrollment)");
                 return Ok(());
             };
-            let status = spool.status().map_err(|error| error.to_string())?;
+            let status = spool
+                .status_for_sink(&enrollment.sink_fingerprint)
+                .map_err(|error| error.to_string())?;
             println!(
-                "enterprise telemetry: enrolled; pending={} ({} bytes); dropped={}",
-                status.pending_rows, status.pending_bytes, status.dropped_rows
+                "enterprise telemetry: enrolled; pending={} ({} bytes); stranded={} ({} bytes); physical={} bytes; dropped={}; rollover_discarded={}",
+                status.pending_rows,
+                status.pending_payload_bytes,
+                status.stranded_rows,
+                status.stranded_payload_bytes,
+                status.physical_bytes,
+                status.dropped_rows,
+                status.rollover_discarded_rows
             );
             Ok(())
         }
@@ -584,6 +913,21 @@ pub(crate) fn run_command(command: TelemetryCmd) -> Result<(), String> {
             );
             Ok(())
         }
+        TelemetryCmd::RolloverDiscard => {
+            let Some((enrollment, spool)) =
+                enrolled_spool(settings.managed_enterprise_telemetry(), &workspace, now_s)?
+            else {
+                println!("enterprise telemetry: disabled (no managed enrollment)");
+                return Ok(());
+            };
+            let discarded = spool
+                .discard_stranded(&enrollment.sink_fingerprint)
+                .map_err(|error| error.to_string())?;
+            println!(
+                "enterprise telemetry: explicitly discarded {discarded} stranded rollover rows"
+            );
+            Ok(())
+        }
     }
 }
 
@@ -591,41 +935,51 @@ pub(crate) fn run_command(command: TelemetryCmd) -> Result<(), String> {
 pub(crate) fn enqueue_finalized_execution(
     store: &stella_store::Store,
     execution_id: i64,
-) -> Result<bool, String> {
+) -> Result<FinalizationEnqueueOutcome, String> {
     let Some(workspace) = store.workspace_root() else {
-        return Ok(false);
+        return Ok(FinalizationEnqueueOutcome::Disabled);
     };
     let settings = crate::settings::Settings::load(workspace)?;
     let (now_s, now_ms) = unix_time()?;
-    let Some((enrollment, spool)) =
-        enrolled_spool(settings.managed_enterprise_telemetry(), workspace, now_s)?
-    else {
-        return Ok(false);
+    let Some(managed) = settings.managed_enterprise_telemetry() else {
+        return Ok(FinalizationEnqueueOutcome::Disabled);
     };
+    let enrollment = verify_managed_enrollment(managed, now_s)?;
+    // Durable intent precedes every host-spool filesystem operation.
+    if !store
+        .mark_enterprise_export_pending(&enrollment.sink_fingerprint, execution_id)
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(FinalizationEnqueueOutcome::Ineligible);
+    }
     let Some(rollup) = store
         .execution_rollup(execution_id, workspace)
         .map_err(|error| error.to_string())?
     else {
-        return Ok(false);
+        return Ok(FinalizationEnqueueOutcome::Ineligible);
     };
-    let event = StellaOperationalEventV1::from_finalized_rollup(&enrollment.context, &rollup)
+    let spool_path = host_spool_path(workspace)?;
+    let spool = EnterpriseTelemetrySpool::open_at(&spool_path, SpoolLimits::default())
         .map_err(|error| error.to_string())?;
-    spool
-        .enqueue(&event, now_ms)
-        .map_err(|error| error.to_string())
-}
-
-/// Close the deck's direct cancellation path, then export fail-open.
-pub(crate) fn finish_cancelled_execution(
-    store: &stella_store::Store,
-    execution_id: i64,
-    cost_usd: f64,
-) -> Result<(), String> {
-    store
-        .finish_execution(execution_id, "cancelled", cost_usd)
+    let context = enrollment.context(operational_identity(store, &spool_path)?)?;
+    let event = StellaOperationalEventV1::from_finalized_rollup(&context, &rollup)
         .map_err(|error| error.to_string())?;
-    let _ = enqueue_finalized_execution(store, execution_id);
-    Ok(())
+    let outcome = spool
+        .enqueue(&enrollment.sink_fingerprint, &event, now_ms)
+        .map_err(|error| error.to_string())?;
+    if matches!(
+        outcome,
+        EnqueueOutcome::Retained | EnqueueOutcome::Duplicate
+    ) {
+        store
+            .mark_enterprise_export_spooled(&enrollment.sink_fingerprint, execution_id)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(match outcome {
+        EnqueueOutcome::Retained => FinalizationEnqueueOutcome::Retained,
+        EnqueueOutcome::Duplicate => FinalizationEnqueueOutcome::Duplicate,
+        EnqueueOutcome::DroppedNew => FinalizationEnqueueOutcome::DroppedNew,
+    })
 }
 
 /// Startup-only detached flush. It cannot delay execution or process exit.
@@ -644,10 +998,33 @@ pub(crate) fn start_best_effort_flush() {
     };
     // Verify synchronously so sensitive env names are registered before any
     // model-controlled tool or hook can spawn. Network remains detached.
-    if let Err(error) = verify_managed_enrollment(&managed, startup_s) {
+    let enrollment = match verify_managed_enrollment(&managed, startup_s) {
+        Ok(enrollment) => enrollment,
+        Err(error) => {
+            eprintln!("warning: enterprise telemetry enrollment is inactive: {error}");
+            return;
+        }
+    };
+    if let Err(error) = prove_process_free_surface(&workspace) {
         eprintln!("warning: enterprise telemetry enrollment is inactive: {error}");
         return;
     }
+    if let Err(error) = host_spool_path(&workspace) {
+        eprintln!("warning: enterprise telemetry enrollment is inactive: {error}");
+        return;
+    }
+    let store = match stella_store::Store::open(&workspace) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("warning: enterprise telemetry enrollment is inactive: {error}");
+            return;
+        }
+    };
+    if let Err(error) = store.begin_enterprise_enrollment(&enrollment.sink_fingerprint) {
+        eprintln!("warning: enterprise telemetry enrollment is inactive: {error}");
+        return;
+    }
+    activate_process_free_authority(&enrollment);
     std::thread::spawn(move || {
         let Ok((now_s, now_ms)) = unix_time() else {
             return;

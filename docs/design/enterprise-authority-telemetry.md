@@ -70,6 +70,23 @@ process-free attestation, so paid generation remains fail-closed. Keeping the
 journal outside the workspace and validating paths are secondary defenses;
 they are not treated as process confinement.
 
+### Enrolled telemetry process boundary
+
+An enrolled telemetry claim must request `process_free`, and the secure
+administrator-managed policy must independently permit exactly that mode.
+Before an HTTP client is constructed, Stella builds and inspects a process-free
+`ToolRegistry`. The active session then uses the same construction: bash, web,
+fixed-command search, process/test controls, issue probes, hooks, MCP, custom
+commands, and skill search/install are absent. This is a capability property of
+the constructed surface, not an environment-variable attestation.
+
+Child-environment scrubbing is defense in depth, not a same-user security
+boundary. Deployments that provide telemetry credentials in environment
+variables MUST isolate enrolled Stella from untrusted same-UID processes with
+an OS account, container, or equivalent host boundary. A credential broker
+that issues request-scoped delivery authority is the preferred longer-term
+replacement for ambient bearer credentials.
+
 ## Verification model
 
 Witness preparation uses the existing candidate-workspace abstraction. When
@@ -90,18 +107,46 @@ outcome, timing, token/cost totals, tool-call counts, and aggregate file-change
 counts. Its type has no fields capable of carrying prompts, source, paths,
 arguments, results, reasoning, errors, git metadata, memories, or rules.
 
-Enrollment is managed-only and signed. It binds issuer, audience, enrollment,
-organization, workspace, endpoint, credential environment reference, allowed
-event classes, issue time, and expiry. The issuer verification key is installed
-through managed configuration, never supplied by a repository or the endpoint.
+Enrollment is managed-only and signed using explicit domain-separated,
+length-framed canonical bytes. It binds issuer, audience, enrollment,
+organization, workspace, endpoint, distinct signing/bearer credential
+references, allowed event classes, the closed provider/model catalog,
+process-free isolation, issue time, and expiry. The administrator-managed file
+is opened without following a terminal symlink and must be an owner/root-owned,
+single-link regular file that is not group/other writable. Privileged startup
+environment values and credential references are snapshotted before project
+dotenv loading and restored afterward. Invalid enrollment bytes cannot register
+arbitrary scrub names. Every delivery rechecks expiry and credential-domain
+separation.
 
-Events enter a separate bounded SQLite spool after local finalization. Delivery
-is at-least-once with deterministic event IDs. A bounded detached startup flush
-and `stella telemetry flush` attempt delivery. Graceful shutdown guarantees the
-finalized event is durably enqueued locally but never blocks on network I/O;
-the next startup or explicit flush retries it. Failure remains locally visible
-and never changes the agent outcome. A full spool may evict the oldest
-operational event and increments a durable drop counter.
+The event id is domain-separated and length-framed over schema, class,
+enrollment, organization, workspace, a persistent random installation UUID, a
+persistent random store UUID, and the local execution row id. Installation and
+store identities never serialize. Provider/model dimensions are admitted only
+by the signed catalog; every unknown pair projects to the closed `other/other`
+dimension.
+
+Every terminal path, including cancellation, first passes through one closeout
+aggregator. A per-store enrollment boundary excludes pre-enrollment history; a
+persistent local ledger records post-enrollment export intent before spool I/O
+and backfills missed enqueues at startup. Events then enter a separate bounded
+SQLite spool after local finalization. Delivery is at-least-once with
+deterministic event IDs. Each row is immutably bound to a cryptographic sink
+fingerprint; claim, acknowledgement, and retry require that exact sink. Rotated
+rows are stranded rather than sent to the new sink, and only the explicit
+`stella telemetry rollover-discard` command removes them while incrementing a
+durable rollover counter.
+
+A bounded detached startup flush and `stella telemetry flush` attempt delivery.
+Graceful shutdown guarantees durable local enqueue intent but never blocks on
+network I/O; the next startup or explicit flush retries it. Failure remains
+locally visible and never changes the agent outcome. The spool reports retained,
+duplicate, and dropped-new outcomes separately, tracks database/WAL/SHM disk
+bytes, repairs retry/lease deadlines after clock rollback, orders equal-time
+rows by a monotonic insertion sequence, and applies bounded retry jitter. A
+full spool may evict the oldest unleased operational event and increments a
+durable drop counter. Delivery disables ambient HTTP proxies, redirects, and
+unbounded request/response bodies.
 
 `compliance_audit` enrollment is rejected in this phase. Compliance delivery
 requires a non-evicting ledger, server receipts, retention/hold semantics, and
