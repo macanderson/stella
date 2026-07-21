@@ -145,6 +145,64 @@ pub fn diagnose_cache(
     Some(CacheCause::PrefixInstability)
 }
 
+/// Per-provider prompt-cache TTL in seconds — how long a written prefix stays
+/// readable before the provider evicts it, keyed by provider id. `None` for a
+/// provider with no documented eviction window (nothing to schedule around).
+///
+/// Anthropic's default cache TTL is 5 minutes; Bedrock and OpenRouter's Claude
+/// routes ride the same default. The 1-hour Anthropic/OpenRouter TTL is a
+/// per-request opt-in that bills writes at 2x — a caller's choice, not modeled
+/// here (this is the *default* a TTL-blind scheduler forfeits).
+///
+/// Local const table, deliberately: the authoritative home is the
+/// `provider_parity` matrix's not-yet-added TTL column. Merge this into that
+/// column when it lands — it pairs with [`cache_write_premium_multiplier`].
+pub fn provider_cache_ttl_secs(provider: &str) -> Option<u64> {
+    match provider {
+        "anthropic" | "bedrock" | "openrouter" => Some(300),
+        _ => None,
+    }
+}
+
+/// Remaining prompt-cache warmth for a live session: how long until its written
+/// prefix expires, derived from the time since the session's last provider call
+/// and the provider TTL. Pure over its inputs — it reads no clock, so the
+/// scheduler and the deck's countdown compute it the same way from passed-in
+/// elapsed time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheWarmth {
+    /// Seconds until the cached prefix expires; `0` once it already has.
+    pub remaining_secs: u64,
+    /// True once the prefix has expired — the next turn re-writes it.
+    pub expired: bool,
+}
+
+impl CacheWarmth {
+    /// Warmth of a session whose last provider call was `elapsed_secs` ago,
+    /// against a `ttl_secs` cache TTL. Saturating: a session idle longer than
+    /// the TTL reads `remaining_secs: 0, expired: true`, never underflows.
+    pub fn from_elapsed(elapsed_secs: u64, ttl_secs: u64) -> Self {
+        let remaining_secs = ttl_secs.saturating_sub(elapsed_secs);
+        Self {
+            remaining_secs,
+            expired: remaining_secs == 0,
+        }
+    }
+}
+
+/// Whether a model call is a *cache-expired rewrite*: the session's prefix went
+/// cold (the `gap_secs` since its previous call exceeded the provider
+/// `ttl_secs`) **and** this call wrote the cache again (`cache_write_tokens >
+/// 0`), so the whole prefix was re-billed at the write rate rather than read
+/// back. This is the exact event [`CacheCause::IdleBeyondTtl`] names and
+/// TTL-aware scheduling exists to prevent; counting it makes the heuristic's
+/// savings measurable (the `cache_expired_rewrite` counter). The strict `>`
+/// mirrors the provider contract that a prefix is still readable *at* the TTL
+/// boundary, cold only past it.
+pub fn is_cache_expired_rewrite(gap_secs: u64, cache_write_tokens: u64, ttl_secs: u64) -> bool {
+    gap_secs > ttl_secs && cache_write_tokens > 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +313,49 @@ mod tests {
         assert!((hit_rate(1_000, 500) - 0.5).abs() < 1e-12);
         // Defensive clamp: cached over total input never exceeds 1.
         assert!((hit_rate(1_000, 2_000) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ttl_is_five_minutes_for_the_opt_in_cache_providers_and_none_otherwise() {
+        // Anthropic-family default TTL is 5 minutes.
+        assert_eq!(provider_cache_ttl_secs("anthropic"), Some(300));
+        assert_eq!(provider_cache_ttl_secs("bedrock"), Some(300));
+        assert_eq!(provider_cache_ttl_secs("openrouter"), Some(300));
+        // Providers with no documented eviction window: nothing to schedule.
+        assert_eq!(provider_cache_ttl_secs("zai"), None);
+        assert_eq!(provider_cache_ttl_secs("local"), None);
+    }
+
+    #[test]
+    fn warmth_counts_down_and_saturates_to_expired() {
+        // Fresh: full TTL remaining, not expired.
+        let warm = CacheWarmth::from_elapsed(0, 300);
+        assert_eq!(warm.remaining_secs, 300);
+        assert!(!warm.expired);
+        // Midway: partial warmth, still live.
+        let cooling = CacheWarmth::from_elapsed(120, 300);
+        assert_eq!(cooling.remaining_secs, 180);
+        assert!(!cooling.expired);
+        // At the boundary the prefix is gone (remaining 0 → expired).
+        let at_edge = CacheWarmth::from_elapsed(300, 300);
+        assert_eq!(at_edge.remaining_secs, 0);
+        assert!(at_edge.expired);
+        // Idle well past the TTL saturates, never underflows.
+        let cold = CacheWarmth::from_elapsed(10_000, 300);
+        assert_eq!(cold.remaining_secs, 0);
+        assert!(cold.expired);
+    }
+
+    #[test]
+    fn expired_rewrite_needs_both_a_cold_gap_and_an_actual_write() {
+        // Cold gap AND a write → the prefix was re-billed: a rewrite.
+        assert!(is_cache_expired_rewrite(600, 40_000, 300));
+        // Cold gap but nothing written (a read-only or cache-off turn) → not
+        // a rewrite; there was no prefix write to forfeit.
+        assert!(!is_cache_expired_rewrite(600, 0, 300));
+        // Wrote the cache but well within the TTL → a healthy warm write.
+        assert!(!is_cache_expired_rewrite(30, 40_000, 300));
+        // Exactly at the boundary is still warm (strict `>`).
+        assert!(!is_cache_expired_rewrite(300, 40_000, 300));
     }
 }

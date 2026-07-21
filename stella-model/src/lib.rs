@@ -21,7 +21,8 @@ pub mod vertex;
 pub mod zai;
 
 pub use cache_economics::{
-    cache_write_premium_multiplier, diagnose_cache, hit_rate as cache_hit_rate,
+    CacheWarmth, cache_write_premium_multiplier, diagnose_cache, hit_rate as cache_hit_rate,
+    is_cache_expired_rewrite, provider_cache_ttl_secs,
 };
 pub use catalog::{Catalog, CatalogEntry, Pricing, ToolDialect};
 pub use credential::{ApiKey, CredentialError};
