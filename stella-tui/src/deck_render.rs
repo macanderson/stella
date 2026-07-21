@@ -15,6 +15,7 @@ use ratatui_comfy_tabs::{TabNav, TabNavState};
 
 use stella_protocol::{CiStatus, PrStatus};
 
+use crate::cache_panel;
 use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
 use crate::deck_ui::DeckUi;
@@ -944,31 +945,17 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
         theme::AURORA_AZURE
     };
 
-    // CACHE: the session prompt-cache hit rate — cumulative cache-read (hit)
-    // tokens over cumulative input tokens (a subset of it by the
-    // `CompletionUsage` contract, so the ratio is always in `[0, 1]`; clamped
-    // regardless), with the raw counts in parens. `—` before any usage has
-    // been metered.
-    let cache_hit = model.cache_hit_tokens();
+    // Cache economics panel (#267/#269) — CACHE hit%/volumes, SAVED dollars,
+    // WARMTH countdown; the pricing/TTL math already happened in the producer.
     let cache_total = model.total_input_tokens();
-    let cache_spans: Vec<Span<'static>> = if cache_total == 0 {
-        vec![Span::styled("—", val)]
-    } else {
-        let pct = ((cache_hit as f64 / cache_total as f64) * 100.0)
-            .round()
-            .clamp(0.0, 100.0);
-        vec![
-            Span::styled(format!("{pct:.0}%"), val),
-            Span::styled(
-                format!(
-                    " ({}/{} tokens)",
-                    fmt_tokens(cache_hit),
-                    fmt_tokens(cache_total)
-                ),
-                dim,
-            ),
-        ]
-    };
+    let cache_spans = cache_panel::cache_cell(
+        model.cache_hit_tokens(),
+        model.total_cache_write_tokens(),
+        cache_total,
+    );
+    let saved_spans = cache_panel::saved_cell(model.total_cache_savings_usd(), cache_total > 0);
+    let warmth_spans =
+        cache_panel::warmth_cell(focused.and_then(|a| a.cache_warmth_secs(model.now_ms)));
 
     // PIPELINE: ON when the session drives the staged pipeline, OFF for the
     // raw engine loop (`model.pipeline`).
@@ -1040,6 +1027,8 @@ fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut 
             6,
         ),
         ("CACHE", cache_spans, 4),
+        ("SAVED", saved_spans, 3),
+        ("WARMTH", warmth_spans, 3),
         (
             "ENGINE",
             vec![Span::styled(
@@ -1258,7 +1247,7 @@ fn fmt_k(n: u64) -> String {
 /// `105.3M`, `211.4K`, `950` — the CACHE-cell convention. `fmt_k` (the context
 /// meter) caps at `k`; cumulative cache counts reach the millions, so this
 /// carries an `M` tier, matching the requested `67% (105.3M/211.4M tokens)`.
-fn fmt_tokens(n: u64) -> String {
+pub(crate) fn fmt_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     } else if n >= 1_000 {
@@ -1715,15 +1704,20 @@ mod tests {
     }
 
     /// One committed model call, carrying `input`/`cached` usage — the fold
-    /// that feeds the CACHE cell.
+    /// that feeds the CACHE cell. `step_usage` writes nothing to the cache;
+    /// `step_usage_full` also sets the write volume.
     fn step_usage(input: u64, cached: u64) -> AgentEvent {
+        step_usage_full(input, cached, 0)
+    }
+
+    fn step_usage_full(input: u64, cached: u64, write: u64) -> AgentEvent {
         AgentEvent::StepUsage {
             step: 1,
             model: "glm".into(),
             input_tokens: input,
             output_tokens: 0,
             cached_input_tokens: cached,
-            cache_write_tokens: 0,
+            cache_write_tokens: write,
             estimated_input_tokens: 0,
             cost_usd: 0.0,
             duration_ms: 1,
@@ -1753,8 +1747,8 @@ mod tests {
         let text = buffer_text(&buf);
         assert!(text.contains("CACHE"), "cache label present:\n{text}");
         assert!(
-            text.contains("50% (105.3M/211.4M tokens)"),
-            "cache hit rate + compact counts:\n{text}"
+            text.contains("50% (105.3M rd · 0 wr)"),
+            "cache hit rate + compact read/write volumes:\n{text}"
         );
     }
 
@@ -1788,7 +1782,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_status_bar(&cold, &ui, area, &mut buf);
         assert!(
-            buffer_text(&buf).contains("0% (0/1.0K tokens)"),
+            buffer_text(&buf).contains("0% (0 rd · 0 wr)"),
             "cold cache reads 0%:\n{}",
             buffer_text(&buf)
         );
@@ -1798,7 +1792,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render_status_bar(&warm, &ui, area, &mut buf);
         assert!(
-            buffer_text(&buf).contains("100% (1.0K/1.0K tokens)"),
+            buffer_text(&buf).contains("100% (1.0K rd · 0 wr)"),
             "fully warm cache reads 100%:\n{}",
             buffer_text(&buf)
         );
@@ -1816,8 +1810,61 @@ mod tests {
         let text = buffer_text(&buf);
         assert!(text.contains("CACHE"), "cache label still present:\n{text}");
         assert!(
-            !text.contains("tokens"),
-            "no token counts before any usage:\n{text}"
+            !text.contains(" wr)"),
+            "no read/write volumes before any usage:\n{text}"
+        );
+    }
+
+    #[test]
+    fn statline_cache_panel_shows_savings_and_warmth_running_and_complete() {
+        let ui = DeckUi::default();
+        let area = Rect::new(0, 0, 240, 2);
+        let render = |m: &WorkspaceModel| {
+            let mut buf = Buffer::empty(area);
+            render_status_bar(m, &ui, area, &mut buf);
+            buffer_text(&buf)
+        };
+        let fold = |m: &mut WorkspaceModel, event| {
+            m.apply_inbound(&Inbound::Event {
+                agent: "lead".into(),
+                event,
+            });
+        };
+
+        // Running: 150K of 200K input served from cache, 40K written; derived
+        // economics say $0.42 saved on a 5-min-TTL provider; 120s idle since,
+        // so 180s of warmth ("3:00") remains.
+        let mut m = running_model_with_queue();
+        fold(&mut m, step_usage_full(200_000, 150_000, 40_000));
+        m.apply_inbound(&Inbound::CacheInsight {
+            agent: "lead".into(),
+            savings_usd_delta: 0.42,
+            ttl_secs: 300,
+        });
+        m.now_ms += 120_000;
+        let running = render(&m);
+        for needle in [
+            "75% (150.0K rd · 40.0K wr)",
+            "SAVED",
+            "$0.42",
+            "WARMTH",
+            "3:00",
+        ] {
+            assert!(running.contains(needle), "missing {needle:?}:\n{running}");
+        }
+
+        // Complete: the turn ends; the cache panel stays populated.
+        fold(
+            &mut m,
+            AgentEvent::Complete {
+                model: "claude".into(),
+                cost_usd: 0.05,
+            },
+        );
+        let complete = render(&m);
+        assert!(
+            complete.contains("75% (150.0K rd · 40.0K wr)") && complete.contains("$0.42"),
+            "cache panel persists in Complete:\n{complete}"
         );
     }
 

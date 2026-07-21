@@ -74,8 +74,7 @@ impl Pricing {
         let cached = usage.cached_input_tokens.min(usage.input_tokens);
         let read_saved =
             (cached as f64 / PER_MTOK) * (self.input_usd_per_mtok - self.cached_input_usd_per_mtok);
-        let write_cost =
-            (usage.cache_write_tokens as f64 / PER_MTOK) * write_premium_usd_per_mtok;
+        let write_cost = (usage.cache_write_tokens as f64 / PER_MTOK) * write_premium_usd_per_mtok;
         read_saved - write_cost
     }
 
@@ -246,7 +245,10 @@ mod tests {
         };
         let premium = 3.00 * 0.25;
         let got = pricing.cache_savings_usd(&usage(500_000, 0, 500_000), premium);
-        assert!(got < 0.0, "writes-with-no-reads must show a loss, got {got}");
+        assert!(
+            got < 0.0,
+            "writes-with-no-reads must show a loss, got {got}"
+        );
         // -500_000/1e6 * 0.75 = -0.375
         assert!((got + 0.375).abs() < 1e-9, "got {got}");
     }
@@ -260,7 +262,8 @@ mod tests {
         };
         // anthropic → 1.25x, so the convenience form equals the explicit one.
         let explicit = pricing.cache_savings_usd(&usage(1_000_000, 400_000, 100_000), 3.00 * 0.25);
-        let convenient = pricing.cache_savings_usd_for("anthropic", &usage(1_000_000, 400_000, 100_000));
+        let convenient =
+            pricing.cache_savings_usd_for("anthropic", &usage(1_000_000, 400_000, 100_000));
         assert!((explicit - convenient).abs() < 1e-12);
 
         // An implicit-cache provider bills writes at input rate → premium 0;
