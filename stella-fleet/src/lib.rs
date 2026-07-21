@@ -41,6 +41,7 @@
 //! [`WorkerControls`]: fleet::WorkerControls
 //! [`FleetWorker`]: fleet::FleetWorker
 
+pub mod cache_schedule;
 pub mod fleet;
 pub mod git;
 pub mod ledger;
@@ -63,4 +64,5 @@ pub use monitor::{
     Monitor, MonitorError, Sleeper, SystemGhCli, TimeoutReason, TokioSleeper, WatchConfig,
     WatchPhase, commit_event, parse_pr_number, pr_event, pr_event_with_ci,
 };
+pub use cache_schedule::{RunnableSession, warmest_first};
 pub use plan::{Isolation, Plan, PlanError, Task, TaskId};
