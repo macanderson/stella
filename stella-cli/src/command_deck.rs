@@ -1585,15 +1585,17 @@ pub async fn run_deck_session(
                     && turn_warrants_reflection(&messages[reflect_start..])
                     && let Some(m) = &mut memory
                 {
-                    m.reflect_and_record(
-                        &*provider,
-                        &cfg.model_id,
-                        &messages,
-                        true,
-                        true,
-                        agent::remaining_budget(&budget),
-                    )
-                    .await;
+                    let report = m
+                        .reflect_and_record(
+                            &*provider,
+                            &cfg.model_id,
+                            &messages,
+                            true,
+                            true,
+                            agent::remaining_budget(&budget),
+                        )
+                        .await;
+                    authoring::forward_reflection_events(&in_tx, report);
                 }
                 // Registry + inbox: the turn settled, so the session now
                 // waits on the user (Needs Input, machine-wide). Failed work

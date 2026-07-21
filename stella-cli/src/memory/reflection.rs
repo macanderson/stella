@@ -3,15 +3,17 @@
 use std::path::Path;
 
 use stella_model::provider::Provider;
-use stella_protocol::{CompletionMessage, CompletionRequest, MessageRole};
+use stella_protocol::{AgentEvent, CompletionMessage, CompletionRequest, MessageRole};
 
 use super::ReflectionLesson;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
+#[must_use = "reflection cost and usage events must be surfaced by every caller"]
 pub struct ReflectionReport {
     pub recorded: usize,
     pub model_error: Option<String>,
     pub cost_usd: f64,
+    pub events: Vec<AgentEvent>,
 }
 
 pub fn turn_warrants_reflection(turn_messages: &[CompletionMessage]) -> bool {
@@ -28,7 +30,8 @@ pub async fn reflect_on_turn(
     domain_names: &[String],
     succeeded: bool,
     budget_limit: Option<f64>,
-) -> Result<(Vec<ReflectionLesson>, f64), crate::accounted_call::StandaloneCallError> {
+) -> Result<(Vec<ReflectionLesson>, f64, Vec<AgentEvent>), crate::accounted_call::StandaloneCallError>
+{
     let digest = transcript
         .iter()
         .rev()
@@ -110,6 +113,7 @@ pub async fn reflect_on_turn(
     Ok((
         parse_lessons(&accounted.result.text, domain_names),
         accounted.cost_usd,
+        accounted.events,
     ))
 }
 

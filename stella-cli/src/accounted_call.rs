@@ -6,7 +6,7 @@ use std::time::Duration;
 use stella_core::{
     AccountedCall, AccountedCallError, BudgetGuard, RetryPolicy, run_accounted_call,
 };
-use stella_protocol::{CompletionRequest, CompletionResult, ModelCallRole, Provider};
+use stella_protocol::{AgentEvent, CompletionRequest, CompletionResult, ModelCallRole, Provider};
 use stella_store::Store;
 use tokio::sync::mpsc;
 
@@ -17,12 +17,14 @@ use crate::runtime::TokioSleeper;
 pub(crate) struct StandaloneCompletion {
     pub(crate) result: CompletionResult,
     pub(crate) cost_usd: f64,
+    pub(crate) events: Vec<AgentEvent>,
 }
 
 #[derive(Debug)]
 pub(crate) struct StandaloneCallError {
     pub(crate) message: String,
     pub(crate) cost_usd: f64,
+    pub(crate) events: Vec<AgentEvent>,
 }
 
 pub(crate) async fn complete_standalone(
@@ -37,6 +39,7 @@ pub(crate) async fn complete_standalone(
     let store = Store::open(workspace_root).map_err(|error| StandaloneCallError {
         message: format!("accounting store unavailable before model dispatch: {error}"),
         cost_usd: 0.0,
+        events: Vec::new(),
     })?;
     let execution_id = store
         .begin_execution(
@@ -48,6 +51,7 @@ pub(crate) async fn complete_standalone(
         .map_err(|error| StandaloneCallError {
             message: format!("accounting execution unavailable before model dispatch: {error}"),
             cost_usd: 0.0,
+            events: Vec::new(),
         })?;
     let mut budget: BudgetGuard = agent::build_budget_guard(budget_limit);
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -69,9 +73,11 @@ pub(crate) async fn complete_standalone(
     drop(tx);
     let mut persistence_complete = true;
     let mut seq = 0;
+    let mut settled_events = Vec::new();
     while let Some(event) = rx.recv().await {
         persistence_complete &=
             agent::persist_event(&store, execution_id, seq, &event, provider.id());
+        settled_events.push(event);
         seq += 1;
     }
     match outcome {
@@ -90,9 +96,14 @@ pub(crate) async fn complete_standalone(
                 return Err(StandaloneCallError {
                     message: "model call settled but its accounting closeout failed".into(),
                     cost_usd,
+                    events: settled_events,
                 });
             }
-            Ok(StandaloneCompletion { result, cost_usd })
+            Ok(StandaloneCompletion {
+                result,
+                cost_usd,
+                events: settled_events,
+            })
         }
         Err(AccountedCallError::Budget { result, .. }) => {
             let cost_usd = result.cost_usd;
@@ -105,6 +116,7 @@ pub(crate) async fn complete_standalone(
             Err(StandaloneCallError {
                 message: "model call settled over the configured budget".into(),
                 cost_usd,
+                events: settled_events,
             })
         }
         Err(AccountedCallError::Provider(error)) => {
@@ -112,6 +124,7 @@ pub(crate) async fn complete_standalone(
             Err(StandaloneCallError {
                 message: error.to_string(),
                 cost_usd: 0.0,
+                events: settled_events,
             })
         }
         Err(AccountedCallError::Timeout) => {
@@ -119,6 +132,7 @@ pub(crate) async fn complete_standalone(
             Err(StandaloneCallError {
                 message: "model call timed out".into(),
                 cost_usd: 0.0,
+                events: settled_events,
             })
         }
     }
@@ -191,6 +205,10 @@ mod tests {
             .await
             .expect("accounted call");
             assert_eq!(outcome.cost_usd, 0.0125);
+            assert!(outcome.events.iter().any(|event| matches!(
+                event,
+                AgentEvent::StepUsage { role: actual, .. } if actual == &role
+            )));
         }
 
         let store = Store::open(root.path()).expect("store");

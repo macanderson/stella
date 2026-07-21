@@ -6,8 +6,21 @@ use stella_tui::{AgentScope, Inbound};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::config::Config;
+use crate::memory::ReflectionReport;
 
-use super::agents_list_inbound;
+use super::{LEAD, agents_list_inbound};
+
+pub(super) fn forward_reflection_events(
+    in_tx: &UnboundedSender<Inbound>,
+    report: ReflectionReport,
+) {
+    for event in report.events {
+        let _ = in_tx.send(Inbound::Event {
+            agent: LEAD.to_string(),
+            event,
+        });
+    }
+}
 
 pub(super) async fn handle_agent_create(
     description: &str,

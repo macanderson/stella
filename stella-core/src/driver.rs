@@ -71,6 +71,7 @@ use crate::loop_detect::{LoopDetectionConfig, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff};
 use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
+use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 
 mod settlement;
 use settlement::{check_budget, record_settled_cost};
@@ -490,11 +491,8 @@ impl<'a> Engine<'a> {
         0.0
     }
 
-    /// Replace the oldest replaceable span of the conversation with one
-    /// model-written summary message. Best-effort by contract: any failure
-    /// (no viable span, provider error, empty summary) leaves the
-    /// conversation untouched and the turn proceeds exactly as before this
-    /// mechanism existed. Returns the summarizer call's spend.
+    /// Replace the oldest viable span with a model-written summary. Failures
+    /// leave the conversation untouched. Returns the summarizer call's spend.
     async fn summarize_overflow_span(
         &self,
         messages: &mut Vec<CompletionMessage>,
@@ -542,19 +540,28 @@ impl<'a> Engine<'a> {
             reasoning: None,
             params: None,
         };
-        let result = match self.provider.complete(request).await {
+        let estimated_input_tokens = estimate_conversation_tokens(&request.messages);
+        let result = match run_accounted_call(
+            AccountedCall {
+                provider: self.provider,
+                role: stella_protocol::ModelCallRole::Summarization,
+                model_hint: "unknown".into(),
+                request,
+                retry_policy: RetryPolicy::deterministic(),
+                timeout: None,
+                estimated_input_tokens,
+            },
+            budget,
+            events,
+            self.sleeper,
+        )
+        .await
+        {
             Ok(result) => result,
-            // Best-effort: a summarizer outage must never fail the turn.
-            Err(_) => return 0.0,
+            Err(AccountedCallError::Budget { result, .. }) => return result.cost_usd,
+            Err(AccountedCallError::Provider(_) | AccountedCallError::Timeout) => return 0.0,
         };
         let cost_usd = result.cost_usd;
-        // The call happened — meter it honestly even if the text is unusable.
-        budget.record_spend(cost_usd);
-        let _ = events.send(AgentEvent::BudgetTick {
-            spent_usd: budget.spent_usd(),
-            limit_usd: budget.turn_limit_usd(),
-            mode: budget.mode(),
-        });
         if result.text.trim().is_empty() {
             return cost_usd;
         }

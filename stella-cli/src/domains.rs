@@ -189,6 +189,7 @@ pub async fn infer_domains(
     let mut total_cost_usd = 0.0;
 
     for _attempt in 0..2 {
+        let remaining_budget = budget_limit.map(|limit| (limit - total_cost_usd).max(0.0));
         let req = CompletionRequest {
             messages: messages.clone(),
             max_output_tokens: Some(2048),
@@ -204,7 +205,7 @@ pub async fn infer_domains(
             ModelCallRole::DomainInference,
             "domain_inference",
             model_hint,
-            budget_limit,
+            remaining_budget,
             req,
         )
         .await
@@ -303,7 +304,40 @@ pub fn heuristic_domains(root: &Path) -> Domains {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+    use stella_protocol::{CompletionResult, CompletionUsage, ProviderError};
+
     use super::*;
+
+    struct RepairProvider {
+        responses: tokio::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl Provider for RepairProvider {
+        fn id(&self) -> &str {
+            "paid-domains"
+        }
+
+        async fn complete(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<CompletionResult, ProviderError> {
+            let text = self.responses.lock().await.remove(0);
+            Ok(CompletionResult {
+                text,
+                tool_calls: Vec::new(),
+                usage: CompletionUsage {
+                    input_tokens: 10,
+                    output_tokens: 2,
+                    ..CompletionUsage::default()
+                },
+                model: "paid-domains-model".into(),
+                cost_usd: 0.006,
+                finish_reason: None,
+            })
+        }
+    }
 
     fn temp_root(name: &str) -> PathBuf {
         let dir =
@@ -410,6 +444,30 @@ mod tests {
         assert!(summary.contains("src/routes"));
         assert!(summary.contains("Has manifest: Cargo.toml"));
         assert!(summary.contains("My project"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn repair_attempt_cannot_apply_output_after_aggregate_budget_is_exceeded() {
+        let root = temp_root("repair-budget");
+        std::fs::create_dir_all(root.join("fallback-domain")).expect("mkdir");
+        let provider = RepairProvider {
+            responses: tokio::sync::Mutex::new(vec![
+                "not json".into(),
+                r#"[{"name":"model-domain","description":"model","paths":["fallback-domain"]}]"#
+                    .into(),
+            ]),
+        };
+
+        let (domains, cost_usd) =
+            infer_domains(&provider, &root, "paid-domains-model", Some(0.01)).await;
+
+        assert_eq!(cost_usd, 0.012, "both settled calls remain attributable");
+        assert_eq!(domains.inferred_by, "heuristic");
+        assert!(
+            !domains.names().contains(&"model-domain".to_string()),
+            "over-budget repair output must not be applied"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -299,6 +299,7 @@ async fn run_pipeline_one_shot(
     // — is what makes the primary surface actually learn. The reflector is
     // then handed an enriched transcript (final answer + a note of what
     // changed) so it has signal even when the tool turns aren't in `messages`.
+    let mut reflection_report = ReflectionReport::default();
     if (turn_warrants_reflection(&messages) || !files.is_empty())
         && let Some(m) = &mut memory
     {
@@ -332,6 +333,7 @@ async fn run_pipeline_one_shot(
             )
             .await;
         surface_reflection(&report, format);
+        reflection_report = report;
     }
 
     if let Some(set) = &mcp {
@@ -367,7 +369,7 @@ async fn run_pipeline_one_shot(
                 let summary = serde_json::json!({
                     "status": status_str,
                     "text": outcome.final_text,
-                    "cost_usd": outcome.total_cost_usd,
+                    "cost_usd": outcome.total_cost_usd + reflection_report.cost_usd,
                     "reason": reason_str,
                     "task_class": format!("{:?}", outcome.task_class),
                     "verdict": outcome.verdict.as_ref().map(|v| serde_json::json!({
@@ -379,6 +381,7 @@ async fn run_pipeline_one_shot(
                     "candidates_run": outcome.candidates_run,
                     "model": format!("{}/{}", cfg.provider.id, cfg.model_id),
                     "events": collected,
+                    "reflection": reflection_json(&reflection_report),
                 });
                 println!(
                     "{}",
@@ -391,7 +394,7 @@ async fn run_pipeline_one_shot(
             if format == OutputFormat::Text {
                 tui::files_touched_panel(&files);
                 tui::cost_summary(
-                    outcome.total_cost_usd,
+                    outcome.total_cost_usd + reflection_report.cost_usd,
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
                     turn_start.elapsed(),
                 );
@@ -691,15 +694,17 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             } else if turn_warrants_reflection(&messages[turn_start..])
                 && let Some(m) = &mut memory
             {
-                m.reflect_and_record(
-                    &*provider,
-                    &cfg.model_id,
-                    &messages,
-                    false,
-                    true,
-                    remaining_budget(&budget),
-                )
-                .await;
+                let report = m
+                    .reflect_and_record(
+                        &*provider,
+                        &cfg.model_id,
+                        &messages,
+                        false,
+                        true,
+                        remaining_budget(&budget),
+                    )
+                    .await;
+                surface_reflection(&report, OutputFormat::Text);
             }
             continue;
         }
@@ -767,15 +772,17 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         } else if turn_warrants_reflection(&messages[turn_start..])
             && let Some(m) = &mut memory
         {
-            m.reflect_and_record(
-                &*provider,
-                &cfg.model_id,
-                &messages,
-                false,
-                true,
-                remaining_budget(&budget),
-            )
-            .await;
+            let report = m
+                .reflect_and_record(
+                    &*provider,
+                    &cfg.model_id,
+                    &messages,
+                    false,
+                    true,
+                    remaining_budget(&budget),
+                )
+                .await;
+            surface_reflection(&report, OutputFormat::Text);
         }
     }
 
@@ -840,8 +847,13 @@ pub(crate) async fn record_turn_episode(
 /// correct case and stays quiet. Never writes stdout in `json` mode, so that
 /// format's single-object contract is untouched. Best-effort: a `None` model
 /// error in `text`/`json` prints nothing.
-fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
+pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
     if format == OutputFormat::StreamJson {
+        for event in &report.events {
+            if let Ok(line) = serde_json::to_string(event) {
+                println!("{line}");
+            }
+        }
         let line = serde_json::json!({
             "type": "reflect",
             "recorded": report.recorded,
@@ -851,12 +863,56 @@ fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
         println!("{line}");
         return;
     }
+    if format == OutputFormat::Text {
+        for event in &report.events {
+            match event {
+                AgentEvent::StepUsage {
+                    role,
+                    provider,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    cost_usd,
+                    retries,
+                    complete,
+                    ..
+                } => eprintln!(
+                    "  {} {:?} {provider}/{model}: {input_tokens} in, {output_tokens} out, \
+                     ${cost_usd:.4}, {retries} retries, complete={complete}",
+                    "✦".magenta(),
+                    role
+                ),
+                AgentEvent::UsageIncomplete {
+                    role,
+                    provider,
+                    model,
+                    reason,
+                    retries,
+                    ..
+                } => eprintln!(
+                    "  {} {:?} {provider}/{model}: usage incomplete ({reason:?}, retries={retries:?})",
+                    "!".yellow(),
+                    role
+                ),
+                _ => {}
+            }
+        }
+    }
     if let Some(err) = &report.model_error {
         eprintln!(
             "  {} post-turn reflection skipped — model call failed: {err}",
             "!".yellow()
         );
     }
+}
+
+fn reflection_json(report: &ReflectionReport) -> serde_json::Value {
+    serde_json::json!({
+        "recorded": report.recorded,
+        "error": report.model_error,
+        "cost_usd": report.cost_usd,
+        "events": report.events,
+    })
 }
 
 /// Build the workspace code-graph index into `.stella/private/codegraph.db` (the

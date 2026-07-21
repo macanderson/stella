@@ -711,5 +711,38 @@ fn judge_build_failure_falls_back_to_the_worker() {
     );
 }
 
+#[test]
+fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
+    let report = ReflectionReport {
+        recorded: 1,
+        model_error: None,
+        cost_usd: 0.0042,
+        events: vec![AgentEvent::StepUsage {
+            step: 0,
+            role: stella_protocol::ModelCallRole::Reflection,
+            provider: "anthropic".into(),
+            model: "claude-reflect".into(),
+            input_tokens: 100,
+            output_tokens: 20,
+            cached_input_tokens: 5,
+            cache_write_tokens: 3,
+            estimated_input_tokens: 90,
+            cost_usd: 0.0042,
+            duration_ms: 12,
+            retries: 1,
+            tool_calls: 0,
+            complete: true,
+        }],
+    };
+
+    let value = reflection_json(&report);
+    assert_eq!(value["cost_usd"], 0.0042);
+    assert_eq!(value["events"][0]["type"], "step_usage");
+    assert_eq!(value["events"][0]["role"], "reflection");
+    assert_eq!(value["events"][0]["provider"], "anthropic");
+    assert_eq!(value["events"][0]["model"], "claude-reflect");
+    assert_eq!(value["events"][0]["complete"], true);
+}
+
 #[path = "agent_tests/usage_completeness.rs"]
 mod usage_completeness;

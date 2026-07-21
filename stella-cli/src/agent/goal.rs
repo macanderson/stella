@@ -129,7 +129,8 @@ pub(crate) async fn run_raw_one_shot(
     // `succeeded=false`). Gated on `turn_warrants_reflection` so a tool-free
     // turn (nothing to mine, failure almost certainly external) never spends a
     // model call. The report is surfaced so a model-call error is never silent.
-    if turn_warrants_reflection(&messages)
+    if format != OutputFormat::Json
+        && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
         let report = m
@@ -290,15 +291,17 @@ pub async fn run_goal_cmd(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        m.reflect_and_record(
-            &*provider,
-            &cfg.model_id,
-            &messages,
-            false,
-            true,
-            crate::agent::remaining_budget(&budget),
-        )
-        .await;
+        let report = m
+            .reflect_and_record(
+                &*provider,
+                &cfg.model_id,
+                &messages,
+                false,
+                true,
+                crate::agent::remaining_budget(&budget),
+            )
+            .await;
+        surface_reflection(&report, OutputFormat::Text);
     }
     if let Some(set) = &mcp {
         set.close_all().await;

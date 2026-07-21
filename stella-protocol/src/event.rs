@@ -76,6 +76,7 @@ pub enum ModelCallRole {
     SkillAuthor,
     DomainInference,
     Reflection,
+    Summarization,
 }
 
 /// Content-free reason a provider attempt cannot contribute a truthful usage

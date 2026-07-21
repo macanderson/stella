@@ -498,7 +498,7 @@ impl SessionMemory {
         )
         .await
         {
-            Ok((lessons, cost_usd)) => (lessons, cost_usd),
+            Ok((lessons, cost_usd, events)) => (lessons, cost_usd, events),
             // The single reflection model call errored. Report it up so the
             // caller can warn (text) or emit an event (stream-json) — this
             // is the fix for the previously-silent reflection failure. Never
@@ -508,13 +508,15 @@ impl SessionMemory {
                     recorded: 0,
                     model_error: Some(model_error.message),
                     cost_usd: model_error.cost_usd,
+                    events: model_error.events,
                 };
             }
         };
-        let (lessons, reflection_cost_usd) = lessons;
+        let (lessons, reflection_cost_usd, reflection_events) = lessons;
         if lessons.is_empty() {
             return ReflectionReport {
                 cost_usd: reflection_cost_usd,
+                events: reflection_events,
                 ..ReflectionReport::default()
             };
         }
@@ -587,6 +589,7 @@ impl SessionMemory {
             recorded: if stored { lessons.len() } else { 0 },
             model_error: None,
             cost_usd: reflection_cost_usd,
+            events: reflection_events,
         }
     }
 
@@ -1294,7 +1297,8 @@ mod tests {
     async fn reflect_and_record_writes_lessons_to_log_and_store() {
         use async_trait::async_trait;
         use stella_protocol::{
-            CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+            AgentEvent, CompletionRequest, CompletionResult, CompletionUsage, Provider,
+            ProviderError,
         };
 
         struct StubProvider;
@@ -1337,6 +1341,13 @@ mod tests {
 
         assert_eq!(report.recorded, 1, "the lesson was stored");
         assert!(report.model_error.is_none());
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::StepUsage {
+                role: stella_protocol::ModelCallRole::Reflection,
+                ..
+            }
+        )));
 
         // The mining log now carries the lesson, one JSON object per line.
         let log = std::fs::read_to_string(dir.path().join(".stella/private/reflections.jsonl"))
@@ -1361,7 +1372,8 @@ mod tests {
     async fn reflection_preserves_settled_cost_when_budget_rejects_model_output() {
         use async_trait::async_trait;
         use stella_protocol::{
-            CompletionRequest, CompletionResult, CompletionUsage, Provider, ProviderError,
+            AgentEvent, CompletionRequest, CompletionResult, CompletionUsage, Provider,
+            ProviderError,
         };
 
         struct PaidReflection;
@@ -1405,5 +1417,13 @@ mod tests {
         assert_eq!(report.recorded, 0);
         assert_eq!(report.cost_usd, 0.02);
         assert!(report.model_error.is_some());
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::StepUsage {
+                role: stella_protocol::ModelCallRole::Reflection,
+                cost_usd,
+                ..
+            } if (*cost_usd - 0.02).abs() < f64::EPSILON
+        )));
     }
 }
