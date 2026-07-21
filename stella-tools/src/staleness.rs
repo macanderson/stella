@@ -173,6 +173,7 @@ pub fn git_head_sync(root: &Path) -> Option<String> {
     for var in crate::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    crate::subprocess_env::scrub_sensitive_std_env(&mut cmd);
     let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
@@ -187,6 +188,7 @@ fn worktree_clean_sync(root: &Path) -> bool {
     for var in crate::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    crate::subprocess_env::scrub_sensitive_std_env(&mut cmd);
     match cmd.output() {
         Ok(out) => out.status.success() && out.stdout.iter().all(|b| b.is_ascii_whitespace()),
         Err(_) => false,
@@ -202,6 +204,7 @@ pub async fn git_head(root: &Path) -> Option<String> {
     for var in crate::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    crate::subprocess_env::scrub_sensitive_env(&mut cmd);
     let output = cmd.output().await.ok()?;
     if !output.status.success() {
         return None;
@@ -218,6 +221,7 @@ async fn worktree_clean(root: &Path) -> bool {
     for var in crate::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    crate::subprocess_env::scrub_sensitive_env(&mut cmd);
     match cmd.output().await {
         Ok(out) => out.status.success() && out.stdout.iter().all(|b| b.is_ascii_whitespace()),
         Err(_) => false,

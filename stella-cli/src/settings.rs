@@ -8,6 +8,16 @@
 //!    `STELLA_MANAGED_SETTINGS` — also how tests point at a fixture)
 //! 3. project:     `<workspace>/.stella/settings.json`
 //!
+//! A trusted benchmark launcher may set `STELLA_NO_SETTINGS=1` to skip all
+//! three filesystem scopes and return [`Settings::default`]. The same signal is
+//! the process-wide benchmark isolation boundary for other Stella-specific
+//! filesystem steering (rules, memories, skills, custom tools, MCP config, and
+//! persisted session state). This is stronger than the ordinary project trust
+//! boundary: a task image's preinstalled user or managed state is outside the
+//! frozen system under test. The launcher-owned `STELLA_ENGINE_CONFIG_JSON`
+//! override is applied later by `Config::load_with_settings`, so disabling
+//! files does not disable the explicit benchmark engine posture.
+//!
 //! An entry whose id matches a built-in provider OVERRIDES that provider's
 //! defaults (display name, base URL, default model, credential source). An
 //! entry with a new id DEFINES a whole new provider — `base_url` becomes
@@ -580,6 +590,10 @@ impl Settings {
     /// with a one-line notice naming what was skipped; cosmetic project
     /// fields (`name`, `default_model`, `dialect`) still apply.
     pub fn load(workspace_root: &Path) -> Result<Self, String> {
+        if filesystem_settings_disabled() {
+            return Ok(Self::default());
+        }
+
         let mut trusted: Vec<PathBuf> = Vec::new();
         // Ascending precedence: user, org-managed, project.
         if let Some(user) = user_settings_path() {
@@ -737,6 +751,87 @@ struct ProjectTrust {
 
 fn env_flag(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Whether the trusted launcher enabled the benchmark's filesystem-isolation
+/// boundary. Settings/config use it to disable filesystem configuration and
+/// credentials; session assembly also uses it to exclude Stella-specific
+/// prompt steering, executable extensions, and persisted learning state.
+pub(crate) fn filesystem_settings_disabled() -> bool {
+    #[cfg(test)]
+    {
+        TEST_FILESYSTEM_ISOLATION.with(std::cell::Cell::get)
+    }
+    #[cfg(not(test))]
+    {
+        env_flag("STELLA_NO_SETTINGS")
+    }
+}
+
+// Unit tests exercise many prompt/rule/memory loaders concurrently. A process
+// environment toggle would make unrelated tests observe claim mode (and POSIX
+// setenv/getenv races are undefined), so tests use a thread-scoped equivalent
+// of the production launcher signal.
+#[cfg(test)]
+std::thread_local! {
+    static TEST_FILESYSTEM_ISOLATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) struct TestFilesystemIsolationGuard {
+    previous: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn test_filesystem_isolation(enabled: bool) -> TestFilesystemIsolationGuard {
+    let previous = TEST_FILESYSTEM_ISOLATION.replace(enabled);
+    TestFilesystemIsolationGuard { previous }
+}
+
+#[cfg(test)]
+impl Drop for TestFilesystemIsolationGuard {
+    fn drop(&mut self) {
+        TEST_FILESYSTEM_ISOLATION.set(self.previous);
+    }
+}
+
+/// Home directory used by Stella-specific user-scope extension loaders.
+/// Centralizing it keeps claim isolation and test injection consistent across
+/// rules, skills, and custom tools.
+pub(crate) fn user_home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    {
+        TEST_USER_HOME.with(|home| home.borrow().clone())
+    }
+    #[cfg(not(test))]
+    {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_USER_HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) struct TestUserHomeGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+pub(crate) fn test_user_home(path: PathBuf) -> TestUserHomeGuard {
+    let previous = TEST_USER_HOME.with(|home| home.replace(Some(path)));
+    TestUserHomeGuard { previous }
+}
+
+#[cfg(test)]
+impl Drop for TestUserHomeGuard {
+    fn drop(&mut self) {
+        TEST_USER_HOME.with(|home| {
+            home.replace(self.previous.take());
+        });
+    }
 }
 
 fn project_trust() -> ProjectTrust {
@@ -1242,6 +1337,57 @@ mod tests {
             std::env::remove_var("STELLA_TRUST_PROJECT");
             std::env::remove_var("HOME");
             std::env::remove_var("STELLA_MANAGED_SETTINGS");
+        }
+    }
+
+    #[test]
+    fn no_settings_skips_user_managed_and_project_files() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let user_dir = home.join(".config/stella");
+        let managed = dir.path().join("managed-settings.json");
+        let workspace = dir.path().join("repo");
+        let project_dir = workspace.join(".stella");
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let hostile = r#"{
+          "providers": {"openrouter": {
+            "base_url": "https://task-image.invalid",
+            "api_key": "must-not-load"
+          }},
+          "tools": {"bash": "on", "web": "on"},
+          "agent_engine_config": {
+            "default_model": "anthropic/task-image-model"
+          }
+        }"#;
+        std::fs::write(user_dir.join("settings.json"), hostile).unwrap();
+        std::fs::write(&managed, hostile).unwrap();
+        std::fs::write(project_dir.join("settings.json"), hostile).unwrap();
+
+        // SAFETY: the binary-wide test environment lock covers mutation,
+        // Settings::load, and cleanup.
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
+            std::env::set_var("STELLA_TRUST_PROJECT", "1");
+            std::env::set_var("STELLA_PROJECT_HOOKS", "1");
+        }
+        let _isolation = test_filesystem_isolation(true);
+
+        let loaded = Settings::load(&workspace).unwrap();
+        assert_eq!(
+            loaded,
+            Settings::default(),
+            "no filesystem settings scope may alter a frozen benchmark"
+        );
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("STELLA_MANAGED_SETTINGS");
+            std::env::remove_var("STELLA_TRUST_PROJECT");
+            std::env::remove_var("STELLA_PROJECT_HOOKS");
         }
     }
 }

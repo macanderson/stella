@@ -56,7 +56,7 @@ pub enum ServerFrame {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TurnOutcomeWire {
     Completed { text: String, cost_usd: f64 },
-    Aborted { reason: String },
+    Aborted { reason: String, cost_usd: f64 },
 }
 
 impl From<TurnOutcome> for TurnOutcomeWire {
@@ -65,7 +65,9 @@ impl From<TurnOutcome> for TurnOutcomeWire {
             TurnOutcome::Completed { text, cost_usd } => {
                 TurnOutcomeWire::Completed { text, cost_usd }
             }
-            TurnOutcome::Aborted { reason } => TurnOutcomeWire::Aborted { reason },
+            TurnOutcome::Aborted { reason, cost_usd } => {
+                TurnOutcomeWire::Aborted { reason, cost_usd }
+            }
         }
     }
 }

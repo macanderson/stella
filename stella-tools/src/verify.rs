@@ -72,6 +72,7 @@ fn git_in(dir: &std::path::Path) -> Command {
     for var in crate::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    crate::subprocess_env::scrub_sensitive_env(&mut cmd);
     cmd
 }
 

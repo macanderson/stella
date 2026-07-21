@@ -25,19 +25,20 @@ impl HookRunner for ShellHookRunner {
         payload_json: &str,
         cwd: &str,
     ) -> Result<HookExecResult, HookExecError> {
-        let mut child = tokio::process::Command::new("bash")
+        let mut command = tokio::process::Command::new("bash");
+        command
             .arg("-c")
             .arg(&action.command)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| HookExecError::SpawnFailed {
-                command: action.command.clone(),
-                message: e.to_string(),
-            })?;
+            .kill_on_drop(true);
+        crate::subprocess_env::scrub_sensitive_env(&mut command);
+        let mut child = command.spawn().map_err(|e| HookExecError::SpawnFailed {
+            command: action.command.clone(),
+            message: e.to_string(),
+        })?;
 
         // Feed the payload on a DETACHED task and let the timeout-bounded
         // `wait_with_output` below drain stdout concurrently. Writing inline
@@ -117,6 +118,21 @@ mod tests {
             .await
             .expect("hook runs");
         assert!(out.stdout.contains("PreToolUse"));
+    }
+
+    #[tokio::test]
+    async fn hook_scrubs_inherited_credentials_but_keeps_benign_env() {
+        let _fixture = crate::subprocess_env::test_support::InheritedCredentialFixture::install();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = ShellHookRunner
+            .run(
+                &action(crate::subprocess_env::test_support::PROBE_COMMAND),
+                "{}",
+                &dir.path().display().to_string(),
+            )
+            .await
+            .expect("hook runs");
+        crate::subprocess_env::test_support::assert_scrubbed(&out.stdout);
     }
 
     #[tokio::test]

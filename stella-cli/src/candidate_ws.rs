@@ -26,7 +26,7 @@
 //!
 //! # What a candidate's engine can reach
 //!
-//! Candidates drive the built-in [`ToolRegistry`] PLUS the session's custom
+//! Candidates drive the built-in [`stella_tools::ToolRegistry`] PLUS the session's custom
 //! script tools, both rooted at the snapshot (with the session's workspace
 //! rules and schema gate applied) — a [`CustomToolSet`] owning the registry
 //! by `Arc`. Custom tools spawn subprocesses with the snapshot as cwd
@@ -56,8 +56,8 @@ use stella_pipeline::ports::{
 };
 use stella_protocol::FileChangeKind;
 
+use stella_tools::RegistryOptions;
 use stella_tools::custom::{CustomTool, CustomToolSet};
-use stella_tools::{RegistryOptions, ToolRegistry};
 
 use crate::agent::{GitRepoStatus, ShellCommandRunner, fs_fingerprint};
 
@@ -106,6 +106,7 @@ async fn git_stdout_to_file(repo: &Path, args: &[&str], out: &Path) -> Result<()
     for var in stella_tools::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    stella_tools::subprocess_env::scrub_sensitive_env(&mut cmd);
     cmd.kill_on_drop(true);
     let output = cmd
         .output()
@@ -264,7 +265,7 @@ impl GitCandidateWorkspaces {
         match populate_snapshot(&toplevel, &dir, &root_rel).await {
             Ok(overlay_untracked) => {
                 let ws_root = dir.join(&root_rel);
-                let registry = ToolRegistry::new_detected(ws_root.clone(), self.options).await;
+                let registry = crate::agent::new_tool_registry(ws_root.clone(), self.options).await;
                 // Same governance as the session registry: workspace rules
                 // and the schema gate travel with the tree — best-of-N must
                 // not be a way around them. Applied while `registry` is still

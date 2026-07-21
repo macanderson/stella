@@ -25,6 +25,7 @@ mod claims;
 mod command_deck;
 mod config;
 mod connect_cmd;
+mod credential_handoff;
 mod discovery;
 mod domains;
 mod engine_config;
@@ -660,7 +661,10 @@ fn run_observe(port: u16, open: bool) -> Result<(), String> {
             } else {
                 "xdg-open"
             };
-            let _ = std::process::Command::new(opener).arg(&url).spawn();
+            let mut command = std::process::Command::new(opener);
+            command.arg(&url);
+            stella_tools::subprocess_env::scrub_sensitive_std_env(&mut command);
+            let _ = command.spawn();
         }
     }))
     .map_err(|e| e.to_string())
@@ -968,6 +972,19 @@ fn main() -> ExitCode {
     // installing a default signal disposition here races nothing.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
+    // A trusted benchmark launcher may provide the selected provider key on
+    // an inherited anonymous FD. Consume and close it before project env-file
+    // loading, clap, a runtime, or any model/repository-controlled process.
+    // The raw key is retained only in the credential module's in-memory slot;
+    // it is never installed into this process's environment.
+    if let Err(error) = credential_handoff::consume_at_startup() {
+        eprintln!(
+            "{} secure credential handoff failed: {error}",
+            "stella:".red().bold()
+        );
+        return ExitCode::FAILURE;
     }
 
     // Load project-scoped `.env`/`.env.local`/`.env.<mode>.local` before

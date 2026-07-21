@@ -3,6 +3,9 @@
 //! private surface (`CandidateSurface`, `Pipeline::gather_diff`, ...)
 //! stays reachable via `super::*`.
 
+mod management_accounting;
+mod telemetry;
+
 use super::*;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -13,8 +16,8 @@ use stella_core::router::{CircuitBreaker, ProviderProfile, RoleTable};
 use stella_core::{Clock, ToolExecutor};
 use stella_protocol::event::BudgetMode;
 use stella_protocol::{
-    CompletionRequest, CompletionUsage, FileChangeKind, MessageRole, ProviderError, ScopeProposal,
-    ToolOutput, ToolSchema,
+    CompletionRequest, CompletionResult, CompletionUsage, FileChangeKind, MessageRole,
+    ProviderError, ScopeProposal, ToolOutput, ToolSchema,
 };
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
@@ -111,6 +114,27 @@ impl Provider for ScriptedProvider {
     }
 }
 
+struct DelayedProvider {
+    result: TokioMutex<Option<CompletionResult>>,
+    delay: Duration,
+}
+
+#[async_trait]
+impl Provider for DelayedProvider {
+    fn id(&self) -> &str {
+        "delayed"
+    }
+
+    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        tokio::time::sleep(self.delay).await;
+        self.result
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| ProviderError::Terminal("delayed provider exhausted".into()))
+    }
+}
+
 /// A [`TurnSteering`] that hands out its queue on the first drain and never
 /// soft-stops — the witness that a queued steer reaches the execute engine.
 #[derive(Default)]
@@ -132,6 +156,14 @@ impl stella_core::ports::TurnSteering for SteeringOnce {
 /// A resolver that returns the one scripted provider for every model.
 struct OneProvider<'p>(&'p ScriptedProvider);
 impl ProviderResolver for OneProvider<'_> {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        Some(self.0)
+    }
+}
+
+struct AnyProvider<'p>(&'p dyn Provider);
+
+impl ProviderResolver for AnyProvider<'_> {
     fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
         Some(self.0)
     }

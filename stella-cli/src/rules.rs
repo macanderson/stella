@@ -126,12 +126,11 @@ impl RuleSource for SessionRuleSource {
 /// section and the Tier-2 guards, so the two enforcement surfaces can
 /// never disagree about what was loaded.
 pub(crate) fn load_workspace_rules(workspace_root: &Path) -> Vec<Rule> {
-    let user_rules_dir = std::env::var_os("HOME").map(|home| {
-        PathBuf::from(home)
-            .join(".config")
-            .join("stella")
-            .join("rules")
-    });
+    if crate::settings::filesystem_settings_disabled() {
+        return Vec::new();
+    }
+    let user_rules_dir = crate::settings::user_home_dir()
+        .map(|home| home.join(".config").join("stella").join("rules"));
     load_rules_from(workspace_root, user_rules_dir)
 }
 

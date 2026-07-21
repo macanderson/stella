@@ -48,7 +48,9 @@
 //!      as `STELLA_INPUT_<UPPER_SNAKE_KEY>` — e.g. `path` → `STELLA_INPUT_PATH`.
 //!      Nested objects and arrays are delivered on stdin only.
 //! - Applies the manifest's optional `[env]` table on top of the inherited
-//!   environment.
+//!   environment, then removes credential-bearing variables from both. A
+//!   custom tool receives normal task configuration, never Stella's provider
+//!   keys or repository/AWS tokens.
 //!
 //! Outcome mapping:
 //!
@@ -477,6 +479,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             }
         }
     }
+    crate::subprocess_env::scrub_sensitive_env(&mut cmd);
 
     // New process group so a timeout kills the whole child tree (mirrors
     // `crate::bash`).
@@ -1014,6 +1017,29 @@ command = []"#;
         let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
         match out {
             ToolOutput::Ok { content } => assert!(content.contains("p=strict"), "{content}"),
+            ToolOutput::Error { message } => panic!("expected ok: {message}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn manifest_cannot_reintroduce_credentials_but_benign_env_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "#!/bin/sh\n{}\n",
+            crate::subprocess_env::test_support::PROBE_COMMAND
+        );
+        let mut tool = script_tool(dir.path(), "secret-env.sh", &body, 5000);
+        tool.env.extend([
+            ("OPENROUTER_API_KEY".into(), "manifest-openrouter".into()),
+            ("GITHUB_TOKEN".into(), "manifest-github".into()),
+            ("AWS_SECRET_ACCESS_KEY".into(), "manifest-aws".into()),
+            ("STELLA_TEST_BENIGN".into(), "visible".into()),
+        ]);
+        let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+        match out {
+            ToolOutput::Ok { content } => {
+                crate::subprocess_env::test_support::assert_scrubbed(&content)
+            }
             ToolOutput::Error { message } => panic!("expected ok: {message}"),
         }
     }

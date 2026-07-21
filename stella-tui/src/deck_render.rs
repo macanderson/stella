@@ -1719,6 +1719,8 @@ mod tests {
     fn step_usage(input: u64, cached: u64) -> AgentEvent {
         AgentEvent::StepUsage {
             step: 1,
+            purpose: None,
+            output_text: None,
             model: "glm".into(),
             input_tokens: input,
             output_tokens: 0,

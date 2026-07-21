@@ -27,7 +27,6 @@ use std::collections::HashMap;
 use stella_core::Engine;
 use stella_core::tasks::SpawnRequest;
 use stella_protocol::{AgentEvent, CompletionMessage, TaskItem};
-use stella_tools::ToolRegistry;
 use stella_tui::{AgentMeta, AgentStatus, Inbound};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::{oneshot, watch};
@@ -388,7 +387,7 @@ async fn run_worker(
         Err(e) => return (None, 0.0, WorkerEnd::Failed(e)),
     };
     let registry =
-        ToolRegistry::new_detected(cfg.workspace_root.clone(), agent::registry_options(cfg)).await;
+        agent::new_tool_registry(cfg.workspace_root.clone(), agent::registry_options(cfg)).await;
     agent::populate_schema_index(&registry, &cfg.workspace_root);
     crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root);
 
@@ -481,8 +480,8 @@ async fn run_worker(
         RacedTurn::Outcome(stella_core::TurnOutcome::Completed { cost_usd, .. }) => {
             ("completed", cost_usd, WorkerEnd::Done)
         }
-        RacedTurn::Outcome(stella_core::TurnOutcome::Aborted { reason }) => {
-            ("aborted", 0.0, WorkerEnd::Failed(reason))
+        RacedTurn::Outcome(stella_core::TurnOutcome::Aborted { reason, cost_usd }) => {
+            ("aborted", cost_usd, WorkerEnd::Failed(reason))
         }
         RacedTurn::Stopped => ("cancelled", 0.0, WorkerEnd::Stopped),
     };

@@ -42,22 +42,42 @@ use crate::OutputFormat;
 use crate::config::Config;
 use crate::domains::{Domains, heuristic_domains, infer_domains};
 use crate::interactive::{InteractiveToolSet, SkillRegistry, default_ask_io};
-use crate::memory::{
-    ReflectionReport, SessionMemory, inject_recall_block, turn_warrants_reflection,
-};
+use crate::memory::{SessionMemory, inject_recall_block, turn_warrants_reflection};
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::tui;
 use stella_context::EpisodeOutcome;
 
 mod engine;
 mod goal;
+mod output;
 mod prompt;
 mod tools;
 
 pub(crate) use engine::*;
 pub(crate) use goal::*;
+use output::*;
 pub(crate) use prompt::*;
 pub(crate) use tools::*;
+
+/// Construct the native tool registry without consulting optional host/user backends when the
+/// trusted benchmark launcher seals filesystem state; ordinary sessions retain auto-detection.
+pub(crate) async fn new_tool_registry(
+    workspace_root: std::path::PathBuf,
+    options: stella_tools::RegistryOptions,
+) -> ToolRegistry {
+    if crate::settings::filesystem_settings_disabled() {
+        ToolRegistry::with_backends_and_options(workspace_root, None, None, options)
+    } else {
+        ToolRegistry::new_detected(workspace_root, options).await
+    }
+}
+
+/// Public skill-registry commands are an extension surface omitted from a filesystem-isolated
+/// tool schema; ordinary sessions retain them.
+fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillRegistry> {
+    (!crate::settings::filesystem_settings_disabled())
+        .then(|| SkillRegistry::from_env(workspace_root))
+}
 
 /// Run a one-shot prompt. `use_pipeline` selects the staged pipeline (the
 /// default) vs the raw step-loop (`--no-pipeline`). `test_command`, when
@@ -72,6 +92,9 @@ pub async fn run_one_shot(
     use_pipeline: bool,
     test_command: Option<&str>,
 ) -> Result<(), String> {
+    // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
+    // is writable before provider construction or any code path that can make a paid call.
+    preflight_durable_stream(format)?;
     if use_pipeline {
         run_pipeline_one_shot(cfg, prompt, budget_limit, format, test_command).await
     } else {
@@ -92,9 +115,8 @@ async fn run_pipeline_one_shot(
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
 
-    let registry: Arc<ToolRegistry> = Arc::new(
-        ToolRegistry::new_detected(cfg.workspace_root.clone(), registry_options(cfg)).await,
-    );
+    let registry: Arc<ToolRegistry> =
+        Arc::new(new_tool_registry(cfg.workspace_root.clone(), registry_options(cfg)).await);
     populate_schema_index(&registry, &cfg.workspace_root);
     crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root);
     // Auto-build + live-refresh the code graph in the background so the
@@ -136,8 +158,15 @@ async fn run_pipeline_one_shot(
     let mut presence = SessionPresence::announce(cfg, prompt);
     let execution = begin_execution(&store, "pipeline", prompt, cfg, Some(presence.id()));
 
-    let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let renderer = spawn_renderer(rx, format, execution.clone(), cfg.provider.id.to_string());
+    let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    let renderer = spawn_renderer(
+        rx,
+        format,
+        execution.clone(),
+        cfg.provider.id.to_string(),
+        durable_pre_persisted,
+    );
 
     // Role wiring from `agent_engine_config`: per-role model pins (triage/
     // judge), their adapters, and per-role request overrides. Notices are
@@ -166,8 +195,11 @@ async fn run_pipeline_one_shot(
             &customs,
             tx.clone(),
             default_ask_io(format == OutputFormat::Text),
-        )
-        .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
+        );
+        let interactive = match skill_registry_for_run(cfg.workspace_root.clone()) {
+            Some(skills) => interactive.with_skill_registry(skills),
+            None => interactive,
+        };
         // Outermost: the discovery layer (tool_search/skill_search/mcp_search)
         // must see the complete advertised catalog below it.
         let tools =
@@ -280,7 +312,13 @@ async fn run_pipeline_one_shot(
     // — is what makes the primary surface actually learn. The reflector is
     // then handed an enriched transcript (final answer + a note of what
     // changed) so it has signal even when the tool turns aren't in `messages`.
-    if (turn_warrants_reflection(&messages) || !files.is_empty())
+    // Output format does not change Stella's learning semantics: text, JSON,
+    // and stream-JSON runs all reflect by default. Ephemeral automation may
+    // explicitly opt out with `STELLA_DISABLE_REFLECTION` when it must avoid a
+    // post-turn provider call (for example, a benchmark adapter that meters
+    // only the task-solving envelope).
+    if one_shot_reflection_enabled(format)
+        && (turn_warrants_reflection(&messages) || !files.is_empty())
         && let Some(m) = &mut memory
     {
         let mut reflect_transcript = messages.clone();
@@ -405,7 +443,7 @@ const REPL_RESERVED: &[&str] = &[
 pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<(), String> {
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> = std::sync::Arc::new(
-        ToolRegistry::new_detected(cfg.workspace_root.clone(), registry_options(cfg)).await,
+        new_tool_registry(cfg.workspace_root.clone(), registry_options(cfg)).await,
     );
     let mcp = connect_mcp(
         cfg,
@@ -766,33 +804,6 @@ pub(crate) async fn record_turn_episode(
         started_unix,
     )
     .await;
-}
-
-/// Surface a post-turn [`ReflectionReport`] for a headless / line-based
-/// format — the reflection outcome must never vanish (the silent-reflection
-/// blind spot this closes). `stream-json` gets one machine event line so a
-/// metering/CI consumer sees that reflection ran and whether it errored;
-/// `text` and `json` get a one-line stderr warning ONLY when the reflection
-/// model call actually failed — a clean empty reflection is the common,
-/// correct case and stays quiet. Never writes stdout in `json` mode, so that
-/// format's single-object contract is untouched. Best-effort: a `None` model
-/// error in `text`/`json` prints nothing.
-fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
-    if format == OutputFormat::StreamJson {
-        let line = serde_json::json!({
-            "type": "reflect",
-            "recorded": report.recorded,
-            "error": report.model_error,
-        });
-        println!("{line}");
-        return;
-    }
-    if let Some(err) = &report.model_error {
-        eprintln!(
-            "  {} post-turn reflection skipped — model call failed: {err}",
-            "!".yellow()
-        );
-    }
 }
 
 /// Build the workspace code-graph index into `.stella/codegraph.db` (the
@@ -1216,6 +1227,9 @@ pub(crate) enum McpPlan {
 /// Stage 1 of MCP assembly: read and parse the workspace config. Local file
 /// I/O only — never touches the network.
 pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
+    if crate::settings::filesystem_settings_disabled() {
+        return McpPlan::None;
+    }
     let path = cfg.workspace_root.join(".stella").join("mcp.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return McpPlan::None;
@@ -1333,9 +1347,9 @@ pub(crate) async fn discover_custom_tools(
     // The manifest walk is synchronous directory I/O — off the runtime
     // worker thread it goes (#64).
     let root = cfg.workspace_root.clone();
-    let report = tokio::task::spawn_blocking(move || custom::discover(&root))
+    let report = tokio::task::spawn_blocking(move || custom_tool_report_for_workspace(&root))
         .await
-        .unwrap_or_else(|_| custom::discover(&cfg.workspace_root));
+        .unwrap_or_else(|_| custom_tool_report_for_workspace(&cfg.workspace_root));
     if print_diagnostics {
         for diagnostic in &report.diagnostics {
             eprintln!(
@@ -1579,6 +1593,12 @@ pub(crate) fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
 /// observability, not a work dependency: a store that won't open warns once
 /// and the session runs on without it — never a startup failure.
 pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
+    // Persisted telemetry can feed calibration and extension-authored rules
+    // back into later sessions. Claim-mode trials are isolated and ephemeral:
+    // do not read that state or create `.stella/store.db` in the task.
+    if crate::settings::filesystem_settings_disabled() {
+        return None;
+    }
     match Store::open(workspace_root) {
         Ok(store) => Some(Arc::new(store)),
         Err(e) => {
@@ -1724,11 +1744,11 @@ impl SessionPresence {
 
 /// Run one full turn through `stella_core::Engine`, rendering its
 /// `AgentEvent` stream live via a spawned draining task running
-/// concurrently with the engine (the channel is unbounded and `send` never
-/// blocks, so events reach the renderer as soon as an `.await` point in
-/// `run_turn` yields — same live-feeling output the old inline-print loop
-/// had, just sourced from the event stream instead of direct calls). That
-/// same drain task ([`spawn_renderer`]) also persists every event and each
+/// concurrently with the engine. Ordinary runs enqueue to an unbounded
+/// channel; benchmark stream-json runs synchronously append+flush each event
+/// before enqueueing it, so paid-call evidence survives a paused/cancelled
+/// renderer. Events still reach the renderer as soon as `run_turn` yields.
+/// The drain task ([`spawn_renderer`]) persists every event and each
 /// `StepUsage` to the workspace store when one is open. `registry` is the
 /// concrete tool registry (its CRUD ledger is read after the turn for the
 /// Files Touched panel); `base_tools` is the same registry as the engine's
@@ -1754,8 +1774,15 @@ async fn run_turn(
     let turn_start = Instant::now();
     let execution = begin_execution(store, kind, prompt, cfg, session);
 
-    let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let renderer = spawn_renderer(rx, format, execution.clone(), cfg.provider.id.to_string());
+    let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    let renderer = spawn_renderer(
+        rx,
+        format,
+        execution.clone(),
+        cfg.provider.id.to_string(),
+        durable_pre_persisted,
+    );
 
     // The tool set holds a tx clone (for AskUser events), so it must drop
     // before the renderer is awaited — the channel only closes once EVERY
@@ -1776,8 +1803,11 @@ async fn run_turn(
             &customs,
             tx.clone(),
             default_ask_io(format == OutputFormat::Text),
-        )
-        .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
+        );
+        let interactive = match skill_registry_for_run(cfg.workspace_root.clone()) {
+            Some(skills) => interactive.with_skill_registry(skills),
+            None => interactive,
+        };
         // Outermost discovery layer; the session-scoped `activated` handle
         // keeps lean-mode activations across the per-turn stack rebuild.
         let tools =
@@ -1790,7 +1820,7 @@ async fn run_turn(
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }
-        engine.run_turn(messages, budget, &tx).await
+        engine.run_turn_with_sender(messages, budget, &tx).await
     };
     // Dropping the last sender closes the channel, ending the renderer's
     // `recv()` loop; awaiting it ensures every already-queued event has
@@ -1807,7 +1837,7 @@ async fn run_turn(
     if let Some((store, id)) = &execution {
         let (outcome_label, cost) = match &outcome {
             TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
-            TurnOutcome::Aborted { .. } => ("aborted", 0.0),
+            TurnOutcome::Aborted { cost_usd, .. } => ("aborted", *cost_usd),
         };
         if !record_execution_end(store, *id, registry, outcome_label, cost) {
             warn_store_write_failed(
@@ -1824,7 +1854,9 @@ async fn run_turn(
             TurnOutcome::Completed { text, cost_usd } => {
                 ("completed", Some(text.clone()), Some(*cost_usd), None)
             }
-            TurnOutcome::Aborted { reason } => ("aborted", None, None, Some(reason.clone())),
+            TurnOutcome::Aborted { reason, cost_usd } => {
+                ("aborted", None, Some(*cost_usd), Some(reason.clone()))
+            }
         };
         let summary = serde_json::json!({
             "status": status,
@@ -1858,7 +1890,7 @@ async fn run_turn(
             }
             Ok(())
         }
-        TurnOutcome::Aborted { reason } => Err(reason),
+        TurnOutcome::Aborted { reason, .. } => Err(reason),
     }
 }
 
@@ -1877,6 +1909,7 @@ fn spawn_renderer(
     format: OutputFormat,
     execution: Option<(Arc<Store>, i64)>,
     provider_id: String,
+    durable_pre_persisted: bool,
 ) -> tokio::task::JoinHandle<Vec<AgentEvent>> {
     tokio::spawn(async move {
         let mut tool_names: HashMap<String, String> = HashMap::new();
@@ -1902,15 +1935,18 @@ fn spawn_renderer(
             }
             match format {
                 OutputFormat::StreamJson => {
-                    // One line per event — the stable machine interface
-                    //. Serialization of a protocol
-                    // enum never fails; if it somehow does, surface it on
-                    // stderr rather than silently dropping the event.
+                    // One line per event — the stable machine interface.
+                    // Serialization of a protocol enum never fails; if it
+                    // somehow does, terminate before
+                    // the provider loop can spend on a later unmetered call.
                     match serde_json::to_string(&event) {
-                        Ok(line) => println!("{line}"),
-                        Err(e) => {
-                            eprintln!("{{\"type\":\"error\",\"message\":\"serialize: {e}\"}}")
+                        Ok(line) if durable_pre_persisted => {
+                            emit_pre_persisted_stream_json_line_or_terminate(&line)
                         }
+                        Ok(line) => emit_stream_json_line_or_terminate(&line),
+                        Err(error) => terminate_stream_json(&format!(
+                            "stream-json serialization failed: {error}"
+                        )),
                     }
                 }
                 OutputFormat::Json => collected.push(event),
@@ -2088,6 +2124,7 @@ pub(crate) fn persist_event(
         duration_ms,
         retries,
         tool_calls,
+        ..
     } = event
     {
         telemetry_ok = store

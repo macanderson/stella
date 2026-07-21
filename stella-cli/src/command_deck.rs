@@ -262,7 +262,7 @@ pub async fn run_deck_session(
     // after the deck task spawns, narrated as transcript events (#98).
     let provider = agent::build_provider(cfg)?;
     let registry: Arc<ToolRegistry> = Arc::new(
-        ToolRegistry::new_detected(cfg.workspace_root.clone(), agent::registry_options(cfg)).await,
+        agent::new_tool_registry(cfg.workspace_root.clone(), agent::registry_options(cfg)).await,
     );
     agent::populate_schema_index(&registry, &cfg.workspace_root);
     crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root);
@@ -2509,14 +2509,18 @@ fn ci_status_token(ci: CiStatus) -> &'static str {
 /// non-zero (code 8) while still printing the JSON — so parse whatever
 /// stdout holds instead of gating on exit status.
 async fn gh_json(root: &std::path::Path, args: &[&str]) -> Option<Value> {
-    let output = tokio::process::Command::new("gh")
-        .args(args)
-        .current_dir(root)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .ok()?;
+    let mut command = tokio::process::Command::new("gh");
+    command.args(args).current_dir(root).kill_on_drop(true);
+    scrub_gh_command(&mut command);
+    let output = command.output().await.ok()?;
     serde_json::from_slice(&output.stdout).ok()
+}
+
+fn scrub_gh_command(command: &mut tokio::process::Command) {
+    stella_tools::subprocess_env::scrub_sensitive_env_except(
+        command,
+        stella_tools::subprocess_env::GITHUB_CLI_AUTH_ENV_VARS,
+    );
 }
 
 /// Reconcile the workspace's current-branch PR: `gh pr view` for identity
@@ -4163,7 +4167,7 @@ async fn run_lead_turn(
     if let Some((store, id)) = &execution {
         let (outcome_label, cost) = match &outcome {
             TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
-            TurnOutcome::Aborted { .. } => ("aborted", 0.0),
+            TurnOutcome::Aborted { cost_usd, .. } => ("aborted", *cost_usd),
         };
         if !agent::record_execution_end(store, *id, registry, outcome_label, cost) {
             let _ = in_tx.send(Inbound::Event {
@@ -4191,7 +4195,7 @@ async fn run_lead_turn(
 
     match outcome {
         TurnOutcome::Completed { .. } => Ok(()),
-        TurnOutcome::Aborted { reason } => Err(reason),
+        TurnOutcome::Aborted { reason, .. } => Err(reason),
     }
 }
 

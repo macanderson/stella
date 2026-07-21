@@ -828,6 +828,8 @@ mod tests {
             },
             AgentEvent::StepUsage {
                 step: 0,
+                purpose: None,
+                output_text: None,
                 model: "m".into(),
                 input_tokens: 1,
                 output_tokens: 1,

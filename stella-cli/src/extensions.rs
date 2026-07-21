@@ -458,6 +458,9 @@ impl CustomExtensions {
     /// Load every custom definition visible from `workspace_root`
     /// (user-global + workspace `.stella` directories, workspace wins).
     pub fn load(workspace_root: &Path) -> Self {
+        if crate::settings::filesystem_settings_disabled() {
+            return Self::default();
+        }
         let mut problems = Vec::new();
         let commands = load_commands_from(
             &load_dirs(workspace_root, ExtensionKind::Commands),

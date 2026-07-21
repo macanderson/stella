@@ -1277,6 +1277,8 @@ mod tests {
             "lead",
             AgentEvent::StepUsage {
                 step: 1,
+                purpose: None,
+                output_text: None,
                 model: "glm-5.2".into(),
                 input_tokens: 1200,
                 output_tokens: 300,
@@ -1357,6 +1359,8 @@ mod tests {
         w.apply_inbound(&reg("lead"));
         let step = |input: u64| AgentEvent::StepUsage {
             step: 1,
+            purpose: None,
+            output_text: None,
             model: "glm-5.2".into(),
             input_tokens: input,
             output_tokens: 10,
@@ -1385,6 +1389,8 @@ mod tests {
     fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
         let step = |cost_usd: f64| AgentEvent::StepUsage {
             step: 1,
+            purpose: None,
+            output_text: None,
             model: "m".into(),
             input_tokens: 1,
             output_tokens: 1,

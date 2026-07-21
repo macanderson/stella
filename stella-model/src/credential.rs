@@ -203,6 +203,18 @@ pub struct CredentialsFile {
 }
 
 impl CredentialsFile {
+    /// An empty in-memory credential store with no filesystem read.
+    ///
+    /// Trusted benchmark/credential-handoff paths use this when filesystem
+    /// credential discovery is outside the execution boundary. Its empty
+    /// path also makes any accidental later `save` fail closed.
+    pub fn empty() -> Self {
+        Self {
+            path: PathBuf::new(),
+            data: CredentialsFileData::default(),
+        }
+    }
+
     /// The default path: `~/.config/stella/credentials.toml`. Returns `None`
     /// if the platform has no resolvable home directory (never panics —
     /// callers treat "no credentials file available" as just another
@@ -239,10 +251,7 @@ impl CredentialsFile {
     pub fn load_default() -> Result<Self, CredentialError> {
         match Self::default_path() {
             Some(path) => Self::load(path),
-            None => Ok(Self {
-                path: PathBuf::new(),
-                data: CredentialsFileData::default(),
-            }),
+            None => Ok(Self::empty()),
         }
     }
 

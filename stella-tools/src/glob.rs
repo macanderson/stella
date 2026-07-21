@@ -93,6 +93,7 @@ impl Tool for Glob {
         fd.arg("--color").arg("never");
         fd.arg("--max-results").arg(MAX_RESULTS.to_string());
         fd.arg("--").arg(pattern).arg(&search_dir);
+        crate::subprocess_env::scrub_sensitive_env(&mut fd);
         fd.stdout(std::process::Stdio::piped());
         fd.stderr(std::process::Stdio::piped());
 
@@ -120,6 +121,7 @@ impl Tool for Glob {
                 find.arg(&search_dir);
                 find.arg("-type").arg("f");
                 find.arg("-name").arg(pattern);
+                crate::subprocess_env::scrub_sensitive_env(&mut find);
                 find.stdout(std::process::Stdio::piped());
                 find.stderr(std::process::Stdio::piped());
 

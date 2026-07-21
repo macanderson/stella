@@ -20,7 +20,7 @@ pub(crate) async fn run_raw_one_shot(
     // files-touched ledger is reachable after the turn — the trait object
     // hides it. It still coerces to `&dyn ToolExecutor` for the engine.
     let registry: std::sync::Arc<ToolRegistry> = std::sync::Arc::new(
-        ToolRegistry::new_detected(cfg.workspace_root.clone(), registry_options(cfg)).await,
+        new_tool_registry(cfg.workspace_root.clone(), registry_options(cfg)).await,
     );
     populate_schema_index(&registry, &cfg.workspace_root);
     crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root);
@@ -110,7 +110,8 @@ pub(crate) async fn run_raw_one_shot(
     // `succeeded=false`). Gated on `turn_warrants_reflection` so a tool-free
     // turn (nothing to mine, failure almost certainly external) never spends a
     // model call. The report is surfaced so a model-call error is never silent.
-    if turn_warrants_reflection(&messages)
+    if one_shot_reflection_enabled(format)
+        && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
         let report = m
@@ -167,7 +168,7 @@ pub async fn run_goal_cmd(
 ) -> Result<(), String> {
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> = std::sync::Arc::new(
-        ToolRegistry::new_detected(cfg.workspace_root.clone(), registry_options(cfg)).await,
+        new_tool_registry(cfg.workspace_root.clone(), registry_options(cfg)).await,
     );
     populate_schema_index(&registry, &cfg.workspace_root);
     crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root);
@@ -336,6 +337,7 @@ pub(crate) async fn run_goal_turn(
         OutputFormat::Text,
         execution.clone(),
         cfg.provider.id.to_string(),
+        false,
     );
 
     let outcome = {
@@ -491,6 +493,7 @@ async fn run_goal_pipeline_turn(
         OutputFormat::Text,
         execution.clone(),
         cfg.provider.id.to_string(),
+        false,
     );
 
     // Run the loop; the result is folded into `goal_result` so there is exactly

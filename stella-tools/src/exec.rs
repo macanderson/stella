@@ -66,7 +66,28 @@ pub(crate) async fn run(
 ) -> Result<(i32, String), String> {
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(command);
-    drive(cmd, command, dir, timeout_secs).await
+    drive(cmd, command, dir, timeout_secs, &[]).await
+}
+
+/// Run a repository-owned GitHub CLI command while preserving only GitHub
+/// CLI's exact documented authentication variables. The command text must be
+/// constructed by Stella code with user values shell-quoted; model-authored
+/// arbitrary shell commands must use [`run`] and receive no credential.
+pub(crate) async fn run_github(
+    command: &str,
+    dir: &std::path::Path,
+    timeout_secs: u64,
+) -> Result<(i32, String), String> {
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c").arg(command);
+    drive(
+        cmd,
+        command,
+        dir,
+        timeout_secs,
+        crate::subprocess_env::GITHUB_CLI_AUTH_ENV_VARS,
+    )
+    .await
 }
 
 /// Run `program` with `args` DIRECTLY — argv exec, no shell anywhere — in
@@ -86,7 +107,7 @@ pub(crate) async fn run_argv(
         .chain(args.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ");
-    drive(cmd, &display, dir, timeout_secs).await
+    drive(cmd, &display, dir, timeout_secs, &[]).await
 }
 
 /// SIGKILLs `pid`'s process group on drop unless disarmed — the
@@ -120,6 +141,7 @@ async fn drive(
     command: &str,
     dir: &std::path::Path,
     timeout_secs: u64,
+    preserved_sensitive_env: &[&str],
 ) -> Result<(i32, String), String> {
     cmd.current_dir(dir);
     for var in GIT_REPO_ENV_VARS {
@@ -128,6 +150,7 @@ async fn drive(
     for var in FORCED_COLOR_ENV_VARS {
         cmd.env_remove(var);
     }
+    crate::subprocess_env::scrub_sensitive_env_except(&mut cmd, preserved_sensitive_env);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     #[cfg(unix)]
@@ -258,6 +281,41 @@ mod tests {
         .unwrap();
         assert_eq!(code, 0);
         assert!(out.contains("$(id); `id`; && ||"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn shell_and_direct_argv_scrub_inherited_credentials() {
+        let _fixture = crate::subprocess_env::test_support::InheritedCredentialFixture::install();
+        let probe = crate::subprocess_env::test_support::PROBE_COMMAND;
+
+        let (shell_code, shell_out) = run(probe, std::path::Path::new("/tmp"), 30)
+            .await
+            .expect("shell runner");
+        assert_eq!(shell_code, 0);
+        crate::subprocess_env::test_support::assert_scrubbed(&shell_out);
+
+        let (argv_code, argv_out) = run_argv(
+            "sh",
+            &["-c".to_string(), probe.to_string()],
+            std::path::Path::new("/tmp"),
+            30,
+        )
+        .await
+        .expect("direct argv runner");
+        assert_eq!(argv_code, 0);
+        crate::subprocess_env::test_support::assert_scrubbed(&argv_out);
+    }
+
+    #[tokio::test]
+    async fn github_runner_preserves_only_github_cli_auth() {
+        let _fixture = crate::subprocess_env::test_support::InheritedCredentialFixture::install();
+        let probe = crate::subprocess_env::test_support::PROBE_COMMAND;
+
+        let (code, output) = run_github(probe, std::path::Path::new("/tmp"), 30)
+            .await
+            .expect("GitHub runner");
+        assert_eq!(code, 0);
+        assert_eq!(output, "|leaked||visible|present");
     }
 
     /// Dropping the future mid-wait (a cancelled turn) must kill the whole

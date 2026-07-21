@@ -7,6 +7,26 @@
 
 use super::*;
 
+/// Apply the cross-crate policy shared by every model/repository-controlled
+/// subprocess. Kept as a named seam so the CLI's pipeline-only spawns have a
+/// direct regression test rather than relying only on stella-tools tests.
+fn scrub_model_subprocess(command: &mut tokio::process::Command) {
+    stella_tools::subprocess_env::scrub_sensitive_env(command);
+}
+
+/// The single filesystem-isolation seam for developer script-tool discovery.
+/// Both the session stack and candidate workspaces use this exact report.
+pub(crate) fn custom_tool_report_for_workspace(
+    root: &std::path::Path,
+) -> stella_tools::custom::DiscoveryReport {
+    if crate::settings::filesystem_settings_disabled() {
+        stella_tools::custom::DiscoveryReport::default()
+    } else {
+        let home = crate::settings::user_home_dir();
+        stella_tools::custom::discover_in(root, home.as_deref())
+    }
+}
+
 /// Repo-structure summary via `git ls-files` for the planner's split context.
 pub(crate) struct GitRepoStructure {
     pub(crate) root: std::path::PathBuf,
@@ -21,6 +41,7 @@ impl RepoStructurePort for GitRepoStructure {
         for var in stella_tools::exec::GIT_REPO_ENV_VARS {
             cmd.env_remove(var);
         }
+        scrub_model_subprocess(&mut cmd);
         let output = cmd.output().await;
         match output {
             Ok(out) if out.status.success() => {
@@ -61,6 +82,7 @@ impl RepoStatusPort for GitRepoStatus {
         for var in stella_tools::exec::GIT_REPO_ENV_VARS {
             cmd.env_remove(var);
         }
+        scrub_model_subprocess(&mut cmd);
         let output = cmd.output().await;
         let Ok(listing) = output else {
             return out;
@@ -119,7 +141,7 @@ pub(crate) fn workspace_ports(root: std::path::PathBuf, cfg: &Config) -> Workspa
     // The candidate registry mirrors the session's custom tool surface —
     // discovered from the same root, so a candidate sees exactly the custom
     // tools the session does (re-rooted at its snapshot at create time).
-    let custom_tools = stella_tools::custom::discover(&root).tools;
+    let custom_tools = custom_tool_report_for_workspace(&root).tools;
     WorkspacePorts {
         repo_structure: GitRepoStructure { root: root.clone() },
         repo_status: GitRepoStatus { root: root.clone() },
@@ -145,6 +167,10 @@ impl CommandRunner for ShellCommandRunner {
         cmd.current_dir(&self.root);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // `--test-command` is user/model supplied and executes repository
+        // code. It gets ordinary build configuration, never Stella/provider,
+        // GitHub, cloud, or other ambient credentials.
+        scrub_model_subprocess(&mut cmd);
         #[cfg(unix)]
         unsafe {
             cmd.pre_exec(|| {
@@ -239,5 +265,48 @@ pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
     stella_tools::RegistryOptions {
         bash: cfg.tools_bash,
         web: cfg.tools_web,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pipeline_test_command_uses_central_credential_scrub_policy() {
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .env("OPENROUTER_API_KEY", "provider-secret")
+            .env("GITHUB_TOKEN", "repo-secret")
+            .env("AWS_SECRET_ACCESS_KEY", "cloud-secret")
+            .env("STELLA_TEST_BENIGN", "visible");
+
+        scrub_model_subprocess(&mut command);
+
+        let overrides: std::collections::HashMap<_, _> = command
+            .as_std()
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(std::ffi::OsStr::to_os_string),
+                )
+            })
+            .collect();
+        for secret in [
+            "OPENROUTER_API_KEY",
+            "GITHUB_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+        ] {
+            assert_eq!(
+                overrides.get(secret),
+                Some(&None),
+                "{secret} was not removed"
+            );
+        }
+        assert_eq!(
+            overrides["STELLA_TEST_BENIGN"].as_deref(),
+            Some(std::ffi::OsStr::new("visible"))
+        );
     }
 }

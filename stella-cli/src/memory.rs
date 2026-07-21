@@ -152,10 +152,9 @@ pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
 /// `~/.config/stella/skills` — the user-global skills directory (empty
 /// string without a home, which the loader skips silently).
 pub(crate) fn user_skills_dir() -> String {
-    std::env::var_os("HOME")
+    crate::settings::user_home_dir()
         .map(|home| {
-            PathBuf::from(home)
-                .join(".config")
+            home.join(".config")
                 .join("stella")
                 .join("skills")
                 .display()
@@ -169,6 +168,9 @@ pub(crate) fn user_skills_dir() -> String {
 /// custom-extensions surface (`crate::extensions`), which offers the same
 /// files as ⚡ slash-menu entries.
 pub(crate) fn load_workspace_skills(workspace_root: &Path) -> Vec<Skill> {
+    if crate::settings::filesystem_settings_disabled() {
+        return Vec::new();
+    }
     load_workspace_skills_with_diagnostics(workspace_root).skills
 }
 
@@ -178,6 +180,9 @@ pub(crate) fn load_workspace_skills(workspace_root: &Path) -> Vec<Skill> {
 pub(crate) fn load_workspace_skills_with_diagnostics(
     workspace_root: &Path,
 ) -> skills::LoadedSkills {
+    if crate::settings::filesystem_settings_disabled() {
+        return skills::LoadedSkills::default();
+    }
     let mut loaded = skills::load_skills_with_diagnostics(
         &FsSkillSource,
         &LoadSkillsOptions {
@@ -195,6 +200,13 @@ impl SessionMemory {
     /// Open the workspace's memory. `None` (with a one-line warning) when
     /// the store can't open — a session without memory beats no session.
     pub fn open(workspace_root: &Path, warn: bool) -> Option<Self> {
+        // Ephemeral benchmark trials must neither recall task/user-planted
+        // learning state nor create a context database that can perturb the
+        // task under test. Reflection is separately pinned off by the launcher;
+        // this closes the pre-turn recall side of the same boundary.
+        if crate::settings::filesystem_settings_disabled() {
+            return None;
+        }
         let db_path = workspace_root.join(".stella").join("context.db");
         if let Some(parent) = db_path.parent() {
             let _ = std::fs::create_dir_all(parent);

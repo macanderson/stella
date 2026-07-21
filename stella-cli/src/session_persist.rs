@@ -844,6 +844,8 @@ mod tests {
                 agent: "lead".into(),
                 event: AgentEvent::StepUsage {
                     step: 1,
+                    purpose: None,
+                    output_text: None,
                     model: "z/glm".into(),
                     input_tokens: 900,
                     output_tokens: 60,

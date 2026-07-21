@@ -169,6 +169,7 @@ impl Tool for Grep {
         // with `-` — the everyday `->`, `--flag`, `-n` — is treated as the
         // search string, not parsed as an rg option.
         rg.arg("-e").arg(pattern).arg(&search_dir);
+        crate::subprocess_env::scrub_sensitive_env(&mut rg);
         rg.stdout(std::process::Stdio::piped());
         rg.stderr(std::process::Stdio::piped());
 
@@ -214,6 +215,7 @@ impl Tool for Grep {
                 }
                 // `-e <pattern>` for the same leading-`-` safety as rg above.
                 grep.arg("-e").arg(pattern).arg(&search_dir);
+                crate::subprocess_env::scrub_sensitive_env(&mut grep);
                 grep.stdout(std::process::Stdio::piped());
                 grep.stderr(std::process::Stdio::piped());
 
