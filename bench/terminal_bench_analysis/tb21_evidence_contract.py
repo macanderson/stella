@@ -1314,13 +1314,18 @@ def _validate_outcome_records(
         envelopes_raw = _require_array(
             record["call_envelopes"], label=f"{label} call_envelopes"
         )
+        if attempted > 0 and not expected_ids:
+            raise ValueError(f"{label} attempted trials require expected paid-call IDs")
+        if attempted == 0 and (expected_ids or envelopes_raw):
+            raise ValueError(
+                f"{label} zero attempted trials cannot declare paid-call evidence"
+            )
         observed_ids: list[str] = []
         input_total = 0
         output_total = 0
         cached_total = 0
         cost_total = Decimal(0)
         envelopes_complete = True
-        has_non_successful_call = False
         for envelope_index, envelope_item in enumerate(envelopes_raw):
             envelope_label = f"{label} call_envelopes[{envelope_index}]"
             envelope = _require_object(envelope_item, label=envelope_label)
@@ -1339,7 +1344,6 @@ def _validate_outcome_records(
             )
             if terminal_state not in {"successful", "failed", "aborted"}:
                 raise ValueError(f"{envelope_label} has an unknown terminal state")
-            has_non_successful_call |= terminal_state != "successful"
             components: dict[str, int] = {}
             for field in ("input_tokens", "output_tokens", "cached_input_tokens"):
                 component = envelope[field]
@@ -1382,9 +1386,7 @@ def _validate_outcome_records(
         accounting_complete = envelopes_complete and not missing_ids
         if status == "complete" and missing_ids:
             raise ValueError(f"{label} missing paid-call IDs cannot be complete")
-        if status == "complete" and (
-            not accounting_complete or has_non_successful_call
-        ):
+        if status == "complete" and not accounting_complete:
             raise ValueError(
                 f"{label} incomplete paid-call accounting cannot be complete"
             )

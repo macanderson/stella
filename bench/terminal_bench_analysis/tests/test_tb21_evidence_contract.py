@@ -1223,11 +1223,61 @@ def test_metered_values_require_bounded_nonnegative_decimal_strings(field: str) 
         append_outcome(ledger, outcome)
 
 
+@pytest.mark.parametrize(
+    ("attempted_trials", "expected_paid_call_ids", "call_envelopes", "message"),
+    [
+        (10, [], [], "attempted trials require expected paid-call IDs"),
+        (
+            0,
+            ["call-1"],
+            [],
+            "zero attempted trials cannot declare paid-call evidence",
+        ),
+        (
+            0,
+            [],
+            [
+                {
+                    "call_id": "call-1",
+                    "terminal_state": "successful",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cached_input_tokens": 0,
+                    "cost_usd": "0.00",
+                }
+            ],
+            "zero attempted trials cannot declare paid-call evidence",
+        ),
+    ],
+)
+def test_paid_call_evidence_matches_attempted_trial_cardinality(
+    attempted_trials: int,
+    expected_paid_call_ids: list[str],
+    call_envelopes: list[dict[str, object]],
+    message: str,
+) -> None:
+    ledger = _development_intent_ledger()
+    outcome = outcome_record(
+        sequence=8,
+        status="complete" if attempted_trials else "ineligible",
+        attempted_trials=attempted_trials,
+    )
+    outcome["expected_paid_call_ids"] = expected_paid_call_ids
+    outcome["call_envelopes"] = call_envelopes
+
+    with pytest.raises(ValueError, match=message):
+        append_outcome(ledger, outcome)
+
+
 def test_call_envelopes_retain_all_terminal_states_and_derive_exact_aggregates() -> (
     None
 ):
     ledger = _development_intent_ledger()
-    outcome = outcome_record(sequence=8, status="ineligible")
+    outcome = outcome_record(
+        sequence=8,
+        status="complete",
+        promotion_eligible=False,
+    )
     _set_call_evidence(
         outcome,
         [
