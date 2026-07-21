@@ -87,9 +87,26 @@ pub fn parse_test_invocation(command: &str) -> Result<TestInvocation, TestInvoca
                     (Some("nextest"), Some("run"))
                 )
         }
-        "pnpm" | "npm" | "yarn" | "bun" => {
+        "pnpm" => {
             matches!(args.first().map(String::as_str), Some("test"))
+                || matches!(
+                    (
+                        args.first().map(String::as_str),
+                        args.get(1).map(String::as_str),
+                        args.get(2).map(String::as_str)
+                    ),
+                    (Some("exec"), Some("vitest"), Some("run"))
+                )
         }
+        "npm" | "yarn" | "bun" => matches!(args.first().map(String::as_str), Some("test")),
+        "vitest" => matches!(args.first().map(String::as_str), Some("run")),
+        "npx" | "bunx" => matches!(
+            (
+                args.first().map(String::as_str),
+                args.get(1).map(String::as_str)
+            ),
+            (Some("vitest"), Some("run"))
+        ),
         "pytest" => true,
         "python" | "python3" => matches!(
             (
@@ -184,7 +201,7 @@ fn split_test_words(command: &str) -> Result<Vec<String>, TestInvocationError> {
 fn validate_local_args(program: &str, args: &[String]) -> Result<(), TestInvocationError> {
     let forbidden_flags: &[&str] = match program {
         "cargo" => &["--manifest-path", "--config", "-C", "--target-dir"],
-        "pnpm" | "npm" | "yarn" | "bun" => &[
+        "pnpm" | "npm" | "yarn" | "bun" | "vitest" | "npx" | "bunx" => &[
             "--prefix",
             "--dir",
             "--cwd",
@@ -233,7 +250,7 @@ pub fn validate_witness_artifact(
         [path]
             if !untracked_before.contains_key(path)
                 && untracked_after.contains_key(path)
-                && is_test_path(path) =>
+                && is_witness_test_path(path) =>
         {
             path
         }
@@ -252,21 +269,28 @@ pub fn validate_witness_invocation(
     path: &str,
     invocation: &TestInvocation,
 ) -> Result<(), WitnessArtifactError> {
+    let normalized_path = path.replace('\\', "/");
     let extension = path
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
         .unwrap_or_default();
     let matches = match invocation.program.as_str() {
-        "cargo" => extension == "rs",
-        "pytest" | "python" | "python3" => extension == "py",
-        "pnpm" | "npm" | "yarn" | "bun" => {
+        "cargo" => {
+            extension == "rs" && cargo_invocation_is_exact(&normalized_path, &invocation.args)
+        }
+        "pytest" | "python" | "python3" => {
+            extension == "py" && pytest_invocation_targets(&normalized_path, invocation)
+        }
+        "pnpm" | "vitest" | "npx" | "bunx" => {
             matches!(
                 extension.as_str(),
                 "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs"
-            )
+            ) && vitest_invocation_targets(&normalized_path, invocation)
         }
-        "go" => extension == "go",
-        "dotnet" => extension == "cs",
+        "go" => extension == "go" && go_invocation_is_exact(&normalized_path, &invocation.args),
+        "dotnet" => {
+            extension == "cs" && dotnet_invocation_is_exact(&normalized_path, &invocation.args)
+        }
         _ => false,
     };
     if matches {
@@ -277,6 +301,170 @@ pub fn validate_witness_invocation(
             program: invocation.program.clone(),
         })
     }
+}
+
+fn cargo_invocation_is_exact(path: &str, args: &[String]) -> bool {
+    if args.first().map(String::as_str) != Some("test")
+        || args.iter().filter(|arg| arg.as_str() == "--test").count() != 1
+        || args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--no-run" | "--workspace" | "--all" | "--all-targets" | "--tests" | "--exclude"
+            )
+        })
+    {
+        return false;
+    }
+    let Some(stem) = path
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.strip_suffix(".rs"))
+    else {
+        return false;
+    };
+    let target_flag_index = match args.get(1).map(String::as_str) {
+        Some("--test") => 1,
+        Some("-p" | "--package")
+            if args
+                .get(2)
+                .is_some_and(|package| !package.is_empty() && !package.starts_with('-')) =>
+        {
+            3
+        }
+        _ => return false,
+    };
+    if args.get(target_flag_index).map(String::as_str) != Some("--test")
+        || args.get(target_flag_index + 1).map(String::as_str) != Some(stem)
+    {
+        return false;
+    }
+    let selector_index = target_flag_index + 2;
+    let separator = selector_index + 1;
+    if args.get(separator).map(String::as_str) != Some("--") {
+        return false;
+    }
+    args.get(selector_index)
+        .is_some_and(|selector| !selector.is_empty() && !selector.starts_with('-'))
+        && args.get(separator + 1).map(String::as_str) == Some("--exact")
+        && args[separator + 2..].iter().all(|arg| arg == "--nocapture")
+}
+
+fn pytest_invocation_targets(path: &str, invocation: &TestInvocation) -> bool {
+    let args = match invocation.program.as_str() {
+        "pytest" => invocation.args.as_slice(),
+        "python" | "python3"
+            if invocation.args.first().map(String::as_str) == Some("-m")
+                && invocation.args.get(1).map(String::as_str) == Some("pytest") =>
+        {
+            &invocation.args[2..]
+        }
+        _ => return false,
+    };
+    let Some(target) = args.first().map(|arg| arg.replace('\\', "/")) else {
+        return false;
+    };
+    (target == path
+        || target
+            .strip_prefix(path)
+            .is_some_and(|rest| rest.starts_with("::")))
+        && args[1..].iter().all(|arg| {
+            matches!(
+                arg.as_str(),
+                "-q" | "--quiet" | "-v" | "--verbose" | "-x" | "-s"
+            ) || arg.starts_with("--maxfail=")
+        })
+}
+
+fn vitest_invocation_targets(path: &str, invocation: &TestInvocation) -> bool {
+    let args = match invocation.program.as_str() {
+        "vitest" if invocation.args.first().map(String::as_str) == Some("run") => {
+            &invocation.args[1..]
+        }
+        "pnpm"
+            if invocation.args.first().map(String::as_str) == Some("exec")
+                && invocation.args.get(1).map(String::as_str) == Some("vitest")
+                && invocation.args.get(2).map(String::as_str) == Some("run") =>
+        {
+            &invocation.args[3..]
+        }
+        "npx" | "bunx"
+            if invocation.args.first().map(String::as_str) == Some("vitest")
+                && invocation.args.get(1).map(String::as_str) == Some("run") =>
+        {
+            &invocation.args[2..]
+        }
+        _ => return false,
+    };
+    args.len() == 1 && args[0].replace('\\', "/") == path
+}
+
+fn go_invocation_is_exact(path: &str, args: &[String]) -> bool {
+    if args.first().map(String::as_str) != Some("test") {
+        return false;
+    }
+    let parent = path.rsplit_once('/').map_or(".", |(parent, _)| parent);
+    let package = if parent == "." {
+        ".".to_string()
+    } else {
+        format!("./{parent}")
+    };
+    if args.get(1) != Some(&package) {
+        return false;
+    }
+    if args.get(2).map(String::as_str) != Some("-run") {
+        return false;
+    }
+    let Some(selector) = args.get(3) else {
+        return false;
+    };
+    let Some(exact) = selector
+        .strip_prefix('^')
+        .and_then(|selector| selector.strip_suffix('$'))
+    else {
+        return false;
+    };
+    let trailing_is_safe = args[4..]
+        .chunks(2)
+        .all(|chunk| matches!(chunk, [flag, value] if flag == "-count" && value != "0"));
+    exact.starts_with("Test")
+        && exact.len() > "Test".len()
+        && exact
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && trailing_is_safe
+}
+
+fn dotnet_invocation_is_exact(path: &str, args: &[String]) -> bool {
+    if args.first().map(String::as_str) != Some("test") {
+        return false;
+    }
+    let Some(project) = args.get(1).map(|arg| arg.replace('\\', "/")) else {
+        return false;
+    };
+    if !project.ends_with(".csproj") {
+        return false;
+    }
+    let project_dir = project.rsplit_once('/').map_or("", |(parent, _)| parent);
+    if !project_dir.is_empty()
+        && path != project_dir
+        && !path.starts_with(&format!("{project_dir}/"))
+    {
+        return false;
+    }
+    let filter = match args {
+        [_, _, flag, value] if flag == "--filter" => Some(value.as_str()),
+        [_, _, flag] => flag.strip_prefix("--filter="),
+        _ => None,
+    };
+    filter.is_some_and(|filter| {
+        let Some(identity) = filter.strip_prefix("FullyQualifiedName=") else {
+            return false;
+        };
+        !identity.is_empty()
+            && identity
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '+'))
+    })
 }
 
 /// Pin the accepted delta entry to a no-follow filesystem identity.
@@ -308,7 +496,8 @@ fn changed_paths(before: &HashMap<String, String>, after: &HashMap<String, Strin
     paths
 }
 
-fn is_test_path(path: &str) -> bool {
+/// Whether a candidate-relative path has a supported witness-test shape.
+pub fn is_witness_test_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let name = normalized.rsplit('/').next().unwrap_or(&normalized);
     let recognized_dir = normalized
@@ -366,9 +555,13 @@ pub fn witness_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str
          production code — the implementation is someone else's job.\n\
          - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
          behavior), not because of a typo, a missing import, or a harness error.\n\
-         - Prefer the narrowest runnable command (one test/module, not the whole suite).\n\
+         - Use `create_witness_test`; no general write, edit, process, network, or external \
+         action is available in this role.\n\
+         - The command must directly name this artifact and an exact test: for Rust use \
+         `cargo test --test <file-stem> <selector> -- --exact`; for Python/Vitest name the \
+         file path; for Go/.NET include an exact test filter. Never run a whole suite.\n\
          - End your reply with exactly one line:\n\
-         TEST_COMMAND: <a direct test command such as cargo test or pytest>\n",
+         TEST_COMMAND: <the direct, artifact-specific test command>\n",
     );
     if !repo_structure.trim().is_empty() {
         s.push_str("\n## Repository structure\n");
@@ -610,15 +803,112 @@ mod tests {
     }
 
     #[test]
-    fn witness_artifact_language_matches_the_typed_runner() {
-        let cargo = parse_test_invocation("cargo test authority_witness").unwrap();
-        let pytest = parse_test_invocation("pytest tests/test_authority.py").unwrap();
-        let npm = parse_test_invocation("npm test").unwrap();
-        assert!(validate_witness_invocation("tests/authority_witness.rs", &cargo).is_ok());
-        assert!(validate_witness_invocation("tests/test_authority.py", &pytest).is_ok());
-        assert!(validate_witness_invocation("src/authority.test.ts", &npm).is_ok());
-        assert!(validate_witness_invocation("tests/test_authority.py", &cargo).is_err());
-        assert!(validate_witness_invocation("tests/authority_witness.rs", &pytest).is_err());
+    fn witness_invocation_names_the_exact_authored_artifact_and_test() {
+        for (path, command) in [
+            (
+                "tests/authority_witness.rs",
+                "cargo test --test authority_witness authority_witness -- --exact",
+            ),
+            (
+                "tests/authority_witness.rs",
+                "cargo test -p stella-pipeline --test authority_witness authority_witness -- --exact",
+            ),
+            (
+                "tests/test_authority.py",
+                "pytest tests/test_authority.py::test_authority -q",
+            ),
+            (
+                "src/authority.test.ts",
+                "pnpm exec vitest run src/authority.test.ts",
+            ),
+            (
+                "pkg/authority_test.go",
+                "go test ./pkg -run ^TestAuthority$",
+            ),
+            (
+                "tests/Authority.Tests/AuthorityWitnessTests.cs",
+                "dotnet test tests/Authority.Tests/Authority.Tests.csproj --filter FullyQualifiedName=Authority.Tests.AuthorityWitness",
+            ),
+        ] {
+            let invocation = parse_test_invocation(command).unwrap();
+            assert!(
+                validate_witness_invocation(path, &invocation).is_ok(),
+                "exact witness invocation must be accepted: {command}"
+            );
+        }
+
+        for (path, command) in [
+            ("tests/authority_witness.rs", "cargo test"),
+            ("tests/authority_witness.rs", "cargo test authority_witness"),
+            (
+                "tests/authority_witness.rs",
+                "cargo test --no-run --test authority_witness authority_witness -- --exact",
+            ),
+            (
+                "tests/authority_witness.rs",
+                "cargo test --test authority_witness authority_witness -- --exact --skip authority_witness",
+            ),
+            (
+                "tests/authority_witness.rs",
+                "cargo test --workspace --test authority_witness authority_witness -- --exact",
+            ),
+            (
+                "tests/authority_witness.rs",
+                "cargo test --test authority_witness --test other authority_witness -- --exact",
+            ),
+            (
+                "tests/authority_witness.rs",
+                "cargo test stray --test authority_witness authority_witness -- --exact",
+            ),
+            (
+                "tests/authority_witness.rs",
+                "cargo test --test some_other_test authority_witness -- --exact",
+            ),
+            ("tests/test_authority.py", "pytest"),
+            ("tests/test_authority.py", "pytest tests"),
+            (
+                "tests/test_authority.py",
+                "pytest tests/test_authority.py --collect-only",
+            ),
+            (
+                "tests/test_authority.py",
+                "pytest --ignore tests/test_authority.py",
+            ),
+            ("src/authority.test.ts", "npm test"),
+            ("src/authority.test.ts", "pnpm test"),
+            (
+                "src/authority.test.ts",
+                "pnpm exec vitest run src/authority.test.ts --exclude src/authority.test.ts",
+            ),
+            ("pkg/authority_test.go", "go test ./..."),
+            ("pkg/authority_test.go", "go test ./pkg"),
+            (
+                "pkg/authority_test.go",
+                "go test ./pkg ./other -run ^TestAuthority$",
+            ),
+            (
+                "pkg/authority_test.go",
+                "go test ./pkg -run ^TestAuthority$ -count=0",
+            ),
+            (
+                "tests/Authority.Tests/AuthorityWitnessTests.cs",
+                "dotnet test tests/Authority.Tests/Authority.Tests.csproj",
+            ),
+            (
+                "tests/Authority.Tests/AuthorityWitnessTests.cs",
+                "dotnet test tests/Authority.Tests/Authority.Tests.csproj --filter FullyQualifiedName=Authority.Tests.AuthorityWitness --list-tests",
+            ),
+            (
+                "tests/Authority.Tests/AuthorityWitnessTests.cs",
+                "dotnet test tests/Authority.Tests/Authority.Tests.csproj --filter FullyQualifiedName~AuthorityWitness",
+            ),
+        ] {
+            let invocation = parse_test_invocation(command).unwrap();
+            assert!(
+                validate_witness_invocation(path, &invocation).is_err(),
+                "broad or mismatched witness invocation must be rejected: {command}"
+            );
+        }
     }
 
     #[test]

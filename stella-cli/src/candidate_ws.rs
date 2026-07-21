@@ -64,6 +64,9 @@ use crate::agent::{
     GitDiagnosticRunner, GitRepoStatus, TypedTestRunner, fs_artifact_identity, fs_fingerprint,
 };
 
+mod witness_tools;
+use witness_tools::WitnessToolExecutor;
+
 /// The commit identity for snapshot plumbing commits (which exist only
 /// inside the shadow and are discarded with it) — the user's repo may have
 /// no identity configured (CI), and their real identity must never be
@@ -285,6 +288,7 @@ impl GitCandidateWorkspaces {
                 // (the workspace outlives every borrow). Custom tools re-root
                 // to `ws_root`, so their subprocesses run in the shadow.
                 let registry: Arc<dyn stella_core::ToolExecutor> = Arc::new(registry);
+                let witness_tools = WitnessToolExecutor::new(ws_root.clone(), registry.clone());
                 let tools =
                     CustomToolSet::new_owned(registry, self.custom_tools.clone(), ws_root.clone());
                 Ok(GitCandidateWorkspace {
@@ -294,6 +298,7 @@ impl GitCandidateWorkspaces {
                     baseline,
                     sealed: Mutex::new(None),
                     tools,
+                    witness_tools,
                     diagnostics: GitDiagnosticRunner {
                         root: ws_root.clone(),
                     },
@@ -469,6 +474,8 @@ pub(crate) struct GitCandidateWorkspace {
     /// The candidate's tool surface: snapshot-rooted registry + custom tools,
     /// owned so the boxed workspace can hand out `&dyn ToolExecutor`.
     tools: CustomToolSet<'static>,
+    /// Constructed before dispatch and incapable of general mutation or egress.
+    witness_tools: WitnessToolExecutor,
     diagnostics: GitDiagnosticRunner,
     tests: TypedTestRunner,
     repo_status: SnapshotRepoStatus,
@@ -619,6 +626,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     fn tools(&self) -> &dyn stella_core::ToolExecutor {
         &self.tools
+    }
+
+    fn witness_tools(&self) -> &dyn stella_core::ToolExecutor {
+        &self.witness_tools
     }
 
     fn diagnostics(&self) -> &dyn DiagnosticRunner {

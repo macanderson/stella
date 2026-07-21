@@ -964,10 +964,49 @@ impl<'a> Pipeline<'a> {
             ));
         };
 
+        // Resolve both identities before creating a workspace or dispatching
+        // the witness. Authored verification is meaningful only when its
+        // author is actually independent from the worker.
+        let worker = self
+            .resolve_provider(Role::Worker)
+            .map_err(RoleResolveError::into_pipeline_error)?;
+        if let Some(fallback) = &worker.fallback {
+            self.emit_fallback(fallback);
+        }
+        let worker_label = worker.model_ref.to_string();
+        let witness_author = if author_witness {
+            let Ok(author) = self.resolve_provider(Role::Judge) else {
+                return Ok((
+                    CandidateResult::aborted(
+                        base_messages.to_vec(),
+                        "could not resolve an independent witness author".to_string(),
+                    ),
+                    Some(worker_label),
+                ));
+            };
+            if author.model_ref == worker.model_ref {
+                return Ok((
+                    CandidateResult::aborted(
+                        base_messages.to_vec(),
+                        format!(
+                            "could not resolve an independent witness author: judge and worker both resolved to `{}`",
+                            worker.model_ref
+                        ),
+                    ),
+                    Some(worker_label),
+                ));
+            }
+            if let Some(fallback) = &author.fallback {
+                self.emit_fallback(fallback);
+            }
+            Some(author)
+        } else {
+            None
+        };
+
         let mut candidates: Vec<CandidateResult> = Vec::with_capacity(n as usize);
         let mut workspaces: Vec<Option<Box<dyn CandidateWorkspace>>> =
             Vec::with_capacity(n as usize);
-        let mut worker: Option<ResolvedRole<'a>> = None;
         for i in 0..n {
             let ws = match port.create().await {
                 Ok(ws) => ws,
@@ -1000,8 +1039,11 @@ impl<'a> Pipeline<'a> {
                     workspace: Some(ws.as_ref()),
                 };
                 let witness = if author_witness {
+                    let author = witness_author
+                        .as_ref()
+                        .expect("authored witness identity is resolved before dispatch");
                     match self
-                        .witness_stage(goal, frames, ws.tools(), surface, budget, total)
+                        .witness_stage(goal, frames, author, surface, budget, total)
                         .await
                     {
                         Ok(witness) => witness,
@@ -1015,26 +1057,6 @@ impl<'a> Pipeline<'a> {
                 } else {
                     None
                 };
-                if worker.is_none() {
-                    match self.resolve_provider(Role::Worker) {
-                        Ok(resolved) => {
-                            if let Some(fallback) = &resolved.fallback {
-                                self.emit_fallback(fallback);
-                            }
-                            worker = Some(resolved);
-                        }
-                        Err(error) => {
-                            ws.remove().await;
-                            for workspace in workspaces.into_iter().flatten() {
-                                workspace.remove().await;
-                            }
-                            return Err(error.into_pipeline_error());
-                        }
-                    }
-                }
-                let worker = worker
-                    .as_ref()
-                    .expect("worker resolution is populated before candidate execution");
                 let mut engine = Engine::with_sleeper(
                     worker.provider,
                     ws.tools(),
@@ -1105,10 +1127,7 @@ impl<'a> Pipeline<'a> {
         if let Some(e) = adopt_failure {
             best.aborted = Some(e.to_string());
         }
-        let label = worker
-            .as_ref()
-            .map(|resolved| resolved.model_ref.to_string());
-        Ok((best, label))
+        Ok((best, Some(worker_label)))
     }
 
     // ------------------------------------------------------------------

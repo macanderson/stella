@@ -36,7 +36,7 @@ impl<'a> Pipeline<'a> {
         &self,
         goal: &str,
         frames: &[RecalledFrame],
-        tools: &dyn stella_core::ToolExecutor,
+        author: &ResolvedRole<'a>,
         surface: CandidateSurface<'_>,
         budget: &mut BudgetGuard,
         total: &mut f64,
@@ -44,29 +44,20 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Witness,
         });
-        let resolved = match self
-            .resolve_provider(Role::Judge)
-            .or_else(|_| self.resolve_provider(Role::Worker))
-        {
-            Ok(resolved) => resolved,
-            Err(_) => return Err("could not resolve an independent witness author".to_string()),
-        };
-        if let Some(fallback) = &resolved.fallback {
-            self.emit_fallback(fallback);
-        }
 
         let tracked_before = surface.repo_status.tracked_fingerprints().await;
         let untracked_before = surface.repo_status.untracked_fingerprints().await;
         let structure = self.repo.structure_summary().await;
-        let mut engine = Engine::with_sleeper(
-            resolved.provider,
-            tools,
+        let witness_tools = surface
+            .workspace
+            .expect("witness authoring requires a candidate workspace")
+            .witness_tools();
+        let engine = Engine::with_sleeper(
+            author.provider,
+            witness_tools,
             self.engine_config_for(surface),
             self.sleeper,
         );
-        if let Some((hooks, runner)) = self.hooks {
-            engine = engine.with_hooks(hooks, surface.hook_runner.unwrap_or(runner));
-        }
 
         let mut messages = vec![
             CompletionMessage::system(WITNESS_SYSTEM_PROMPT),

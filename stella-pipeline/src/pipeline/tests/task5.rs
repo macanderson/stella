@@ -76,7 +76,9 @@ async fn witness_worker_and_revision_hooks_are_bound_to_the_candidate_root() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         tool_result("write_file"),
-        text_result("TEST_COMMAND: cargo test authority_witness"),
+        text_result(
+            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
+        ),
         tool_result("write_file"),
         text_result("worker done"),
         tool_result("write_file"),
@@ -144,7 +146,11 @@ async fn witness_worker_and_revision_hooks_are_bound_to_the_candidate_root() {
         .expect("pipeline runs");
     assert_eq!(outcome.status, PipelineStatus::Completed);
     let cwd = hook_runner.cwd.lock().unwrap().clone();
-    assert_eq!(cwd.len(), 3, "witness, worker, and revision each fire once");
+    assert_eq!(
+        cwd.len(),
+        2,
+        "witness authoring cannot run hooks; worker and revision each fire once"
+    );
     assert!(
         cwd.iter()
             .all(|path| path == &candidate_root.path().display().to_string()),
@@ -152,15 +158,78 @@ async fn witness_worker_and_revision_hooks_are_bound_to_the_candidate_root() {
     );
     let payload_cwd = hook_runner.payload_cwd.lock().unwrap().clone();
     assert_eq!(payload_cwd, cwd, "hook payload and process cwd must agree");
-    assert_eq!(std::fs::read_dir(candidate_root.path()).unwrap().count(), 3);
+    assert_eq!(std::fs::read_dir(candidate_root.path()).unwrap().count(), 2);
     assert_eq!(std::fs::read_dir(session_root.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn authored_witness_fails_closed_before_workspace_creation_when_judge_is_worker() {
+    let provider = ScriptedProvider::new(vec![text_result("single")]);
+    let resolver = OneProvider(&provider);
+    let diagnostics = NeverRunner;
+    let repo_status = NeverRepoStatus;
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let port = FakeWorkspacePort::untouchable();
+    let same = ModelRef::new("scripted", "same-model");
+    let mut roles = RoleTable::new();
+    roles.pin(Role::Worker, same.clone());
+    roles.pin(Role::Judge, same);
+    let router = Router::new(
+        roles,
+        vec![ProviderProfile::new(
+            "scripted",
+            ModelRef::new("scripted", "worker"),
+            ModelRef::new("scripted", "triage"),
+            ModelRef::new("scripted", "judge"),
+        )],
+        CircuitBreaker::new(Box::new(ZeroClock)),
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &diagnostics,
+            tests: &diagnostics,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: Some(&port),
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("independence failure is a truthful candidate abort");
+    assert!(matches!(
+        outcome.status,
+        PipelineStatus::Aborted { ref reason }
+            if reason.contains("independent witness author")
+    ));
+    assert!(!stages(&drain(&mut rx)).contains(&StageKind::Witness));
 }
 
 #[tokio::test]
 async fn authored_witness_with_one_candidate_uses_one_disposable_snapshot() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test authority_witness"),
+        text_result(
+            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
+        ),
         text_result("done"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -194,7 +263,9 @@ async fn authored_witness_with_one_candidate_uses_one_disposable_snapshot() {
 async fn sealed_witness_identity_survives_git_reclassification_out_of_untracked_files() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test authority_witness"),
+        text_result(
+            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
+        ),
         text_result("done"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -265,7 +336,9 @@ async fn authored_witness_isolation_failure_aborts_before_authoring() {
 async fn tracked_production_edit_by_witness_author_aborts_without_adoption() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test authority_witness"),
+        text_result(
+            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
+        ),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
     let status = SeqRepoStatus::new(vec![
@@ -294,7 +367,9 @@ async fn tracked_production_edit_by_witness_author_aborts_without_adoption() {
 async fn witness_language_mismatch_aborts_before_worker_execution() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test authority_witness"),
+        text_result(
+            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
+        ),
         text_result("worker done"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -321,7 +396,9 @@ async fn witness_language_mismatch_aborts_before_worker_execution() {
 async fn symlink_witness_artifact_aborts_before_worker_execution() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test authority_witness"),
+        text_result(
+            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
+        ),
         text_result("worker done"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -355,7 +432,7 @@ async fn symlink_witness_artifact_aborts_before_worker_execution() {
 async fn post_baseline_witness_tamper_is_hard_failure_even_if_judge_would_pass() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test witness"),
+        text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
         text_result("worker done"),
         text_result("PASS override attempt"),
     ]);

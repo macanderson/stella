@@ -154,10 +154,10 @@ async fn enforced_budget_breach_in_triage_stops_before_the_next_paid_stage() {
 }
 
 #[tokio::test]
-async fn post_witness_worker_routing_error_retains_prior_stage_cost() {
+async fn unavailable_independent_witness_fails_closed_before_authoring() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test witness"),
+        text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
     ]);
     let resolver = FirstTwoProviderLookups {
         provider: &provider,
@@ -199,14 +199,18 @@ async fn post_witness_worker_routing_error_retains_prior_stage_cost() {
     let mut messages = vec![CompletionMessage::system("sys")];
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
 
-    let err = pipeline
+    let outcome = pipeline
         .run("Fix the parser", &mut messages, &mut budget)
         .await
-        .expect_err("worker routing is a typed hard error");
+        .expect("unavailable independent witness is a truthful abort");
 
-    assert!(matches!(err.cause, PipelineError::NoProviderForModel(_)));
+    assert!(matches!(
+        outcome.status,
+        PipelineStatus::Aborted { ref reason }
+            if reason.contains("independent witness author")
+    ));
     assert!(
-        (err.total_cost_usd - 0.0002).abs() < 1e-9,
-        "triage and witness spend must survive worker resolution: {err:?}"
+        (outcome.total_cost_usd - 0.0001).abs() < 1e-9,
+        "only triage spend settles before role independence is checked: {outcome:?}"
     );
 }

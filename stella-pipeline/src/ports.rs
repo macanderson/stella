@@ -271,6 +271,11 @@ pub trait CandidateWorkspace: Send + Sync {
     /// The tool executor rooted at this workspace: every engine-turn tool
     /// call (read/edit/shell) lands in the snapshot, never in the real tree.
     fn tools(&self) -> &dyn stella_core::ToolExecutor;
+    /// Capability-minimal witness executor, constructed with the candidate:
+    /// candidate-root reads plus one atomic, create-only witness test action.
+    /// It must never expose general writes, edits, processes, hooks, MCP,
+    /// custom tools, credentials, or external adapters.
+    fn witness_tools(&self) -> &dyn stella_core::ToolExecutor;
     /// Runs closed diagnostic invocations inside the snapshot.
     fn diagnostics(&self) -> &dyn DiagnosticRunner;
     /// Typed test-process runner rooted at this workspace.

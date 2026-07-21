@@ -374,6 +374,9 @@ impl CandidateWorkspace for FakeWorkspace {
     fn tools(&self) -> &dyn ToolExecutor {
         &self.tools
     }
+    fn witness_tools(&self) -> &dyn ToolExecutor {
+        &self.tools
+    }
     fn diagnostics(&self) -> &dyn DiagnosticRunner {
         &self.diagnostics
     }
@@ -1012,7 +1015,7 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
     // triage → "single"; witness author turn → marker line; worker → done.
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("wrote the test.\nTEST_COMMAND: cargo test witness"),
+        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
         text_result("done"),
     ]);
     // Test-command pops: witness fail-check (fail), per-candidate baseline
@@ -1041,7 +1044,9 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
         verdict.summary
     );
     assert!(
-        verdict.summary.contains("cargo test witness"),
+        verdict
+            .summary
+            .contains("cargo test --test witness witness -- --exact"),
         "the evidence names the witness command: {}",
         verdict.summary
     );
@@ -1058,9 +1063,9 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
 async fn a_witness_that_never_fails_aborts_and_removes_the_candidate() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test always-green"),
+        text_result("TEST_COMMAND: cargo test --test witness always_green -- --exact"),
         // The repair attempt also yields a command that passes.
-        text_result("TEST_COMMAND: cargo test still-green"),
+        text_result("TEST_COMMAND: cargo test --test witness still_green -- --exact"),
     ]);
     // Pops: witness check (pass), repair check (pass) → discard. Then no
     // test command exists for the candidate, so no further pops.
@@ -1088,7 +1093,7 @@ async fn a_witness_that_never_fails_aborts_and_removes_the_candidate() {
 async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("TEST_COMMAND: cargo test witness"),
+        text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
         text_result("done"),                     // worker
         text_result("FAIL the test was edited"), // must remain unused
     ]);
