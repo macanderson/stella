@@ -25,6 +25,7 @@ py-modules = [
     "github_public_timing",
     "tb21_analysis",
     "tb21_evidence_contract",
+    "tb21_hybrid_analysis",
     "tb21_study_seed",
 ]
 
