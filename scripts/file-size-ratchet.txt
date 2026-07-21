@@ -11,7 +11,8 @@ stella-core/src/skills.rs 1518
 stella-model/src/zai.rs 2063
 stella-pipeline/src/pipeline.rs 1938
 stella-pipeline/src/pipeline/tests.rs 1524
-stella-store/src/lib.rs 3904
+stella-store/src/lib.rs 2035
+stella-store/src/tests.rs 1927
 stella-tools/src/registry.rs 2606
 stella-tools/src/scripts.rs 1643
 stella-tui/src/deck_render.rs 2005
