@@ -9,11 +9,17 @@ from collections.abc import Sequence
 from copy import deepcopy
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from functools import cache
 
 from tb21_study_seed import TASK_IDENTITIES, TaskIdentity
 
 STUDY_ID = "stella-tb21-hybrid-study-v1"
 TASK_PARTITION_SCHEMA = "stella-tb21-task-partition-v1"
+BOOTSTRAP_SEED = 20260721
+BOOTSTRAP_REPLICATES = 50_000
+SCREEN_DOMAIN = "stella-tb21-screen-bootstrap-v1"
+CONFIRMATORY_DOMAIN = "stella-tb21-confirmatory-bootstrap-v1"
+BOOTSTRAP_INDEX_STREAM_DOMAIN = "stella-tb21-bootstrap-index-stream-v1"
 DEVELOPMENT_TASK_NAMES = (
     "fix-git",
     "filter-js-from-html",
@@ -349,6 +355,66 @@ def canonical_body_bytes(value: object) -> bytes:
         ensure_ascii=False,
         allow_nan=False,
     ).encode()
+
+
+def sampler_preimage(
+    domain: str, seed: int, replicate: int, draw: int, retry: int
+) -> bytes:
+    """Return the exact NUL-delimited SHA-256 counter-sampler preimage."""
+    if domain not in {SCREEN_DOMAIN, CONFIRMATORY_DOMAIN}:
+        raise ValueError("sampler domain is not registered")
+    integers = (seed, replicate, draw, retry)
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+        for value in integers
+    ):
+        raise ValueError("sampler counters must be nonnegative integers")
+    return b"\x00".join(
+        [domain.encode("ascii"), *(str(value).encode("ascii") for value in integers)]
+    )
+
+
+def sha256_counter_index(
+    domain: str, seed: int, replicate: int, draw: int, n: int
+) -> int:
+    """Select one unbiased task index from the frozen SHA-256 counter stream."""
+    if not isinstance(n, int) or isinstance(n, bool) or not 0 < n <= 65_535:
+        raise ValueError("sampler task count is invalid")
+    retry = 0
+    limit = (1 << 64) // n * n
+    while True:
+        raw = sampler_preimage(domain, seed, replicate, draw, retry)
+        value = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big")
+        if value < limit:
+            return value % n
+        retry += 1
+
+
+@cache
+def bootstrap_index_stream_sha256(domain: str, n: int, replicate_count: int) -> str:
+    """Digest the frozen replicate-major, draw-minor u16 index stream."""
+    if not isinstance(n, int) or isinstance(n, bool) or not 0 < n <= 65_535:
+        raise ValueError("sampler task count is invalid")
+    if (
+        not isinstance(replicate_count, int)
+        or isinstance(replicate_count, bool)
+        or not 0 < replicate_count < 1 << 64
+    ):
+        raise ValueError("sampler replicate count is invalid")
+    sampler_preimage(domain, BOOTSTRAP_SEED, 0, 0, 0)
+    digest = hashlib.sha256()
+    digest.update(BOOTSTRAP_INDEX_STREAM_DOMAIN.encode("ascii"))
+    digest.update(b"\x00")
+    digest.update(domain.encode("ascii"))
+    digest.update(b"\x00")
+    digest.update(BOOTSTRAP_SEED.to_bytes(8, "big"))
+    digest.update(n.to_bytes(4, "big"))
+    digest.update(replicate_count.to_bytes(8, "big"))
+    for replicate in range(replicate_count):
+        for draw in range(n):
+            index = sha256_counter_index(domain, BOOTSTRAP_SEED, replicate, draw, n)
+            digest.update(index.to_bytes(2, "big"))
+    return digest.hexdigest()
 
 
 def _reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
