@@ -18,7 +18,7 @@ use stella_protocol::{TaskItem, TaskStatus};
 
 use crate::deck::{AgentEntry, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::model::TranscriptEntry;
+use crate::model::{FileState, TranscriptEntry};
 use crate::render::{
     entry_lines, inner_height, inner_width, render_ask_user, render_hud, render_scope_review,
     render_transcript_window,
@@ -38,7 +38,7 @@ use crate::theme;
 /// longer grows with session length.
 #[derive(Debug, Clone, Default)]
 pub struct SessionFold {
-    key: Option<(String, bool, bool, u64, usize, usize)>,
+    key: Option<(String, bool, bool, u64, usize, usize, u64)>,
     settled: usize,
     prefix: Vec<Line<'static>>,
     entry_rows: Vec<Range<usize>>,
@@ -60,6 +60,7 @@ impl SessionFold {
         &mut self,
         agent: &str,
         transcript: &[TranscriptEntry],
+        files: &[FileState],
         streaming: &str,
         thinking: bool,
         expanded: &HashSet<usize>,
@@ -76,6 +77,11 @@ impl SessionFold {
             Some(TranscriptEntry::Evicted { count }) => *count,
             _ => 0,
         };
+        // A settled tool result's inline diff resolves against `files` at
+        // fold time, and a later mutation can stale it (freshness gate in
+        // `entry_lines`) without appending anything — the total mutation
+        // count is the only fingerprint that moves, so it keys the cache.
+        let file_gen: u64 = files.iter().map(|f| u64::from(f.changes)).sum();
         let key = (
             agent.to_string(),
             thinking,
@@ -83,6 +89,7 @@ impl SessionFold {
             expanded_rev,
             width,
             evicted,
+            file_gen,
         );
         if self.key.as_ref() != Some(&key) || self.settled > transcript.len().saturating_sub(1) {
             self.key = Some(key);
@@ -96,6 +103,7 @@ impl SessionFold {
             let start = self.prefix.len();
             entry_lines(
                 &transcript[i],
+                files,
                 thinking,
                 expand_all || expanded.contains(&i),
                 width,
@@ -108,6 +116,7 @@ impl SessionFold {
         if let Some(last) = transcript.last() {
             entry_lines(
                 last,
+                files,
                 thinking,
                 expand_all || expanded.contains(&target),
                 width,
@@ -116,7 +125,7 @@ impl SessionFold {
         }
         if !streaming.is_empty() {
             let preview = TranscriptEntry::Text(streaming.to_string());
-            entry_lines(&preview, thinking, false, width, &mut self.tail);
+            entry_lines(&preview, files, thinking, false, width, &mut self.tail);
         }
     }
 
@@ -215,6 +224,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     ui.session_fold.refresh(
         &agent.meta.id,
         &sm.transcript,
+        &sm.files,
         &sm.streaming_text,
         ui.thinking_expanded,
         expanded_set,
@@ -526,6 +536,7 @@ mod tests {
         fold.refresh(
             "lead",
             &model.transcript,
+            &model.files,
             "",
             false,
             &expanded,
@@ -540,6 +551,7 @@ mod tests {
         fold.refresh(
             "lead",
             &model.transcript,
+            &model.files,
             "",
             false,
             &expanded,
@@ -552,6 +564,7 @@ mod tests {
         fresh.refresh(
             "lead",
             &model.transcript,
+            &model.files,
             "",
             false,
             &expanded,
@@ -564,6 +577,107 @@ mod tests {
             fold.window_lines(0..fold.total()),
             fresh.window_lines(0..fresh.total()),
             "the incrementally-maintained fold matches a from-scratch fold"
+        );
+    }
+
+    #[test]
+    fn a_later_mutation_to_the_same_path_stales_the_settled_inline_diff() {
+        use stella_protocol::{FileChangeKind, ToolCall, ToolOutput};
+        // A successful edit_file: ToolStart → FileChange (the engine's tap
+        // fires during execution) → ToolResult. The result's inline diff
+        // must render — and must vanish once a LATER mutation of the same
+        // path makes the recorded seq stale, even though nothing was
+        // appended to the transcript (the fold cache's only moving
+        // fingerprint is the file-mutation count).
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "c1".into(),
+                name: "edit_file".into(),
+                input: serde_json::json!({"path": "src/x.rs"}),
+            },
+        });
+        model.apply(&AgentEvent::FileChange {
+            path: "src/x.rs".into(),
+            kind: FileChangeKind::Modified,
+            diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
+        });
+        model.apply(&AgentEvent::ToolResult {
+            call_id: "c1".into(),
+            output: ToolOutput::Ok {
+                content: "ok".into(),
+            },
+            duration_ms: 3,
+            speculated: false,
+        });
+        let expanded = HashSet::new();
+        let mut fold = SessionFold::default();
+        fold.refresh(
+            "lead",
+            &model.transcript,
+            &model.files,
+            "",
+            false,
+            &expanded,
+            false,
+            0,
+            120,
+        );
+        let text: String = fold
+            .window_lines(0..fold.total())
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(
+            text.contains("first_diff_line"),
+            "the fresh inline diff renders:\n{text}"
+        );
+
+        // The same path mutates again — no transcript append, but the
+        // settled result's diff no longer belongs to its call.
+        model.apply(&AgentEvent::FileChange {
+            path: "src/x.rs".into(),
+            kind: FileChangeKind::Modified,
+            diff: Some("@@ -1,1 +1,1 @@\n+second_diff_line".into()),
+        });
+        fold.refresh(
+            "lead",
+            &model.transcript,
+            &model.files,
+            "",
+            false,
+            &expanded,
+            false,
+            0,
+            120,
+        );
+        let text: String = fold
+            .window_lines(0..fold.total())
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(
+            !text.contains("first_diff_line") && !text.contains("second_diff_line"),
+            "a stale diff is hidden, never misattributed:\n{text}"
+        );
+
+        // And the incrementally-invalidated fold stays line-exact.
+        let mut fresh = SessionFold::default();
+        fresh.refresh(
+            "lead",
+            &model.transcript,
+            &model.files,
+            "",
+            false,
+            &expanded,
+            false,
+            0,
+            120,
+        );
+        assert_eq!(
+            fold.window_lines(0..fold.total()),
+            fresh.window_lines(0..fresh.total()),
+            "the mutation-count key refolds the settled prefix"
         );
     }
 

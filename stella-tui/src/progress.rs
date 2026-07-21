@@ -221,7 +221,8 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
 }
 
 /// The label chunk (`✓ plan · ▸ execute · verify`) as styled spans, plus its
-/// display width. Done = success green, Active = flame, Pending = dim.
+/// display width. Done = success green, Active = gold (matches the fill),
+/// Pending = dim.
 fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
     let mut spans = Vec::new();
     let mut width = 0usize;
@@ -235,7 +236,7 @@ fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
             SegState::Active if state.phase == RunPhase::Error => {
                 ("✗", theme::AURORA_MAGENTA, true)
             }
-            SegState::Active => ("▸", theme::AURORA_AZURE, true),
+            SegState::Active => ("▸", theme::GOLD_BRIGHT, true),
             SegState::Pending => ("·", theme::TEXT_DIM, false),
         };
         let mut style = Style::default().fg(color);

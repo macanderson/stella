@@ -35,13 +35,15 @@ fn running_model() -> WorkspaceModel {
 fn progress_bar_fill_is_gold_not_blue() {
     let model = running_model();
 
-    let mut ui = DeckUi::default();
-    ui.focused = 0;
     // Truecolor is the one mode where the per-cell fill color is emitted
     // verbatim (lesser terminals collapse to a single solid token); freeze
     // motion so the frame is deterministic.
-    ui.color_mode = ColorMode::Truecolor;
-    ui.no_anim = true;
+    let ui = DeckUi {
+        focused: 0,
+        color_mode: ColorMode::Truecolor,
+        no_anim: true,
+        ..DeckUi::default()
+    };
 
     let width: u16 = 60;
     let area = Rect::new(0, 0, width, 1);
