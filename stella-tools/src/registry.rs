@@ -137,26 +137,19 @@ pub struct StorageIndex {
     session: Vec<stella_graph::storage::RelationEntry>,
 }
 
-/// Host-decided feature switches for registry construction. `Default` is
-/// the SECURE posture — no `bash`: arbitrary shell execution is opt-in via
-/// settings (`tools.bash: "on"` in any scope), never ambient. Every
-/// construction path (CLI session drivers, fleet workers, tests) threads a
-/// value through explicitly; there is no global.
+/// Host-decided registry switches. `Default` is secure; every construction
+/// path threads a value explicitly, with no global fallback.
 #[derive(Clone, Default)]
 pub struct RegistryOptions {
-    /// Register the `bash` shell tool. Off by default everywhere: when off
-    /// the model never sees the schema, and calling `bash` anyway returns
-    /// the standard unknown-tool error.
+    /// Register `bash`; off by default, so the model never sees its schema.
     pub bash: bool,
-    /// Register the web family (`web_fetch`, `web_extract_assets`,
-    /// `web_download`, and `web_search` when a BYOK search key is present).
-    /// Off by default everywhere — network egress is opt-in exactly like
-    /// the shell (settings `tools.web: "on"`).
+    /// Register the web family; off by default, so egress is always opt-in.
     pub web: bool,
     /// Host-owned media gate; `None` resolves to deny.
     pub media_spend_gate: Option<Arc<dyn stella_media::MediaSpendGate>>,
-    /// Managed authority ceiling. `false` denies paid media even when a host
-    /// gate would approve; it can never select a permissive fallback.
+    /// Host-owned retry-stable identity; required for an approving media gate.
+    pub media_operation_ids: Option<Arc<dyn crate::media::MediaOperationIdSource>>,
+    /// Managed ceiling; `false` denies even when a host gate would approve.
     pub media_requires_host_approval: bool,
 }
 
@@ -218,10 +211,11 @@ impl ToolRegistry {
         media_backend: Option<crate::media::MediaBackend>,
         options: RegistryOptions,
     ) -> Self {
-        let media_spend_gate = options
+        let media_host_context = options
             .media_spend_gate
-            .filter(|_| options.media_requires_host_approval)
-            .unwrap_or_else(|| Arc::new(stella_media::DenyMediaSpendGate));
+            .clone()
+            .zip(options.media_operation_ids.clone())
+            .filter(|_| options.media_requires_host_approval);
         let citations: crate::memory::CitationLedger = Arc::default();
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
@@ -311,15 +305,23 @@ impl ToolRegistry {
         // configured — BYOK end to end. The async video pair additionally
         // needs the key family to have a video adapter.
         if let Some(media) = media_backend {
-            entries.push(Arc::new(crate::media::GenerateImage::with_spend_gate(
-                media.image,
-                media_spend_gate.clone(),
-            )));
+            entries.push(match &media_host_context {
+                Some((gate, ids)) => Arc::new(crate::media::GenerateImage::with_host_context(
+                    media.image,
+                    gate.clone(),
+                    ids.clone(),
+                )) as Arc<dyn Tool>,
+                None => Arc::new(crate::media::GenerateImage::new(media.image)),
+            });
             if let Some(video) = media.video {
-                entries.push(Arc::new(crate::media::GenerateVideo::with_spend_gate(
-                    video.clone(),
-                    media_spend_gate,
-                )));
+                entries.push(match &media_host_context {
+                    Some((gate, ids)) => Arc::new(crate::media::GenerateVideo::with_host_context(
+                        video.clone(),
+                        gate.clone(),
+                        ids.clone(),
+                    )) as Arc<dyn Tool>,
+                    None => Arc::new(crate::media::GenerateVideo::new(video.clone())),
+                });
                 entries.push(Arc::new(crate::media::PollVideo(video)));
             }
         }

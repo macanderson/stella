@@ -254,3 +254,170 @@ pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
         ..Default::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use stella_media::{
+        CostDecision, ImageRequest, MediaArtifact, MediaCapabilities, MediaError, MediaJob,
+        MediaJobStatus, MediaKind, MediaProvider, MediaSpendGate, MediaSpendRequest, VideoRequest,
+    };
+
+    struct FixedOperationId(&'static str);
+
+    impl stella_tools::media::MediaOperationIdSource for FixedOperationId {
+        fn operation_id(&self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    struct CountingGate(AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl MediaSpendGate for CountingGate {
+        async fn authorize(&self, _request: &MediaSpendRequest) -> CostDecision {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            CostDecision::Approve
+        }
+    }
+
+    struct CountingImageProvider(AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl MediaProvider for CountingImageProvider {
+        fn id(&self) -> &str {
+            "managed-test"
+        }
+
+        fn capabilities(&self) -> MediaCapabilities {
+            MediaCapabilities {
+                provider_id: self.id().into(),
+                image: true,
+                image_usd_each: Some(0.01),
+                ..Default::default()
+            }
+        }
+
+        async fn generate_image(&self, request: ImageRequest) -> Result<MediaArtifact, MediaError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(MediaArtifact {
+                kind: MediaKind::Image,
+                bytes: b"image".to_vec(),
+                extension: "png".into(),
+                label: request.label,
+                model: "managed-test".into(),
+                cost_usd: 0.01,
+            })
+        }
+
+        async fn generate_video(&self, _request: VideoRequest) -> Result<MediaJob, MediaError> {
+            Err(MediaError::Transport("not under test".into()))
+        }
+
+        async fn poll_video(&self, _job: &MediaJob) -> Result<MediaJobStatus, MediaError> {
+            Err(MediaError::Transport("not under test".into()))
+        }
+    }
+
+    fn load_managed_config(
+        workspace: &std::path::Path,
+        home: &std::path::Path,
+        managed: &std::path::Path,
+    ) -> (crate::settings::Settings, Config) {
+        let _env = crate::test_env::lock();
+        let original_dir = std::env::current_dir().unwrap();
+        let original_home = std::env::var_os("HOME");
+        let original_managed = std::env::var_os("STELLA_MANAGED_SETTINGS");
+        unsafe {
+            std::env::set_var("HOME", home);
+            std::env::set_var("STELLA_MANAGED_SETTINGS", managed);
+        }
+        std::env::set_current_dir(workspace).unwrap();
+        let settings = crate::settings::Settings::load(workspace);
+        let cfg = Config::load(
+            Some("local/managed-test"),
+            Some("test-key"),
+            Some("http://localhost:11434/v1"),
+        );
+        std::env::set_current_dir(original_dir).unwrap();
+        unsafe {
+            match original_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match original_managed {
+                Some(value) => std::env::set_var("STELLA_MANAGED_SETTINGS", value),
+                None => std::env::remove_var("STELLA_MANAGED_SETTINGS"),
+            }
+        }
+        (settings.unwrap(), cfg.unwrap())
+    }
+
+    #[tokio::test]
+    async fn managed_media_ceiling_flows_through_config_into_registry_enforcement() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+
+        let mut results = Vec::new();
+        for (name, authority_json, expected_allowed) in [
+            (
+                "off",
+                r#"{"authority":{"media_requires_host_approval":"off"}}"#,
+                false,
+            ),
+            (
+                "on",
+                r#"{"authority":{"media_requires_host_approval":"on"}}"#,
+                true,
+            ),
+            ("absent", r#"{}"#, true),
+        ] {
+            let workspace = dir.path().join(name);
+            let managed = dir.path().join(format!("managed-{name}.json"));
+            std::fs::create_dir_all(&workspace).unwrap();
+            std::fs::write(&managed, authority_json).unwrap();
+            let (settings, cfg) = load_managed_config(&workspace, &home, &managed);
+            let gate = Arc::new(CountingGate(AtomicUsize::new(0)));
+            let provider = Arc::new(CountingImageProvider(AtomicUsize::new(0)));
+            let mut options = registry_options(&cfg);
+            options.media_spend_gate = Some(gate.clone());
+            options.media_operation_ids = Some(Arc::new(FixedOperationId("host-managed-test")));
+            let registry = stella_tools::ToolRegistry::with_backends_and_options(
+                workspace,
+                None,
+                Some(stella_tools::media::MediaBackend {
+                    image: provider.clone(),
+                    video: None,
+                }),
+                options,
+            );
+            let output = registry
+                .execute("generate_image", &serde_json::json!({"prompt": "test"}))
+                .await;
+            results.push((
+                name,
+                expected_allowed,
+                settings.authority_policy.media_requires_host_approval,
+                cfg.authority.media_requires_host_approval,
+                gate.0.load(Ordering::SeqCst),
+                provider.0.load(Ordering::SeqCst),
+                output.is_error(),
+            ));
+        }
+
+        for (name, allowed, settings_value, config_value, gate, provider, is_error) in results {
+            assert_eq!(settings_value, allowed, "settings row {name}");
+            assert_eq!(config_value, allowed, "config row {name}");
+            let expected_calls = usize::from(allowed);
+            assert_eq!(gate, expected_calls, "gate row {name}");
+            assert_eq!(provider, expected_calls, "provider row {name}");
+            assert_eq!(is_error, !allowed, "output row {name}");
+        }
+    }
+}

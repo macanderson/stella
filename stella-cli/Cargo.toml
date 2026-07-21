@@ -51,4 +51,5 @@ tempfile.workspace = true
 rpassword.workspace = true
 
 [dev-dependencies]
+stella-media = { path = "../stella-media" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

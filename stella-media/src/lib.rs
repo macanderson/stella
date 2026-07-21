@@ -59,7 +59,7 @@ pub use artifact::{ArtifactStore, ManifestEntry};
 pub use cost_gate::{CostDecision, DenyMediaSpendGate, MediaSpendGate, MediaSpendRequest};
 pub use credential::{ApiKey, CredentialError};
 pub use error::MediaError;
-pub use jobs::{JobStore, resume};
+pub use jobs::{JobStore, MediaOperationState, resume};
 pub use preview::{
     PreviewRung, detect as detect_preview, detect_from_env, render as render_preview,
 };
