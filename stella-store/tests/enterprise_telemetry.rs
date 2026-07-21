@@ -538,6 +538,62 @@ fn clock_rollback_rebases_once_without_clearing_a_live_lease() {
 }
 
 #[test]
+fn stale_claim_generation_cannot_restore_a_pre_rollback_retry_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enterprise-telemetry.db");
+    let spool = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let event = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(1)).unwrap();
+    spool.enqueue(SINK_A, &event, 100_000).unwrap();
+    let claimed = spool
+        .claim_batch(SINK_A, "future-worker", 100_000, 30_000, 1, 64 * 1024)
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+
+    let concurrent = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    assert!(
+        concurrent
+            .claim_batch(SINK_A, "rollback-worker", 1_000, 1_000, 1, 64 * 1024)
+            .unwrap()
+            .is_empty(),
+        "clock repair must not steal the original live lease"
+    );
+    let inspect = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        inspect
+            .query_row(
+                "SELECT clock_generation FROM operational_spool_clock
+                 WHERE sink_fingerprint = ?1",
+                [SINK_A],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1
+    );
+
+    spool
+        .retry(SINK_A, "future-worker", &claimed, 100_000)
+        .unwrap();
+    let deadline: i64 = inspect
+        .query_row(
+            "SELECT next_attempt_ms FROM operational_spool WHERE sink_fingerprint = ?1",
+            [SINK_A],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        deadline <= 1_000 + 375_000,
+        "stale claimant restored an old-epoch deadline: {deadline}"
+    );
+    assert_eq!(
+        concurrent
+            .claim_batch(SINK_A, "eligible-worker", deadline, 1_000, 1, 64 * 1024)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn retry_deadline_never_exceeds_the_inclusive_375_second_horizon() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("enterprise-telemetry.db");
@@ -595,6 +651,54 @@ fn malformed_spool_row_is_quarantined_before_lease_and_does_not_block_good_rows(
     let status = spool.status_for_sink(SINK_A).unwrap();
     assert_eq!(status.corrupt_dropped_rows, 1);
     assert_eq!(status.pending_rows, 1);
+}
+
+#[test]
+fn repeated_corruption_keeps_only_a_bounded_diagnostic_sample() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enterprise-telemetry.db");
+    let spool = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let mut settled_physical = 0;
+    for round in 0..8 {
+        let mut raw = rusqlite::Connection::open(&path).unwrap();
+        let tx = raw.transaction().unwrap();
+        for index in 0..1_000 {
+            let event_id = if round == 0 && index == 999 {
+                "x".repeat(100_000)
+            } else {
+                format!("evt_{round:02x}{index:062x}")
+            };
+            tx.execute(
+                "INSERT INTO operational_spool
+                 (event_id, sink_fingerprint, payload, payload_bytes, created_at_ms)
+                 VALUES (?1, ?2, ?3, 1, 0)",
+                rusqlite::params![event_id, SINK_A, vec![b'{']],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        drop(raw);
+        assert!(
+            spool
+                .claim_batch(SINK_A, "worker", 10, 1_000, 1, 64 * 1024)
+                .unwrap()
+                .is_empty()
+        );
+        let status = spool.status_for_sink(SINK_A).unwrap();
+        assert_eq!(status.corrupt_dropped_rows, (round + 1) * 1_000);
+        assert!(status.quarantine_diagnostic_rows <= 128);
+        assert!(status.quarantine_diagnostic_bytes <= 32 * 1024);
+        if round == 3 {
+            settled_physical = status.physical_bytes;
+        }
+        if round == 7 {
+            assert!(
+                status.physical_bytes <= settled_physical + 512 * 1024,
+                "bounded diagnostic sampling must also bound physical growth: settled={settled_physical}, final={}",
+                status.physical_bytes
+            );
+        }
+    }
 }
 
 #[test]
@@ -906,4 +1010,104 @@ fn completed_export_ledger_compacts_with_a_durable_idempotency_boundary() {
             .unwrap(),
         rows[299].1
     );
+}
+
+#[test]
+fn legacy_export_nonce_migration_is_resumable_and_startup_bounded() {
+    const LEGACY_ROWS: i64 = 50_257;
+    const STARTUP_ROW_BUDGET: i64 = 1_024;
+
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    drop(Store::open(&workspace).unwrap());
+    let path = stella_store::workspace_private_sqlite_path(&workspace, "store.db").unwrap();
+    let mut raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "DROP TABLE enterprise_export_ledger;
+         CREATE TABLE enterprise_export_ledger (
+             sink_fingerprint TEXT NOT NULL,
+             execution_id INTEGER NOT NULL,
+             status TEXT NOT NULL CHECK(status IN ('pending', 'spooled')),
+             PRIMARY KEY(sink_fingerprint, execution_id)
+         );",
+    )
+    .unwrap();
+    let tx = raw.transaction().unwrap();
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO enterprise_export_ledger
+                 (sink_fingerprint, execution_id, status) VALUES (?1, ?2, 'pending')",
+            )
+            .unwrap();
+        for execution_id in 1..=LEGACY_ROWS {
+            insert
+                .execute(rusqlite::params![SINK_A, execution_id])
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    drop(raw);
+
+    drop(Store::open(&workspace).unwrap());
+    let inspect = rusqlite::Connection::open(&path).unwrap();
+    let (migrated, batches, complete): (i64, i64, i64) = inspect
+        .query_row(
+            "SELECT migrated_rows, batches_completed, is_complete
+             FROM enterprise_export_migration WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(migrated, STARTUP_ROW_BUDGET);
+    assert_eq!(
+        batches, 4,
+        "startup must commit multiple fixed-size batches"
+    );
+    assert_eq!(complete, 0);
+    assert!(
+        inspect
+            .query_row(
+                "SELECT COUNT(*) FROM enterprise_export_ledger WHERE export_nonce = ''",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 49_000
+    );
+    drop(inspect);
+
+    let mut previous = migrated;
+    for _ in 0..100 {
+        drop(Store::open(&workspace).unwrap());
+        let inspect = rusqlite::Connection::open(&path).unwrap();
+        let (current, complete): (i64, i64) = inspect
+            .query_row(
+                "SELECT migrated_rows, is_complete
+                 FROM enterprise_export_migration WHERE singleton = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(current >= previous);
+        assert!(current - previous <= STARTUP_ROW_BUDGET);
+        previous = current;
+        if complete == 1 {
+            break;
+        }
+    }
+    let inspect = rusqlite::Connection::open(&path).unwrap();
+    let (rows, distinct_nonces, empty_nonces): (i64, i64, i64) = inspect
+        .query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT export_nonce),
+                    SUM(CASE WHEN export_nonce = '' THEN 1 ELSE 0 END)
+             FROM enterprise_export_ledger",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(rows, LEGACY_ROWS);
+    assert_eq!(distinct_nonces, LEGACY_ROWS);
+    assert_eq!(empty_nonces, 0);
 }

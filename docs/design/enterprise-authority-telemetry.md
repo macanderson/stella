@@ -138,6 +138,10 @@ aggregator. A per-store enrollment boundary excludes pre-enrollment history; a
 persistent local ledger records post-enrollment export intent before spool I/O
 and backfills at most 256 missed enqueues per runtime construction. Repeated
 startups make bounded progress without allocating an outage-sized vector.
+Legacy ledgers add the nonce column in place and persist a versioned rowid
+cursor. Each startup commits four independent batches of at most 256 rows, so
+both memory and write-lock duration stay fixed while a large migration resumes
+without losing rows or changing an already-issued nonce.
 Spooled ledger rows retain the newest 2,048 records; older completed rows compact
 behind a durable per-enrollment execution boundary so closeout cannot mint a new
 nonce for compacted history. Events then enter a separate bounded
@@ -156,14 +160,22 @@ duplicate, and dropped-new outcomes separately, tracks database/WAL/SHM disk
 bytes, repairs retry/lease deadlines after clock rollback, orders equal-time
 rows by a monotonic insertion sequence, and applies bounded retry jitter. Clock
 rollback translates created/retry/lease deadlines once against a persisted
-per-sink clock anchor and preserves live lease ownership. Retry delay including
-jitter is capped at an inclusive 375 seconds. Capacity enforcement may evict
+per-sink clock anchor and generation, returns that generation with every claim,
+and preserves live lease ownership. Delivery rereads wall time before retry;
+the retry transaction checks the current generation so a claimant racing a
+rollback cannot restore a pre-repair deadline. Retry delay including jitter is
+capped at an inclusive 375 seconds. Capacity enforcement may evict
 only an unleased row belonging to the inserting sink; if another sink consumes
 the global budget, the new row is dropped. Malformed rows are validated before
-lease, moved transactionally to metadata-only quarantine, counted durably, and
-cannot block a later valid row. Cost conversion rejects non-finite, negative,
-and rounded `u64` upper-bound values before casting. Delivery disables ambient
-HTTP proxies, redirects, and unbounded request/response bodies.
+lease, counted durably, and cannot block a later valid row. Their payload is
+deleted; diagnostics retain only a fixed event fingerprint and bounded metadata
+in a 128-row newest-first sample pruned by the same transaction. Status reports
+the sample's row/metadata-byte footprint separately and includes the real
+SQLite/WAL/SHM footprint; WAL checkpoint and journal-size limits prevent
+repeated corruption from growing the diagnostic file without bound. Cost
+conversion rejects non-finite, negative, and rounded `u64` upper-bound values
+before casting. Delivery disables ambient HTTP proxies, redirects, and
+unbounded request/response bodies.
 
 `compliance_audit` enrollment is rejected in this phase. Compliance delivery
 requires a non-evicting ledger, server receipts, retention/hold semantics, and

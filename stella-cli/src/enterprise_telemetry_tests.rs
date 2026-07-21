@@ -637,10 +637,16 @@ fn failed_delivery_stays_retryable_and_success_acks_the_same_event() {
         .enable_all()
         .build()
         .unwrap();
-    assert!(handle.block_on(runtime.flush(20)).is_err());
+    assert!(
+        handle
+            .block_on(runtime.flush_with_retry_clock(20, || Ok(20)))
+            .is_err()
+    );
     assert_eq!(runtime.status().unwrap().pending_rows, 1);
     *sender.fail.lock().unwrap() = false;
-    let flushed = handle.block_on(runtime.flush(2_000)).unwrap();
+    let flushed = handle
+        .block_on(runtime.flush_with_retry_clock(2_000, || Ok(2_000)))
+        .unwrap();
     assert_eq!(flushed, 1);
     assert_eq!(runtime.status().unwrap().pending_rows, 0);
     assert_eq!(sender.attempts.load(Ordering::SeqCst), 2);
@@ -650,6 +656,60 @@ fn failed_delivery_stays_retryable_and_success_acks_the_same_event() {
         std::env::remove_var("STELLA_TEST_VERIFY_SECRET");
         std::env::remove_var("STELLA_TEST_TELEMETRY_TOKEN");
     }
+}
+
+#[test]
+fn delivery_retry_reads_a_fresh_wall_clock_after_the_claim() {
+    let _env = crate::test_env::lock();
+    let _restore = EnvRestore::capture(&[
+        "STELLA_DATA_DIR",
+        "STELLA_TEST_VERIFY_SECRET",
+        "STELLA_TEST_TELEMETRY_TOKEN",
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    unsafe {
+        std::env::set_var("STELLA_DATA_DIR", dir.path().join("host-data"));
+        std::env::set_var(
+            "STELLA_TEST_VERIFY_SECRET",
+            "0123456789abcdef0123456789abcdef",
+        );
+        std::env::set_var("STELLA_TEST_TELEMETRY_TOKEN", "bearer-secret");
+    }
+    let managed = signed_managed(
+        "STELLA_TEST_VERIFY_SECRET",
+        b"0123456789abcdef0123456789abcdef",
+        valid_claims(),
+    );
+    let sender = Arc::new(Sender {
+        attempts: AtomicUsize::new(0),
+        fail: Mutex::new(true),
+    });
+    let sender_for_runtime = sender.clone();
+    let runtime = build_runtime_from_managed(Some(&managed), &workspace, 1_700_000_001, || {
+        Ok(sender_for_runtime as Arc<dyn BatchSender>)
+    })
+    .unwrap()
+    .unwrap();
+    runtime.enqueue_rollup(&rollup(81), 100_000).unwrap();
+    let handle = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    assert!(
+        handle
+            .block_on(runtime.flush_with_retry_clock(100_000, || Ok(1_000)))
+            .is_err()
+    );
+    *sender.fail.lock().unwrap() = false;
+    assert_eq!(
+        handle
+            .block_on(runtime.flush_with_retry_clock(5_000, || Ok(5_000)))
+            .unwrap(),
+        1,
+        "retry must be eligible in the repaired clock epoch"
+    );
 }
 
 #[test]
@@ -765,7 +825,11 @@ fn credential_rotation_failure_releases_the_claim_to_retry_state() {
         .enable_all()
         .build()
         .unwrap();
-    assert!(handle.block_on(runtime.flush(20)).is_err());
+    assert!(
+        handle
+            .block_on(runtime.flush_with_retry_clock(20, || Ok(20)))
+            .is_err()
+    );
     assert_eq!(runtime.status().unwrap().pending_rows, 1);
     assert_eq!(sender.attempts.load(Ordering::SeqCst), 0);
 }
@@ -809,7 +873,12 @@ fn enrolled_host_can_flush_but_run_tests_cannot_observe_its_credentials() {
         .enable_all()
         .build()
         .unwrap();
-    assert_eq!(handle.block_on(runtime.flush(20)).unwrap(), 1);
+    assert_eq!(
+        handle
+            .block_on(runtime.flush_with_retry_clock(20, || Ok(20)))
+            .unwrap(),
+        1
+    );
 
     let registry = stella_tools::ToolRegistry::with_backends(workspace, None, None);
     let output = handle.block_on(registry.execute("run_tests", &json!({"command": "env"})));

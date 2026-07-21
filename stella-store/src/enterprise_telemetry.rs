@@ -20,11 +20,17 @@ use sha2::{Digest, Sha256};
 use crate::usage::ExecutionRollupRow;
 use crate::{Result, StoreError};
 
+mod migrations;
+use migrations::{migrate_spool_schema, migrate_store_export_schema};
+
 const IDENTIFIER_MAX_BYTES: usize = 128;
 const DIMENSION_MAX_BYTES: usize = 160;
 const MAX_CLAIM_EVENTS: usize = 1_000;
 const MAX_EXPORT_PAGE_ROWS: usize = 256;
+const LEGACY_EXPORT_MIGRATION_BATCH_ROWS: usize = 256;
+const LEGACY_EXPORT_MIGRATION_BATCHES_PER_OPEN: usize = 4;
 const MAX_CORRUPT_SCAN_ROWS: usize = 1_000;
+const MAX_QUARANTINE_DIAGNOSTICS: usize = 128;
 const MAX_CLAIM_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_LEASE_MS: i64 = 5 * 60 * 1_000;
 const RETRY_BASE_MS: i64 = 1_000;
@@ -51,71 +57,19 @@ CREATE TABLE IF NOT EXISTS enterprise_export_ledger (
     export_nonce TEXT NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('pending', 'spooled')),
     PRIMARY KEY(sink_fingerprint, execution_id)
+);
+CREATE TABLE IF NOT EXISTS enterprise_export_migration (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    version INTEGER NOT NULL,
+    last_rowid INTEGER NOT NULL DEFAULT 0,
+    migrated_rows INTEGER NOT NULL DEFAULT 0,
+    batches_completed INTEGER NOT NULL DEFAULT 0,
+    is_complete INTEGER NOT NULL DEFAULT 0 CHECK(is_complete IN (0, 1))
 );";
 
 pub(crate) fn initialize_store_export_schema(conn: &mut Connection) -> Result<()> {
     conn.execute_batch(STORE_EXPORT_TABLES_DDL)?;
     migrate_store_export_schema(conn)
-}
-
-fn migrate_store_export_schema(conn: &mut Connection) -> Result<()> {
-    let has_compaction_boundary: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('enterprise_export_enrollment')
-         WHERE name = 'compacted_through_execution_id')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !has_compaction_boundary {
-        conn.execute_batch(
-            "ALTER TABLE enterprise_export_enrollment
-             ADD COLUMN compacted_through_execution_id INTEGER NOT NULL DEFAULT 0;",
-        )?;
-    }
-    let has_export_nonce: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('enterprise_export_ledger')
-         WHERE name = 'export_nonce')",
-        [],
-        |row| row.get(0),
-    )?;
-    if has_export_nonce {
-        return Ok(());
-    }
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let legacy = {
-        let mut stmt = tx.prepare(
-            "SELECT sink_fingerprint, execution_id, status
-             FROM enterprise_export_ledger ORDER BY sink_fingerprint, execution_id",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
-    tx.execute_batch(
-        "ALTER TABLE enterprise_export_ledger RENAME TO enterprise_export_ledger_legacy;
-         CREATE TABLE enterprise_export_ledger (
-             sink_fingerprint TEXT NOT NULL,
-             execution_id INTEGER NOT NULL,
-             export_nonce TEXT NOT NULL,
-             status TEXT NOT NULL CHECK(status IN ('pending', 'spooled')),
-             PRIMARY KEY(sink_fingerprint, execution_id)
-         );",
-    )?;
-    for (sink, execution_id, status) in legacy {
-        tx.execute(
-            "INSERT INTO enterprise_export_ledger
-             (sink_fingerprint, execution_id, export_nonce, status)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![sink, execution_id, random_export_nonce(), status],
-        )?;
-    }
-    tx.execute_batch("DROP TABLE enterprise_export_ledger_legacy;")?;
-    tx.commit()?;
-    Ok(())
 }
 
 impl crate::Store {
@@ -842,6 +796,8 @@ pub struct SpoolStatus {
     pub dropped_rows: u64,
     pub rollover_discarded_rows: u64,
     pub corrupt_dropped_rows: u64,
+    pub quarantine_diagnostic_rows: u64,
+    pub quarantine_diagnostic_bytes: u64,
     pub physical_bytes: u64,
 }
 
@@ -851,6 +807,7 @@ pub struct ClaimedOperationalEvent {
     pub event: StellaOperationalEventV1,
     sink_fingerprint: String,
     attempts: u32,
+    clock_generation: i64,
 }
 
 /// Bounded at-least-once SQLite spool stored outside model-writable workspaces.
@@ -875,7 +832,9 @@ impl EnterpriseTelemetrySpool {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
-             PRAGMA busy_timeout=100;",
+             PRAGMA busy_timeout=100;
+             PRAGMA wal_autocheckpoint=256;
+             PRAGMA journal_size_limit=1048576;",
         )?;
         migrate_spool_schema(&mut conn)?;
         conn.execute_batch(
@@ -897,7 +856,8 @@ impl EnterpriseTelemetrySpool {
                                       lease_until_ms, insertion_seq);
              CREATE TABLE IF NOT EXISTS operational_spool_clock (
                  sink_fingerprint TEXT PRIMARY KEY,
-                 last_seen_ms INTEGER NOT NULL
+                 last_seen_ms INTEGER NOT NULL,
+                 clock_generation INTEGER NOT NULL DEFAULT 0
              );
              CREATE TABLE IF NOT EXISTS operational_spool_meta (
                  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -1006,22 +966,25 @@ impl EnterpriseTelemetrySpool {
             .map_err(|_| StoreError("invalid enterprise telemetry claim limits".into()))?;
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let last_seen: Option<i64> = tx
+        let clock: Option<(i64, i64)> = tx
             .query_row(
-                "SELECT last_seen_ms FROM operational_spool_clock
+                "SELECT last_seen_ms, clock_generation FROM operational_spool_clock
                  WHERE sink_fingerprint = ?1",
                 params![sink_fingerprint],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        let observed_baseline = match last_seen {
+        let (observed_baseline, mut clock_generation) = match clock {
             Some(value) => value,
-            None => tx.query_row(
-                "SELECT COALESCE(MAX(created_at_ms), ?2) FROM operational_spool
-                 WHERE sink_fingerprint = ?1",
-                params![sink_fingerprint, now_ms],
-                |row| row.get(0),
-            )?,
+            None => (
+                tx.query_row(
+                    "SELECT COALESCE(MAX(created_at_ms), ?2) FROM operational_spool
+                     WHERE sink_fingerprint = ?1",
+                    params![sink_fingerprint, now_ms],
+                    |row| row.get(0),
+                )?,
+                0,
+            ),
         };
         if now_ms < observed_baseline {
             let delta = observed_baseline - now_ms;
@@ -1034,12 +997,15 @@ impl EnterpriseTelemetrySpool {
                  WHERE sink_fingerprint = ?2",
                 params![delta, sink_fingerprint],
             )?;
+            clock_generation = clock_generation.saturating_add(1);
         }
         tx.execute(
-            "INSERT INTO operational_spool_clock(sink_fingerprint, last_seen_ms)
-             VALUES (?1, ?2)
-             ON CONFLICT(sink_fingerprint) DO UPDATE SET last_seen_ms = excluded.last_seen_ms",
-            params![sink_fingerprint, now_ms],
+            "INSERT INTO operational_spool_clock
+             (sink_fingerprint, last_seen_ms, clock_generation) VALUES (?1, ?2, ?3)
+             ON CONFLICT(sink_fingerprint) DO UPDATE SET
+                 last_seen_ms = excluded.last_seen_ms,
+                 clock_generation = excluded.clock_generation",
+            params![sink_fingerprint, now_ms, clock_generation],
         )?;
         let selected = {
             let mut stmt = tx.prepare(
@@ -1060,6 +1026,7 @@ impl EnterpriseTelemetrySpool {
             })?;
             let mut selected = Vec::new();
             let mut bytes = 0usize;
+            let mut quarantined = false;
             let candidates = rows.collect::<std::result::Result<Vec<_>, _>>()?;
             drop(stmt);
             for (sequence, id, payload, stored_bytes, attempts) in candidates {
@@ -1073,7 +1040,12 @@ impl EnterpriseTelemetrySpool {
                         "INSERT INTO operational_spool_quarantine
                          (event_id, sink_fingerprint, payload_bytes, dropped_at_ms, reason)
                          VALUES (?1, ?2, ?3, ?4, 'invalid_payload')",
-                        params![id, sink_fingerprint, stored_bytes.max(0), now_ms],
+                        params![
+                            quarantine_event_fingerprint(&id),
+                            sink_fingerprint,
+                            stored_bytes.max(0),
+                            now_ms
+                        ],
                     )?;
                     tx.execute(
                         "DELETE FROM operational_spool WHERE insertion_seq = ?1",
@@ -1085,6 +1057,7 @@ impl EnterpriseTelemetrySpool {
                          WHERE singleton = 1",
                         [],
                     )?;
+                    quarantined = true;
                     continue;
                 }
                 let event = decoded.map_err(|error| {
@@ -1099,6 +1072,16 @@ impl EnterpriseTelemetrySpool {
                 if selected.len() == max_events {
                     break;
                 }
+            }
+            if quarantined {
+                tx.execute(
+                    "DELETE FROM operational_spool_quarantine
+                     WHERE quarantine_seq NOT IN (
+                         SELECT quarantine_seq FROM operational_spool_quarantine
+                         ORDER BY quarantine_seq DESC LIMIT ?1
+                     )",
+                    params![MAX_QUARANTINE_DIAGNOSTICS as i64],
+                )?;
             }
             selected
         };
@@ -1123,6 +1106,7 @@ impl EnterpriseTelemetrySpool {
                 event,
                 sink_fingerprint: sink_fingerprint.to_string(),
                 attempts,
+                clock_generation,
             })
             .collect())
     }
@@ -1174,8 +1158,58 @@ impl EnterpriseTelemetrySpool {
         {
             return Err(StoreError("claimed event belongs to another sink".into()));
         }
+        if now_ms < 0 {
+            return Err(StoreError(
+                "enterprise telemetry retry time must be non-negative".into(),
+            ));
+        }
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (last_seen_ms, current_generation): (i64, i64) = tx.query_row(
+            "SELECT last_seen_ms, clock_generation FROM operational_spool_clock
+             WHERE sink_fingerprint = ?1",
+            params![sink_fingerprint],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let claimed_generation = claimed
+            .first()
+            .map_or(current_generation, |item| item.clock_generation);
+        if claimed
+            .iter()
+            .any(|item| item.clock_generation != claimed_generation)
+        {
+            return Err(StoreError(
+                "operational telemetry retry mixes clock generations".into(),
+            ));
+        }
+        let effective_now_ms = if claimed_generation != current_generation {
+            last_seen_ms
+        } else if now_ms < last_seen_ms {
+            let delta = last_seen_ms - now_ms;
+            tx.execute(
+                "UPDATE operational_spool
+                 SET created_at_ms = MAX(0, created_at_ms - ?1),
+                     next_attempt_ms = MAX(0, next_attempt_ms - ?1),
+                     lease_until_ms = CASE WHEN lease_until_ms IS NULL THEN NULL
+                                           ELSE MAX(0, lease_until_ms - ?1) END
+                 WHERE sink_fingerprint = ?2",
+                params![delta, sink_fingerprint],
+            )?;
+            tx.execute(
+                "UPDATE operational_spool_clock
+                 SET last_seen_ms = ?1, clock_generation = clock_generation + 1
+                 WHERE sink_fingerprint = ?2",
+                params![now_ms, sink_fingerprint],
+            )?;
+            now_ms
+        } else {
+            tx.execute(
+                "UPDATE operational_spool_clock SET last_seen_ms = ?1
+                 WHERE sink_fingerprint = ?2",
+                params![now_ms, sink_fingerprint],
+            )?;
+            now_ms
+        };
         for item in claimed {
             let exponent = item.attempts.min(8);
             let delay = RETRY_BASE_MS
@@ -1189,7 +1223,7 @@ impl EnterpriseTelemetrySpool {
                      leased_by = NULL, lease_until_ms = NULL
                  WHERE sink_fingerprint = ?2 AND event_id = ?3 AND leased_by = ?4",
                 params![
-                    now_ms.saturating_add(retry_after),
+                    effective_now_ms.saturating_add(retry_after),
                     sink_fingerprint,
                     item.event.event_id(),
                     owner
@@ -1252,6 +1286,14 @@ impl EnterpriseTelemetrySpool {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
+        let (quarantine_rows, quarantine_bytes): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(length(event_id) + length(sink_fingerprint)
+                                 + length(reason) + 24), 0)
+             FROM operational_spool_quarantine",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
         Ok(SpoolStatus {
             pending_rows: u64::try_from(rows).unwrap_or(0),
             pending_payload_bytes: u64::try_from(bytes).unwrap_or(0),
@@ -1260,6 +1302,8 @@ impl EnterpriseTelemetrySpool {
             dropped_rows: u64::try_from(dropped).unwrap_or(0),
             rollover_discarded_rows: u64::try_from(rollover_discarded).unwrap_or(0),
             corrupt_dropped_rows: u64::try_from(corrupt_dropped).unwrap_or(0),
+            quarantine_diagnostic_rows: u64::try_from(quarantine_rows).unwrap_or(0),
+            quarantine_diagnostic_bytes: u64::try_from(quarantine_bytes).unwrap_or(0),
             physical_bytes: physical_size(&self.path),
         })
     }
@@ -1291,92 +1335,6 @@ impl EnterpriseTelemetrySpool {
     }
 }
 
-fn migrate_spool_schema(conn: &mut Connection) -> Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master
-         WHERE type = 'table' AND name = 'operational_spool')",
-        [],
-        |row| row.get(0),
-    )?;
-    if exists {
-        let has_sink: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('operational_spool')
-             WHERE name = 'sink_fingerprint')",
-            [],
-            |row| row.get(0),
-        )?;
-        let has_sequence: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('operational_spool')
-             WHERE name = 'insertion_seq')",
-            [],
-            |row| row.get(0),
-        )?;
-        if !has_sink || !has_sequence {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute_batch(
-                "ALTER TABLE operational_spool RENAME TO operational_spool_legacy;
-                 CREATE TABLE operational_spool (
-                     insertion_seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                     event_id TEXT NOT NULL,
-                     sink_fingerprint TEXT NOT NULL,
-                     payload BLOB NOT NULL,
-                     payload_bytes INTEGER NOT NULL CHECK(payload_bytes >= 0),
-                     created_at_ms INTEGER NOT NULL,
-                     attempts INTEGER NOT NULL DEFAULT 0,
-                     next_attempt_ms INTEGER NOT NULL DEFAULT 0,
-                     leased_by TEXT,
-                     lease_until_ms INTEGER,
-                     UNIQUE(sink_fingerprint, event_id)
-                 );",
-            )?;
-            tx.execute(
-                "INSERT INTO operational_spool
-                 (event_id, sink_fingerprint, payload, payload_bytes, created_at_ms,
-                  attempts, next_attempt_ms, leased_by, lease_until_ms)
-                 SELECT event_id, ?1, payload, payload_bytes, created_at_ms,
-                        attempts, next_attempt_ms, leased_by, lease_until_ms
-                 FROM operational_spool_legacy ORDER BY rowid",
-                params![LEGACY_UNBOUND_SINK],
-            )?;
-            tx.execute_batch("DROP TABLE operational_spool_legacy;")?;
-            tx.commit()?;
-        }
-    }
-    let meta_exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master
-         WHERE type = 'table' AND name = 'operational_spool_meta')",
-        [],
-        |row| row.get(0),
-    )?;
-    if meta_exists {
-        let has_rollover: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('operational_spool_meta')
-             WHERE name = 'rollover_discarded_rows')",
-            [],
-            |row| row.get(0),
-        )?;
-        if !has_rollover {
-            conn.execute_batch(
-                "ALTER TABLE operational_spool_meta
-                 ADD COLUMN rollover_discarded_rows INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-        let has_corrupt: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('operational_spool_meta')
-             WHERE name = 'corrupt_dropped_rows')",
-            [],
-            |row| row.get(0),
-        )?;
-        if !has_corrupt {
-            conn.execute_batch(
-                "ALTER TABLE operational_spool_meta
-                 ADD COLUMN corrupt_dropped_rows INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn validate_sink_fingerprint(value: &str) -> Result<()> {
     let valid = value.len() == 69
         && value.starts_with("sink_")
@@ -1401,6 +1359,20 @@ fn retry_jitter(event_id: &str, attempts: u32, delay: i64) -> i64 {
     let raw = u64::from_be_bytes(digest[..8].try_into().unwrap_or([0; 8]));
     let cap = u64::try_from((delay / 4).max(1)).unwrap_or(1);
     i64::try_from(raw % cap).unwrap_or(0)
+}
+
+fn quarantine_event_fingerprint(event_id: &str) -> String {
+    let mut hash = Sha256::new();
+    hash_part(
+        &mut hash,
+        b"stella.enterprise.telemetry.quarantine-event.v1",
+    );
+    hash_part(&mut hash, event_id.as_bytes());
+    let mut fingerprint = String::with_capacity(64);
+    for byte in hash.finalize() {
+        let _ = write!(&mut fingerprint, "{byte:02x}");
+    }
+    fingerprint
 }
 
 fn physical_size(path: &Path) -> u64 {

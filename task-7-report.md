@@ -15,6 +15,7 @@ sink-scoped claims/acks/retries, leases, jittered retry backoff, hard row/byte
 capacity, sink-local oldest-unleased eviction, and durable
 drop/corruption/rollover counters.
 `stella telemetry status` reports payload and physical SQLite/WAL/SHM health,
+including the bounded quarantine sample's row and metadata-byte footprint;
 `flush` performs one explicit bounded delivery, and `rollover-discard` is the
 only path that discards rows stranded by sink rotation.
 
@@ -71,6 +72,9 @@ part of the design contract.
   I/O and backfills missed enqueues in pages of at most 256 without exporting
   pre-enrollment history. Completed rows compact behind a durable idempotency
   boundary while retaining the newest 2,048 records.
+- A legacy ledger migration adds its nonce column in place and persists a
+  versioned rowid cursor. Startup commits four independent 256-row batches, so
+  50,000-row histories resume without an unbounded vector or transaction.
 
 ## TDD evidence
 
@@ -110,9 +114,16 @@ redirect helper. Focused regressions then established and closed these cases:
   two startup runs advance by exactly 256 rows each, and completed history
   compacts without minting a replacement nonce;
 - the spool hardening witnesses are GREEN: capacity never evicts another sink,
-  rollback repair preserves a concurrent live lease and rebases once, retry
-  horizon is at most 375 seconds, and malformed rows quarantine before lease
-  while later valid rows continue; and
+  rollback repair preserves a concurrent live lease and rebases once, stale
+  claim generations cannot restore an old-epoch retry deadline, delivery reads
+  a fresh retry clock, retry horizon is at most 375 seconds, and malformed rows
+  quarantine before lease while later valid rows continue;
+- the 50,257-row legacy-ledger witness is GREEN: each startup migrates exactly
+  four committed 256-row batches, progress resumes from durable version/cursor
+  state, and completion preserves every row with a distinct nonce;
+- the repeated-corruption witness is GREEN: the aggregate count reaches 8,000,
+  diagnostics stay at 128 rows and under 32 KiB even with a 100 KiB corrupt
+  identifier, and WAL/journal limits bound physical growth; and
 - the numeric boundary witness is GREEN: the rounded `u64` upper edge is
   rejected before float-to-integer conversion.
 
@@ -122,23 +133,26 @@ redirect helper. Focused regressions then established and closed these cases:
   spool. The CLI adapter alone owns enrollment verification and HTTP.
 - The spool defaults to 10,000 rows and 16 MiB. Claims are additionally capped
   at 1,000 events and 16 MiB; production delivery uses 50 events and 256 KiB.
-- Corrupt payloads are retained only as metadata in quarantine; status exposes
-  the durable corruption-drop count without exposing malformed payload bytes.
+- Corrupt payloads and raw identifiers are deleted. Quarantine retains only a
+  fixed SHA-256 event fingerprint and bounded metadata for the newest 128
+  diagnostics; status exposes that row/byte footprint and the durable aggregate
+  corruption-drop count.
 - HTTP disables proxies and redirects, uses 2-second connect and 5-second total timeouts,
   and caps response bodies at 64 KiB while streaming.
-- SQLite uses a 100 ms busy timeout so telemetry contention fails open quickly.
+- SQLite uses a 100 ms busy timeout so telemetry contention fails open quickly,
+  plus a 256-page WAL autocheckpoint and 1 MiB journal-size limit.
 - New direct dependencies are existing workspace crates: `sha2` for event IDs,
   `hmac` for signed enrollment, `reqwest` for the bounded HTTPS adapter, and
   `futures-util` for capped streaming response reads.
 
 ## Verification
 
-- `cargo test -p stella-store`: 87 unit and 23 enterprise telemetry integration
+- `cargo test -p stella-store`: 87 unit and 26 enterprise telemetry integration
   tests passed.
 - `cargo test -p stella-tools`: 335 unit tests passed; 1 existing sandbox test
   remained ignored; 4 media replay tests passed. The 6 tracker and 8 web
   localhost integration tests passed outside the restricted network sandbox.
-- `cargo test -p stella-cli`: 371 tests passed, including the project-dotenv
+- `cargo test -p stella-cli`: 372 tests passed, including the project-dotenv
   provenance and credential non-disclosure witnesses.
 - `cargo clippy -p stella-store -p stella-tools -p stella-cli --all-targets --
   -D warnings`: passed.

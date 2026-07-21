@@ -235,3 +235,27 @@ pub struct AuthorityPolicy {
 - [x] Re-run focused RED tests to green, then full store/CLI/tools tests, production-surface tests, formatting, Clippy with warnings denied, file-size gate, and diff checks.
 - [x] Update the design and `task-7-report.md` with exact invariants and fresh command evidence.
 - [x] Commit with `git commit -s -m "fix(telemetry): close process and spool review gaps"`; do not push.
+
+### Task 10: Enterprise telemetry generation and storage bounds
+
+**Files:**
+- Modify: `stella-store/src/enterprise_telemetry.rs`
+- Create: `stella-store/src/enterprise_telemetry/migrations.rs`
+- Modify: `stella-store/tests/enterprise_telemetry.rs`
+- Modify: `stella-cli/src/enterprise_telemetry.rs`
+- Modify: `stella-cli/src/enterprise_telemetry_tests.rs`
+- Modify: `docs/design/enterprise-authority-telemetry.md`
+- Modify: `task-7-report.md`
+
+**Interfaces:**
+- Produces: generation-fenced retry claims and a fresh retry wall-clock read
+- Produces: versioned, cursor-based legacy nonce migration with a 1,024-row startup budget
+- Produces: a 128-row fixed-fingerprint quarantine sample with explicit status accounting
+
+- [x] Add RED regressions for a claim racing a concurrent clock rollback, a 50,257-row legacy ledger, and repeated corruption including an oversized identifier.
+- [x] Persist and return a per-sink clock generation; transactionally fence/rebase retry against the current generation and read fresh wall time before every delivery retry.
+- [x] Replace the all-row legacy migration with resumable four-by-256 cursor batches and durable version/progress state.
+- [x] Hash corrupt identifiers, retain only the newest 128 diagnostic rows, report diagnostic rows/bytes and physical bytes, and bound WAL/journal growth.
+- [x] Run focused and full store/CLI/tools suites, Clippy, formatting, file-size and diff gates.
+- [x] Update design/report with exact invariants and fresh counts.
+- [x] Create a new DCO-signed commit without pushing.

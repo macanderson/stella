@@ -850,6 +850,18 @@ impl EnterpriseTelemetryRuntime {
     }
 
     pub(crate) async fn flush(&self, now_ms: i64) -> Result<usize, String> {
+        self.flush_with_retry_clock(now_ms, || unix_time().map(|(_, millis)| millis))
+            .await
+    }
+
+    pub(crate) async fn flush_with_retry_clock<F>(
+        &self,
+        now_ms: i64,
+        retry_clock: F,
+    ) -> Result<usize, String>
+    where
+        F: Fn() -> Result<i64, String>,
+    {
         let now_s = now_ms.div_euclid(1_000);
         if now_s >= self.enrollment.expires_at_unix_s {
             return Err("enterprise telemetry enrollment expired before delivery".into());
@@ -875,7 +887,12 @@ impl EnterpriseTelemetryRuntime {
             Ok(value) if !value.is_empty() && value.len() <= MAX_BEARER_BYTES => value,
             _ => {
                 self.spool
-                    .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
+                    .retry(
+                        &self.enrollment.sink_fingerprint,
+                        &owner,
+                        &claimed,
+                        retry_clock()?,
+                    )
                     .map_err(|error| error.to_string())?;
                 return Err(
                     "enterprise telemetry bearer credential is unavailable or invalid".into(),
@@ -886,14 +903,24 @@ impl EnterpriseTelemetryRuntime {
             Ok(value) if (32..=MAX_SECRET_BYTES).contains(&value.len()) => value,
             _ => {
                 self.spool
-                    .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
+                    .retry(
+                        &self.enrollment.sink_fingerprint,
+                        &owner,
+                        &claimed,
+                        retry_clock()?,
+                    )
                     .map_err(|error| error.to_string())?;
                 return Err("enterprise telemetry verification secret is unavailable".into());
             }
         };
         if signing_secret.as_bytes() == token.as_bytes() {
             self.spool
-                .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
+                .retry(
+                    &self.enrollment.sink_fingerprint,
+                    &owner,
+                    &claimed,
+                    retry_clock()?,
+                )
                 .map_err(|error| error.to_string())?;
             return Err("enterprise telemetry signing and bearer values must be distinct".into());
         }
@@ -911,7 +938,12 @@ impl EnterpriseTelemetryRuntime {
             }
             Err(error) => {
                 self.spool
-                    .retry(&self.enrollment.sink_fingerprint, &owner, &claimed, now_ms)
+                    .retry(
+                        &self.enrollment.sink_fingerprint,
+                        &owner,
+                        &claimed,
+                        retry_clock()?,
+                    )
                     .map_err(|retry_error| {
                         format!("{error}; retry persistence failed: {retry_error}")
                     })?;
@@ -969,11 +1001,13 @@ pub(crate) fn run_command(command: TelemetryCmd) -> Result<(), String> {
                 .status_for_sink(&enrollment.sink_fingerprint)
                 .map_err(|error| error.to_string())?;
             println!(
-                "enterprise telemetry: enrolled; pending={} ({} bytes); stranded={} ({} bytes); physical={} bytes; dropped={}; corrupt_dropped={}; rollover_discarded={}",
+                "enterprise telemetry: enrolled; pending={} ({} bytes); stranded={} ({} bytes); quarantine={} ({} metadata bytes); physical={} bytes; dropped={}; corrupt_dropped={}; rollover_discarded={}",
                 status.pending_rows,
                 status.pending_payload_bytes,
                 status.stranded_rows,
                 status.stranded_payload_bytes,
+                status.quarantine_diagnostic_rows,
+                status.quarantine_diagnostic_bytes,
                 status.physical_bytes,
                 status.dropped_rows,
                 status.corrupt_dropped_rows,
