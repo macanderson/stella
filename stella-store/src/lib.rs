@@ -117,14 +117,14 @@ pub use catalog::CatalogStore;
 // natural name. Reach the writer through its module.
 pub use journal::JournalRecord;
 pub use notify::{Notification, NotificationStore};
+pub(crate) use private::{
+    WORKSPACE_GENERATED_IGNORE, ensure_private_dir, ensure_workspace_state_dir, open_private_file,
+    open_private_sqlite, read_private_to_string, write_private_atomic,
+};
 pub use private::{
     WORKSPACE_PRIVATE_DIR, append_workspace_private_line, existing_workspace_private_sqlite_path,
     existing_workspace_private_state_path, read_sensitive_file_to_string,
     workspace_private_sqlite_path, workspace_private_state_path, write_sensitive_file_atomic,
-};
-pub(crate) use private::{
-    ensure_private_dir, ensure_workspace_state_dir, open_private_file, open_private_sqlite,
-    read_private_to_string, write_private_atomic,
 };
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 
@@ -535,7 +535,7 @@ fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
         .open(&gitignore)
     {
         use std::io::Write;
-        let _ = file.write_all(b"*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\n");
+        let _ = file.write_all(WORKSPACE_GENERATED_IGNORE);
     }
     Ok(())
 }
@@ -3909,7 +3909,23 @@ mod tests {
         let gitignore = std::fs::read_to_string(dir.join(".gitignore")).unwrap();
         assert!(gitignore.contains("*.db"));
         assert!(gitignore.contains("reflections.jsonl"));
+        assert!(gitignore.lines().any(|line| line.trim() == "private/"));
         assert!(!gitignore.lines().any(|l| l.trim() == "*"));
+
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        let ignored = std::process::Command::new("git")
+            .args(["check-ignore", ".stella/private/mcp_oauth.json"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            ignored.status.success(),
+            "private OAuth tokens must never stage"
+        );
 
         // A pre-existing .gitignore is left alone (user may have customized).
         // Under create_new this same path also covers the race where another

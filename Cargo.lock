@@ -3293,6 +3293,7 @@ dependencies = [
  "stella-graph",
  "stella-media",
  "stella-protocol",
+ "stella-store",
  "tempfile",
  "tokio",
  "toml",

@@ -986,7 +986,7 @@ mod tests {
     #[tokio::test]
     async fn store_backed_guard_survives_candidate_snapshot_and_winner_adoption() {
         let root = scaffold("storeguard");
-        std::fs::write(root.join(".gitignore"), "ignored.txt\n.stella/store.db*\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "ignored.txt\n.stella/private/\n").unwrap();
         {
             let store = stella_store::Store::open(&root).unwrap();
             store

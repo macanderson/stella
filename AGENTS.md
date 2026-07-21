@@ -217,9 +217,18 @@ editing Stella's own code should know what lives where:
 | `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.bash: "on"` opts the shell tool in — it is off by default in every scope). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
-| `.stella/reflections.jsonl` | Per-turn reflection mining log (one JSON object per line). |
-| `.stella/store.db` | Local SQLite telemetry (executions, events, cost/tokens). No phone-home. |
-| `.stella/codegraph.db` | Tree-sitter code-graph index, built on `stella init`. |
+| `.stella/private/` | Owner-only generated local state (`0700`; files `0600`). The generated `.stella/.gitignore` excludes this whole directory. |
+| `.stella/private/reflections.jsonl` | Per-turn reflection mining log (one JSON object per line). |
+| `.stella/private/store.db` | Local SQLite telemetry (executions, events, cost/tokens). No phone-home. |
+| `.stella/private/context.db` | Recallable memories, episodes, facts, and temporal context. |
+| `.stella/private/codegraph.db` | Tree-sitter code-graph index, built on `stella init`. |
+| `.stella/private/fleet.db` | Fleet run, attempt, commit, and spend ledger. |
+| `.stella/private/mcp_oauth.json` | MCP OAuth tokens. Secret local state; never commit it. |
+
+Older releases wrote these private artifacts directly under `.stella/`. Path
+resolvers migrate a safe, closed legacy file into `.stella/private/`; unsafe
+permissions or live SQLite WAL/SHM sidecars fail closed with an actionable
+error and leave the legacy files untouched.
 
 ---
 
@@ -285,5 +294,6 @@ seconds; `cargo test --workspace` rebuilds everything.
 - **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →
   project (`.stella/settings.json`). Project wins per-field.
 - **`context.db` vs `codegraph.db`**: `stella-context` and `stella-graph` used
-  to share `.stella/context.db` — they now use separate files
-  (`context.db` and `codegraph.db` respectively). Don't revert this.
+  to share `.stella/private/context.db` — they now use separate files
+  (`.stella/private/context.db` and `.stella/private/codegraph.db`
+  respectively). Don't revert this.

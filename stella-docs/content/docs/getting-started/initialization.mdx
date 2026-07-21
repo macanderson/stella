@@ -59,7 +59,12 @@ files and SQLite databases you can inspect, version, or delete at will:
 | `.stella/worktrees/` | Dedicated worktrees for fleet tasks marked `isolation = "isolated"` |
 | `.stella/exports/` | Session telemetry [exports](/docs/telemetry/dashboard) (ZIP + HTML) |
 | `.stella/private/reflections.jsonl` | Post-turn reflection log (lessons the [context engine](/docs/context-engine) distills) |
-| `.stella/mcp_oauth.json` | **OAuth tokens** for MCP servers you've logged into — a secret, never commit it |
+| `.stella/private/mcp_oauth.json` | **OAuth tokens** for MCP servers you've logged into — a secret, never commit it |
+
+When upgrading from a release that wrote private files directly under
+`.stella/`, Stella migrates safe, closed legacy files into `.stella/private/`
+on first use. Unsafe permissions or live SQLite WAL/SHM sidecars fail closed
+with an actionable error and remain untouched.
 
 User-scope counterparts live under `~/.config/stella/` (settings, skills,
 agents, credentials).
@@ -71,16 +76,14 @@ agents, credentials).
 `.stella/tools/` are team-shareable and version-control-friendly — with one caveat:
 if `.stella/settings.json` carries an inline `api_key`, keep it out of version control
 (prefer [`api_key_env` or `credentials.toml`](/docs/configuration/credentials)). The
-`.db` files are local state, and `.stella/mcp_oauth.json` holds **OAuth tokens** — add
-all of them to `.gitignore`:
+Everything under `.stella/private/` is local state, including MCP OAuth
+tokens. `stella` generates `.stella/.gitignore` with `private/`; if the
+repository uses a root ignore file, exclude the whole private directory:
 
 ```text title=".gitignore"
-.stella/*.db
-.stella/*.db-*
-.stella/mcp_oauth.json
+.stella/private/
 .stella/worktrees/
 .stella/exports/
-.stella/private/reflections.jsonl
 ```
 
 ## Verify the result

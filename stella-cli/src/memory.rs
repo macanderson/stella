@@ -41,7 +41,9 @@ use stella_protocol::{CompletionMessage, CompletionRequest, MessageRole, Provide
 
 use crate::domains::Domains;
 
+mod private_state;
 mod projection;
+use private_state::resolve_context_db_path;
 use projection::{is_quarantined_local_memory, project_recalled_frame};
 
 /// Marker prefixing a recalled-context message so [`inject_recall_block`]
@@ -206,8 +208,9 @@ impl SessionMemory {
         warn: bool,
         include_workspace_skills: bool,
     ) -> Option<Self> {
-        let db_path =
-            stella_store::workspace_private_sqlite_path(workspace_root, "context.db").ok()?;
+        let db_path = resolve_context_db_path(workspace_root, warn, |message| {
+            eprintln!("  {} {message}", "!".yellow());
+        })?;
         match ContextStore::open_and_warm(
             &db_path,
             std::sync::Arc::new(HashEmbedder::default()),

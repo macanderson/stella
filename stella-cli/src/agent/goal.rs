@@ -41,7 +41,7 @@ pub(crate) async fn run_raw_one_shot(
         Some(registry.mcp_usage_ledger()),
         format == OutputFormat::Text,
     )
-    .await;
+    .await?;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
@@ -198,7 +198,7 @@ pub async fn run_goal_cmd(
         Some(registry.mcp_usage_ledger()),
         true,
     )
-    .await;
+    .await?;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,

@@ -116,7 +116,7 @@ async fn run_pipeline_one_shot(
         Some(registry.mcp_usage_ledger()),
         format == OutputFormat::Text,
     )
-    .await;
+    .await?;
     let base_tools: &dyn ToolExecutor = match &mcp {
         Some(set) => set,
         None => &*registry,
@@ -412,7 +412,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         Some(registry.mcp_usage_ledger()),
         true,
     )
-    .await;
+    .await?;
     populate_schema_index(&registry, &cfg.workspace_root);
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
@@ -1303,19 +1303,19 @@ pub(crate) async fn connect_mcp(
     native: std::sync::Arc<dyn ToolExecutor>,
     usage: Option<stella_core::mcp_usage::McpUsageLedger>,
     print_diagnostics: bool,
-) -> Option<McpToolSet> {
+) -> Result<Option<McpToolSet>, String> {
     let servers = match load_mcp_plan(cfg) {
-        McpPlan::None => return None,
+        McpPlan::None => return Ok(None),
         McpPlan::Invalid(reason) => {
             if print_diagnostics {
                 eprintln!("  {} {reason}", "!".yellow());
             }
-            return None;
+            return Ok(None);
         }
         McpPlan::Servers(servers) => servers,
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
-    let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root);
+    let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root)?;
     let set = connect_mcp_servers(&servers, native, usage, None, Some(auth)).await;
     if print_diagnostics {
         for (name, reason) in set.failed_servers() {
@@ -1332,7 +1332,7 @@ pub(crate) async fn connect_mcp(
             );
         }
     }
-    Some(set)
+    Ok(Some(set))
 }
 
 /// Discover developer-defined custom script tools (.stella/tools/*.toml,

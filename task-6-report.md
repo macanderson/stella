@@ -58,6 +58,24 @@ RED was established before implementation:
 - A legacy database with live WAL/SHM sidecars initially admitted a partial
   multi-rename migration. It now fails closed, remains byte-identical, and
   asks the operator to close/checkpoint before the main DB is atomically moved.
+- Re-review first compiled the OAuth migration witness against a path-only
+  helper and failed because callers could not receive resolver errors. The
+  helper now returns `Result`, every login/logout/status/agent/TUI caller
+  propagates or visibly reports failure, and a safe legacy token store migrates
+  before the OAuth manager opens it.
+- The OAuth staging witness initially failed because a workspace that had not
+  opened the main store had no generated ignore file. Creating any private
+  workspace state now best-effort creates `.stella/.gitignore` with `private/`,
+  and a real `git check-ignore` test proves token files are ignored.
+- Direct graph queries and graph availability initially treated safe legacy
+  indexes as absent. Both now preflight the shared SQLite resolver and migrate
+  safe legacy state; direct queries surface unsafe legacy-parent errors without
+  claiming there is no index. Storage and observatory commands apply the same
+  fallible preflight before their lower-level readers.
+- Session-memory construction initially discarded secure-path failures with
+  `.ok()?`. The resolver now emits one explicit "memory disabled" warning when
+  warnings are enabled, remains quiet only when explicitly requested, and
+  never converts an unsafe legacy layout into ordinary absence.
 
 ## Implementation notes
 
@@ -84,6 +102,10 @@ RED was established before implementation:
 - Fresh private directories use mode-at-create `0700`. Existing directories
   known to contain only private state are repaired to `0700`. Existing mixed
   project `.stella` directories are validated but deliberately not chmodded.
+- Private workspace-state resolution also creates a generated
+  `.stella/.gitignore` containing `private/` plus the historical direct-file
+  patterns. Documentation treats `.stella/private/` as authoritative and
+  records one-time migration from safe closed legacy files.
 - User settings use secure atomic replacement because they may contain inline
   API keys. Project settings keep the ordinary write path so their committed
   file mode is not silently changed.
@@ -98,17 +120,18 @@ RED was established before implementation:
 - `cargo test -p stella-store`: 87 tests passed.
 - `cargo test -p stella-graph`: 65 unit + 18 integration tests passed; 1
   environment-dependent watcher test ignored.
-- `cargo test -p stella-tools`: 328 unit + 10 integration tests passed; 1
-  sandbox test ignored. The 6 localhost tracker tests passed outside the
-  filesystem/network sandbox.
-- `cargo test -p stella-cli`: 345 tests passed after the projection split.
+- `cargo test -p stella-tools`: 331 unit + 18 integration tests passed; 1
+  sandbox test ignored. The localhost tracker and web integration suites passed
+  outside the filesystem/network sandbox.
+- `cargo test -p stella-cli`: 351 tests passed after the projection split and
+  private-state preflight additions.
 - `cargo test -p stella-tui`: 487 unit + 5 render tests passed; 1 TTY test
   ignored.
 - `cargo test -p stella-mcp`: 68 unit + 22 integration + 1 doc test passed.
 - `cargo test -p stella-observatory`: 22 tests passed.
 - `cargo clippy --workspace --all-targets -- -D warnings`: passed.
 - `cargo fmt --all -- --check`: passed.
-- `make sizes`: all 297 tracked Rust files passed.
+- `make sizes`: all 298 tracked Rust files passed.
 - `pnpm --dir stella-docs typecheck` and `pnpm --dir stella-docs build`:
   passed; 81 static pages generated.
 - `git diff --check`: passed.
@@ -124,6 +147,9 @@ RED was established before implementation:
   the private-directory repair primitive.
 - Re-ran the full affected protocol, pipeline, context, store, graph, tools,
   CLI, TUI, MCP, and Observatory suites after the module split.
+- Searched authoritative docs and CLI help for direct workspace state paths;
+  the only remaining legacy path mentions are migration documentation and
+  migration/error regression fixtures.
 
 ## Concerns
 

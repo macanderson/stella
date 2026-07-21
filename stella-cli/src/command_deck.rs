@@ -1785,18 +1785,28 @@ fn spawn_mcp_connect(
                     "connecting {} MCP server(s)…",
                     servers.len()
                 )));
-                let set = agent::connect_mcp_servers(
-                    &servers,
-                    registry.clone(),
-                    Some(registry.mcp_usage_ledger()),
-                    Some(disabled.clone()),
-                    Some(crate::mcp_cmd::oauth_manager(&cfg.workspace_root)),
-                )
-                .await;
-                let _ = chrome_tx.send(chrome_note(mcp_outcome_report(
-                    &set.connected_names(),
-                    set.failed_servers(),
-                )));
+                match crate::mcp_cmd::oauth_manager(&cfg.workspace_root) {
+                    Ok(auth) => {
+                        let set = agent::connect_mcp_servers(
+                            &servers,
+                            registry.clone(),
+                            Some(registry.mcp_usage_ledger()),
+                            Some(disabled.clone()),
+                            Some(auth),
+                        )
+                        .await;
+                        let _ = chrome_tx.send(chrome_note(crate::mcp_cmd::mcp_outcome_report(
+                            &set.connected_names(),
+                            set.failed_servers(),
+                        )));
+                        let _ = slot.set(set);
+                    }
+                    Err(error) => {
+                        let _ = chrome_tx.send(chrome_note(format!(
+                            "MCP authentication unavailable: {error} — continuing with native tools only"
+                        )));
+                    }
+                }
                 // The Text events above fold the lead to `Running`, but no
                 // turn is in flight — restore the idle status or the
                 // dashboard would show a busy lead forever.
@@ -1804,10 +1814,6 @@ fn spawn_mcp_connect(
                     agent: LEAD.to_string(),
                     status: AgentStatus::WaitingInput,
                 });
-                // `set` is infallible here (the cell is set exactly once,
-                // by this task); an in-flight turn keeps its resolved
-                // executor and the NEXT turn picks the servers up.
-                let _ = slot.set(set);
             }
         }
         // Seed the MCP tab with the configured servers and their live state.
@@ -1819,26 +1825,6 @@ fn spawn_mcp_connect(
     configured
 }
 
-/// The transcript report for a finished MCP connect attempt: the connected
-/// servers by name, then one row per failure with its reason — the deck-mode
-/// analogue of the diagnostics [`agent::connect_mcp`] prints in the plain
-/// REPL. Zero connections is stated outright: the degraded session must be
-/// visible in the transcript, never inferred from silence.
-fn mcp_outcome_report(connected: &[&str], failed: &[(String, String)]) -> String {
-    let mut lines = Vec::new();
-    match connected.len() {
-        0 => lines.push("no MCP servers connected — continuing with native tools only".to_string()),
-        n => lines.push(format!(
-            "{n} MCP server(s) connected: {}",
-            connected.join(", ")
-        )),
-    }
-    for (name, reason) in failed {
-        lines.push(format!("MCP server `{name}` unavailable: {reason}"));
-    }
-    lines.join("\n")
-}
-
 /// Build the MCP tab snapshot: every configured server (`.stella/mcp.toml`)
 /// joined with its live session state — enabled (not in the disabled set),
 /// connected (in the live tool set), health, per-server tool count (derived
@@ -1848,8 +1834,8 @@ async fn mcp_snapshot(
     cfg: &Config,
     mcp: Option<&stella_mcp::McpToolSet>,
     disabled: &stella_mcp::DisabledServers,
-) -> Vec<stella_tui::McpServerInfo> {
-    let config = crate::mcp_cmd::load_config(&cfg.workspace_root).unwrap_or_default();
+) -> Result<Vec<stella_tui::McpServerInfo>, String> {
+    let config = crate::mcp_cmd::load_config(&cfg.workspace_root)?;
     let connected: std::collections::HashSet<String> = mcp
         .map(|s| {
             s.connected_names()
@@ -1863,14 +1849,14 @@ async fn mcp_snapshot(
         None => Vec::new(),
     };
     let schemas = mcp.map(|s| s.schemas()).unwrap_or_default();
-    let usage = crate::mcp_cmd::usage_stats(&cfg.workspace_root).unwrap_or_default();
+    let usage = crate::mcp_cmd::usage_stats(&cfg.workspace_root)?;
     let disabled_set = disabled.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let oauth_logins: std::collections::HashSet<String> =
-        crate::mcp_cmd::oauth_logged_in(&cfg.workspace_root)
+        crate::mcp_cmd::oauth_logged_in(&cfg.workspace_root)?
             .into_iter()
             .collect();
 
-    config
+    Ok(config
         .names()
         .into_iter()
         .map(|name| {
@@ -1911,7 +1897,7 @@ async fn mcp_snapshot(
                 calls,
             }
         })
-        .collect()
+        .collect())
 }
 
 /// Build and push a fresh MCP tab snapshot.
@@ -1921,7 +1907,19 @@ async fn send_mcp_snapshot(
     disabled: &stella_mcp::DisabledServers,
     in_tx: &mpsc::UnboundedSender<Inbound>,
 ) {
-    let _ = in_tx.send(Inbound::McpServers(mcp_snapshot(cfg, mcp, disabled).await));
+    match mcp_snapshot(cfg, mcp, disabled).await {
+        Ok(rows) => {
+            let _ = in_tx.send(Inbound::McpServers(rows));
+        }
+        Err(error) => {
+            let _ = in_tx.send(Inbound::McpServers(Vec::new()));
+            let _ = in_tx.send(Inbound::McpOauthStatus {
+                server: "MCP state".to_string(),
+                message: error,
+                outcome: Some(false),
+            });
+        }
+    }
 }
 
 /// Run a registry search and shape it for the tab, flagging already-configured

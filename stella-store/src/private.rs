@@ -7,6 +7,21 @@ use rusqlite::Connection;
 use crate::{Result, StoreError};
 
 pub const WORKSPACE_PRIVATE_DIR: &str = "private";
+pub(crate) const WORKSPACE_GENERATED_IGNORE: &[u8] =
+    b"private/\n*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\n";
+
+fn ensure_workspace_generated_ignore(dot: &Path) {
+    use std::io::Write as _;
+
+    let path = dot.join(".gitignore");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        let _ = file.write_all(WORKSPACE_GENERATED_IGNORE);
+    }
+}
 
 pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathBuf, bool)> {
     let dir = workspace_root.join(".stella");
@@ -152,6 +167,7 @@ pub fn workspace_private_state_path(workspace_root: &Path, name: &str) -> Result
     let private = dot.join(WORKSPACE_PRIVATE_DIR);
     migrate_legacy_files(&dot, &private, &[name.to_string()])?;
     ensure_private_dir(&private)?;
+    ensure_workspace_generated_ignore(&dot);
     Ok(private.join(name))
 }
 
@@ -203,6 +219,7 @@ pub fn workspace_private_sqlite_path(workspace_root: &Path, name: &str) -> Resul
     }
     migrate_legacy_files(&dot, &private, &[name.to_string()])?;
     ensure_private_dir(&private)?;
+    ensure_workspace_generated_ignore(&dot);
     prepare_private_sqlite_path(&private.join(name))
 }
 

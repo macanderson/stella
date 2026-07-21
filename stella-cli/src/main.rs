@@ -479,7 +479,7 @@ pub enum McpCmd {
         name: String,
     },
     /// OAuth login to a configured http server (opens your browser; tokens
-    /// land owner-only in .stella/mcp_oauth.json and auto-refresh)
+    /// land owner-only in .stella/private/mcp_oauth.json and auto-refresh)
     Login {
         /// The configured server's local name
         name: String,
@@ -637,9 +637,18 @@ enum StorageCmd {
 /// `stella observe` — serve the Observatory dashboard for this workspace on
 /// `127.0.0.1` until interrupted. Telemetry stores are opened read-only; the
 /// page and its assets are embedded, so nothing is fetched from anywhere.
+fn preflight_observatory_stores(root: &std::path::Path) -> Result<(), String> {
+    for name in ["store.db", "fleet.db", "context.db", "codegraph.db"] {
+        stella_store::existing_workspace_private_sqlite_path(root, name)
+            .map_err(|e| format!("cannot resolve private Observatory state `{name}`: {e}"))?;
+    }
+    Ok(())
+}
+
 fn run_observe(port: u16, open: bool) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    preflight_observatory_stores(&root)?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -766,11 +775,19 @@ fn run_graph(op: GraphOp, target: &str) -> Result<(), String> {
 /// gate enforces (docs/design/storage-map.md). Reads the persisted index +
 /// stella.storage.toml; empty output means `stella init` hasn't indexed any
 /// storage yet.
+fn load_storage_snapshot_checked(
+    root: &std::path::Path,
+) -> Result<stella_graph::StorageSnapshot, String> {
+    stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|e| format!("cannot resolve private storage-map index: {e}"))?;
+    Ok(stella_graph::load_storage_snapshot(root))
+}
+
 fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
     use stella_graph::storage::{dedup_key, display_address, embed_card, normalize_name};
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    let snapshot = stella_graph::load_storage_snapshot(&root);
+    let snapshot = load_storage_snapshot_checked(&root)?;
     if snapshot.relations.is_empty() && snapshot.layers.is_empty() {
         println!(
             "{}",

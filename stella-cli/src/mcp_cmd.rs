@@ -69,6 +69,23 @@ pub fn resolve_registry_url(workspace_root: &Path) -> String {
         .unwrap_or_else(|_| stella_mcp::DEFAULT_REGISTRY_URL.to_string())
 }
 
+/// Deck-mode report for MCP connection outcomes, including total failure.
+pub(crate) fn mcp_outcome_report(connected: &[&str], failed: &[(String, String)]) -> String {
+    let mut lines = match connected.len() {
+        0 => vec!["no MCP servers connected — continuing with native tools only".to_string()],
+        n => vec![format!(
+            "{n} MCP server(s) connected: {}",
+            connected.join(", ")
+        )],
+    };
+    lines.extend(
+        failed
+            .iter()
+            .map(|(name, reason)| format!("MCP server `{name}` unavailable: {reason}")),
+    );
+    lines.join("\n")
+}
+
 /// Search a registry over HTTP (async, non-blocking).
 pub async fn search(
     registry_url: &str,
@@ -119,19 +136,20 @@ pub fn remove(workspace_root: &Path, name: &str) -> Result<bool, String> {
     Ok(removed)
 }
 
-/// The workspace's OAuth token store, beside `mcp.toml` (owner-only JSON).
-pub fn oauth_store_path(workspace_root: &Path) -> PathBuf {
-    workspace_root
-        .join(".stella")
-        .join("private")
-        .join("mcp_oauth.json")
+/// Resolve the workspace's owner-only OAuth token store, migrating a safe
+/// legacy `.stella/mcp_oauth.json` before any caller constructs a token store.
+pub fn oauth_store_path(workspace_root: &Path) -> Result<PathBuf, String> {
+    stella_store::workspace_private_state_path(workspace_root, "mcp_oauth.json")
+        .map_err(|e| format!("cannot resolve private MCP OAuth token store: {e}"))
 }
 
 /// The session's OAuth manager: lazy per-server bearer sources over the
 /// workspace token store. Cheap; construct once per connect.
-pub fn oauth_manager(workspace_root: &Path) -> std::sync::Arc<stella_mcp::OAuthManager> {
-    std::sync::Arc::new(stella_mcp::OAuthManager::new(oauth_store_path(
-        workspace_root,
+pub fn oauth_manager(
+    workspace_root: &Path,
+) -> Result<std::sync::Arc<stella_mcp::OAuthManager>, String> {
+    Ok(std::sync::Arc::new(stella_mcp::OAuthManager::new(
+        oauth_store_path(workspace_root)?,
     )))
 }
 
@@ -161,7 +179,7 @@ pub async fn oauth_login(
     notify: &mut (dyn FnMut(stella_mcp::LoginEvent) + Send),
 ) -> Result<(), String> {
     let url = http_server_url(workspace_root, server)?;
-    let store_path = oauth_store_path(workspace_root);
+    let store_path = oauth_store_path(workspace_root)?;
     let tokens = stella_mcp::oauth::login(
         server,
         &url,
@@ -182,16 +200,16 @@ pub async fn oauth_login(
 
 /// Forget a server's OAuth tokens; returns whether any existed.
 pub fn oauth_logout(workspace_root: &Path, server: &str) -> Result<bool, String> {
-    stella_mcp::TokenStore::new(oauth_store_path(workspace_root))
+    stella_mcp::TokenStore::new(oauth_store_path(workspace_root)?)
         .remove(server)
         .map_err(|e| e.to_string())
 }
 
 /// The configured servers that currently hold OAuth logins.
-pub fn oauth_logged_in(workspace_root: &Path) -> Vec<String> {
-    stella_mcp::TokenStore::new(oauth_store_path(workspace_root))
+pub fn oauth_logged_in(workspace_root: &Path) -> Result<Vec<String>, String> {
+    stella_mcp::TokenStore::new(oauth_store_path(workspace_root)?)
         .logged_in_servers()
-        .unwrap_or_default()
+        .map_err(|e| e.to_string())
 }
 
 /// Best-effort `open`/`xdg-open`/`start` of the authorize URL. Failure is
@@ -409,7 +427,7 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
     println!(
         "  {} logged in — tokens in {} (auto-refreshed; `stella mcp logout {name}` to forget)",
         "◆".bright_cyan(),
-        oauth_store_path(workspace_root).display()
+        oauth_store_path(workspace_root)?.display()
     );
     Ok(())
 }
@@ -546,5 +564,36 @@ mod tests {
         symlink(&target, mcp_toml_path(dir.path())).unwrap();
         assert!(save_config(dir.path(), &cfg).is_err());
         assert_eq!(std::fs::read_to_string(target).unwrap(), "[servers]\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oauth_path_migrates_a_safe_legacy_token_store_into_private_state() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let dot = dir.path().join(".stella");
+        std::fs::create_dir_all(&dot).unwrap();
+        std::fs::set_permissions(&dot, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let legacy = dot.join("mcp_oauth.json");
+        std::fs::write(&legacy, br#"{"servers":{}}"#).unwrap();
+
+        let resolved: Result<PathBuf, String> = oauth_store_path(dir.path());
+        let resolved = resolved.unwrap();
+        assert_eq!(resolved, dot.join("private/mcp_oauth.json"));
+        assert!(!legacy.exists());
+        assert_eq!(std::fs::read(resolved).unwrap(), br#"{"servers":{}}"#);
+
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        let ignored = std::process::Command::new("git")
+            .args(["check-ignore", ".stella/private/mcp_oauth.json"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(ignored.status.success(), "OAuth tokens must never stage");
     }
 }
