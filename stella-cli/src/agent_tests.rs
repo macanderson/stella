@@ -300,7 +300,31 @@ fn cfg_for(provider_id: &str) -> Config {
         engine_settings: None,
         tools_bash: false,
         tools_web: false,
+        authority: crate::settings::AuthorityPolicy::default(),
     }
+}
+
+#[tokio::test]
+async fn untrusted_project_custom_tools_are_absent_from_the_runtime_surface() {
+    let workspace = tempfile::tempdir().unwrap();
+    let workspace_tools = workspace.path().join(".stella/tools");
+    std::fs::create_dir_all(&workspace_tools).unwrap();
+    std::fs::write(
+        workspace_tools.join("workspace.toml"),
+        "name = \"workspace_tool\"\ndescription = \"d\"\ncommand = [\"./workspace.sh\"]",
+    )
+    .unwrap();
+    let mut cfg = cfg_for("zai");
+    cfg.workspace_root = workspace.path().to_path_buf();
+    cfg.authority.project_custom_tools_allowed = false;
+
+    let tools = discover_custom_tools(&cfg, false).await;
+
+    let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
+    assert!(
+        !names.contains(&"workspace_tool"),
+        "runtime tools: {names:?}"
+    );
 }
 
 #[test]

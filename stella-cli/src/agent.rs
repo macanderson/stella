@@ -1333,9 +1333,16 @@ pub(crate) async fn discover_custom_tools(
     // The manifest walk is synchronous directory I/O — off the runtime
     // worker thread it goes (#64).
     let root = cfg.workspace_root.clone();
-    let report = tokio::task::spawn_blocking(move || custom::discover(&root))
-        .await
-        .unwrap_or_else(|_| custom::discover(&cfg.workspace_root));
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let include_workspace = cfg.authority.project_custom_tools_allowed;
+    let worker_home = home.clone();
+    let report = tokio::task::spawn_blocking(move || {
+        custom::discover_in_scopes(&root, worker_home.as_deref(), include_workspace)
+    })
+    .await
+    .unwrap_or_else(|_| {
+        custom::discover_in_scopes(&cfg.workspace_root, home.as_deref(), include_workspace)
+    });
     if print_diagnostics {
         for diagnostic in &report.diagnostics {
             eprintln!(
@@ -1438,7 +1445,12 @@ pub fn run_tools_listing() -> Result<(), String> {
         );
     }
 
-    let report = custom::discover(&workspace_root);
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let report = custom::discover_in_scopes(
+        &workspace_root,
+        home.as_deref(),
+        settings.authority_policy.project_custom_tools_allowed,
+    );
     println!(
         "\n  {}",
         "custom (.stella/tools/, ~/.config/stella/tools/):".dimmed()

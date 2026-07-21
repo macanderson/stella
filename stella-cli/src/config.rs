@@ -384,6 +384,10 @@ pub struct Config {
     /// Same threading as `tools_bash` — the default tool surface has no
     /// network egress.
     pub tools_web: bool,
+    /// Monotonic authority computed while loading the scope chain. Runtime
+    /// adapters consume this instead of reinterpreting trust environment
+    /// variables or repository settings independently.
+    pub authority: crate::settings::AuthorityPolicy,
 }
 
 impl Config {
@@ -476,8 +480,9 @@ impl Config {
         )?;
         cfg.hooks = settings.hooks.clone();
         cfg.engine_settings = settings.agent_engine_config.clone();
-        cfg.tools_bash = settings.bash_tool_enabled();
-        cfg.tools_web = settings.web_tools_enabled();
+        cfg.authority = settings.authority_policy;
+        cfg.tools_bash = settings.bash_tool_enabled() && cfg.authority.bash_allowed;
+        cfg.tools_web = settings.web_tools_enabled() && cfg.authority.web_allowed;
         Ok(cfg)
     }
 
@@ -574,6 +579,7 @@ impl Config {
                     engine_settings: None,
                     tools_bash: false,
                     tools_web: false,
+                    authority: crate::settings::AuthorityPolicy::default(),
                 });
             }
 
@@ -766,6 +772,7 @@ impl Config {
             engine_settings: None,
             tools_bash: false,
             tools_web: false,
+            authority: crate::settings::AuthorityPolicy::default(),
         })
     }
 

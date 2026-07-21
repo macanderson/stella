@@ -25,6 +25,10 @@ use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 
 use crate::config::Dialect;
 
+mod authority;
+pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
+use authority::{apply_tool_ceiling, restore_project_prompts, restore_project_tools};
+
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in
 /// (override: any subset is fine) or defines a new provider (`base_url`
@@ -94,17 +98,26 @@ pub struct Settings {
     /// sampling parameters for the four engine agents (default / worker /
     /// judge / triage), plus the allowed-model vocabulary and the auto
     /// modes. Scopes overlay per field like `providers`. Deliberately NOT
-    /// behind the project trust boundary: it carries no credential routing
-    /// (an agent's `provider` names an id whose `base_url`/`api_key_env`
-    /// are themselves gated above), and repo-supplied prompt text is
-    /// already the status quo via `.stella/memories` and workspace rules.
+    /// mostly outside the project trust boundary: model and sampling fields
+    /// carry no credential routing (an agent's `provider` names an id whose
+    /// endpoint and credential fields are gated above). Per-agent replacement
+    /// prompts are privileged and restored from trusted scopes unless the
+    /// effective authority explicitly permits project prompts.
     #[serde(default)]
     pub agent_engine_config: Option<AgentEngineConfig>,
-    /// Built-in tool switches ([`ToolsSettings`]). Scopes overlay per
-    /// field, project winning — so a repo may opt its sessions into (or
-    /// back out of) the `bash` tool.
+    /// Built-in tool switches ([`ToolsSettings`]). Scopes overlay per field,
+    /// subject to repository trust and the non-overridable managed ceiling.
     #[serde(default)]
     pub tools: Option<ToolsSettings>,
+    /// Authority ceilings are honored only from the org-managed settings
+    /// file. The serde name is intentionally short because the containing
+    /// file is already the policy source.
+    #[serde(default, rename = "authority")]
+    managed_authority: Option<ManagedAuthoritySettings>,
+    /// Effective authority computed by [`Settings::load`]. This is skipped
+    /// when parsing individual scopes so repository text cannot supply it.
+    #[serde(skip)]
+    pub authority_policy: AuthorityPolicy,
 }
 
 /// An `on`/`off` switch. A dedicated enum rather than `bool` because the
@@ -573,19 +586,19 @@ impl Settings {
     ///   violates the "outbound traffic only to the user-chosen provider"
     ///   invariant just as surely as a phone-home would.
     ///
-    /// So both are gated: the user and org-managed scopes always load; the
-    /// project scope's hooks and credential-routing fields load only when the
-    /// repo is trusted (`STELLA_TRUST_PROJECT=1`, or the legacy
-    /// `STELLA_PROJECT_HOOKS=1` for hooks alone). Untrusted, they are dropped
-    /// with a one-line notice naming what was skipped; cosmetic project
-    /// fields (`name`, `default_model`, `dialect`) still apply.
+    /// The user and org-managed scopes always load. Project hooks and
+    /// credential-routing fields load only when explicitly trusted; project
+    /// tool switches and replacement prompts are likewise restored from the
+    /// trusted scopes while untrusted. Managed denials remain ceilings even
+    /// after explicit repository trust.
     pub fn load(workspace_root: &Path) -> Result<Self, String> {
         let mut trusted: Vec<PathBuf> = Vec::new();
         // Ascending precedence: user, org-managed, project.
         if let Some(user) = user_settings_path() {
             trusted.push(user);
         }
-        trusted.push(managed_settings_path());
+        let managed = managed_settings_path();
+        trusted.push(managed.clone());
         let project = project_settings_path(workspace_root);
 
         let mut all = trusted.clone();
@@ -593,11 +606,18 @@ impl Settings {
         let mut merged = Self::load_from(&all)?;
 
         let project_only = Self::load_from(std::slice::from_ref(&project))?;
+        let trusted_only = Self::load_from(&trusted)?;
+        let managed_only = Self::load_from(std::slice::from_ref(&managed))?;
         let trust = project_trust();
+        let authority = AuthorityPolicy::compute(
+            managed_only.managed_authority.as_ref(),
+            managed_only.tools.as_ref(),
+            trust.credentials,
+        );
 
         if !trust.hooks && project_only.hooks.is_some() {
             // Rebuild hooks from the trusted scopes alone.
-            merged.hooks = Self::load_from(&trusted)?.hooks;
+            merged.hooks = trusted_only.hooks.clone();
             eprintln!(
                 "  ! project hooks in {} were NOT loaded — set STELLA_PROJECT_HOOKS=1 \
                  (or STELLA_TRUST_PROJECT=1) to trust this repo's hooks",
@@ -610,7 +630,6 @@ impl Settings {
             // restoring each to what the trusted scopes alone say (usually
             // the built-in default). This is the real exfiltration gate:
             // without it a repo could point ANTHROPIC_API_KEY at its own host.
-            let trusted_only = Self::load_from(&trusted)?;
             let mut redacted: Vec<String> = Vec::new();
 
             for (id, pentry) in &project_only.providers {
@@ -656,6 +675,17 @@ impl Settings {
                 );
             }
         }
+        if !trust.credentials {
+            restore_project_tools(&mut merged, &trusted_only, &project_only);
+        }
+        if !authority.project_prompts_allowed {
+            restore_project_prompts(&mut merged, &trusted_only, &project_only);
+        }
+        apply_tool_ceiling(&mut merged, authority);
+        // Only the dedicated managed file can supply a ceiling. Preserve it
+        // for inspection, but never retain a user/project copy after merge.
+        merged.managed_authority = managed_only.managed_authority;
+        merged.authority_policy = authority;
         Ok(merged)
     }
 
@@ -719,6 +749,9 @@ impl Settings {
                     .agent_engine_config
                     .get_or_insert_with(AgentEngineConfig::default)
                     .overlay(engine);
+            }
+            if let Some(authority) = scope.managed_authority {
+                merged.managed_authority = Some(authority);
             }
         }
         Ok(merged)
@@ -1237,11 +1270,197 @@ mod tests {
             "an explicitly trusted repo may redirect (that is the opt-in)"
         );
         assert_eq!(merged.mcp_registry_url(), "https://evil.registry/");
+        assert!(merged.authority_policy.project_prompts_allowed);
+        assert!(merged.authority_policy.project_custom_tools_allowed);
 
         unsafe {
             std::env::remove_var("STELLA_TRUST_PROJECT");
             std::env::remove_var("HOME");
             std::env::remove_var("STELLA_MANAGED_SETTINGS");
         }
+    }
+
+    #[test]
+    fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let workspace = dir.path().join("repo");
+        std::fs::create_dir_all(home.join(".config/stella")).unwrap();
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        write(
+            &home.join(".config/stella"),
+            "settings.json",
+            r#"{
+              "tools": {"bash": "off", "web": "off"},
+              "agent_engine_config": {
+                "agents": {"judge": {"prompt": "trusted prompt"}}
+              }
+            }"#,
+        );
+        write(
+            &workspace.join(".stella"),
+            "settings.json",
+            r#"{
+              "tools": {"bash": "on", "web": "on"},
+              "agent_engine_config": {
+                "agents": {"judge": {"prompt": "untrusted prompt"}}
+              }
+            }"#,
+        );
+        // SAFETY: serialized behind the binary-wide env lock.
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var(
+                "STELLA_MANAGED_SETTINGS",
+                dir.path().join("no-such-managed.json"),
+            );
+            std::env::remove_var("STELLA_TRUST_PROJECT");
+            std::env::remove_var("STELLA_PROJECT_HOOKS");
+        }
+
+        let merged = Settings::load(&workspace).unwrap();
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("STELLA_MANAGED_SETTINGS");
+        }
+        assert!(
+            !merged.bash_tool_enabled(),
+            "untrusted project enabled bash"
+        );
+        assert!(!merged.web_tools_enabled(), "untrusted project enabled web");
+        assert_eq!(
+            merged
+                .agent_engine_config
+                .as_ref()
+                .and_then(|engine| engine.agent(EngineAgentKind::Judge))
+                .and_then(|judge| judge.prompt.as_deref()),
+            Some("trusted prompt"),
+            "untrusted project replaced a privileged agent prompt"
+        );
+        assert!(!merged.authority_policy.project_prompts_allowed);
+        assert!(!merged.authority_policy.project_custom_tools_allowed);
+    }
+
+    #[test]
+    fn untrusted_project_may_narrow_trusted_tool_grants() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let workspace = dir.path().join("repo");
+        std::fs::create_dir_all(home.join(".config/stella")).unwrap();
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        write(
+            &home.join(".config/stella"),
+            "settings.json",
+            r#"{"tools": {"bash": "on", "web": "on"}}"#,
+        );
+        write(
+            &workspace.join(".stella"),
+            "settings.json",
+            r#"{"tools": {"bash": "off", "web": "off"}}"#,
+        );
+        // SAFETY: serialized behind the binary-wide env lock.
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var(
+                "STELLA_MANAGED_SETTINGS",
+                dir.path().join("no-such-managed.json"),
+            );
+            std::env::remove_var("STELLA_TRUST_PROJECT");
+            std::env::remove_var("STELLA_PROJECT_HOOKS");
+        }
+
+        let merged = Settings::load(&workspace).unwrap();
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("STELLA_MANAGED_SETTINGS");
+        }
+        assert!(!merged.bash_tool_enabled(), "project off must narrow bash");
+        assert!(!merged.web_tools_enabled(), "project off must narrow web");
+    }
+
+    #[test]
+    fn managed_tool_denial_survives_explicit_project_trust() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let managed = dir.path().join("managed.json");
+        let workspace = dir.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        std::fs::write(
+            &managed,
+            r#"{
+              "tools": {"bash": "off", "web": "off"},
+              "authority": {
+                "project_prompts": "off",
+                "project_custom_tools": "off"
+              }
+            }"#,
+        )
+        .unwrap();
+        write(
+            &workspace.join(".stella"),
+            "settings.json",
+            r#"{
+              "tools": {"bash": "on", "web": "on"},
+              "agent_engine_config": {
+                "agents": {"judge": {"prompt": "project prompt"}}
+              }
+            }"#,
+        );
+        // SAFETY: serialized behind the binary-wide env lock.
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
+            std::env::set_var("STELLA_TRUST_PROJECT", "1");
+            std::env::remove_var("STELLA_PROJECT_HOOKS");
+        }
+
+        let merged = Settings::load(&workspace).unwrap();
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("STELLA_MANAGED_SETTINGS");
+            std::env::remove_var("STELLA_TRUST_PROJECT");
+        }
+        assert!(
+            !merged.bash_tool_enabled(),
+            "project overrode managed bash denial"
+        );
+        assert!(
+            !merged.web_tools_enabled(),
+            "project overrode managed web denial"
+        );
+        assert!(!merged.authority_policy.bash_allowed);
+        assert!(!merged.authority_policy.web_allowed);
+        assert!(!merged.authority_policy.project_prompts_allowed);
+        assert!(!merged.authority_policy.project_custom_tools_allowed);
+        assert!(
+            merged
+                .agent_engine_config
+                .as_ref()
+                .and_then(|engine| engine.agent(EngineAgentKind::Judge))
+                .and_then(|judge| judge.prompt.as_ref())
+                .is_none(),
+            "managed denial must remove the trusted project's prompt"
+        );
+    }
+
+    #[test]
+    fn managed_authority_settings_round_trip() {
+        let policy = ManagedAuthoritySettings {
+            project_prompts: Some(Toggle::Off),
+            project_custom_tools: Some(Toggle::Off),
+            bash: Some(Toggle::Off),
+            web: Some(Toggle::On),
+            media_requires_host_approval: Some(Toggle::On),
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let round_trip: ManagedAuthoritySettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip, policy);
     }
 }
