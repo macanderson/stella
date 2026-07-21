@@ -849,7 +849,8 @@ impl EnterpriseTelemetryRuntime {
             .map_err(|error| error.to_string())
     }
 
-    pub(crate) async fn flush(&self, now_ms: i64) -> Result<usize, String> {
+    pub(crate) async fn flush(&self) -> Result<usize, String> {
+        let (_, now_ms) = unix_time()?;
         self.flush_with_retry_clock(now_ms, || unix_time().map(|(_, millis)| millis))
             .await
     }
@@ -869,12 +870,16 @@ impl EnterpriseTelemetryRuntime {
         static CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
         let sequence = CLAIM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let owner = format!("pid-{}-{now_ms}-{sequence}", std::process::id());
+        let observed_clock = self
+            .spool
+            .observe_claim_clock(&self.enrollment.sink_fingerprint, now_ms)
+            .map_err(|error| error.to_string())?;
         let claimed = self
             .spool
             .claim_batch(
                 &self.enrollment.sink_fingerprint,
                 &owner,
-                now_ms,
+                observed_clock,
                 LEASE_MS,
                 MAX_BATCH_EVENTS,
                 MAX_REQUEST_BYTES,
@@ -988,7 +993,7 @@ pub(crate) fn run_command(command: TelemetryCmd) -> Result<(), String> {
     let workspace =
         std::env::current_dir().map_err(|error| format!("cannot determine workspace: {error}"))?;
     let settings = crate::settings::Settings::load(&workspace)?;
-    let (now_s, now_ms) = unix_time()?;
+    let (now_s, _) = unix_time()?;
     match command {
         TelemetryCmd::Status => {
             let Some((enrollment, spool)) =
@@ -1030,7 +1035,7 @@ pub(crate) fn run_command(command: TelemetryCmd) -> Result<(), String> {
                 .enable_all()
                 .build()
                 .map_err(|error| format!("cannot start telemetry runtime: {error}"))?;
-            let sent = runtime_handle.block_on(runtime.flush(now_ms))?;
+            let sent = runtime_handle.block_on(runtime.flush())?;
             let status = runtime.status()?;
             println!(
                 "enterprise telemetry: flushed={sent}; pending={}; dropped={}",
@@ -1151,7 +1156,7 @@ pub(crate) fn start_best_effort_flush() {
     }
     activate_process_free_authority(&enrollment);
     std::thread::spawn(move || {
-        let Ok((now_s, now_ms)) = unix_time() else {
+        let Ok((now_s, _)) = unix_time() else {
             return;
         };
         let Ok(Some(runtime)) =
@@ -1165,6 +1170,6 @@ pub(crate) fn start_best_effort_flush() {
         else {
             return;
         };
-        let _ = handle.block_on(runtime.flush(now_ms));
+        let _ = handle.block_on(runtime.flush());
     });
 }

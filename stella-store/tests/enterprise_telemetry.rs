@@ -1,10 +1,45 @@
 use stella_protocol::AgentEvent;
 use stella_store::enterprise_telemetry::{
-    EnqueueOutcome, EnterpriseTelemetrySpool, ManagedModelDimension, OperationalEventContext,
-    OperationalIdentity, SpoolLimits, StellaOperationalEventV1, load_or_create_installation_uuid,
+    ClaimedOperationalEvent, EnqueueOutcome, EnterpriseTelemetrySpool, ManagedModelDimension,
+    OperationalEventContext, OperationalIdentity, SpoolLimits, StellaOperationalEventV1,
+    load_or_create_installation_uuid,
 };
 use stella_store::usage::ExecutionRollupRow;
-use stella_store::{FileTouchRow, Store, TelemetryRow};
+use stella_store::{FileTouchRow, Store, StoreError, TelemetryRow};
+
+trait ClaimBatchAt {
+    fn claim_batch_at(
+        &self,
+        sink_fingerprint: &str,
+        owner: &str,
+        now_ms: i64,
+        lease_ms: i64,
+        max_events: usize,
+        max_payload_bytes: usize,
+    ) -> Result<Vec<ClaimedOperationalEvent>, StoreError>;
+}
+
+impl ClaimBatchAt for EnterpriseTelemetrySpool {
+    fn claim_batch_at(
+        &self,
+        sink_fingerprint: &str,
+        owner: &str,
+        now_ms: i64,
+        lease_ms: i64,
+        max_events: usize,
+        max_payload_bytes: usize,
+    ) -> Result<Vec<ClaimedOperationalEvent>, StoreError> {
+        let observed_clock = self.observe_claim_clock(sink_fingerprint, now_ms)?;
+        self.claim_batch(
+            sink_fingerprint,
+            owner,
+            observed_clock,
+            lease_ms,
+            max_events,
+            max_payload_bytes,
+        )
+    }
+}
 
 fn rollup(execution_id: i64) -> ExecutionRollupRow {
     ExecutionRollupRow {
@@ -295,7 +330,7 @@ fn spool_is_idempotent_bounded_and_evicts_oldest_with_durable_drop_count() {
     assert_eq!(status.pending_rows, 2);
     assert_eq!(status.dropped_rows, 1);
     let claimed = spool
-        .claim_batch(SINK_A, "worker", 40, 1_000, 10, 64 * 1024)
+        .claim_batch_at(SINK_A, "worker", 40, 1_000, 10, 64 * 1024)
         .unwrap();
     let ids: Vec<_> = claimed.iter().map(|item| item.event.event_id()).collect();
     assert!(
@@ -320,11 +355,11 @@ fn claims_are_transactional_retryable_and_expired_leases_recover() {
     }
 
     let a = spool
-        .claim_batch(SINK_A, "worker-a", 10, 50, 1, 64 * 1024)
+        .claim_batch_at(SINK_A, "worker-a", 10, 50, 1, 64 * 1024)
         .unwrap();
     assert_eq!(a.len(), 1);
     let b = spool
-        .claim_batch(SINK_A, "worker-b", 10, 50, 10, 64 * 1024)
+        .claim_batch_at(SINK_A, "worker-b", 10, 50, 10, 64 * 1024)
         .unwrap();
     assert_eq!(b.len(), 1);
     assert_ne!(a[0].event.event_id(), b[0].event.event_id());
@@ -334,18 +369,18 @@ fn claims_are_transactional_retryable_and_expired_leases_recover() {
     spool.retry(SINK_A, "worker-a", &a, 20).unwrap();
     assert!(
         spool
-            .claim_batch(SINK_A, "worker-c", 20, 50, 10, 64 * 1024)
+            .claim_batch_at(SINK_A, "worker-c", 20, 50, 10, 64 * 1024)
             .unwrap()
             .is_empty(),
         "backoff keeps a failed request retryable but not hot-looping"
     );
     let recovered = spool
-        .claim_batch(SINK_A, "worker-d", 100, 50, 10, 64 * 1024)
+        .claim_batch_at(SINK_A, "worker-d", 100, 50, 10, 64 * 1024)
         .unwrap();
     assert_eq!(recovered.len(), 1, "worker-b lease recovered after expiry");
     spool.ack(SINK_A, "worker-d", &recovered).unwrap();
     let retried = spool
-        .claim_batch(SINK_A, "worker-c", 2_000, 50, 10, 64 * 1024)
+        .claim_batch_at(SINK_A, "worker-c", 2_000, 50, 10, 64 * 1024)
         .unwrap();
     assert_eq!(retried.len(), 1);
     spool.ack(SINK_A, "worker-c", &retried).unwrap();
@@ -360,12 +395,12 @@ fn claim_api_rejects_unbounded_batch_requests() {
 
     assert!(
         spool
-            .claim_batch(SINK_A, "worker", 10, 1_000, 1_001, 64 * 1024)
+            .claim_batch_at(SINK_A, "worker", 10, 1_000, 1_001, 64 * 1024)
             .is_err()
     );
     assert!(
         spool
-            .claim_batch(SINK_A, "worker", 10, 1_000, 10, 16 * 1024 * 1024 + 1)
+            .claim_batch_at(SINK_A, "worker", 10, 1_000, 10, 16 * 1024 * 1024 + 1)
             .is_err()
     );
 }
@@ -387,7 +422,7 @@ fn sink_rotation_strands_old_rows_until_explicit_discard() {
     );
 
     let claimed = spool
-        .claim_batch(SINK_B, "worker", 10, 1_000, 10, 64 * 1024)
+        .claim_batch_at(SINK_B, "worker", 10, 1_000, 10, 64 * 1024)
         .unwrap();
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].event.event_id(), current.event_id());
@@ -440,7 +475,7 @@ fn legacy_unbound_spool_rows_migrate_as_stranded_never_current() {
     assert_eq!(status.stranded_rows, 1);
     assert!(
         spool
-            .claim_batch(SINK_A, "worker", 10, 1_000, 10, 64 * 1024)
+            .claim_batch_at(SINK_A, "worker", 10, 1_000, 10, 64 * 1024)
             .unwrap()
             .is_empty()
     );
@@ -507,7 +542,7 @@ fn clock_rollback_rebases_once_without_clearing_a_live_lease() {
     spool.enqueue(SINK_A, &event, 100_000).unwrap();
     assert_eq!(
         spool
-            .claim_batch(SINK_A, "future-worker", 100_000, 30_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "future-worker", 100_000, 30_000, 1, 64 * 1024)
             .unwrap()
             .len(),
         1
@@ -516,21 +551,21 @@ fn clock_rollback_rebases_once_without_clearing_a_live_lease() {
 
     assert!(
         concurrent
-            .claim_batch(SINK_A, "rolled-back-a", 1_000, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "rolled-back-a", 1_000, 1_000, 1, 64 * 1024)
             .unwrap()
             .is_empty(),
         "rollback repair must preserve the original owner's rebased live lease"
     );
     assert!(
         spool
-            .claim_batch(SINK_A, "rolled-back-b", 1_000, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "rolled-back-b", 1_000, 1_000, 1, 64 * 1024)
             .unwrap()
             .is_empty(),
         "a concurrent caller at the same repaired epoch must not rebase again"
     );
     assert_eq!(
         concurrent
-            .claim_batch(SINK_A, "after-expiry", 31_000, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "after-expiry", 31_000, 1_000, 1, 64 * 1024)
             .unwrap()
             .len(),
         1
@@ -545,14 +580,14 @@ fn stale_claim_generation_cannot_restore_a_pre_rollback_retry_deadline() {
     let event = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(1)).unwrap();
     spool.enqueue(SINK_A, &event, 100_000).unwrap();
     let claimed = spool
-        .claim_batch(SINK_A, "future-worker", 100_000, 30_000, 1, 64 * 1024)
+        .claim_batch_at(SINK_A, "future-worker", 100_000, 30_000, 1, 64 * 1024)
         .unwrap();
     assert_eq!(claimed.len(), 1);
 
     let concurrent = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
     assert!(
         concurrent
-            .claim_batch(SINK_A, "rollback-worker", 1_000, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "rollback-worker", 1_000, 1_000, 1, 64 * 1024)
             .unwrap()
             .is_empty(),
         "clock repair must not steal the original live lease"
@@ -586,10 +621,127 @@ fn stale_claim_generation_cannot_restore_a_pre_rollback_retry_deadline() {
     );
     assert_eq!(
         concurrent
-            .claim_batch(SINK_A, "eligible-worker", deadline, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "eligible-worker", deadline, 1_000, 1, 64 * 1024)
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[test]
+fn delayed_pre_rollback_claim_cannot_overwrite_the_repaired_anchor_or_steal_lease() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enterprise-telemetry.db");
+    let stale = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let event = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(1)).unwrap();
+    stale.enqueue(SINK_A, &event, 100_000).unwrap();
+
+    let stale_high_clock = stale.observe_claim_clock(SINK_A, 100_000).unwrap();
+    let repaired = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let repaired_clock = repaired.observe_claim_clock(SINK_A, 1_000).unwrap();
+    let repaired_claim = repaired
+        .claim_batch(
+            SINK_A,
+            "rollback-worker",
+            repaired_clock,
+            30_000,
+            1,
+            64 * 1024,
+        )
+        .unwrap();
+    assert_eq!(repaired_claim.len(), 1);
+
+    assert!(
+        stale
+            .claim_batch(
+                SINK_A,
+                "delayed-old-worker",
+                stale_high_clock,
+                1_000,
+                1,
+                64 * 1024,
+            )
+            .unwrap()
+            .is_empty(),
+        "a stale clock generation must fence the delayed claim"
+    );
+
+    let inspect = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        inspect
+            .query_row(
+                "SELECT last_seen_ms, clock_generation FROM operational_spool_clock
+                 WHERE sink_fingerprint = ?1",
+                [SINK_A],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap(),
+        (1_000, 1)
+    );
+    assert_eq!(
+        inspect
+            .query_row(
+                "SELECT leased_by, lease_until_ms FROM operational_spool
+                 WHERE sink_fingerprint = ?1",
+                [SINK_A],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap(),
+        ("rollback-worker".to_string(), 31_000)
+    );
+}
+
+#[test]
+fn delayed_forward_clock_claim_cannot_create_an_already_expired_lease() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("enterprise-telemetry.db");
+    let stale = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let event = StellaOperationalEventV1::from_finalized_rollup(&context(), &rollup(1)).unwrap();
+    stale.enqueue(SINK_A, &event, 1_000).unwrap();
+
+    let stale_clock = stale.observe_claim_clock(SINK_A, 1_000).unwrap();
+    let current = EnterpriseTelemetrySpool::open_at(&path, SpoolLimits::default()).unwrap();
+    let current_clock = current.observe_claim_clock(SINK_A, 100_000).unwrap();
+    assert!(
+        stale
+            .claim_batch(
+                SINK_A,
+                "delayed-old-worker",
+                stale_clock,
+                30_000,
+                1,
+                64 * 1024,
+            )
+            .unwrap()
+            .is_empty(),
+        "a later forward observation must fence the old timestamp"
+    );
+
+    assert_eq!(
+        current
+            .claim_batch(
+                SINK_A,
+                "current-worker",
+                current_clock,
+                30_000,
+                1,
+                64 * 1024,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+    let inspect = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        inspect
+            .query_row(
+                "SELECT leased_by, lease_until_ms FROM operational_spool
+                 WHERE sink_fingerprint = ?1",
+                [SINK_A],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap(),
+        ("current-worker".to_string(), 130_000)
     );
 }
 
@@ -605,7 +757,7 @@ fn retry_deadline_never_exceeds_the_inclusive_375_second_horizon() {
     for attempt in 0..10 {
         let owner = format!("worker-{attempt}");
         let claimed = spool
-            .claim_batch(SINK_A, &owner, now, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, &owner, now, 1_000, 1, 64 * 1024)
             .unwrap();
         assert_eq!(claimed.len(), 1);
         spool.retry(SINK_A, &owner, &claimed, now).unwrap();
@@ -644,7 +796,7 @@ fn malformed_spool_row_is_quarantined_before_lease_and_does_not_block_good_rows(
     spool.enqueue(SINK_A, &good, 1).unwrap();
 
     let claimed = spool
-        .claim_batch(SINK_A, "worker", 10, 1_000, 1, 64 * 1024)
+        .claim_batch_at(SINK_A, "worker", 10, 1_000, 1, 64 * 1024)
         .unwrap();
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].event.event_id(), good.event_id());
@@ -680,7 +832,7 @@ fn repeated_corruption_keeps_only_a_bounded_diagnostic_sample() {
         drop(raw);
         assert!(
             spool
-                .claim_batch(SINK_A, "worker", 10, 1_000, 1, 64 * 1024)
+                .claim_batch_at(SINK_A, "worker", 10, 1_000, 1, 64 * 1024)
                 .unwrap()
                 .is_empty()
         );
@@ -716,14 +868,14 @@ fn separate_connections_cannot_claim_the_same_event_concurrently() {
     let a = std::thread::spawn(move || {
         a_barrier.wait();
         first
-            .claim_batch(SINK_A, "a", 10, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "a", 10, 1_000, 1, 64 * 1024)
             .unwrap()
     });
     let b_barrier = barrier.clone();
     let b = std::thread::spawn(move || {
         b_barrier.wait();
         second
-            .claim_batch(SINK_A, "b", 10, 1_000, 1, 64 * 1024)
+            .claim_batch_at(SINK_A, "b", 10, 1_000, 1, 64 * 1024)
             .unwrap()
     });
     barrier.wait();
@@ -1110,4 +1262,78 @@ fn legacy_export_nonce_migration_is_resumable_and_startup_bounded() {
     assert_eq!(rows, LEGACY_ROWS);
     assert_eq!(distinct_nonces, LEGACY_ROWS);
     assert_eq!(empty_nonces, 0);
+}
+
+#[test]
+fn first_post_upgrade_runtime_repairs_pending_nonces_beyond_the_startup_budget() {
+    const LEGACY_ROWS: usize = 1_026;
+
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let store = Store::open(&workspace).unwrap();
+    store.begin_enterprise_enrollment(SINK_A).unwrap();
+    let mut executions = Vec::with_capacity(LEGACY_ROWS);
+    for index in 0..LEGACY_ROWS {
+        let execution = store
+            .begin_execution("run", &format!("legacy-{index}"), "anthropic", "model")
+            .unwrap();
+        store.finish_execution(execution, "completed", 0.0).unwrap();
+        executions.push(execution);
+    }
+    drop(store);
+
+    let path = stella_store::workspace_private_sqlite_path(&workspace, "store.db").unwrap();
+    let mut raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(
+        "DROP TABLE enterprise_export_ledger;
+         CREATE TABLE enterprise_export_ledger (
+             sink_fingerprint TEXT NOT NULL,
+             execution_id INTEGER NOT NULL,
+             status TEXT NOT NULL CHECK(status IN ('pending', 'spooled')),
+             PRIMARY KEY(sink_fingerprint, execution_id)
+         );",
+    )
+    .unwrap();
+    let tx = raw.transaction().unwrap();
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO enterprise_export_ledger
+                 (sink_fingerprint, execution_id, status) VALUES (?1, ?2, ?3)",
+            )
+            .unwrap();
+        for (index, execution_id) in executions.iter().enumerate() {
+            let status = if index < 1_024 { "spooled" } else { "pending" };
+            insert
+                .execute(rusqlite::params![SINK_A, execution_id, status])
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    drop(raw);
+
+    let upgraded = Store::open(&workspace).unwrap();
+    let repaired_by_mark = upgraded
+        .mark_enterprise_export_pending(SINK_A, executions[1_024])
+        .unwrap()
+        .unwrap();
+    assert_eq!(repaired_by_mark.len(), 32);
+    assert!(
+        repaired_by_mark
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    );
+
+    let pending = upgraded
+        .pending_enterprise_export_page(SINK_A, None, 256)
+        .unwrap();
+    assert_eq!(pending.len(), 2);
+    assert!(pending.iter().all(|row| {
+        row.export_nonce.len() == 32
+            && row
+                .export_nonce
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+    }));
 }

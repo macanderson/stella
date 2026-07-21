@@ -140,6 +140,17 @@ impl crate::Store {
             )
             .optional()?
         {
+            if existing.is_empty() {
+                let nonce = random_export_nonce();
+                tx.execute(
+                    "UPDATE enterprise_export_ledger SET export_nonce = ?1
+                     WHERE sink_fingerprint = ?2 AND execution_id = ?3
+                       AND export_nonce = ''",
+                    params![nonce, sink_fingerprint, execution_id],
+                )?;
+                tx.commit()?;
+                return Ok(Some(nonce));
+            }
             tx.commit()?;
             return Ok(Some(existing));
         }
@@ -175,20 +186,35 @@ impl crate::Store {
         let after = after_execution_id.unwrap_or(0);
         let sql_limit = i64::try_from(limit)
             .map_err(|_| StoreError("invalid enterprise export page limit".into()))?;
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT execution_id, export_nonce FROM enterprise_export_ledger
-             WHERE sink_fingerprint = ?1 AND status = 'pending' AND execution_id > ?2
-             ORDER BY execution_id LIMIT ?3",
-        )?;
-        let rows = stmt.query_map(params![sink_fingerprint, after, sql_limit], |row| {
-            Ok(PendingEnterpriseExport {
-                execution_id: row.get(0)?,
-                export_nonce: row.get(1)?,
-            })
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(Into::into)
+        let mut conn = self.lock();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut pending = {
+            let mut stmt = tx.prepare(
+                "SELECT execution_id, export_nonce FROM enterprise_export_ledger
+                 WHERE sink_fingerprint = ?1 AND status = 'pending' AND execution_id > ?2
+                 ORDER BY execution_id LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![sink_fingerprint, after, sql_limit], |row| {
+                Ok(PendingEnterpriseExport {
+                    execution_id: row.get(0)?,
+                    export_nonce: row.get(1)?,
+                })
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for row in &mut pending {
+            if row.export_nonce.is_empty() {
+                row.export_nonce = random_export_nonce();
+                tx.execute(
+                    "UPDATE enterprise_export_ledger SET export_nonce = ?1
+                     WHERE sink_fingerprint = ?2 AND execution_id = ?3
+                       AND export_nonce = ''",
+                    params![row.export_nonce, sink_fingerprint, row.execution_id],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(pending)
     }
 
     pub fn mark_enterprise_export_spooled(
@@ -810,6 +836,14 @@ pub struct ClaimedOperationalEvent {
     clock_generation: i64,
 }
 
+/// A sink-scoped clock observation that fences a later claim across rollback repair.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ObservedClaimClock {
+    sink_fingerprint: String,
+    now_ms: i64,
+    clock_generation: i64,
+}
+
 /// Bounded at-least-once SQLite spool stored outside model-writable workspaces.
 pub struct EnterpriseTelemetrySpool {
     conn: Mutex<Connection>,
@@ -934,36 +968,18 @@ impl EnterpriseTelemetrySpool {
         })
     }
 
-    /// Claim a bounded, disjoint batch. Expired leases are eligible again.
-    pub fn claim_batch(
+    /// Observe and, if needed, repair a sink clock before attempting a claim.
+    pub fn observe_claim_clock(
         &self,
         sink_fingerprint: &str,
-        owner: &str,
         now_ms: i64,
-        lease_ms: i64,
-        max_events: usize,
-        max_payload_bytes: usize,
-    ) -> Result<Vec<ClaimedOperationalEvent>> {
+    ) -> Result<ObservedClaimClock> {
         validate_sink_fingerprint(sink_fingerprint)?;
-        if owner.is_empty()
-            || owner.len() > IDENTIFIER_MAX_BYTES
-            || now_ms < 0
-            || lease_ms <= 0
-            || lease_ms > MAX_LEASE_MS
-            || max_events == 0
-            || max_events > MAX_CLAIM_EVENTS
-            || max_payload_bytes == 0
-            || max_payload_bytes > MAX_CLAIM_PAYLOAD_BYTES
-        {
+        if now_ms < 0 {
             return Err(StoreError(
-                "invalid enterprise telemetry claim limits".into(),
+                "enterprise telemetry claim time must be non-negative".into(),
             ));
         }
-        let scan_limit = max_events
-            .saturating_add(MAX_CORRUPT_SCAN_ROWS)
-            .min(MAX_CLAIM_EVENTS);
-        let sql_limit = i64::try_from(scan_limit)
-            .map_err(|_| StoreError("invalid enterprise telemetry claim limits".into()))?;
         let mut conn = self.lock();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let clock: Option<(i64, i64)> = tx
@@ -1007,6 +1023,60 @@ impl EnterpriseTelemetrySpool {
                  clock_generation = excluded.clock_generation",
             params![sink_fingerprint, now_ms, clock_generation],
         )?;
+        tx.commit()?;
+        Ok(ObservedClaimClock {
+            sink_fingerprint: sink_fingerprint.to_string(),
+            now_ms,
+            clock_generation,
+        })
+    }
+
+    /// Claim a bounded, disjoint batch at an observed clock generation.
+    pub fn claim_batch(
+        &self,
+        sink_fingerprint: &str,
+        owner: &str,
+        observed_clock: ObservedClaimClock,
+        lease_ms: i64,
+        max_events: usize,
+        max_payload_bytes: usize,
+    ) -> Result<Vec<ClaimedOperationalEvent>> {
+        validate_sink_fingerprint(sink_fingerprint)?;
+        if owner.is_empty()
+            || owner.len() > IDENTIFIER_MAX_BYTES
+            || observed_clock.sink_fingerprint != sink_fingerprint
+            || lease_ms <= 0
+            || lease_ms > MAX_LEASE_MS
+            || max_events == 0
+            || max_events > MAX_CLAIM_EVENTS
+            || max_payload_bytes == 0
+            || max_payload_bytes > MAX_CLAIM_PAYLOAD_BYTES
+        {
+            return Err(StoreError(
+                "invalid enterprise telemetry claim limits".into(),
+            ));
+        }
+        let scan_limit = max_events
+            .saturating_add(MAX_CORRUPT_SCAN_ROWS)
+            .min(MAX_CLAIM_EVENTS);
+        let sql_limit = i64::try_from(scan_limit)
+            .map_err(|_| StoreError("invalid enterprise telemetry claim limits".into()))?;
+        let mut conn = self.lock();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current_clock: Option<(i64, i64)> = tx
+            .query_row(
+                "SELECT last_seen_ms, clock_generation FROM operational_spool_clock
+                 WHERE sink_fingerprint = ?1",
+                params![sink_fingerprint],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if current_clock != Some((observed_clock.now_ms, observed_clock.clock_generation)) {
+            tx.commit()?;
+            return Ok(Vec::new());
+        }
+        let now_ms = observed_clock.now_ms;
+        let clock_generation = observed_clock.clock_generation;
         let selected = {
             let mut stmt = tx.prepare(
                 "SELECT insertion_seq, event_id, payload, payload_bytes, attempts

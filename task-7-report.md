@@ -74,7 +74,9 @@ part of the design contract.
   boundary while retaining the newest 2,048 records.
 - A legacy ledger migration adds its nonce column in place and persists a
   versioned rowid cursor. Startup commits four independent 256-row batches, so
-  50,000-row histories resume without an unbounded vector or transaction.
+  50,000-row histories resume without an unbounded vector or transaction. A
+  mark or bounded pending-page read transactionally repairs any empty legacy
+  nonce beyond that startup budget before runtime event construction.
 
 ## TDD evidence
 
@@ -111,13 +113,17 @@ redirect helper. Focused regressions then established and closed these cases:
   action and `search_skills`/`install_skill` is absent; and
 - the export-ledger witness is GREEN: pre-enrollment executions are excluded,
   post-enrollment pending intent survives reopen, a 10,050-row outage is paged,
-  two startup runs advance by exactly 256 rows each, and completed history
+  two startup runs advance by exactly 256 rows each, 1,026 pending legacy rows
+  remain consumable on the first post-upgrade runtime, and completed history
   compacts without minting a replacement nonce;
 - the spool hardening witnesses are GREEN: capacity never evicts another sink,
   rollback repair preserves a concurrent live lease and rebases once, stale
-  claim generations cannot restore an old-epoch retry deadline, delivery reads
-  a fresh retry clock, retry horizon is at most 375 seconds, and malformed rows
-  quarantine before lease while later valid rows continue;
+  claim generations cannot restore an old-epoch retry deadline or let a delayed
+  pre-rollback high-clock claimant overwrite the repaired anchor and steal its
+  lease, and the full observed clock anchor also fences a delayed pre-forward
+  claimant from creating an already-expired lease. Delivery reads a fresh retry
+  clock, retry horizon is at most 375 seconds, and malformed rows quarantine
+  before lease while later valid rows continue;
 - the 50,257-row legacy-ledger witness is GREEN: each startup migrates exactly
   four committed 256-row batches, progress resumes from durable version/cursor
   state, and completion preserves every row with a distinct nonce;
@@ -147,7 +153,7 @@ redirect helper. Focused regressions then established and closed these cases:
 
 ## Verification
 
-- `cargo test -p stella-store`: 87 unit and 26 enterprise telemetry integration
+- `cargo test -p stella-store`: 87 unit and 29 enterprise telemetry integration
   tests passed.
 - `cargo test -p stella-tools`: 335 unit tests passed; 1 existing sandbox test
   remained ignored; 4 media replay tests passed. The 6 tracker and 8 web
@@ -168,4 +174,4 @@ redirect helper. Focused regressions then established and closed these cases:
 
 Task 8 must replace absolute public no-phone-home wording with the exact
 contract: no community/default enterprise telemetry egress, plus an explicit,
-signed, managed-only enterprise operational exception. No push was performed.
+signed, managed-only enterprise operational exception.
