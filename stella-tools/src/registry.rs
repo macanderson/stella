@@ -17,6 +17,8 @@ use crate::file_touch::{
     normalize_workspace_path,
 };
 
+mod process_tools;
+
 /// One tool the agent can call. Input arrives as the model-produced JSON;
 /// output is always a typed `ToolOutput` (never a bare string).
 #[async_trait]
@@ -145,14 +147,20 @@ pub struct RegistryOptions {
     pub media_operation_ids: Option<Arc<dyn crate::media::MediaOperationIdSource>>,
     pub media_operation_journal: Option<Arc<dyn stella_media::MediaOperationJournal>>,
     pub media_requires_host_approval: bool,
+    pub media_host_data_isolation: Option<crate::media::HostDataIsolation>,
 }
 
 impl ToolRegistry {
     /// Construct with auto-detected optional backends.
     pub fn new(root: PathBuf, options: RegistryOptions) -> Self {
+        let issue_backend = if crate::media::process_free(options.media_host_data_isolation) {
+            None
+        } else {
+            crate::issues::detect_issue_backend()
+        };
         Self::with_backends_and_options(
             root,
-            crate::issues::detect_issue_backend(),
+            issue_backend,
             crate::media::detect_media_backend(),
             options,
         )
@@ -162,9 +170,14 @@ impl ToolRegistry {
     /// routed through the blocking pool (#64) — the constructor every async
     /// session driver uses.
     pub async fn new_detected(root: PathBuf, options: RegistryOptions) -> Self {
+        let issue_backend = if crate::media::process_free(options.media_host_data_isolation) {
+            None
+        } else {
+            crate::issues::detect_issue_backend_async().await
+        };
         Self::with_backends_and_options(
             root,
-            crate::issues::detect_issue_backend_async().await,
+            issue_backend,
             crate::media::detect_media_backend(),
             options,
         )
@@ -203,19 +216,19 @@ impl ToolRegistry {
         media_backend: Option<crate::media::MediaBackend>,
         options: RegistryOptions,
     ) -> Self {
+        let process_free = crate::media::process_free(options.media_host_data_isolation);
         let media_host_context = options
             .media_spend_gate
             .clone()
             .zip(options.media_operation_ids.clone())
             .zip(options.media_operation_journal.clone())
-            .map(|((gate, ids), journal)| (gate, ids, journal))
-            .filter(|_| options.media_requires_host_approval);
+            .zip(options.media_host_data_isolation)
+            .filter(|_| options.media_requires_host_approval && process_free)
+            .map(|(((gate, ids), journal), _)| (gate, ids, journal));
         let citations: crate::memory::CitationLedger = Arc::default();
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
-        let processes: crate::process::ProcessTableHandle = Arc::default();
-        let repo_backend: Arc<dyn crate::repo::RepoBackend> = Arc::new(crate::repo::GitCli);
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
         let mut entries: Vec<Arc<dyn Tool>> = vec![
             Arc::new(crate::read::ReadFile::default()),
@@ -225,54 +238,32 @@ impl ToolRegistry {
             // Search results carry a code-map footer; a symbol-shaped grep
             // pattern additionally carries the graph_query pointer, decided
             // per-call from the pattern (crate::code_map::is_symbol_shaped).
-            Arc::new(crate::grep::Grep::with_code_map()),
-            Arc::new(crate::glob::Glob::with_code_map()),
-            Arc::new(crate::gather::GatherContext),
-            Arc::new(crate::exploration::Explorations),
-            Arc::new(crate::exploration::SaveExploration),
             Arc::new(crate::memory::SaveMemory),
             Arc::new(crate::memory::CiteMemory(citations.clone())),
-            Arc::new(crate::verify::VerifyDone),
-            Arc::new(crate::project::BuildProject),
-            Arc::new(crate::project::RunTests),
-            Arc::new(crate::project::RunLint),
-            Arc::new(crate::project::FormatCode),
             Arc::new(crate::scripts::ListScripts),
-            Arc::new(crate::scripts::RunScript),
-            // The process group shares one table; it lives exactly as long
-            // as the registry and its Drop reaps anything still running.
-            Arc::new(crate::process::StartProcess(processes.clone())),
-            Arc::new(crate::process::ReadOutput(processes.clone())),
-            Arc::new(crate::process::SendStdin(processes.clone())),
-            Arc::new(crate::process::StopProcess(processes)),
-            // Vendor-neutral repository tools over the RepoBackend port.
-            Arc::new(crate::repo::RepoStatusTool(repo_backend.clone())),
-            Arc::new(crate::repo::RepoCommit(repo_backend.clone())),
-            Arc::new(crate::repo::RepoPush(repo_backend.clone())),
-            Arc::new(crate::repo::RepoPull(repo_backend.clone())),
-            Arc::new(crate::repo::RepoRollback(repo_backend)),
-            Arc::new(crate::ci::CiStatus),
-            Arc::new(crate::screenshot::Screenshot),
             Arc::new(crate::tasks::TaskCreate(task_board.clone())),
             Arc::new(crate::tasks::TaskList(task_board.clone())),
             Arc::new(crate::tasks::TaskStart(task_board.clone())),
             Arc::new(crate::tasks::TaskComplete(task_board.clone())),
             Arc::new(crate::tasks::TaskCancel(task_board.clone())),
-            Arc::new(crate::tasks::TaskAssign(
-                task_board.clone(),
-                spawn_queue.clone(),
-            )),
             // SVG generation is client-side (the model authors the SVG, the
             // pipeline validates/sanitizes) — no provider key needed, so
             // unlike image/video it is always registered.
             Arc::new(crate::media::GenerateSvg),
         ];
-        // `bash` is OPT-IN, never ambient: registered only when the host
-        // enabled it (settings `tools.bash: "on"`). Absent, the model never
-        // sees the schema and a call is the standard unknown-tool error —
-        // policy enforced at the tool boundary, not by prompt discipline.
-        if options.bash {
-            entries.push(Arc::new(crate::bash::Bash));
+        // `grep`, `glob`, and exploration staleness checks also launch fixed
+        // child processes, so the isolation mode keeps this omission literal.
+        if !process_free {
+            entries.push(Arc::new(crate::gather::GatherContext));
+            entries.push(Arc::new(crate::grep::Grep::with_code_map()));
+            entries.push(Arc::new(crate::glob::Glob::with_code_map()));
+            entries.push(Arc::new(crate::exploration::Explorations));
+            entries.push(Arc::new(crate::exploration::SaveExploration));
+            entries.extend(process_tools::builtins(
+                options.bash,
+                task_board.clone(),
+                spawn_queue.clone(),
+            ));
         }
         // The web family is OPT-IN like bash (`tools.web: "on"`): a fetched
         // page is untrusted input AND an uncontrolled egress channel, so
@@ -327,7 +318,7 @@ impl ToolRegistry {
                 });
             }
         }
-        if let Some(backend) = issue_backend {
+        if let Some(backend) = issue_backend.filter(|_| !process_free) {
             let backend = Arc::new(backend);
             entries.push(Arc::new(crate::issues::CreateIssue(backend.clone())));
             entries.push(Arc::new(crate::issues::UpdateIssue(backend.clone())));
@@ -342,7 +333,11 @@ impl ToolRegistry {
             let name = tool.schema().name;
             tools.insert(name, tool);
         }
-        let exploration_coverage = std::sync::Mutex::new(ExplorationCoverage::rebuild(&root));
+        let exploration_coverage = std::sync::Mutex::new(if process_free {
+            ExplorationCoverage::default()
+        } else {
+            ExplorationCoverage::rebuild(&root)
+        });
         Self {
             tools,
             late_tools: std::sync::RwLock::new(HashMap::new()),
@@ -1530,6 +1525,11 @@ mod tests {
         // And the default options value IS the off posture.
         assert!(!RegistryOptions::default().bash);
         assert!(!RegistryOptions::default().web);
+        assert!(
+            RegistryOptions::default()
+                .media_host_data_isolation
+                .is_none()
+        );
     }
 
     /// Witness: the explicit opt-in registers `bash` — schema advertised

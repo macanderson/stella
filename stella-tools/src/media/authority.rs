@@ -3,6 +3,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use stella_media::{ArtifactStore, JobStore, MediaJob, MediaKind, MediaSpendRequest};
 use stella_protocol::tool::ToolOutput;
 
+/// Host attestation that paid-media tools run in a process-free executor.
+///
+/// Selecting this mode makes [`crate::ToolRegistry`] omit every built-in
+/// tool that launches a child process, delegates to another agent, or reaches
+/// a process-backed issue adapter. The host must preserve that boundary when
+/// composing external MCP/custom tools around the registry; the marker is not
+/// a filesystem-path sandbox and must never be inferred from path checks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostDataIsolation {
+    ProcessFree,
+}
+
+pub(crate) fn process_free(value: Option<HostDataIsolation>) -> bool {
+    value == Some(HostDataIsolation::ProcessFree)
+}
+
 /// Host-owned invocation identity. It never comes from model arguments and
 /// remains stable when the host retries one call.
 #[derive(Clone, Debug, PartialEq, Eq)]

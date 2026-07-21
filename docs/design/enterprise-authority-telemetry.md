@@ -54,6 +54,22 @@ an already granted capability. It may not:
   privileged instructions;
 - configure or redirect enterprise telemetry.
 
+### Paid-media host-data isolation
+
+An approving `MediaSpendGate` is necessary but not sufficient. The registry
+constructs approving image/video tools only when the host also supplies a
+retry-stable operation ID source, the host-owned operation journal, the
+managed approval ceiling, and `HostDataIsolation::ProcessFree`. That isolation
+mode removes every built-in process-launching, process-control, delegation,
+and process-backed issue tool from the same registry, including fixed-command
+search and repository helpers.
+
+Hosts must not add arbitrary-process MCP or custom tools around that registry.
+The shipping local CLI supplies neither an approving spend gate nor the
+process-free attestation, so paid generation remains fail-closed. Keeping the
+journal outside the workspace and validating paths are secondary defenses;
+they are not treated as process confinement.
+
 ## Verification model
 
 Witness preparation uses the existing candidate-workspace abstraction. When
@@ -108,4 +124,3 @@ an explicit managed fail-closed rule.
 - GitHub CI passes on the PR head.
 - A whole-branch security and correctness review has no Critical or Important
   findings.
-

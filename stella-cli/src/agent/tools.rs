@@ -480,6 +480,8 @@ mod tests {
             assert!(options.media_operation_journal.is_some());
             options.media_spend_gate = Some(gate.clone());
             options.media_operation_ids = Some(Arc::new(FixedOperationId("host-managed-test")));
+            options.media_host_data_isolation =
+                Some(stella_tools::media::HostDataIsolation::ProcessFree);
             let registry = stella_tools::ToolRegistry::with_backends_and_options(
                 workspace,
                 None,

@@ -10,9 +10,8 @@ use stella_media::{
     MediaProvider, MediaSpendGate, MediaSpendRequest, SqliteMediaOperationJournal, VideoRequest,
 };
 use stella_tools::media::{
-    GenerateImage, HostMediaOperation, MediaBackend, MediaOperationIdSource,
+    HostDataIsolation, HostMediaOperation, MediaBackend, MediaOperationIdSource,
 };
-use stella_tools::registry::Tool;
 use stella_tools::{RegistryOptions, ToolRegistry};
 
 struct SameHostOperation {
@@ -94,19 +93,29 @@ async fn concurrent_same_id_claims_authorize_and_submit_once() {
     let gate = Arc::new(CountingGate(AtomicUsize::new(0)));
     let provider = Arc::new(SlowImageProvider(AtomicUsize::new(0)));
     let operation_journal = journal(&dir.path().join("host-data/media-operations.db"));
-    let tool = GenerateImage::with_host_context(
-        provider.clone(),
-        gate.clone(),
-        Arc::new(SameHostOperation {
-            expires_at: unix_now() + 3600,
+    let registry = ToolRegistry::with_backends_and_options(
+        dir.path().to_path_buf(),
+        None,
+        Some(MediaBackend {
+            image: provider.clone(),
+            video: None,
         }),
-        operation_journal,
+        RegistryOptions {
+            media_requires_host_approval: true,
+            media_spend_gate: Some(gate.clone()),
+            media_operation_ids: Some(Arc::new(SameHostOperation {
+                expires_at: unix_now() + 3600,
+            })),
+            media_operation_journal: Some(operation_journal),
+            media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
+            ..Default::default()
+        },
     );
     let input = serde_json::json!({"prompt": "same"});
 
     let (first, second) = tokio::join!(
-        tool.execute(&input, dir.path()),
-        tool.execute(&input, dir.path())
+        registry.execute("generate_image", &input),
+        registry.execute("generate_image", &input)
     );
 
     assert_eq!(gate.0.load(Ordering::SeqCst), 1);
@@ -132,6 +141,7 @@ async fn different_roots_with_one_host_journal_submit_once() {
             expires_at: unix_now() + 3600,
         })),
         media_operation_journal: Some(operation_journal),
+        media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
         ..Default::default()
     };
     let backend = || MediaBackend {
@@ -209,6 +219,74 @@ async fn workspace_tools_cannot_modify_or_delete_host_journal() {
         operation_journal
             .claim(
                 "host-owned-key",
+                MediaKind::Image,
+                "concurrent-test",
+                expires_at,
+            )
+            .unwrap(),
+        MediaOperationClaim::Existing(stella_media::MediaOperationState::Pending)
+    );
+}
+
+#[tokio::test]
+async fn process_free_registry_cannot_spawn_a_journal_deletion() {
+    let workspace = tempfile::tempdir().unwrap();
+    let host_data = tempfile::tempdir().unwrap();
+    let journal_path = host_data.path().join("media-operations.db");
+    let operation_journal = journal(&journal_path);
+    let expires_at = unix_now() + 3600;
+    assert_eq!(
+        operation_journal
+            .claim(
+                "host-process-adversary",
+                MediaKind::Image,
+                "concurrent-test",
+                expires_at,
+            )
+            .unwrap(),
+        MediaOperationClaim::New
+    );
+    let registry = ToolRegistry::with_backends_and_options(
+        workspace.path().to_path_buf(),
+        None,
+        Some(MediaBackend {
+            image: Arc::new(SlowImageProvider(AtomicUsize::new(0))),
+            video: None,
+        }),
+        RegistryOptions {
+            media_requires_host_approval: true,
+            media_spend_gate: Some(Arc::new(CountingGate(AtomicUsize::new(0)))),
+            media_operation_ids: Some(Arc::new(SameHostOperation { expires_at })),
+            media_operation_journal: Some(operation_journal.clone()),
+            media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
+            ..Default::default()
+        },
+    );
+    assert!(
+        registry
+            .schemas()
+            .iter()
+            .any(|schema| schema.name == "generate_image"),
+        "test requires an approving paid-media registry"
+    );
+    let attack = registry
+        .execute(
+            "start_process",
+            &serde_json::json!({
+                "argv": ["sh", "-c", format!("rm -f -- {}", journal_path.display())]
+            }),
+        )
+        .await;
+
+    assert!(
+        attack.is_error(),
+        "process tool unexpectedly ran: {attack:?}"
+    );
+    assert!(journal_path.exists(), "host journal was deleted");
+    assert_eq!(
+        operation_journal
+            .claim(
+                "host-process-adversary",
                 MediaKind::Image,
                 "concurrent-test",
                 expires_at,

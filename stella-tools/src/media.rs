@@ -13,10 +13,13 @@
 //!
 //! Image and video submissions cross a host-owned spend gate before touching
 //! the provider. Tool arguments cannot approve spend; callers without an
-//! injected host gate deny by default. A submitted video handle is persisted
-//! through the `JobStore` so a dropped session never orphans a paid job;
-//! `poll_video` reconciles it live against the provider (L-V3) and persists
-//! the finished artifact under the identity assigned at submit.
+//! injected host gate deny by default. The registry constructs an approving
+//! tool only in explicit [`HostDataIsolation::ProcessFree`] mode, which omits
+//! process-launching/delegating built-ins from that executor. A submitted
+//! video handle is persisted through the `JobStore` so a dropped session never
+//! orphans a paid job; `poll_video` reconciles it live against the provider
+//! (L-V3) and persists the finished artifact under the identity assigned at
+//! submit.
 
 use std::sync::Arc;
 
@@ -34,13 +37,14 @@ use crate::registry::Tool;
 mod authority;
 mod backend;
 mod poll_video;
+pub(crate) use authority::process_free;
 #[cfg(test)]
 use authority::unix_now;
 use authority::{
     DeniedOperationIds, open_jobs, open_store, operation_key, reconciliation_required,
     spend_denied, video_submitted,
 };
-pub use authority::{HostMediaOperation, MediaOperationIdSource};
+pub use authority::{HostDataIsolation, HostMediaOperation, MediaOperationIdSource};
 pub use backend::{MediaBackend, detect_media_backend};
 pub use poll_video::PollVideo;
 
@@ -68,7 +72,7 @@ impl GenerateImage {
     }
 
     /// Construct with host-owned approval and retry-stable invocation identity.
-    pub fn with_host_context(
+    pub(crate) fn with_host_context(
         provider: Arc<dyn MediaProvider>,
         spend_gate: Arc<dyn MediaSpendGate>,
         operation_ids: Arc<dyn MediaOperationIdSource>,
@@ -251,7 +255,7 @@ impl GenerateVideo {
     }
 
     /// Construct with host-owned approval and retry-stable invocation identity.
-    pub fn with_host_context(
+    pub(crate) fn with_host_context(
         provider: Arc<dyn MediaProvider>,
         spend_gate: Arc<dyn MediaSpendGate>,
         operation_ids: Arc<dyn MediaOperationIdSource>,
@@ -774,7 +778,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approving_host_gate_allows_exactly_one_provider_submission() {
+    async fn media_approval_requires_a_process_free_registry() {
         let provider = Arc::new(CountingImages {
             submits: AtomicUsize::new(0),
             manifest_blocker: None,
@@ -845,9 +849,9 @@ mod tests {
         assert_eq!(gate.calls.load(Ordering::SeqCst), 0);
         assert_eq!(provider.submits.load(Ordering::SeqCst), 0);
 
-        let approved_root = tempfile::tempdir().expect("tempdir");
-        let approved = crate::registry::ToolRegistry::with_backends_and_options(
-            approved_root.path().to_path_buf(),
+        let unconfined_root = tempfile::tempdir().expect("tempdir");
+        let unconfined = crate::registry::ToolRegistry::with_backends_and_options(
+            unconfined_root.path().to_path_buf(),
             None,
             Some(backend()),
             crate::registry::RegistryOptions {
@@ -858,11 +862,83 @@ mod tests {
                 ..Default::default()
             },
         );
-        let approved_out = approved
+        let unconfined_out = unconfined
             .execute("generate_image", &serde_json::json!({"prompt": "a star"}))
             .await;
 
-        assert!(!approved_out.is_error(), "{approved_out:?}");
+        assert!(unconfined_out.is_error(), "{unconfined_out:?}");
+        let unconfined_names: Vec<_> = unconfined
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        for expected in ["build_project", "run_tests", "start_process"] {
+            assert!(
+                unconfined_names.iter().any(|name| name == expected),
+                "ordinary registry lost {expected}: {unconfined_names:?}"
+            );
+        }
+        assert_eq!(gate.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.submits.load(Ordering::SeqCst), 0);
+
+        let isolated_root = tempfile::tempdir().expect("tempdir");
+        let isolated = crate::registry::ToolRegistry::with_backends_and_options(
+            isolated_root.path().to_path_buf(),
+            Some(crate::issues::IssueBackend::GitHub),
+            Some(backend()),
+            crate::registry::RegistryOptions {
+                bash: true,
+                media_requires_host_approval: true,
+                media_spend_gate: Some(gate.clone()),
+                media_operation_ids: Some(Arc::new(FixedOperationIds("host-isolated-image"))),
+                media_operation_journal: Some(operation_journal()),
+                media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
+                ..Default::default()
+            },
+        );
+        let isolated_names: Vec<_> = isolated
+            .schemas()
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+        for forbidden in [
+            "bash",
+            "verify_done",
+            "build_project",
+            "run_tests",
+            "run_lint",
+            "format_code",
+            "start_process",
+            "read_output",
+            "send_stdin",
+            "stop_process",
+            "run_script",
+            "repo_status",
+            "repo_commit",
+            "repo_push",
+            "repo_pull",
+            "repo_rollback",
+            "ci_status",
+            "screenshot",
+            "task_assign",
+            "gather_context",
+            "grep",
+            "glob",
+            "explorations",
+            "save_exploration",
+            "create_issue",
+            "start_work_on_issue",
+        ] {
+            assert!(
+                !isolated_names.iter().any(|name| name == forbidden),
+                "process-free registry exposed {forbidden}: {isolated_names:?}"
+            );
+        }
+        let isolated_out = isolated
+            .execute("generate_image", &serde_json::json!({"prompt": "a star"}))
+            .await;
+
+        assert!(!isolated_out.is_error(), "{isolated_out:?}");
         assert_eq!(gate.calls.load(Ordering::SeqCst), 1);
         assert_eq!(provider.submits.load(Ordering::SeqCst), 1);
     }

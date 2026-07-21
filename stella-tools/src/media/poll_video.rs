@@ -21,7 +21,7 @@ impl PollVideo {
         }
     }
 
-    pub fn with_operation_journal(
+    pub(crate) fn with_operation_journal(
         provider: Arc<dyn MediaProvider>,
         operation_journal: Arc<dyn MediaOperationJournal>,
     ) -> Self {
