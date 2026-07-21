@@ -199,6 +199,29 @@ _CANDIDATE_IDENTITY_FIELDS = (
     "role_model",
     "effort",
     "reasoning",
+    "harbor_concurrency",
+    "per_trial_limit_usd",
+    "task_split",
+    "attempts_per_task",
+    "retry_max_retries",
+)
+_PROMOTION_IDENTITY_FIELDS = (
+    "source_commit",
+    "binary_sha256",
+    "source_tree_sha256",
+    "config_sha256",
+    "adapter_sha256",
+    "analyzer_sha256",
+    "harbor_sha256",
+    "evidence_contract_sha256",
+    "model",
+    "provider_route_policy",
+    "topology",
+    "role_model",
+    "effort",
+    "reasoning",
+    "per_trial_limit_usd",
+    "task_partition_sha256",
 )
 _PREREGISTRATION_FIELDS = {
     "sequence",
@@ -238,6 +261,12 @@ _INTENT_FIELDS = {
     "candidate_id",
     "candidate_sha256",
     "config_sha256",
+    "model",
+    "provider_route_policy",
+    "topology",
+    "role_model",
+    "effort",
+    "reasoning",
     "job_name",
     "task_split",
     "requested_trials",
@@ -261,15 +290,31 @@ _OUTCOME_FIELDS = {
     "config_sha256",
     "job_name",
     "status",
+    "promotion_eligible",
     "attempted_trials",
     "artifact_tree_sha256",
     "provider_usage_before_usd",
     "provider_usage_after_usd",
     "provider_usage_delta_usd",
+    "expected_paid_call_ids",
+    "call_envelopes",
+    "missing_paid_call_ids",
+    "telemetry_input_tokens",
+    "telemetry_output_tokens",
+    "telemetry_cached_input_tokens",
+    "telemetry_normalized_tokens",
     "telemetry_cost_sum_usd",
     "reconciliation_tolerance_usd",
     "completed_at",
     "recorded_at",
+}
+_CALL_ENVELOPE_FIELDS = {
+    "call_id",
+    "terminal_state",
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "cost_usd",
 }
 _ROUTE_POLICY = {
     "provider": "openrouter",
@@ -666,6 +711,16 @@ def _validate_budget_authorizations(
 
     first = validated[0]
     second = validated[1]
+    if (
+        first["sequence"],
+        first["authorization_id"],
+        second["sequence"],
+        second["authorization_id"],
+    ) != (1, "tuning_provider_v1", 2, "tuning_infrastructure_v1"):
+        raise ValueError(
+            "initial budget authorization order must pin provider at sequence 1 "
+            "and infrastructure at sequence 2"
+        )
     common_matches = (
         first["scope"] == second["scope"] == "tuning_and_screen"
         and first["authorization_commit"] == second["authorization_commit"]
@@ -722,8 +777,15 @@ def _candidate_identity(record: dict[str, object]) -> dict[str, object]:
     return {field: record[field] for field in _CANDIDATE_IDENTITY_FIELDS}
 
 
+def _promotion_identity(record: dict[str, object]) -> dict[str, object]:
+    return {field: record[field] for field in _PROMOTION_IDENTITY_FIELDS}
+
+
 def _validate_candidates(
-    records: list[object], *, partition_sha256: str
+    records: list[object],
+    *,
+    partition_sha256: str,
+    authorizations: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     validated: list[dict[str, object]] = []
     ids_by_stage: dict[str, set[str]] = {stage: set() for stage in STAGE_SHAPES}
@@ -738,6 +800,15 @@ def _validate_candidates(
         )
         stage = _require_string(record["stage"], label=f"{label} stage")
         shape = stage_shape(stage)
+        if stage == "confirmatory" and not any(
+            authorization["scope"] == "confirmatory"
+            and authorization["sequence"] < record["sequence"]
+            for authorization in authorizations.values()
+        ):
+            raise ValueError(
+                f"{label} authorization must precede confirmatory record; "
+                "a new explicit confirmatory authorization is required"
+            )
         if candidate_id in ids_by_stage[stage]:
             raise ValueError(f"duplicate candidate {candidate_id!r} in {stage}")
         ids_by_stage[stage].add(candidate_id)
@@ -837,6 +908,7 @@ def _validate_preregistrations(
     *,
     candidates: list[dict[str, object]],
     outcomes: list[dict[str, object]],
+    authorizations: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     validated: list[dict[str, object]] = []
     normal_kinds: set[str] = set()
@@ -913,6 +985,14 @@ def _validate_preregistrations(
             _validate_fields(record, _PREREGISTRATION_FIELDS, label=label)
             _record_sequence(record, label=label)
             stage_shape(kind)
+            if kind == "confirmatory" and not any(
+                authorization["scope"] == "confirmatory"
+                and authorization["sequence"] < record["sequence"]
+                for authorization in authorizations.values()
+            ):
+                raise ValueError(
+                    f"{label} authorization must precede confirmatory preregistration"
+                )
             if kind in normal_kinds:
                 raise ValueError(f"duplicate preregistration for {kind!r}")
             normal_kinds.add(kind)
@@ -1064,6 +1144,21 @@ def _validate_intent_records(
             _require_sha256(record[field], label=f"{label} {field}")
             if record[field] != candidate[field]:
                 raise ValueError(f"{label} changes the frozen candidate {field}")
+        for field in (
+            "model",
+            "provider_route_policy",
+            "topology",
+            "role_model",
+            "effort",
+            "reasoning",
+            "harbor_concurrency",
+            "per_trial_limit_usd",
+            "task_split",
+            "attempts_per_task",
+            "retry_max_retries",
+        ):
+            if record[field] != candidate[field]:
+                raise ValueError(f"{label} {field} differs from its frozen candidate")
         job_name = _require_string(record["job_name"], label=f"{label} job_name")
         if job_name in job_names:
             raise ValueError(f"duplicate intent job name {job_name!r}")
@@ -1116,6 +1211,11 @@ def _validate_intent_records(
         infrastructure_auth = authorizations.get(infrastructure_id)
         if provider_auth is None or infrastructure_auth is None:
             raise ValueError(f"{label} names an unknown budget authorization")
+        if (
+            provider_auth["sequence"] >= record["sequence"]
+            or infrastructure_auth["sequence"] >= record["sequence"]
+        ):
+            raise ValueError(f"{label} authorization must precede its paid intent")
         provider_key_name = _require_string(
             record["provider_key_name"], label=f"{label} provider_key_name"
         )
@@ -1184,6 +1284,13 @@ def _validate_outcome_records(
         status = _require_string(record["status"], label=f"{label} status")
         if status not in {"complete", "ineligible", "incomplete"}:
             raise ValueError(f"{label} has an unapproved status")
+        promotion_eligible = record["promotion_eligible"]
+        if not isinstance(promotion_eligible, bool):
+            raise ValueError(f"{label} promotion_eligible must be a boolean")
+        if promotion_eligible and status != "complete":
+            raise ValueError(
+                f"{label} promotion eligibility requires complete outcome status"
+            )
         attempted = _require_int(
             record["attempted_trials"], label=f"{label} attempted_trials"
         )
@@ -1194,6 +1301,127 @@ def _validate_outcome_records(
         _require_sha256(
             record["artifact_tree_sha256"], label=f"{label} artifact_tree_sha256"
         )
+        expected_raw = _require_array(
+            record["expected_paid_call_ids"],
+            label=f"{label} expected_paid_call_ids",
+        )
+        expected_ids = [
+            _require_string(value, label=f"{label} expected paid-call ID")
+            for value in expected_raw
+        ]
+        if len(expected_ids) != len(set(expected_ids)):
+            raise ValueError(f"{label} has a duplicate paid-call ID in expectations")
+        envelopes_raw = _require_array(
+            record["call_envelopes"], label=f"{label} call_envelopes"
+        )
+        observed_ids: list[str] = []
+        input_total = 0
+        output_total = 0
+        cached_total = 0
+        cost_total = Decimal(0)
+        envelopes_complete = True
+        has_non_successful_call = False
+        for envelope_index, envelope_item in enumerate(envelopes_raw):
+            envelope_label = f"{label} call_envelopes[{envelope_index}]"
+            envelope = _require_object(envelope_item, label=envelope_label)
+            _validate_fields(envelope, _CALL_ENVELOPE_FIELDS, label=envelope_label)
+            call_id = _require_string(
+                envelope["call_id"], label=f"{envelope_label} call_id"
+            )
+            if call_id in observed_ids:
+                raise ValueError(f"{label} has a duplicate paid-call ID {call_id!r}")
+            if call_id not in expected_ids:
+                raise ValueError(f"{label} has an unknown paid-call ID {call_id!r}")
+            observed_ids.append(call_id)
+            terminal_state = _require_string(
+                envelope["terminal_state"],
+                label=f"{envelope_label} terminal_state",
+            )
+            if terminal_state not in {"successful", "failed", "aborted"}:
+                raise ValueError(f"{envelope_label} has an unknown terminal state")
+            has_non_successful_call |= terminal_state != "successful"
+            components: dict[str, int] = {}
+            for field in ("input_tokens", "output_tokens", "cached_input_tokens"):
+                component = envelope[field]
+                if component is None:
+                    envelopes_complete = False
+                    continue
+                components[field] = _require_int(
+                    component, label=f"{envelope_label} {field}"
+                )
+            cost_value = envelope["cost_usd"]
+            if cost_value is None:
+                envelopes_complete = False
+            else:
+                cost_total += _require_decimal(
+                    cost_value, label=f"{envelope_label} cost_usd"
+                )
+            if len(components) == 3:
+                if components["cached_input_tokens"] > components["input_tokens"]:
+                    raise ValueError(
+                        f"{envelope_label} cached input exceeds total input"
+                    )
+                input_total += components["input_tokens"]
+                output_total += components["output_tokens"]
+                cached_total += components["cached_input_tokens"]
+        missing_ids = [
+            call_id for call_id in expected_ids if call_id not in observed_ids
+        ]
+        supplied_missing_raw = _require_array(
+            record["missing_paid_call_ids"],
+            label=f"{label} missing_paid_call_ids",
+        )
+        supplied_missing = [
+            _require_string(value, label=f"{label} missing paid-call ID")
+            for value in supplied_missing_raw
+        ]
+        if supplied_missing != missing_ids:
+            raise ValueError(
+                f"{label} missing paid-call IDs differ from exact evidence"
+            )
+        accounting_complete = envelopes_complete and not missing_ids
+        if status == "complete" and missing_ids:
+            raise ValueError(f"{label} missing paid-call IDs cannot be complete")
+        if status == "complete" and (
+            not accounting_complete or has_non_successful_call
+        ):
+            raise ValueError(
+                f"{label} incomplete paid-call accounting cannot be complete"
+            )
+        aggregate_fields = (
+            "telemetry_input_tokens",
+            "telemetry_output_tokens",
+            "telemetry_cached_input_tokens",
+            "telemetry_normalized_tokens",
+        )
+        if envelopes_complete:
+            expected_aggregates = (
+                input_total,
+                output_total,
+                cached_total,
+                input_total + output_total,
+            )
+            observed_aggregates = tuple(
+                _require_int(record[field], label=f"{label} {field}")
+                for field in aggregate_fields
+            )
+            if observed_aggregates != expected_aggregates:
+                raise ValueError(f"{label} token aggregates differ from call envelopes")
+            telemetry = _require_decimal(
+                record["telemetry_cost_sum_usd"],
+                label=f"{label} telemetry_cost_sum_usd",
+            )
+            if telemetry != cost_total:
+                raise ValueError(f"{label} cost aggregate differs from call envelopes")
+        else:
+            if (
+                any(record[field] is not None for field in aggregate_fields)
+                or record["telemetry_cost_sum_usd"] is not None
+            ):
+                raise ValueError(
+                    f"{label} incomplete accounting aggregates must remain null"
+                )
+            telemetry = None
         before = _require_decimal(
             record["provider_usage_before_usd"],
             label=f"{label} provider_usage_before_usd",
@@ -1206,10 +1434,6 @@ def _validate_outcome_records(
             record["provider_usage_delta_usd"],
             label=f"{label} provider_usage_delta_usd",
         )
-        telemetry = _require_decimal(
-            record["telemetry_cost_sum_usd"],
-            label=f"{label} telemetry_cost_sum_usd",
-        )
         tolerance = _require_decimal(
             record["reconciliation_tolerance_usd"],
             label=f"{label} reconciliation_tolerance_usd",
@@ -1221,7 +1445,9 @@ def _validate_outcome_records(
             raise ValueError(f"{label} provider usage preimage differs from its intent")
         if after - before != delta:
             raise ValueError(f"{label} provider usage delta does not reconcile exactly")
-        if tolerance > Decimal("0.01") or abs(delta - telemetry) > tolerance:
+        if tolerance > Decimal("0.01") or (
+            telemetry is not None and abs(delta - telemetry) > tolerance
+        ):
             raise ValueError(f"{label} telemetry reconciliation exceeds $0.01")
         if delta * 100 > intent["maximum_spend_cents"]:
             raise ValueError(f"{label} provider spend exceeds the intent maximum")
@@ -1247,6 +1473,8 @@ def _validate_promotions(
     previous_stage = {
         "development_round_2": "development_round_1",
         "development_round_3": "development_round_2",
+        "screen": "development_round_3",
+        "confirmatory": "screen",
     }
     for candidate in candidates:
         stage = str(candidate["stage"])
@@ -1260,17 +1488,33 @@ def _validate_promotions(
             and intent["candidate_id"] == candidate["candidate_id"]
             and intent["sequence"] < candidate["sequence"]
         ]
-        eligible = [
-            intent
-            for intent in prior_intents
-            if (outcome := outcome_by_intent.get(str(intent["intent_sha256"])))
-            is not None
-            and outcome["status"] == "complete"
-            and outcome["sequence"] < candidate["sequence"]
-            and intent["candidate_sha256"] == candidate["candidate_sha256"]
-            and intent["config_sha256"] == candidate["config_sha256"]
-        ]
+        eligible: list[dict[str, object]] = []
+        for intent in prior_intents:
+            outcome = outcome_by_intent.get(str(intent["intent_sha256"]))
+            prior_candidates = [
+                prior_candidate
+                for prior_candidate in candidates
+                if prior_candidate["stage"] == prior_stage
+                and prior_candidate["candidate_id"] == candidate["candidate_id"]
+                and prior_candidate["candidate_sha256"] == intent["candidate_sha256"]
+                and prior_candidate["sequence"] < intent["sequence"]
+            ]
+            if (
+                outcome is not None
+                and outcome["status"] == "complete"
+                and outcome["promotion_eligible"] is True
+                and outcome["sequence"] < candidate["sequence"]
+                and len(prior_candidates) == 1
+                and _promotion_identity(prior_candidates[0])
+                == _promotion_identity(candidate)
+            ):
+                eligible.append(intent)
         if len(eligible) != 1:
+            if stage in {"screen", "confirmatory"}:
+                raise ValueError(
+                    f"{stage} requires exactly one promotion-eligible {prior_stage} "
+                    "outcome with the frozen candidate identity"
+                )
             raise ValueError(
                 f"{stage} may promote only one complete candidate from {prior_stage}"
             )
@@ -1442,16 +1686,30 @@ def validate_run_ledger(value: object) -> dict[str, object]:
         field: _require_array(ledger[field], label=f"run ledger {field}")
         for field in _LEDGER_ARRAY_FIELDS
     }
+    for field, records in arrays.items():
+        array_sequences = [
+            _record_sequence(
+                _require_object(record, label=f"run ledger {field}"), label=field
+            )
+            for record in records
+        ]
+        if array_sequences != sorted(array_sequences):
+            raise ValueError(f"run ledger {field} must be strictly sequence-ordered")
     authorizations = _validate_budget_authorizations(arrays["budget_authorizations"])
     candidates = _validate_candidates(
-        arrays["candidates"], partition_sha256=partition_sha
+        arrays["candidates"],
+        partition_sha256=partition_sha,
+        authorizations=authorizations,
     )
     intents = _validate_intent_records(
         arrays["intents"], candidates=candidates, authorizations=authorizations
     )
     outcomes = _validate_outcome_records(arrays["outcomes"], intents=intents)
     preregistrations = _validate_preregistrations(
-        arrays["preregistrations"], candidates=candidates, outcomes=outcomes
+        arrays["preregistrations"],
+        candidates=candidates,
+        outcomes=outcomes,
+        authorizations=authorizations,
     )
     publications = _validate_publications(
         arrays["publications"],

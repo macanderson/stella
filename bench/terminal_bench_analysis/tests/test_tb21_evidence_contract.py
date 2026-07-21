@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -131,6 +132,11 @@ def candidate_record(
         "role_model": "openrouter/z-ai/glm-5.1",
         "effort": "max",
         "reasoning": True,
+        "harbor_concurrency": shape["harbor_concurrency"],
+        "per_trial_limit_usd": "0.30",
+        "task_split": "development" if stage.startswith("development_") else stage,
+        "attempts_per_task": shape["attempts"],
+        "retry_max_retries": 0,
     }
     record: dict[str, object] = {
         "sequence": sequence,
@@ -166,6 +172,34 @@ def _refresh_candidate_record_sha256(record: dict[str, object]) -> None:
             if key not in {"sequence", "record_sha256"}
         }
     )
+
+
+def _refresh_candidate_identity_and_record_sha256(record: dict[str, object]) -> None:
+    identity_fields = (
+        "source_commit",
+        "binary_sha256",
+        "source_tree_sha256",
+        "config_sha256",
+        "adapter_sha256",
+        "analyzer_sha256",
+        "harbor_sha256",
+        "evidence_contract_sha256",
+        "model",
+        "provider_route_policy",
+        "topology",
+        "role_model",
+        "effort",
+        "reasoning",
+        "harbor_concurrency",
+        "per_trial_limit_usd",
+        "task_split",
+        "attempts_per_task",
+        "retry_max_retries",
+    )
+    record["candidate_sha256"] = _sha256(
+        {field: record[field] for field in identity_fields}
+    )
+    _refresh_candidate_record_sha256(record)
 
 
 def preregistration_record(
@@ -252,6 +286,12 @@ def intent_record(
         "candidate_id": candidate_id,
         "candidate_sha256": candidate["candidate_sha256"],
         "config_sha256": candidate["config_sha256"],
+        "model": candidate["model"],
+        "provider_route_policy": candidate["provider_route_policy"],
+        "topology": candidate["topology"],
+        "role_model": candidate["role_model"],
+        "effort": candidate["effort"],
+        "reasoning": candidate["reasoning"],
         "job_name": candidate["job_name"],
         "task_split": candidate["task_split"],
         "requested_trials": requested_trials,
@@ -274,28 +314,94 @@ def outcome_record(
     sequence: int,
     intent_sha256: str = "b" * 64,
     status: str = "complete",
-    attempted_trials: int = 10,
-    job_name: str = "stella-dev-r1-a-development_round_1",
+    attempted_trials: int | None = None,
+    job_name: str | None = None,
+    promotion_eligible: bool | None = None,
+    stage: str = "development_round_1",
+    candidate_id: str = "dev-r1-a",
+    candidate_sha256: str | None = None,
+    config_sha256: str = "4" * 64,
 ) -> dict[str, object]:
-    candidate = candidate_record(sequence=3)
+    candidate = candidate_record(
+        sequence=3,
+        candidate_id=candidate_id,
+        stage=stage,
+        job_name=job_name,
+        candidate_sha256=candidate_sha256,
+        config_sha256=config_sha256,
+    )
+    attempted_trials = (
+        stage_shape(stage)["tasks"] * stage_shape(stage)["attempts"]
+        if attempted_trials is None
+        else attempted_trials
+    )
+    expected_paid_call_ids = [] if attempted_trials == 0 else ["call-1"]
+    call_envelopes = (
+        []
+        if attempted_trials == 0
+        else [
+            {
+                "call_id": "call-1",
+                "terminal_state": "successful",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cached_input_tokens": 0,
+                "cost_usd": "0.00",
+            }
+        ]
+    )
     return {
         "sequence": sequence,
         "intent_sha256": intent_sha256,
-        "candidate_id": "dev-r1-a",
+        "candidate_id": candidate_id,
         "candidate_sha256": candidate["candidate_sha256"],
         "config_sha256": candidate["config_sha256"],
-        "job_name": job_name,
+        "job_name": candidate["job_name"],
         "status": status,
+        "promotion_eligible": (
+            status == "complete" if promotion_eligible is None else promotion_eligible
+        ),
         "attempted_trials": attempted_trials,
         "artifact_tree_sha256": "9" * 64,
         "provider_usage_before_usd": "0.00",
         "provider_usage_after_usd": "0.00",
         "provider_usage_delta_usd": "0.00",
+        "expected_paid_call_ids": expected_paid_call_ids,
+        "call_envelopes": call_envelopes,
+        "missing_paid_call_ids": [],
+        "telemetry_input_tokens": 0,
+        "telemetry_output_tokens": 0,
+        "telemetry_cached_input_tokens": 0,
+        "telemetry_normalized_tokens": 0,
         "telemetry_cost_sum_usd": "0.00",
         "reconciliation_tolerance_usd": "0.01",
         "completed_at": "2026-07-21T12:06:00-07:00",
         "recorded_at": "2026-07-21T12:07:00-07:00",
     }
+
+
+def _set_call_evidence(
+    outcome: dict[str, object], envelopes: list[dict[str, object]]
+) -> None:
+    outcome["expected_paid_call_ids"] = [envelope["call_id"] for envelope in envelopes]
+    outcome["call_envelopes"] = envelopes
+    outcome["missing_paid_call_ids"] = []
+    outcome["telemetry_input_tokens"] = sum(
+        int(envelope["input_tokens"]) for envelope in envelopes
+    )
+    outcome["telemetry_output_tokens"] = sum(
+        int(envelope["output_tokens"]) for envelope in envelopes
+    )
+    outcome["telemetry_cached_input_tokens"] = sum(
+        int(envelope["cached_input_tokens"]) for envelope in envelopes
+    )
+    outcome["telemetry_normalized_tokens"] = (
+        outcome["telemetry_input_tokens"] + outcome["telemetry_output_tokens"]
+    )
+    total = sum(Decimal(str(envelope["cost_usd"])) for envelope in envelopes)
+    outcome["telemetry_cost_sum_usd"] = format(total, "f")
+    outcome["provider_usage_after_usd"] = format(total, "f")
+    outcome["provider_usage_delta_usd"] = format(total, "f")
 
 
 def confirmatory_authorization_record(sequence: int) -> dict[str, object]:
@@ -336,6 +442,94 @@ def _development_intent_ledger() -> dict[str, object]:
         ledger,
         publication_record(sequence=7, subject_type="intent", subject_id="b" * 64),
     )
+
+
+def _append_completed_stage(
+    ledger: dict[str, object],
+    *,
+    stage: str,
+    candidate_id: str,
+    intent_sha256: str,
+    promotion_eligible: bool = True,
+) -> dict[str, object]:
+    candidate = candidate_record(
+        sequence=next_sequence(ledger), candidate_id=candidate_id, stage=stage
+    )
+    ledger = append_candidate(ledger, candidate)
+    preregistration = preregistration_record(
+        sequence=next_sequence(ledger), kind=stage, candidate_ids=[candidate_id]
+    )
+    if stage in {"screen", "confirmatory"}:
+        preregistration["study_manifest_sha256"] = "e" * 64
+    ledger = append_preregistration(ledger, preregistration)
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=next_sequence(ledger),
+            subject_type="preregistration",
+            subject_id=stage,
+        ),
+    )
+    intent = intent_record(
+        sequence=next_sequence(ledger),
+        stage=stage,
+        candidate_id=candidate_id,
+        intent_sha256=intent_sha256,
+        candidate_sha256=candidate["candidate_sha256"],
+        config_sha256=candidate["config_sha256"],
+        provider_key_name=(
+            "stella-tb21-confirmatory-key-v1"
+            if stage == "confirmatory"
+            else "stella-tb21-tuning-key-v1"
+        ),
+        provider_authorization_id=(
+            "confirmatory_v1" if stage == "confirmatory" else "tuning_provider_v1"
+        ),
+        infrastructure_authorization_id=(
+            "confirmatory_v1" if stage == "confirmatory" else "tuning_infrastructure_v1"
+        ),
+    )
+    ledger = append_intent(ledger, intent)
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=next_sequence(ledger),
+            subject_type="intent",
+            subject_id=intent_sha256,
+        ),
+    )
+    return append_outcome(
+        ledger,
+        outcome_record(
+            sequence=next_sequence(ledger),
+            intent_sha256=intent_sha256,
+            stage=stage,
+            candidate_id=candidate_id,
+            candidate_sha256=candidate["candidate_sha256"],
+            config_sha256=candidate["config_sha256"],
+            promotion_eligible=promotion_eligible,
+        ),
+    )
+
+
+def _through_round_three() -> dict[str, object]:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    for stage, digest in (
+        ("development_round_1", "b" * 64),
+        ("development_round_2", "c" * 64),
+        ("development_round_3", "d" * 64),
+    ):
+        ledger = _append_completed_stage(
+            ledger,
+            stage=stage,
+            candidate_id="winner",
+            intent_sha256=digest,
+        )
+    return ledger
 
 
 def test_real_seed_and_partition_are_frozen() -> None:
@@ -746,27 +940,30 @@ def test_initial_budget_and_stage_shapes_are_exact() -> None:
 
 
 def test_confirmatory_accepts_only_a_new_explicit_authorization() -> None:
-    ledger = build_initial_ledger(
-        "a" * 64,
-        authorization_commit="a" * 40,
-        declared_at="2026-07-21T12:00:00-07:00",
+    ledger = _through_round_three()
+    ledger = _append_completed_stage(
+        ledger,
+        stage="screen",
+        candidate_id="winner",
+        intent_sha256="e" * 64,
+        promotion_eligible=True,
     )
     ledger = append_budget_authorization(
-        ledger, confirmatory_authorization_record(sequence=3)
+        ledger, confirmatory_authorization_record(sequence=next_sequence(ledger))
     )
     candidate = candidate_record(
-        sequence=4, candidate_id="winner", stage="confirmatory"
+        sequence=next_sequence(ledger), candidate_id="winner", stage="confirmatory"
     )
     ledger = append_candidate(ledger, candidate)
     preregistration = preregistration_record(
-        sequence=5, kind="confirmatory", candidate_ids=["winner"]
+        sequence=next_sequence(ledger), kind="confirmatory", candidate_ids=["winner"]
     )
     preregistration["study_manifest_sha256"] = "e" * 64
     ledger = append_preregistration(ledger, preregistration)
     ledger = append_publication(
         ledger,
         publication_record(
-            sequence=6,
+            sequence=next_sequence(ledger),
             subject_type="preregistration",
             subject_id="confirmatory",
         ),
@@ -774,9 +971,10 @@ def test_confirmatory_accepts_only_a_new_explicit_authorization() -> None:
     ledger = append_intent(
         ledger,
         intent_record(
-            sequence=7,
+            sequence=next_sequence(ledger),
             stage="confirmatory",
             candidate_id="winner",
+            intent_sha256="f" * 64,
             provider_key_name="stella-tb21-confirmatory-key-v1",
             provider_authorization_id="confirmatory_v1",
             infrastructure_authorization_id="confirmatory_v1",
@@ -867,7 +1065,7 @@ def test_lifecycle_mutation_matrix_is_rejected(mutation: str) -> None:
         )
         candidate = candidate_record(sequence=3)
         candidate["attempts_per_task"] = True
-        _refresh_candidate_record_sha256(candidate)
+        _refresh_candidate_identity_and_record_sha256(candidate)
         with pytest.raises(ValueError, match="integer"):
             append_candidate(ledger, candidate)
         return
@@ -996,22 +1194,8 @@ def test_lifecycle_mutation_matrix_is_rejected(mutation: str) -> None:
             authorization_commit="a" * 40,
             declared_at="2026-07-21T12:00:00-07:00",
         )
-        ledger = append_candidate(
-            ledger, candidate_record(sequence=3, stage="confirmatory")
-        )
-        preregistration = preregistration_record(sequence=4, kind="confirmatory")
-        preregistration["study_manifest_sha256"] = "e" * 64
-        ledger = append_preregistration(ledger, preregistration)
-        ledger = append_publication(
-            ledger,
-            publication_record(
-                sequence=5,
-                subject_type="preregistration",
-                subject_id="confirmatory",
-            ),
-        )
         with pytest.raises(ValueError, match="explicit confirmatory authorization"):
-            append_intent(ledger, intent_record(sequence=6, stage="confirmatory"))
+            append_candidate(ledger, candidate_record(sequence=3, stage="confirmatory"))
         return
 
     raise AssertionError(f"unhandled mutation {mutation!r}")
@@ -1037,3 +1221,345 @@ def test_metered_values_require_bounded_nonnegative_decimal_strings(field: str) 
     outcome[field] = "Infinity"
     with pytest.raises(ValueError, match="decimal string"):
         append_outcome(ledger, outcome)
+
+
+def test_call_envelopes_retain_all_terminal_states_and_derive_exact_aggregates() -> (
+    None
+):
+    ledger = _development_intent_ledger()
+    outcome = outcome_record(sequence=8, status="ineligible")
+    _set_call_evidence(
+        outcome,
+        [
+            {
+                "call_id": "call-success",
+                "terminal_state": "successful",
+                "input_tokens": 11,
+                "output_tokens": 5,
+                "cached_input_tokens": 3,
+                "cost_usd": "0.01",
+            },
+            {
+                "call_id": "call-failed",
+                "terminal_state": "failed",
+                "input_tokens": 7,
+                "output_tokens": 2,
+                "cached_input_tokens": 1,
+                "cost_usd": "0.02",
+            },
+            {
+                "call_id": "call-aborted",
+                "terminal_state": "aborted",
+                "input_tokens": 4,
+                "output_tokens": 1,
+                "cached_input_tokens": 0,
+                "cost_usd": "0.03",
+            },
+        ],
+    )
+
+    ledger = append_outcome(ledger, outcome)
+    recorded = ledger["outcomes"][0]
+    assert [item["terminal_state"] for item in recorded["call_envelopes"]] == [
+        "successful",
+        "failed",
+        "aborted",
+    ]
+    assert recorded["telemetry_input_tokens"] == 22
+    assert recorded["telemetry_output_tokens"] == 8
+    assert recorded["telemetry_cached_input_tokens"] == 4
+    assert recorded["telemetry_normalized_tokens"] == 30
+    assert recorded["telemetry_cost_sum_usd"] == "0.06"
+
+
+def test_incomplete_call_accounting_is_retained_but_never_complete() -> None:
+    ledger = _development_intent_ledger()
+    outcome = outcome_record(sequence=8, status="incomplete")
+    envelope = outcome["call_envelopes"][0]
+    envelope["output_tokens"] = None
+    envelope["cost_usd"] = None
+    outcome["telemetry_input_tokens"] = None
+    outcome["telemetry_output_tokens"] = None
+    outcome["telemetry_cached_input_tokens"] = None
+    outcome["telemetry_normalized_tokens"] = None
+    outcome["telemetry_cost_sum_usd"] = None
+
+    recorded = append_outcome(ledger, outcome)["outcomes"][0]
+    assert recorded["call_envelopes"][0]["output_tokens"] is None
+    assert recorded["call_envelopes"][0]["cost_usd"] is None
+
+    outcome["status"] = "complete"
+    with pytest.raises(ValueError, match="incomplete paid-call accounting.*complete"):
+        append_outcome(ledger, outcome)
+
+
+def test_missing_call_ids_are_exact_and_force_incomplete_status() -> None:
+    ledger = _development_intent_ledger()
+    outcome = outcome_record(sequence=8, status="incomplete")
+    outcome["expected_paid_call_ids"] = ["call-1", "call-2"]
+    outcome["missing_paid_call_ids"] = ["call-2"]
+
+    recorded = append_outcome(ledger, outcome)["outcomes"][0]
+    assert recorded["missing_paid_call_ids"] == ["call-2"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("duplicate", "duplicate paid-call ID"),
+        ("unknown", "unknown paid-call ID"),
+        ("missing_complete", "missing paid-call IDs.*complete"),
+        ("missing_list_drift", "missing paid-call IDs differ"),
+        ("token_aggregate", "token aggregates"),
+        ("cost_aggregate", "cost aggregate"),
+        ("incomplete_envelope", "fields differ"),
+        ("float_cost", "decimal string"),
+    ],
+)
+def test_call_envelope_mutations_fail_closed(mutation: str, message: str) -> None:
+    ledger = _development_intent_ledger()
+    outcome = outcome_record(sequence=8)
+    envelope = outcome["call_envelopes"][0]
+    if mutation == "duplicate":
+        outcome["call_envelopes"].append(copy.deepcopy(envelope))
+    elif mutation == "unknown":
+        envelope["call_id"] = "unknown-call"
+    elif mutation == "missing_complete":
+        outcome["call_envelopes"] = []
+        outcome["missing_paid_call_ids"] = ["call-1"]
+    elif mutation == "missing_list_drift":
+        outcome["call_envelopes"] = []
+    elif mutation == "token_aggregate":
+        outcome["telemetry_normalized_tokens"] = 1
+    elif mutation == "cost_aggregate":
+        outcome["telemetry_cost_sum_usd"] = "0.01"
+    elif mutation == "incomplete_envelope":
+        del envelope["output_tokens"]
+    elif mutation == "float_cost":
+        envelope["cost_usd"] = 0.0
+    else:
+        raise AssertionError(mutation)
+
+    with pytest.raises(ValueError, match=message):
+        append_outcome(ledger, outcome)
+
+
+def test_ordering_pins_initial_authorization_ids_to_sequences_one_and_two() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    ledger["budget_authorizations"].reverse()
+    ledger["budget_authorizations"][0]["sequence"] = 1
+    ledger["budget_authorizations"][1]["sequence"] = 2
+
+    with pytest.raises(ValueError, match="initial budget authorization order"):
+        validate_run_ledger(ledger)
+
+
+def test_ordering_rejects_a_reordered_record_array() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    ledger = append_candidate(
+        ledger, candidate_record(sequence=3, candidate_id="entrant-a")
+    )
+    ledger = append_candidate(
+        ledger, candidate_record(sequence=4, candidate_id="entrant-b")
+    )
+    ledger["candidates"].reverse()
+
+    with pytest.raises(ValueError, match="strictly sequence-ordered"):
+        validate_run_ledger(ledger)
+
+
+def test_ordering_rejects_future_confirmatory_authorization() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    ledger["candidates"].append(
+        candidate_record(sequence=3, candidate_id="winner", stage="confirmatory")
+    )
+    ledger["budget_authorizations"].append(
+        confirmatory_authorization_record(sequence=4)
+    )
+
+    with pytest.raises(ValueError, match="authorization must precede confirmatory"):
+        validate_run_ledger(ledger)
+
+
+def test_promotion_eligibility_is_explicit_and_requires_a_complete_outcome() -> None:
+    ledger = _development_intent_ledger()
+    outcome = outcome_record(sequence=8, status="incomplete", promotion_eligible=True)
+
+    with pytest.raises(ValueError, match="promotion eligibility requires complete"):
+        append_outcome(ledger, outcome)
+
+    outcome["promotion_eligible"] = False
+    assert append_outcome(ledger, outcome)["outcomes"][0]["promotion_eligible"] is False
+
+
+def test_promotion_rejects_screen_without_round_three_evidence() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+
+    with pytest.raises(ValueError, match="screen.*development_round_3"):
+        append_candidate(
+            ledger, candidate_record(sequence=3, candidate_id="winner", stage="screen")
+        )
+
+
+def test_promotion_rejects_confirmatory_after_failed_complete_screen() -> None:
+    ledger = _through_round_three()
+    ledger = _append_completed_stage(
+        ledger,
+        stage="screen",
+        candidate_id="winner",
+        intent_sha256="e" * 64,
+        promotion_eligible=False,
+    )
+    ledger = append_budget_authorization(
+        ledger, confirmatory_authorization_record(next_sequence(ledger))
+    )
+
+    with pytest.raises(ValueError, match="confirmatory.*promotion-eligible screen"):
+        append_candidate(
+            ledger,
+            candidate_record(
+                sequence=next_sequence(ledger),
+                candidate_id="winner",
+                stage="confirmatory",
+            ),
+        )
+
+
+def test_promotion_accepts_exact_eligible_screen_to_confirmatory_chain() -> None:
+    ledger = _through_round_three()
+    ledger = _append_completed_stage(
+        ledger,
+        stage="screen",
+        candidate_id="winner",
+        intent_sha256="e" * 64,
+        promotion_eligible=True,
+    )
+    ledger = append_budget_authorization(
+        ledger, confirmatory_authorization_record(next_sequence(ledger))
+    )
+    ledger = append_candidate(
+        ledger,
+        candidate_record(
+            sequence=next_sequence(ledger),
+            candidate_id="winner",
+            stage="confirmatory",
+        ),
+    )
+
+    assert validate_run_ledger(ledger) == ledger
+
+
+def test_candidate_freeze_identity_includes_per_trial_and_execution_posture() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    candidate = candidate_record(sequence=3)
+    candidate["per_trial_limit_usd"] = "0.29"
+    _refresh_candidate_record_sha256(candidate)
+
+    with pytest.raises(ValueError, match="candidate identity digest"):
+        append_candidate(ledger, candidate)
+
+
+def test_candidate_freeze_rejects_intent_per_trial_drift_with_unchanged_digests() -> (
+    None
+):
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    candidate = candidate_record(sequence=3)
+    ledger = append_candidate(ledger, candidate)
+    ledger = append_preregistration(ledger, preregistration_record(sequence=4))
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=5,
+            subject_type="preregistration",
+            subject_id="development_round_1",
+        ),
+    )
+    intent = intent_record(
+        sequence=6,
+        candidate_sha256=candidate["candidate_sha256"],
+        config_sha256=candidate["config_sha256"],
+    )
+    intent["per_trial_limit_usd"] = "0.29"
+    intent["maximum_spend_cents"] = 290
+
+    with pytest.raises(ValueError, match="per_trial_limit_usd.*frozen candidate"):
+        append_intent(ledger, intent)
+
+
+def test_candidate_freeze_rejects_intent_model_posture_drift() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    candidate = candidate_record(sequence=3)
+    ledger = append_candidate(ledger, candidate)
+    ledger = append_preregistration(ledger, preregistration_record(sequence=4))
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=5,
+            subject_type="preregistration",
+            subject_id="development_round_1",
+        ),
+    )
+    intent = intent_record(
+        sequence=6,
+        candidate_sha256=candidate["candidate_sha256"],
+        config_sha256=candidate["config_sha256"],
+    )
+    intent["topology"] = "fleet"
+
+    with pytest.raises(ValueError, match="topology.*frozen candidate"):
+        append_intent(ledger, intent)
+
+
+def test_candidate_full_record_digest_rejects_nonidentity_job_name_edit() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    candidate = candidate_record(sequence=3)
+    original_identity_digest = candidate["candidate_sha256"]
+    candidate["job_name"] = "edited-after-freeze"
+
+    with pytest.raises(ValueError, match="candidate record digest"):
+        append_candidate(ledger, candidate)
+    assert candidate["candidate_sha256"] == original_identity_digest
+
+
+def test_promotion_rejects_behavioral_identity_change_between_stages() -> None:
+    ledger = _through_round_three()
+    candidate = candidate_record(
+        sequence=next_sequence(ledger), candidate_id="winner", stage="screen"
+    )
+    candidate["source_commit"] = "f" * 40
+    _refresh_candidate_identity_and_record_sha256(candidate)
+
+    with pytest.raises(ValueError, match="screen.*frozen candidate identity"):
+        append_candidate(ledger, candidate)
