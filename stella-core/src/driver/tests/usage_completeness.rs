@@ -36,10 +36,11 @@ async fn exhausted_worker_call_emits_one_content_free_incompleteness_event() {
         AgentEvent::UsageIncomplete {
             role: stella_protocol::ModelCallRole::Worker,
             provider,
+            model,
             reason: stella_protocol::UsageIncompleteReason::ProviderError,
             retries: Some(0),
             ..
-        } if provider == "anthropic-fallback"
+        } if provider == "anthropic-fallback" && model == "unknown" && model != provider
     ));
     let wire = serde_json::to_string(incomplete[0]).unwrap();
     assert!(!wire.contains("private upstream body"));

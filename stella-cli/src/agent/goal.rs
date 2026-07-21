@@ -135,9 +135,11 @@ pub(crate) async fn run_raw_one_shot(
         let report = m
             .reflect_and_record(
                 &*provider,
+                &cfg.model_id,
                 &messages,
                 format != OutputFormat::Text,
                 outcome.is_ok(),
+                crate::agent::remaining_budget(&budget),
             )
             .await;
         surface_reflection(&report, format);
@@ -288,8 +290,15 @@ pub async fn run_goal_cmd(
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {
-        m.reflect_and_record(&*provider, &messages, false, true)
-            .await;
+        m.reflect_and_record(
+            &*provider,
+            &cfg.model_id,
+            &messages,
+            false,
+            true,
+            crate::agent::remaining_budget(&budget),
+        )
+        .await;
     }
     if let Some(set) = &mcp {
         set.close_all().await;

@@ -188,8 +188,6 @@ where
 {
     let mut retries = Vec::new();
     let mut attempt: u32 = 0;
-    let mut rng = rand::rng();
-
     loop {
         match attempt_fn().await {
             Ok(value) => {
@@ -209,7 +207,7 @@ where
                         retry_after_ms: Some(hint),
                         ..
                     } => (*hint).min(policy.max_delay_ms),
-                    _ => compute_backoff_delay_ms(policy, attempt, &mut rng),
+                    _ => compute_backoff_delay_ms(policy, attempt, &mut rand::rng()),
                 };
 
                 retries.push(RetryAttempt {

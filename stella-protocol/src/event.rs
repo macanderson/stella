@@ -72,6 +72,10 @@ pub enum ModelCallRole {
     Worker,
     DistressGuidance,
     Judge,
+    AgentAuthor,
+    SkillAuthor,
+    DomainInference,
+    Reflection,
 }
 
 /// Content-free reason a provider attempt cannot contribute a truthful usage

@@ -321,12 +321,14 @@ async fn run_pipeline_one_shot(
         let report = m
             .reflect_and_record(
                 &*provider,
+                &cfg.model_id,
                 &reflect_transcript,
                 format != OutputFormat::Text,
                 matches!(
                     &result,
                     Ok(outcome) if matches!(outcome.status, PipelineStatus::Completed)
                 ),
+                remaining_budget(&budget),
             )
             .await;
         surface_reflection(&report, format);
@@ -560,8 +562,16 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         if input == "/init" {
             println!();
             let mut emit = |line: String| println!("  {line}");
-            match init_workspace(Some(&*provider), &cfg.workspace_root, &mut emit).await {
-                Ok(_) => {
+            match init_workspace(
+                Some(&*provider),
+                &cfg.workspace_root,
+                Some(&cfg.model_id),
+                remaining_budget(&budget),
+                &mut emit,
+            )
+            .await
+            {
+                Ok((_domains, _cost_usd)) => {
                     // A fresh index may name tables/types the schema gate
                     // should know about this session, not just the next one.
                     if let Err(error) = populate_schema_index(&registry, &cfg.workspace_root) {
@@ -681,8 +691,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             } else if turn_warrants_reflection(&messages[turn_start..])
                 && let Some(m) = &mut memory
             {
-                m.reflect_and_record(&*provider, &messages, false, true)
-                    .await;
+                m.reflect_and_record(
+                    &*provider,
+                    &cfg.model_id,
+                    &messages,
+                    false,
+                    true,
+                    remaining_budget(&budget),
+                )
+                .await;
             }
             continue;
         }
@@ -750,8 +767,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         } else if turn_warrants_reflection(&messages[turn_start..])
             && let Some(m) = &mut memory
         {
-            m.reflect_and_record(&*provider, &messages, false, true)
-                .await;
+            m.reflect_and_record(
+                &*provider,
+                &cfg.model_id,
+                &messages,
+                false,
+                true,
+                remaining_budget(&budget),
+            )
+            .await;
         }
     }
 
@@ -822,6 +846,7 @@ fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
             "type": "reflect",
             "recorded": report.recorded,
             "error": report.model_error,
+            "cost_usd": report.cost_usd,
         });
         println!("{line}");
         return;
@@ -1034,11 +1059,21 @@ pub(crate) fn spawn_session_graph(
 pub(crate) async fn init_workspace(
     provider: Option<&dyn Provider>,
     workspace_root: &std::path::Path,
+    model_hint: Option<&str>,
+    budget_limit: Option<f64>,
     emit: &mut dyn FnMut(String),
-) -> Result<Domains, String> {
-    let domains = match provider {
-        Some(p) => infer_domains(p, workspace_root).await,
-        None => heuristic_domains(workspace_root),
+) -> Result<(Domains, f64), String> {
+    let (domains, inference_cost_usd) = match provider {
+        Some(p) => {
+            infer_domains(
+                p,
+                workspace_root,
+                model_hint.unwrap_or("unknown"),
+                budget_limit,
+            )
+            .await
+        }
+        None => (heuristic_domains(workspace_root), 0.0),
     };
 
     // The code graph needs no provider — build it regardless of how the
@@ -1066,7 +1101,12 @@ pub(crate) async fn init_workspace(
         domains.inferred_by,
         path.display()
     ));
-    Ok(domains)
+    if inference_cost_usd > 0.0 {
+        emit(format!(
+            "domain inference model cost: ${inference_cost_usd:.6}"
+        ));
+    }
+    Ok((domains, inference_cost_usd))
 }
 
 /// Query the code graph (if `stella init` has built it) for the
@@ -1189,26 +1229,27 @@ pub async fn run_init(
 
     tui::section_header("Stella init");
 
-    let provider = match Config::load(model_override, api_key_override, base_url_override) {
-        Ok(cfg) => {
-            let provider = build_provider(&cfg)?;
-            println!(
-                "  {} inferring domains with {}/{}…",
-                "◈".bright_cyan(),
-                cfg.provider.id,
-                cfg.model_id
-            );
-            Some(provider)
-        }
-        Err(_) => {
-            println!(
-                "  {} no provider configured — using the directory heuristic \
+    let (provider, model_hint) =
+        match Config::load(model_override, api_key_override, base_url_override) {
+            Ok(cfg) => {
+                let provider = build_provider(&cfg)?;
+                println!(
+                    "  {} inferring domains with {}/{}…",
+                    "◈".bright_cyan(),
+                    cfg.provider.id,
+                    cfg.model_id
+                );
+                (Some(provider), Some(cfg.model_id))
+            }
+            Err(_) => {
+                println!(
+                    "  {} no provider configured — using the directory heuristic \
                  (re-run `stella init` with a key for a better taxonomy)",
-                "!".yellow()
-            );
-            None
-        }
-    };
+                    "!".yellow()
+                );
+                (None, None)
+            }
+        };
 
     // Play the launch cinematic (starfield + jetpack turtle) over the indexing
     // work. Progress lines route THROUGH it so they print above the animation
@@ -1218,7 +1259,14 @@ pub async fn run_init(
     // domain summary prints.
     let cine = crate::init_fx::InitCinematic::start(crate::init_fx::animation_enabled(no_anim));
     let mut emit = |line: String| cine.log(line);
-    let domains = init_workspace(provider.as_deref(), &workspace_root, &mut emit).await?;
+    let (domains, _inference_cost_usd) = init_workspace(
+        provider.as_deref(),
+        &workspace_root,
+        model_hint.as_deref(),
+        None,
+        &mut emit,
+    )
+    .await?;
     cine.finish().await;
 
     for domain in &domains.domains {
@@ -1627,6 +1675,12 @@ pub(crate) fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
         Some(limit) => BudgetGuard::new(BudgetMode::Enforced, Some(limit), None),
         None => BudgetGuard::new(BudgetMode::Observed, None, None),
     }
+}
+
+pub(crate) fn remaining_budget(guard: &BudgetGuard) -> Option<f64> {
+    guard
+        .turn_limit_usd()
+        .map(|limit| (limit - guard.spent_usd()).max(0.0))
 }
 
 /// Open the workspace SQLite store (`.stella/private/store.db`). Persistence is

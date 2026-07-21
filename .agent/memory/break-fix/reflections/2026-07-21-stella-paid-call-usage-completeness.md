@@ -5,3 +5,5 @@ The defect crossed four boundaries: provider dispatch, cancellation, local persi
 The durable invariant is monotonic: each dispatched call yields either one complete role/provider envelope or one content-free incomplete marker, and any later write failure permanently downgrades the execution. Export selection filters eligibility without consuming incomplete rows, so a bounded page remains live.
 
 The most useful regression shape combined exact-once cancellation at the cost-settlement no-await boundary with a duplicate event/telemetry write failure followed by an otherwise successful closeout.
+
+A follow-up inventory found four standalone CLI dispatches outside the engine and pipeline chokepoints. The reusable boundary is an I/O-free core accounting primitive; CLI adapters own execution persistence and closeout, while exact settled cost crosses both success and structured error paths so over-budget output is never applied before its paid call is recorded.

@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use stella_protocol::{CompletionMessage, CompletionRequest, Provider};
+use stella_protocol::{CompletionMessage, CompletionRequest, ModelCallRole, Provider};
 
 /// One inferred domain: a name, a one-line description, and the path
 /// prefixes (workspace-relative, `/`-separated) that belong to it.
@@ -163,7 +163,12 @@ pub fn summarize_repo(root: &Path) -> String {
 
 /// Infer domains with the worker model; one bounded repair attempt on
 /// unparseable output; heuristic fallback on any failure.
-pub async fn infer_domains(provider: &dyn Provider, root: &Path) -> Domains {
+pub async fn infer_domains(
+    provider: &dyn Provider,
+    root: &Path,
+    model_hint: &str,
+    budget_limit: Option<f64>,
+) -> (Domains, f64) {
     let summary = summarize_repo(root);
     let prompt = format!(
         "Analyze this repository's shape and infer its semantic DOMAINS — the 4-10 major \
@@ -181,6 +186,7 @@ pub async fn infer_domains(provider: &dyn Provider, root: &Path) -> Domains {
         ),
         CompletionMessage::user(&prompt),
     ];
+    let mut total_cost_usd = 0.0;
 
     for _attempt in 0..2 {
         let req = CompletionRequest {
@@ -192,35 +198,54 @@ pub async fn infer_domains(provider: &dyn Provider, root: &Path) -> Domains {
             reasoning: None,
             params: None,
         };
-        match provider.complete(req).await {
-            Ok(result) => match parse_domains_json(&result.text) {
-                Ok(domains) if !domains.is_empty() => {
-                    return Domains {
-                        version: 1,
-                        inferred_by: "model".into(),
-                        domains,
-                    };
-                }
-                Ok(_) | Err(_) => {
-                    // Bounded repair: feed the failure back once.
-                    messages.push(CompletionMessage {
-                        role: stella_protocol::MessageRole::Assistant,
-                        content: result.text.clone(),
-                        tool_calls: vec![],
-                        tool_results: vec![],
-                        attachments: Vec::new(),
-                    });
-                    messages.push(CompletionMessage::user(
-                        "That was not a valid non-empty JSON array of domains. Respond with \
+        match crate::accounted_call::complete_standalone(
+            root,
+            provider,
+            ModelCallRole::DomainInference,
+            "domain_inference",
+            model_hint,
+            budget_limit,
+            req,
+        )
+        .await
+        {
+            Ok(accounted) => {
+                total_cost_usd += accounted.cost_usd;
+                match parse_domains_json(&accounted.result.text) {
+                    Ok(domains) if !domains.is_empty() => {
+                        return (
+                            Domains {
+                                version: 1,
+                                inferred_by: "model".into(),
+                                domains,
+                            },
+                            total_cost_usd,
+                        );
+                    }
+                    Ok(_) | Err(_) => {
+                        // Bounded repair: feed the failure back once.
+                        messages.push(CompletionMessage {
+                            role: stella_protocol::MessageRole::Assistant,
+                            content: accounted.result.text.clone(),
+                            tool_calls: vec![],
+                            tool_results: vec![],
+                            attachments: Vec::new(),
+                        });
+                        messages.push(CompletionMessage::user(
+                            "That was not a valid non-empty JSON array of domains. Respond with \
                          ONLY the JSON array.",
-                    ));
+                        ));
+                    }
                 }
-            },
-            Err(_) => break, // provider trouble → heuristic, don't hammer
+            }
+            Err(error) => {
+                total_cost_usd += error.cost_usd;
+                break;
+            } // provider trouble → heuristic, don't hammer
         }
     }
 
-    heuristic_domains(root)
+    (heuristic_domains(root), total_cost_usd)
 }
 
 /// Extract and parse the first JSON array in `text` (models love prose and

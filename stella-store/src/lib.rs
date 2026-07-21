@@ -1683,7 +1683,7 @@ impl Store {
         {
             let mut stmt = conn.prepare(
                 "SELECT id, kind, prompt, provider, model, started_at, finished_at, outcome, \
-                 cost_usd FROM executions ORDER BY id ASC",
+                 cost_usd, usage_complete FROM executions ORDER BY id ASC",
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok(serde_json::json!({
@@ -1696,6 +1696,7 @@ impl Store {
                     "finished_at": row.get::<_, Option<String>>(6)?,
                     "outcome": row.get::<_, Option<String>>(7)?,
                     "cost_usd": row.get::<_, f64>(8)?,
+                    "usage_complete": row.get::<_, bool>(9)?,
                 }))
             })?;
             let mut arr = Vec::new();
@@ -1712,9 +1713,10 @@ impl Store {
         for (name, sql) in [
             (
                 "telemetry",
-                "SELECT execution_id, step, ts, provider, model, input_tokens, \
+                "SELECT execution_id, step, ts, provider, call_role, model, input_tokens, \
                  estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
-                 cache_write_tokens, cost_usd, duration_ms, retries, tool_calls FROM telemetry \
+                 cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete \
+                 FROM telemetry \
                  ORDER BY execution_id ASC, step ASC"
                     .to_string(),
             ),

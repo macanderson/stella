@@ -693,7 +693,7 @@ impl<'a> Engine<'a> {
                 let _ = events.send(AgentEvent::UsageIncomplete {
                     role: self.call_role,
                     provider: self.provider.id().to_string(),
-                    model: String::new(),
+                    model: "unknown".into(),
                     reason: stella_protocol::UsageIncompleteReason::ProviderError,
                     duration_ms,
                     retries: Some(retries),
