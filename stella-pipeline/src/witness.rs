@@ -336,10 +336,19 @@ pub struct Witness {
     pub command: String,
     /// Parsed process invocation used for every baseline/final test run.
     pub invocation: TestInvocation,
-    /// `path -> fingerprint` for the one accepted, newly created test file.
+    /// `path -> identity` for the one accepted, newly created test file.
     /// Tracked edits, non-test files, and edits to pre-existing untracked
     /// files are rejected before candidate execution.
-    pub files: HashMap<String, String>,
+    pub files: HashMap<String, ArtifactIdentity>,
+}
+
+/// Whether the current no-follow filesystem observation is exactly the
+/// regular, single-link artifact accepted at witness authoring time.
+pub fn witness_identity_matches(
+    expected: &ArtifactIdentity,
+    current: Option<&ArtifactIdentity>,
+) -> bool {
+    expected.is_regular_single_link() && current == Some(expected)
 }
 
 /// The witness author's task prompt: split context exactly like the planner

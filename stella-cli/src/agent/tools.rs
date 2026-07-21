@@ -7,7 +7,8 @@
 
 use super::*;
 use stella_pipeline::{
-    ArtifactKind, DiagnosticInvocation, DiagnosticRunner, TestInvocation, TestRunner,
+    ArtifactIdentity, ArtifactKind, DiagnosticInvocation, DiagnosticRunner, TestInvocation,
+    TestRunner,
 };
 
 /// Repo-structure summary via `git ls-files` for the planner's split context.
@@ -134,53 +135,102 @@ pub(crate) fn fs_fingerprint(path: &std::path::Path) -> Option<String> {
 pub(crate) fn fs_artifact_identity(
     path: &std::path::Path,
 ) -> Option<stella_pipeline::ArtifactIdentity> {
-    use std::fmt::Write as _;
+    OpenedWitnessArtifact::open(path)?.identity_for_path(path)
+}
 
-    use sha2::{Digest, Sha256};
+struct OpenedWitnessArtifact {
+    file: std::fs::File,
+    metadata: std::fs::Metadata,
+}
 
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    let kind = if metadata.file_type().is_file() {
-        ArtifactKind::Regular
-    } else if metadata.file_type().is_symlink() {
-        ArtifactKind::Symlink
-    } else {
-        ArtifactKind::Other
-    };
-    #[cfg(unix)]
-    let (mode, link_count) = {
-        use std::os::unix::fs::MetadataExt;
-        (metadata.mode(), metadata.nlink())
-    };
-    #[cfg(not(unix))]
-    let (mode, link_count) = (u32::from(metadata.permissions().readonly()), 1);
-    let payload = match kind {
-        ArtifactKind::Regular => std::fs::read(path).ok()?,
-        ArtifactKind::Symlink => std::fs::read_link(path)
-            .ok()?
-            .to_string_lossy()
-            .as_bytes()
-            .to_vec(),
-        ArtifactKind::Other => Vec::new(),
-    };
-    let mut hasher = Sha256::new();
-    hasher.update(match kind {
-        ArtifactKind::Regular => b"regular".as_slice(),
-        ArtifactKind::Symlink => b"symlink".as_slice(),
-        ArtifactKind::Other => b"other".as_slice(),
-    });
-    hasher.update(mode.to_le_bytes());
-    hasher.update(link_count.to_le_bytes());
-    hasher.update(payload);
-    let mut fingerprint = String::from("sha256:");
-    for byte in hasher.finalize() {
-        write!(&mut fingerprint, "{byte:02x}").ok()?;
+impl OpenedWitnessArtifact {
+    fn open(path: &std::path::Path) -> Option<Self> {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_OPEN_REPARSE_POINT opens a link/reparse point itself
+            // instead of following it. Link count is unavailable through a
+            // stable std API, so Windows still fails closed below.
+            options.custom_flags(0x0020_0000);
+        }
+        let file = options.open(path).ok()?;
+        let metadata = file.metadata().ok()?;
+        if !metadata.file_type().is_file() || opened_metadata(&metadata).is_none() {
+            return None;
+        }
+        Some(Self { file, metadata })
     }
-    Some(stella_pipeline::ArtifactIdentity {
-        fingerprint,
-        kind,
-        mode,
-        link_count,
-    })
+
+    fn identity_for_path(mut self, path: &std::path::Path) -> Option<ArtifactIdentity> {
+        use std::fmt::Write as _;
+        use std::io::Read as _;
+
+        use sha2::{Digest, Sha256};
+
+        let (mode, link_count) = opened_metadata(&self.metadata)?;
+        if link_count != 1 || !path_resolves_to_opened_file(path, &self.metadata) {
+            return None;
+        }
+        let mut payload = Vec::new();
+        self.file.read_to_end(&mut payload).ok()?;
+        let final_metadata = self.file.metadata().ok()?;
+        if opened_metadata(&final_metadata) != Some((mode, link_count))
+            || !path_resolves_to_opened_file(path, &final_metadata)
+        {
+            return None;
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"regular");
+        hasher.update(mode.to_le_bytes());
+        hasher.update(link_count.to_le_bytes());
+        hasher.update(payload);
+        let mut fingerprint = String::from("sha256:");
+        for byte in hasher.finalize() {
+            write!(&mut fingerprint, "{byte:02x}").ok()?;
+        }
+        Some(ArtifactIdentity {
+            fingerprint,
+            kind: ArtifactKind::Regular,
+            mode,
+            link_count,
+        })
+    }
+}
+
+#[cfg(unix)]
+fn opened_metadata(metadata: &std::fs::Metadata) -> Option<(u32, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((metadata.mode(), metadata.nlink()))
+}
+
+#[cfg(not(unix))]
+fn opened_metadata(_metadata: &std::fs::Metadata) -> Option<(u32, u64)> {
+    // Stable Rust does not expose a by-handle link count on Windows. Never
+    // manufacture `1`: without proof that no hardlink aliases exist, witness
+    // identity is unavailable and acceptance fails closed.
+    None
+}
+
+#[cfg(unix)]
+fn path_resolves_to_opened_file(path: &std::path::Path, opened: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let Ok(current) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    current.file_type().is_file() && current.dev() == opened.dev() && current.ino() == opened.ino()
+}
+
+#[cfg(not(unix))]
+fn path_resolves_to_opened_file(_path: &std::path::Path, _opened: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// The workspace-rooted pipeline ports every session driver constructs the
@@ -455,15 +505,16 @@ mod tests {
         assert!(before.is_regular_single_link());
 
         std::fs::hard_link(&file, &hardlink).unwrap();
-        let linked = fs_artifact_identity(&file).unwrap();
-        assert!(!linked.is_regular_single_link());
-        assert_eq!(linked.link_count, 2);
+        assert!(
+            fs_artifact_identity(&file).is_none(),
+            "multi-link files fail closed at the identity boundary"
+        );
 
         std::os::unix::fs::symlink(&file, &symlink).unwrap();
-        let symlinked = fs_artifact_identity(&symlink).unwrap();
-        assert_eq!(symlinked.kind, ArtifactKind::Symlink);
-        assert!(!symlinked.is_regular_single_link());
-        assert_ne!(symlinked.fingerprint, linked.fingerprint);
+        assert!(
+            fs_artifact_identity(&symlink).is_none(),
+            "no-follow identity must never open a symlink target"
+        );
 
         std::fs::remove_file(&hardlink).unwrap();
         let mut permissions = std::fs::metadata(&file).unwrap().permissions();
@@ -471,6 +522,42 @@ mod tests {
         std::fs::set_permissions(&file, permissions).unwrap();
         let executable = fs_artifact_identity(&file).unwrap();
         assert_ne!(before.fingerprint, executable.fingerprint);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_witness_identity_rejects_path_retarget_before_fingerprinting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("witness.rs");
+        let moved = dir.path().join("original.rs");
+        std::fs::write(&path, "original bytes\n").unwrap();
+        let opened = OpenedWitnessArtifact::open(&path).expect("regular file opens no-follow");
+
+        std::fs::rename(&path, &moved).unwrap();
+        std::fs::write(&path, "replacement bytes\n").unwrap();
+
+        assert!(
+            opened.identity_for_path(&path).is_none(),
+            "the opened handle must not be credited after its path is retargeted"
+        );
+    }
+
+    #[test]
+    fn witness_identity_requires_established_platform_link_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("witness.rs");
+        std::fs::write(&path, "test bytes\n").unwrap();
+        let identity = fs_artifact_identity(&path);
+        #[cfg(unix)]
+        assert!(
+            identity.is_some(),
+            "Unix exposes link count from the handle"
+        );
+        #[cfg(not(unix))]
+        assert!(
+            identity.is_none(),
+            "platforms without a stable handle link count fail closed"
+        );
     }
 
     #[tokio::test]

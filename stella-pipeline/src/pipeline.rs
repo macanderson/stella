@@ -71,8 +71,8 @@ use crate::verify::{
     judge_prompt, ladder_decision, model_verdict_evidence, parse_judge_response,
 };
 use crate::witness::{
-    Witness, parse_test_invocation, parse_witness_command, tampered_paths,
-    validate_witness_artifact, validate_witness_identity, validate_witness_invocation,
+    Witness, parse_test_invocation, parse_witness_command, validate_witness_artifact,
+    validate_witness_identity, validate_witness_invocation, witness_identity_matches,
     witness_prompt, witness_repair_prompt,
 };
 mod run_error;
@@ -1281,13 +1281,16 @@ impl<'a> Pipeline<'a> {
             // Tamper exclusion is an authority boundary, not evidence for a
             // model to weigh. Any post-baseline witness mutation hard-fails
             // the candidate before a judge can override it.
-            let tampered = match witness {
-                Some(w) if !w.files.is_empty() => {
-                    let current = surface.repo_status.untracked_fingerprints().await;
-                    tampered_paths(&w.files, &current)
+            let mut tampered = Vec::new();
+            if let Some(witness) = witness {
+                for (path, expected) in &witness.files {
+                    let current = surface.repo_status.artifact_identity(path).await;
+                    if !witness_identity_matches(expected, current.as_ref()) {
+                        tampered.push(path.clone());
+                    }
                 }
-                _ => Vec::new(),
-            };
+                tampered.sort();
+            }
             if !tampered.is_empty() {
                 return CandidateResult::aborted(
                     state.messages,

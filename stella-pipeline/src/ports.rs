@@ -131,8 +131,9 @@ pub enum ArtifactKind {
     Other,
 }
 
-/// Complete witness artifact identity. The fingerprint commits to content,
-/// kind, Unix mode/link count, and symlink target where applicable.
+/// Complete witness artifact identity. Accepted identities are regular,
+/// single-link files whose fingerprint commits to bytes, type, mode, and link
+/// count from one no-follow file handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactIdentity {
     pub fingerprint: String,

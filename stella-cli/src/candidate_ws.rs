@@ -874,6 +874,56 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    #[tokio::test]
+    async fn authored_witness_keeps_identity_through_seal_verification_and_exact_adoption() {
+        let root = scaffold("witness-seal");
+        let port = GitCandidateWorkspaces::new(
+            root.clone(),
+            RegistryOptions::default(),
+            Vec::new(),
+            crate::rules::ResolvedRules::default(),
+        );
+        let ws = port.create_workspace().await.unwrap();
+        std::fs::create_dir_all(ws.dir().join("tests")).unwrap();
+        std::fs::write(
+            ws.dir().join("tests/authority_witness.rs"),
+            "#[test] fn authority_witness() {}\n",
+        )
+        .unwrap();
+
+        let authored = ws
+            .repo_status()
+            .artifact_identity("tests/authority_witness.rs")
+            .await
+            .expect("authored witness has an identity");
+        ws.seal().await.unwrap();
+        assert!(
+            !ws.repo_status()
+                .untracked_fingerprints()
+                .await
+                .contains_key("tests/authority_witness.rs"),
+            "the seal intentionally reclassifies the witness as tracked"
+        );
+        let verified = ws
+            .repo_status()
+            .artifact_identity("tests/authority_witness.rs")
+            .await;
+        assert!(stella_pipeline::witness_identity_matches(
+            &authored,
+            verified.as_ref()
+        ));
+
+        let adopted = ws.adopt().await.unwrap();
+        assert_eq!(adopted.len(), 1);
+        assert_eq!(
+            read(&root.join("tests/authority_witness.rs")),
+            "#[test] fn authority_witness() {}\n"
+        );
+        ws.remove().await;
+        assert_no_candidate_worktrees(&root);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// A candidate's tool surface includes the session's custom script tools,
     /// and running one executes in the SNAPSHOT (cwd = shadow), never the real
     /// tree — the isolation guarantee for the grown tool surface.

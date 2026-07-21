@@ -60,6 +60,7 @@ struct SeqRepoStatus {
     tracked_snapshots: std::sync::Mutex<VecDeque<HashMap<String, String>>>,
     tracked_last: std::sync::Mutex<HashMap<String, String>>,
     artifact_identity: Option<ArtifactIdentity>,
+    artifact_identities: std::sync::Mutex<VecDeque<Option<ArtifactIdentity>>>,
 }
 impl SeqRepoStatus {
     fn new(snapshots: Vec<Vec<(&str, &str)>>) -> Self {
@@ -78,6 +79,7 @@ impl SeqRepoStatus {
             tracked_snapshots: std::sync::Mutex::new(VecDeque::new()),
             tracked_last: std::sync::Mutex::new(HashMap::new()),
             artifact_identity: None,
+            artifact_identities: std::sync::Mutex::new(VecDeque::new()),
         }
     }
 
@@ -98,6 +100,11 @@ impl SeqRepoStatus {
 
     fn with_artifact_identity(mut self, identity: ArtifactIdentity) -> Self {
         self.artifact_identity = Some(identity);
+        self
+    }
+
+    fn with_artifact_identities(self, identities: Vec<Option<ArtifactIdentity>>) -> Self {
+        *self.artifact_identities.lock().unwrap() = identities.into();
         self
     }
 }
@@ -126,6 +133,9 @@ impl RepoStatusPort for SeqRepoStatus {
     }
 
     async fn artifact_identity(&self, path: &str) -> Option<ArtifactIdentity> {
+        if let Some(identity) = self.artifact_identities.lock().unwrap().pop_front() {
+            return identity;
+        }
         self.artifact_identity.clone().or_else(|| {
             self.last
                 .lock()
@@ -1090,6 +1100,20 @@ async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
         vec![("tests/witness.rs", "w1")],
         vec![("tests/witness.rs", "w1")],
         vec![("tests/witness.rs", "w2")],
+    ])
+    .with_artifact_identities(vec![
+        Some(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
+        Some(ArtifactIdentity {
+            fingerprint: "w2".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
     ]);
     let config = PipelineConfig {
         max_revisions: 0, // judge FAIL ends the run — keeps the script short

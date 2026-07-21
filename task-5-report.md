@@ -72,6 +72,28 @@ Review follow-up also used RED-first regressions:
   A closed `DiagnosticInvocation` enum now maps only to direct fixed Git argv;
   a metacharacter-bearing untracked path remains a literal argument.
 
+A second review follow-up closed the remaining filesystem edge cases:
+
+- A sealed witness is committed into the candidate and therefore disappears
+  from `git ls-files --others`. The regression first failed with a false
+  witness-deletion abort. Final verification now compares the current direct
+  `artifact_identity(path)` with the full identity captured at authoring,
+  independent of Git tracked/untracked classification.
+- A real Git candidate regression exercises author → seal → final identity
+  verification → exact adoption and explicitly proves the seal reclassifies
+  the intact witness without invalidating it. Scripted direct-identity
+  regressions still hard-fail a byte or metadata mutation before judge review.
+- Artifact identity no longer performs separate path metadata and path reads.
+  Unix opens once with `O_NOFOLLOW | O_CLOEXEC`, gets metadata and bytes from
+  that handle, requires `nlink == 1`, and compares path device/inode with the
+  opened handle both before and after reading. A deterministic rename-and-
+  replacement regression proves path retargeting is rejected.
+- Windows opens with `FILE_FLAG_OPEN_REPARSE_POINT`, but stable Rust does not
+  expose a by-handle link count. Witness identity therefore fails closed on
+  Windows instead of manufacturing a single-link result. The platform behavior
+  regression records that contract; Unix additionally proves hardlinks and
+  symlinks are rejected.
+
 ## Implementation notes
 
 - `TestInvocation` and `TestRunner` form a typed, shell-free test boundary.
@@ -101,8 +123,8 @@ Review follow-up also used RED-first regressions:
 
 ## Verification
 
-- `cargo test -p stella-pipeline`: 129 unit tests and 4 replay tests passed.
-- `cargo test -p stella-cli`: 333 tests passed, including all 11 candidate
+- `cargo test -p stella-pipeline`: 130 unit tests and 4 replay tests passed.
+- `cargo test -p stella-cli`: 336 tests passed, including all 12 candidate
   workspace tests and the typed-runner/fingerprint regressions.
 - `cargo clippy --workspace --all-targets -- -D warnings`: passed.
 - `cargo fmt --all -- --check`: passed.

@@ -132,21 +132,25 @@ impl<'a> Pipeline<'a> {
 
         let tracked_after = surface.repo_status.tracked_fingerprints().await;
         let untracked_after = surface.repo_status.untracked_fingerprints().await;
-        let files = validate_witness_artifact(
+        let fingerprints = validate_witness_artifact(
             &tracked_before,
             &tracked_after,
             &untracked_before,
             &untracked_after,
         )
         .map_err(|error| error.to_string())?;
-        let path = files
+        let path = fingerprints
             .keys()
             .next()
             .expect("validated witness artifact contains exactly one path");
         validate_witness_invocation(path, &invocation).map_err(|error| error.to_string())?;
         let identity = surface.repo_status.artifact_identity(path).await;
-        validate_witness_identity(path, &files[path], identity.as_ref())
+        validate_witness_identity(path, &fingerprints[path], identity.as_ref())
             .map_err(|error| error.to_string())?;
+        let files = HashMap::from([(
+            path.clone(),
+            identity.expect("validated witness identity is present"),
+        )]);
         Ok(Some(Witness {
             command,
             invocation,

@@ -191,6 +191,53 @@ async fn authored_witness_with_one_candidate_uses_one_disposable_snapshot() {
 }
 
 #[tokio::test]
+async fn sealed_witness_identity_survives_git_reclassification_out_of_untracked_files() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("TEST_COMMAND: cargo test authority_witness"),
+        text_result("done"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let identity = ArtifactIdentity {
+        fingerprint: "sha256:test".into(),
+        kind: ArtifactKind::Regular,
+        mode: 0o100644,
+        link_count: 1,
+    };
+    let status = SeqRepoStatus::new(vec![
+        vec![],
+        vec![("tests/authority_witness.rs", "sha256:test")],
+        vec![("tests/authority_witness.rs", "sha256:test")],
+        vec![("tests/authority_witness.rs", "sha256:test")],
+        // `git add -A && git commit` in `seal()` makes the accepted witness
+        // tracked. Classification changes; filesystem identity does not.
+        vec![],
+    ])
+    .with_artifact_identity(identity);
+    let workspace = FakeWorkspace::new(0, vec![false, false, true], Ok(vec![]), log.clone())
+        .with_repo_status(status);
+    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log.clone());
+
+    let (outcome, _, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig {
+            candidates: Some(1),
+            ..PipelineConfig::default()
+        },
+        "Fix the failing test",
+    )
+    .await;
+
+    let outcome = outcome.expect("classification change is not witness tamper");
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["create", "seal:0", "adopt:0", "remove:0"]
+    );
+}
+
+#[tokio::test]
 async fn authored_witness_isolation_failure_aborts_before_authoring() {
     let provider = ScriptedProvider::new(vec![text_result("single")]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -319,6 +366,20 @@ async fn post_baseline_witness_tamper_is_hard_failure_even_if_judge_would_pass()
         vec![("tests/witness.rs", "w1")],
         vec![("tests/witness.rs", "w1")],
         vec![("tests/witness.rs", "w2")],
+    ])
+    .with_artifact_identities(vec![
+        Some(ArtifactIdentity {
+            fingerprint: "w1".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
+        Some(ArtifactIdentity {
+            fingerprint: "w2".into(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100644,
+            link_count: 1,
+        }),
     ]);
     let workspace = FakeWorkspace::new(0, vec![false, false, true], Ok(vec![]), log.clone())
         .with_repo_status(status);
