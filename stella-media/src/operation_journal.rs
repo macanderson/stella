@@ -6,10 +6,10 @@
 //! trusted expiry, so expired rows can be deleted without making an old retry
 //! fresh: the same expired identity is rejected before any insert.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use stella_protocol::MediaKind;
 
 use crate::MediaError;
@@ -92,20 +92,59 @@ impl SqliteMediaOperationJournal {
         path: impl AsRef<Path>,
         retention: MediaOperationRetention,
     ) -> Result<Self, MediaError> {
-        let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| journal_error(format!("cannot create journal dir: {error}")))?;
-        }
-        let connection = Connection::open(path)
-            .map_err(|error| journal_error(format!("cannot open journal: {error}")))?;
-        Self::init(connection, retention)
+        Self::open_private(path.as_ref(), None, retention)
+    }
+
+    /// Open a host-owned journal only when its fully resolved parent remains
+    /// outside the model-controlled workspace.
+    pub fn open_outside(
+        path: impl AsRef<Path>,
+        workspace_root: impl AsRef<Path>,
+        retention: MediaOperationRetention,
+    ) -> Result<Self, MediaError> {
+        let workspace_root = workspace_root.as_ref().canonicalize().map_err(|error| {
+            journal_error(format!(
+                "cannot resolve model-controlled workspace {}: {error}",
+                workspace_root.as_ref().display()
+            ))
+        })?;
+        Self::open_private(path.as_ref(), Some(&workspace_root), retention)
     }
 
     pub fn open_in_memory(retention: MediaOperationRetention) -> Result<Self, MediaError> {
         let connection = Connection::open_in_memory()
             .map_err(|error| journal_error(format!("cannot open journal: {error}")))?;
         Self::init(connection, retention)
+    }
+
+    fn open_private(
+        path: &Path,
+        forbidden_root: Option<&Path>,
+        retention: MediaOperationRetention,
+    ) -> Result<Self, MediaError> {
+        Self::open_private_with_hook(path, forbidden_root, retention, |_| {})
+    }
+
+    fn open_private_with_hook(
+        path: &Path,
+        forbidden_root: Option<&Path>,
+        retention: MediaOperationRetention,
+        after_prepare: impl FnOnce(&Path),
+    ) -> Result<Self, MediaError> {
+        let prepared = prepare_private_sqlite_path(path, forbidden_root)?;
+        after_prepare(&prepared.path);
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let connection = Connection::open_with_flags(&prepared.path, flags)
+            .map_err(|error| journal_error(format!("cannot open journal: {error}")))?;
+        prepared.validate_before_init()?;
+        let journal = Self::init(connection, retention)?;
+        prepared.validate_main_path()?;
+        validate_private_sqlite_family(&prepared.path)?;
+        drop(prepared);
+        Ok(journal)
     }
 
     fn init(
@@ -397,4 +436,535 @@ fn sql_error(error: rusqlite::Error) -> MediaError {
 
 fn journal_error(message: impl Into<String>) -> MediaError {
     MediaError::Artifact(message.into())
+}
+
+struct PreparedPrivateSqlite {
+    path: PathBuf,
+    #[cfg(unix)]
+    main: PrivateFileGuard,
+    #[cfg(unix)]
+    sidecars: Vec<PreparedSidecar>,
+}
+
+impl PreparedPrivateSqlite {
+    #[cfg(unix)]
+    fn validate_before_init(&self) -> Result<(), MediaError> {
+        self.validate_main_path()?;
+        for sidecar in &self.sidecars {
+            sidecar.validate()?;
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn validate_main_path(&self) -> Result<(), MediaError> {
+        self.main.validate_path(&self.path, "journal database")
+    }
+
+    #[cfg(not(unix))]
+    fn validate_before_init(&self) -> Result<(), MediaError> {
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn validate_main_path(&self) -> Result<(), MediaError> {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PrivateFileIdentity {
+    device: u64,
+    inode: u64,
+    owner: u32,
+    links: u64,
+    mode: u32,
+}
+
+#[cfg(unix)]
+struct PrivateFileGuard {
+    file: std::fs::File,
+    identity: PrivateFileIdentity,
+}
+
+#[cfg(unix)]
+impl PrivateFileGuard {
+    fn validate_path(&self, path: &Path, label: &str) -> Result<(), MediaError> {
+        let opened = self.file.metadata().map_err(|error| {
+            journal_error(format!(
+                "cannot inspect opened {label} {}: {error}",
+                path.display()
+            ))
+        })?;
+        let current = std::fs::symlink_metadata(path).map_err(|error| {
+            journal_error(format!(
+                "cannot re-inspect {label} {}: {error}",
+                path.display()
+            ))
+        })?;
+        let opened = private_file_identity(&opened);
+        let current = private_file_identity(&current);
+        if opened != self.identity || current != self.identity {
+            return Err(journal_error(format!(
+                "{label} {} changed after its secure open; refusing initialization",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+struct PreparedSidecar {
+    path: PathBuf,
+    guard: Option<PrivateFileGuard>,
+}
+
+#[cfg(unix)]
+impl PreparedSidecar {
+    fn validate(&self) -> Result<(), MediaError> {
+        match &self.guard {
+            Some(guard) => guard.validate_path(&self.path, "journal SQLite sidecar"),
+            None => match std::fs::symlink_metadata(&self.path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Ok(_) => Err(journal_error(format!(
+                    "journal SQLite sidecar {} appeared after secure preparation; refusing initialization",
+                    self.path.display()
+                ))),
+                Err(error) => Err(journal_error(format!(
+                    "cannot re-inspect journal SQLite sidecar {}: {error}",
+                    self.path.display()
+                ))),
+            },
+        }
+    }
+}
+
+#[cfg(unix)]
+fn prepare_private_sqlite_path(
+    path: &Path,
+    forbidden_root: Option<&Path>,
+) -> Result<PreparedPrivateSqlite, MediaError> {
+    let absolute = std::path::absolute(path).map_err(|error| {
+        journal_error(format!(
+            "cannot resolve journal path {}: {error}",
+            path.display()
+        ))
+    })?;
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(journal_error(format!(
+            "journal path {} must not contain parent traversal",
+            path.display()
+        )));
+    }
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| journal_error(format!("journal path {} has no filename", path.display())))?
+        .to_os_string();
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| journal_error(format!("journal path {} has no parent", path.display())))?;
+    let parent = ensure_private_parent(parent, forbidden_root)?;
+    let path = parent.join(name);
+    let sidecars = prepare_sqlite_sidecars(&path)?;
+    let main = precreate_private_file(&path, "journal database")?;
+    Ok(PreparedPrivateSqlite {
+        path,
+        main,
+        sidecars,
+    })
+}
+
+#[cfg(not(unix))]
+fn prepare_private_sqlite_path(
+    path: &Path,
+    _forbidden_root: Option<&Path>,
+) -> Result<PreparedPrivateSqlite, MediaError> {
+    Err(journal_error(format!(
+        "secure host journal persistence is unsupported on this platform: {}",
+        path.display()
+    )))
+}
+
+#[cfg(unix)]
+fn ensure_private_parent(
+    parent: &Path,
+    forbidden_root: Option<&Path>,
+) -> Result<PathBuf, MediaError> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut cursor = parent;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(cursor) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(journal_error(format!(
+                        "journal parent {} is not a real directory",
+                        cursor.display()
+                    )));
+                }
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = cursor.file_name().ok_or_else(|| {
+                    journal_error(format!(
+                        "cannot find an existing ancestor for {}",
+                        parent.display()
+                    ))
+                })?;
+                missing.push(name.to_os_string());
+                cursor = cursor.parent().ok_or_else(|| {
+                    journal_error(format!(
+                        "cannot find an existing ancestor for {}",
+                        parent.display()
+                    ))
+                })?;
+            }
+            Err(error) => {
+                return Err(journal_error(format!(
+                    "cannot inspect journal parent {}: {error}",
+                    cursor.display()
+                )));
+            }
+        }
+    }
+
+    let mut resolved = cursor.canonicalize().map_err(|error| {
+        journal_error(format!(
+            "cannot resolve journal parent {}: {error}",
+            cursor.display()
+        ))
+    })?;
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
+        reject_forbidden_parent(&resolved, forbidden_root)?;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(&resolved) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(journal_error(format!(
+                    "cannot create private journal parent {}: {error}",
+                    resolved.display()
+                )));
+            }
+        }
+        validate_private_directory(&resolved)?;
+    }
+    reject_forbidden_parent(&resolved, forbidden_root)?;
+    validate_private_directory(&resolved)?;
+    Ok(resolved)
+}
+
+#[cfg(unix)]
+fn reject_forbidden_parent(parent: &Path, forbidden_root: Option<&Path>) -> Result<(), MediaError> {
+    if forbidden_root.is_some_and(|root| parent.starts_with(root)) {
+        return Err(journal_error(format!(
+            "host journal parent {} is inside the model-controlled workspace",
+            parent.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_private_directory(path: &Path) -> Result<(), MediaError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        journal_error(format!(
+            "cannot inspect journal parent {}: {error}",
+            path.display()
+        ))
+    })?;
+    let mode = metadata.permissions().mode() & 0o777;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || mode != 0o700
+    {
+        return Err(journal_error(format!(
+            "journal parent {} must be an owner-only 0700 real directory",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn precreate_private_file(path: &Path, label: &str) -> Result<PrivateFileGuard, MediaError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let existed = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(journal_error(format!(
+                    "{label} {} must be a regular file",
+                    path.display()
+                )));
+            }
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(journal_error(format!(
+                "cannot inspect {label} {}: {error}",
+                path.display()
+            )));
+        }
+    };
+
+    let open_existing = || {
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        options.open(path)
+    };
+    let file = if existed {
+        open_existing()
+    } else {
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        match options.open(path) {
+            Ok(file) => Ok(file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => open_existing(),
+            Err(error) => Err(error),
+        }
+    }
+    .map_err(|error| journal_error(format!("cannot open {label} {}: {error}", path.display())))?;
+    let identity = validate_opened_private_file(path, &file, label)?;
+    Ok(PrivateFileGuard { file, identity })
+}
+
+#[cfg(unix)]
+fn validate_opened_private_file(
+    path: &Path,
+    file: &std::fs::File,
+    label: &str,
+) -> Result<PrivateFileIdentity, MediaError> {
+    let opened = file.metadata().map_err(|error| {
+        journal_error(format!(
+            "cannot inspect opened {label} {}: {error}",
+            path.display()
+        ))
+    })?;
+    let current = std::fs::symlink_metadata(path).map_err(|error| {
+        journal_error(format!(
+            "cannot re-inspect {label} {}: {error}",
+            path.display()
+        ))
+    })?;
+    let identity = private_file_identity(&opened);
+    if !opened.is_file()
+        || identity.owner != unsafe { libc::geteuid() }
+        || identity.links != 1
+        || identity.mode != 0o600
+        || current.file_type().is_symlink()
+        || !current.is_file()
+        || private_file_identity(&current) != identity
+    {
+        return Err(journal_error(format!(
+            "{label} {} must be an owner-only 0600 single-link regular file",
+            path.display()
+        )));
+    }
+    Ok(identity)
+}
+
+#[cfg(unix)]
+fn private_file_identity(metadata: &std::fs::Metadata) -> PrivateFileIdentity {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    PrivateFileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        owner: metadata.uid(),
+        links: metadata.nlink(),
+        mode: metadata.permissions().mode() & 0o777,
+    }
+}
+
+#[cfg(unix)]
+fn validate_existing_private_file(path: &Path, label: &str) -> Result<(), MediaError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(journal_error(format!(
+                    "{label} {} must be a regular file",
+                    path.display()
+                )));
+            }
+            precreate_private_file(path, label).map(drop)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(journal_error(format!(
+            "cannot inspect {label} {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> Result<PathBuf, MediaError> {
+    let mut name = path
+        .file_name()
+        .ok_or_else(|| journal_error(format!("journal path {} has no filename", path.display())))?
+        .to_os_string();
+    name.push(suffix);
+    Ok(path.with_file_name(name))
+}
+
+#[cfg(unix)]
+fn validate_sqlite_sidecars(path: &Path) -> Result<(), MediaError> {
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = sqlite_sidecar_path(path, suffix)?;
+        validate_existing_private_file(&sidecar, "journal SQLite sidecar")?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn prepare_sqlite_sidecars(path: &Path) -> Result<Vec<PreparedSidecar>, MediaError> {
+    let mut prepared = Vec::with_capacity(2);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = sqlite_sidecar_path(path, suffix)?;
+        let guard = match std::fs::symlink_metadata(&sidecar) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(journal_error(format!(
+                        "journal SQLite sidecar {} must be a regular file",
+                        sidecar.display()
+                    )));
+                }
+                Some(precreate_private_file(&sidecar, "journal SQLite sidecar")?)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(journal_error(format!(
+                    "cannot inspect journal SQLite sidecar {}: {error}",
+                    sidecar.display()
+                )));
+            }
+        };
+        prepared.push(PreparedSidecar {
+            path: sidecar,
+            guard,
+        });
+    }
+    Ok(prepared)
+}
+
+#[cfg(not(unix))]
+fn validate_sqlite_sidecars(_path: &Path) -> Result<(), MediaError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_private_sqlite_family(path: &Path) -> Result<(), MediaError> {
+    validate_existing_private_file(path, "journal database")?;
+    validate_sqlite_sidecars(path)
+}
+
+#[cfg(not(unix))]
+fn validate_private_sqlite_family(_path: &Path) -> Result<(), MediaError> {
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod security_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    #[test]
+    fn final_path_swap_is_rejected_before_the_external_database_is_mutated() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host-data");
+        std::fs::create_dir(&host).unwrap();
+        std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let journal_path = host.join("operations.db");
+        let external_path = dir.path().join("external.db");
+        let external = Connection::open(&external_path).unwrap();
+        external
+            .execute_batch("CREATE TABLE sentinel (value TEXT NOT NULL);")
+            .unwrap();
+        drop(external);
+        std::fs::set_permissions(&external_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let result = SqliteMediaOperationJournal::open_private_with_hook(
+            &journal_path,
+            None,
+            MediaOperationRetention {
+                retention_secs: 3600,
+                max_rows: 100,
+            },
+            |prepared| {
+                std::fs::remove_file(prepared).unwrap();
+                std::fs::hard_link(&external_path, prepared).unwrap();
+            },
+        );
+
+        assert!(result.is_err(), "path substitution must fail closed");
+        let external = Connection::open(&external_path).unwrap();
+        let journal_tables: i64 = external
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'media_operations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            journal_tables, 0,
+            "an untrusted substitute must not be initialized before rejection"
+        );
+    }
+
+    #[test]
+    fn sidecar_appearance_is_rejected_before_sqlite_initialization() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host-data");
+        std::fs::create_dir(&host).unwrap();
+        std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let journal_path = host.join("operations.db");
+        let injected = host.join("operations.db-wal");
+
+        let result = SqliteMediaOperationJournal::open_private_with_hook(
+            &journal_path,
+            None,
+            MediaOperationRetention {
+                retention_secs: 3600,
+                max_rows: 100,
+            },
+            |_| {
+                std::fs::write(&injected, b"untrusted-sidecar").unwrap();
+                std::fs::set_permissions(&injected, std::fs::Permissions::from_mode(0o600))
+                    .unwrap();
+            },
+        );
+
+        assert!(result.is_err(), "late sidecar must fail closed");
+        assert_eq!(std::fs::read(&injected).unwrap(), b"untrusted-sidecar");
+        let connection = Connection::open(&journal_path).unwrap();
+        let journal_tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'media_operations'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(journal_tables, 0);
+    }
 }

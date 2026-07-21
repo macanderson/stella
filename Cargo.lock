@@ -3180,6 +3180,7 @@ version = "0.4.51"
 dependencies = [
  "async-trait",
  "base64",
+ "libc",
  "reqwest",
  "roxmltree",
  "rusqlite",

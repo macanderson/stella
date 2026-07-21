@@ -455,13 +455,9 @@ fn host_media_operation_journal(
     if data_dir.starts_with(&workspace_root) {
         return None;
     }
-    std::fs::create_dir_all(&data_dir).ok()?;
-    let data_dir = data_dir.canonicalize().ok()?;
-    if data_dir.starts_with(workspace_root) {
-        return None;
-    }
-    stella_media::SqliteMediaOperationJournal::open(
+    stella_media::SqliteMediaOperationJournal::open_outside(
         data_dir.join("media-operations.db"),
+        workspace_root,
         Default::default(),
     )
     .ok()
@@ -729,6 +725,16 @@ mod tests {
             std::os::unix::fs::symlink(&workspace, &link).unwrap();
             unsafe { std::env::set_var("STELLA_DATA_DIR", link) };
             assert!(host_media_operation_journal(&workspace).is_none());
+
+            let ancestor_link = outside.join("linked-parent");
+            std::os::unix::fs::symlink(&workspace, &ancestor_link).unwrap();
+            let nested = ancestor_link.join("must-not-be-created");
+            unsafe { std::env::set_var("STELLA_DATA_DIR", nested) };
+            assert!(host_media_operation_journal(&workspace).is_none());
+            assert!(
+                !workspace.join("must-not-be-created").exists(),
+                "workspace must not be mutated before the resolved containment check"
+            );
         }
 
         std::env::set_current_dir(&workspace).unwrap();
