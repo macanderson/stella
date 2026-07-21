@@ -306,6 +306,7 @@ fn test_process(invocation: &TestInvocation, root: &std::path::Path) -> tokio::p
     for var in stella_tools::exec::GIT_REPO_ENV_VARS {
         cmd.env_remove(var);
     }
+    stella_tools::exec::scrub_sensitive_env(&mut cmd);
     cmd
 }
 

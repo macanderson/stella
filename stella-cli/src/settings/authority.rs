@@ -7,6 +7,13 @@ use super::{
     ToolsSettings,
 };
 
+impl Settings {
+    /// Managed-only raw enrollment. User and project copies never merge here.
+    pub(crate) fn managed_enterprise_telemetry(&self) -> Option<&serde_json::Value> {
+        self.enterprise_telemetry.as_ref()
+    }
+}
+
 /// Authority ceilings accepted from the org-managed settings file.
 ///
 /// `off` denies the corresponding capability. An `on` value permits a later

@@ -28,6 +28,9 @@ mod connect_cmd;
 mod discovery;
 mod domains;
 mod engine_config;
+mod enterprise_telemetry;
+#[cfg(test)]
+mod enterprise_telemetry_tests;
 mod env_files;
 mod export;
 mod extensions;
@@ -337,6 +340,13 @@ enum Command {
         provider: Option<String>,
     },
 
+    /// Inspect or explicitly flush the managed enterprise operational spool.
+    /// Disabled by default; requires a signed org-managed enrollment.
+    Telemetry {
+        #[command(subcommand)]
+        cmd: TelemetryCmd,
+    },
+
     /// Open the Observatory — a local web dashboard over this workspace's
     /// telemetry (.stella/private/store.db + fleet.db): spend, tokens, cache
     /// traffic, tool calls, files touched, memory citations, reflections,
@@ -384,6 +394,14 @@ enum Command {
 
     /// Print the version and exit
     Version,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
+enum TelemetryCmd {
+    /// Show enrollment state, pending bytes/rows, and local drop count.
+    Status,
+    /// Attempt one bounded delivery batch now.
+    Flush,
 }
 
 /// `stella models` subcommands — the model-catalog surface. A bare
@@ -991,9 +1009,15 @@ fn main() -> ExitCode {
     // resolution see project keys. Runs here at single-threaded startup where
     // mutating the process environment is safe. The live shell always wins;
     // `STELLA_NO_ENV_FILE=1` opts out entirely.
-    let loaded_env = env_files::maybe_load();
+    let mut loaded_env = env_files::maybe_load();
 
     let cli = Cli::parse();
+
+    enterprise_telemetry::register_project_env_names(loaded_env.names.iter().cloned());
+    enterprise_telemetry::start_best_effort_flush();
+    loaded_env
+        .names
+        .retain(|name| !stella_tools::exec::is_sensitive_env_name(name));
 
     // Value-free confirmation (names only), gated on STELLA_ENV_DEBUG + a TTY +
     // a human output format so it never pollutes json/stream-json.
@@ -1057,6 +1081,11 @@ fn run(cli: Cli) -> Result<(), String> {
             // needs `validate` by ref), so `format` binds as `&StatsFormat`;
             // it is `Copy`, so deref rather than move.
             return stats::run_stats(*format, provider.as_deref());
+        }
+        Some(Command::Telemetry { cmd }) => {
+            // Managed operational export is independent of model/provider
+            // configuration. Community/default status constructs no client.
+            return enterprise_telemetry::run_command(*cmd);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
@@ -1246,6 +1275,7 @@ fn run(cli: Cli) -> Result<(), String> {
         | Command::Scripts { .. }
         | Command::Storage { .. }
         | Command::Stats { .. }
+        | Command::Telemetry { .. }
         | Command::Memory { .. }
         | Command::Mcp { .. }
         | Command::Connect { .. }

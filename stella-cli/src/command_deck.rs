@@ -97,6 +97,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use crate::agent;
 use crate::claims::ClaimTap;
 use crate::config::Config;
+use crate::enterprise_telemetry::finish_cancelled_execution;
 use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRegistry};
 use crate::memory::{SessionMemory, inject_recall_block, turn_warrants_reflection};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -1648,9 +1649,7 @@ pub async fn run_deck_session(
                 let cancelled_cost =
                     agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
                 if let Some((store, id)) = &execution
-                    && store
-                        .finish_execution(*id, "cancelled", cancelled_cost)
-                        .is_err()
+                    && finish_cancelled_execution(store, *id, cancelled_cost).is_err()
                 {
                     let _ = in_tx.send(Inbound::Event {
                         agent: LEAD.to_string(),

@@ -233,6 +233,7 @@ impl Tool for Bash {
         let mut cmd = Command::new(program);
         cmd.args(args);
         cmd.current_dir(root);
+        crate::exec::scrub_sensitive_env(&mut cmd);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         // New process group so we can kill the whole tree on timeout.

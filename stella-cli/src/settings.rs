@@ -118,6 +118,9 @@ pub struct Settings {
     /// file is already the policy source.
     #[serde(default, rename = "authority")]
     managed_authority: Option<ManagedAuthoritySettings>,
+    /// Raw enrollment captured only from managed scope; validated fail-open by its adapter.
+    #[serde(default)]
+    enterprise_telemetry: Option<serde_json::Value>,
     /// Effective authority computed by [`Settings::load`]. This is skipped
     /// when parsing individual scopes so repository text cannot supply it.
     #[serde(skip)]
@@ -694,6 +697,7 @@ impl Settings {
         }
         apply_tool_ceiling(&mut merged, authority);
         merged.managed_authority = managed.managed_authority;
+        merged.enterprise_telemetry = managed.enterprise_telemetry.clone();
         merged.authority_policy = authority;
         merged
     }

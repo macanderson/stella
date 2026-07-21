@@ -96,10 +96,12 @@ event classes, issue time, and expiry. The issuer verification key is installed
 through managed configuration, never supplied by a repository or the endpoint.
 
 Events enter a separate bounded SQLite spool after local finalization. Delivery
-is at-least-once with deterministic event IDs. Startup, shutdown, and
-`stella telemetry flush` attempt delivery. Failure remains locally visible and
-never changes the agent outcome. A full spool may evict the oldest operational
-event and increments a durable drop counter.
+is at-least-once with deterministic event IDs. A bounded detached startup flush
+and `stella telemetry flush` attempt delivery. Graceful shutdown guarantees the
+finalized event is durably enqueued locally but never blocks on network I/O;
+the next startup or explicit flush retries it. Failure remains locally visible
+and never changes the agent outcome. A full spool may evict the oldest
+operational event and increments a durable drop counter.
 
 `compliance_audit` enrollment is rejected in this phase. Compliance delivery
 requires a non-evicting ledger, server receipts, retention/hold semantics, and

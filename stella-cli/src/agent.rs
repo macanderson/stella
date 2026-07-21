@@ -2033,9 +2033,9 @@ pub(crate) fn record_execution_end(
     let _ = store.materialize_tool_calls(execution_id);
     let _ = store.finalize_execution_reflection(execution_id);
     let _ = store.sync_to_usage_default(execution_id);
+    let _ = crate::enterprise_telemetry::enqueue_finalized_execution(store, execution_id);
     files_ok && citations_ok && uses_ok && mcp_usage_ok && finish_ok
 }
-
 /// The registry's MCP tool-usage ledger as store rows. This DRAINS the ledger
 /// (like memory citations) so each call persists under exactly one execution —
 /// re-persisting under later turns would inflate the per-tool call counts.

@@ -475,6 +475,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     let mut cmd = Command::new(&tool.command[0]);
     cmd.args(&tool.command[1..]);
     cmd.current_dir(workspace_root);
+    crate::exec::scrub_sensitive_env(&mut cmd);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());

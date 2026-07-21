@@ -98,6 +98,7 @@ mod private;
 mod private_state_tests;
 
 pub mod catalog;
+pub mod enterprise_telemetry;
 pub mod journal;
 pub mod notify;
 pub mod sessions;
