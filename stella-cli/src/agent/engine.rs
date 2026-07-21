@@ -110,13 +110,17 @@ pub(crate) enum PipelineApprovalCapability {
 
 /// Build the one-shot pipeline config from the host's approval capability.
 /// Rendering remains a separate concern owned by the event renderer.
+/// `worker_model` is [`EngineWiring::worker_model`], threaded through to
+/// `pipeline_engine_config_for` so the worker's clamps key off the model the
+/// role actually resolves to (issue #276).
 pub(crate) fn pipeline_config_for_approval_capability(
     cfg: &Config,
     approval: PipelineApprovalCapability,
+    worker_model: &ModelRef,
     test_command: Option<&str>,
 ) -> PipelineConfig {
     PipelineConfig {
-        engine: pipeline_engine_config_for(cfg),
+        engine: pipeline_engine_config_for(cfg, worker_model),
         headless: approval == PipelineApprovalCapability::Unavailable,
         headless_bypass_scope_review: HEADLESS_SCOPE_REVIEW_BYPASS,
         test_command: test_command.map(str::to_string),
