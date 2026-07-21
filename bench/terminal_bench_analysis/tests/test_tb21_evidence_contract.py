@@ -9,10 +9,21 @@ import pytest
 
 import freeze_tb21_study_seed as freezer
 from tb21_evidence_contract import (
+    append_budget_authorization,
+    append_candidate,
+    append_intent,
+    append_outcome,
+    append_preregistration,
+    append_publication,
+    build_initial_ledger,
     build_task_partition,
     canonical_body_bytes,
     canonical_file_bytes,
+    next_sequence,
     parse_canonical_object,
+    required_public_subjects,
+    stage_shape,
+    validate_run_ledger,
     validate_task_partition,
 )
 from tb21_study_seed import TASK_IDENTITIES, TASK_SET_HASH_DOMAIN, task_set_sha256
@@ -84,6 +95,247 @@ def _refresh_split_digest(partition: dict[str, object], split: str) -> None:
     digests = partition["split_sha256"]
     assert isinstance(digests, dict)
     digests[split] = hashlib.sha256(canonical_body_bytes(partition[split])).hexdigest()
+
+
+def _sha256(value: object) -> str:
+    return hashlib.sha256(canonical_body_bytes(value)).hexdigest()
+
+
+def candidate_record(
+    *,
+    sequence: int,
+    candidate_id: str = "dev-r1-a",
+    stage: str = "development_round_1",
+    job_name: str | None = None,
+    candidate_sha256: str | None = None,
+    config_sha256: str = "4" * 64,
+) -> dict[str, object]:
+    shape = stage_shape(stage)
+    identity = {
+        "source_commit": "1" * 40,
+        "binary_sha256": "2" * 64,
+        "source_tree_sha256": "3" * 64,
+        "config_sha256": config_sha256,
+        "adapter_sha256": "5" * 64,
+        "analyzer_sha256": "6" * 64,
+        "harbor_sha256": "7" * 64,
+        "evidence_contract_sha256": "8" * 64,
+        "model": "openrouter/z-ai/glm-5.1",
+        "provider_route_policy": {
+            "provider": "openrouter",
+            "model": "z-ai/glm-5.1",
+            "allow_fallbacks": False,
+            "data_collection": "deny",
+        },
+        "topology": "direct",
+        "role_model": "openrouter/z-ai/glm-5.1",
+        "effort": "max",
+        "reasoning": True,
+    }
+    record: dict[str, object] = {
+        "sequence": sequence,
+        "candidate_id": candidate_id,
+        "stage": stage,
+        "candidate_sha256": candidate_sha256 or _sha256(identity),
+        "record_sha256": "",
+        **identity,
+        "harbor_concurrency": shape["harbor_concurrency"],
+        "per_trial_limit_usd": "0.30",
+        "task_split": "development" if stage.startswith("development_") else stage,
+        "task_partition_sha256": "a" * 64,
+        "attempts_per_task": shape["attempts"],
+        "retry_max_retries": 0,
+        "job_name": job_name or f"stella-{candidate_id}-{stage}",
+        "declared_at": "2026-07-21T12:01:00-07:00",
+    }
+    record["record_sha256"] = _sha256(
+        {
+            key: value
+            for key, value in record.items()
+            if key not in {"sequence", "record_sha256"}
+        }
+    )
+    return record
+
+
+def _refresh_candidate_record_sha256(record: dict[str, object]) -> None:
+    record["record_sha256"] = _sha256(
+        {
+            key: value
+            for key, value in record.items()
+            if key not in {"sequence", "record_sha256"}
+        }
+    )
+
+
+def preregistration_record(
+    *,
+    sequence: int,
+    kind: str = "development_round_1",
+    candidate_ids: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "sequence": sequence,
+        "kind": kind,
+        "subject_commit": "1" * 40,
+        "candidate_ids": candidate_ids if candidate_ids is not None else ["dev-r1-a"],
+        "study_manifest_sha256": None,
+        "declared_at": "2026-07-21T12:02:00-07:00",
+    }
+
+
+def amendment_record(
+    *, sequence: int, invalid_job_name: str, replacement_job_name: str
+) -> dict[str, object]:
+    candidate = candidate_record(sequence=3)
+    return {
+        "sequence": sequence,
+        "kind": "development_amendment",
+        "stage": "development_round_1",
+        "candidate_id": "dev-r1-a",
+        "invalid_job_name": invalid_job_name,
+        "replacement_job_name": replacement_job_name,
+        "artifact_tree_sha256": "9" * 64,
+        "reason": "runner failed before the first canonical trial",
+        "candidate_sha256": candidate["candidate_sha256"],
+        "config_sha256": candidate["config_sha256"],
+        "subject_commit": "1" * 40,
+        "declared_at": "2026-07-21T12:08:00-07:00",
+    }
+
+
+def publication_record(
+    *,
+    sequence: int,
+    subject_type: str,
+    subject_id: str,
+    ledger_preimage_sha256: str | None = None,
+) -> dict[str, object]:
+    return {
+        "sequence": sequence,
+        "subject_type": subject_type,
+        "subject_id": subject_id,
+        "ledger_preimage_sha256": ledger_preimage_sha256,
+        "ledger_commit": "c" * 40,
+        "public_url": f"https://github.com/macanderson/stella/commit/{'c' * 40}",
+        "published_at": "2026-07-21T12:03:00-07:00",
+    }
+
+
+def intent_record(
+    *,
+    sequence: int,
+    stage: str = "development_round_1",
+    candidate_id: str = "dev-r1-a",
+    intent_sha256: str = "b" * 64,
+    job_name: str | None = None,
+    provider_key_name: str = "stella-tb21-tuning-key-v1",
+    provider_authorization_id: str = "tuning_provider_v1",
+    infrastructure_authorization_id: str = "tuning_infrastructure_v1",
+    candidate_sha256: str | None = None,
+    config_sha256: str = "4" * 64,
+) -> dict[str, object]:
+    shape = stage_shape(stage)
+    requested_trials = shape["tasks"] * shape["attempts"]
+    candidate = candidate_record(
+        sequence=3,
+        candidate_id=candidate_id,
+        stage=stage,
+        job_name=job_name,
+        candidate_sha256=candidate_sha256,
+        config_sha256=config_sha256,
+    )
+    return {
+        "sequence": sequence,
+        "intent_sha256": intent_sha256,
+        "stage": stage,
+        "candidate_id": candidate_id,
+        "candidate_sha256": candidate["candidate_sha256"],
+        "config_sha256": candidate["config_sha256"],
+        "job_name": candidate["job_name"],
+        "task_split": candidate["task_split"],
+        "requested_trials": requested_trials,
+        "attempts_per_task": shape["attempts"],
+        "retry_max_retries": 0,
+        "harbor_concurrency": shape["harbor_concurrency"],
+        "per_trial_limit_usd": "0.30",
+        "maximum_spend_cents": requested_trials * 30,
+        "provider_authorization_id": provider_authorization_id,
+        "infrastructure_authorization_id": infrastructure_authorization_id,
+        "provider_key_name": provider_key_name,
+        "provider_usage_before_usd": "0.00",
+        "provider_snapshot_at": "2026-07-21T12:03:30-07:00",
+        "declared_at": "2026-07-21T12:04:00-07:00",
+    }
+
+
+def outcome_record(
+    *,
+    sequence: int,
+    intent_sha256: str = "b" * 64,
+    status: str = "complete",
+    attempted_trials: int = 10,
+    job_name: str = "stella-dev-r1-a-development_round_1",
+) -> dict[str, object]:
+    candidate = candidate_record(sequence=3)
+    return {
+        "sequence": sequence,
+        "intent_sha256": intent_sha256,
+        "candidate_id": "dev-r1-a",
+        "candidate_sha256": candidate["candidate_sha256"],
+        "config_sha256": candidate["config_sha256"],
+        "job_name": job_name,
+        "status": status,
+        "attempted_trials": attempted_trials,
+        "artifact_tree_sha256": "9" * 64,
+        "provider_usage_before_usd": "0.00",
+        "provider_usage_after_usd": "0.00",
+        "provider_usage_delta_usd": "0.00",
+        "telemetry_cost_sum_usd": "0.00",
+        "reconciliation_tolerance_usd": "0.01",
+        "completed_at": "2026-07-21T12:06:00-07:00",
+        "recorded_at": "2026-07-21T12:07:00-07:00",
+    }
+
+
+def confirmatory_authorization_record(sequence: int) -> dict[str, object]:
+    return {
+        "sequence": sequence,
+        "authorization_id": "confirmatory_v1",
+        "scope": "confirmatory",
+        "provider_key_name": "stella-tb21-confirmatory-key-v1",
+        "hard_limit_cents": 20_000,
+        "provider_cap_cents": 15_000,
+        "infrastructure_cap_cents": 5_000,
+        "reserve_cents": 0,
+        "authorization_commit": "d" * 40,
+        "declared_at": "2026-07-21T13:00:00-07:00",
+    }
+
+
+def _development_intent_ledger() -> dict[str, object]:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    ledger = append_candidate(ledger, candidate_record(sequence=3))
+    ledger = append_preregistration(
+        ledger, preregistration_record(sequence=4, kind="development_round_1")
+    )
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=5,
+            subject_type="preregistration",
+            subject_id="development_round_1",
+        ),
+    )
+    ledger = append_intent(ledger, intent_record(sequence=6))
+    return append_publication(
+        ledger,
+        publication_record(sequence=7, subject_type="intent", subject_id="b" * 64),
+    )
 
 
 def test_real_seed_and_partition_are_frozen() -> None:
@@ -380,3 +632,408 @@ def test_partition_rejects_a_digest_consistent_nonfrozen_split() -> None:
 
     with pytest.raises(ValueError, match="frozen seed"):
         validate_task_partition(partition)
+
+
+def test_hybrid_lifecycle_accepts_many_intents_and_one_global_sequence() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    assert next_sequence(ledger) == 3
+    candidate = candidate_record(sequence=3, candidate_id="dev-r1-a")
+    ledger = append_candidate(ledger, candidate)
+    ledger = append_preregistration(
+        ledger,
+        preregistration_record(sequence=4, kind="development_round_1"),
+    )
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=5,
+            subject_type="preregistration",
+            subject_id="development_round_1",
+        ),
+    )
+    ledger = append_intent(
+        ledger,
+        intent_record(sequence=6, stage="development_round_1", candidate_id="dev-r1-a"),
+    )
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=7,
+            subject_type="intent",
+            subject_id="b" * 64,
+        ),
+    )
+    assert validate_run_ledger(ledger) == ledger
+    assert required_public_subjects(ledger) == (
+        ("preregistration", "development_round_1"),
+        ("intent", "b" * 64),
+    )
+    assert [
+        record["sequence"]
+        for field in (
+            "budget_authorizations",
+            "preregistrations",
+            "candidates",
+            "intents",
+            "publications",
+            "outcomes",
+        )
+        for record in ledger[field]
+    ] != list(range(1, 8))
+    assert sorted(
+        record["sequence"]
+        for field in (
+            "budget_authorizations",
+            "preregistrations",
+            "candidates",
+            "intents",
+            "publications",
+            "outcomes",
+        )
+        for record in ledger[field]
+    ) == list(range(1, 8))
+
+
+def test_initial_budget_and_stage_shapes_are_exact() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+
+    assert ledger["budget_authorizations"] == [
+        {
+            "sequence": 1,
+            "authorization_id": "tuning_provider_v1",
+            "scope": "tuning_and_screen",
+            "provider_key_name": "stella-tb21-tuning-key-v1",
+            "hard_limit_cents": 10_000,
+            "provider_cap_cents": 10_000,
+            "infrastructure_cap_cents": 0,
+            "reserve_cents": 1_500,
+            "authorization_commit": "a" * 40,
+            "declared_at": "2026-07-21T12:00:00-07:00",
+        },
+        {
+            "sequence": 2,
+            "authorization_id": "tuning_infrastructure_v1",
+            "scope": "tuning_and_screen",
+            "provider_key_name": None,
+            "hard_limit_cents": 5_500,
+            "provider_cap_cents": 0,
+            "infrastructure_cap_cents": 5_500,
+            "reserve_cents": 0,
+            "authorization_commit": "a" * 40,
+            "declared_at": "2026-07-21T12:00:00-07:00",
+        },
+    ]
+    assert stage_shape("development_round_3") == {
+        "tasks": 10,
+        "attempts": 3,
+        "max_candidates": 2,
+        "max_intents": 4,
+        "max_trials": 60,
+        "max_spend_cents": 1_800,
+        "harbor_concurrency": 3,
+    }
+    assert stage_shape("confirmatory")["max_spend_cents"] is None
+    with pytest.raises(ValueError, match="stage"):
+        stage_shape("calibration")
+
+
+def test_confirmatory_accepts_only_a_new_explicit_authorization() -> None:
+    ledger = build_initial_ledger(
+        "a" * 64,
+        authorization_commit="a" * 40,
+        declared_at="2026-07-21T12:00:00-07:00",
+    )
+    ledger = append_budget_authorization(
+        ledger, confirmatory_authorization_record(sequence=3)
+    )
+    candidate = candidate_record(
+        sequence=4, candidate_id="winner", stage="confirmatory"
+    )
+    ledger = append_candidate(ledger, candidate)
+    preregistration = preregistration_record(
+        sequence=5, kind="confirmatory", candidate_ids=["winner"]
+    )
+    preregistration["study_manifest_sha256"] = "e" * 64
+    ledger = append_preregistration(ledger, preregistration)
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=6,
+            subject_type="preregistration",
+            subject_id="confirmatory",
+        ),
+    )
+    ledger = append_intent(
+        ledger,
+        intent_record(
+            sequence=7,
+            stage="confirmatory",
+            candidate_id="winner",
+            provider_key_name="stella-tb21-confirmatory-key-v1",
+            provider_authorization_id="confirmatory_v1",
+            infrastructure_authorization_id="confirmatory_v1",
+        ),
+    )
+
+    assert validate_run_ledger(ledger) == ledger
+
+
+def test_published_amendment_allows_only_a_zero_trial_development_replacement() -> None:
+    ledger = _development_intent_ledger()
+    invalid_job_name = "stella-dev-r1-a-development_round_1"
+    replacement_job_name = "stella-dev-r1-a-development_round_1-replacement"
+    ledger = append_outcome(
+        ledger,
+        outcome_record(
+            sequence=8,
+            status="ineligible",
+            attempted_trials=0,
+            job_name=invalid_job_name,
+        ),
+    )
+    ledger = append_preregistration(
+        ledger,
+        amendment_record(
+            sequence=9,
+            invalid_job_name=invalid_job_name,
+            replacement_job_name=replacement_job_name,
+        ),
+    )
+    ledger = append_publication(
+        ledger,
+        publication_record(
+            sequence=10,
+            subject_type="preregistration",
+            subject_id=f"development_amendment:{invalid_job_name}",
+        ),
+    )
+    ledger = append_intent(
+        ledger,
+        intent_record(
+            sequence=11,
+            intent_sha256="d" * 64,
+            job_name=replacement_job_name,
+        ),
+    )
+
+    assert validate_run_ledger(ledger) == ledger
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "sequence reuse",
+        "booleans as integers",
+        "naive timestamps",
+        "publication-only delta drift",
+        "candidate edits",
+        "round overfill",
+        "unamended development replacement",
+        "incomplete-candidate promotion",
+        "wrong key authorization",
+        "reserve reuse",
+        "confirmatory records without a new explicit authorization",
+    ],
+)
+def test_lifecycle_mutation_matrix_is_rejected(mutation: str) -> None:
+    if mutation == "naive timestamps":
+        with pytest.raises(ValueError, match="timezone-aware"):
+            build_initial_ledger(
+                "a" * 64,
+                authorization_commit="a" * 40,
+                declared_at="2026-07-21T12:00:00",
+            )
+        return
+
+    if mutation == "sequence reuse":
+        ledger = _development_intent_ledger()
+        with pytest.raises(ValueError, match="next global sequence"):
+            append_outcome(ledger, outcome_record(sequence=7))
+        return
+
+    if mutation == "booleans as integers":
+        ledger = build_initial_ledger(
+            "a" * 64,
+            authorization_commit="a" * 40,
+            declared_at="2026-07-21T12:00:00-07:00",
+        )
+        candidate = candidate_record(sequence=3)
+        candidate["attempts_per_task"] = True
+        _refresh_candidate_record_sha256(candidate)
+        with pytest.raises(ValueError, match="integer"):
+            append_candidate(ledger, candidate)
+        return
+
+    if mutation == "publication-only delta drift":
+        ledger = build_initial_ledger(
+            "a" * 64,
+            authorization_commit="a" * 40,
+            declared_at="2026-07-21T12:00:00-07:00",
+        )
+        ledger = append_candidate(ledger, candidate_record(sequence=3))
+        ledger = append_preregistration(ledger, preregistration_record(sequence=4))
+        publication = publication_record(
+            sequence=5,
+            subject_type="preregistration",
+            subject_id="development_round_1",
+            ledger_preimage_sha256=_sha256(ledger),
+        )
+        ledger["budget_authorizations"][0]["authorization_commit"] = "f" * 40
+        ledger["budget_authorizations"][1]["authorization_commit"] = "f" * 40
+        with pytest.raises(ValueError, match="preimage"):
+            append_publication(ledger, publication)
+        return
+
+    if mutation == "candidate edits":
+        ledger = _development_intent_ledger()
+        ledger["candidates"][0]["config_sha256"] = "f" * 64
+        with pytest.raises(ValueError, match=r"candidate (?:identity|record) digest"):
+            validate_run_ledger(ledger)
+        return
+
+    if mutation == "round overfill":
+        ledger = build_initial_ledger(
+            "a" * 64,
+            authorization_commit="a" * 40,
+            declared_at="2026-07-21T12:00:00-07:00",
+        )
+        for index in range(8):
+            ledger = append_candidate(
+                ledger,
+                candidate_record(
+                    sequence=next_sequence(ledger), candidate_id=f"entrant-{index}"
+                ),
+            )
+        with pytest.raises(ValueError, match="candidate cap"):
+            append_candidate(
+                ledger,
+                candidate_record(
+                    sequence=next_sequence(ledger), candidate_id="entrant-8"
+                ),
+            )
+        return
+
+    if mutation == "unamended development replacement":
+        ledger = _development_intent_ledger()
+        ledger = append_outcome(
+            ledger,
+            outcome_record(sequence=8, status="ineligible", attempted_trials=0),
+        )
+        with pytest.raises(ValueError, match="published development amendment"):
+            append_intent(
+                ledger,
+                intent_record(
+                    sequence=9,
+                    intent_sha256="d" * 64,
+                    job_name="stella-dev-r1-a-development_round_1-replacement",
+                ),
+            )
+        return
+
+    if mutation == "incomplete-candidate promotion":
+        ledger = _development_intent_ledger()
+        ledger = append_outcome(
+            ledger,
+            outcome_record(sequence=8, status="incomplete", attempted_trials=10),
+        )
+        prior = ledger["candidates"][0]
+        with pytest.raises(ValueError, match="complete candidate"):
+            append_candidate(
+                ledger,
+                candidate_record(
+                    sequence=9,
+                    stage="development_round_2",
+                    candidate_sha256=prior["candidate_sha256"],
+                    config_sha256=prior["config_sha256"],
+                ),
+            )
+        return
+
+    if mutation == "reserve reuse":
+        ledger = build_initial_ledger(
+            "a" * 64,
+            authorization_commit="a" * 40,
+            declared_at="2026-07-21T12:00:00-07:00",
+        )
+        ledger["budget_authorizations"][0]["reserve_cents"] = 0
+        with pytest.raises(ValueError, match="exact approved caps"):
+            validate_run_ledger(ledger)
+        return
+
+    if mutation == "wrong key authorization":
+        ledger = build_initial_ledger(
+            "a" * 64,
+            authorization_commit="a" * 40,
+            declared_at="2026-07-21T12:00:00-07:00",
+        )
+        ledger = append_candidate(ledger, candidate_record(sequence=3))
+        ledger = append_preregistration(ledger, preregistration_record(sequence=4))
+        ledger = append_publication(
+            ledger,
+            publication_record(
+                sequence=5,
+                subject_type="preregistration",
+                subject_id="development_round_1",
+            ),
+        )
+        intent = intent_record(sequence=6)
+        intent["provider_key_name"] = "stella-tb21-confirmatory-key-v1"
+        with pytest.raises(ValueError, match="provider key"):
+            append_intent(ledger, intent)
+        return
+
+    if mutation == "confirmatory records without a new explicit authorization":
+        ledger = build_initial_ledger(
+            "a" * 64,
+            authorization_commit="a" * 40,
+            declared_at="2026-07-21T12:00:00-07:00",
+        )
+        ledger = append_candidate(
+            ledger, candidate_record(sequence=3, stage="confirmatory")
+        )
+        preregistration = preregistration_record(sequence=4, kind="confirmatory")
+        preregistration["study_manifest_sha256"] = "e" * 64
+        ledger = append_preregistration(ledger, preregistration)
+        ledger = append_publication(
+            ledger,
+            publication_record(
+                sequence=5,
+                subject_type="preregistration",
+                subject_id="confirmatory",
+            ),
+        )
+        with pytest.raises(ValueError, match="explicit confirmatory authorization"):
+            append_intent(ledger, intent_record(sequence=6, stage="confirmatory"))
+        return
+
+    raise AssertionError(f"unhandled mutation {mutation!r}")
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "provider_usage_before_usd",
+        "provider_usage_after_usd",
+        "provider_usage_delta_usd",
+        "telemetry_cost_sum_usd",
+        "reconciliation_tolerance_usd",
+    ],
+)
+def test_metered_values_require_bounded_nonnegative_decimal_strings(field: str) -> None:
+    ledger = _development_intent_ledger()
+    outcome = outcome_record(sequence=8)
+    outcome[field] = 0.0
+    with pytest.raises(ValueError, match="decimal string"):
+        append_outcome(ledger, outcome)
+
+    outcome[field] = "Infinity"
+    with pytest.raises(ValueError, match="decimal string"):
+        append_outcome(ledger, outcome)
