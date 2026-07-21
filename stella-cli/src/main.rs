@@ -25,6 +25,7 @@ mod claims;
 mod command_deck;
 mod config;
 mod connect_cmd;
+mod credential_status;
 mod discovery;
 mod domains;
 mod engine_config;
@@ -983,7 +984,7 @@ fn main() -> ExitCode {
     // a human output format so it never pollutes json/stream-json.
     env_files::announce(&loaded_env, cli.globals.output_format);
 
-    match run(cli) {
+    match run(cli, &loaded_env) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{} {}", "stella:".red().bold(), e);
@@ -992,13 +993,13 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // Models and Version don't need a configured provider/key.
     match &cli.command {
         Some(Command::Models { cmd }) => {
             return match cmd {
                 None => {
-                    config::Config::print_available_models();
+                    config::Config::print_available_models(Some(loaded_env));
                     model_catalog::print_catalog_status();
                     Ok(())
                 }
@@ -1239,7 +1240,7 @@ fn run(cli: Cli) -> Result<(), String> {
             unreachable!("handled before provider resolution")
         }
         Command::Config => {
-            cfg.print_config();
+            cfg.print_config(Some(loaded_env));
         }
     }
     Ok(())

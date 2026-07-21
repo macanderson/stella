@@ -44,6 +44,14 @@ pub enum CredentialSource {
     CliFlag,
     EnvVar,
     ConfigFile,
+    /// A literal `providers.<id>.api_key` in a merged settings scope
+    /// (user/org/project `settings.json`). `ApiKey::resolve` itself never
+    /// produces this — it has no notion of settings.json — a caller that
+    /// layers a settings literal on top of the base chain (`stella-cli`'s
+    /// `resolve_provider_key`) constructs it, so a display surface can tell
+    /// "this file" (`ConfigFile`) apart from "this declarative config"
+    /// (`SettingsJson`) instead of both reporting as the same source.
+    SettingsJson,
     Interactive,
 }
 
@@ -243,6 +251,19 @@ impl CredentialsFile {
                 path: PathBuf::new(),
                 data: CredentialsFileData::default(),
             }),
+        }
+    }
+
+    /// An empty, in-memory-only credentials file (no backing path — `save`
+    /// on it errors with `FileWrite`). For callers that must always have
+    /// *some* `&CredentialsFile` to pass into `ApiKey::resolve` /
+    /// `resolve_provider_key`, even when the real file failed to load (e.g.
+    /// malformed TOML) and the caller's posture is "degrade the listing,
+    /// don't crash it" rather than propagate the error.
+    pub fn empty() -> Self {
+        Self {
+            path: PathBuf::new(),
+            data: CredentialsFileData::default(),
         }
     }
 
@@ -534,6 +555,18 @@ mod tests {
         let err = CredentialsFile::load(&path).unwrap_err();
         assert!(matches!(err, CredentialError::FileParse { .. }));
         let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- empty (degrade-a-listing-command posture) -----------------------
+
+    #[test]
+    fn empty_file_has_no_entries_and_refuses_to_save() {
+        let file = CredentialsFile::empty();
+        assert_eq!(file.get("zai"), None);
+        assert!(matches!(
+            file.save().unwrap_err(),
+            CredentialError::FileWrite { .. }
+        ));
     }
 
     // ---- ApiKey::resolve precedence (per-provider-per-source) --------
