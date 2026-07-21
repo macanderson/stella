@@ -15,11 +15,17 @@
 //! Warnings never block launch — a run can proceed on a partially-valid
 //! config (a bad judge pin falls back to the worker, etc.); the point is to
 //! surface the problem where it's cheap to fix, not to gate.
+//!
+//! [`save_role_model`] is the check's recovery companion: the settings
+//! write behind the `/model-<role> <spec>` chat commands, validated by the
+//! same wire-shape rules and performed with NO model call — when the
+//! configured model itself is what's broken, fixing it must not depend on
+//! it.
 
 use crate::config::{PROVIDERS, ProviderConfig};
 use crate::engine_config::{ModelSpec, model_spec_for, parse_model_spec};
 use crate::model_catalog::validate_model_slug;
-use crate::settings::{AgentEngineConfig, EngineAgentKind};
+use crate::settings::{AgentEngineConfig, EngineAgentKind, Settings};
 use stella_model::catalog::Catalog;
 
 /// One flagged settings problem — where it lives, the offending value, and
@@ -258,6 +264,94 @@ pub fn check_resolved_model(provider: &ProviderConfig, model_id: &str) -> Option
     validate_model_slug(provider, model_id).err().map(issue)
 }
 
+/// The flat settings key that carries `kind`'s model — where
+/// [`save_role_model`] writes and what its status line names.
+pub fn flat_key(kind: EngineAgentKind) -> &'static str {
+    match kind {
+        EngineAgentKind::Default => "default_model",
+        EngineAgentKind::Worker => "pipeline_worker_model",
+        EngineAgentKind::Judge => "pipeline_judge_model",
+        EngineAgentKind::Triage => "pipeline_triage_model",
+    }
+}
+
+/// Set `kind`'s model to `raw` (`provider/slug`, or a bare slug the seed
+/// catalog knows) in the settings file where the write actually takes
+/// effect: the project scope when its own engine config already answers
+/// `model_for(kind)` — a user-scope write would lose that merge — and the
+/// user scope otherwise.
+///
+/// In the target scope the role's flat key gets `raw`, and the same
+/// agent's `model`/`provider` pins are cleared so the qualified spec is
+/// the single source of routing for that role there. Returns the status
+/// line to show; `Err` means validation or I/O failed and nothing was
+/// written.
+pub fn save_role_model(
+    workspace_root: &std::path::Path,
+    kind: EngineAgentKind,
+    raw: &str,
+) -> Result<String, String> {
+    let raw = raw.trim();
+    let settings = Settings::load(workspace_root)?;
+    let ids: Vec<String> = PROVIDERS
+        .iter()
+        .map(|p| p.id.to_string())
+        .chain(std::iter::once(
+            crate::config::LOCAL_PROVIDER.id.to_string(),
+        ))
+        .chain(settings.providers.keys().cloned())
+        .collect();
+    let is_provider = |id: &str| ids.iter().any(|p| p == id);
+    let location = flat_key(kind);
+    if let Some(issue) = check_spec(location, raw, &is_provider) {
+        return Err(issue.line());
+    }
+    let project = crate::settings::project_settings_path(workspace_root);
+    let project_only = Settings::load_from(std::slice::from_ref(&project))?;
+    let project_wins = project_only
+        .agent_engine_config
+        .as_ref()
+        .is_some_and(|e| e.model_for(kind).is_some());
+    let path = if project_wins {
+        project
+    } else {
+        crate::settings::user_settings_path()
+            .ok_or_else(|| "cannot determine $HOME for user settings".to_string())?
+    };
+    let scope_only = Settings::load_from(std::slice::from_ref(&path))?;
+    let mut engine = scope_only.agent_engine_config.unwrap_or_default();
+    match kind {
+        EngineAgentKind::Default => engine.default_model = Some(raw.to_string()),
+        EngineAgentKind::Worker => engine.pipeline_worker_model = Some(raw.to_string()),
+        EngineAgentKind::Judge => engine.pipeline_judge_model = Some(raw.to_string()),
+        EngineAgentKind::Triage => engine.pipeline_triage_model = Some(raw.to_string()),
+    }
+    if let Some(agents) = engine.agents.as_mut()
+        && let Some(agent) = agents.get_mut(kind).as_mut()
+    {
+        agent.model = None;
+        agent.provider = None;
+    }
+    engine.save_to(&path)?;
+    // A model you have no key for saves fine — it just won't serve yet.
+    // Credential resolution is non-interactive here, like the launch check.
+    let configured = crate::config::discover_configured_providers();
+    let note = parse_model_spec(raw, &is_provider)
+        .filter(|spec| !configured.iter().any(|c| c.config.id == spec.provider))
+        .map(|spec| {
+            format!(
+                "\nnote: no credential currently resolves for provider `{}` — the \
+                 setting is saved, but calls will fail until one is configured",
+                spec.provider
+            )
+        })
+        .unwrap_or_default();
+    Ok(format!(
+        "{location} = `{raw}` saved to {} — applies to runs started from now on{note}",
+        path.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,10 +442,9 @@ mod tests {
         // With no explicit `provider`, `openai/nope` splits to the OpenAI
         // catalog and is correctly flagged (the string carries its own
         // routing).
-        let engine: AgentEngineConfig = serde_json::from_str(
-            r#"{ "agents": { "judge": { "model": "openai/nope" } } }"#,
-        )
-        .unwrap();
+        let engine: AgentEngineConfig =
+            serde_json::from_str(r#"{ "agents": { "judge": { "model": "openai/nope" } } }"#)
+                .unwrap();
         let issues = check_engine_settings(&engine, &is_seed_provider);
         assert_eq!(issues.len(), 1, "{issues:?}");
         assert_eq!(issues[0].location, "agents.judge.model");
@@ -368,6 +461,88 @@ mod tests {
         assert_eq!(
             issue.line(),
             "default_model: `openrouter/auto` — not served"
+        );
+    }
+
+    #[test]
+    fn save_role_model_targets_the_project_scope_that_defines_the_key() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join(".stella");
+        std::fs::create_dir_all(&project).unwrap();
+        // The broken state the recovery command exists for: an openrouter
+        // pin over the TUI-qualified doubled spec, defined at project scope
+        // — so a user-scope write would lose the merge.
+        std::fs::write(
+            project.join("settings.json"),
+            r#"{"agent_engine_config": {
+                "default_model": "openrouter/openrouter/auto",
+                "agents": {"default": {"provider": "openrouter"}}
+            }}"#,
+        )
+        .unwrap();
+        let status = save_role_model(dir.path(), EngineAgentKind::Default, "zai/glm-5.2")
+            .expect("a seed-known spec must save");
+        assert!(status.contains("default_model"), "{status}");
+        assert!(
+            status.contains(".stella"),
+            "the project scope must be the target: {status}"
+        );
+        let raw = std::fs::read_to_string(project.join("settings.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let engine = &json["agent_engine_config"];
+        assert_eq!(engine["default_model"], "zai/glm-5.2");
+        // The stale pin is cleared — the flat spec is the single source of
+        // routing for the role in this scope after the write.
+        assert!(
+            engine["agents"]["default"].get("provider").is_none(),
+            "{raw}"
+        );
+    }
+
+    #[test]
+    fn save_role_model_rejects_a_mis_shaped_spec_and_writes_nothing() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let err = save_role_model(
+            dir.path(),
+            EngineAgentKind::Default,
+            "openrouter/openrouter/openrouter/auto",
+        )
+        .expect_err("the over-qualified form must be rejected");
+        assert!(err.contains("over-qualified"), "{err}");
+        assert!(
+            !dir.path().join(".stella").exists(),
+            "a rejected spec must write nothing"
+        );
+    }
+
+    #[test]
+    fn save_role_model_falls_back_to_the_user_scope() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let saved_home = std::env::var_os("HOME");
+        // SAFETY: env lock held for the whole mutate-read-restore window.
+        unsafe { std::env::set_var("HOME", &home) };
+        let result = save_role_model(dir.path(), EngineAgentKind::Judge, "zai/glm-5.2");
+        // Restore BEFORE asserting so a failure can't leak the fake HOME.
+        // SAFETY: same lock window as above.
+        unsafe {
+            match &saved_home {
+                Some(h) => std::env::set_var("HOME", h),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        let status = result.expect("no project opinion → user-scope save");
+        assert!(status.contains("pipeline_judge_model"), "{status}");
+        let raw = std::fs::read_to_string(home.join(".config/stella/settings.json"))
+            .expect("the user settings file is created");
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            json["agent_engine_config"]["pipeline_judge_model"],
+            "zai/glm-5.2"
         );
     }
 }

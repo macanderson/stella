@@ -394,8 +394,19 @@ async fn run_pipeline_one_shot(
 /// exact-match handlers in the loop only claim the bare forms). Must cover
 /// every `/`-command the loop below handles.
 const REPL_RESERVED: &[&str] = &[
-    "/exit", "/quit", "/models", "/config", "/help", "/clear", "/files", "/agents", "/init",
-    "/rename", "/color", "/goal",
+    "/exit",
+    "/quit",
+    "/models",
+    "/model-default",
+    "/config",
+    "/help",
+    "/clear",
+    "/files",
+    "/agents",
+    "/init",
+    "/rename",
+    "/color",
+    "/goal",
 ];
 
 /// Run an interactive REPL session. `budget_limit` is per-session: the
@@ -492,8 +503,40 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         if input == "/exit" || input == "/quit" || input == "exit" {
             break;
         }
-        if input == "/models" {
+        if input == "/models" || input == "/models list" {
             cfg.print_models();
+            continue;
+        }
+        // The recovery vocabulary is handled model-free: when the configured
+        // model itself is broken, `/models refresh` and `/model-default
+        // <spec>` are exactly how the user digs out — routing them into a
+        // model turn would fail on the very error being fixed.
+        if input == "/models refresh" || input == "/models refresh --force" {
+            println!();
+            if let Err(e) = crate::model_catalog::run_refresh(input.ends_with("--force")).await {
+                println!("  {} refresh failed: {e}", "✗".red());
+            }
+            println!();
+            continue;
+        }
+        if input == "/model-default" {
+            println!(
+                "  current default model: {}/{} — `/model-default <provider/slug>` sets it\n",
+                cfg.provider.id, cfg.model_id
+            );
+            continue;
+        }
+        if let Some(spec) = input.strip_prefix("/model-default ")
+            && !spec.trim().contains(char::is_whitespace)
+        {
+            match crate::settings_check::save_role_model(
+                &cfg.workspace_root,
+                crate::settings::EngineAgentKind::Default,
+                spec,
+            ) {
+                Ok(status) => println!("  {status}\n"),
+                Err(e) => println!("  {} {e}\n", "✗".red()),
+            }
             continue;
         }
         if input == "/config" {
@@ -2115,8 +2158,13 @@ fn print_help() {
     println!("  {}\n", "Stella Commands".bright_cyan().bold());
     println!("  {}  Send a prompt to the agent", "type message".dimmed());
     println!(
-        "  {}       List configured providers and models",
+        "  {}       List configured providers and models (`/models refresh` re-syncs the catalog)",
         "/models".bright_magenta()
+    );
+    println!(
+        "  {} Set the default model in settings — no model call, so it works when the \
+         configured model is broken",
+        "/model-default <provider/slug>".bright_magenta()
     );
     println!(
         "  {}        Show current configuration",

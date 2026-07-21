@@ -3102,7 +3102,7 @@ enum DeckCommand {
 const DECK_BUILTINS: &[(&str, &str)] = &[
     ("/help", "show commands"),
     ("/clear", "reset the conversation"),
-    ("/models", "list providers & models"),
+    ("/models", "list providers & models (`refresh` re-syncs)"),
     ("/init", "index the workspace: domains + code graph"),
     (
         "/agents",
@@ -3138,7 +3138,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     // The engine-config editor lives on the SETTINGS tab, full-width (no
     // `/engine` popup anymore); the /model-* commands jump straight to it
     // with that agent's model picker open.
-    ("/model-default", "pick the default agent's model"),
+    (
+        "/model-default",
+        "pick the default agent's model (or pass `<provider/slug>`)",
+    ),
     ("/model-worker", "pick the pipeline worker model"),
     ("/model-judge", "pick the pipeline judge model"),
     ("/model-triage", "pick the pipeline triage model"),
@@ -3148,6 +3151,69 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
 /// The deck's reserved command names — see [`DECK_BUILTINS`].
 fn deck_reserved() -> Vec<&'static str> {
     DECK_BUILTINS.iter().map(|(name, _)| *name).collect()
+}
+
+/// The engine role a `/model-<role>` command head names.
+fn role_for_head(head: &str) -> Option<crate::settings::EngineAgentKind> {
+    use crate::settings::EngineAgentKind;
+    match head {
+        "/model-default" => Some(EngineAgentKind::Default),
+        "/model-worker" => Some(EngineAgentKind::Worker),
+        "/model-judge" => Some(EngineAgentKind::Judge),
+        "/model-triage" => Some(EngineAgentKind::Triage),
+        _ => None,
+    }
+}
+
+/// An argument-carrying form of a productized command — the recovery
+/// vocabulary, which must never cost a model call: when the configured
+/// model itself is broken, `/models refresh` and `/model-default <spec>`
+/// are exactly how the user digs out, and routing them into a model turn
+/// fails on the very error being fixed. Parsed conservatively — a single
+/// recognized token (plus `refresh --force`); anything sentence-like stays
+/// a prompt, matching the "`/init do the thing` is a model prompt" rule.
+enum DeckArgCommand {
+    /// `/models refresh [--force]` — re-sync the catalog, no model call.
+    ModelsRefresh { force: bool },
+    /// `/models list` — the same listing the bare `/models` prints.
+    ModelsList,
+    /// `/models <typo>` — one unrecognized token: a mistyped subcommand,
+    /// answered with usage instead of a wasted model call.
+    ModelsUsage(String),
+    /// `/model-<role> <spec>` — set that role's model in settings.
+    SetRoleModel {
+        kind: crate::settings::EngineAgentKind,
+        spec: String,
+    },
+}
+
+/// Parse `trimmed` as a [`DeckArgCommand`]; `None` leaves it on the normal
+/// path (custom expansion, then prompt).
+fn parse_deck_arg_command(trimmed: &str) -> Option<DeckArgCommand> {
+    let (head, rest) = trimmed.split_once(char::is_whitespace)?;
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    if head == "/models" {
+        let mut words = rest.split_whitespace();
+        return match (words.next(), words.next(), words.next()) {
+            (Some("refresh"), None, None) => Some(DeckArgCommand::ModelsRefresh { force: false }),
+            (Some("refresh"), Some("--force"), None) => {
+                Some(DeckArgCommand::ModelsRefresh { force: true })
+            }
+            (Some("list"), None, None) => Some(DeckArgCommand::ModelsList),
+            (Some(word), None, None) => Some(DeckArgCommand::ModelsUsage(word.to_string())),
+            // A sentence after `/models` stays a prompt.
+            _ => None,
+        };
+    }
+    let kind = role_for_head(head)?;
+    // A single token is a slug attempt; a sentence is a prompt.
+    (!rest.contains(char::is_whitespace)).then(|| DeckArgCommand::SetRoleModel {
+        kind,
+        spec: rest.to_string(),
+    })
 }
 
 // ── Agent-engine config (the SETTINGS tab's config panel) ─────────────────────
@@ -3992,7 +4058,60 @@ async fn run_deck_command(
         // TUI-side, but a queued one reaches here — accept it as handled (a
         // no-op) rather than calling it "unknown".
         "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search" => {}
+        // The bare `/model-<role>` forms are TUI-intercepted (they open the
+        // SETTINGS tab's picker); one that reaches the driver was queued —
+        // answer with the effective routing and the argument form.
+        "/model-default" | "/model-worker" | "/model-judge" | "/model-triage" => {
+            let kind = role_for_head(trimmed).expect("arm lists only /model-<role> heads");
+            let current = cfg
+                .engine_settings
+                .as_ref()
+                .and_then(|e| {
+                    let configured = crate::config::discover_configured_providers();
+                    let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
+                    crate::engine_config::model_spec_for(e, kind, &is_provider)
+                })
+                .map(|spec| format!("{}/{}", spec.provider, spec.model))
+                .unwrap_or_else(|| format!("{}/{} (session)", cfg.provider.id, cfg.model_id));
+            say(format!(
+                "{trimmed}: currently `{current}` — `{trimmed} <provider/slug>` sets it \
+                 (no model call), or open the picker on the SETTINGS tab"
+            ));
+        }
         _ => {
+            // The recovery vocabulary first (see [`DeckArgCommand`]): the
+            // argument forms of reserved commands are handled model-free —
+            // they are how a broken model setting gets fixed, so they can
+            // never be allowed to depend on a working model.
+            if let Some(command) = parse_deck_arg_command(trimmed) {
+                match command {
+                    DeckArgCommand::ModelsRefresh { force } => {
+                        say("Model catalog refresh…".to_string());
+                        let mut emit = |line: String| say(line);
+                        if let Err(e) =
+                            crate::model_catalog::run_refresh_emit(force, &mut emit).await
+                        {
+                            say(format!("refresh failed: {e}"));
+                        }
+                    }
+                    DeckArgCommand::ModelsList => say(Config::available_models_plain()),
+                    DeckArgCommand::ModelsUsage(word) => say(format!(
+                        "`/models {word}` — unknown subcommand; try `/models` or `/models list` \
+                         (the listing) or `/models refresh [--force]` (re-sync the catalog)"
+                    )),
+                    DeckArgCommand::SetRoleModel { kind, spec } => {
+                        match crate::settings_check::save_role_model(
+                            &cfg.workspace_root,
+                            kind,
+                            &spec,
+                        ) {
+                            Ok(status) => say(status),
+                            Err(e) => say(e),
+                        }
+                    }
+                }
+                return DeckCommand::Handled;
+            }
             // A custom command/skill/agent (⚡): expand its template —
             // arguments and all — into the prompt the model turn runs.
             // Reserved names never reach a custom definition (`/init do the
@@ -4587,6 +4706,50 @@ fn pseudo_diff(old: &str, new: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deck_arg_commands_parse_recovery_forms_and_leave_sentences_as_prompts() {
+        use crate::settings::EngineAgentKind;
+        assert!(matches!(
+            parse_deck_arg_command("/models refresh"),
+            Some(DeckArgCommand::ModelsRefresh { force: false })
+        ));
+        assert!(matches!(
+            parse_deck_arg_command("/models refresh --force"),
+            Some(DeckArgCommand::ModelsRefresh { force: true })
+        ));
+        assert!(matches!(
+            parse_deck_arg_command("/models list"),
+            Some(DeckArgCommand::ModelsList)
+        ));
+        // One unrecognized token is a typo'd subcommand → usage, never a
+        // model call; a sentence stays a prompt.
+        assert!(matches!(
+            parse_deck_arg_command("/models refrsh"),
+            Some(DeckArgCommand::ModelsUsage(_))
+        ));
+        assert!(parse_deck_arg_command("/models what can I use").is_none());
+        // Role-model setters take exactly one token — the slug keeps its
+        // qualified form verbatim for `save_role_model` to validate.
+        let Some(DeckArgCommand::SetRoleModel { kind, spec }) =
+            parse_deck_arg_command("/model-default openrouter/openrouter/auto")
+        else {
+            panic!("expected SetRoleModel");
+        };
+        assert_eq!(kind, EngineAgentKind::Default);
+        assert_eq!(spec, "openrouter/openrouter/auto");
+        assert!(matches!(
+            parse_deck_arg_command("/model-judge zai/glm-5.2"),
+            Some(DeckArgCommand::SetRoleModel {
+                kind: EngineAgentKind::Judge,
+                ..
+            })
+        ));
+        assert!(parse_deck_arg_command("/model-default pick something good").is_none());
+        // Bare forms and non-command paths are not arg commands.
+        assert!(parse_deck_arg_command("/models").is_none());
+        assert!(parse_deck_arg_command("/src/main.rs explain").is_none());
+    }
 
     #[test]
     fn parse_skill_hits_strips_ansi_and_extracts_id_installs_url() {
