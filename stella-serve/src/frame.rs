@@ -55,8 +55,15 @@ pub enum ServerFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TurnOutcomeWire {
-    Completed { text: String, cost_usd: f64 },
-    Aborted { reason: String, cost_usd: f64 },
+    Completed {
+        text: String,
+        cost_usd: f64,
+    },
+    Aborted {
+        reason: String,
+        #[serde(default)]
+        cost_usd: f64,
+    },
 }
 
 impl From<TurnOutcome> for TurnOutcomeWire {
@@ -188,5 +195,22 @@ mod tests {
         );
         let json = serde_json::to_value(wire).expect("wire outcome serializes");
         assert_eq!(json["cost_usd"], 1.25);
+    }
+
+    #[test]
+    fn legacy_aborted_turn_without_cost_deserializes_as_zero() {
+        let wire: TurnOutcomeWire = serde_json::from_value(serde_json::json!({
+            "status": "aborted",
+            "reason": "old client"
+        }))
+        .expect("legacy aborted wire shape remains readable");
+
+        assert_eq!(
+            wire,
+            TurnOutcomeWire::Aborted {
+                reason: "old client".into(),
+                cost_usd: 0.0,
+            }
+        );
     }
 }

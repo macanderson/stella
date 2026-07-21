@@ -1,4 +1,16 @@
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct FirstTwoProviderLookups<'a> {
+    provider: &'a ScriptedProvider,
+    lookups: AtomicUsize,
+}
+
+impl ProviderResolver for FirstTwoProviderLookups<'_> {
+    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
+        (self.lookups.fetch_add(1, Ordering::SeqCst) < 2).then_some(self.provider as &dyn Provider)
+    }
+}
 
 impl ScriptedProvider {
     async fn remaining(&self) -> usize {
@@ -18,7 +30,7 @@ async fn red_final_verdict_is_verification_failed_not_completed() {
     let approvals = AutoApproveGate;
     let sleeper = NoopSleeper;
     let router = router();
-    let (tx, _rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::unbounded_channel();
     let pipeline = Pipeline::new(
         PipelinePorts {
             router: &router,
@@ -61,6 +73,22 @@ async fn red_final_verdict_is_verification_failed_not_completed() {
     assert!(
         (outcome.total_cost_usd - 0.0002).abs() < 1e-9,
         "triage and worker spend are retained"
+    );
+    let events = drain(&mut rx);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Complete { .. })),
+        "a failed verification must never emit the success terminal event"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, retryable: false }
+                if message.contains("verification failed")
+                    && message.contains(&outcome.verdict.as_ref().unwrap().summary)
+        )),
+        "the terminal failure event must retain verdict evidence: {events:?}"
     );
 }
 
@@ -120,5 +148,57 @@ async fn enforced_budget_breach_in_triage_stops_before_the_next_paid_stage() {
         provider.remaining().await,
         2,
         "the next paid stage must not start after triage crosses the cap"
+    );
+}
+
+#[tokio::test]
+async fn post_witness_worker_routing_error_retains_prior_stage_cost() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("TEST_COMMAND: run-witness"),
+    ]);
+    let resolver = FirstTwoProviderLookups {
+        provider: &provider,
+        lookups: AtomicUsize::new(0),
+    };
+    let runner = ScriptedRunner::new(vec![false], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            commands: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+
+    let err = pipeline
+        .run("Fix the parser", &mut messages, &mut budget)
+        .await
+        .expect_err("worker routing is a typed hard error");
+
+    assert!(matches!(err.cause, PipelineError::NoProviderForModel(_)));
+    assert!(
+        (err.total_cost_usd - 0.0002).abs() < 1e-9,
+        "triage and witness spend must survive worker resolution: {err:?}"
     );
 }

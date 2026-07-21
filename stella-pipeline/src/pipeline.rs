@@ -40,7 +40,7 @@ use std::time::Duration;
 
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::retry::{RetryPolicy, Sleeper, retry_with_backoff};
-use stella_core::router::{FallbackInfo, RouterError};
+use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, Router, TurnOutcome};
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, CompletionResult, ContextFrameRef,
@@ -69,7 +69,10 @@ use crate::witness::{
     Witness, parse_witness_command, tampered_paths, witness_prompt, witness_repair_prompt,
     witness_watchlist,
 };
+mod run_error;
 mod stage_budget;
+use run_error::RoleResolveError;
+pub use run_error::{PipelineError, PipelineRunError};
 use stage_budget::{PipelineBudgetAbort, aborted_before_execute, budget_abort, record_and_tick};
 /// Minimal fallback when the caller supplies no stable system prefix.
 const DEFAULT_SYSTEM_PROMPT: &str =
@@ -290,47 +293,11 @@ pub struct PipelineOutcome {
     pub candidates_run: u32,
 }
 
-/// A hard, named failure of a pipeline run (as opposed to a clean
-/// [`PipelineStatus::Aborted`], which is a normal outcome).
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PipelineError {
-    /// A plan crossed the scope-review thresholds while running headless with
-    /// no approval bypass configured (L-E5): never silently auto-approve.
-    #[error(
-        "scope review is required for this plan, but the run is headless without an approval bypass — re-run interactively or enable the scope-review bypass"
-    )]
-    ScopeReviewRequiredHeadless,
-    /// The router resolved a role to a model no configured adapter serves
-    /// (L-M1): a loud error, never a silent fallback.
-    #[error(
-        "no provider adapter is configured for the resolved model `{0}` — configure the provider or refresh the catalog"
-    )]
-    NoProviderForModel(String),
-    /// A required role (worker) could not be resolved at all.
-    #[error(transparent)]
-    Routing(#[from] RouterError),
-}
-
 /// A role resolved to a concrete provider.
 struct ResolvedRole<'a> {
     model_ref: ModelRef,
     provider: &'a dyn Provider,
     fallback: Option<FallbackInfo>,
-}
-
-/// Internal error resolving a role to a usable provider.
-enum RoleResolveError {
-    Router(RouterError),
-    NoProvider(ModelRef),
-}
-
-impl RoleResolveError {
-    fn into_pipeline_error(self) -> PipelineError {
-        match self {
-            RoleResolveError::Router(e) => PipelineError::Routing(e),
-            RoleResolveError::NoProvider(m) => PipelineError::NoProviderForModel(m.to_string()),
-        }
-    }
 }
 
 /// The outcome of running one candidate (execute + verify + bounded revise).
@@ -479,7 +446,7 @@ impl<'a> Pipeline<'a> {
         goal: &str,
         messages: &mut Vec<CompletionMessage>,
         budget: &mut BudgetGuard,
-    ) -> Result<PipelineOutcome, PipelineError> {
+    ) -> Result<PipelineOutcome, PipelineRunError> {
         let mut total_cost = 0.0f64;
         if messages.is_empty() {
             messages.push(CompletionMessage::system(DEFAULT_SYSTEM_PROMPT));
@@ -542,9 +509,9 @@ impl<'a> Pipeline<'a> {
 
         // --- 4. Scope review (only for planned work above thresholds). -----
         let plan = match plan {
-            Some(steps) => match self.scope_review(goal, steps).await? {
-                Some(steps) => Some(steps),
-                None => {
+            Some(steps) => match self.scope_review(goal, steps).await {
+                Ok(Some(steps)) => Some(steps),
+                Ok(None) => {
                     // User aborted (or trimmed to nothing) at the gate.
                     return Ok(aborted_before_execute(
                         &self.events,
@@ -553,6 +520,7 @@ impl<'a> Pipeline<'a> {
                         "aborted at scope review",
                     ));
                 }
+                Err(cause) => return Err(PipelineRunError::new(cause, total_cost)),
             },
             None => None,
         };
@@ -579,7 +547,9 @@ impl<'a> Pipeline<'a> {
         // --- 5. Execute + verify (single-shot or best-of-N). ---------------
         let worker = match self.resolve_provider(Role::Worker) {
             Ok(w) => w,
-            Err(e) => return Err(e.into_pipeline_error()),
+            Err(e) => {
+                return Err(PipelineRunError::new(e.into_pipeline_error(), total_cost));
+            }
         };
         if let Some(fb) = &worker.fallback {
             self.emit_fallback(fb);
@@ -647,16 +617,27 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Complete,
         });
-        self.emit(AgentEvent::Complete {
-            model: worker_model_label,
-            cost_usd: total_cost,
-        });
         let status = match &best.verdict {
             Some(verdict) if !verdict.passed => PipelineStatus::VerificationFailed {
                 verdict: verdict.clone(),
             },
             _ => PipelineStatus::Completed,
         };
+        match &status {
+            PipelineStatus::Completed => self.emit(AgentEvent::Complete {
+                model: worker_model_label,
+                cost_usd: total_cost,
+            }),
+            PipelineStatus::VerificationFailed { verdict } => {
+                self.emit(AgentEvent::Error {
+                    message: format!("verification failed: {}", verdict.summary),
+                    retryable: false,
+                });
+            }
+            PipelineStatus::Aborted { .. } => {
+                unreachable!("aborted candidates return before terminal verification")
+            }
+        }
         Ok(PipelineOutcome {
             status,
             task_class,

@@ -682,7 +682,7 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
 /// A multi-step plan above the scope-review thresholds, running headless
 /// with no bypass, is a named error (never a silent auto-approve).
 #[tokio::test]
-async fn headless_scope_review_without_bypass_is_a_named_error() {
+async fn paid_headless_scope_review_error_retains_settled_cost() {
     // triage → "multi"; plan → a 6-step JSON array (default threshold 5).
     let provider = ScriptedProvider::new(vec![
         text_result("multi"),
@@ -733,7 +733,11 @@ async fn headless_scope_review_without_bypass_is_a_named_error() {
         )
         .await
         .expect_err("headless scope review must be a named error");
-    assert_eq!(err, PipelineError::ScopeReviewRequiredHeadless);
+    assert_eq!(err.cause, PipelineError::ScopeReviewRequiredHeadless);
+    assert!(
+        (err.total_cost_usd - 0.0002).abs() < 1e-9,
+        "triage and plan spend must survive the hard error: {err:?}"
+    );
 }
 
 /// The user aborting at the scope-review gate ends the run cleanly (not an
@@ -1194,7 +1198,7 @@ async fn run_isolated(
     config: PipelineConfig,
     goal: &str,
 ) -> (
-    Result<PipelineOutcome, PipelineError>,
+    Result<PipelineOutcome, PipelineRunError>,
     Vec<AgentEvent>,
     Vec<CompletionMessage>,
 ) {

@@ -80,3 +80,57 @@ over-cap triage result stops before planning.
 No known correctness concerns remain in Task 4 scope. The serve HTTP suite's
 loopback permission requirement is environmental, not a product failure.
 No push was performed.
+
+## Review follow-up
+
+Parent review found six additional truth-boundary defects. They were addressed
+in a second strict RED/GREEN pass without rewriting the original commit.
+
+### Additional RED evidence
+
+- Paid scope-review and post-witness worker-routing tests failed to compile
+  because the pipeline returned a cost-free `PipelineError`; the wished-for
+  `PipelineRunError.cause` and `total_cost_usd` fields did not exist.
+- The verification event-stream test failed because a red verdict still
+  emitted `AgentEvent::Complete`.
+- A preseeded, over-session-cap overflow turn failed because the summarizer
+  provider was called before the budget check.
+- A preseeded goal reported `0.761` instead of the goal-local `0.011` delta.
+- Cancellation closeout tests failed because no dispatch-ledger delta helper
+  existed, and the deck/subsession paths persisted literal zero.
+- Deserializing a legacy aborted serve frame failed with
+  `missing field cost_usd`.
+- A CLI closeout regression separately failed before the shared helper existed,
+  proving hard pipeline errors would otherwise still be persisted as `$0` by
+  surface code.
+
+### Review fixes
+
+- `Pipeline::run` now returns `PipelineRunError { cause, total_cost_usd }` for
+  hard errors. Paid scope-review and post-witness worker-routing failures retain
+  every prior stage's settled cost, and CLI/deck use one tested closeout mapper.
+- Verification failure emits a non-retryable error containing the verdict
+  summary and never emits the success-only `AgentEvent::Complete`.
+- The engine checks an existing enforced breach before paid compaction, while
+  keeping the existing post-compaction check for a summarizer-induced breach.
+- Every `GoalOutcome` exit reports the session-ledger delta from goal entry,
+  excluding spend that predates the goal.
+- Deck and subsession cancellation capture the session ledger at dispatch and
+  persist its settled delta. Cancellation before spend remains exactly zero.
+- `TurnOutcomeWire::Aborted.cost_usd` has a serde default so pre-cost wire
+  records remain readable as zero while new frames retain explicit cost.
+- Pipeline hard-error types moved into a child module to keep the orchestrator
+  below the file-size ratchet.
+
+### Expanded verification
+
+- `cargo test -p stella-core`: 318 passed.
+- `cargo test -p stella-pipeline`: 114 unit tests and 4 replay tests passed.
+- `cargo test -p stella-fleet`: 69 passed.
+- `cargo test -p stella-cli`: 326 passed.
+- `cargo test -p stella-serve`: 2 unit, 3 bridge, and 2 HTTP tests passed.
+- `cargo test -p stella-tui`: 486 passed, 1 ignored; 4 deck snapshots and 1
+  progress-gold integration test passed.
+- `cargo test -p stella-protocol`: 42 passed.
+- Workspace clippy with `-D warnings`, formatting, file-size ratchet, and diff
+  whitespace checks passed.

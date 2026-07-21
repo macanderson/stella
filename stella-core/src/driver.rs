@@ -371,6 +371,9 @@ impl<'a> Engine<'a> {
                     };
                 }
             }
+            if let Some(aborted) = check_budget(budget, total_cost_usd, events) {
+                return aborted;
+            }
             total_cost_usd += self
                 .run_compaction_pass(messages, calibration_model.as_deref(), budget, events)
                 .await;

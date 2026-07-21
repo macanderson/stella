@@ -57,7 +57,11 @@ mod tools;
 
 pub(crate) use engine::*;
 pub(crate) use goal::*;
-use outcome::*;
+use outcome::{
+    pipeline_episode_outcome, pipeline_failure_reason, pipeline_status_label,
+    pipeline_status_result,
+};
+pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 pub(crate) use prompt::*;
 pub(crate) use tools::*;
 
@@ -246,13 +250,7 @@ async fn run_pipeline_one_shot(
 
     let files = registry.files_touched();
     if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = match &result {
-            Ok(outcome) => (
-                pipeline_status_label(&outcome.status),
-                outcome.total_cost_usd,
-            ),
-            Err(_) => ("error", 0.0),
-        };
+        let (outcome_label, cost) = pipeline_execution_closeout(&result);
         if !record_execution_end(store, *id, &registry, outcome_label, cost) {
             warn_store_write_failed(
                 "the audit record (files touched / memory citations / outcome)",

@@ -1175,6 +1175,8 @@ pub async fn run_deck_session(
             });
         }
 
+        let dispatch_spend_usd = budget.session_spent_usd();
+
         // Shared with the live input arms below: `>` steers, Esc soft-stops.
         // Per-turn by construction — a stop latched here can't leak into
         // the next turn.
@@ -1626,8 +1628,12 @@ pub async fn run_deck_session(
                     // point (the channel is FIFO) — can still requeue it.
                     dispatch.cancelled(&submitted);
                 }
+                let cancelled_cost =
+                    agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
                 if let Some((store, id)) = &execution
-                    && store.finish_execution(*id, "cancelled", 0.0).is_err()
+                    && store
+                        .finish_execution(*id, "cancelled", cancelled_cost)
+                        .is_err()
                 {
                     let _ = in_tx.send(Inbound::Event {
                         agent: LEAD.to_string(),
@@ -4349,17 +4355,7 @@ async fn run_lead_pipeline_turn(
     claims.release_all();
 
     if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = match &result {
-            Ok(outcome) => {
-                let label = match outcome.status {
-                    PipelineStatus::Completed => "completed",
-                    PipelineStatus::VerificationFailed { .. } => "verification_failed",
-                    PipelineStatus::Aborted { .. } => "aborted",
-                };
-                (label, outcome.total_cost_usd)
-            }
-            Err(_) => ("error", 0.0),
-        };
+        let (outcome_label, cost) = agent::pipeline_execution_closeout(&result);
         if !agent::record_execution_end(store, *id, registry, outcome_label, cost) {
             let _ = in_tx.send(Inbound::Event {
                 agent: LEAD.to_string(),

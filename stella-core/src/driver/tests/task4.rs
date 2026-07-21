@@ -44,3 +44,40 @@ async fn summary_induced_budget_breach_aborts_with_cost_before_next_provider_cal
         "the summary call may cross the cap, but the next provider call must not start"
     );
 }
+
+#[tokio::test]
+async fn an_existing_budget_breach_stops_before_paid_compaction() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("must never be called"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let provider_calls = provider.calls.clone();
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, overflow_config(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("the task"),
+    ];
+    for i in 0..6 {
+        messages.push(big_assistant_text(&format!("t{i}")));
+    }
+    let mut budget = BudgetGuard::new(BudgetMode::Enforced, None, Some(0.05));
+    budget.reseed_session_spend(0.10);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(matches!(
+        outcome,
+        TurnOutcome::Aborted { cost_usd, .. } if cost_usd == 0.0
+    ));
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        0,
+        "an already-over-cap turn must not pay for compaction"
+    );
+}

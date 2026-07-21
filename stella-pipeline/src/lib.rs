@@ -68,7 +68,7 @@ pub mod witness;
 
 pub use pipeline::{
     Pipeline, PipelineConfig, PipelineError, PipelineOutcome, PipelinePorts, PipelineRoleOverrides,
-    PipelineStatus, RoleCallOverrides, Verdict,
+    PipelineRunError, PipelineStatus, RoleCallOverrides, Verdict,
 };
 pub use ports::{
     AdoptedChange, AlwaysAbortGate, ApprovalGate, AutoApproveGate, CandidateWorkspace,

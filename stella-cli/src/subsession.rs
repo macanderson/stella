@@ -418,6 +418,7 @@ async fn run_worker(
     ];
     let mut budget = agent::build_budget_guard(budget_limit);
     budget.begin_turn();
+    let dispatch_spend_usd = budget.session_spent_usd();
 
     let store = agent::open_store(&cfg.workspace_root);
     let calibration = agent::seed_calibration(&store, cfg);
@@ -501,7 +502,11 @@ async fn run_worker(
         RacedTurn::Outcome(stella_core::TurnOutcome::Aborted { reason, cost_usd }) => {
             ("aborted", cost_usd, WorkerEnd::Failed(reason))
         }
-        RacedTurn::Stopped => ("cancelled", 0.0, WorkerEnd::Stopped),
+        RacedTurn::Stopped => (
+            "cancelled",
+            agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd()),
+            WorkerEnd::Stopped,
+        ),
     };
     if let Some((store, id)) = &execution {
         let _ = agent::record_execution_end(store, *id, &registry, label, cost);
