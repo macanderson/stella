@@ -135,12 +135,28 @@ pub const SYNTAX_NUMBER: Color = VIOLET;
 /// Line comment (rendered dimmed + italic).
 pub const SYNTAX_COMMENT: Color = Color::Rgb(118, 124, 134);
 
-// ── Aurora gradient (the progress-bar fill) ─────────────────────────────────
+// ── Aurora gradient (retained for other views) ──────────────────────────────
 
 /// The aurora gradient's three stops, left → right: cyan → azure → violet.
-/// The determinate progress fill interpolates across these per cell (truecolor
-/// only; lesser terminals collapse to a solid [`AURORA_AZURE`] fill).
 pub const AURORA_STOPS: [Color; 3] = [AURORA_CYAN, AURORA_AZURE, VIOLET];
+
+// ── Gold gradient (the progress-bar fill) ───────────────────────────────────
+//
+// The one deliberately warm run: the run progress bar reads gold end-to-end
+// so the deck's single activity indicator is unmistakable against the cool
+// aurora chrome everywhere else.
+
+/// Deep gold — the fill's leading (left) stop, a burnished antique gold.
+pub const GOLD_DEEP: Color = Color::Rgb(0xA8, 0x7A, 0x0E);
+/// Gold — the mid stop; also the non-truecolor fallback fill.
+pub const GOLD: Color = Color::Rgb(0xE8, 0xB8, 0x2E);
+/// Bright gold — the frontier/sparkle stop, a warm champagne highlight.
+pub const GOLD_BRIGHT: Color = Color::Rgb(0xFF, 0xE6, 0x8A);
+
+/// The gold gradient's three stops, left → right: deep → gold → bright.
+/// The determinate progress fill interpolates across these per cell (truecolor
+/// only; lesser terminals collapse to a solid [`GOLD`] fill).
+pub const GOLD_STOPS: [Color; 3] = [GOLD_DEEP, GOLD, GOLD_BRIGHT];
 
 /// Linear-interpolate two RGB colors at `t ∈ [0, 1]`. Non-RGB inputs return
 /// `a` unchanged (the gradient only ever feeds it `Color::Rgb` stops).
@@ -157,11 +173,23 @@ pub fn lerp_rgb(a: Color, b: Color, t: f64) -> Color {
 /// violet at 1, linearly interpolated between the two nearest
 /// [`AURORA_STOPS`].
 pub fn aurora_gradient(t: f64) -> Color {
+    gradient_at(&AURORA_STOPS, t)
+}
+
+/// The gold gradient sampled at `t ∈ [0, 1]`: deep gold at 0, gold at ½,
+/// bright champagne gold at 1, linearly interpolated between the two nearest
+/// [`GOLD_STOPS`]. This is the run progress bar's fill.
+pub fn gold_gradient(t: f64) -> Color {
+    gradient_at(&GOLD_STOPS, t)
+}
+
+/// Sample a 3-stop gradient at `t ∈ [0, 1]`.
+fn gradient_at(stops: &[Color; 3], t: f64) -> Color {
     let t = t.clamp(0.0, 1.0);
-    let span = (AURORA_STOPS.len() - 1) as f64; // 2 segments
+    let span = (stops.len() - 1) as f64; // 2 segments
     let scaled = t * span;
-    let i = (scaled.floor() as usize).min(AURORA_STOPS.len() - 2);
-    lerp_rgb(AURORA_STOPS[i], AURORA_STOPS[i + 1], scaled - i as f64)
+    let i = (scaled.floor() as usize).min(stops.len() - 2);
+    lerp_rgb(stops[i], stops[i + 1], scaled - i as f64)
 }
 
 /// Lighten `color` toward white by `amount ∈ [0, 1]` — the shimmer band and the
@@ -299,6 +327,9 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (DIFF_DEL_BG, 52, 1),
     (SYNTAX_STRING, 114, 10),
     (SYNTAX_COMMENT, 244, 8),
+    (GOLD_DEEP, 136, 3),
+    (GOLD, 220, 11),
+    (GOLD_BRIGHT, 228, 11),
 ];
 
 /// Resolve one color for the mode actually in use. Truecolor passes through;
@@ -562,6 +593,9 @@ mod tests {
         DIFF_DEL_BG,
         SYNTAX_STRING,
         SYNTAX_COMMENT,
+        GOLD_DEEP,
+        GOLD,
+        GOLD_BRIGHT,
     ];
 
     #[test]

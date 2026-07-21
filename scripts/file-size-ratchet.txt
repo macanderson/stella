@@ -18,5 +18,4 @@ stella-tui/src/deck_render.rs 2005
 stella-tui/src/deck_ui.rs 6629
 stella-tui/src/deck.rs 1726
 stella-tui/src/model.rs 1528
-stella-tui/src/render.rs 2392
 stella-tui/src/views/engine.rs 1692

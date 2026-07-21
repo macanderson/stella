@@ -69,6 +69,11 @@ struct TranscriptCache {
     /// term (see `ensure_transcript_lines`) so clearing the preview always
     /// changes the fingerprint.
     streaming_len: usize,
+    /// Total file mutations at fold time. A later mutation stales an earlier
+    /// tool result's inline diff (the freshness gate in `entry_lines`)
+    /// *without* appending a transcript entry — this is the only term that
+    /// moves, so it must be part of the fingerprint.
+    file_gen: u64,
     expand_thinking: bool,
     width: usize,
     lines: Vec<Line<'static>>,
@@ -169,10 +174,12 @@ impl UiState {
         // the authoritative `Text` coalescing a cleared preview into the
         // trailing entry could leave the total unchanged and the cache stale.
         let streaming_len = model.streaming_text.len();
+        let file_gen: u64 = model.files.iter().map(|f| u64::from(f.changes)).sum();
         let fresh = self.transcript_cache.as_ref().is_some_and(|c| {
             c.len == len
                 && c.trailing_stream_len == trailing_stream_len
                 && c.streaming_len == streaming_len
+                && c.file_gen == file_gen
                 && c.expand_thinking == expand_thinking
                 && c.width == width
         });
@@ -182,6 +189,7 @@ impl UiState {
                 len,
                 trailing_stream_len,
                 streaming_len,
+                file_gen,
                 expand_thinking,
                 width,
                 lines,

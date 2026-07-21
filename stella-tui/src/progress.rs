@@ -14,9 +14,13 @@
 //!   `plan → execute → verify`: completed phases fill solid, the active phase
 //!   fills to its midpoint, and the percent is derived from that position. It
 //!   moves only when the engine actually emits a new `Stage` event.
-//! - The **shimmer** and the **pulsing head** are the *only* indeterminate cues,
-//!   and they signal liveness (`AgentStatus::Running`) — never progress. They
-//!   ride *on top of* the determinate fill and never advance it.
+//! - The **shimmer** (a brighter leading band plus a dimmer trailing echo) and
+//!   the **pulsing head** are the *only* indeterminate cues, and they signal
+//!   liveness (`AgentStatus::Running`) — never progress. They ride *on top of*
+//!   the determinate fill and never advance it.
+//! - The fill rides a warm **gold** gradient (deep → gold → bright champagne)
+//!   — the deck's one deliberately warm run, so its sole activity indicator
+//!   is unmistakable against the cool aurora chrome everywhere else.
 //! - **tok/s** is the focused agent's real `tokens_out / elapsed`; it is omitted
 //!   (not guessed) whenever there's nothing real to divide. **ETA** is always
 //!   omitted — the planner exposes no estimate to substantiate one.
@@ -44,10 +48,10 @@ use crate::envelope::AgentStatus;
 use crate::theme::{self, ColorMode};
 
 /// The shimmer sweep's period, in ms — one pass of the light band across the
-/// filled region (§3: ~1.6–1.8s).
-const SHIMMER_PERIOD_MS: u64 = 1_700;
+/// filled region (a brisker sweep than before for a livelier read).
+const SHIMMER_PERIOD_MS: u64 = 1_100;
 /// The head-pulse period, in ms — a gentle brighten/dim at the fill frontier.
-const PULSE_PERIOD_MS: u64 = 900;
+const PULSE_PERIOD_MS: u64 = 700;
 
 /// The three display phases the bar collapses the real [`StageKind`] pipeline
 /// onto. The engine's ten stages are conditional and unordered-in-advance, so a
@@ -217,7 +221,8 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
 }
 
 /// The label chunk (`✓ plan · ▸ execute · verify`) as styled spans, plus its
-/// display width. Done = success green, Active = flame, Pending = dim.
+/// display width. Done = success green, Active = gold (matches the fill),
+/// Pending = dim.
 fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
     let mut spans = Vec::new();
     let mut width = 0usize;
@@ -231,7 +236,7 @@ fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
             SegState::Active if state.phase == RunPhase::Error => {
                 ("✗", theme::AURORA_MAGENTA, true)
             }
-            SegState::Active => ("▸", theme::AURORA_AZURE, true),
+            SegState::Active => ("▸", theme::GOLD_BRIGHT, true),
             SegState::Pending => ("·", theme::TEXT_DIM, false),
         };
         let mut style = Style::default().fg(color);
@@ -372,7 +377,7 @@ fn render_track(
     // Head pulse amount at the frontier.
     let pulse = if state.animate {
         let t = (now_ms % PULSE_PERIOD_MS) as f64 / PULSE_PERIOD_MS as f64;
-        0.25 + 0.35 * (0.5 - (t - 0.5).abs()) * 2.0 // triangle 0.25→0.6→0.25
+        0.2 + 0.5 * (0.5 - (t - 0.5).abs()) * 2.0 // triangle 0.2→0.7→0.2
     } else {
         0.30
     };
@@ -401,22 +406,30 @@ fn render_track(
                 0.0
             };
             let mut fg = if truecolor {
-                theme::aurora_gradient(t)
+                theme::gold_gradient(t)
             } else {
-                theme::AURORA_AZURE
+                theme::GOLD
             };
 
-            // Shimmer: a soft light band on truecolor (a lightened RGB has no
-            // indexed fallback, so it must not reach a lesser terminal), which
+            // Shimmer: two light bands (a bright leader and a dimmer trailing
+            // echo, half a period behind) sweep left→right within the filled
+            // region — a livelier double-pulse rather than one flat glint. On
+            // truecolor a lightened RGB has no indexed fallback, so it
             // degrades to a single moving highlight cell.
             if let Some(center) = shimmer_center {
                 if truecolor {
                     let d = (i as f64 - center).abs();
                     if d < 2.5 {
-                        fg = theme::lighten(fg, 0.4 * (1.0 - d / 2.5));
+                        fg = theme::lighten(fg, 0.45 * (1.0 - d / 2.5));
+                    }
+                    let echo_center =
+                        (center - fill_cells as f64 * 0.5).rem_euclid(fill_cells.max(1) as f64);
+                    let de = (i as f64 - echo_center).abs();
+                    if de < 1.5 {
+                        fg = theme::lighten(fg, 0.2 * (1.0 - de / 1.5));
                     }
                 } else if i == center.round() as usize {
-                    fg = theme::AURORA_CYAN;
+                    fg = theme::GOLD_BRIGHT;
                 }
             }
 
@@ -428,7 +441,7 @@ fn render_track(
                 } else if truecolor {
                     fg = theme::lighten(fg, pulse);
                 } else {
-                    fg = theme::AURORA_CYAN;
+                    fg = theme::GOLD_BRIGHT;
                 }
             }
 
@@ -664,8 +677,8 @@ mod tests {
         // cleanly — an interpolated gradient RGB has no indexed fallback.
         render_track(&state, 1234, ColorMode::Ansi256, 0, 0, 40, &mut buf);
         let allowed = [
-            theme::AURORA_AZURE,
-            theme::AURORA_CYAN,
+            theme::GOLD,
+            theme::GOLD_BRIGHT,
             theme::TEXT_DIM,
             theme::HAIRLINE,
             ratatui::style::Color::Reset,
