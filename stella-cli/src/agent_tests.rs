@@ -431,7 +431,6 @@ async fn untrusted_project_custom_tools_are_absent_from_the_runtime_surface() {
     );
 }
 
-
 #[tokio::test]
 async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
     let root = tempfile::tempdir().unwrap();

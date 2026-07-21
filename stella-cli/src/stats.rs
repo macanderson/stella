@@ -7,10 +7,41 @@
 //!
 //! Formats: an aligned table for humans (with a TOTAL row), and json/csv
 //! for machine-readable receipts. Field order in json/csv follows
-//! `UsageStatsRow`'s declaration order — a stable contract.
+//! [`StatsRow`]'s declaration order — a stable contract.
+//!
+//! ## Reading the cache columns (issues #267/#269)
+//!
+//! `HIT%`, `SAVED ($)`, and `TTL REWRITES` are derived at display time, not
+//! stored — `stella-store` records only the raw token counts and per-call
+//! timing (`Store::usage_stats`, `Store::cache_call_gaps`); this module is
+//! where the model catalog and the TTL/pricing policy (both `stella-model`
+//! concerns the store deliberately doesn't depend on) turn those into
+//! dollars and a rewrite count, via `stella_model::cache_economics` — the
+//! exact formulas the deck's CACHE/SAVED/WARMTH statline uses, so the two
+//! surfaces never drift:
+//!
+//! - **`HIT%`** — cache-read tokens over total input tokens for the row.
+//! - **`SAVED ($)`** — signed estimated savings at TODAY's catalog list
+//!   pricing (the store doesn't persist a per-call savings figure, so this
+//!   re-derives it from the summed token counts against current, not
+//!   historical, pricing — `-` when the model isn't in the running catalog).
+//!   Negative means the cache write premium outran the reads it bought —
+//!   the low-hit-rate incident worth investigating, never hidden.
+//! - **`TTL REWRITES`** — calls whose session-relative gap since the
+//!   previous call exceeded the provider's prompt-cache TTL, so the prefix
+//!   had already expired and this call re-wrote it instead of reading it
+//!   back (`cache_expired_rewrite`, from [`Store::cache_call_gaps`]) — the
+//!   TTL-blind tax cache-aware scheduling (#269) exists to cut. `0` for a
+//!   provider with no documented TTL (nothing can expire).
+
+use std::collections::HashMap;
 
 use clap::ValueEnum;
-use stella_store::{Store, UsageStatsRow};
+use serde::Serialize;
+use stella_model::cache_economics::{hit_rate, is_cache_expired_rewrite, provider_cache_ttl_secs};
+use stella_model::catalog::Catalog;
+use stella_protocol::CompletionUsage;
+use stella_store::{CacheCallGap, Store, UsageStatsRow};
 
 /// Output format for `stella stats`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -21,6 +52,118 @@ pub enum StatsFormat {
     Json,
     /// RFC-4180-style CSV with a header row.
     Csv,
+}
+
+/// One display row: [`UsageStatsRow`] — the store's raw per-(provider,
+/// model) aggregate — plus the cache economics derived here (see the module
+/// docs). `stella-store` stays free of the model catalog and TTL policy;
+/// this is where they meet the raw counts.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StatsRow {
+    pub provider: String,
+    pub model: String,
+    pub division: String,
+    pub runs: i64,
+    pub resolved: i64,
+    pub resolve_rate: f64,
+    pub total_cost_usd: f64,
+    pub cost_per_resolved_usd: Option<f64>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub avg_duration_ms: f64,
+    /// Cache-read tokens over total input tokens for this row —
+    /// [`hit_rate`], the same formula the deck's CACHE cell uses.
+    pub cache_hit_rate: f64,
+    /// Estimated USD saved by prompt caching at today's catalog list
+    /// pricing; `None` when `(provider, model)` isn't in the running
+    /// catalog (nothing to price against).
+    pub cache_savings_usd: Option<f64>,
+    /// Calls whose prefix went cold past the provider TTL before this call
+    /// and got rewritten instead of read back — see [`Store::cache_call_gaps`].
+    pub cache_expired_rewrites: i64,
+}
+
+/// Look up `(provider, model)` in the running model catalog and price this
+/// row's summed token counts — [`Pricing::cache_savings_usd_for`], the same
+/// formula `Store::cache_call_gaps`' caller-side economics and the deck's
+/// `CacheInsight` producer both use. `None` when the catalog has no entry
+/// for the pair (a retired or custom model) — never a guessed number.
+fn cache_savings_for(row: &UsageStatsRow) -> Option<f64> {
+    let catalog = Catalog::current();
+    let entry = catalog.resolve_for(&row.provider, &row.model).ok()?;
+    let usage = CompletionUsage {
+        input_tokens: row.input_tokens.max(0) as u64,
+        output_tokens: row.output_tokens.max(0) as u64,
+        cached_input_tokens: row.cache_read_tokens.max(0) as u64,
+        cache_write_tokens: row.cache_write_tokens.max(0) as u64,
+    };
+    Some(entry.pricing.cache_savings_usd_for(&row.provider, &usage))
+}
+
+/// Fold raw [`CacheCallGap`]s into a `cache_expired_rewrite` count per
+/// `(provider, model)`, applying [`is_cache_expired_rewrite`] against each
+/// row's provider TTL ([`provider_cache_ttl_secs`]) — the store carries no
+/// TTL policy, so that pairing happens here. A gap with no predecessor
+/// (`None`) or a provider with no documented TTL contributes nothing; there
+/// is nothing to have expired.
+fn cache_expired_rewrite_counts(gaps: &[CacheCallGap]) -> HashMap<(String, String), i64> {
+    let mut counts: HashMap<(String, String), i64> = HashMap::new();
+    for gap in gaps {
+        let Some(gap_secs) = gap.gap_secs.filter(|g| *g >= 0) else {
+            continue;
+        };
+        let Some(ttl_secs) = provider_cache_ttl_secs(&gap.provider) else {
+            continue;
+        };
+        if is_cache_expired_rewrite(
+            gap_secs as u64,
+            gap.cache_write_tokens.max(0) as u64,
+            ttl_secs,
+        ) {
+            *counts
+                .entry((gap.provider.clone(), gap.model.clone()))
+                .or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// Enrich the store's raw aggregates into display rows: hit rate (pure
+/// arithmetic over the row's own counts), catalog-priced savings, and the
+/// `cache_expired_rewrite` count keyed off the matching `(provider, model)`.
+fn to_stats_rows(rows: Vec<UsageStatsRow>, gaps: &[CacheCallGap]) -> Vec<StatsRow> {
+    let expired = cache_expired_rewrite_counts(gaps);
+    rows.into_iter()
+        .map(|r| {
+            let cache_hit_rate = hit_rate(
+                r.input_tokens.max(0) as u64,
+                r.cache_read_tokens.max(0) as u64,
+            );
+            let cache_savings_usd = cache_savings_for(&r);
+            let key = (r.provider.clone(), r.model.clone());
+            let cache_expired_rewrites = expired.get(&key).copied().unwrap_or(0);
+            StatsRow {
+                provider: r.provider,
+                model: r.model,
+                division: r.division,
+                runs: r.runs,
+                resolved: r.resolved,
+                resolve_rate: r.resolve_rate,
+                total_cost_usd: r.total_cost_usd,
+                cost_per_resolved_usd: r.cost_per_resolved_usd,
+                input_tokens: r.input_tokens,
+                output_tokens: r.output_tokens,
+                cache_read_tokens: r.cache_read_tokens,
+                cache_write_tokens: r.cache_write_tokens,
+                avg_duration_ms: r.avg_duration_ms,
+                cache_hit_rate,
+                cache_savings_usd,
+                cache_expired_rewrites,
+            }
+        })
+        .collect()
 }
 
 /// Entry point for `stella stats`. `provider` filters rows to one provider
@@ -42,7 +185,10 @@ pub fn run_stats(format: StatsFormat, provider: Option<&str>) -> Result<(), Stri
         if let Some(p) = provider {
             rows.retain(|r| r.provider == p);
         }
-        rows
+        let gaps = store
+            .cache_call_gaps()
+            .map_err(|e| format!("cannot read cache-call gaps: {e}"))?;
+        to_stats_rows(rows, &gaps)
     } else {
         Vec::new()
     };
@@ -117,12 +263,19 @@ fn legacy_duckdb_message(provider: Option<&str>) -> String {
 /// The TOTAL row across every displayed row, computed in Rust (weighted,
 /// not an average of averages): rates and $/resolved are re-derived from
 /// the summed counts, and $/resolved stays `-` when nothing resolved.
-fn totals(rows: &[UsageStatsRow]) -> UsageStatsRow {
+/// `cache_hit_rate` is likewise re-derived from the summed token counts
+/// (never an average of per-row percentages); `cache_savings_usd` sums only
+/// the rows the catalog could price, `None` when none could be; and
+/// `cache_expired_rewrites` is a plain sum — a real count, not a rate.
+fn totals(rows: &[StatsRow]) -> StatsRow {
     let runs: i64 = rows.iter().map(|r| r.runs).sum();
     let resolved: i64 = rows.iter().map(|r| r.resolved).sum();
     let total_cost_usd: f64 = rows.iter().map(|r| r.total_cost_usd).sum();
     let total_duration_ms: f64 = rows.iter().map(|r| r.avg_duration_ms * r.runs as f64).sum();
-    UsageStatsRow {
+    let input_tokens: i64 = rows.iter().map(|r| r.input_tokens).sum();
+    let cache_read_tokens: i64 = rows.iter().map(|r| r.cache_read_tokens).sum();
+    let known_savings: Vec<f64> = rows.iter().filter_map(|r| r.cache_savings_usd).collect();
+    StatsRow {
         provider: "TOTAL".into(),
         model: "-".into(),
         division: "-".into(),
@@ -135,20 +288,23 @@ fn totals(rows: &[UsageStatsRow]) -> UsageStatsRow {
         },
         total_cost_usd,
         cost_per_resolved_usd: (resolved > 0).then(|| total_cost_usd / resolved as f64),
-        input_tokens: rows.iter().map(|r| r.input_tokens).sum(),
+        input_tokens,
         output_tokens: rows.iter().map(|r| r.output_tokens).sum(),
-        cache_read_tokens: rows.iter().map(|r| r.cache_read_tokens).sum(),
+        cache_read_tokens,
         cache_write_tokens: rows.iter().map(|r| r.cache_write_tokens).sum(),
         avg_duration_ms: if runs > 0 {
             total_duration_ms / runs as f64
         } else {
             0.0
         },
+        cache_hit_rate: hit_rate(input_tokens.max(0) as u64, cache_read_tokens.max(0) as u64),
+        cache_savings_usd: (!known_savings.is_empty()).then(|| known_savings.iter().sum()),
+        cache_expired_rewrites: rows.iter().map(|r| r.cache_expired_rewrites).sum(),
     }
 }
 
-/// Column headers, in `UsageStatsRow` field order.
-const TABLE_HEADERS: [&str; 13] = [
+/// Column headers, in `StatsRow` field order.
+const TABLE_HEADERS: [&str; 16] = [
     "PROVIDER",
     "MODEL",
     "DIVISION",
@@ -161,6 +317,9 @@ const TABLE_HEADERS: [&str; 13] = [
     "OUT TOK",
     "CACHE RD",
     "CACHE WR",
+    "HIT%",
+    "SAVED ($)",
+    "TTL REWRITES",
     "AVG MS",
 ];
 
@@ -168,7 +327,7 @@ const TABLE_HEADERS: [&str; 13] = [
 /// numbers (right-aligned).
 const STRING_COLS: usize = 3;
 
-fn table_cells(row: &UsageStatsRow) -> [String; 13] {
+fn table_cells(row: &StatsRow) -> [String; 16] {
     [
         row.provider.clone(),
         row.model.clone(),
@@ -185,13 +344,19 @@ fn table_cells(row: &UsageStatsRow) -> [String; 13] {
         row.output_tokens.to_string(),
         row.cache_read_tokens.to_string(),
         row.cache_write_tokens.to_string(),
+        format!("{:.0}%", row.cache_hit_rate * 100.0),
+        match row.cache_savings_usd {
+            Some(v) => format!("{v:.4}"),
+            None => "-".into(),
+        },
+        row.cache_expired_rewrites.to_string(),
         format!("{:.0}", row.avg_duration_ms),
     ]
 }
 
 /// Render the aligned table with a separator line before the TOTAL row.
-fn render_table(rows: &[UsageStatsRow]) -> String {
-    let body: Vec<[String; 13]> = rows.iter().map(table_cells).collect();
+fn render_table(rows: &[StatsRow]) -> String {
+    let body: Vec<[String; 16]> = rows.iter().map(table_cells).collect();
     let total = table_cells(&totals(rows));
 
     let mut widths: Vec<usize> = TABLE_HEADERS.iter().map(|h| h.len()).collect();
@@ -234,10 +399,11 @@ fn render_table(rows: &[UsageStatsRow]) -> String {
     out
 }
 
-/// CSV header, matching `UsageStatsRow`'s serialized field order exactly.
+/// CSV header, matching `StatsRow`'s serialized field order exactly.
 fn csv_header() -> &'static str {
     "provider,model,division,runs,resolved,resolve_rate,total_cost_usd,cost_per_resolved_usd,\
-     input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,avg_duration_ms"
+     input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,cache_hit_rate,\
+     cache_savings_usd,cache_expired_rewrites,avg_duration_ms"
 }
 
 /// Quote a CSV field when it contains a comma, quote, or line break;
@@ -250,9 +416,9 @@ fn csv_escape(field: &str) -> String {
     }
 }
 
-fn csv_row(row: &UsageStatsRow) -> String {
+fn csv_row(row: &StatsRow) -> String {
     format!(
-        "{},{},{},{},{},{:.4},{:.6},{},{},{},{},{},{:.1}",
+        "{},{},{},{},{},{:.4},{:.6},{},{},{},{},{},{:.4},{},{},{:.1}",
         csv_escape(&row.provider),
         csv_escape(&row.model),
         csv_escape(&row.division),
@@ -268,11 +434,17 @@ fn csv_row(row: &UsageStatsRow) -> String {
         row.output_tokens,
         row.cache_read_tokens,
         row.cache_write_tokens,
+        row.cache_hit_rate,
+        match row.cache_savings_usd {
+            Some(v) => format!("{v:.6}"),
+            None => String::new(),
+        },
+        row.cache_expired_rewrites,
         row.avg_duration_ms,
     )
 }
 
-fn render_csv(rows: &[UsageStatsRow]) -> String {
+fn render_csv(rows: &[StatsRow]) -> String {
     let mut out = String::from(csv_header());
     out.push('\n');
     for row in rows {
@@ -286,8 +458,8 @@ fn render_csv(rows: &[UsageStatsRow]) -> String {
 mod tests {
     use super::*;
 
-    fn row(provider: &str, model: &str) -> UsageStatsRow {
-        UsageStatsRow {
+    fn row(provider: &str, model: &str) -> StatsRow {
+        StatsRow {
             provider: provider.into(),
             model: model.into(),
             division: UsageStatsRow::division_for_provider(provider).into(),
@@ -301,6 +473,9 @@ mod tests {
             cache_read_tokens: 2000,
             cache_write_tokens: 10,
             avg_duration_ms: 750.0,
+            cache_hit_rate: 2000.0 / 6000.0,
+            cache_savings_usd: Some(0.5),
+            cache_expired_rewrites: 3,
         }
     }
 
@@ -321,7 +496,7 @@ mod tests {
         );
         assert_eq!(
             csv_row(&r),
-            "zai,glm-5.2,-,4,2,0.5000,0.030000,0.015000,6000,600,2000,10,750.0"
+            "zai,glm-5.2,-,4,2,0.5000,0.030000,0.015000,6000,600,2000,10,0.3333,0.500000,3,750.0"
         );
 
         // resolved = 0 → the $/resolved field is EMPTY, never 0 or NaN.
@@ -330,7 +505,7 @@ mod tests {
         r.cost_per_resolved_usd = None;
         assert_eq!(
             csv_row(&r),
-            "zai,glm-5.2,-,4,0,0.0000,0.030000,,6000,600,2000,10,750.0"
+            "zai,glm-5.2,-,4,0,0.0000,0.030000,,6000,600,2000,10,0.3333,0.500000,3,750.0"
         );
 
         // Fields with commas round-trip quoted.
@@ -359,6 +534,32 @@ mod tests {
         assert!((t.cost_per_resolved_usd.unwrap() - 0.04).abs() < 1e-12);
         // (750*4 + 100*1) / 5 = 620 — weighted by runs.
         assert!((t.avg_duration_ms - 620.0).abs() < 1e-12);
+        // cache_hit_rate is re-derived from the SUMMED token counts (never
+        // an average of per-row percentages); cache_savings_usd and
+        // cache_expired_rewrites are plain sums across both rows.
+        assert!((t.cache_hit_rate - 2000.0 * 2.0 / (6000.0 * 2.0)).abs() < 1e-12);
+        assert!((t.cache_savings_usd.unwrap() - 1.0).abs() < 1e-12);
+        assert_eq!(t.cache_expired_rewrites, 6);
+    }
+
+    #[test]
+    fn totals_cache_savings_sums_only_the_catalog_priced_rows() {
+        // A row the catalog couldn't price (cache_savings_usd: None) must
+        // not zero out or poison the total — it's simply left out of the sum.
+        let mut priced = row("zai", "glm-5.2");
+        priced.cache_savings_usd = Some(0.30);
+        let mut unpriced = row("anthropic", "claude-fable-5");
+        unpriced.cache_savings_usd = None;
+
+        let t = totals(&[priced, unpriced]);
+        assert!((t.cache_savings_usd.unwrap() - 0.30).abs() < 1e-12);
+
+        // Every row unpriced → the total is honestly None, not a fake $0.00.
+        let mut a = row("zai", "glm-5.2");
+        a.cache_savings_usd = None;
+        let mut b = row("anthropic", "claude-fable-5");
+        b.cache_savings_usd = None;
+        assert_eq!(totals(&[a, b]).cache_savings_usd, None);
     }
 
     #[test]
@@ -387,5 +588,26 @@ mod tests {
         let col = lines[0].find("RATE").unwrap() + "RATE".len();
         assert!(lines[1][..col].ends_with("50.0%"));
         assert!(lines[2][..col].ends_with("50.0%"));
+        // Cache-economics columns (#267/#269) are present and populated.
+        for header in ["HIT%", "SAVED ($)", "TTL REWRITES"] {
+            assert!(lines[0].contains(header), "{header} header:\n{out}");
+        }
+        assert!(lines[1].contains("33%"), "hit rate rendered:\n{out}");
+        assert!(lines[1].contains("0.5000"), "savings rendered:\n{out}");
+    }
+
+    #[test]
+    fn table_shows_a_dash_for_savings_the_catalog_cannot_price() {
+        let mut r = row("zai", "glm-5.2");
+        r.cache_savings_usd = None;
+        let out = render_table(&[r]);
+        let lines: Vec<&str> = out.lines().collect();
+        // The SAVED ($) column, specifically, right-aligns to a bare dash —
+        // never a fake $0.00 for a model the catalog can't price.
+        let col = lines[0].find("SAVED ($)").unwrap() + "SAVED ($)".len();
+        assert!(
+            lines[1][..col].ends_with('-'),
+            "unpriced savings is a dash:\n{out}"
+        );
     }
 }
