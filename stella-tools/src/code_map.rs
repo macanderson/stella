@@ -141,7 +141,7 @@ pub fn for_files<'a, I>(root: &Path, candidates: I, show_tip: bool) -> Option<St
 where
     I: IntoIterator<Item = &'a str>,
 {
-    if !crate::graph::graph_available(root) {
+    if !matches!(crate::graph::graph_available(root), Ok(true)) {
         return None;
     }
     let graph = stella_graph::CodeGraph::open(root, &crate::graph::graph_db_path(root)).ok()?;

@@ -101,7 +101,7 @@ async fn run_pipeline_one_shot(
     let registry: Arc<ToolRegistry> = Arc::new(
         ToolRegistry::new_detected(cfg.workspace_root.clone(), registry_options.clone()).await,
     );
-    populate_schema_index(&registry, &cfg.workspace_root);
+    populate_schema_index(&registry, &cfg.workspace_root)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     let (_session_graph, _graph_build) = spawn_session_graph(
@@ -413,7 +413,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         true,
     )
     .await?;
-    populate_schema_index(&registry, &cfg.workspace_root);
+    populate_schema_index(&registry, &cfg.workspace_root)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     // Auto-build the code-graph index in the background (a cheap incremental
@@ -544,12 +544,18 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 Ok(_) => {
                     // A fresh index may name tables/types the schema gate
                     // should know about this session, not just the next one.
-                    populate_schema_index(&registry, &cfg.workspace_root);
+                    if let Err(error) = populate_schema_index(&registry, &cfg.workspace_root) {
+                        println!("  {} schema governance unavailable: {error}", "!".yellow());
+                        continue;
+                    }
                     // The code graph now exists — expose the `graph_query` tool
                     // to the rest of this session (it is registered only when
                     // an index is present, so a session that started without
                     // one otherwise wouldn't see it until relaunch).
-                    registry.enable_code_graph_if_available(&cfg.workspace_root);
+                    if let Err(error) = registry.enable_code_graph_if_available(&cfg.workspace_root)
+                    {
+                        println!("  {} graph tool unavailable: {error}", "!".yellow());
+                    }
                     // Re-open memory so recall/reflection use the taxonomy
                     // `/init` just wrote — otherwise the cached domains stay
                     // stale until the next launch.
@@ -976,8 +982,12 @@ pub(crate) fn spawn_session_graph(
         }
         // 2) Expose `graph_query` for the rest of the session and teach the
         //    schema gate any table/type names the fresh index now carries.
-        registry.enable_code_graph_if_available(&root);
-        populate_schema_index(&registry, &root);
+        if let Err(error) = registry.enable_code_graph_if_available(&root) {
+            status(format!("! graph tool unavailable: {error}"));
+        }
+        if let Err(error) = populate_schema_index(&registry, &root) {
+            status(format!("! schema governance unavailable: {error}"));
+        }
         on_ready();
         // 3) Arm the live watcher on a mounted graph kept alive for the
         //    session. Best-effort: a mount failure only loses live refresh, it
@@ -1133,14 +1143,13 @@ pub(crate) fn graph_snapshot_focus(
     })
 }
 
-/// Seed the tool registry's storage-gate baseline with the assembled
-/// storage map (persisted index + `stella.storage.toml`). Best-effort: with
-/// no `.stella/private/codegraph.db` and no manifest the snapshot is empty and every
-/// gate mechanism is a no-op until `stella init` runs. The gate also
-/// re-reads the persisted map per gated write, so this baseline only has to
-/// cover session start.
-pub(crate) fn populate_schema_index(registry: &ToolRegistry, workspace_root: &std::path::Path) {
-    registry.update_storage_index(stella_graph::load_storage_snapshot(workspace_root));
+/// Seed the storage gate; unsafe legacy state is an error, not an empty map.
+pub(crate) fn populate_schema_index(
+    registry: &ToolRegistry,
+    workspace_root: &std::path::Path,
+) -> Result<(), String> {
+    registry.update_storage_index(stella_tools::graph::load_storage_snapshot(workspace_root)?);
+    Ok(())
 }
 
 /// `stella init` — infer the workspace's domain taxonomy, build the code-graph

@@ -403,7 +403,9 @@ async fn run_worker(
         Err(e) => return (None, 0.0, WorkerEnd::Failed(e)),
     };
     let registry = ToolRegistry::new_detected(cfg.workspace_root.clone(), registry_options).await;
-    agent::populate_schema_index(&registry, &cfg.workspace_root);
+    if let Err(error) = agent::populate_schema_index(&registry, &cfg.workspace_root) {
+        return (None, 0.0, WorkerEnd::Failed(error));
+    }
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
 

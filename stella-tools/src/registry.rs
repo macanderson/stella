@@ -280,10 +280,8 @@ impl ToolRegistry {
                 entries.push(Arc::new(crate::web::WebSearch(search)));
             }
         }
-        // The code-graph query tool exists only when `stella init` has built
-        // an index — same conditional-registration discipline as the issue
-        // tools: no index, no dead schema entry.
-        if crate::graph::graph_available(&root) {
+        // Resolver errors advertise the tool so invocation exposes them.
+        if !matches!(crate::graph::graph_available(&root), Ok(false)) {
             entries.push(Arc::new(crate::graph::CodeGraphQuery));
         }
         if let Some(media) = media_backend {
@@ -377,24 +375,20 @@ impl ToolRegistry {
         self.bus.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
-    /// Enable the `graph_query` tool once the code-graph index has been built
-    /// and it isn't already registered. Idempotent, cheap, and safe to
-    /// call every turn. Lets a background session-start build (or a mid-session
-    /// `/init`) expose `graph_query` to
-    /// subsequent turns without rebuilding the whole registry (and its MCP
-    /// wrapper) — the overlay is shared through every `&ToolRegistry` /
-    /// `Arc<ToolRegistry>` reference the session already holds.
-    pub fn enable_code_graph_if_available(&self, root: &std::path::Path) {
-        if !crate::graph::graph_available(root) {
-            return;
+    /// Enable `graph_query` after a background build or mid-session `/init`;
+    /// the shared overlay avoids rebuilding the registry and its MCP wrapper.
+    pub fn enable_code_graph_if_available(&self, root: &std::path::Path) -> Result<(), String> {
+        if !crate::graph::graph_available(root)? {
+            return Ok(());
         }
         let tool: Arc<dyn Tool> = Arc::new(crate::graph::CodeGraphQuery);
         let name = tool.schema().name;
         if self.tools.contains_key(&name) {
-            return; // already registered at construction
+            return Ok(()); // already registered at construction
         }
         let mut late = self.late_tools.write().unwrap_or_else(|p| p.into_inner());
         late.entry(name).or_insert(tool);
+        Ok(())
     }
 
     /// All tool schemas, for advertising to the model — primary tools plus any
@@ -541,7 +535,10 @@ impl ToolRegistry {
                     .as_deref()
                     .map(|content| extractor.extract(path, content))
                     .unwrap_or_default();
-                let snapshot = self.storage_snapshot();
+                let snapshot = match self.storage_snapshot() {
+                    Ok(snapshot) => snapshot,
+                    Err(message) => return ToolOutput::Error { message },
+                };
                 let manifest_layer = crate::schema_gate::manifest_layer_for(&self.root, path);
                 let intent = input.get("storage_intent").and_then(|v| v.as_str());
                 match crate::schema_gate::check(&crate::schema_gate::GateRequest {
@@ -869,13 +866,9 @@ impl ToolRegistry {
         Ok(())
     }
 
-    /// The live storage map for the gate: the persisted index + manifest,
-    /// re-read per gated write (so a mid-session `stella init` or manifest
-    /// edit is seen immediately), merged with the host-seeded baseline and
-    /// the objects created by earlier writes this session (covers the
-    /// watcher's re-index lag).
-    fn storage_snapshot(&self) -> stella_graph::StorageSnapshot {
-        let mut snapshot = stella_graph::load_storage_snapshot(&self.root);
+    /// Fresh persisted storage map merged with the session overlay.
+    fn storage_snapshot(&self) -> Result<stella_graph::StorageSnapshot, String> {
+        let mut snapshot = crate::graph::load_storage_snapshot(&self.root)?;
         let index = self.storage_index.lock().unwrap_or_else(|p| p.into_inner());
         for rel in index.baseline.relations.iter().chain(index.session.iter()) {
             if let Some(existing) = snapshot
@@ -899,7 +892,7 @@ impl ToolRegistry {
                 snapshot.relations.push(rel.clone());
             }
         }
-        snapshot
+        Ok(snapshot)
     }
 
     /// Record what a landed write created: grow the session overlay, and —
@@ -1270,6 +1263,10 @@ impl ToolExecutor for ToolRegistry {
         ToolRegistry::execute(self, name, input).await
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "registry/private_state_tests.rs"]
+mod private_state_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1720,7 +1717,7 @@ mod tests {
             |r: &ToolRegistry| r.schemas().iter().any(|s| s.name == "graph_query");
 
         assert!(!has_graph_query(&reg), "no index → not advertised");
-        reg.enable_code_graph_if_available(&root); // no index yet: a no-op
+        reg.enable_code_graph_if_available(&root).unwrap(); // no index yet: a no-op
         assert!(!has_graph_query(&reg));
 
         // Build a minimal index, exactly what `stella init` does.
@@ -1731,7 +1728,7 @@ mod tests {
         graph.index_all().unwrap();
         graph.shutdown();
 
-        reg.enable_code_graph_if_available(&root);
+        reg.enable_code_graph_if_available(&root).unwrap();
         assert!(has_graph_query(&reg), "index built → now advertised");
         // And it actually dispatches through the overlay.
         let out = reg

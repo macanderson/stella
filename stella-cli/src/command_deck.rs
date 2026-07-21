@@ -281,7 +281,7 @@ pub async fn run_deck_session(
     let registry: Arc<ToolRegistry> = Arc::new(
         ToolRegistry::new_detected(cfg.workspace_root.clone(), registry_options.clone()).await,
     );
-    agent::populate_schema_index(&registry, &cfg.workspace_root);
+    agent::populate_schema_index(&registry, &cfg.workspace_root)?;
     let active_rules =
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     let custom_tools = agent::discover_custom_tools(cfg, true).await;
@@ -4014,11 +4014,18 @@ async fn run_deck_command(
                 Ok(_) => {
                     // A fresh index may name tables/types the schema gate
                     // should know about this session, not just the next one.
-                    agent::populate_schema_index(registry, &cfg.workspace_root);
+                    if let Err(error) = agent::populate_schema_index(registry, &cfg.workspace_root)
+                    {
+                        say(format!("schema governance unavailable: {error}"));
+                        return DeckCommand::Handled;
+                    }
                     // Expose the `graph_query` tool for the rest of the session
                     // now that the index exists (it is registered only when an
                     // index is present at construction).
-                    registry.enable_code_graph_if_available(&cfg.workspace_root);
+                    if let Err(error) = registry.enable_code_graph_if_available(&cfg.workspace_root)
+                    {
+                        say(format!("graph tool unavailable: {error}"));
+                    }
                     return DeckCommand::InitCompleted;
                 }
                 Err(e) => say(format!("init failed: {e}")),

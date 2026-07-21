@@ -117,14 +117,14 @@ pub use catalog::CatalogStore;
 // natural name. Reach the writer through its module.
 pub use journal::JournalRecord;
 pub use notify::{Notification, NotificationStore};
-pub(crate) use private::{
-    WORKSPACE_GENERATED_IGNORE, ensure_private_dir, ensure_workspace_state_dir, open_private_file,
-    open_private_sqlite, read_private_to_string, write_private_atomic,
-};
 pub use private::{
     WORKSPACE_PRIVATE_DIR, append_workspace_private_line, existing_workspace_private_sqlite_path,
     existing_workspace_private_state_path, read_sensitive_file_to_string,
     workspace_private_sqlite_path, workspace_private_state_path, write_sensitive_file_atomic,
+};
+pub(crate) use private::{
+    ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,
+    open_private_file, open_private_sqlite, read_private_to_string, write_private_atomic,
 };
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 
@@ -525,18 +525,7 @@ fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
             ))
         })?;
     }
-    let gitignore = dir.join(".gitignore");
-    // create_new: AlreadyExists (pre-existing or created by a concurrent
-    // session between any check and this open) leaves the file untouched —
-    // success; other errors are best-effort ignored, like the write itself.
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&gitignore)
-    {
-        use std::io::Write;
-        let _ = file.write_all(WORKSPACE_GENERATED_IGNORE);
-    }
+    ensure_workspace_generated_ignore(dir)?;
     Ok(())
 }
 
@@ -3927,14 +3916,18 @@ mod tests {
             "private OAuth tokens must never stage"
         );
 
-        // A pre-existing .gitignore is left alone (user may have customized).
-        // Under create_new this same path also covers the race where another
-        // session drops the file between open's checks — never truncated.
+        // A pre-existing customized ignore keeps its contents and gains the
+        // private-state rule exactly once.
         std::fs::write(dir.join(".gitignore"), "custom\n").unwrap();
         drop(Store::open(&root).unwrap());
         assert_eq!(
             std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
-            "custom\n"
+            "custom\nprivate/\n"
+        );
+        drop(Store::open(&root).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
+            "custom\nprivate/\n"
         );
 
         #[cfg(unix)]

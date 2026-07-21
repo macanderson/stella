@@ -575,6 +575,11 @@ mod tests {
         let dot = dir.path().join(".stella");
         std::fs::create_dir_all(&dot).unwrap();
         std::fs::set_permissions(&dot, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let previous_generated = "*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\n";
+        let custom = "# keep this custom rule\nexports/\n";
+        let ignore_path = dot.join(".gitignore");
+        std::fs::write(&ignore_path, format!("{previous_generated}{custom}")).unwrap();
+        std::fs::set_permissions(&ignore_path, std::fs::Permissions::from_mode(0o640)).unwrap();
         let legacy = dot.join("mcp_oauth.json");
         std::fs::write(&legacy, br#"{"servers":{}}"#).unwrap();
 
@@ -583,6 +588,29 @@ mod tests {
         assert_eq!(resolved, dot.join("private/mcp_oauth.json"));
         assert!(!legacy.exists());
         assert_eq!(std::fs::read(resolved).unwrap(), br#"{"servers":{}}"#);
+        assert_eq!(
+            std::fs::read_to_string(&ignore_path).unwrap(),
+            format!("{previous_generated}{custom}private/\n")
+        );
+        assert_eq!(
+            std::fs::metadata(&ignore_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640,
+            "committable ignore mode must survive the atomic update"
+        );
+        oauth_store_path(dir.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&ignore_path)
+                .unwrap()
+                .lines()
+                .filter(|line| *line == "private/")
+                .count(),
+            1,
+            "idempotent resolution must not duplicate the ignore rule"
+        );
 
         std::process::Command::new("git")
             .args(["init", "--quiet"])

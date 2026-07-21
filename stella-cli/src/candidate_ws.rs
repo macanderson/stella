@@ -277,7 +277,7 @@ impl GitCandidateWorkspaces {
                 // and the schema gate travel with the tree — best-of-N must
                 // not be a way around them. Applied while `registry` is still
                 // a plain `ToolRegistry`, before it moves into the `Arc`.
-                crate::agent::populate_schema_index(&registry, &ws_root);
+                crate::agent::populate_schema_index(&registry, &ws_root).map_err(snap)?;
                 crate::rules::attach_rule_guards(&registry, &self.active_rules);
                 // The candidate's tool surface: the snapshot-rooted registry
                 // plus the session's custom script tools, owned as one value

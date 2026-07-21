@@ -8,19 +8,129 @@ use crate::{Result, StoreError};
 
 pub const WORKSPACE_PRIVATE_DIR: &str = "private";
 pub(crate) const WORKSPACE_GENERATED_IGNORE: &[u8] =
-    b"private/\n*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\n";
+    b"*.db\n*.db-wal\n*.db-shm\nreflections.jsonl\nprivate/\n";
 
-fn ensure_workspace_generated_ignore(dot: &Path) {
+#[cfg(unix)]
+fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
+    use std::io::Read as _;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options.open(path).map_err(|e| {
+        StoreError(format!(
+            "cannot open committable file {}: {e}",
+            path.display()
+        ))
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", path.display())))?;
+    if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } || metadata.nlink() != 1
+    {
+        return Err(StoreError(format!(
+            "committable file {} must be an owner-controlled single-link regular file",
+            path.display()
+        )));
+    }
+    let mode = metadata.permissions().mode() & 0o7777;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| StoreError(format!("cannot read {}: {e}", path.display())))?;
+    Ok((bytes, mode))
+}
+
+#[cfg(unix)]
+fn write_committable_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
-    let path = dot.join(".gitignore");
-    if let Ok(mut file) = std::fs::OpenOptions::new()
+    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp.{}.{}", std::process::id(), sequence));
+    let mut options = std::fs::OpenOptions::new();
+    options
         .write(true)
         .create_new(true)
-        .open(path)
-    {
-        let _ = file.write_all(WORKSPACE_GENERATED_IGNORE);
+        .mode(mode)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options
+        .open(&tmp)
+        .map_err(|e| StoreError(format!("cannot create {}: {e}", tmp.display())))?;
+    let result = (|| {
+        let metadata = file
+            .metadata()
+            .map_err(|e| StoreError(format!("cannot inspect {}: {e}", tmp.display())))?;
+        if !metadata.is_file() {
+            return Err(StoreError(format!(
+                "temporary committable path {} is not a regular file",
+                tmp.display()
+            )));
+        }
+        file.set_permissions(std::fs::Permissions::from_mode(mode))
+            .map_err(|e| StoreError(format!("cannot preserve mode on {}: {e}", tmp.display())))?;
+        file.write_all(bytes)
+            .map_err(|e| StoreError(format!("cannot write {}: {e}", tmp.display())))?;
+        file.sync_all()
+            .map_err(|e| StoreError(format!("cannot fsync {}: {e}", tmp.display())))?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+            .map_err(|e| StoreError(format!("cannot replace {}: {e}", path.display())))?;
+        if let Some(parent) = path.parent() {
+            sync_directory(parent)?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
+    result
+}
+
+#[cfg(not(unix))]
+fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
+    Err(StoreError(format!(
+        "secure committable-file persistence is unsupported on this platform: {}",
+        path.display()
+    )))
+}
+
+#[cfg(not(unix))]
+fn write_committable_atomic(path: &Path, _bytes: &[u8], _mode: u32) -> Result<()> {
+    Err(StoreError(format!(
+        "secure committable-file persistence is unsupported on this platform: {}",
+        path.display()
+    )))
+}
+
+pub(crate) fn ensure_workspace_generated_ignore(dot: &Path) -> Result<()> {
+    let path = dot.join(".gitignore");
+    let (mut bytes, mode) = match std::fs::symlink_metadata(&path) {
+        Ok(_) => read_committable_file(&path)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return write_committable_atomic(&path, WORKSPACE_GENERATED_IGNORE, 0o644);
+        }
+        Err(error) => {
+            return Err(StoreError(format!(
+                "cannot inspect generated ignore {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    if bytes
+        .split(|byte| *byte == b'\n')
+        .any(|line| line == b"private/")
+    {
+        return Ok(());
+    }
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        bytes.push(b'\n');
+    }
+    bytes.extend_from_slice(b"private/\n");
+    write_committable_atomic(&path, &bytes, mode)
 }
 
 pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathBuf, bool)> {
@@ -165,9 +275,9 @@ pub fn workspace_private_state_path(workspace_root: &Path, name: &str) -> Result
     validate_state_name(name)?;
     let (dot, _) = ensure_workspace_state_dir(workspace_root)?;
     let private = dot.join(WORKSPACE_PRIVATE_DIR);
+    ensure_workspace_generated_ignore(&dot)?;
     migrate_legacy_files(&dot, &private, &[name.to_string()])?;
     ensure_private_dir(&private)?;
-    ensure_workspace_generated_ignore(&dot);
     Ok(private.join(name))
 }
 
@@ -195,6 +305,7 @@ pub fn workspace_private_sqlite_path(workspace_root: &Path, name: &str) -> Resul
     validate_state_name(name)?;
     let (dot, _) = ensure_workspace_state_dir(workspace_root)?;
     let private = dot.join(WORKSPACE_PRIVATE_DIR);
+    ensure_workspace_generated_ignore(&dot)?;
     let sidecars = [format!("{name}-wal"), format!("{name}-shm")];
     let mut existing_sidecars = Vec::new();
     for sidecar in &sidecars {
@@ -219,7 +330,6 @@ pub fn workspace_private_sqlite_path(workspace_root: &Path, name: &str) -> Resul
     }
     migrate_legacy_files(&dot, &private, &[name.to_string()])?;
     ensure_private_dir(&private)?;
-    ensure_workspace_generated_ignore(&dot);
     prepare_private_sqlite_path(&private.join(name))
 }
 

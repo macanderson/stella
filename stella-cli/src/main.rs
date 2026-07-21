@@ -778,9 +778,8 @@ fn run_graph(op: GraphOp, target: &str) -> Result<(), String> {
 fn load_storage_snapshot_checked(
     root: &std::path::Path,
 ) -> Result<stella_graph::StorageSnapshot, String> {
-    stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
-        .map_err(|e| format!("cannot resolve private storage-map index: {e}"))?;
-    Ok(stella_graph::load_storage_snapshot(root))
+    stella_tools::graph::load_storage_snapshot(root)
+        .map_err(|e| format!("cannot resolve private storage-map index: {e}"))
 }
 
 fn run_storage(cmd: &StorageCmd) -> Result<(), String> {

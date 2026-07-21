@@ -135,6 +135,26 @@ fn graph_snapshot_is_none_without_an_index() {
     assert!(graph_snapshot_focus(root.path(), Some("x.rs")).is_none());
 }
 
+#[cfg(unix)]
+#[test]
+fn schema_index_population_visibly_rejects_unsafe_legacy_codegraph() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().expect("tempdir");
+    let dot = root.path().join(".stella");
+    std::fs::create_dir_all(&dot).unwrap();
+    std::fs::set_permissions(&dot, std::fs::Permissions::from_mode(0o777)).unwrap();
+    std::fs::write(dot.join("codegraph.db"), b"unsafe legacy graph").unwrap();
+    let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    let error = populate_schema_index(&registry, root.path()).unwrap_err();
+    assert!(
+        error.contains("legacy") && error.contains("private"),
+        "{error}"
+    );
+    assert!(dot.join("codegraph.db").exists());
+}
+
 /// Auto-build on session start (task part A): a workspace with a source
 /// file but NO `.stella/private/codegraph.db` does not advertise `graph_query` on
 /// turn 1; once [`spawn_session_graph`]'s background build completes the
@@ -151,7 +171,7 @@ async fn spawn_session_graph_auto_builds_and_enables_graph_query() {
     let advertises = |r: &ToolRegistry| r.schemas().iter().any(|s| s.name == "graph_query");
 
     // Turn 1: absent — no index on disk yet.
-    assert!(!stella_tools::graph::graph_available(&root));
+    assert!(!stella_tools::graph::graph_available(&root).unwrap());
     assert!(
         !advertises(&registry),
         "graph_query must be absent before the index is built"
@@ -164,7 +184,7 @@ async fn spawn_session_graph_auto_builds_and_enables_graph_query() {
     // After the build: the db exists, the tool is advertised, and it
     // dispatches against the freshly built index.
     assert!(
-        stella_tools::graph::graph_available(&root),
+        stella_tools::graph::graph_available(&root).unwrap(),
         "the background build must create .stella/private/codegraph.db"
     );
     assert!(

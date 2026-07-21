@@ -31,12 +31,22 @@ pub fn graph_db_path(root: &Path) -> PathBuf {
     root.join(".stella").join("private").join("codegraph.db")
 }
 
-/// Whether the workspace has an index — the registration condition.
-pub fn graph_available(root: &Path) -> bool {
-    matches!(
-        stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db"),
-        Ok(Some(_))
-    )
+/// Whether the workspace has an index — the registration condition. Resolver
+/// failures stay distinct from absence so security errors cannot disable
+/// graph-backed governance by masquerading as an uninitialized workspace.
+pub fn graph_available(root: &Path) -> Result<bool, String> {
+    stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
+        .map(|path| path.is_some())
+        .map_err(|error| format!("cannot resolve private code graph state: {error}"))
+}
+
+/// Fallible storage-map assembly for every governance caller. The graph crate's
+/// lower loader remains format-focused and best-effort; this boundary performs
+/// private-state migration and rejects unsafe legacy layouts before delegating.
+pub fn load_storage_snapshot(root: &Path) -> Result<stella_graph::StorageSnapshot, String> {
+    stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|error| format!("cannot resolve private code graph state: {error}"))?;
+    Ok(stella_graph::load_storage_snapshot(root))
 }
 
 pub struct CodeGraphQuery;
@@ -302,7 +312,7 @@ mod tests {
     #[test]
     fn availability_preflight_migrates_a_safe_legacy_index() {
         let dir = legacy_indexed_workspace(0o700);
-        assert!(graph_available(dir.path()));
+        assert!(graph_available(dir.path()).unwrap());
         assert!(graph_db_path(dir.path()).exists());
     }
 
