@@ -364,7 +364,10 @@ mod tests {
     fn reasoning_provider_ids_are_unique() {
         let mut seen = std::collections::BTreeSet::new();
         for (id, _) in REASONING_POSTURE {
-            assert!(seen.insert(id), "duplicate reasoning-posture row for `{id}`");
+            assert!(
+                seen.insert(id),
+                "duplicate reasoning-posture row for `{id}`"
+            );
         }
     }
 
@@ -372,7 +375,8 @@ mod tests {
     /// present on one axis but not the other is a matrix hole.
     #[test]
     fn both_axes_cover_the_same_provider_ids() {
-        let cache: std::collections::BTreeSet<_> = CACHE_POSTURE.iter().map(|(id, _)| *id).collect();
+        let cache: std::collections::BTreeSet<_> =
+            CACHE_POSTURE.iter().map(|(id, _)| *id).collect();
         let reasoning: std::collections::BTreeSet<_> =
             REASONING_POSTURE.iter().map(|(id, _)| *id).collect();
         assert_eq!(

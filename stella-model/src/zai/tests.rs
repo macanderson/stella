@@ -1351,11 +1351,7 @@ async fn xai_identity_maps_effort_to_reasoning_effort() {
     );
     // xAI never speaks GLM's `thinking` object or OpenRouter's `reasoning`.
     assert!(!bodies[0].contains("thinking"), "{}", bodies[0]);
-    assert!(
-        !bodies[0].contains("\"reasoning\":"),
-        "{}",
-        bodies[0]
-    );
+    assert!(!bodies[0].contains("\"reasoning\":"), "{}", bodies[0]);
 }
 
 /// The byte-stability contract for `reasoning_effort`: the field is xai-only,
