@@ -294,9 +294,19 @@ async fn anthropic_smoke() {
             r.usage.cached_input_tokens,
             r.text
         ),
+        // Deliberately does NOT say "rejected the request shape" — the
+        // 2026-07-21 run hit an account-billing 400 that never got that
+        // far (see the doc comment above), so pre-judging the cause here
+        // would have printed something false on the exact failure this
+        // suite exists to distinguish from a real regression. `e` already
+        // carries the provider's own status + body (never a raw
+        // credential) — a human reading it tells wire-shape apart from
+        // auth/quota/billing; see "2026-07-21 run" above for why this
+        // suite doesn't try to auto-classify that itself.
         Err(e) => panic!(
-            "anthropic live smoke failed — the live Messages API rejected today's request \
-             shape (never a raw credential; see the message below): {e}"
+            "anthropic live smoke did not return a parseable 200 — could be a genuine \
+             wire-shape regression OR an unrelated account/auth/quota/billing problem; \
+             read the status and body below to tell which: {e}"
         ),
     }
 }

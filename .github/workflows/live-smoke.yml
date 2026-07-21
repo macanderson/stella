@@ -15,6 +15,16 @@
 # (see `armed_key`) rather than failing the job — so this workflow is safe to
 # run with any subset of the secrets below configured.
 #
+# A red run on a configured provider needs a human read of the failure, not
+# an assumption: this suite deliberately does NOT auto-classify a failure
+# into "wire-shape regression" vs. "account/auth/quota/billing problem" (a
+# 400 with billing language in the body is genuinely ambiguous with a 400
+# from a malformed request on at least Anthropic — see the 2026-07-21 run
+# noted on `anthropic_smoke`'s doc comment — and sniffing the body for
+# billing keywords to auto-skip would be fragile and could paper over a
+# real regression). Read the printed status/body in the job log before
+# re-triggering.
+#
 # Required repo secrets (Settings -> Secrets and variables -> Actions ->
 # Repository secrets) — add only the ones for the providers you want this
 # job to actually exercise; every other provider's test just skips:
