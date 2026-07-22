@@ -1,6 +1,6 @@
 # Research papers
 
-Original analysis on Stella's architecture, the Open Context Protocol, and
+Original analysis on Stella's architecture, the Context Graph Protocol (CGP), and
 the defensible properties of deterministic coding-agent design. These are
 research-grade documents — written for engineers and architecture reviewers,
 grounded in primary research, and referencing the shipping implementation by
@@ -14,7 +14,7 @@ file and line.
   not any single property — constitutes the moat. Covers ports-not-concretions,
   no-I/O-in-the-engine, the witness-test contract, BYOK + no-phone-home,
   prompt-cache-native memory, budget enforcement at safe boundaries, and the
-  Open Context Protocol.
+  Context Graph Protocol.
 
 - [**The Deterministic Engine: Why Single-Thread Beats the Swarm**](./deterministic-engine.md)
   — a focused analysis of one defensible property: Stella's decision to build
@@ -25,8 +25,8 @@ file and line.
 
 ## Related
 
-- [**The Open Context Protocol: Advantages and Uniqueness**](https://github.com/macanderson/opencontextprotocol/blob/main/docs/protocol-advantages.md)
-  — standalone analysis of the OCP's trust architecture: the seven advantages
+- [**The Context Graph Protocol: Advantages and Uniqueness**](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md)
+  — standalone analysis of the CGP's trust architecture: the seven advantages
   (provenance, budget honesty, consent enforcement, conformance verification,
   citation guarantees, version stability, temporal validity) and why the
   combination is irreducible.

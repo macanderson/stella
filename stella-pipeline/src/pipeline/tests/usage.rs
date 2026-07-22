@@ -61,7 +61,11 @@ async fn run_triage_only(
     provider: &dyn Provider,
     config: PipelineConfig,
     budget: &mut BudgetGuard,
-) -> (Result<TaskAssessment, PipelineBudgetAbort>, f64, Vec<AgentEvent>) {
+) -> (
+    Result<TaskAssessment, PipelineBudgetAbort>,
+    f64,
+    Vec<AgentEvent>,
+) {
     let resolver = AnyProvider(provider);
     let tools = EmptyTools;
     let recall = NoContextRecall;

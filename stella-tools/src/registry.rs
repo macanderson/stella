@@ -278,15 +278,14 @@ impl ToolRegistry {
                 entries.push(Arc::new(crate::web::WebSearch(search)));
             }
         }
-        // Registered unconditionally, unlike `graph_query`: the overview
-        // still answers from static manifests when no index exists, and its
-        // whole purpose is to be the FIRST call — a tool that appears only
-        // for already-initialized workspaces cannot be that.
+        // Both advertised unconditionally: a graph tool builds its own
+        // index on first use (`crate::graph::open_or_build`), so gating
+        // registration on the index already existing would hide exactly the
+        // tool meant to CREATE it — and leave the agent to grep instead. The
+        // background session build still runs; this just removes the race and
+        // the chicken-and-egg gate.
         entries.push(Arc::new(crate::overview::ProjectOverview));
-        // Resolver errors advertise the tool so invocation exposes them.
-        if !matches!(crate::graph::graph_available(&root), Ok(false)) {
-            entries.push(Arc::new(crate::graph::CodeGraphQuery));
-        }
+        entries.push(Arc::new(crate::graph::CodeGraphQuery));
         if let Some(media) = media_backend {
             entries.push(match &media_host_context {
                 Some((gate, ids, journal)) => {
@@ -1499,12 +1498,13 @@ mod tests {
             "list_members",
             "start_work_on_issue",
             "project_overview",
+            "graph_query",
         ] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
         // `bash` is NOT in the default surface — it is the settings opt-in.
         assert!(!names.contains(&"bash".to_string()), "{names:?}");
-        assert_eq!(names.len(), 45, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 46, "unexpected tool count: {names:?}");
     }
 
     // ---- bash opt-in (default OFF everywhere) -------------------------
@@ -1629,7 +1629,7 @@ mod tests {
     fn issue_tools_absent_without_a_configured_backend() {
         let (_root, reg) = bare_registry(None);
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        assert_eq!(names.len(), 37, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 38, "unexpected tool count: {names:?}");
         for absent in [
             "create_issue",
             "update_issue",
@@ -1714,39 +1714,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn graph_query_tool_is_enabled_after_a_mid_session_index_build() {
-        // A session that starts without a code-graph index doesn't advertise
-        // `graph_query`; once the background build / `/init` builds the index,
-        // `enable_code_graph_if_available` must expose it for the rest of the
-        // session (schema advertised AND dispatchable) without a rebuild.
+    async fn graph_query_is_advertised_without_an_index_and_builds_one_on_first_use() {
+        // The gate is gone: `graph_query` is advertised from the start, even
+        // in a workspace with no `.stella/private/codegraph.db`. Hiding it
+        // until an index existed hid the very tool that builds one, so the
+        // agent grepped instead. The first call builds the index it needs.
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let reg = ToolRegistry::with_issue_backend(root.clone(), None);
         let has_graph_query =
             |r: &ToolRegistry| r.schemas().iter().any(|s| s.name == "graph_query");
 
-        assert!(!has_graph_query(&reg), "no index → not advertised");
-        reg.enable_code_graph_if_available(&root).unwrap(); // no index yet: a no-op
-        assert!(!has_graph_query(&reg));
+        assert!(
+            has_graph_query(&reg),
+            "advertised with no index present yet"
+        );
+        assert!(
+            !crate::graph::graph_db_path(&root).exists(),
+            "and no index exists at this point"
+        );
 
-        // Build a minimal index, exactly what `stella init` does.
         std::fs::write(root.join("lib.rs"), "pub fn f() {}\n").unwrap();
-        let db = crate::graph::graph_db_path(&root);
-        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
-        let graph = stella_graph::CodeGraph::open(&root, &db).unwrap();
-        graph.index_all().unwrap();
-        graph.shutdown();
-
-        reg.enable_code_graph_if_available(&root).unwrap();
-        assert!(has_graph_query(&reg), "index built → now advertised");
-        // And it actually dispatches through the overlay.
+        // The first query builds the index and answers — no `stella init`,
+        // no prior `enable_code_graph_if_available`.
         let out = reg
             .execute(
                 "graph_query",
                 &serde_json::json!({"op": "definitions", "target": "f"}),
             )
             .await;
-        assert!(!out.is_error(), "graph_query must dispatch: {out:?}");
+        assert!(!out.is_error(), "first-use build must dispatch: {out:?}");
+        assert!(
+            crate::graph::graph_db_path(&root).exists(),
+            "the call built the index on first use"
+        );
     }
 
     #[test]

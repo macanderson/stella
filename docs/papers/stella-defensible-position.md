@@ -10,7 +10,7 @@
 >
 > **Reading order.** This is the capstone paper. For domain-specific depth,
 > read alongside:
-> - [The Open Context Protocol: Advantages and Uniqueness](https://github.com/macanderson/opencontextprotocol/blob/main/docs/protocol-advantages.md) — the
+> - [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md) — the
 >   retrieval protocol's trust architecture.
 > - [`stella-core/src/lib.rs`](../../stella-core/src/lib.rs) and
 >   [`stella-core/src/driver.rs`](../../stella-core/src/driver.rs) — the engine.
@@ -44,7 +44,7 @@ not any individual property — constitutes the moat.
 6. [Property IV: BYOK + zero telemetry egress by default — the trust perimeter](#6-property-iv-byok--zero-telemetry-egress-by-default--the-trust-perimeter)
 7. [Property V: Prompt-cache-native memory — the cost discipline](#7-property-v-prompt-cache-native-memory--the-cost-discipline)
 8. [Property VI: Budget enforcement at safe boundaries](#8-property-vi-budget-enforcement-at-safe-boundaries)
-9. [Property VII: The Open Context Protocol — an open standard](#9-property-vii-the-open-context-protocol--an-open-standard)
+9. [Property VII: The Context Graph Protocol — an open standard](#9-property-vii-the-context-graph-protocol--an-open-standard)
 10. [Why the combination is the moat](#10-why-the-combination-is-the-moat)
 11. [Competitive analysis](#11-competitive-analysis)
 12. [Threats to defensibility](#12-threats-to-defensibility)
@@ -95,7 +95,7 @@ We identify seven such properties in Stella's design.
 | IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural invariant; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../stella-docs/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
 | V | Prompt-cache-native memory | Lessons load into a byte-stable system prompt prefix at ~0.1x input price | `build_system_prompt` (`stella-cli::agent`); L-E8 cache discipline |
 | VI | Budget at safe boundaries | The budget guard consults only between model calls, never interrupts a tool | `run_turn` budget check (`stella-core::driver`); property-tested |
-| VII | Open Context Protocol | Retrieval is a typed, budgeted, provenance-carrying, consent-gated, conformance-verified protocol | `ocp-types`, `ocp-host`, `ocp-conformance` |
+| VII | Context Graph Protocol | Retrieval is a typed, budgeted, provenance-carrying, consent-gated, conformance-verified protocol | `contextgraph-types`, `contextgraph-host`, `contextgraph-conformance` |
 
 Each property is examined below.
 
@@ -446,45 +446,45 @@ reported metric, but an abort condition.
 
 ---
 
-## 9. Property VII: The Open Context Protocol — an open standard
+## 9. Property VII: The Context Graph Protocol — an open standard
 
 ### The invariant
 
-Retrieval in Stella is designed as an open, versioned wire protocol (OCP,
-`ocp/1.0-draft`): the `ocp-types` crate (zero dependencies beyond `serde`),
-the `ocp-host` host runtime, and the `ocp-conformance` conformance suite. See
-[The Open Context Protocol: Advantages and Uniqueness](https://github.com/macanderson/opencontextprotocol/blob/main/docs/protocol-advantages.md) for the
+Retrieval in Stella is designed as an open, versioned wire protocol (CGP,
+`contextgraph/1.0-draft`): the `contextgraph-types` crate (zero dependencies beyond `serde`),
+the `contextgraph-host` host runtime, and the `contextgraph-conformance` conformance suite. See
+[The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md) for the
 full analysis.
 
 ### Why it is hard to copy
 
 An open standard is defensible for the same reason TCP/IP is defensible: once
 ecosystem participants build against the standard, switching costs become
-prohibitive. OCP's specific defensibility comes from three properties:
+prohibitive. CGP's specific defensibility comes from three properties:
 
-1. **Zero-dependency wire types.** `ocp-types` depends only on `serde`. A
-   third party can implement an OCP provider in any language without pulling
+1. **Zero-dependency wire types.** `contextgraph-types` depends only on `serde`. A
+   third party can implement an CGP provider in any language without pulling
    in Stella code. The barrier to entry is a JSON codec and the wire table.
 
-2. **Machine-checked conformance.** "OCP conformant" is defined as green on
-   `ocp-conformance`'s suite — a checkable claim. This makes
+2. **Machine-checked conformance.** "CGP conformant" is defined as green on
+   `contextgraph-conformance`'s suite — a checkable claim. This makes
    interoperability a testable property. A provider that passes conformance
-   works with any OCP host; a provider that fails is caught at CI time, not
+   works with any CGP host; a provider that fails is caught at CI time, not
    at integration time.
 
-3. **The trust architecture.** OCP's seven durability properties (provenance,
+3. **The trust architecture.** CGP's seven durability properties (provenance,
    budget honesty, consent, conformance, citation, version stability,
    temporal validity) are irreducible. A competitor proposing an alternative
    retrieval protocol must match all seven or accept a weaker trust model. See
-   [The Open Context Protocol: Advantages and Uniqueness](https://github.com/macanderson/opencontextprotocol/blob/main/docs/protocol-advantages.md) §10 for
+   [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md) §10 for
    why the combination is irreducible.
 
 ### The ecosystem play
 
-OCP positions Stella not just as a coding agent but as the **reference
-implementation of a standard.** If OCP becomes the standard for context
+CGP positions Stella not just as a coding agent but as the **reference
+implementation of a standard.** If CGP becomes the standard for context
 retrieval in AI coding tools — the way MCP is becoming the standard for tool
-invocation — then Stella is the first and most mature host. Every OCP
+invocation — then Stella is the first and most mature host. Every CGP
 provider built by the ecosystem (a Jira context provider, a Figma context
 provider, a Confluence context provider) works with Stella for free. The
 standard creates network effects that compound with each adoption.
@@ -508,10 +508,10 @@ are mutually reinforcing:
   the budget guard ensures the agent doesn't spend unboundedly trying. Together,
   they define "done" as both *verified* and *bounded*.
 
-- **BYOK + zero telemetry egress by default (IV) + OCP (VII)** define a trust
+- **BYOK + zero telemetry egress by default (IV) + CGP (VII)** define a trust
   perimeter. BYOK means the user controls the model; Community/default local
   telemetry plus the explicit signed Enterprise exception makes operational
-  egress inspectable and governed; OCP means the user controls the context
+  egress inspectable and governed; CGP means the user controls the context
   sources. The trust perimeter is not one property but three, each closing a
   gap the others don't address.
 
@@ -546,7 +546,7 @@ Stella on:
   integration. Stella's engine is SDK-free.
 - **Witness-test**: Claude Code does not have a verify_done-equivalent. It
   stops at "the suite is green."
-- **OCP**: Claude Code does not expose a context-retrieval protocol. Its
+- **CGP**: Claude Code does not expose a context-retrieval protocol. Its
   retrieval is opaque and vendor-locked.
 
 Claude Code's advantage is deep integration with Anthropic's model
@@ -569,7 +569,7 @@ feature (tree-sitter-based). It is Stella's closest open-source peer.
 
 Aider pioneered the tree-sitter repo map that Stella's `stella-graph` builds
 on. The key differentiator is that Stella treats retrieval as a *protocol*
-(OCP), not a *feature* — making it extensible by third parties and
+(CGP), not a *feature* — making it extensible by third parties and
 conformance-verified.
 
 ### vs. Cursor / Windsurf (IDE-based agents)
@@ -585,7 +585,7 @@ cannot match Stella on:
   exception documented above.
 - **Ports and I/O purity**: Both embed provider integration in the agent loop.
   Stella's engine is SDK-free and property-testable.
-- **Witness-test, budget, OCP**: Neither has these properties.
+- **Witness-test, budget, CGP**: Neither has these properties.
 
 Their advantage is IDE integration (inline diffs, multi-file editing,
 language-server awareness). Stella operates in the terminal, which is a
@@ -600,10 +600,10 @@ A rigorous analysis must consider what could erode Stella's position:
 1. **Model convergence.** If a single model becomes so dominant that
    model-agnosticism stops mattering, BYOK loses its edge. *Mitigation:*
    Stella's other properties (zero telemetry egress by default, witness-test,
-   budget, OCP) do not depend on model diversity.
+   budget, CGP) do not depend on model diversity.
 
-2. **OCP non-adoption.** If the ecosystem does not build OCP providers, the
-   protocol's network effects don't materialize, and OCP becomes an internal
+2. **CGP non-adoption.** If the ecosystem does not build CGP providers, the
+   protocol's network effects don't materialize, and CGP becomes an internal
    architecture rather than a standard. *Mitigation:* the zero-dependency wire
    types, the public conformance suite, and the MIT license lower the barrier
    to adoption. But adoption is not guaranteed.
@@ -677,6 +677,6 @@ is the running code that proves it.
 
 ---
 
-*See also: [The Open Context Protocol: Advantages and Uniqueness](https://github.com/macanderson/opencontextprotocol/blob/main/docs/protocol-advantages.md)
+*See also: [The Context Graph Protocol: Advantages and Uniqueness](https://github.com/macanderson/context-graph-protocol/blob/main/docs/protocol-advantages.md)
 for the retrieval protocol's trust architecture, and the
-[OCP reference docs](./README.md) for implementation guides.*
+[CGP reference docs](./README.md) for implementation guides.*

@@ -414,7 +414,8 @@ take effect the next session — hot-injection would invalidate the cache.
 
 Every working turn is also recorded as an **episode** (summary, files touched,
 outcome, time window) in `.stella/private/context.db`, and `stella init` writes the
-domain taxonomy as bi-temporal facts. Recall fans out through the CGP host to
+domain taxonomy as bi-temporal facts. Recall fans out through the Context Graph
+Protocol host to
 the memory store and the code graph, fused by score under one budget.
 
 ## Telemetry
@@ -526,7 +527,8 @@ flowchart TD
 
 ## Workspace layout
 
-Fourteen `stella-*` crates make up the workspace. The Context Graph Protocol —
+Fourteen `stella-*` crates make up the workspace. The Context Graph Protocol
+(CGP) —
 the retrieval abstraction Stella's recall routes through — now lives in its own
 repository and is pulled in as a pinned git dependency, not as workspace members.
 

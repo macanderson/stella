@@ -178,7 +178,8 @@ Stella does parallelize where it is safe and beneficial:
 - **Read-only tool concurrency.** When the model requests multiple read-only
   operations (read three files, grep for two patterns), they execute
   concurrently. This is safe because read-only tools have no side effects.
-- **Context fan-out.** When the context plane queries multiple OCP providers,
+- **Context fan-out.** When the context plane queries multiple Context Graph
+  Protocol providers,
   they are fanned out concurrently (`Host::query_all`). Each provider is
   isolated; one provider's failure never affects another.
 

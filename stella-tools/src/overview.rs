@@ -107,15 +107,11 @@ pub fn build_overview(root: &Path) -> Value {
 }
 
 fn open_graph(root: &Path) -> Option<stella_graph::CodeGraph> {
-    let path = stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db").ok()??;
-    let graph = stella_graph::CodeGraph::open(root, &path).ok()?;
-    // Same reason `graph_query` catches up: an overview that describes a tree
-    // the agent has already changed is worse than none, because it reads as
-    // authoritative. Only changed files are re-parsed.
-    if let Err(error) = graph.index_all() {
-        eprintln!("stella: overview index catch-up failed, using the last index: {error}");
-    }
-    Some(graph)
+    // Build on first use, the same path `graph_query` takes: project_overview
+    // is meant to be the FIRST call in a session, before the background index
+    // build could possibly have finished, so it must be able to produce the
+    // index it reports on rather than waiting for one to appear.
+    crate::graph::open_or_build(root).ok()
 }
 
 fn index_section(graph: &stella_graph::CodeGraph) -> Value {
@@ -200,14 +196,15 @@ fn scripts_section(scripts: &ScriptIndex) -> Value {
     if scripts.is_empty() {
         return json!({ "detected": false });
     }
-    let verbs: serde_json::Map<String, Value> = ["install", "build", "start", "test", "lint", "format"]
-        .iter()
-        .filter_map(|verb| {
-            scripts
-                .verb_entry(verb)
-                .map(|entry| ((*verb).to_string(), json!(entry.command.clone())))
-        })
-        .collect();
+    let verbs: serde_json::Map<String, Value> =
+        ["install", "build", "start", "test", "lint", "format"]
+            .iter()
+            .filter_map(|verb| {
+                scripts
+                    .verb_entry(verb)
+                    .map(|entry| ((*verb).to_string(), json!(entry.command.clone())))
+            })
+            .collect();
     json!({
         "detected": true,
         "runners": scripts.detected_runners(),
@@ -258,28 +255,42 @@ fn language_of(path: &str) -> Option<&'static str> {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The point of the tool: one call, no arguments, and the agent knows
-    /// how to build and test the project. An empty or un-indexed workspace
-    /// must still answer — an orientation call that errors sends the agent
-    /// straight back to the glob loop this replaces.
+    /// A truly empty workspace (no source at all) still answers, with an
+    /// index that built but found nothing — never an error that would send
+    /// the agent back to the glob loop this replaces.
     #[test]
-    fn an_uninitialized_workspace_still_answers_and_says_it_is_uninitialized() {
+    fn an_empty_workspace_answers_with_a_built_but_empty_index() {
         let dir = tempfile::tempdir().unwrap();
         let out = build_overview(dir.path());
 
-        let index = &out["index"];
-        assert_eq!(index["built"], serde_json::json!(false));
+        // The tool builds the index on first use, so it exists — and reports
+        // zero files honestly rather than pretending there is nothing to index.
+        assert_eq!(out["index"]["built"], serde_json::json!(true));
+        assert_eq!(out["index"]["files"], serde_json::json!(0));
+    }
+
+    /// With real source present, the first call builds the index and the
+    /// overview reports it — no prior `stella init`.
+    #[test]
+    fn a_first_call_builds_the_index_and_reports_real_symbols() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\npub struct S;\n").unwrap();
+
+        let out = build_overview(dir.path());
+        assert_eq!(out["index"]["built"], serde_json::json!(true));
         assert!(
-            index["note"].as_str().unwrap_or("").contains("stella init"),
-            "the fix is named, not just the symptom: {index}"
+            out["index"]["files"].as_u64().unwrap_or(0) >= 1,
+            "the first call indexed the source: {}",
+            out["index"]
         );
-        // No confident-looking empty code section implying "no code here".
-        assert!(out.get("code").is_none());
+        assert!(
+            out.get("code").is_some(),
+            "a code section is present: {out}"
+        );
     }
 
     #[test]
@@ -318,14 +329,21 @@ mod tests {
         .unwrap();
 
         let out = build_overview(dir.path());
-        assert_eq!(out["domains"], serde_json::json!(["scheduling", "transport"]));
+        assert_eq!(
+            out["domains"],
+            serde_json::json!(["scheduling", "transport"])
+        );
     }
 
     #[test]
     fn a_malformed_taxonomy_degrades_to_empty_rather_than_failing_the_call() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
-        std::fs::write(dir.path().join(".stella").join("domains.toml"), "not = [toml").unwrap();
+        std::fs::write(
+            dir.path().join(".stella").join("domains.toml"),
+            "not = [toml",
+        )
+        .unwrap();
         assert_eq!(build_overview(dir.path())["domains"], serde_json::json!([]));
     }
 }

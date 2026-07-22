@@ -66,7 +66,9 @@ use crate::ports::{
     WorkspaceError,
 };
 use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review};
-use crate::triage::{TaskAssessment, TaskClass, parse_triage_response, resolve_task_class, triage_prompt};
+use crate::triage::{
+    TaskAssessment, TaskClass, parse_triage_response, resolve_task_class, triage_prompt,
+};
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
     deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
@@ -1219,8 +1221,10 @@ impl<'a> Pipeline<'a> {
             return state.into_unverified();
         }
 
-        self.verify_candidate(goal, assessment, witness, engine, surface, budget, total, state)
-            .await
+        self.verify_candidate(
+            goal, assessment, witness, engine, surface, budget, total, state,
+        )
+        .await
     }
 
     /// Execute stage: one turn for simple/single-task; one turn per plan step
