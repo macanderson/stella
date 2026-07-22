@@ -108,6 +108,30 @@ pub(crate) enum PipelineApprovalCapability {
     Unavailable,
 }
 
+/// Which approval capability a one-shot host run can actually service, given
+/// the output format and whether stdin/stdout are real terminals. A pure
+/// function over already-observed booleans (rather than calling
+/// `IsTerminal` itself) so the exact condition is directly unit-testable —
+/// this is the seam a prior squash-merge (#284 x #297/#276) silently
+/// dropped from `run_pipeline_one_shot`, collapsing it to a bare `is_text`
+/// check with no test to catch the regression. Stdio approval requires a
+/// text-safe renderer PLUS both terminal handles: stdin must accept the
+/// decision and stdout must present the prompt. A redirected/piped
+/// text-format run is still rendered as text, but must stay headless and
+/// fail closed at scope review — never read stdin for a decision no one is
+/// there to give.
+pub(crate) fn approval_capability_for(
+    is_text: bool,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> PipelineApprovalCapability {
+    if is_text && stdin_is_terminal && stdout_is_terminal {
+        PipelineApprovalCapability::Stdio
+    } else {
+        PipelineApprovalCapability::Unavailable
+    }
+}
+
 /// Build the one-shot pipeline config from the host's approval capability.
 /// Rendering remains a separate concern owned by the event renderer.
 /// `worker_model` is [`EngineWiring::worker_model`], threaded through to
@@ -118,6 +142,7 @@ pub(crate) fn pipeline_config_for_approval_capability(
     approval: PipelineApprovalCapability,
     worker_model: &ModelRef,
     test_command: Option<&str>,
+    worker_model: &ModelRef,
 ) -> PipelineConfig {
     PipelineConfig {
         engine: pipeline_engine_config_for(cfg, worker_model),
