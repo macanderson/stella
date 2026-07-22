@@ -196,14 +196,15 @@ fn scripts_section(scripts: &ScriptIndex) -> Value {
     if scripts.is_empty() {
         return json!({ "detected": false });
     }
-    let verbs: serde_json::Map<String, Value> = ["install", "build", "start", "test", "lint", "format"]
-        .iter()
-        .filter_map(|verb| {
-            scripts
-                .verb_entry(verb)
-                .map(|entry| ((*verb).to_string(), json!(entry.command.clone())))
-        })
-        .collect();
+    let verbs: serde_json::Map<String, Value> =
+        ["install", "build", "start", "test", "lint", "format"]
+            .iter()
+            .filter_map(|verb| {
+                scripts
+                    .verb_entry(verb)
+                    .map(|entry| ((*verb).to_string(), json!(entry.command.clone())))
+            })
+            .collect();
     json!({
         "detected": true,
         "runners": scripts.detected_runners(),
@@ -254,7 +255,6 @@ fn language_of(path: &str) -> Option<&'static str> {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,7 +287,10 @@ mod tests {
             "the first call indexed the source: {}",
             out["index"]
         );
-        assert!(out.get("code").is_some(), "a code section is present: {out}");
+        assert!(
+            out.get("code").is_some(),
+            "a code section is present: {out}"
+        );
     }
 
     #[test]
@@ -326,14 +329,21 @@ mod tests {
         .unwrap();
 
         let out = build_overview(dir.path());
-        assert_eq!(out["domains"], serde_json::json!(["scheduling", "transport"]));
+        assert_eq!(
+            out["domains"],
+            serde_json::json!(["scheduling", "transport"])
+        );
     }
 
     #[test]
     fn a_malformed_taxonomy_degrades_to_empty_rather_than_failing_the_call() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".stella")).unwrap();
-        std::fs::write(dir.path().join(".stella").join("domains.toml"), "not = [toml").unwrap();
+        std::fs::write(
+            dir.path().join(".stella").join("domains.toml"),
+            "not = [toml",
+        )
+        .unwrap();
         assert_eq!(build_overview(dir.path())["domains"], serde_json::json!([]));
     }
 }

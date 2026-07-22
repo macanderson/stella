@@ -1095,9 +1095,7 @@ mod diff_baseline_tests {
         git(root, &["add", "-A"]);
         git(root, &["commit", "-qm", "the agent's work"]);
 
-        let out = runner
-            .run_diagnostic(&DiagnosticInvocation::GitDiff)
-            .await;
+        let out = runner.run_diagnostic(&DiagnosticInvocation::GitDiff).await;
         assert!(
             out.stdout_tail.contains("server.py"),
             "committed work must appear in the diff, got: {:?}",

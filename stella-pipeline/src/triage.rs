@@ -490,8 +490,8 @@ mod tests {
 
     #[test]
     fn assurance_flags_tolerate_bullets_punctuation_and_case() {
-        let a = parse_triage_response("- CLASS: Multi\n- Witness: NO\n* judge : none")
-            .expect("parses");
+        let a =
+            parse_triage_response("- CLASS: Multi\n- Witness: NO\n* judge : none").expect("parses");
         assert_eq!(a.class, TaskClass::MultiStep);
         assert_eq!(a.require_witness, Some(false));
         assert_eq!(a.require_judge, Some(false));

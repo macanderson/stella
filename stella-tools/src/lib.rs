@@ -6,7 +6,6 @@
 //! configured root, and `cd` inside `bash` cannot silently diverge the root
 //! for subsequent file operations (L-S2).
 
-pub mod overview;
 pub mod agent_use;
 pub mod bash;
 pub mod ci;
@@ -27,6 +26,7 @@ pub mod issue_ops;
 pub mod issues;
 pub mod media;
 pub mod memory;
+pub mod overview;
 pub mod process;
 pub mod project;
 pub mod read;

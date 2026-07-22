@@ -1206,8 +1206,16 @@ int put(const char *k) { return 0; }
             .imports
             .iter()
             .any(|s| matches!(s, ImportSpec::Bare { specifier } if specifier == "stdio.h"));
-        assert!(quoted, "quoted include is path-relative: {:?}", parsed.imports);
-        assert!(angled, "angled include stays unresolved: {:?}", parsed.imports);
+        assert!(
+            quoted,
+            "quoted include is path-relative: {:?}",
+            parsed.imports
+        );
+        assert!(
+            angled,
+            "angled include stays unresolved: {:?}",
+            parsed.imports
+        );
     }
 
     #[test]
@@ -1265,7 +1273,10 @@ function boot() {}
     fn new_extensions_classify() {
         use std::path::Path;
         assert_eq!(Language::from_path(Path::new("m.go")), Some(Language::Go));
-        assert_eq!(Language::from_path(Path::new("A.java")), Some(Language::Java));
+        assert_eq!(
+            Language::from_path(Path::new("A.java")),
+            Some(Language::Java)
+        );
         assert_eq!(Language::from_path(Path::new("k.c")), Some(Language::C));
         assert_eq!(Language::from_path(Path::new("k.h")), Some(Language::C));
         assert_eq!(Language::from_path(Path::new("i.php")), Some(Language::Php));
