@@ -799,14 +799,24 @@ impl<'a> Pipeline<'a> {
             return Ok(Some(plan));
         }
 
-        if self.config.headless && !self.config.headless_bypass_scope_review {
+        if self.config.headless && self.config.headless_bypass_scope_review {
+            // Bypass means proceed, not "ask a gate that always says no".
+            // The headless approval port is `AlwaysAbortGate`, so running the
+            // review anyway would empty the plan and end the turn having done
+            // nothing — the same zero-work outcome as the error below, just
+            // spelled differently.
+            return Ok(Some(plan));
+        }
+        if self.config.headless {
             // Say why the run is ending. This error leaves through the
             // `Result`, not the event stream, so without this the stream just
             // stops mid-plan: a consumer reading only events sees a run that
             // vanished with no terminal event and no explanation.
             self.emit(AgentEvent::Error {
                 message: format!(
-                    "this plan needs scope review ({} steps, ~{} files) and a headless run                      has nobody to ask; set `headless_scope_bypass: on` where the working                      tree is disposable, or raise the scope thresholds",
+                    "this plan needs scope review ({} steps, ~{} files) and a headless \
+                     run has nobody to ask; set `headless_scope_bypass: on` where the \
+                     working tree is disposable, or raise the scope thresholds",
                     plan.len(),
                     estimate.estimated_files
                 ),

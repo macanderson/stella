@@ -1480,3 +1480,43 @@ mod mcp_prefetch;
 mod task4;
 mod task5;
 mod usage;
+
+/// The headless approval port is `AlwaysAbortGate`, so "bypass scope review"
+/// has to mean *proceed*. Running the review anyway would hand the plan to a
+/// gate that always says no, empty it, and end the turn having done nothing —
+/// the same zero-work outcome as the hard error, just spelled differently.
+#[tokio::test]
+async fn headless_scope_bypass_proceeds_instead_of_asking_a_gate_that_always_aborts() {
+    // Six steps clears the default 5-step threshold, so scope review fires.
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: multi\nWITNESS: no\nJUDGE: no"),
+        text_result(r#"["a","b","c","d","e","f"]"#),
+        text_result("done"),
+    ]);
+    let config = PipelineConfig {
+        headless: true,
+        headless_bypass_scope_review: true,
+        ..PipelineConfig::default()
+    };
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        config,
+        "Refactor across the codebase and then update all callers",
+        router(),
+    )
+    .await;
+    let outcome = outcome.expect("bypass must not surface the headless scope error");
+
+    assert_ne!(
+        outcome.status,
+        PipelineStatus::Aborted {
+            reason: "aborted at scope review".to_string()
+        },
+        "a bypassed review must not abort at the gate it bypassed"
+    );
+    let s = stages(&events);
+    assert!(
+        s.contains(&StageKind::Execute),
+        "the run reaches execute rather than ending at the gate: {s:?}"
+    );
+}
