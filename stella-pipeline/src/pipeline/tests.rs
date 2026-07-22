@@ -1099,13 +1099,8 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
         text_result("done"),
         text_result("PASS looks right"),
     ]);
-    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let workspace = FakeWorkspace::new(0, vec![], Ok(vec![]), log.clone())
-        .with_repo_status(SeqRepoStatus::new(vec![vec![("src/lib.rs", "m")]]));
-    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log);
-    let (outcome, events, _) = run_isolated_with_router(
+    let (outcome, events, _) = run_unisolated_with_router(
         &provider,
-        &port,
         PipelineConfig::default(),
         "Fix the retry bug",
         single_model_router(),
@@ -1310,6 +1305,56 @@ async fn run_isolated(
     Vec<CompletionMessage>,
 ) {
     run_isolated_with_router(provider, port, config, goal, router()).await
+}
+
+/// Run over ordinary *session* ports with no candidate-workspace port, the
+/// path an unauthored run takes. Isolation exists to protect the session tree
+/// from a witness author; with no author there is nothing to protect it from,
+/// so no snapshot machinery is engaged — which is what lets Stella work in a
+/// plain directory that is not a git repository.
+async fn run_unisolated_with_router(
+    provider: &ScriptedProvider,
+    config: PipelineConfig,
+    goal: &str,
+    router: Router,
+) -> (
+    Result<PipelineOutcome, PipelineRunError>,
+    Vec<AgentEvent>,
+    Vec<CompletionMessage>,
+) {
+    let resolver = OneProvider(provider);
+    let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
+    let repo_status = SeqRepoStatus::new(vec![vec![]]);
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline.run(goal, &mut messages, &mut budget).await;
+    (outcome, drain(&mut rx), messages)
 }
 
 /// [`run_isolated`] over a caller-supplied router, so a test can pin the

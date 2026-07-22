@@ -179,17 +179,15 @@ async fn authored_witness_degrades_when_judge_is_worker() {
         text_result("PASS looks right"),
     ]);
     let resolver = OneProvider(&provider);
-    let diagnostics = NeverRunner;
-    let repo_status = NeverRepoStatus;
+    // Session ports, not candidate ones: with no author to isolate from, the
+    // run stays in the working tree and engages no snapshot machinery.
+    let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
+    let repo_status = SeqRepoStatus::new(vec![vec![]]);
     let tools = EmptyTools;
     let recall = NoContextRecall;
     let repo = NoRepoStructure;
     let approvals = AutoApproveGate;
     let sleeper = NoopSleeper;
-    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let workspace = FakeWorkspace::new(0, vec![], Ok(vec![]), log.clone())
-        .with_repo_status(SeqRepoStatus::new(vec![vec![("src/lib.rs", "m")]]));
-    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log);
     let same = ModelRef::new("scripted", "same-model");
     let mut roles = RoleTable::new();
     roles.pin(Role::Worker, same.clone());
@@ -213,12 +211,12 @@ async fn authored_witness_degrades_when_judge_is_worker() {
             recall: &recall,
             repo: &repo,
             repo_status: &repo_status,
-            diagnostics: &diagnostics,
-            tests: &diagnostics,
+            diagnostics: &runner,
+            tests: &runner,
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
-            candidate_workspaces: Some(&port),
+            candidate_workspaces: None,
             mcp_prefetch: None,
             steering: None,
         },

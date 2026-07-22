@@ -1,14 +1,16 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct FirstTwoProviderLookups<'a> {
+/// Every role resolves except the judge — "no independent witness author is
+/// available", stated by identity rather than by call count so the fixture
+/// survives a change in the order roles are resolved.
+struct NoJudgeProvider<'a> {
     provider: &'a ScriptedProvider,
-    lookups: AtomicUsize,
 }
 
-impl ProviderResolver for FirstTwoProviderLookups<'_> {
-    fn provider_for(&self, _model: &ModelRef) -> Option<&dyn Provider> {
-        (self.lookups.fetch_add(1, Ordering::SeqCst) < 2).then_some(self.provider as &dyn Provider)
+impl ProviderResolver for NoJudgeProvider<'_> {
+    fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider> {
+        (model.model_id != "judge").then_some(self.provider as &dyn Provider)
     }
 }
 
@@ -164,9 +166,8 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
         text_result("single"),
         text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
     ]);
-    let resolver = FirstTwoProviderLookups {
+    let resolver = NoJudgeProvider {
         provider: &provider,
-        lookups: AtomicUsize::new(0),
     };
     let runner = ScriptedRunner::new(vec![false], "");
     let tools = EmptyTools;
@@ -195,7 +196,7 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
             approvals: &approvals,
             sleeper: &sleeper,
             hooks: None,
-            candidate_workspaces: Some(&candidate_workspaces),
+            candidate_workspaces: None,
             mcp_prefetch: None,
             steering: None,
         },
