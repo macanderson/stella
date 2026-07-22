@@ -66,7 +66,7 @@ use crate::ports::{
     WorkspaceError,
 };
 use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review};
-use crate::triage::{TaskClass, classify_triage_response, resolve_task_class, triage_prompt};
+use crate::triage::{TaskAssessment, TaskClass, parse_triage_response, resolve_task_class, triage_prompt};
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
     deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
@@ -461,11 +461,11 @@ impl<'a> Pipeline<'a> {
             });
             self.recall.recall(goal).await
         };
-        let (task_class, frames) =
+        let (assessment, frames) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);
         self.emit_context_recall(&frames);
-        let task_class = match task_class {
-            Ok(task_class) => task_class,
+        let assessment = match assessment {
+            Ok(assessment) => assessment,
             Err(abort) => {
                 return Ok(self.aborted_before_execute(
                     resolve_task_class(None, goal),
@@ -474,6 +474,7 @@ impl<'a> Pipeline<'a> {
                 ));
             }
         };
+        let task_class = assessment.class;
         // The volatile recall+goal message rides AFTER the stable system
         // prefix (L-E8) — see assemble_user_message.
         messages.push(CompletionMessage::user(assemble_user_message(
@@ -523,7 +524,7 @@ impl<'a> Pipeline<'a> {
         // directory that is a hard failure rather than an unused cost.
         let authored_witness = self.config.test_command.is_none()
             && self.config.witness_writer
-            && task_class.verifies_unconditionally()
+            && assessment.wants_witness()
             && self.can_author_independent_witness();
         // Single-shot (the default) runs directly over the session ports —
         // zero snapshot/adoption machinery only when the user supplied the
@@ -551,7 +552,7 @@ impl<'a> Pipeline<'a> {
                     goal,
                     &base_messages,
                     plan.as_deref(),
-                    task_class,
+                    assessment,
                     None,
                     &worker,
                     1,
@@ -569,7 +570,7 @@ impl<'a> Pipeline<'a> {
                     goal,
                     &base_messages,
                     plan.as_deref(),
-                    task_class,
+                    assessment,
                     n,
                     &frames,
                     authored_witness,
@@ -647,7 +648,7 @@ impl<'a> Pipeline<'a> {
         goal: &str,
         budget: &mut BudgetGuard,
         total: &mut f64,
-    ) -> Result<TaskClass, PipelineBudgetAbort> {
+    ) -> Result<TaskAssessment, PipelineBudgetAbort> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
         });
@@ -655,13 +656,15 @@ impl<'a> Pipeline<'a> {
             Ok(r) => r,
             // Triage resolution failure is soft: fall through to the full path
             // via the deterministic floor. Never fail the run on triage.
-            Err(_) => return Ok(resolve_task_class(None, goal)),
+            Err(_) => {
+                return Ok(TaskAssessment::from_class(resolve_task_class(None, goal)));
+            }
         };
         if let Some(fb) = &resolved.fallback {
             self.emit_fallback(fb);
         }
 
-        let model_class = match self
+        let assessment = match self
             .metered_raw_call(
                 RawCall {
                     role: ModelCallRole::Triage,
@@ -676,11 +679,20 @@ impl<'a> Pipeline<'a> {
             )
             .await
         {
-            Ok(result) => classify_triage_response(&result.text),
+            Ok(result) => parse_triage_response(&result.text),
             Err(RawCallError::Budget(abort)) => return Err(abort),
             Err(RawCallError::Provider | RawCallError::Timeout) => None,
         };
-        Ok(resolve_task_class(model_class, goal))
+        // The class still goes through `resolve_task_class` so a failed or
+        // unparseable triage lands on the deterministic floor exactly as
+        // before; a real assessment keeps its own assurance flags.
+        Ok(match assessment {
+            Some(assessment) => TaskAssessment {
+                class: resolve_task_class(Some(assessment.class), goal),
+                ..assessment
+            },
+            None => TaskAssessment::from_class(resolve_task_class(None, goal)),
+        })
     }
 
     // ------------------------------------------------------------------
@@ -826,7 +838,7 @@ impl<'a> Pipeline<'a> {
         goal: &str,
         base_messages: &[CompletionMessage],
         plan: Option<&[PlanStep]>,
-        task_class: TaskClass,
+        assessment: TaskAssessment,
         witness: Option<&Witness>,
         worker: &ResolvedRole<'a>,
         n: u32,
@@ -860,7 +872,7 @@ impl<'a> Pipeline<'a> {
                     goal,
                     base_messages,
                     plan,
-                    task_class,
+                    assessment,
                     witness,
                     &engine,
                     surface,
@@ -886,7 +898,7 @@ impl<'a> Pipeline<'a> {
         goal: &str,
         base_messages: &[CompletionMessage],
         plan: Option<&[PlanStep]>,
-        task_class: TaskClass,
+        assessment: TaskAssessment,
         n: u32,
         frames: &[RecalledFrame],
         author_witness: bool,
@@ -929,7 +941,7 @@ impl<'a> Pipeline<'a> {
                     goal,
                     base_messages,
                     plan,
-                    task_class,
+                    assessment,
                     None,
                     &worker,
                     n,
@@ -1053,7 +1065,7 @@ impl<'a> Pipeline<'a> {
                     goal,
                     base_messages,
                     plan,
-                    task_class,
+                    assessment,
                     witness.as_ref(),
                     &engine,
                     surface,
@@ -1120,7 +1132,7 @@ impl<'a> Pipeline<'a> {
         goal: &str,
         base_messages: &[CompletionMessage],
         plan: Option<&[PlanStep]>,
-        task_class: TaskClass,
+        assessment: TaskAssessment,
         witness: Option<&Witness>,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
@@ -1138,7 +1150,7 @@ impl<'a> Pipeline<'a> {
         // best-of-N, or a shared tree an earlier candidate may have
         // modified), and a seeded observation would be a fabricated one.
         let mut oracle = FlipOracle::new();
-        if task_class.verifies_unconditionally()
+        if assessment.class.verifies_unconditionally()
             && let Some(cmd) = self.effective_test_command(witness)
         {
             let pre = surface.tests.run_test(cmd.invocation).await;
@@ -1177,14 +1189,14 @@ impl<'a> Pipeline<'a> {
         (state.diff_lines, state.diff_text) =
             self.gather_diff(surface, &state.untracked_before).await;
         let files_touched = state.file_changes > 0 || !state.diff_text.trim().is_empty();
-        let should_verify = task_class.verifies_unconditionally()
-            || (task_class == TaskClass::SimpleLookup && files_touched);
+        let should_verify = assessment.class.verifies_unconditionally()
+            || (assessment.class == TaskClass::SimpleLookup && files_touched);
         if !should_verify {
             // A clean lookup: nothing to verify.
             return state.into_unverified();
         }
 
-        self.verify_candidate(goal, witness, engine, surface, budget, total, state)
+        self.verify_candidate(goal, assessment, witness, engine, surface, budget, total, state)
             .await
     }
 
@@ -1254,6 +1266,7 @@ impl<'a> Pipeline<'a> {
     async fn verify_candidate(
         &self,
         goal: &str,
+        assessment: TaskAssessment,
         witness: Option<&Witness>,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
@@ -1386,6 +1399,31 @@ impl<'a> Pipeline<'a> {
                     {
                         return CandidateResult::aborted(state.messages, reason);
                     }
+                }
+                // Triage judged this result not worth a separate reviewer.
+                // Record exactly that: a pass carrying no independent
+                // evidence. Falling through to `heuristic_fallback` would
+                // report "judge unavailable", which describes a judge that
+                // broke — not one that was deliberately waived — and would
+                // turn a task triage called simple into a verification
+                // failure. The summary states plainly what was not done.
+                LadderDecision::ModelJudge if !assessment.wants_judge() => {
+                    let evidence = JudgeEvidence {
+                        summary: "model review waived by triage; no independent \
+                                  verification was performed"
+                            .to_string(),
+                        deterministic: false,
+                        evidence_refs: vec![],
+                    };
+                    self.emit(AgentEvent::JudgeVerdict {
+                        passed: true,
+                        evidence: evidence.clone(),
+                    });
+                    return state.into_verified(
+                        true,
+                        &evidence,
+                        score_from_verification(true, None),
+                    );
                 }
                 LadderDecision::ModelJudge => {
                     // Inconclusive — escalate to the model judge (judge ≠

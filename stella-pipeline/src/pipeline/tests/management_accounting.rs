@@ -88,7 +88,10 @@ async fn late_triage_is_abandoned_and_reported_incomplete() {
 
     // The abandoned answer never classifies, so triage lands on the
     // deterministic floor rather than a guess from a call it did not await.
-    assert_eq!(class, resolve_task_class(None, "What is two plus two?"));
+    assert_eq!(
+        class.class,
+        resolve_task_class(None, "What is two plus two?")
+    );
     // Nothing settled, so nothing is charged — an unknowable envelope is
     // reported as incomplete instead of being invented.
     assert_eq!(total, 0.0);

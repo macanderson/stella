@@ -1085,6 +1085,47 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
     assert!(!s.contains(&StageKind::Judge), "judge skipped on the flip");
 }
 
+/// The point of the assessment: triage can route work onto a cheaper path
+/// than the keyword floor would. This goal trips `deterministic_floor`'s
+/// "across the codebase" marker — under the old `max(model, floor)` rule it
+/// bought a plan, an authored witness, and a judge no matter what triage said.
+/// An independent judge model IS available here, so a skipped witness proves
+/// triage's call was honored rather than independence being unavailable.
+#[tokio::test]
+async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+    ]);
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        PipelineConfig::default(),
+        "Rename the retry helper across the codebase",
+        router(),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    assert_eq!(
+        outcome.task_class,
+        TaskClass::SingleTask,
+        "triage read the goal; the floor only pattern-matched it"
+    );
+    let s = stages(&events);
+    assert!(!s.contains(&StageKind::Plan), "single task plans nothing");
+    assert!(
+        !s.contains(&StageKind::Witness),
+        "triage said no witness: {s:?}"
+    );
+    // Two paid calls: triage and the worker. No witness author, no judge.
+    let calls = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
+        .count();
+    assert_eq!(calls, 2, "ceremony triage declined is never bought: {s:?}");
+}
+
 /// Losing the independent witness author must cost the run its authored
 /// witness, never the whole task. With every role pinned to one model the
 /// pipeline used to abort here after a single model call, having executed

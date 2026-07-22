@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Every role resolves except the judge — "no independent witness author is
 /// available", stated by identity rather than by call count so the fixture
@@ -178,7 +177,7 @@ async fn unavailable_independent_witness_degrades_instead_of_aborting() {
     let workspace = FakeWorkspace::new(0, vec![false], Ok(vec![]), log.clone()).with_repo_status(
         SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "sha256:test")]]),
     );
-    let candidate_workspaces = FakeWorkspacePort::new(vec![Ok(workspace)], log);
+    let _candidate_workspaces = FakeWorkspacePort::new(vec![Ok(workspace)], log);
     let approvals = AutoApproveGate;
     let sleeper = NoopSleeper;
     let router = router();
