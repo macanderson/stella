@@ -484,6 +484,11 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
     // Roll one turn up into the user-tier aggregate.
     let usage = crate::usage::UsageStore::in_memory().unwrap();
     let root = std::path::Path::new("/w/stella");
+    assert!(
+        !store.sync_to_usage(id, root, &usage).unwrap(),
+        "a pending execution must not escape into usage aggregates"
+    );
+    store.finish_execution(id, "completed", 0.0).unwrap();
     assert!(store.sync_to_usage(id, root, &usage).unwrap());
     let pid = crate::usage::project_id_for(root);
     assert_eq!(usage.execution_count(&pid).unwrap(), 1);
@@ -940,9 +945,9 @@ fn skill_usage_records_per_execution_version_rows() {
     // skill_usage lands at v5; mcp_usage takes v6; the data-plane tables
     // (tool_calls / execution_reflection / reflections) take v7; the
     // session plane (executions.session_id / tasks / pull_requests)
-    // takes v8; v9 adds fail-closed call-role and usage-completeness
+    // takes v8; v9 adds fail-closed call-role/completeness and v10 adds lifecycle
     // accounting for execution/telemetry rows.
-    assert_eq!(SCHEMA_VERSION, 9);
+    assert_eq!(SCHEMA_VERSION, 10);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
