@@ -337,7 +337,7 @@ pub(crate) fn workspace_ports(
 /// paths remain literal arguments and no shell is involved.
 pub(crate) struct GitDiagnosticRunner {
     pub(crate) root: std::path::PathBuf,
-    /// The commit the session started on, resolved once on first use.
+    /// The commit the session started on, resolved eagerly at construction.
     ///
     /// A bare `git diff` reports only unstaged working-tree changes, so an
     /// agent that *commits* its work — with `repo_commit`, a tool this very
@@ -348,37 +348,43 @@ pub(crate) struct GitDiagnosticRunner {
     /// starting commit instead counts staged, unstaged, and committed work
     /// alike. `None` means no resolvable HEAD (an empty or non-git tree), in
     /// which case the plain working-tree diff is already the whole truth.
-    pub(crate) baseline: std::sync::OnceLock<Option<String>>,
+    pub(crate) baseline: Option<String>,
 }
 
 impl GitDiagnosticRunner {
+    /// Resolve the baseline NOW, at session/candidate setup — not on the
+    /// first diff.
+    ///
+    /// Every `GitDiff` runs inside `gather_diff`, which happens *after*
+    /// execute. Resolving lazily there would read HEAD once the agent had
+    /// already committed, making the baseline the agent's own commit and the
+    /// diff empty again — reintroducing exactly the bug this fixes, while a
+    /// test that captured early would still pass.
     pub(crate) fn new(root: std::path::PathBuf) -> Self {
-        Self {
-            root,
-            baseline: std::sync::OnceLock::new(),
-        }
+        let baseline = resolve_head(&root);
+        Self { root, baseline }
     }
 
-    /// `git rev-parse HEAD` for the workspace, resolved once and reused.
-    /// Synchronous on purpose: it runs at most once per runner, and keeping
-    /// it out of the async path avoids racing two resolutions.
     fn baseline_commit(&self) -> Option<&str> {
-        self.baseline
-            .get_or_init(|| {
-                let mut cmd = std::process::Command::new("git");
-                cmd.args(["rev-parse", "HEAD"]).current_dir(&self.root);
-                for var in stella_tools::exec::GIT_REPO_ENV_VARS {
-                    cmd.env_remove(var);
-                }
-                let out = cmd.output().ok()?;
-                if !out.status.success() {
-                    return None;
-                }
-                let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                (sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit())).then_some(sha)
-            })
-            .as_deref()
+        self.baseline.as_deref()
     }
+}
+
+/// `git rev-parse HEAD`, or `None` when there is no resolvable commit (an
+/// empty or non-git tree) — where the working-tree diff is already the whole
+/// truth.
+fn resolve_head(root: &std::path::Path) -> Option<String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["rev-parse", "HEAD"]).current_dir(root);
+    for var in stella_tools::exec::GIT_REPO_ENV_VARS {
+        cmd.env_remove(var);
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit())).then_some(sha)
 }
 
 /// Workspace-rooted typed test runner. It passes an enumerable argv directly
@@ -1078,12 +1084,11 @@ mod diff_baseline_tests {
         git(root, &["add", "-A"]);
         git(root, &["commit", "-qm", "baseline"]);
 
-        // The runner pins its baseline here, exactly as a turn would.
+        // Construct at session setup and then never touch it again — the
+        // production order. Nothing here forces an early capture; if the
+        // baseline resolved lazily on the first diff it would land AFTER the
+        // commit below and this test would fail, which is the point.
         let runner = GitDiagnosticRunner::new(root.to_path_buf());
-        assert!(
-            runner.baseline_commit().is_some(),
-            "a repo with a commit resolves a baseline"
-        );
 
         // The agent writes AND commits — the tree ends clean.
         std::fs::write(root.join("server.py"), "def serve():\n    return 1\n").unwrap();
