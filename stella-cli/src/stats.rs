@@ -94,7 +94,6 @@ pub struct StatsRow {
     pub output_tokens: i64,
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
-    pub avg_duration_ms: f64,
     /// Cache-read tokens over total input tokens for this row —
     /// [`hit_rate`], the same formula the deck's CACHE cell uses.
     pub cache_hit_rate: f64,
@@ -105,6 +104,10 @@ pub struct StatsRow {
     /// Calls whose prefix went cold past the provider TTL before this call
     /// and got rewritten instead of read back — see [`Store::cache_call_gaps`].
     pub cache_expired_rewrites: i64,
+    /// Declared last so json (serde, struct order), csv, and the table all
+    /// place this column in the same spot — the stable field-order contract
+    /// in the module docs.
+    pub avg_duration_ms: f64,
 }
 
 /// Look up `(provider, model)` in the running model catalog and price this
