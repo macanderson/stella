@@ -366,7 +366,8 @@ fn model_with_cache(input: u64, cached: u64) -> WorkspaceModel {
 
 #[test]
 fn statline_cache_box_shows_hit_rate_and_compact_token_counts() {
-    // 105.3M cache-read over 211.4M input → 50% (rounded), compact `M`s.
+    // 105.3M cache-read over 211.4M input → 50% (rounded); the cell exposes
+    // compact read/write volumes while input remains the rate denominator.
     let model = model_with_cache(211_400_000, 105_300_000);
     let ui = DeckUi::default();
     let area = Rect::new(0, 0, 200, 2);
@@ -375,8 +376,8 @@ fn statline_cache_box_shows_hit_rate_and_compact_token_counts() {
     let text = buffer_text(&buf);
     assert!(text.contains("CACHE"), "cache label present:\n{text}");
     assert!(
-        text.contains("50% (105.3M/211.4M tokens)"),
-        "cache hit rate + compact counts:\n{text}"
+        text.contains("50% (105.3M rd · 0 wr)"),
+        "cache hit rate + compact read/write volumes:\n{text}"
     );
 }
 
@@ -410,7 +411,7 @@ fn statline_cache_box_renders_zero_and_full_hit_rates() {
     let mut buf = Buffer::empty(area);
     render_status_bar(&cold, &ui, area, &mut buf);
     assert!(
-        buffer_text(&buf).contains("0% (0/1.0K tokens)"),
+        buffer_text(&buf).contains("0% (0 rd · 0 wr)"),
         "cold cache reads 0%:\n{}",
         buffer_text(&buf)
     );
@@ -420,7 +421,7 @@ fn statline_cache_box_renders_zero_and_full_hit_rates() {
     let mut buf = Buffer::empty(area);
     render_status_bar(&warm, &ui, area, &mut buf);
     assert!(
-        buffer_text(&buf).contains("100% (1.0K/1.0K tokens)"),
+        buffer_text(&buf).contains("100% (1.0K rd · 0 wr)"),
         "fully warm cache reads 100%:\n{}",
         buffer_text(&buf)
     );
