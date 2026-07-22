@@ -197,13 +197,14 @@ fn schema_index_population_visibly_rejects_unsafe_legacy_codegraph() {
 }
 
 /// Auto-build on session start (task part A): a workspace with a source
-/// file but NO `.stella/private/codegraph.db` does not advertise `graph_query` on
-/// turn 1; once [`spawn_session_graph`]'s background build completes the
-/// tool is advertised AND dispatchable — no manual `stella init`, no
-/// restart. Awaiting the returned handle is the deterministic "index
-/// ready" signal.
+/// file. `graph_query` is now advertised from turn 1 regardless (it builds
+/// its own index on first use), so this pins what [`spawn_session_graph`]
+/// still adds: it builds `.stella/private/codegraph.db` EAGERLY in the
+/// background, so the first real query harvests a ready index instead of
+/// paying the build cost inline. Awaiting the returned handle is the
+/// deterministic "index ready" signal.
 #[tokio::test]
-async fn spawn_session_graph_auto_builds_and_enables_graph_query() {
+async fn spawn_session_graph_eagerly_builds_the_index_in_the_background() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("lib.rs"), "pub fn find_me() {}\n").unwrap();
@@ -211,11 +212,12 @@ async fn spawn_session_graph_auto_builds_and_enables_graph_query() {
     let registry = Arc::new(ToolRegistry::with_issue_backend(root.clone(), None));
     let advertises = |r: &ToolRegistry| r.schemas().iter().any(|s| s.name == "graph_query");
 
-    // Turn 1: absent — no index on disk yet.
+    // Turn 1: advertised already, and no index on disk yet — the tool does
+    // not wait for one, it builds on first use.
     assert!(!stella_tools::graph::graph_available(&root).unwrap());
     assert!(
-        !advertises(&registry),
-        "graph_query must be absent before the index is built"
+        advertises(&registry),
+        "graph_query is advertised from the start, index or not"
     );
 
     let (session_graph, build) =
@@ -230,7 +232,7 @@ async fn spawn_session_graph_auto_builds_and_enables_graph_query() {
     );
     assert!(
         advertises(&registry),
-        "graph_query must be advertised once the index is built"
+        "graph_query stays advertised after the build"
     );
     let out = registry
         .execute(

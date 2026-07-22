@@ -97,52 +97,46 @@ impl Tool for CodeGraphQuery {
     }
 }
 
-/// Bring the index up to date with the working tree, best-effort.
+/// Open the code graph for a read, **building it on first use** when no
+/// index exists yet.
 ///
-/// A failed pass leaves the previous index in place: stale answers beat no
-/// answers, and the caller has no better recovery than proceeding.
-fn catch_up(graph: &stella_graph::CodeGraph) {
+/// The index is a session-start background build (`spawn_session_graph`), so
+/// a query on turn 1 can race ahead of it — and the tool used to be gated on
+/// the db already existing, so it wasn't even advertised until that build
+/// finished. Bootstrapping here removes both: the graph tools are always
+/// advertised, and the first query that needs an index builds one instead of
+/// erroring. `index_all` is the same pass `stella init` runs — a full build
+/// on a fresh db, a hash-diff catch-up on an existing one — so it doubles as
+/// the freshness pass that lets the graph see files the agent just wrote.
+///
+/// The `stale answers are worse than none` rule still holds: the pass runs
+/// on every open, and only a hard failure to prepare the store surfaces as
+/// an error to the caller.
+pub(crate) fn open_or_build(root: &Path) -> Result<stella_graph::CodeGraph, String> {
+    // The WRITABLE path (creates `.stella/private/`), not the read-only
+    // `existing_...` probe — this is the one place a query is allowed to
+    // create the index it needs.
+    let db_path = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|error| format!("cannot prepare the code graph store: {error}"))?;
+    let graph = stella_graph::CodeGraph::open(root, &db_path)
+        .map_err(|error| format!("could not open the code graph: {error}"))?;
     if let Err(error) = graph.index_all() {
-        eprintln!("stella: code graph catch-up failed, answering from the last index: {error}");
+        // A build/refresh failure is not fatal to a query: an existing index
+        // still answers from its last good state, and a brand-new one answers
+        // empty rather than aborting the agent's turn.
+        eprintln!("stella: code graph index pass failed, answering from what exists: {error}");
     }
+    Ok(graph)
 }
 
 /// Open → query → shutdown, entirely synchronous underneath (SQLite reads).
 /// Shared by the tool and the `stella graph` subcommand so both render the
 /// exact same frames.
 pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
-    let db_path = match stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db") {
-        Ok(Some(path)) => path,
-        Ok(None) => {
-            return ToolOutput::Error {
-                message:
-                    "no code graph index — run `stella init` to build .stella/private/codegraph.db"
-                        .into(),
-            };
-        }
-        Err(error) => {
-            return ToolOutput::Error {
-                message: format!("cannot resolve private code graph state: {error}"),
-            };
-        }
-    };
-    let graph = match stella_graph::CodeGraph::open(root, &db_path) {
+    let graph = match open_or_build(root) {
         Ok(g) => g,
-        Err(e) => {
-            return ToolOutput::Error {
-                message: format!("could not open the code graph: {e}"),
-            };
-        }
+        Err(message) => return ToolOutput::Error { message },
     };
-    // Catch up before answering. The index is a point-in-time build, and a
-    // stale graph does not degrade gracefully — it answers *confidently
-    // wrong*: a definition at a path the agent already moved, a symbol it
-    // just deleted. That is worse than having no tool, because the agent
-    // acts on it. `index_all` re-parses only files whose hash changed and
-    // prunes deleted ones, so this is near-free once warm, and it is what
-    // makes the graph cover the agent's OWN writes — the majority of the
-    // code in any from-scratch task.
-    catch_up(&graph);
     let result = match op {
         "definitions" => graph.definitions(target),
         "references" => graph.references(target),
@@ -265,8 +259,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_index_is_a_named_error_pointing_at_init() {
+    async fn a_query_with_no_index_builds_one_and_answers_rather_than_erroring() {
+        // No `stella init`, no pre-existing db. A real source file is present,
+        // so the on-first-use build indexes it and the query resolves the
+        // symbol — the tool bootstraps the index it needs.
         let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("greet.rs"), "pub fn greet() {}\n").unwrap();
         let out = CodeGraphQuery
             .execute(
                 &serde_json::json!({"op": "definitions", "target": "greet"}),
@@ -274,9 +272,17 @@ mod tests {
             )
             .await;
         match out {
-            ToolOutput::Error { message } => assert!(message.contains("stella init")),
-            ToolOutput::Ok { .. } => panic!("expected an error without an index"),
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("greet"), "definition found: {content}");
+            }
+            ToolOutput::Error { message } => {
+                panic!("first-use build should answer, not error: {message}")
+            }
         }
+        assert!(
+            crate::graph::graph_db_path(dir.path()).exists(),
+            "the index was built on first use"
+        );
     }
 
     #[tokio::test]
