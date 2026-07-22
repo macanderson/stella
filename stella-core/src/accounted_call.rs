@@ -93,7 +93,7 @@ pub async fn run_accounted_call(
         duration_ms: started.elapsed().as_millis() as u64,
         retries: outcome.retries.len() as u32,
         tool_calls: result.tool_calls.len(),
-        complete: result.usage.is_complete_for(provider),
+        complete: result.usage.is_complete(),
     });
     let budget_outcome = budget.record_spend(result.cost_usd);
     let _ = events.send(AgentEvent::BudgetTick {

@@ -2875,8 +2875,9 @@ mod tests {
         // skill_usage lands at v5; mcp_usage takes v6; the data-plane tables
         // (tool_calls / execution_reflection / reflections) take v7; the
         // session plane (executions.session_id / tasks / pull_requests)
-        // takes v8, so SCHEMA_VERSION is now 8.
-        assert_eq!(SCHEMA_VERSION, 8);
+        // takes v8; v9 adds fail-closed call-role and usage-completeness
+        // accounting for execution/telemetry rows.
+        assert_eq!(SCHEMA_VERSION, 9);
 
         let id = store
             .begin_execution("deck", "format the sql", "zai", "glm-5.2")
@@ -3344,10 +3345,28 @@ mod tests {
         store
             .record_telemetry(1, &drift_row(2, "zai", "glm-5.2", 400, 500))
             .unwrap();
+        let completeness: Vec<(i64, bool)> = {
+            let conn = store.lock();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT step, usage_complete FROM telemetry \
+                     WHERE execution_id = 1 ORDER BY step",
+                )
+                .unwrap();
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(
+            completeness,
+            vec![(0, false), (1, false), (2, true)],
+            "migrated rows fail closed while a fresh telemetry row is complete"
+        );
         assert_eq!(
             store.drift_samples("zai", "glm-5.2", 10).unwrap(),
-            vec![(200, 222), (300, 333), (400, 500)],
-            "deduped history reads back newest-per-key, oldest first"
+            vec![(400, 500)],
+            "drift calibration excludes migrated rows whose usage is incomplete"
         );
         // A post-migration execution gets a fresh id, never execution 1's.
         assert_eq!(

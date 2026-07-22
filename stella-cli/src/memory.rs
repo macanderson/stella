@@ -1316,6 +1316,7 @@ mod tests {
                         .into(),
                     tool_calls: vec![],
                     usage: CompletionUsage {
+                        reported: true,
                         input_tokens: 1,
                         ..CompletionUsage::default()
                     },
@@ -1391,6 +1392,7 @@ mod tests {
                     text: r#"[{"lesson":"must not apply","domains":[]}]"#.into(),
                     tool_calls: Vec::new(),
                     usage: CompletionUsage {
+                        reported: true,
                         input_tokens: 8,
                         output_tokens: 2,
                         ..CompletionUsage::default()

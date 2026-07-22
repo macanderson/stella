@@ -32,7 +32,10 @@ impl Provider for BilledResultWithBlockedSpeculation {
         Ok(CompletionResultAlias {
             text: String::new(),
             tool_calls: vec![call],
-            usage: CompletionUsage::default(),
+            usage: CompletionUsage {
+                reported: true,
+                ..CompletionUsage::default()
+            },
             model: self.id().into(),
             cost_usd: 0.25,
             finish_reason: None,

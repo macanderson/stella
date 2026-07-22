@@ -435,7 +435,10 @@ mod tests {
         CompletionResult {
             text: text.into(),
             tool_calls: vec![],
-            usage: CompletionUsage::default(),
+            usage: CompletionUsage {
+                reported: true,
+                ..CompletionUsage::default()
+            },
             model: "scripted".into(),
             cost_usd: cost,
             finish_reason: None,
@@ -702,7 +705,10 @@ mod tests {
                 name: "noop".into(),
                 input: serde_json::json!({}),
             }],
-            usage: CompletionUsage::default(),
+            usage: CompletionUsage {
+                reported: true,
+                ..CompletionUsage::default()
+            },
             model: "scripted".into(),
             cost_usd: 0.05,
             finish_reason: None,

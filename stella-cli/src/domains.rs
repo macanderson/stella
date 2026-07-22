@@ -328,6 +328,7 @@ mod tests {
                 text,
                 tool_calls: Vec::new(),
                 usage: CompletionUsage {
+                    reported: true,
                     input_tokens: 10,
                     output_tokens: 2,
                     ..CompletionUsage::default()

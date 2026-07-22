@@ -742,7 +742,7 @@ impl<'a> Engine<'a> {
             duration_ms: call_duration_ms,
             retries: retries.len() as u32,
             tool_calls: result.tool_calls.len(),
-            complete: result.usage.is_complete_for(self.provider.id()),
+            complete: result.usage.is_complete(),
         });
         let speculation = speculation_future.await;
 
@@ -1329,7 +1329,7 @@ mod tests {
         CompletionResultAlias {
             text: text.into(),
             tool_calls: vec![],
-            usage: CompletionUsage::default(),
+            usage: CompletionUsage::reported_zero(),
             model: "scripted".into(),
             cost_usd: 0.0001,
             finish_reason: None,
@@ -1344,7 +1344,7 @@ mod tests {
                 name: name.into(),
                 input: serde_json::json!({"cmd": "echo hi"}),
             }],
-            usage: CompletionUsage::default(),
+            usage: CompletionUsage::reported_zero(),
             model: "scripted".into(),
             cost_usd: 0.0001,
             finish_reason: None,
@@ -1398,7 +1398,7 @@ mod tests {
                 Ok(CompletionResultAlias {
                     text: String::new(),
                     tool_calls: vec![self.commit.clone()],
-                    usage: CompletionUsage::default(),
+                    usage: CompletionUsage::reported_zero(),
                     model: "speculating".into(),
                     cost_usd: 0.0001,
                     finish_reason: None,
@@ -2044,6 +2044,7 @@ mod tests {
             text: String::new(),
             tool_calls: vec![],
             usage: CompletionUsage {
+                reported: true,
                 input_tokens: 100,
                 output_tokens: 8192,
                 cached_input_tokens: 0,
@@ -2353,7 +2354,7 @@ mod tests {
                     name: "bash".into(),
                     input: serde_json::json!({"cmd": format!("step {i}")}),
                 }],
-                usage: CompletionUsage::default(),
+                usage: CompletionUsage::reported_zero(),
                 model: format!("{dialect}-model"),
                 cost_usd: 0.00001,
                 finish_reason: None,
@@ -2464,7 +2465,7 @@ mod tests {
                     input: serde_json::json!({"which": *id}),
                 })
                 .collect(),
-            usage: CompletionUsage::default(),
+            usage: CompletionUsage::reported_zero(),
             model: "scripted".into(),
             cost_usd: 0.0001,
             finish_reason: None,
@@ -2679,6 +2680,7 @@ mod tests {
                 multi_call_result(calls)
             };
             result.usage = CompletionUsage {
+                reported: true,
                 input_tokens: 1000,
                 output_tokens: 50,
                 cached_input_tokens: 800,
@@ -2689,8 +2691,7 @@ mod tests {
         let provider = ScriptedProvider {
             id: "scripted".into(),
             script: TokioMutex::new(vec![
-                // Step 0 commits only after one retryable failure — its
-                // StepUsage must say retries: 1.
+                // Step 0 commits after a retry, so StepUsage must say retries: 1.
                 Err(ProviderError::RateLimited {
                     message: "429".into(),
                     retry_after_ms: Some(1),
@@ -2854,13 +2855,13 @@ mod tests {
         let with_real_usage = |result: CompletionResultAlias| {
             let mut result = result;
             result.usage = CompletionUsage {
+                reported: true,
                 input_tokens: 4_000,
                 output_tokens: 50,
                 cached_input_tokens: 0,
                 cache_write_tokens: 0,
             };
-            // Vary each call's input: `tool_call_result` reuses one command,
-            // and three byte-identical bash calls are exactly what
+            // Vary each input: three byte-identical bash calls are exactly what
             // `loop_detect` exists to abort — this test is about the
             // calibration feed, not the loop breaker.
             if let Some(call) = result.tool_calls.first_mut() {
