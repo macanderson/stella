@@ -115,8 +115,12 @@ impl Store {
         usage_complete: bool,
     ) -> Result<()> {
         self.lock().execute(
-            "UPDATE executions SET finished_at = CURRENT_TIMESTAMP, outcome = ?, cost_usd = ?, \
-                    usage_complete = usage_complete AND ? WHERE id = ?",
+            "UPDATE executions SET finished_at = CURRENT_TIMESTAMP, outcome = ?1, cost_usd = ?2, \
+                    usage_complete = CASE \
+                      WHEN usage_status = 'incomplete' OR NOT ?3 THEN 0 ELSE 1 END, \
+                    usage_status = CASE \
+                      WHEN usage_status = 'incomplete' OR NOT ?3 \
+                      THEN 'incomplete' ELSE 'complete' END WHERE id = ?4",
             params![outcome, cost_usd, usage_complete, execution_id],
         )?;
         Ok(())
@@ -125,7 +129,7 @@ impl Store {
     /// Permanently downgrade one execution's accounting state.
     pub fn mark_execution_usage_incomplete(&self, execution_id: i64) -> Result<()> {
         self.lock().execute(
-            "UPDATE executions SET usage_complete = 0 WHERE id = ?1",
+            "UPDATE executions SET usage_complete = 0, usage_status = 'incomplete' WHERE id = ?1",
             params![execution_id],
         )?;
         Ok(())
@@ -135,7 +139,8 @@ impl Store {
     pub fn execution_usage_complete(&self, execution_id: i64) -> Result<bool> {
         self.lock()
             .query_row(
-                "SELECT usage_complete FROM executions WHERE id = ?1",
+                "SELECT finished_at IS NOT NULL AND usage_complete = 1 \
+                        AND usage_status = 'complete' FROM executions WHERE id = ?1",
                 params![execution_id],
                 |row| row.get(0),
             )

@@ -105,8 +105,16 @@ pub(crate) fn record_execution_end(
     let uses_ok = uses.is_empty() || store.record_agent_uses(execution_id, &uses).is_ok();
     let mcp_usage = mcp_usage_rows(registry);
     let mcp_usage_ok = store.record_mcp_usage(execution_id, &mcp_usage).is_ok();
-    let audit_complete =
-        persistence_complete && files_ok && citations_ok && uses_ok && mcp_usage_ok;
+    // Cancellation can race a provider response after dispatch. Even when all
+    // local writes succeed, the provider-side usage envelope is unknowable and
+    // the execution must never become exportable.
+    let terminal_usage_known = outcome_label != "cancelled";
+    let audit_complete = persistence_complete
+        && files_ok
+        && citations_ok
+        && uses_ok
+        && mcp_usage_ok
+        && terminal_usage_known;
     let finish_ok = store
         .finish_execution_accounted(execution_id, outcome_label, cost_usd, audit_complete)
         .is_ok();

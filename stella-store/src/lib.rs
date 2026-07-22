@@ -660,8 +660,8 @@ impl Store {
     ) -> Result<i64> {
         let conn = self.lock();
         conn.execute(
-            "INSERT INTO executions (kind, prompt, provider, model, usage_complete) \
-             VALUES (?, ?, ?, ?, 1)",
+            "INSERT INTO executions (kind, prompt, provider, model, usage_complete, usage_status) \
+             VALUES (?, ?, ?, ?, 0, 'pending')",
             params![kind, prompt, provider, model],
         )?;
         Ok(conn.last_insert_rowid())
@@ -1122,7 +1122,8 @@ impl Store {
             .query_row(
                 "SELECT kind, prompt, provider, model, COALESCE(outcome, ''), cost_usd, started_at, \
                         usage_complete \
-                 FROM executions WHERE id = ?1",
+                 FROM executions WHERE id = ?1 AND finished_at IS NOT NULL \
+                   AND usage_complete = 1 AND usage_status = 'complete'",
                 params![execution_id],
                 |r| {
                     Ok((

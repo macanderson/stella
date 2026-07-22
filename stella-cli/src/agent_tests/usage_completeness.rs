@@ -100,3 +100,29 @@ fn event_and_telemetry_persistence_failure_downgrades_later_successful_closeout(
         "completion is monotonic: a later successful closeout cannot restore trust"
     );
 }
+
+#[test]
+fn cancelled_closeout_is_incomplete_even_when_every_write_succeeds() {
+    let store = Store::in_memory().expect("store");
+    let execution_id = store
+        .begin_execution("deck-sub", "prompt", "anthropic", "claude-fable-5")
+        .expect("begin");
+    let root = tempfile::tempdir().expect("root");
+    let registry = ToolRegistry::with_issue_backend(root.path().to_path_buf(), None);
+
+    assert!(!record_execution_end(
+        &store,
+        execution_id,
+        &registry,
+        "cancelled",
+        0.0,
+        true,
+    ));
+    assert!(!store.execution_usage_complete(execution_id).unwrap());
+    assert!(
+        store
+            .execution_rollup(execution_id, root.path())
+            .unwrap()
+            .is_none()
+    );
+}
