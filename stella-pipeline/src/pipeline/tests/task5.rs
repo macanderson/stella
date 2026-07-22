@@ -166,9 +166,18 @@ async fn witness_worker_and_revision_hooks_are_bound_to_the_candidate_root() {
     assert_eq!(std::fs::read_dir(session_root.path()).unwrap().count(), 0);
 }
 
+/// Pinning worker and judge to one model costs the run its authored witness,
+/// not the task: the pipeline warns once and proceeds down the unauthored
+/// verify ladder. (The profile-level single-model case is covered by
+/// `single_model_config_degrades_to_unauthored_witness_instead_of_aborting`;
+/// this pins the roles explicitly, which is a distinct resolution path.)
 #[tokio::test]
-async fn authored_witness_fails_closed_before_workspace_creation_when_judge_is_worker() {
-    let provider = ScriptedProvider::new(vec![text_result("single")]);
+async fn authored_witness_degrades_when_judge_is_worker() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS looks right"),
+    ]);
     let resolver = OneProvider(&provider);
     let diagnostics = NeverRunner;
     let repo_status = NeverRepoStatus;
@@ -177,7 +186,10 @@ async fn authored_witness_fails_closed_before_workspace_creation_when_judge_is_w
     let repo = NoRepoStructure;
     let approvals = AutoApproveGate;
     let sleeper = NoopSleeper;
-    let port = FakeWorkspacePort::untouchable();
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let workspace = FakeWorkspace::new(0, vec![], Ok(vec![]), log.clone())
+        .with_repo_status(SeqRepoStatus::new(vec![vec![("src/lib.rs", "m")]]));
+    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log);
     let same = ModelRef::new("scripted", "same-model");
     let mut roles = RoleTable::new();
     roles.pin(Role::Worker, same.clone());
@@ -219,13 +231,22 @@ async fn authored_witness_fails_closed_before_workspace_creation_when_judge_is_w
     let outcome = pipeline
         .run("Fix the failing test", &mut messages, &mut budget)
         .await
-        .expect("independence failure is a truthful candidate abort");
-    assert!(matches!(
+        .expect("independence failure is a degradation, not a failure");
+    assert_eq!(
         outcome.status,
-        PipelineStatus::Aborted { ref reason }
-            if reason.contains("independent witness author")
-    ));
-    assert!(!stages(&drain(&mut rx)).contains(&StageKind::Witness));
+        PipelineStatus::Completed,
+        "pinning judge to the worker must not abort the task: {outcome:?}"
+    );
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, retryable: true }
+                if message.contains("no witness author independent of the worker")
+        )),
+        "the degradation is announced once: {events:?}"
+    );
+    assert!(!stages(&events).contains(&StageKind::Witness));
 }
 
 #[tokio::test]

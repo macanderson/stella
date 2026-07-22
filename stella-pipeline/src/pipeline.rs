@@ -950,32 +950,44 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fallback);
         }
         let worker_label = worker.model_ref.to_string();
+        // Losing the independent author costs the run its authored witness —
+        // it must never cost the run the whole task. A single-model
+        // configuration (every role pinned to one model, as benchmark and
+        // solo-provider setups do) previously aborted here after one model
+        // call, having done no work at all. Degrade to the unauthored verify
+        // ladder instead, and say so once.
+        let mut author_witness = author_witness;
         let witness_author = if author_witness {
-            let Ok(author) = self.resolve_provider(Role::Judge) else {
-                return Ok((
-                    CandidateResult::aborted(
-                        base_messages.to_vec(),
-                        "could not resolve an independent witness author".to_string(),
-                    ),
-                    Some(worker_label),
-                ));
+            let independent = match self.resolve_provider(Role::Judge) {
+                Ok(author) if author.model_ref != worker.model_ref => Some(author),
+                Ok(_) => {
+                    self.warn(format!(
+                        "no witness author independent of the worker (judge and worker both \
+                         resolved to `{worker_label}`); continuing without an authored witness"
+                    ));
+                    None
+                }
+                Err(_) => {
+                    self.warn(
+                        "no witness author independent of the worker (the judge role is \
+                         unresolvable); continuing without an authored witness"
+                            .to_string(),
+                    );
+                    None
+                }
             };
-            if author.model_ref == worker.model_ref {
-                return Ok((
-                    CandidateResult::aborted(
-                        base_messages.to_vec(),
-                        format!(
-                            "could not resolve an independent witness author: judge and worker both resolved to `{}`",
-                            worker.model_ref
-                        ),
-                    ),
-                    Some(worker_label),
-                ));
+            match independent {
+                Some(author) => {
+                    if let Some(fallback) = &author.fallback {
+                        self.emit_fallback(fallback);
+                    }
+                    Some(author)
+                }
+                None => {
+                    author_witness = false;
+                    None
+                }
             }
-            if let Some(fallback) = &author.fallback {
-                self.emit_fallback(fallback);
-            }
-            Some(author)
         } else {
             None
         };

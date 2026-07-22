@@ -503,6 +503,22 @@ fn router() -> Router {
     )
 }
 
+/// Every role pinned to one model — what `--model` alone, a single-provider
+/// account, and the benchmark engine posture all produce.
+fn single_model_router() -> Router {
+    let only = ModelRef::new("scripted", "only");
+    Router::new(
+        RoleTable::new(),
+        vec![ProviderProfile::new(
+            "scripted",
+            only.clone(),
+            only.clone(),
+            only,
+        )],
+        CircuitBreaker::new(Box::new(ZeroClock)),
+    )
+}
+
 fn drain(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
     let mut out = Vec::new();
     while let Ok(e) = rx.try_recv() {
@@ -1069,6 +1085,53 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
     assert!(!s.contains(&StageKind::Judge), "judge skipped on the flip");
 }
 
+/// Losing the independent witness author must cost the run its authored
+/// witness, never the whole task. With every role pinned to one model the
+/// pipeline used to abort here after a single model call, having executed
+/// nothing — which is what a benchmark or solo-provider account always hits.
+/// It must instead warn once and fall through to the unauthored verify ladder.
+#[tokio::test]
+async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting() {
+    // triage → "single"; worker → done; judge → verdict. No witness-author
+    // turn is scripted because no independent author can be resolved.
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result("done"),
+        text_result("PASS looks right"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let workspace = FakeWorkspace::new(0, vec![], Ok(vec![]), log.clone())
+        .with_repo_status(SeqRepoStatus::new(vec![vec![("src/lib.rs", "m")]]));
+    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log);
+    let (outcome, events, _) = run_isolated_with_router(
+        &provider,
+        &port,
+        PipelineConfig::default(),
+        "Fix the retry bug",
+        single_model_router(),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert_eq!(
+        outcome.status,
+        PipelineStatus::Completed,
+        "a single-model config must still complete the task"
+    );
+    assert!(
+        !stages(&events).contains(&StageKind::Witness),
+        "witness authoring is skipped, not attempted without an author"
+    );
+    let warned = events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::Error { message, retryable: true }
+                if message.contains("no witness author independent of the worker")
+        )
+    });
+    assert!(warned, "the degradation is announced once: {events:?}");
+}
+
 /// A witness whose test passes on the unmodified code proves nothing: one
 /// bounded repair retry, and if it still passes the contaminated candidate is
 /// discarded rather than letting author-written files reach adoption.
@@ -1246,6 +1309,23 @@ async fn run_isolated(
     Vec<AgentEvent>,
     Vec<CompletionMessage>,
 ) {
+    run_isolated_with_router(provider, port, config, goal, router()).await
+}
+
+/// [`run_isolated`] over a caller-supplied router, so a test can pin the
+/// roles to one model (the single-model configuration every benchmark and
+/// solo-provider setup uses).
+async fn run_isolated_with_router(
+    provider: &ScriptedProvider,
+    port: &FakeWorkspacePort,
+    config: PipelineConfig,
+    goal: &str,
+    router: Router,
+) -> (
+    Result<PipelineOutcome, PipelineRunError>,
+    Vec<AgentEvent>,
+    Vec<CompletionMessage>,
+) {
     let resolver = OneProvider(provider);
     let diagnostics = NeverRunner;
     let repo_status = NeverRepoStatus;
@@ -1254,7 +1334,6 @@ async fn run_isolated(
     let repo = NoRepoStructure;
     let approvals = AutoApproveGate;
     let sleeper = NoopSleeper;
-    let router = router();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let pipeline = Pipeline::new(
         PipelinePorts {

@@ -155,8 +155,11 @@ async fn enforced_budget_breach_in_triage_stops_before_the_next_paid_stage() {
     );
 }
 
+/// An unresolvable judge costs the run its authored witness, not the task.
+/// The pipeline warns once and falls through to the unauthored verify ladder
+/// rather than aborting with no work done.
 #[tokio::test]
-async fn unavailable_independent_witness_fails_closed_before_authoring() {
+async fn unavailable_independent_witness_degrades_instead_of_aborting() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
         text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
@@ -178,7 +181,7 @@ async fn unavailable_independent_witness_fails_closed_before_authoring() {
     let approvals = AutoApproveGate;
     let sleeper = NoopSleeper;
     let router = router();
-    let (tx, _rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::unbounded_channel();
     let pipeline = Pipeline::new(
         PipelinePorts {
             router: &router,
@@ -205,15 +208,27 @@ async fn unavailable_independent_witness_fails_closed_before_authoring() {
     let outcome = pipeline
         .run("Fix the parser", &mut messages, &mut budget)
         .await
-        .expect("unavailable independent witness is a truthful abort");
+        .expect("an unresolvable witness author is a degradation, not a failure");
 
-    assert!(matches!(
-        outcome.status,
-        PipelineStatus::Aborted { ref reason }
-            if reason.contains("independent witness author")
-    ));
     assert!(
-        (outcome.total_cost_usd - 0.0001).abs() < 1e-9,
-        "only triage spend settles before role independence is checked: {outcome:?}"
+        !matches!(
+            outcome.status,
+            PipelineStatus::Aborted { ref reason }
+                if reason.contains("independent witness author")
+        ),
+        "losing the author must not abort the task: {outcome:?}"
+    );
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, retryable: true }
+                if message.contains("no witness author independent of the worker")
+        )),
+        "the degradation is announced once: {events:?}"
+    );
+    assert!(
+        !stages(&events).contains(&StageKind::Witness),
+        "witness authoring is skipped, never attempted without an author"
     );
 }
