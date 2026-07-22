@@ -213,7 +213,6 @@ mod tests {
             output_tokens: 0,
             cached_input_tokens: cached,
             cache_write_tokens: write,
-            reported: true,
         }
     }
 

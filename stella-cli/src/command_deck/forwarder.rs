@@ -11,7 +11,6 @@ use stella_store::Store;
 use stella_tui::Inbound;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use super::cache_insight_for;
 use crate::agent;
 use crate::cache_insight::cache_insight_for;
 

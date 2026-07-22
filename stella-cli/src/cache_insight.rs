@@ -50,7 +50,6 @@ pub(crate) fn cache_insight_for(
         output_tokens: *output_tokens,
         cached_input_tokens: *cached_input_tokens,
         cache_write_tokens: *cache_write_tokens,
-        reported: *complete,
     };
     let savings_usd_delta = Catalog::current()
         .resolve_for(provider_id, model)
