@@ -201,16 +201,15 @@ async fn run_pipeline_one_shot(
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
 
         let is_text = format == OutputFormat::Text;
-        // Stdio approval requires a text-safe renderer plus two terminal
-        // handles: stdin must accept the decision and stdout must present the
-        // prompt. Redirected text is still rendered as text, but is headless
-        // and fails closed at scope review.
-        let approval_capability =
-            if is_text && std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-                PipelineApprovalCapability::Stdio
-            } else {
-                PipelineApprovalCapability::Unavailable
-            };
+        // The exact condition lives in `approval_capability_for` so it stays
+        // directly unit-testable — inlining it here is what a prior
+        // squash-merge collapsed into a bare `is_text` check, with no test to
+        // catch the regression.
+        let approval_capability = approval_capability_for(
+            is_text,
+            std::io::stdin().is_terminal(),
+            std::io::stdout().is_terminal(),
+        );
         // `--test-command` arms the deterministic verify ladder: the
         // fail→pass flip oracle and SubmitFast/Revise decisions all key off
         // it. Left unset, every verification escalates to the model judge.

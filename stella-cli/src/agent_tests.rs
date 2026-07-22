@@ -441,7 +441,6 @@ fn non_tty_text_output_is_headless_without_losing_text_rendering() {
         PipelineApprovalCapability::Unavailable,
         &worker_model,
         None,
-        &model_ref,
     );
     assert!(
         non_tty.headless,
@@ -538,7 +537,7 @@ fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_sco
     // config must stay headless.
     let text_capability = approval_capability_for(true, false, false);
     let text_config =
-        pipeline_config_for_approval_capability(&cfg, text_capability, None, &model_ref);
+        pipeline_config_for_approval_capability(&cfg, text_capability, &model_ref, None);
     assert_ne!(
         text_capability,
         PipelineApprovalCapability::Stdio,
@@ -554,7 +553,7 @@ fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_sco
     // review; JSON has nowhere to render a prompt regardless of TTY state.
     let json_capability = approval_capability_for(false, true, true);
     let json_config =
-        pipeline_config_for_approval_capability(&cfg, json_capability, None, &model_ref);
+        pipeline_config_for_approval_capability(&cfg, json_capability, &model_ref, None);
     assert!(json_config.headless);
     assert!(
         !json_config.headless_bypass_scope_review,
