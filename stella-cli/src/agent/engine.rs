@@ -140,7 +140,6 @@ pub(crate) fn approval_capability_for(
 pub(crate) fn pipeline_config_for_approval_capability(
     cfg: &Config,
     approval: PipelineApprovalCapability,
-    worker_model: &ModelRef,
     test_command: Option<&str>,
     worker_model: &ModelRef,
 ) -> PipelineConfig {
