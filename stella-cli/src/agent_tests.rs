@@ -518,6 +518,49 @@ fn approval_capability_for_full_tty_text_is_stdio() {
     );
 }
 
+/// The composition gap the incident actually exploited: `approval_capability_for`
+/// and `pipeline_config_for_approval_capability` were each covered above in
+/// isolation, but nothing pinned them wired together the way
+/// `run_pipeline_one_shot` actually wires them (agent.rs, around the
+/// `pipeline_config` construction) — feeding one straight into the other. A
+/// regression that breaks *that* composition (e.g. hardcoding
+/// `PipelineApprovalCapability::Stdio` at the call site instead of using the
+/// computed value) would pass every test above while still shipping the
+/// scope-review bypass this incident (#284 x #297, fixed in #305) shipped.
+#[test]
+fn non_tty_text_run_wiring_stays_headless_and_json_run_wiring_never_bypasses_scope_review() {
+    let cfg = cfg_for("zai");
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+
+    // A non-TTY text-format run (e.g. `stella run` piped in a script or CI)
+    // must not select the interactive stdio approval gate, and its wired
+    // config must stay headless.
+    let text_capability = approval_capability_for(true, false, false);
+    let text_config =
+        pipeline_config_for_approval_capability(&cfg, text_capability, None, &model_ref);
+    assert_ne!(
+        text_capability,
+        PipelineApprovalCapability::Stdio,
+        "a non-tty text run must not select the interactive stdio approval gate"
+    );
+    assert!(
+        text_config.headless,
+        "a non-tty text run's wired config must stay headless"
+    );
+
+    // A JSON-format one-shot run is headless by construction — and even with
+    // both terminal handles real, its wired config must never bypass scope
+    // review; JSON has nowhere to render a prompt regardless of TTY state.
+    let json_capability = approval_capability_for(false, true, true);
+    let json_config =
+        pipeline_config_for_approval_capability(&cfg, json_capability, None, &model_ref);
+    assert!(json_config.headless);
+    assert!(
+        !json_config.headless_bypass_scope_review,
+        "a JSON-format run's wired config must never bypass scope review"
+    );
+}
+
 #[tokio::test]
 async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
     let root = tempfile::tempdir().unwrap();
