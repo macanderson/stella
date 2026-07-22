@@ -22,7 +22,16 @@ pub(crate) fn spawn_renderer(
         };
         let mut seq = 0u64;
         let mut store_warned = false;
+        let mut stream_terminal = None;
         while let Some(event) = rx.recv().await {
+            let event = if format == OutputFormat::StreamJson {
+                let Some(event) = defer_stream_terminal(&mut stream_terminal, event) else {
+                    continue;
+                };
+                event
+            } else {
+                event
+            };
             let preview = matches!(event, AgentEvent::TextDelta { .. });
             if let Some((store, id)) = &execution
                 && !preview
@@ -75,8 +84,33 @@ pub(crate) fn spawn_renderer(
                 },
             }
         }
+        // `Complete` is a protocol terminator, not ordinary narration. Hold
+        // it until every later accounting/reflection event has drained, and
+        // persist/print exactly one terminal frame as the final stream item.
+        if let Some(event) = stream_terminal {
+            if let Some((store, id)) = &execution
+                && !persist_event(store, *id, seq, &event, &provider_id)
+            {
+                outcome.persistence_complete = false;
+            }
+            if let Ok(line) = serde_json::to_string(&event) {
+                println!("{line}");
+            }
+        }
         outcome
     })
+}
+
+fn defer_stream_terminal(
+    pending: &mut Option<AgentEvent>,
+    event: AgentEvent,
+) -> Option<AgentEvent> {
+    if matches!(event, AgentEvent::Complete { .. }) {
+        *pending = Some(event);
+        None
+    } else {
+        Some(event)
+    }
 }
 
 pub(crate) fn record_execution_end(
@@ -242,4 +276,98 @@ pub(crate) fn persist_event(
         let _ = store.mark_execution_usage_incomplete(execution_id);
     }
     complete
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    #[test]
+    fn complete_is_unique_and_final_even_when_later_events_arrive() {
+        let events = vec![
+            AgentEvent::Stage {
+                name: stella_protocol::StageKind::Execute,
+            },
+            AgentEvent::Complete {
+                model: "old".into(),
+                cost_usd: 1.0,
+            },
+            AgentEvent::Stage {
+                name: stella_protocol::StageKind::Reflect,
+            },
+            AgentEvent::Complete {
+                model: "final".into(),
+                cost_usd: 1.25,
+            },
+        ];
+        let mut terminal = None;
+        let mut ordered: Vec<_> = events
+            .into_iter()
+            .filter_map(|event| defer_stream_terminal(&mut terminal, event))
+            .collect();
+        ordered.extend(terminal);
+
+        assert_eq!(
+            ordered
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::Complete { .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            ordered.last(),
+            Some(AgentEvent::Complete { model, cost_usd })
+                if model == "final" && (*cost_usd - 1.25).abs() < f64::EPSILON
+        ));
+    }
+
+    #[tokio::test]
+    async fn stream_renderer_persists_reflection_before_one_terminal_complete() {
+        let store = std::sync::Arc::new(stella_store::Store::in_memory().expect("store"));
+        let execution_id = store
+            .begin_execution("pipeline", "prompt", "anthropic", "claude")
+            .expect("begin");
+        store
+            .set_execution_session(execution_id, "stream-order")
+            .expect("session");
+        let (tx, rx) = mpsc::unbounded_channel();
+        let renderer = spawn_renderer(
+            rx,
+            OutputFormat::StreamJson,
+            Some((store.clone(), execution_id)),
+            "anthropic".into(),
+        );
+        tx.send(AgentEvent::Complete {
+            model: "worker".into(),
+            cost_usd: 1.0,
+        })
+        .unwrap();
+        tx.send(AgentEvent::Stage {
+            name: stella_protocol::StageKind::Reflect,
+        })
+        .unwrap();
+        tx.send(AgentEvent::Complete {
+            model: "worker+reflection".into(),
+            cost_usd: 1.25,
+        })
+        .unwrap();
+        drop(tx);
+
+        let outcome = renderer.await.expect("renderer");
+        assert!(outcome.persistence_complete);
+        let journal = store.session_events("stream-order").expect("journal");
+        assert_eq!(journal.events.len(), 2);
+        assert!(matches!(
+            journal.events.first().map(|record| &record.event),
+            Some(AgentEvent::Stage {
+                name: stella_protocol::StageKind::Reflect
+            })
+        ));
+        assert!(matches!(
+            journal.events.last().map(|record| &record.event),
+            Some(AgentEvent::Complete { model, cost_usd })
+                if model == "worker+reflection"
+                    && (*cost_usd - 1.25).abs() < f64::EPSILON
+        ));
+    }
 }

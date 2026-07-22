@@ -256,27 +256,7 @@ async fn run_pipeline_one_shot(
         pipeline.run(prompt, &mut messages, &mut budget).await
     };
 
-    drop(tx);
-    let rendered = renderer.await.unwrap_or_default();
-    let persistence_complete = rendered.persistence_complete;
-    let collected = rendered.events;
-
     let files = registry.files_touched();
-    if let Some((store, id)) = &execution {
-        let (outcome_label, cost) = pipeline_execution_closeout(&result);
-        if !record_execution_end(
-            store,
-            *id,
-            &registry,
-            outcome_label,
-            cost,
-            persistence_complete,
-        ) {
-            warn_store_write_failed(
-                "the audit record (files touched / memory citations / outcome)",
-            );
-        }
-    }
 
     // Episodic memory: a run that did work (tools or file changes) becomes a
     // retrievable Episode node — outcome, files touched, time window.
@@ -308,6 +288,11 @@ async fn run_pipeline_one_shot(
     if (turn_warrants_reflection(&messages) || !files.is_empty())
         && let Some(m) = &mut memory
     {
+        if format == OutputFormat::StreamJson {
+            let _ = tx.send(AgentEvent::Stage {
+                name: stella_protocol::StageKind::Reflect,
+            });
+        }
         let mut reflect_transcript = messages.clone();
         if let Ok(outcome) = &result
             && !outcome.final_text.trim().is_empty()
@@ -338,8 +323,46 @@ async fn run_pipeline_one_shot(
             )
             .await;
         settle_reflection_budget(&mut report, &mut budget);
-        surface_reflection(&report, format);
+        if format == OutputFormat::StreamJson {
+            for event in &report.events {
+                let _ = tx.send(event.clone());
+            }
+        } else {
+            surface_reflection(&report, format);
+        }
         reflection_report = report;
+    }
+
+    if format == OutputFormat::StreamJson
+        && let Ok(outcome) = &result
+    {
+        // Replace the pipeline's earlier terminal frame with the true
+        // all-calls total. The renderer retains only the latest Complete and
+        // releases it after every queued reflection/accounting event.
+        let _ = tx.send(AgentEvent::Complete {
+            model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+            cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
+        });
+    }
+    drop(tx);
+    let rendered = renderer.await.unwrap_or_default();
+    let persistence_complete = rendered.persistence_complete;
+    let collected = rendered.events;
+
+    if let Some((store, id)) = &execution {
+        let (outcome_label, cost) = pipeline_execution_closeout(&result);
+        if !record_execution_end(
+            store,
+            *id,
+            &registry,
+            outcome_label,
+            cost + reflection_report.cost_usd,
+            persistence_complete,
+        ) {
+            warn_store_write_failed(
+                "the audit record (files touched / memory citations / outcome)",
+            );
+        }
     }
 
     if let Some(set) = &mcp {
@@ -846,31 +869,11 @@ pub(crate) async fn record_turn_episode(
     .await;
 }
 
-/// Surface a post-turn [`ReflectionReport`] for a headless / line-based
-/// format — the reflection outcome must never vanish (the silent-reflection
-/// blind spot this closes). `stream-json` gets one machine event line so a
-/// metering/CI consumer sees that reflection ran and whether it errored;
-/// `text` and `json` get a one-line stderr warning ONLY when the reflection
-/// model call actually failed — a clean empty reflection is the common,
-/// correct case and stays quiet. Never writes stdout in `json` mode, so that
-/// format's single-object contract is untouched. Best-effort: a `None` model
-/// error in `text`/`json` prints nothing.
+/// Surface a post-turn [`ReflectionReport`] for human text output. Machine
+/// streams route reflection events through their execution renderer so
+/// `Complete` remains the unique final frame; this helper never writes a
+/// second, unframed stdout sequence after that terminal barrier.
 pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat) {
-    if format == OutputFormat::StreamJson {
-        for event in &report.events {
-            if let Ok(line) = serde_json::to_string(event) {
-                println!("{line}");
-            }
-        }
-        let line = serde_json::json!({
-            "type": "reflect",
-            "recorded": report.recorded,
-            "error": report.model_error,
-            "cost_usd": report.cost_usd,
-        });
-        println!("{line}");
-        return;
-    }
     if format == OutputFormat::Text {
         for event in &report.events {
             match event {
