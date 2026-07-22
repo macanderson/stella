@@ -247,7 +247,8 @@ impl Engine<'_> {
                 ..self.config.clone()
             },
             self.sleeper,
-        );
+        )
+        .with_call_role(stella_protocol::ModelCallRole::Judge);
         // Share the session's drift calibration: the map is keyed per model
         // (`crate::estimator::CalibrationMap`), so a cross-family judge
         // learns its own model's drift without ever blending into the
@@ -366,7 +367,8 @@ mod tests {
     use serde_json::Value;
     use stella_protocol::event::BudgetMode;
     use stella_protocol::{
-        CompletionRequest, CompletionResult, CompletionUsage, ProviderError, ToolOutput, ToolSchema,
+        CompletionRequest, CompletionResult, CompletionUsage, ModelCallRole, ProviderError,
+        ToolOutput, ToolSchema,
     };
     use tokio::sync::mpsc;
 
@@ -520,6 +522,23 @@ mod tests {
             })
             .collect();
         assert_eq!(verdicts, vec![(1, false), (2, true)]);
+        let roles: Vec<ModelCallRole> = events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::StepUsage { role, .. } => Some(*role),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                ModelCallRole::Worker,
+                ModelCallRole::Judge,
+                ModelCallRole::Worker,
+                ModelCallRole::Judge,
+            ],
+            "worker and judge calls need distinct durable roles"
+        );
         assert!((budget.session_spent_usd() - 0.022).abs() < 1e-9);
     }
 
