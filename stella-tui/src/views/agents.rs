@@ -470,6 +470,7 @@ mod tests {
             agent: "lead".into(),
             savings_usd_delta: 0.1,
             ttl_secs: 300,
+            is_opt_in_provider: true,
         });
         model.now_ms += 60_000;
         // "sub" never calls the model — no cache data, no warm prefix.

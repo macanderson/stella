@@ -178,11 +178,17 @@ pub enum Inbound {
     /// to the agent's running total. `ttl_secs` is the provider's prompt-cache
     /// TTL in seconds (`0` = no prompt cache / no TTL to preserve); the deck
     /// pairs it with the last provider-call time to render a live warmth
-    /// countdown.
+    /// countdown. `is_opt_in_provider` is whether this provider only caches
+    /// behind an explicit marker (Anthropic/Bedrock/OpenRouter-Claude) —
+    /// resolved once here from `stella-model`'s cache-posture table so
+    /// [`crate::deck::AgentEntry::cache_diagnosis`] can name
+    /// `CacheCause::OptInNeverEngaged` without the deck itself needing to
+    /// know which providers require the marker.
     CacheInsight {
         agent: AgentId,
         savings_usd_delta: f64,
         ttl_secs: u64,
+        is_opt_in_provider: bool,
     },
     /// The installed-agents list for the Agents tab's INSTALLED AGENTS pane.
     /// Out-of-band view state (applied straight to `DeckUi::installed` by

@@ -63,6 +63,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let text_w = (area.width as usize).saturating_sub(PROMPT_PREFIX_W + COMPOSER_GUTTER_W);
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
+    // The statline grows a third row only when the focused agent has earned a
+    // low-hit-rate diagnosis (#267) — the common case stays the compact
+    // label-over-value pair; a session that needs the warning gets it without
+    // permanently taxing every other session's content area.
+    let has_diagnosis = model
+        .agents
+        .get(ui.focused)
+        .and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
+        .is_some();
+    let statline_h = if has_diagnosis { 3 } else { 2 };
     let bands = Layout::vertical([
         Constraint::Length(3),          // tab bar
         Constraint::Min(1),             // active view
@@ -70,7 +80,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         Constraint::Length(1),          // run progress bar
         Constraint::Length(composer_h), // composer
         Constraint::Length(1),          // composer footer (keys + line counter)
-        Constraint::Length(2),          // statline (label over value)
+        Constraint::Length(statline_h), // statline (label over value[, diagnosis])
     ])
     .split(area);
 
@@ -1180,6 +1190,27 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
             buf,
         );
     }
+
+    // Third row: the low-hit-rate diagnosis, full-sentence and byte-identical
+    // to `stella stats`'s wording — only present when `render_deck` reserved
+    // the extra row (`AgentEntry::cache_diagnosis` fired for the focused
+    // agent) AND the area actually has it (a caller that hands this function
+    // a bare 2-row area, as every pre-#267 snapshot fixture still does, gets
+    // no diagnosis row rather than a clipped one).
+    if area.height >= 3
+        && let Some(cause) =
+            focused.and_then(|a| a.cache_diagnosis(cache_panel::LOW_HIT_RATE_THRESHOLD))
+    {
+        Paragraph::new(Line::from(cache_panel::diagnosis_spans(cause))).render(
+            Rect {
+                x: area.x,
+                y: top_y + 2,
+                width: area.width,
+                height: 1,
+            },
+            buf,
+        );
+    }
 }
 
 /// A compact 6-cell utilization meter for a `[0, 1]` fraction.
@@ -1522,6 +1553,66 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn full_deck_frame_grows_a_third_statline_row_for_a_diagnosed_agent() {
+        // The acceptance case: an opt-in provider (anthropic), 4 calls (past
+        // MIN_TURNS=3), 0% hit rate, 0 cache writes — the marker never
+        // engaged. `render_deck` must reserve the statline's third row and
+        // `render_status_bar` must fill it with the full-sentence hint, not a
+        // clipped fragment.
+        let mut model = running_model_with_queue();
+        for step in 1..=4usize {
+            model.apply_inbound(&Inbound::Event {
+                agent: "lead".into(),
+                event: AgentEvent::StepUsage {
+                    step,
+                    model: "claude-fable-5".into(),
+                    input_tokens: 10_000,
+                    output_tokens: 500,
+                    cached_input_tokens: 0,
+                    cache_write_tokens: 0,
+                    estimated_input_tokens: 0,
+                    cost_usd: 0.05,
+                    duration_ms: 100,
+                    retries: 0,
+                    tool_calls: 0,
+                },
+            });
+        }
+        model.apply_inbound(&Inbound::CacheInsight {
+            agent: "lead".into(),
+            savings_usd_delta: 0.0,
+            ttl_secs: 300,
+            is_opt_in_provider: true,
+        });
+
+        let mut ui = DeckUi::default();
+        ui.splash.skip();
+        let mut term = Terminal::new(TestBackend::new(190, 40)).unwrap();
+        term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+        let text = buffer_text(term.backend().buffer());
+        assert!(
+            text.contains("cache opt-in never engaged"),
+            "diagnosis row missing from the full frame:\n{text}"
+        );
+
+        // A healthy session (no StepUsage at all) never grows the row or
+        // shows the sentence — the common case stays the compact two rows.
+        let healthy = running_model_with_queue();
+        let mut healthy_ui = DeckUi::default();
+        healthy_ui.splash.skip();
+        let mut healthy_term = Terminal::new(TestBackend::new(190, 40)).unwrap();
+        healthy_term
+            .draw(|f| render_deck(&healthy, &mut healthy_ui, f))
+            .unwrap();
+        let healthy_text = buffer_text(healthy_term.backend().buffer());
+        assert!(
+            !healthy_text.contains("cache opt-in never engaged")
+                && !healthy_text.contains("prompt prefix is unstable"),
+            "a healthy session must not show a diagnosis:\n{healthy_text}"
+        );
     }
 
     #[test]

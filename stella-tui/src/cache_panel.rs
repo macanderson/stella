@@ -11,10 +11,19 @@
 
 use ratatui::style::Style;
 use ratatui::text::Span;
+use stella_protocol::CacheCause;
 
 use crate::deck::{AgentEntry, WorkspaceModel};
 use crate::deck_render::fmt_tokens;
 use crate::theme;
+
+/// Below this hit rate (with enough calls to have established a cache to
+/// hit) the deck names a probable cause — matches
+/// `stella_model::cache_economics::diagnose_cache`'s own "~20%" acceptance
+/// bar and `stella-cli`'s `stats.rs::LOW_HIT_RATE_THRESHOLD`, so a session
+/// reads the same diagnosis live in the deck as it does afterward in
+/// `stella stats`.
+pub const LOW_HIT_RATE_THRESHOLD: f64 = 0.20;
 
 impl AgentEntry {
     /// Seconds of prompt-cache warmth remaining: how long until this agent's
@@ -32,6 +41,36 @@ impl AgentEntry {
         }
         let elapsed_secs = now_ms.saturating_sub(last) / 1000;
         Some(self.cache_ttl_secs.saturating_sub(elapsed_secs))
+    }
+
+    /// The probable cause of this agent's abnormally low cache hit rate, or
+    /// `None` when there's nothing to diagnose (too few calls yet, or a
+    /// healthy hit rate) — the motivating incident is a session sitting at
+    /// CACHE 0% with no hint anywhere on screen. Mirrors
+    /// `stella_model::cache_economics::diagnose_cache`'s selection logic
+    /// rather than calling it (the deck cannot link that model-tier crate),
+    /// using only locally-tracked aggregates plus
+    /// [`Self::cache_is_opt_in_provider`], which the pricing-aware CLI
+    /// producer resolves once from the provider's cache-posture table and
+    /// folds in via `CacheInsight` — the one piece of real domain knowledge
+    /// this re-derivation would otherwise have to duplicate.
+    pub fn cache_diagnosis(&self, threshold: f64) -> Option<CacheCause> {
+        const MIN_TURNS: u64 = 3;
+        if self.cache_call_count <= MIN_TURNS {
+            return None;
+        }
+        let hit_rate = if self.tokens_in == 0 {
+            0.0
+        } else {
+            (self.cache_read_tokens as f64 / self.tokens_in as f64).clamp(0.0, 1.0)
+        };
+        if hit_rate >= threshold {
+            return None;
+        }
+        if self.cache_is_opt_in_provider && self.cache_write_tokens == 0 {
+            return Some(CacheCause::OptInNeverEngaged);
+        }
+        Some(CacheCause::PrefixInstability)
     }
 }
 
@@ -144,6 +183,17 @@ pub fn warmth_cell(remaining_secs: Option<u64>) -> Vec<Span<'static>> {
     )]
 }
 
+/// The statline's optional third row: a low-hit-rate diagnosis, prefixed
+/// with a warning glyph and rendered in `CacheCause::hint`'s full-sentence
+/// wording — byte-identical to what `stella stats` prints for the same
+/// cause, per `stella-protocol::cache`'s "the CLI and the TUI render
+/// identical wording" contract. Always danger-colored: this row only exists
+/// when something is actually wrong.
+pub fn diagnosis_spans(cause: CacheCause) -> Vec<Span<'static>> {
+    let style = Style::default().fg(theme::DANGER_BRIGHT);
+    vec![Span::styled("⚠ ", style), Span::styled(cause.hint(), style)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +221,61 @@ mod tests {
         assert_eq!(fmt_warmth(Some(0)), "cold");
         assert_eq!(fmt_warmth(Some(252)), "4:12");
         assert_eq!(fmt_warmth(Some(9)), "0:09"); // zero-padded seconds
+    }
+
+    fn entry(
+        tokens_in: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+        cache_call_count: u64,
+        is_opt_in: bool,
+    ) -> AgentEntry {
+        let mut m = WorkspaceModel::new();
+        m.apply_inbound(&crate::envelope::Inbound::Register(
+            crate::envelope::AgentMeta::new("lead", "goal", 0),
+        ));
+        let a = &mut m.agents[0];
+        a.tokens_in = tokens_in;
+        a.cache_read_tokens = cache_read_tokens;
+        a.cache_write_tokens = cache_write_tokens;
+        a.cache_call_count = cache_call_count;
+        a.cache_is_opt_in_provider = is_opt_in;
+        m.agents.remove(0)
+    }
+
+    #[test]
+    fn diagnosis_fires_only_past_min_turns_and_under_threshold() {
+        // Too few calls: 0% hit rate but only 3 turns — nothing to say yet.
+        assert_eq!(entry(30_000, 0, 0, 3, true).cache_diagnosis(0.20), None);
+        // Past MIN_TURNS, still 0% hit — fires.
+        assert!(entry(30_000, 0, 0, 4, true).cache_diagnosis(0.20).is_some());
+        // Healthy hit rate past MIN_TURNS — quiet.
+        assert_eq!(
+            entry(30_000, 20_000, 5_000, 6, true).cache_diagnosis(0.20),
+            None
+        );
+    }
+
+    #[test]
+    fn diagnosis_names_opt_in_absent_vs_prefix_instability() {
+        // Opt-in provider, 0 hits, 0 writes: the marker never engaged.
+        assert_eq!(
+            entry(30_000, 0, 0, 5, true).cache_diagnosis(0.20),
+            Some(CacheCause::OptInNeverEngaged)
+        );
+        // Opt-in provider that DID write (writes just never got read back):
+        // the prefix is unstable, not opt-in-absent.
+        assert_eq!(
+            entry(30_000, 0, 15_000, 5, true).cache_diagnosis(0.20),
+            Some(CacheCause::PrefixInstability)
+        );
+        // An implicit-cache provider (is_opt_in false) that never wrote
+        // still names prefix instability, never opt-in-absent — there is no
+        // marker to have missed.
+        assert_eq!(
+            entry(30_000, 0, 0, 5, false).cache_diagnosis(0.20),
+            Some(CacheCause::PrefixInstability)
+        );
     }
 
     // ── Statline integration tests ──────────────────────────────────────────
@@ -358,6 +463,7 @@ mod tests {
             agent: "lead".into(),
             savings_usd_delta: 0.42,
             ttl_secs: 300,
+            is_opt_in_provider: true,
         });
         m.now_ms += 120_000;
         let running = render(&m);

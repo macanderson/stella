@@ -6,13 +6,18 @@
 //! site.
 //!
 //! `StepUsage` already carries the raw token counts the deck folds into the
-//! CACHE cell; this adds the two figures that need list pricing and the TTL
-//! table — `stella-model` concerns the model-tier-free `stella-tui` cannot
-//! reach — computed once here from the provider id the forwarder already
-//! owns. Without this seam the SAVED/WARMTH statline cells are permanently
-//! "—" outside a hand-built test fixture: `Inbound::CacheInsight` had no
-//! producer anywhere on the live path.
+//! CACHE cell; this adds the three figures that need list pricing, the TTL
+//! table, and the cache-posture taxonomy — `stella-model` concerns the
+//! model-tier-free `stella-tui` cannot reach — computed once here from the
+//! provider id the forwarder already owns. Without this seam the
+//! SAVED/WARMTH statline cells are permanently "—" outside a hand-built test
+//! fixture: `Inbound::CacheInsight` had no producer anywhere on the live
+//! path. `is_opt_in_provider` similarly lets
+//! [`stella_tui::AgentEntry::cache_diagnosis`] name
+//! `CacheCause::OptInNeverEngaged` without the deck knowing which providers
+//! require an explicit cache marker.
 
+use stella_model::provider_parity::{CachePosture, cache_posture};
 use stella_model::{Catalog, provider_cache_ttl_secs};
 use stella_protocol::{AgentEvent, CompletionUsage};
 use stella_tui::Inbound;
@@ -48,10 +53,12 @@ pub(crate) fn cache_insight_for(
         .resolve_for(provider_id, model)
         .map(|entry| entry.pricing.cache_savings_usd_for(provider_id, &usage))
         .unwrap_or(0.0);
+    let is_opt_in_provider = matches!(cache_posture(provider_id), Some(CachePosture::OptIn { .. }));
     Some(Inbound::CacheInsight {
         agent: lane.to_string(),
         savings_usd_delta,
         ttl_secs: provider_cache_ttl_secs(provider_id).unwrap_or(0),
+        is_opt_in_provider,
     })
 }
 
@@ -95,6 +102,7 @@ mod tests {
                 agent,
                 savings_usd_delta,
                 ttl_secs,
+                is_opt_in_provider,
             } => {
                 assert_eq!(agent, "lead");
                 assert!(
@@ -103,7 +111,24 @@ mod tests {
                 );
                 // Anthropic's default prompt-cache TTL is 5 minutes.
                 assert_eq!(ttl_secs, 300);
+                // Anthropic requires the explicit cache_control marker.
+                assert!(is_opt_in_provider);
             }
+            other => panic!("expected CacheInsight, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn implicit_provider_is_not_marked_opt_in() {
+        // zai auto-caches with no marker — the opt-in-never-engaged diagnosis
+        // must never fire for it, however low the hit rate runs.
+        let event = step_usage("glm-5.2", 1_000_000, 0, 0);
+        let insight =
+            cache_insight_for("zai", "lead", &event).expect("StepUsage yields an insight");
+        match insight {
+            Inbound::CacheInsight {
+                is_opt_in_provider, ..
+            } => assert!(!is_opt_in_provider),
             other => panic!("expected CacheInsight, got {other:?}"),
         }
     }
