@@ -442,7 +442,6 @@ fn non_tty_text_output_is_headless_without_losing_text_rendering() {
     let non_tty = pipeline_config_for_approval_capability(
         &cfg,
         PipelineApprovalCapability::Unavailable,
-        &worker_model,
         None,
         &worker_model,
     );
@@ -459,7 +458,6 @@ fn non_tty_text_output_is_headless_without_losing_text_rendering() {
     let interactive = pipeline_config_for_approval_capability(
         &cfg,
         PipelineApprovalCapability::Stdio,
-        &worker_model,
         None,
         &worker_model,
     );

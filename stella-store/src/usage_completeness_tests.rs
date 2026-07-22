@@ -5,7 +5,32 @@ use super::*;
 const SINK: &str = "sink_0000000000000000000000000000000000000000000000000000000000000000";
 
 #[test]
-fn incomplete_closeout_is_durable_and_blocks_rollup_truth_claims() {
+fn new_execution_is_pending_and_not_rollupable() {
+    let store = Store::in_memory().unwrap();
+    let execution = store
+        .begin_execution("pipeline", "private", "anthropic", "claude")
+        .unwrap();
+
+    assert!(!store.execution_usage_complete(execution).unwrap());
+    let status: String = store
+        .lock()
+        .query_row(
+            "SELECT usage_status FROM executions WHERE id = ?1",
+            params![execution],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "pending");
+    assert!(
+        store
+            .execution_rollup(execution, std::path::Path::new("/tmp/project"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn incomplete_closeout_is_durable_and_not_rollupable() {
     let store = Store::in_memory().unwrap();
     let execution = store
         .begin_execution("pipeline", "private", "anthropic", "claude")
@@ -16,11 +41,30 @@ fn incomplete_closeout_is_durable_and_blocks_rollup_truth_claims() {
         .unwrap();
 
     assert!(!store.execution_usage_complete(execution).unwrap());
+    assert!(
+        store
+            .execution_rollup(execution, std::path::Path::new("/tmp/project"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn clean_finalization_is_the_only_rollupable_state() {
+    let store = Store::in_memory().unwrap();
+    let execution = store
+        .begin_execution("pipeline", "private", "anthropic", "claude")
+        .unwrap();
+    store
+        .finish_execution_accounted(execution, "completed", 0.25, true)
+        .unwrap();
+
+    assert!(store.execution_usage_complete(execution).unwrap());
     let rollup = store
         .execution_rollup(execution, std::path::Path::new("/tmp/project"))
         .unwrap()
-        .unwrap();
-    assert!(!rollup.usage_complete);
+        .expect("complete finalized rollup");
+    assert!(rollup.usage_complete);
 }
 
 #[test]

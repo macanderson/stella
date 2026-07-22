@@ -28,7 +28,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 9] = [
+pub(crate) const MIGRATIONS: [Migration; 10] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -57,6 +57,8 @@ pub(crate) const MIGRATIONS: [Migration; 9] = [
     migrate_v7_to_v8,
     // v8 → v9: fail-closed paid-call accounting state.
     migrate_v8_to_v9,
+    // v9 → v10: explicit pending/complete/incomplete execution lifecycle.
+    migrate_v9_to_v10,
 ];
 
 /// The schema version this build writes — the `PRAGMA user_version` of
@@ -348,9 +350,8 @@ fn migrate_v7_to_v8(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-/// v8 → v9: new executions start complete but every legacy execution and
-/// telemetry row fails closed. Current writers explicitly set new execution
-/// rows to complete and downgrade monotonically on any unknown/write failure.
+/// v8 → v9: every legacy execution and telemetry row fails closed. The v10
+/// lifecycle migration supersedes v9's former writer-side optimistic start.
 fn migrate_v8_to_v9(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     if !column_exists(tx, "executions", "usage_complete")? {
         tx.execute_batch(
@@ -367,6 +368,29 @@ fn migrate_v8_to_v9(tx: &rusqlite::Transaction<'_>) -> Result<()> {
         tx.execute_batch(
             "ALTER TABLE telemetry ADD COLUMN usage_complete INTEGER NOT NULL DEFAULT 0
                CHECK(usage_complete IN (0, 1));",
+        )?;
+    }
+    Ok(())
+}
+
+/// v9 → v10: replace the optimistic execution bit with an explicit lifecycle.
+/// Historic finalized rows retain `complete` only when their v9 bit was true;
+/// unfinished rows become pending and every other row remains fail-closed.
+fn migrate_v9_to_v10(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "executions", "usage_status")? {
+        tx.execute_batch(
+            "ALTER TABLE executions ADD COLUMN usage_status TEXT NOT NULL DEFAULT 'incomplete'
+               CHECK(usage_status IN ('pending', 'complete', 'incomplete'));
+             UPDATE executions
+                SET usage_status = CASE
+                    WHEN finished_at IS NULL THEN 'pending'
+                    WHEN usage_complete = 1 THEN 'complete'
+                    ELSE 'incomplete'
+                END,
+                    usage_complete = CASE
+                    WHEN finished_at IS NOT NULL AND usage_complete = 1 THEN 1
+                    ELSE 0
+                END;",
         )?;
     }
     Ok(())
@@ -435,5 +459,40 @@ mod tests {
         assert!(!execution_complete);
         assert_eq!(role, "unknown");
         assert!(!call_complete);
+    }
+
+    #[test]
+    fn v10_migration_derives_lifecycle_without_exporting_unfinished_rows() {
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE executions (
+               id INTEGER PRIMARY KEY,
+               finished_at TEXT,
+               usage_complete INTEGER NOT NULL
+             );
+             INSERT INTO executions VALUES (1, NULL, 1);
+             INSERT INTO executions VALUES (2, '2026-07-21', 1);
+             INSERT INTO executions VALUES (3, '2026-07-21', 0);",
+        )
+        .expect("v9 schema");
+
+        apply_migration(&mut conn, migrate_v9_to_v10, 10).expect("migrate");
+
+        let mut stmt = conn
+            .prepare("SELECT usage_status, usage_complete FROM executions ORDER BY id")
+            .unwrap();
+        let rows: Vec<(String, bool)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("pending".into(), false),
+                ("complete".into(), true),
+                ("incomplete".into(), false),
+            ]
+        );
     }
 }

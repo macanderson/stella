@@ -129,7 +129,11 @@ pub(crate) async fn run_raw_one_shot(
     // `succeeded=false`). Gated on `turn_warrants_reflection` so a tool-free
     // turn (nothing to mine, failure almost certainly external) never spends a
     // model call. The report is surfaced so a model-call error is never silent.
-    if format != OutputFormat::Json
+    // The raw one-shot closes its execution inside `run_turn`; unlike the
+    // staged pipeline it has no post-turn event phase before that terminal
+    // barrier. Keep machine streams strict by not dispatching an unframed
+    // reflection call after `Complete` (text retains the best-effort loop).
+    if format == OutputFormat::Text
         && turn_warrants_reflection(&messages)
         && let Some(m) = &mut memory
     {

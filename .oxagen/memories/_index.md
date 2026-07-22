@@ -7,3 +7,8 @@
 - [Host media operation journal private SQLite](host-media-operation-journal-private-sqlite.md) — Hold validated file identity across SQLite initialization · bug · 2026-07-21
 - [Model-call usage completeness must fail closed](model-call-usage-completeness-must-fail-closed.md) — Per-call accounting and persistence completeness are one monotonic export gate · bug · 2026-07-21
 - [Successful retries preserve failed-attempt usage gaps](successful-retries-preserve-failed-attempt-usage-gaps.md) — A later success cannot recover an earlier dispatched attempt's unknown usage · bug · 2026-07-21
+- [Executions start pending and export only after clean finalization](executions-start-pending-and-export-only-after-clean-finalization.md) — Pending, complete, and incomplete are distinct durable lifecycle states · bug · 2026-07-21
+- [Fleet attempts need durable execution envelopes](fleet-attempts-need-durable-execution-envelopes.md) — Fleet event channels are accounting streams, not disposable drains · bug · 2026-07-21
+- [Stream JSON Complete is a terminal frame](stream-json-complete-is-a-terminal-frame.md) — Post-turn accounting must precede one unique final Complete event · bug · 2026-07-21
+- [Successful call usage completeness survives local abort](successful-call-usage-completeness-survives-local-abort.md) — Per-call usage truth is independent of a later pipeline outcome · bug · 2026-07-21
+- [Extracted test modules must track contract updates](extracted-test-modules-must-track-contract-updates.md) — Concurrent test extraction can strand duplicate assertions on an old UI contract · bug · 2026-07-21
