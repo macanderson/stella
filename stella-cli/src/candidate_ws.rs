@@ -351,9 +351,7 @@ impl GitCandidateWorkspaces {
                     sealed: Mutex::new(None),
                     tools,
                     witness_tools,
-                    diagnostics: GitDiagnosticRunner {
-                        root: ws_root.clone(),
-                    },
+                    diagnostics: GitDiagnosticRunner::new(ws_root.clone()),
                     tests: TypedTestRunner {
                         root: ws_root.clone(),
                     },

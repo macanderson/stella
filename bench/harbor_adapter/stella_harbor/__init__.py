@@ -51,6 +51,7 @@ import json
 import math
 import os
 import re
+import shlex
 import sys
 import uuid
 from importlib.metadata import PackageNotFoundError
@@ -1171,6 +1172,39 @@ class StellaAgent(BaseInstalledAgent):
         self._source_commit_verified = embedded_commit is not None
         if version_line:
             self._version = version_line
+
+        await self._build_code_graph(environment)
+
+    async def _build_code_graph(self, environment: BaseEnvironment) -> None:
+        """Index the task workspace so ``graph_query`` is offered at all.
+
+        The tool is registered only when ``.stella/private/codegraph.db``
+        exists (`stella-tools` registry), and a fresh task checkout has never
+        been initialized — so without this the agent is never offered code
+        intelligence and falls back to grep/glob for every discovery step.
+
+        `stella init` resolves no config and needs no credential: with no
+        provider it takes the directory heuristic for domains and builds the
+        graph regardless ("the code graph needs no provider"). Best-effort by
+        construction — a workspace with nothing indexable (or no tree-sitter
+        grammar for its language) is the normal case on this benchmark, not a
+        failure, and must never block the run.
+        """
+        cwd = getattr(environment.task_env_config, "workdir", None)
+        command = f"cd {shlex.quote(str(cwd))} && " if cwd else ""
+        command += f"{_INSTALL_PATH} init"
+        try:
+            result = await self.exec_as_agent(
+                environment, command=command, timeout_sec=300
+            )
+        except Exception as exc:  # noqa: BLE001 - discovery aid, never fatal
+            print(f"stella-adapter: code graph unavailable: {exc}", file=sys.stderr)
+            return
+        summary = getattr(result, "stdout", None) or ""
+        for line in summary.splitlines():
+            if "code graph:" in line:
+                self._code_graph_summary = line.strip()
+                break
 
     @with_prompt_template
     async def run(
