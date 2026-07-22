@@ -241,6 +241,17 @@ pub struct AgentEngineConfig {
     /// default, off for triage), overriding any per-agent `reasoning`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
+    /// `on` = a headless run proceeds past scope review instead of stopping
+    /// at `ScopeReviewRequiredHeadless`.
+    ///
+    /// Off by default, and deliberately so: scope review is the gate that
+    /// keeps a large blast radius from landing unattended, and a headless
+    /// surface has nobody to ask. Turn it on only where the working tree is
+    /// disposable and the budget cap is the real guard — a benchmark
+    /// container, CI on a scratch checkout. Without it, any plan over the
+    /// scope thresholds (more than 5 steps by default) ends the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless_scope_bypass: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents: Option<AgentEngineAgents>,
 }
@@ -460,6 +471,10 @@ impl AgentEngineConfig {
 
     pub fn reasoning_auto_on(&self) -> bool {
         self.reasoning_auto.is_some_and(Toggle::is_on)
+    }
+
+    pub fn headless_scope_bypass_on(&self) -> bool {
+        self.headless_scope_bypass.is_some_and(Toggle::is_on)
     }
 
     /// Persist THIS config as the `agent_engine_config` key of the

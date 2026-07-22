@@ -278,6 +278,11 @@ impl ToolRegistry {
                 entries.push(Arc::new(crate::web::WebSearch(search)));
             }
         }
+        // Registered unconditionally, unlike `graph_query`: the overview
+        // still answers from static manifests when no index exists, and its
+        // whole purpose is to be the FIRST call — a tool that appears only
+        // for already-initialized workspaces cannot be that.
+        entries.push(Arc::new(crate::overview::ProjectOverview));
         // Resolver errors advertise the tool so invocation exposes them.
         if !matches!(crate::graph::graph_available(&root), Ok(false)) {
             entries.push(Arc::new(crate::graph::CodeGraphQuery));
@@ -1493,12 +1498,13 @@ mod tests {
             "list_labels",
             "list_members",
             "start_work_on_issue",
+            "project_overview",
         ] {
             assert!(names.contains(&expected.to_string()), "missing {expected}");
         }
         // `bash` is NOT in the default surface — it is the settings opt-in.
         assert!(!names.contains(&"bash".to_string()), "{names:?}");
-        assert_eq!(names.len(), 44, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 45, "unexpected tool count: {names:?}");
     }
 
     // ---- bash opt-in (default OFF everywhere) -------------------------
@@ -1623,7 +1629,7 @@ mod tests {
     fn issue_tools_absent_without_a_configured_backend() {
         let (_root, reg) = bare_registry(None);
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        assert_eq!(names.len(), 36, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 37, "unexpected tool count: {names:?}");
         for absent in [
             "create_issue",
             "update_issue",
@@ -1761,6 +1767,8 @@ mod tests {
                     | "ci_status"
                     | "search_issues"
                     | "task_list"
+                    | "project_overview"
+                    | "graph_query"
                     | "get_issue"
                     | "list_labels"
                     | "list_members"

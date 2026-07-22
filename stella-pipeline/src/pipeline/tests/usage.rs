@@ -61,7 +61,7 @@ async fn run_triage_only(
     provider: &dyn Provider,
     config: PipelineConfig,
     budget: &mut BudgetGuard,
-) -> (Result<TaskClass, PipelineBudgetAbort>, f64, Vec<AgentEvent>) {
+) -> (Result<TaskAssessment, PipelineBudgetAbort>, f64, Vec<AgentEvent>) {
     let resolver = AnyProvider(provider);
     let tools = EmptyTools;
     let recall = NoContextRecall;
@@ -140,7 +140,7 @@ async fn triage_provider_error_emits_content_free_incompleteness() {
     let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
     let (result, _, events) =
         run_triage_only(&ErrorProvider, PipelineConfig::default(), &mut budget).await;
-    assert_eq!(result.unwrap(), TaskClass::SimpleLookup);
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
     let usage = usage_events(&events);
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0]["type"], "usage_incomplete");
@@ -160,7 +160,7 @@ async fn triage_timeout_emits_content_free_incompleteness() {
         ..PipelineConfig::default()
     };
     let (result, _, events) = run_triage_only(&SlowProvider, config, &mut budget).await;
-    assert_eq!(result.unwrap(), TaskClass::SimpleLookup);
+    assert_eq!(result.unwrap().class, TaskClass::SimpleLookup);
     let usage = usage_events(&events);
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0]["type"], "usage_incomplete");

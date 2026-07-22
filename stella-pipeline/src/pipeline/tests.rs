@@ -829,7 +829,7 @@ async fn paid_headless_scope_review_error_retains_settled_cost() {
     let approvals = FixedGate(ScopeDecision::Approve);
     let sleeper = NoopSleeper;
     let router = router();
-    let (tx, _rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::unbounded_channel();
 
     let config = PipelineConfig {
         headless: true,
@@ -871,6 +871,17 @@ async fn paid_headless_scope_review_error_retains_settled_cost() {
     assert!(
         (err.total_cost_usd - 0.0002).abs() < 1e-9,
         "triage and plan spend must survive the hard error: {err:?}"
+    );
+    // The error leaves through the `Result`, so without an explicit event the
+    // stream simply stops mid-plan. A consumer reading only events (the bench
+    // adapter, the deck) must still be told why the run ended.
+    let events = drain(&mut rx);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::Error { message, .. } if message.contains("scope review")
+        )),
+        "the headless scope stop announces itself: {events:?}"
     );
 }
 
@@ -1083,6 +1094,47 @@ async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
     let s = stages(&events);
     assert!(s.contains(&StageKind::Witness), "witness stage emitted");
     assert!(!s.contains(&StageKind::Judge), "judge skipped on the flip");
+}
+
+/// The point of the assessment: triage can route work onto a cheaper path
+/// than the keyword floor would. This goal trips `deterministic_floor`'s
+/// "across the codebase" marker — under the old `max(model, floor)` rule it
+/// bought a plan, an authored witness, and a judge no matter what triage said.
+/// An independent judge model IS available here, so a skipped witness proves
+/// triage's call was honored rather than independence being unavailable.
+#[tokio::test]
+async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+    ]);
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        PipelineConfig::default(),
+        "Rename the retry helper across the codebase",
+        router(),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    assert_eq!(
+        outcome.task_class,
+        TaskClass::SingleTask,
+        "triage read the goal; the floor only pattern-matched it"
+    );
+    let s = stages(&events);
+    assert!(!s.contains(&StageKind::Plan), "single task plans nothing");
+    assert!(
+        !s.contains(&StageKind::Witness),
+        "triage said no witness: {s:?}"
+    );
+    // Two paid calls: triage and the worker. No witness author, no judge.
+    let calls = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
+        .count();
+    assert_eq!(calls, 2, "ceremony triage declined is never bought: {s:?}");
 }
 
 /// Losing the independent witness author must cost the run its authored
@@ -1428,3 +1480,43 @@ mod mcp_prefetch;
 mod task4;
 mod task5;
 mod usage;
+
+/// The headless approval port is `AlwaysAbortGate`, so "bypass scope review"
+/// has to mean *proceed*. Running the review anyway would hand the plan to a
+/// gate that always says no, empty it, and end the turn having done nothing —
+/// the same zero-work outcome as the hard error, just spelled differently.
+#[tokio::test]
+async fn headless_scope_bypass_proceeds_instead_of_asking_a_gate_that_always_aborts() {
+    // Six steps clears the default 5-step threshold, so scope review fires.
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: multi\nWITNESS: no\nJUDGE: no"),
+        text_result(r#"["a","b","c","d","e","f"]"#),
+        text_result("done"),
+    ]);
+    let config = PipelineConfig {
+        headless: true,
+        headless_bypass_scope_review: true,
+        ..PipelineConfig::default()
+    };
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        config,
+        "Refactor across the codebase and then update all callers",
+        router(),
+    )
+    .await;
+    let outcome = outcome.expect("bypass must not surface the headless scope error");
+
+    assert_ne!(
+        outcome.status,
+        PipelineStatus::Aborted {
+            reason: "aborted at scope review".to_string()
+        },
+        "a bypassed review must not abort at the gate it bypassed"
+    );
+    let s = stages(&events);
+    assert!(
+        s.contains(&StageKind::Execute),
+        "the run reaches execute rather than ending at the gate: {s:?}"
+    );
+}

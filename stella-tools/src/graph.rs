@@ -97,6 +97,16 @@ impl Tool for CodeGraphQuery {
     }
 }
 
+/// Bring the index up to date with the working tree, best-effort.
+///
+/// A failed pass leaves the previous index in place: stale answers beat no
+/// answers, and the caller has no better recovery than proceeding.
+fn catch_up(graph: &stella_graph::CodeGraph) {
+    if let Err(error) = graph.index_all() {
+        eprintln!("stella: code graph catch-up failed, answering from the last index: {error}");
+    }
+}
+
 /// Open → query → shutdown, entirely synchronous underneath (SQLite reads).
 /// Shared by the tool and the `stella graph` subcommand so both render the
 /// exact same frames.
@@ -124,6 +134,15 @@ pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
             };
         }
     };
+    // Catch up before answering. The index is a point-in-time build, and a
+    // stale graph does not degrade gracefully — it answers *confidently
+    // wrong*: a definition at a path the agent already moved, a symbol it
+    // just deleted. That is worse than having no tool, because the agent
+    // acts on it. `index_all` re-parses only files whose hash changed and
+    // prunes deleted ones, so this is near-free once warm, and it is what
+    // makes the graph cover the agent's OWN writes — the majority of the
+    // code in any from-scratch task.
+    catch_up(&graph);
     let result = match op {
         "definitions" => graph.definitions(target),
         "references" => graph.references(target),

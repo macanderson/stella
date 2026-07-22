@@ -57,6 +57,101 @@ impl TaskClass {
     pub fn verifies_unconditionally(self) -> bool {
         !matches!(self, TaskClass::SimpleLookup)
     }
+
+    /// One step down the ceremony ladder, saturating at the cheapest class.
+    /// The bound on how far a triage classification may lower the
+    /// deterministic floor — see [`resolve_task_class`].
+    pub fn one_level_cheaper(self) -> Self {
+        match self {
+            TaskClass::MultiStep => TaskClass::SingleTask,
+            TaskClass::SingleTask | TaskClass::SimpleLookup => TaskClass::SimpleLookup,
+        }
+    }
+}
+
+/// What triage concluded about a goal: how much orchestration it needs, and
+/// what assurance the result actually warrants.
+///
+/// Splitting the two is the point. "How big is this" and "what proof does it
+/// need" are different axes that [`TaskClass`] alone conflates: a sweeping
+/// mechanical rename needs no independent test, while a one-line change to an
+/// auth check might. Triage read the goal, so triage decides — a `None` flag
+/// simply means it expressed no opinion and the class-derived default stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskAssessment {
+    pub class: TaskClass,
+    /// Whether an independently authored witness test is warranted.
+    pub require_witness: Option<bool>,
+    /// Whether a separate model reviewing the result is warranted.
+    pub require_judge: Option<bool>,
+}
+
+impl TaskAssessment {
+    /// An assessment carrying only a class — what a legacy bare-token triage
+    /// response, or a caller with no model answer, produces.
+    pub fn from_class(class: TaskClass) -> Self {
+        Self {
+            class,
+            require_witness: None,
+            require_judge: None,
+        }
+    }
+
+    /// Whether an authored witness is warranted, honoring triage's explicit
+    /// call and otherwise falling back to what the class implies.
+    pub fn wants_witness(&self) -> bool {
+        self.require_witness
+            .unwrap_or_else(|| self.class.verifies_unconditionally())
+    }
+
+    /// Whether a model judge is warranted.
+    ///
+    /// Defaults to `true`, unlike [`Self::wants_witness`]: this is only ever
+    /// consulted once the verification ladder has already run and come back
+    /// *inconclusive*, so the class has had its say. Skipping the judge there
+    /// has to be an explicit call from triage — a class-derived default would
+    /// silently drop the judge on exactly the path the zero-diff guard exists
+    /// to catch (a "lookup" that turned out to touch files).
+    pub fn wants_judge(&self) -> bool {
+        self.require_judge.unwrap_or(true)
+    }
+}
+
+/// Parse one `KEY: yes|no` line out of a triage response, `None` when the key
+/// is absent or its value is not a recognized boolean.
+fn parse_flag(lower: &str, key: &str) -> Option<bool> {
+    for line in lower.lines() {
+        let line = line.trim().trim_start_matches(['-', '*', ' ']);
+        let Some(rest) = line.strip_prefix(key) else {
+            continue;
+        };
+        let rest = rest.trim_start().trim_start_matches(':').trim();
+        let word = rest
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .find(|w| !w.is_empty())?;
+        return match word {
+            "yes" | "true" | "required" | "y" => Some(true),
+            "no" | "false" | "skip" | "none" | "n" => Some(false),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Parse a triage response into a full [`TaskAssessment`].
+///
+/// Tolerant by construction: the class comes from the same keyword scan the
+/// bare-token contract always used, so a model that ignores the structured
+/// format still classifies correctly and simply expresses no assurance
+/// opinion. Returns `None` only when no class keyword appears at all.
+pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
+    let class = classify_triage_response(text)?;
+    let lower = text.to_ascii_lowercase();
+    Some(TaskAssessment {
+        class,
+        require_witness: parse_flag(&lower, "witness"),
+        require_judge: parse_flag(&lower, "judge"),
+    })
 }
 
 /// Parse a triage model's classification response into a [`TaskClass`].
@@ -148,10 +243,22 @@ pub fn deterministic_floor(goal: &str) -> TaskClass {
 /// is `None`), the floor stands alone.
 pub fn resolve_task_class(model_class: Option<TaskClass>, goal: &str) -> TaskClass {
     let floor = deterministic_floor(goal);
-    match model_class {
-        Some(model) => model.max(floor),
-        None => floor,
-    }
+    let Some(model) = model_class else {
+        // No usable classification: the floor stands alone, erring toward
+        // planning exactly as it always has.
+        return floor;
+    };
+    // Triage read the goal; the floor only pattern-matched it, so triage may
+    // route work onto a cheaper path than the keywords guessed — otherwise a
+    // one-line fix whose description contains "and then" buys a full
+    // plan/witness/judge pipeline forever.
+    //
+    // But only one level cheaper. Triage is meant to be the weakest, fastest
+    // tier, and the floor's keyword evidence is weak rather than worthless;
+    // letting a cheap model strip planning, witness, and judge in a single
+    // step is a bigger bet than the speed is worth. Raising stays unbounded —
+    // erring toward more work was never the risk.
+    model.max(floor.one_level_cheaper())
 }
 
 /// Count enumerated list items ("1.", "2)", "- ", "* ") in the goal — a
@@ -229,13 +336,26 @@ fn conjoined_imperative(lower: &str) -> bool {
 ///): it must answer with exactly one bare token.
 pub fn triage_prompt(goal: &str) -> String {
     format!(
-        "Classify the following software task by how much orchestration it needs. \
-         Answer with EXACTLY ONE of these bare tokens and nothing else:\n\
+        "Classify the following software task, and decide what assurance its \
+         result actually warrants. Answer with EXACTLY these three lines and \
+         nothing else:\n\
+         CLASS: lookup|single|multi\n\
+         WITNESS: yes|no\n\
+         JUDGE: yes|no\n\n\
+         CLASS is how much orchestration the work needs:\n\
          - `lookup`  — a read/explain/search question that changes no files\n\
          - `single`  — one concrete code change\n\
          - `multi`   — genuinely multi-step work spanning several changes\n\n\
+         WITNESS is whether a failing test should be written first to pin the \
+         intended behavior. Say no when the change is mechanical, when \
+         correctness is already obvious from the diff, or when the project \
+         has no way to run such a test.\n\
+         JUDGE is whether a separate model should review the result. Say no \
+         when success is self-evident or a test already proves it.\n\
+         Prefer `no` for both on small, self-evident work — ceremony that \
+         proves nothing costs the user time and money.\n\n\
          Task:\n{goal}\n\n\
-         Classification:"
+         Answer:"
     )
 }
 
@@ -341,17 +461,82 @@ mod tests {
     }
 
     #[test]
-    fn resolve_takes_the_more_planning_heavy_class() {
-        // Model says simple, floor says multi (markers present) → multi wins.
+    fn parses_the_structured_assurance_answer() {
+        let a = parse_triage_response("CLASS: single\nWITNESS: no\nJUDGE: yes")
+            .expect("a well-formed answer parses");
+        assert_eq!(a.class, TaskClass::SingleTask);
+        assert_eq!(a.require_witness, Some(false));
+        assert_eq!(a.require_judge, Some(true));
+        assert!(!a.wants_witness(), "an explicit no wins over the class");
+        assert!(a.wants_judge());
+    }
+
+    #[test]
+    fn a_bare_token_answer_still_classifies_and_claims_no_assurance_opinion() {
+        // The pre-existing contract: models that ignore the structured format
+        // must keep working, falling back to what the class implies.
+        let a = parse_triage_response("multi").expect("a bare token parses");
+        assert_eq!(a.class, TaskClass::MultiStep);
+        assert_eq!(a.require_witness, None);
+        assert_eq!(a.require_judge, None);
+        assert!(a.wants_witness(), "class-derived default stands");
+    }
+
+    #[test]
+    fn an_answer_with_no_class_keyword_is_not_a_guess() {
+        assert_eq!(parse_triage_response("WITNESS: no\nJUDGE: no"), None);
+        assert_eq!(parse_triage_response("hmm, hard to say"), None);
+    }
+
+    #[test]
+    fn assurance_flags_tolerate_bullets_punctuation_and_case() {
+        let a = parse_triage_response("- CLASS: Multi\n- Witness: NO\n* judge : none")
+            .expect("parses");
+        assert_eq!(a.class, TaskClass::MultiStep);
+        assert_eq!(a.require_witness, Some(false));
+        assert_eq!(a.require_judge, Some(false));
+    }
+
+    #[test]
+    fn a_judge_opinion_is_required_to_skip_the_judge() {
+        // `wants_judge` is only consulted after the ladder came back
+        // inconclusive, so silence must never mean "skip".
+        for class in [
+            TaskClass::SimpleLookup,
+            TaskClass::SingleTask,
+            TaskClass::MultiStep,
+        ] {
+            assert!(
+                TaskAssessment::from_class(class).wants_judge(),
+                "{class:?} with no triage opinion must still reach the judge"
+            );
+        }
+    }
+
+    #[test]
+    fn triage_may_lower_the_floor_by_one_level_and_raise_it_without_bound() {
+        // Floor says multi (markers present), triage says lookup → lands on
+        // single: DAG planning is skipped, verification is kept. Triage read
+        // the goal, but it is the weakest tier, so it does not get to strip
+        // planning, witness, and judge in one move.
         assert_eq!(
             resolve_task_class(
                 Some(TaskClass::SimpleLookup),
                 "refactor across the codebase"
             ),
-            TaskClass::MultiStep
+            TaskClass::SingleTask
         );
-        // Model says multi, floor says simple → model wins (floor never
-        // lowers).
+        // One level down is honored exactly.
+        assert_eq!(
+            resolve_task_class(Some(TaskClass::SingleTask), "refactor across the codebase"),
+            TaskClass::SingleTask
+        );
+        // A floor of single may be lowered all the way to lookup.
+        assert_eq!(
+            resolve_task_class(Some(TaskClass::SimpleLookup), "add the field and update it"),
+            TaskClass::SimpleLookup
+        );
+        // Raising stays unbounded: erring toward more work was never the risk.
         assert_eq!(
             resolve_task_class(Some(TaskClass::MultiStep), "explain X"),
             TaskClass::MultiStep

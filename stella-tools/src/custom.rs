@@ -93,6 +93,7 @@ use tokio::process::Command;
 /// a manifest named e.g. `verify_done` or `delete_file` could silently replace
 /// a flagship built-in. Keep this in sync if either set changes.
 pub const RESERVED_NAMES: &[&str] = &[
+    "project_overview",
     // File CRUD
     "read_file",
     "write_file",
