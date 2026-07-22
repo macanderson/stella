@@ -435,10 +435,12 @@ async fn untrusted_project_custom_tools_are_absent_from_the_runtime_surface() {
 fn non_tty_text_output_is_headless_without_losing_text_rendering() {
     let cfg = cfg_for("zai");
     let format = OutputFormat::Text;
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     let non_tty = pipeline_config_for_approval_capability(
         &cfg,
         PipelineApprovalCapability::Unavailable,
         None,
+        &model_ref,
     );
     assert!(
         non_tty.headless,
@@ -450,13 +452,70 @@ fn non_tty_text_output_is_headless_without_losing_text_rendering() {
     );
     assert_eq!(format, OutputFormat::Text, "rendering remains text");
 
-    let interactive =
-        pipeline_config_for_approval_capability(&cfg, PipelineApprovalCapability::Stdio, None);
+    let interactive = pipeline_config_for_approval_capability(
+        &cfg,
+        PipelineApprovalCapability::Stdio,
+        None,
+        &model_ref,
+    );
     assert!(
         !interactive.headless,
         "an explicit interactive approval host retains scope review"
     );
     assert!(!interactive.headless_bypass_scope_review);
+}
+
+/// Issue: a squash-merge (#284 x #297/#276) silently dropped
+/// `run_pipeline_one_shot`'s `approval_capability` computation, collapsing
+/// its production call site to a bare `is_text` check with no test to catch
+/// it — the helper above was already covered in isolation, but nothing
+/// exercised the actual condition the call site computes. These three tests
+/// pin `approval_capability_for` (the extracted, directly-testable seam)
+/// against every input combination that matters.
+#[test]
+fn approval_capability_for_requires_both_terminal_handles_not_just_text_format() {
+    // The exact regression: a redirected/piped text-format run (is_text,
+    // stdout still a TTY, but stdin is NOT) must stay Unavailable — a bare
+    // `is_text` check would wrongly select Stdio here and try to read an
+    // approval decision from a pipe no one is at the other end of.
+    assert_eq!(
+        approval_capability_for(true, false, true),
+        PipelineApprovalCapability::Unavailable,
+        "text format alone must not select Stdio when stdin isn't a real terminal"
+    );
+    assert_eq!(
+        approval_capability_for(true, true, false),
+        PipelineApprovalCapability::Unavailable,
+        "text format alone must not select Stdio when stdout isn't a real terminal"
+    );
+    assert_eq!(
+        approval_capability_for(true, false, false),
+        PipelineApprovalCapability::Unavailable
+    );
+}
+
+#[test]
+fn approval_capability_for_json_is_always_unavailable() {
+    // Output serialization must never grant execution authority, regardless
+    // of the terminal state — JSON output has nowhere to render a prompt.
+    assert_eq!(
+        approval_capability_for(false, true, true),
+        PipelineApprovalCapability::Unavailable
+    );
+    assert_eq!(
+        approval_capability_for(false, false, false),
+        PipelineApprovalCapability::Unavailable
+    );
+}
+
+#[test]
+fn approval_capability_for_full_tty_text_is_stdio() {
+    // Only the genuine interactive case — text format, real stdin, real
+    // stdout — selects Stdio.
+    assert_eq!(
+        approval_capability_for(true, true, true),
+        PipelineApprovalCapability::Stdio
+    );
 }
 
 #[tokio::test]
