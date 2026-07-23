@@ -52,6 +52,31 @@ pub enum BudgetMode {
     Enforced,
 }
 
+/// Which budget limit a [`AgentEvent::BudgetDenied`] tripped — mirrors
+/// `stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`
+/// never depends on `stella-core`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetScope {
+    Turn,
+    Session,
+}
+
+/// What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]
+/// records (receipts spec §6.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyKind {
+    /// A blocking policy chain evaluated a tool call or side effect.
+    Evaluated,
+    /// A policy denied the call/side effect.
+    Blocked,
+    /// A policy deferred the call to human approval.
+    ApprovalRequested,
+    /// A payload-hygiene detector flagged secret-shaped content.
+    SecretDetected,
+}
+
 /// Concrete purpose of one provider call. This is more precise than the
 /// router's tier role: repair and guidance calls must remain distinguishable
 /// in the paid-call ledger even when they share a provider/model.
@@ -210,6 +235,71 @@ pub enum AgentEvent {
     /// was steered, and when.
     Steered {
         text: String,
+    },
+    /// Loop detection fired (receipts spec §6.3, #364 gap 3): the typed
+    /// twin of the prose steer/abort, so receipts can parse the decision
+    /// instead of string-matching an `Error` prefix. Emitted on BOTH
+    /// outcomes — the first detection steers (`aborted: false`) and a
+    /// detection that persists past the warning aborts (`aborted: true`).
+    /// Additive to the wire contract: older consumers never see it.
+    LoopDetected {
+        turn_instance: u32,
+        /// `"exact_repeat"` | `"short_cycle"` — mirrors
+        /// `stella-core::loop_detect::LoopVerdict` (kept as a string here so
+        /// `stella-protocol` never depends on `stella-core`).
+        kind: String,
+        /// Tool names of the repeated signature, in cycle order (one entry
+        /// for an exact repeat).
+        pattern: Vec<String>,
+        /// Consecutive identical calls (exact repeat) or full cycles (short
+        /// cycle) observed.
+        repeats: usize,
+        /// The human-readable evidence — same text the paired
+        /// `Steered`/`Error` carries.
+        evidence: String,
+        /// `false`: first detection, the turn was steered and continues.
+        /// `true`: detection persisted after the warning, the turn aborted.
+        aborted: bool,
+    },
+    /// An enforced budget stopped the turn (receipts spec §6.3, #364 gap
+    /// 3): the typed twin of the prose "budget exceeded" `Error`. Only ever
+    /// emitted in `BudgetMode::Enforced` — observed mode warns without
+    /// denying.
+    BudgetDenied {
+        /// Which limit tripped.
+        scope: BudgetScope,
+        spent_usd: f64,
+        limit_usd: f64,
+        mode: BudgetMode,
+    },
+    /// A model call failed terminally after exhausting its retries
+    /// (receipts spec §6.3, #364 gap 3). The per-attempt reasons were
+    /// previously lost on the failure path — `Retry` events only flush for
+    /// steps that COMMIT — so this is the durable record of the doomed
+    /// attempts. Emitted just before the paired `Error`.
+    RetriesExhausted {
+        turn_instance: u32,
+        /// Total dispatched attempts that failed (the initial call plus
+        /// every retry). Equals `reasons.len()`.
+        attempts: u32,
+        /// Per-attempt failure reasons, oldest first.
+        reasons: Vec<String>,
+    },
+    /// One decision from the extension/policy audit plane bridged into the
+    /// event stream (receipts spec §6.4, #364 gap 6). The `HookBus` audit
+    /// events (`policy.evaluated`/`policy.blocked`, `approval.requested`,
+    /// `secret.detected`) were process-ephemeral — hosts map them onto this
+    /// variant so the journal carries the policy plane too. Content-free by
+    /// design: `subject` names the tool/capability/path, NEVER a secret
+    /// value or file contents.
+    PolicyDecision {
+        kind: PolicyKind,
+        /// The tool name, capability, or workspace-relative path the
+        /// decision was about.
+        subject: String,
+        /// Short outcome token — e.g. `"allow"`, `"deny"`, `"modify"`, a
+        /// detector's kind list — never content.
+        outcome: String,
     },
     /// A compaction pass ran (`stella-core::compaction`). Fields mirror
     /// `CompactionReport` — kept as a flat struct here (not a re-exported

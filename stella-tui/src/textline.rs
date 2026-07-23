@@ -421,7 +421,15 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         | AgentEvent::StepManifest { .. }
         // A discarded speculation is internal accounting for read-only work
         // that never reached the transcript — observability, not narration.
-        | AgentEvent::SpeculationDiscarded { .. } => None,
+        | AgentEvent::SpeculationDiscarded { .. }
+        // Typed decision events (receipts spec §6.3/§6.4) are the parseable
+        // twins of prose the stream already narrates (`Steered`/`Error`
+        // carry the loop/budget/retry story; policy denials surface as tool
+        // errors) — rendering them too would say everything twice.
+        | AgentEvent::LoopDetected { .. }
+        | AgentEvent::BudgetDenied { .. }
+        | AgentEvent::RetriesExhausted { .. }
+        | AgentEvent::PolicyDecision { .. } => None,
         AgentEvent::Retry { attempt, reason } => Some(retry(*attempt, reason)),
         AgentEvent::Steered { text } => Some(steered(text)),
         AgentEvent::Compaction {

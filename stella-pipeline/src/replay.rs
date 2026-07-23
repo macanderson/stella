@@ -270,6 +270,21 @@ pub fn event_signature(event: &AgentEvent) -> String {
         AgentEvent::StepManifest { blocks, .. } => {
             format!("step_manifest:blocks={}", blocks.len())
         }
+        // Typed decision events (receipts spec §6.3/§6.4) are the parseable
+        // twins of prose Errors/steers already in the stream; the decision
+        // itself is structural, its evidence/reason text volatile.
+        AgentEvent::LoopDetected { kind, aborted, .. } => {
+            format!("loop_detected:{kind}:aborted={aborted}")
+        }
+        AgentEvent::BudgetDenied { scope, mode, .. } => {
+            format!("budget_denied:{scope:?}:{mode:?}")
+        }
+        AgentEvent::RetriesExhausted { attempts, .. } => {
+            format!("retries_exhausted:attempts={attempts}")
+        }
+        AgentEvent::PolicyDecision { kind, subject, .. } => {
+            format!("policy_decision:{kind:?}:{subject}")
+        }
     }
 }
 

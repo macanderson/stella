@@ -1,9 +1,9 @@
-//! The agent loop — ties providers, tools, the step-driver, and TUI
+//! The agent loop â ties providers, tools, the step-driver, and TUI
 //! together.
 //!
 //! `run_turn` drives `stella_core::Engine::run_turn` (the step-driver: one
 //! model call per step, retry+backoff, compaction, loop detection, budget
-//! checks — see `stella-core/src/driver.rs`) and renders its
+//! checks â see `stella-core/src/driver.rs`) and renders its
 //! `AgentEvent` stream live via a spawned draining task.
 
 use std::collections::HashMap;
@@ -97,7 +97,7 @@ fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillReg
 /// Run a one-shot prompt. `use_pipeline` selects the staged pipeline (the
 /// default) vs the raw step-loop (`--no-pipeline`). `test_command`, when
 /// given, arms the pipeline's deterministic verification ladder (the
-/// fail→pass flip oracle); without it, verification falls back to the model
+/// failâpass flip oracle); without it, verification falls back to the model
 /// judge on every iteration.
 pub async fn run_one_shot(
     cfg: &Config,
@@ -138,7 +138,7 @@ async fn run_pipeline_one_shot(
         crate::rules::enforce_workspace_rules(&registry, &cfg.workspace_root, &cfg.authority);
     // Auto-build + live-refresh the code graph in the background so the
     // pipeline's localize step can reach for `graph_query` once it is ready.
-    // Status goes to stderr — stdout may be machine-readable JSON.
+    // Status goes to stderr â stdout may be machine-readable JSON.
     let (_session_graph, _graph_build) = spawn_session_graph(
         &cfg.workspace_root,
         registry.clone(),
@@ -178,6 +178,9 @@ async fn run_pipeline_one_shot(
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    // Journal the policy/extension audit plane through the same stream
+    // (receipts spec §6.4) — a no-op unless a hook bus is attached.
+    registry.bridge_policy_plane(tx.clone());
     let renderer = spawn_renderer(
         rx,
         format,
@@ -188,7 +191,7 @@ async fn run_pipeline_one_shot(
 
     // Role wiring from `agent_engine_config`: per-role model pins (worker/
     // triage/judge), their adapters, and per-role request overrides. Notices
-    // are stderr diagnostics — stdout may be machine-readable JSON.
+    // are stderr diagnostics â stdout may be machine-readable JSON.
     let configured = crate::config::discover_configured_providers();
     let wiring = resolve_engine_wiring(cfg, &model_ref, &configured);
     for notice in &wiring.notices {
@@ -245,7 +248,7 @@ async fn run_pipeline_one_shot(
 
         let is_text = format == OutputFormat::Text;
         // The exact condition lives in `approval_capability_for` so it stays
-        // directly unit-testable — inlining it here is what a prior
+        // directly unit-testable â inlining it here is what a prior
         // squash-merge collapsed into a bare `is_text` check, with no test to
         // catch the regression.
         let approval_capability = approval_capability_for(
@@ -254,7 +257,7 @@ async fn run_pipeline_one_shot(
             std::io::stdout().is_terminal(),
         );
         // `--test-command` arms the deterministic verify ladder: the
-        // fail→pass flip oracle and SubmitFast/Revise decisions all key off
+        // failâpass flip oracle and SubmitFast/Revise decisions all key off
         // it. Left unset, every verification escalates to the model judge.
         let mut pipeline_config = pipeline_config_for_approval_capability(
             cfg,
@@ -309,7 +312,7 @@ async fn run_pipeline_one_shot(
     let files = registry.files_touched();
 
     // Episodic memory: a run that did work (tools or file changes) becomes a
-    // retrievable Episode node — outcome, files touched, time window.
+    // retrievable Episode node â outcome, files touched, time window.
     if let Some(m) = &memory
         && (turn_warrants_reflection(&messages) || !files.is_empty())
     {
@@ -321,7 +324,7 @@ async fn run_pipeline_one_shot(
             .await;
     }
 
-    // Reflect on turns that did real work — success AND failure. A failed
+    // Reflect on turns that did real work â success AND failure. A failed
     // pipeline run is a high-value learning signal (root-cause prompt via
     // `succeeded=false`).
     //
@@ -330,8 +333,8 @@ async fn run_pipeline_one_shot(
     // are deliberately kept OUT of `messages` (planner context hygiene,
     // L-E6), so `turn_warrants_reflection(&messages)` alone is always false
     // there and the whole self-improvement loop never fired on `stella run`.
-    // Falling back to `!files.is_empty()` — mirroring the episode gate above
-    // — is what makes the primary surface actually learn. The reflector is
+    // Falling back to `!files.is_empty()` â mirroring the episode gate above
+    // â is what makes the primary surface actually learn. The reflector is
     // then handed an enriched transcript (final answer + a note of what
     // changed) so it has signal even when the tool turns aren't in `messages`.
     // Output format does not change Stella's learning semantics: text, JSON,
@@ -426,7 +429,7 @@ async fn run_pipeline_one_shot(
         set.close_all().await;
     }
 
-    // Terminal registry status + the headless → `/inbox` flow: a failed run
+    // Terminal registry status + the headless â `/inbox` flow: a failed run
     // always lands a notification; a successful one only when it ran long
     // enough that the user has plausibly looked away. `Enter` on the
     // notification (or the SESSIONS overlay) replays the journal.
@@ -521,7 +524,7 @@ async fn run_pipeline_one_shot(
     }
 }
 
-/// The REPL's productized command names — reserved: a custom definition can
+/// The REPL's productized command names â reserved: a custom definition can
 /// never run under one of these, argument-carrying forms included (the
 /// exact-match handlers in the loop only claim the bare forms). Must cover
 /// every `/`-command the loop below handles.
@@ -580,7 +583,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         &cfg.workspace_root.display().to_string(),
     );
 
-    // Built once per session and reused verbatim on /clear — the byte-stable
+    // Built once per session and reused verbatim on /clear â the byte-stable
     // prefix (instructions + baked memories + SessionStart hook context) is
     // the prompt-cache contract (see build_system_prompt).
     let system_prompt = with_session_hook_context(
@@ -590,7 +593,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     .await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
-    // Custom extensions: ⚡ commands/skills invocable as `/name args`, custom
+    // Custom extensions: â¡ commands/skills invocable as `/name args`, custom
     // agents behind `/agents`. Reloaded after `/init`, which may adopt new
     // ones from `.claude/`/`.agents/`. Load problems print up front so a
     // definition that failed to parse is visible, not silently absent.
@@ -607,7 +610,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
 
     // Machine-wide presence: the plain REPL registers like the deck does,
     // so its sessions are findable in every SESSIONS overlay and replayable
-    // from their journals. No inbox notifications — the user is right here.
+    // from their journals. No inbox notifications â the user is right here.
     let mut presence = SessionPresence::announce(cfg, "interactive session");
 
     // Session-scoped lean-mode activation state: the tool stack is rebuilt
@@ -639,20 +642,20 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             continue;
         }
         // `/models refresh` is handled model-free: when the configured model
-        // itself is broken, the catalog re-sync is part of digging out —
+        // itself is broken, the catalog re-sync is part of digging out â
         // routing it into a model turn would fail on the very error being
         // fixed. (Changing a model happens in the deck's SETTINGS tab, via
-        // `--model`, or by editing settings.json — not through a command.)
+        // `--model`, or by editing settings.json â not through a command.)
         if input == "/models refresh" || input == "/models refresh --force" {
             println!();
             if let Err(e) = crate::model_catalog::run_refresh(input.ends_with("--force")).await {
-                println!("  {} refresh failed: {e}", "✗".red());
+                println!("  {} refresh failed: {e}", "â".red());
             }
             println!();
             continue;
         }
         if input == "/config" {
-            // The REPL fallback has no startup dotenv-load record handy —
+            // The REPL fallback has no startup dotenv-load record handy â
             // the source label just degrades to the generic `env:VAR` form
             // (see `Config::print_config`'s doc).
             cfg.print_config(None);
@@ -693,12 +696,12 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                     // should know about this session, not just the next one.
                     // Warn-and-fall-through: a schema-index failure must not
                     // skip the graph-tool enable, the memory reopen, or the
-                    // extensions reload below — those refreshes are
+                    // extensions reload below â those refreshes are
                     // independent of it (issue #373, item 3).
                     if let Err(error) = populate_schema_index(&registry, &cfg.workspace_root) {
                         println!("  {} schema governance unavailable: {error}", "!".yellow());
                     }
-                    // The code graph now exists — expose the `graph_query` tool
+                    // The code graph now exists â expose the `graph_query` tool
                     // to the rest of this session (it is registered only when
                     // an index is present, so a session that started without
                     // one otherwise wouldn't see it until relaunch).
@@ -707,7 +710,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                         println!("  {} graph tool unavailable: {error}", "!".yellow());
                     }
                     // Re-open memory so recall/reflection use the taxonomy
-                    // `/init` just wrote — otherwise the cached domains stay
+                    // `/init` just wrote â otherwise the cached domains stay
                     // stale until the next launch.
                     memory = SessionMemory::open_with_authority(
                         &cfg.workspace_root,
@@ -715,7 +718,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                         &cfg.authority,
                     );
                     // `/init` may also have adopted new custom
-                    // commands/skills/agents — make them invocable now, and
+                    // commands/skills/agents â make them invocable now, and
                     // report anything that failed to load.
                     custom = crate::extensions::CustomExtensions::load_with_authority(
                         &cfg.workspace_root,
@@ -727,7 +730,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                         }
                     }
                 }
-                Err(e) => println!("  {} init failed: {e}", "✗".red()),
+                Err(e) => println!("  {} init failed: {e}", "â".red()),
             }
             println!();
             continue;
@@ -743,12 +746,12 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         if let Some(color) = input.strip_prefix("/color ") {
             let name = color.trim();
             if tui::set_accent(name) {
-                // Acknowledge in the newly-set accent itself — the welcome
+                // Acknowledge in the newly-set accent itself â the welcome
                 // banner uses a fixed palette and can't reflect the accent,
                 // so re-printing it would silently ignore the change.
                 println!(
                     "  {} {}\n",
-                    "◆".color(tui::accent()),
+                    "â".color(tui::accent()),
                     format!("accent set to {name}").color(tui::accent()).bold()
                 );
             }
@@ -809,7 +812,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             if let Err(e) = &result {
                 eprintln!("  {} {}\n", "Error:".red().bold(), e);
             }
-            // Failures reflect too (minus the user's own soft stop) — the
+            // Failures reflect too (minus the user's own soft stop) â the
             // one-shot pipeline path has always treated a failed run as a
             // high-value learning signal; interactive paths now match
             // (issue #373, item 7).
@@ -833,8 +836,8 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             continue;
         }
 
-        // A custom command/skill (⚡): expand the template — arguments and
-        // all — into the prompt the model turn runs. Reserved names never
+        // A custom command/skill (â¡): expand the template â arguments and
+        // all â into the prompt the model turn runs. Reserved names never
         // reach a custom definition, so the REPL vocabulary above cannot be
         // shadowed even in argument-carrying forms the exact-match handlers
         // let through (e.g. `/help topic`).
@@ -849,7 +852,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         println!();
 
         if let Some(m) = &mut memory {
-            // Proposal 4: A/B recall measurement — on ~1/10 turns (the A/B
+            // Proposal 4: A/B recall measurement â on ~1/10 turns (the A/B
             // rate), suppress recall so the outcome is comparable to recalled
             // turns. The suppressed flag rides with the turn for attribution.
             m.maybe_suppress_recall(STELLA_AB_RECALL_RATE);
@@ -920,12 +923,12 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         set.close_all().await;
     }
     presence.finish(true, None);
-    println!("\n  {}", "Goodbye! ✦".magenta());
+    println!("\n  {}", "Goodbye! â¦".magenta());
     Ok(())
 }
 
 /// Record one interactive turn as an episode: only new paths this turn (the
-/// slice past `files_before` in the session-cumulative ledger — a re-touch of
+/// slice past `files_before` in the session-cumulative ledger â a re-touch of
 /// an earlier path is not re-listed, an accepted approximation), gated the
 /// same way as reflection so trivial conversational turns write nothing.
 /// `pub(crate)`: the Command Deck's turn driver records through the same
@@ -989,7 +992,7 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
                 } => eprintln!(
                     "  {} {:?} {provider}/{model}: {input_tokens} in, {output_tokens} out, \
                      ${cost_usd:.4}, {retries} retries, complete={complete}",
-                    "✦".magenta(),
+                    "â¦".magenta(),
                     role
                 ),
                 AgentEvent::UsageIncomplete {
@@ -1010,7 +1013,7 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
     }
     if let Some(err) = &report.model_error {
         eprintln!(
-            "  {} post-turn reflection skipped — model call failed: {err}",
+            "  {} post-turn reflection skipped â model call failed: {err}",
             "!".yellow()
         );
     }
@@ -1028,8 +1031,8 @@ fn reflection_json(report: &ReflectionReport) -> serde_json::Value {
 /// infer the domain taxonomy (model-assisted when a provider is available,
 /// directory heuristic otherwise), build the code-graph index, persist
 /// `.stella/domains.toml`, and record the taxonomy into the context plane.
-/// Progress lines stream to `emit` — the CLI prints them, the deck forwards
-/// them into the transcript — so both surfaces share one implementation.
+/// Progress lines stream to `emit` â the CLI prints them, the deck forwards
+/// them into the transcript â so both surfaces share one implementation.
 pub(crate) async fn init_workspace(
     provider: Option<&dyn Provider>,
     workspace_root: &std::path::Path,
@@ -1050,13 +1053,13 @@ pub(crate) async fn init_workspace(
         None => (heuristic_domains(workspace_root), 0.0),
     };
 
-    // The code graph needs no provider — build it regardless of how the
+    // The code graph needs no provider â build it regardless of how the
     // domains were inferred, so the index exists even fully offline.
     build_code_graph(workspace_root, emit).await;
 
     // Adopt commands/skills/agents other code agents keep in `.claude/` and
     // `.agents/` (workspace + user scope) as symlinks into stella's own
-    // directories — idempotent, never clobbers, never fatal.
+    // directories â idempotent, never clobbers, never fatal.
     crate::extensions::sync_extensions(workspace_root, emit);
 
     let path = domains.save(workspace_root)?;
@@ -1064,13 +1067,13 @@ pub(crate) async fn init_workspace(
     // Persist the taxonomy into the context plane too: domain descriptions
     // plus bi-temporal `covers_path` facts, so recall can fuse on them and a
     // re-run after the taxonomy shifts supersedes (never deletes) the old
-    // beliefs. Best-effort — a store that won't open already warned.
+    // beliefs. Best-effort â a store that won't open already warned.
     if let Some(m) = SessionMemory::open(workspace_root, false) {
         m.record_taxonomy(&domains).await;
     }
 
     emit(format!(
-        "✓ {} domains ({}) → {}",
+        "â {} domains ({}) â {}",
         domains.domains.len(),
         domains.inferred_by,
         path.display()
@@ -1085,11 +1088,11 @@ pub(crate) async fn init_workspace(
 
 /// Query the code graph (if `stella init` has built it) for the
 /// best-connected file's neighborhood, converted to the deck's Graph-tab
-/// snapshot. `None` when there is no index, it is empty, or any read fails —
+/// snapshot. `None` when there is no index, it is empty, or any read fails â
 /// the tab then shows its "run stella init" hint instead of an empty graph.
 ///
 /// This is [`graph_snapshot_focus`] with no explicit focus, so the neighborhood
-/// centers on [`busiest_file`](stella_graph::CodeGraph::busiest_file) — the
+/// centers on [`busiest_file`](stella_graph::CodeGraph::busiest_file) â the
 /// sensible default the deck opens on and can re-root away from via the picker.
 pub(crate) fn graph_snapshot(
     workspace_root: &std::path::Path,
@@ -1100,7 +1103,7 @@ pub(crate) fn graph_snapshot(
 /// Build the Graph-tab snapshot centered on `focus` (a root-relative file
 /// path), or on the busiest file when `focus` is `None`. The snapshot always
 /// carries the full [`files`](stella_tui::GraphSnapshot::files) list so the
-/// deck's picker can re-root onto any of them — the deck answers a
+/// deck's picker can re-root onto any of them â the deck answers a
 /// `FocusGraphFile` request by calling this with `Some(file)` and shipping the
 /// result back as a fresh `Inbound::GraphSnapshot`. `None` when there is no
 /// index, it is empty, or any read fails.
@@ -1186,10 +1189,10 @@ pub(crate) fn populate_schema_index(
     Ok(())
 }
 
-/// `stella init` — infer the workspace's domain taxonomy, build the code-graph
+/// `stella init` â infer the workspace's domain taxonomy, build the code-graph
 /// index, and write `.stella/domains.toml` (see `crate::domains`). Domain
 /// inference is model-assisted when a provider resolves, with a deterministic
-/// directory heuristic fallback, so init always succeeds — offline included.
+/// directory heuristic fallback, so init always succeeds â offline included.
 /// The code graph (`.stella/private/codegraph.db`) is built unconditionally: it needs
 /// no provider, only the on-disk source tree.
 pub async fn run_init(
@@ -1208,8 +1211,8 @@ pub async fn run_init(
             Ok(cfg) => {
                 let provider = build_provider(&cfg)?;
                 println!(
-                    "  {} inferring domains with {}/{}…",
-                    "◈".bright_cyan(),
+                    "  {} inferring domains with {}/{}â¦",
+                    "â".bright_cyan(),
                     cfg.provider.id,
                     cfg.model_id
                 );
@@ -1217,7 +1220,7 @@ pub async fn run_init(
             }
             Err(_) => {
                 println!(
-                    "  {} no provider configured — using the directory heuristic \
+                    "  {} no provider configured â using the directory heuristic \
                  (re-run `stella init` with a key for a better taxonomy)",
                     "!".yellow()
                 );
@@ -1245,8 +1248,8 @@ pub async fn run_init(
 
     for domain in &domains.domains {
         println!(
-            "    {} {} — {} [{}]",
-            "·".dimmed(),
+            "    {} {} â {} [{}]",
+            "Â·".dimmed(),
             domain.name.bright_magenta(),
             domain.description.dimmed(),
             domain.paths.join(", ").dimmed()
@@ -1262,13 +1265,13 @@ pub async fn run_init(
 }
 
 /// Cap on each MCP server's connect (and, until overridden, each later
-/// call) — the per-server bound `McpToolSet::connect` enforces.
+/// call) â the per-server bound `McpToolSet::connect` enforces.
 const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The parse of `.stella/mcp.toml`, split from the connect so a caller that
 /// owns a UI (the deck) can announce the slow part before awaiting it (#98).
 pub(crate) enum McpPlan {
-    /// No config file, or one naming zero servers — nothing to connect.
+    /// No config file, or one naming zero servers â nothing to connect.
     None,
     /// The config exists but is unreadable/invalid: MCP is disabled this
     /// session, and the reason must be surfaced exactly once.
@@ -1288,7 +1291,7 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
         return McpPlan::None;
     };
     // Trust gate. A cloned repo's `.stella/mcp.toml` can name an arbitrary
-    // stdio `command` (executed at session start — RCE on `git clone && stella`)
+    // stdio `command` (executed at session start â RCE on `git clone && stella`)
     // or an attacker-controlled http endpoint (egress + a would-be-whitelisted
     // phone-home). This is the same code-execution risk as project hooks, so it
     // is gated by the same flag: untrusted, we do not connect and say why once.
@@ -1296,7 +1299,7 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     // settings.rs; this closes the parallel .stella/mcp.toml hole.)
     if !crate::settings::project_code_execution_trusted() {
         return McpPlan::Invalid(format!(
-            "{} was NOT loaded — set STELLA_TRUST_PROJECT=1 to let this repo start its \
+            "{} was NOT loaded â set STELLA_TRUST_PROJECT=1 to let this repo start its \
              MCP servers (they run commands / open connections on your machine)",
             path.display()
         ));
@@ -1305,7 +1308,7 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
         Ok(parsed) => parsed,
         Err(e) => {
             return McpPlan::Invalid(format!(
-                "{} is invalid: {e} — MCP servers disabled this session",
+                "{} is invalid: {e} â MCP servers disabled this session",
                 path.display()
             ));
         }
@@ -1318,7 +1321,7 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     }
 }
 
-/// Stage 2 of MCP assembly: the slow part — up to [`MCP_CONNECT_TIMEOUT`]
+/// Stage 2 of MCP assembly: the slow part â up to [`MCP_CONNECT_TIMEOUT`]
 /// per server. Best-effort and isolated per server (stella-mcp records
 /// failures in the set instead of propagating them); the returned set wraps
 /// `native` so non-`mcp__` tool names fall through to it.
@@ -1381,7 +1384,7 @@ pub(crate) async fn connect_mcp(
         if set.connected_count() > 0 {
             println!(
                 "  {} {} MCP server(s) connected",
-                "◆".bright_cyan(),
+                "â".bright_cyan(),
                 set.connected_count()
             );
         }
@@ -1399,7 +1402,7 @@ pub(crate) async fn discover_custom_tools(
     if crate::enterprise_telemetry::process_free_authority_active() {
         return Vec::new();
     }
-    // The manifest walk is synchronous directory I/O — off the runtime
+    // The manifest walk is synchronous directory I/O â off the runtime
     // worker thread it goes (#64).
     let root = cfg.workspace_root.clone();
     let include_workspace = cfg.authority.project_custom_tools_allowed;
@@ -1411,7 +1414,7 @@ pub(crate) async fn discover_custom_tools(
     if print_diagnostics {
         for diagnostic in &report.diagnostics {
             eprintln!(
-                "  {} custom tool skipped: {} — {}",
+                "  {} custom tool skipped: {} â {}",
                 "!".yellow(),
                 diagnostic.path.display(),
                 diagnostic.reason
@@ -1427,13 +1430,13 @@ pub(crate) async fn discover_custom_tools(
     report.tools
 }
 
-/// `stella tools` — list the tools the agent would have this session:
+/// `stella tools` â list the tools the agent would have this session:
 /// native built-ins (including the issue tools when a tracker is detected),
 /// the interactive/session tools layered on top (ask_user, search_skills,
 /// install_skill), developer custom tools (with their source manifests), and
 /// any discovery diagnostics for broken manifests. MCP-server tools
 /// (.stella/mcp.toml) are merged in at session build time and are not
-/// enumerated here — connecting to the servers is out of scope for a listing.
+/// enumerated here â connecting to the servers is out of scope for a listing.
 pub fn run_tools_listing() -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
@@ -1459,21 +1462,21 @@ pub fn run_tools_listing() -> Result<(), String> {
         .collect();
     native.sort();
     for name in &native {
-        println!("    {} {}", "·".dimmed(), name);
+        println!("    {} {}", "Â·".dimmed(), name);
     }
     if !bash_enabled {
         println!(
             "    {} {}",
-            "·".dimmed(),
-            "bash — disabled (default); enable with \"tools\": {\"bash\": \"on\"} in settings"
+            "Â·".dimmed(),
+            "bash â disabled (default); enable with \"tools\": {\"bash\": \"on\"} in settings"
                 .dimmed()
         );
     }
     if !web_enabled {
         println!(
             "    {} {}",
-            "·".dimmed(),
-            "web_search/web_fetch/web_extract_assets/web_download — disabled (default); \
+            "Â·".dimmed(),
+            "web_search/web_fetch/web_extract_assets/web_download â disabled (default); \
              enable with \"tools\": {\"web\": \"on\"} in settings"
                 .dimmed()
         );
@@ -1497,16 +1500,16 @@ pub fn run_tools_listing() -> Result<(), String> {
         ),
         (
             "mcp_search",
-            "find MCP servers — configured (.stella/mcp.toml) or the public registry",
+            "find MCP servers â configured (.stella/mcp.toml) or the public registry",
         ),
         ("search_skills", "search the public skills registry"),
         ("install_skill", "install a registry skill (asks first)"),
     ] {
         println!(
             "    {} {} {}",
-            "·".dimmed(),
+            "Â·".dimmed(),
             name,
-            format!("— {note}").dimmed()
+            format!("â {note}").dimmed()
         );
     }
 
@@ -1523,21 +1526,21 @@ pub fn run_tools_listing() -> Result<(), String> {
     if report.tools.is_empty() {
         println!(
             "    {}",
-            "none — drop a <name>.toml manifest in .stella/tools/ to add one".dimmed()
+            "none â drop a <name>.toml manifest in .stella/tools/ to add one".dimmed()
         );
     }
     for tool in &report.tools {
         println!(
-            "    {} {} — {}",
-            "·".green(),
+            "    {} {} â {}",
+            "Â·".green(),
             tool.name.bright_magenta(),
             tool.description.dimmed()
         );
     }
     for diagnostic in &report.diagnostics {
         println!(
-            "    {} {} — {}",
-            "✗".red(),
+            "    {} {} â {}",
+            "â".red(),
             diagnostic.path.display(),
             diagnostic.reason.red()
         );
@@ -1545,30 +1548,30 @@ pub fn run_tools_listing() -> Result<(), String> {
 
     println!(
         "\n  {}",
-        "MCP servers (.stella/mcp.toml) merge more tools at session start — \
+        "MCP servers (.stella/mcp.toml) merge more tools at session start â \
          not enumerated here."
             .dimmed()
     );
     Ok(())
 }
 
-/// `stella tools --validate [DIR]` — the strict pre-flight for custom tool
+/// `stella tools --validate [DIR]` â the strict pre-flight for custom tool
 /// manifests. Where discovery (and the plain listing above) stays lenient,
 /// this checks every `*.toml` in `dir` (or, by default, the same directories
-/// discovery scans) and reports errors, warnings, and infos per file — see
+/// discovery scans) and reports errors, warnings, and infos per file â see
 /// `stella_tools::validate`. Returns `Err` when any manifest has errors, so
 /// the process exits non-zero and a broken manifest is caught *before* a run
 /// consumes model budget.
 pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    tui::section_header("Custom tool manifests — validation");
+    tui::section_header("Custom tool manifests â validation");
 
     let report = match dir {
         Some(dir) => {
             if !dir.is_dir() {
                 return Err(format!(
-                    "`{}` is not a directory — pass a directory of *.toml manifests, or omit \
+                    "`{}` is not a directory â pass a directory of *.toml manifests, or omit \
                      the value to check .stella/tools/ and ~/.stella/tools/",
                     dir.display()
                 ));
@@ -1589,7 +1592,7 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
     if report.manifests.is_empty() {
         println!(
             "  {}",
-            "no manifests found — drop a <name>.toml in .stella/tools/ to add a custom tool"
+            "no manifests found â drop a <name>.toml in .stella/tools/ to add a custom tool"
                 .dimmed()
         );
         return Ok(());
@@ -1598,9 +1601,9 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
     println!();
     for manifest in &report.manifests {
         let mark = if manifest.has_errors() {
-            "✗".red()
+            "â".red()
         } else {
-            "✓".green()
+            "â".green()
         };
         let name = manifest
             .name
@@ -1644,7 +1647,7 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
 
 /// Construct the budget guard from `--budget`. The limit lands on the
 /// session axis, so it caps cumulative spend across every turn and goal
-/// round of the run — `begin_turn` (called at the top of each turn/round)
+/// round of the run â `begin_turn` (called at the top of each turn/round)
 /// resets only the turn-scoped counter while the session accumulator
 /// survives it. The turn axis is left unset on purpose: turn spend can
 /// never exceed session spend (it is a reset-to-zero subset of it), so a
@@ -1659,7 +1662,7 @@ pub(crate) fn build_budget_guard(budget_limit: Option<f64>) -> BudgetGuard {
     }
 }
 
-/// Headroom before the next configured cap trips, in USD — the smaller of
+/// Headroom before the next configured cap trips, in USD â the smaller of
 /// the turn- and session-axis remainders when both are set, so the reported
 /// value is always the binding constraint. `None` when neither axis has a
 /// limit.
@@ -1704,7 +1707,7 @@ pub(crate) fn settle_reflection_budget(report: &mut ReflectionReport, guard: &mu
 }
 /// Open the workspace SQLite store (`.stella/private/store.db`). Persistence is
 /// observability, not a work dependency: a store that won't open warns once
-/// and the session runs on without it — never a startup failure.
+/// and the session runs on without it â never a startup failure.
 pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>> {
     // Persisted telemetry can feed calibration and extension-authored rules
     // back into later sessions. Claim-mode trials are isolated and ephemeral:
@@ -1716,9 +1719,9 @@ pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>>
         Ok(store) => Some(Arc::new(store)),
         Err(e) => {
             eprintln!(
-                "  {} local store unavailable ({e}) — executions/telemetry will not be persisted \
+                "  {} local store unavailable ({e}) â executions/telemetry will not be persisted \
                  this session",
-                "⚠".yellow()
+                "â ".yellow()
             );
             None
         }
@@ -1734,7 +1737,7 @@ const DRIFT_SEED_SAMPLES: usize = 20;
 /// telemetry for the resolved provider/model (`Store::drift_samples`) so the
 /// estimator starts already corrected instead of re-learning each session.
 /// Best-effort like all persistence: no store (or a failed query) just means
-/// starting uncalibrated — factor 1.0, the pre-drift behavior.
+/// starting uncalibrated â factor 1.0, the pre-drift behavior.
 pub(crate) fn seed_calibration(store: &Option<Arc<Store>>, cfg: &Config) -> CalibrationMap {
     let calibration = CalibrationMap::new();
     if let Some(store) = store
@@ -1758,7 +1761,7 @@ pub(crate) fn begin_execution(
     let store = store.as_ref()?;
     match store.begin_execution(kind, prompt, cfg.provider.id, &cfg.model_id) {
         Ok(id) => {
-            // Link the execution to its session (store schema v8) — what
+            // Link the execution to its session (store schema v8) â what
             // lets the deck's SESSIONS overlay reassemble and replay the
             // session's full journal later. Best-effort like every other
             // store write: a failed link degrades replay, never the turn.
@@ -1772,8 +1775,8 @@ pub(crate) fn begin_execution(
 }
 
 /// A headless/plain session's presence in the machine-wide registry: the
-/// deck's SESSIONS overlay finds it live and — because every execution links
-/// back via [`begin_execution`]'s `session` — can replay it long after it
+/// deck's SESSIONS overlay finds it live and â because every execution links
+/// back via [`begin_execution`]'s `session` â can replay it long after it
 /// ended. Registration is best-effort throughout: a failed registry write
 /// never disturbs the run.
 pub(crate) struct SessionPresence {
@@ -1806,7 +1809,7 @@ impl SessionPresence {
         }
     }
 
-    /// The registry id — what executions link to and notifications carry.
+    /// The registry id â what executions link to and notifications carry.
     pub(crate) fn id(&self) -> &str {
         &self.record.id
     }
@@ -1836,7 +1839,7 @@ impl SessionPresence {
     }
 
     /// Terminal status, plus an optional persist-until-read inbox
-    /// notification linked to this session — the headless → `/inbox` flow:
+    /// notification linked to this session â the headless â `/inbox` flow:
     /// a finished `stella run` surfaces in every deck's inbox, and `Enter`
     /// replays it.
     pub(crate) fn finish(&mut self, ok: bool, notify: Option<(String, String)>) {
@@ -1890,6 +1893,9 @@ async fn run_turn(
 
     let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (tx, durable_pre_persisted) = event_sender_for_run(raw_tx, format);
+    // Journal the policy/extension audit plane through the same stream
+    // (receipts spec §6.4) — a no-op unless a hook bus is attached.
+    registry.bridge_policy_plane(tx.clone());
     let renderer = spawn_renderer(
         rx,
         format,
@@ -2040,7 +2046,7 @@ fn print_help() {
         "/files".bright_magenta()
     );
     println!(
-        "  {}      List custom agents (⚡ from .stella/agents or ~/.stella/agents)",
+        "  {}      List custom agents (â¡ from .stella/agents or ~/.stella/agents)",
         "/agents".bright_magenta()
     );
     println!(

@@ -94,6 +94,11 @@ pub struct ToolRegistry {
     /// "this area is already mapped" hints on search-tool results.
     exploration_coverage: std::sync::Mutex<ExplorationCoverage>,
     bus: std::sync::RwLock<Option<HookBus>>,
+    /// The live policy-plane bridge subscription (receipts spec §6.4), if
+    /// [`ToolRegistry::bridge_policy_plane`] wired one. Held so a re-bridge
+    /// (a new turn's event channel) replaces — unsubscribes — the previous
+    /// observer instead of accumulating stale senders.
+    policy_bridge: std::sync::Mutex<Option<stella_core::bus::HookSubscription>>,
     process_free: bool,
 }
 
@@ -233,15 +238,21 @@ impl ToolRegistry {
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
-        // `read_symbol` reads through this same instance, so the per-file
-        // read tally ("read N× this session") counts both surfaces as one.
-        let read_file = Arc::new(crate::read::ReadFile::default());
+        // One read-state ledger per registry (#331): `read_file` and
+        // `read_symbol` (which reads through the same instance) record what
+        // the model saw; `edit_file` attributes match failures against it and
+        // `write_file`/`edit_file` record the content the model produced.
+        let read_ledger: Arc<crate::read::ReadLedger> = Arc::default();
+        let read_file = Arc::new(crate::read::ReadFile::with_ledger(read_ledger.clone()));
         let span_reads: crate::read_symbol::SpanReadLedger = Arc::default();
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
         let mut entries: Vec<Arc<dyn Tool>> = vec![
             read_file.clone(),
-            Arc::new(crate::write::WriteFile),
-            Arc::new(crate::edit::EditFile),
+            Arc::new(crate::write::WriteFile::with_ledger(read_ledger.clone())),
+            Arc::new(crate::edit::EditFile::with_ledger(read_ledger.clone())),
+            Arc::new(crate::apply_edits::ApplyEdits::with_ledger(
+                read_ledger.clone(),
+            )),
             Arc::new(crate::delete::DeleteFile),
             // Search results carry a code-map footer; a symbol-shaped grep
             // pattern additionally carries the graph_query pointer, decided
@@ -366,6 +377,7 @@ impl ToolRegistry {
             storage_index: std::sync::Mutex::new(StorageIndex::default()),
             exploration_coverage,
             bus: std::sync::RwLock::new(None),
+            policy_bridge: std::sync::Mutex::new(None),
             process_free,
         }
     }
@@ -390,6 +402,27 @@ impl ToolRegistry {
             );
         }
         *self.bus.write().unwrap_or_else(|p| p.into_inner()) = Some(bus);
+    }
+
+    /// Bridge the attached bus's policy/extension audit plane into an
+    /// `AgentEvent` stream (receipts spec §6.4, #364 gap 6): every
+    /// `policy.evaluated` / `policy.blocked` / `approval.requested` /
+    /// `secret.detected` the bus emits lands as a content-free
+    /// [`stella_protocol::AgentEvent::PolicyDecision`] on `events`, so
+    /// whatever journal the host hangs off that stream carries the policy
+    /// plane too — previously a process-ephemeral ring that evaporated at
+    /// exit. Returns `false` (registering nothing) when no bus is attached:
+    /// the plane doesn't exist without one. Call after [`Self::attach_bus`];
+    /// calling again (a new turn's event channel) replaces the previous
+    /// bridge, so stale senders never accumulate as observer failures.
+    pub fn bridge_policy_plane(&self, events: stella_core::EventSender) -> bool {
+        let Some(bus) = self.bus() else {
+            return false;
+        };
+        let subscription = stella_core::bus::bridge_policy_plane(&bus, events);
+        // Dropping the previous subscription (if any) unsubscribes it.
+        *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = Some(subscription);
+        true
     }
 
     /// The attached hook bus, if any (cheap clone — shared inner).
@@ -485,20 +518,23 @@ impl ToolRegistry {
             _ => None,
         };
 
-        // Classify the file op BEFORE executing: create-vs-update depends
-        // on whether the file exists now, not after the write.
-        let pending_op = self.classify_file_op(name, input);
+        // Classify the file op(s) BEFORE executing: create-vs-update depends
+        // on whether the file exists now, not after the write. Single-path
+        // tools yield zero or one op; `apply_edits` yields one Update per
+        // distinct file in its batch.
+        let pending_ops = self.classify_file_ops(name, input);
         // Updates need the pre-write content for the line diff; deletes need
         // it for the pre-deletion line count. Lossy UTF-8 so a binary file
         // still yields a deterministic (if approximate) line count.
-        let pre_content: Option<String> = match &pending_op {
-            Some(pending) if matches!(pending.op, FileOp::Update | FileOp::Delete) => {
-                std::fs::read(&pending.full)
+        let pre_contents: Vec<Option<String>> = pending_ops
+            .iter()
+            .map(|pending| match pending.op {
+                FileOp::Update | FileOp::Delete => std::fs::read(&pending.full)
                     .ok()
-                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            }
-            _ => None,
-        };
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                _ => None,
+            })
+            .collect();
 
         // Storage gate (docs/design/storage-map.md §8): if the target is a
         // storage-definition file, parse the proposed content with the SAME
@@ -589,7 +625,7 @@ impl ToolRegistry {
                 bus,
                 name,
                 input,
-                pending_op.as_ref(),
+                &pending_ops,
                 resolved_script_command.as_deref(),
             ) {
                 return denied;
@@ -662,7 +698,7 @@ impl ToolRegistry {
             if let Some(pass) = pending_storage {
                 self.record_storage_objects(&pass, declared_intent.as_deref());
             }
-            if let Some(pending) = pending_op {
+            for (pending, pre_content) in pending_ops.into_iter().zip(pre_contents) {
                 self.record_touch(pending, pre_content, name, input, bus.as_ref());
             }
             // `read_symbol` resolves its file through the code graph
@@ -826,10 +862,10 @@ impl ToolRegistry {
         bus: &HookBus,
         name: &str,
         input: &Value,
-        pending: Option<&PendingTouch>,
+        pending_ops: &[PendingTouch],
         resolved_command: Option<&str>,
     ) -> Result<(), ToolOutput> {
-        if let Some(pending) = pending {
+        for pending in pending_ops {
             if bus::is_sensitive_path(&pending.path) {
                 bus.emit_named(
                     hook_names::SENSITIVE_OPERATION_DETECTED,
@@ -840,12 +876,34 @@ impl ToolRegistry {
                     }),
                 );
             }
-            if matches!(name, "write_file" | "edit_file") {
-                let proposed = input
+            // The content this call proposes to land in THIS file: write's
+            // whole content, edit's replacement, or — for a batch — the
+            // union of the batch's replacements targeting this path.
+            let proposed: Option<String> = match name {
+                "write_file" => input
                     .get("content")
-                    .or_else(|| input.get("new_string"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                    .map(str::to_string),
+                "edit_file" => input
+                    .get("new_string")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                "apply_edits" => input.get("edits").and_then(|v| v.as_array()).map(|edits| {
+                    edits
+                        .iter()
+                        .filter(|e| {
+                            e.get("path")
+                                .and_then(|v| v.as_str())
+                                .and_then(|p| normalize_workspace_path(&self.root, p))
+                                .is_some_and(|p| p == pending.path)
+                        })
+                        .filter_map(|e| e.get("new_string").and_then(|v| v.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }),
+                _ => None,
+            };
+            if let Some(proposed) = proposed.as_deref() {
                 let kinds = bus::scan_for_secrets(proposed);
                 if !kinds.is_empty() {
                     bus.emit_named(
@@ -1016,6 +1074,47 @@ impl ToolRegistry {
     /// `bash` is opaque — file ops done through the shell aren't
     /// attributable, which is why the CRUD tools exist and the prompt steers
     /// agents toward them.
+    /// [`Self::classify_file_op`] generalized to tools that touch several
+    /// files in one call: `apply_edits` yields one Update per distinct file
+    /// in its batch (a dry run yields none — nothing is written), everything
+    /// else defers to the single-path classification.
+    fn classify_file_ops(&self, tool: &str, input: &Value) -> Vec<PendingTouch> {
+        if tool != "apply_edits" {
+            return self.classify_file_op(tool, input).into_iter().collect();
+        }
+        if input
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return Vec::new();
+        }
+        let Some(edits) = input.get("edits").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut ops = Vec::new();
+        for edit in edits {
+            let Some(raw) = edit.get("path").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(full) = crate::resolve_within_root(&self.root, raw) else {
+                continue;
+            };
+            let Some(path) = normalize_workspace_path(&self.root, raw) else {
+                continue;
+            };
+            if seen.insert(path.clone()) {
+                ops.push(PendingTouch {
+                    path,
+                    full,
+                    op: FileOp::Update,
+                });
+            }
+        }
+        ops
+    }
+
     fn classify_file_op(&self, tool: &str, input: &Value) -> Option<PendingTouch> {
         let raw = input.get("path").and_then(|v| v.as_str())?;
         let full = crate::resolve_within_root(&self.root, raw)?;
@@ -1500,6 +1599,7 @@ mod tests {
             "read_symbol",
             "write_file",
             "edit_file",
+            "apply_edits",
             "delete_file",
             "grep",
             "glob",
@@ -1550,7 +1650,7 @@ mod tests {
         }
         // `bash` is NOT in the default surface — it is the settings opt-in.
         assert!(!names.contains(&"bash".to_string()), "{names:?}");
-        assert_eq!(names.len(), 49, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 50, "unexpected tool count: {names:?}");
     }
 
     // bash opt-in (default OFF everywhere)
@@ -1675,7 +1775,7 @@ mod tests {
     fn issue_tools_absent_without_a_configured_backend() {
         let (_root, reg) = bare_registry(None);
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        assert_eq!(names.len(), 41, "unexpected tool count: {names:?}");
+        assert_eq!(names.len(), 42, "unexpected tool count: {names:?}");
         for absent in [
             "create_issue",
             "update_issue",

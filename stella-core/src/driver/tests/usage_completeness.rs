@@ -47,6 +47,68 @@ async fn exhausted_worker_call_emits_one_content_free_incompleteness_event() {
 }
 
 #[tokio::test]
+async fn exhausted_retries_emit_typed_reasons_before_the_error() {
+    // Receipts spec §6.3 (#364 gap 3): `Retry` events only flush for steps
+    // that COMMIT, so a terminally-failed call's doomed attempts were
+    // previously lost. RetriesExhausted is their durable record — one
+    // reason per dispatched attempt, oldest first, ahead of the prose
+    // `Error`.
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Err(ProviderError::Transport("first drop".into())),
+            Err(ProviderError::Transport("second drop".into())),
+            Err(ProviderError::Terminal("gave up".into())),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("work"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(matches!(outcome, TurnOutcome::Aborted { .. }));
+    let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    let exhausted: Vec<_> = events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::RetriesExhausted { .. }))
+        .collect();
+    assert_eq!(exhausted.len(), 1, "{events:?}");
+    match exhausted[0] {
+        AgentEvent::RetriesExhausted {
+            attempts, reasons, ..
+        } => {
+            assert_eq!(*attempts, 3, "two retried transports plus the terminal");
+            assert_eq!(reasons.len(), 3);
+            assert!(reasons[0].contains("first drop"), "{reasons:?}");
+            assert!(reasons[1].contains("second drop"), "{reasons:?}");
+            assert!(reasons[2].contains("gave up"), "{reasons:?}");
+        }
+        other => panic!("filtered above: {other:?}"),
+    }
+    // Ordered ahead of the paired Error, so a receipt reading forward has
+    // the typed record before the prose.
+    let exhausted_pos = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::RetriesExhausted { .. }));
+    let error_pos = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::Error { .. }));
+    assert!(
+        exhausted_pos < error_pos,
+        "{exhausted_pos:?} vs {error_pos:?}"
+    );
+}
+
+#[tokio::test]
 async fn successful_retry_keeps_the_failed_attempt_usage_incomplete() {
     let provider = ScriptedProvider {
         id: "scripted".into(),

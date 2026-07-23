@@ -1306,6 +1306,30 @@ async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
         steers[0],
         AgentEvent::Steered { text } if text.contains("looping")
     ));
+    // Typed decisions (receipts spec §6.3): each detection also lands as a
+    // parseable LoopDetected — the steer with `aborted: false`, the kill
+    // with `aborted: true` — so receipts never string-match Error prefixes.
+    let detections: Vec<(&str, &Vec<String>, bool)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::LoopDetected {
+                kind,
+                pattern,
+                aborted,
+                ..
+            } => Some((kind.as_str(), pattern, *aborted)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        detections.len(),
+        2,
+        "one typed event per detection (steer + abort): {detections:?}"
+    );
+    assert_eq!(detections[0].0, "exact_repeat");
+    assert_eq!(detections[0].1, &vec!["bash".to_string()]);
+    assert!(!detections[0].2, "first detection steers");
+    assert!(detections[1].2, "second detection aborts");
     // The warning precedes the abort's Error event — steer first, abort
     // second.
     let steer_pos = events
@@ -1507,6 +1531,21 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
         events
             .iter()
             .any(|e| matches!(e, AgentEvent::BudgetTick { .. }))
+    );
+    // Typed decision (receipts spec §6.3): the denial is parseable, not
+    // just a prose Error. Scope is the axis that tripped; mode is
+    // Enforced by construction (only enforced budgets abort).
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::BudgetDenied {
+                scope: stella_protocol::BudgetScope::Turn,
+                mode: BudgetMode::Enforced,
+                spent_usd,
+                limit_usd,
+            } if *spent_usd > *limit_usd
+        )),
+        "expected a typed BudgetDenied: {events:?}"
     );
 }
 
@@ -2455,6 +2494,77 @@ async fn session_start_hooks_run_via_the_helper_not_per_turn() {
         "run_turn must not fire SessionStart — only the helper does"
     );
     assert!(payloads[0].contains("\"event\":\"SessionStart\""));
+}
+
+#[test]
+fn read_tally_footer_does_not_blind_loop_detection() {
+    // `read_file` appends "read K\u{d7} this session" — different bytes on
+    // EVERY read of an unchanged file. Comparison must see through the
+    // footer, or the module-doc thrash (read → failing edit → read, and a
+    // bare reread spiral) can never satisfy the byte-identical-output
+    // requirement and detection is structurally blind for read_file.
+    let read_call = |id: &str| CompletionMessage {
+        role: MessageRole::Assistant,
+        content: String::new(),
+        tool_calls: vec![ToolCall {
+            call_id: id.into(),
+            name: "read_file".into(),
+            input: serde_json::json!({ "path": "a.rs" }),
+        }],
+        tool_results: Vec::new(),
+        attachments: Vec::new(),
+    };
+    let read_result = |id: &str, body: &str, count: usize| CompletionMessage {
+        role: MessageRole::Tool,
+        content: String::new(),
+        tool_calls: Vec::new(),
+        tool_results: vec![stella_protocol::ToolResult {
+            call_id: id.into(),
+            output: ToolOutput::Ok {
+                content: format!(
+                    "     1\tfn {body}() {{}}\n\n(1/1 lines shown \u{b7} read {count}\u{d7} this session)"
+                ),
+            },
+        }],
+        attachments: Vec::new(),
+    };
+
+    // Unchanged file reread four times: only the tally differs → a loop.
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("go"),
+    ];
+    for count in 1..=4usize {
+        let id = format!("c{count}");
+        messages.push(read_call(&id));
+        messages.push(read_result(&id, "same", count));
+    }
+    let verdict = detect_loop(
+        &recent_call_records(&messages),
+        LoopDetectionConfig::default(),
+    );
+    assert!(
+        verdict.is_loop(),
+        "identical rereads must be a loop despite the tally footer: {verdict:?}"
+    );
+
+    // Content that genuinely changes between reads stays progress.
+    let mut changing = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("go"),
+    ];
+    for count in 1..=4usize {
+        let id = format!("d{count}");
+        changing.push(read_call(&id));
+        changing.push(read_result(&id, &format!("v{count}"), count));
+    }
+    assert_eq!(
+        detect_loop(
+            &recent_call_records(&changing),
+            LoopDetectionConfig::default()
+        ),
+        crate::loop_detect::LoopVerdict::NoLoop
+    );
 }
 
 mod audit_fixes;
