@@ -233,15 +233,18 @@ impl ToolRegistry {
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
-        // `read_symbol` reads through this same instance, so the per-file
-        // read tally ("read N× this session") counts both surfaces as one.
-        let read_file = Arc::new(crate::read::ReadFile::default());
+        // One read-state ledger per registry (#331): `read_file` and
+        // `read_symbol` (which reads through the same instance) record what
+        // the model saw; `edit_file` attributes match failures against it and
+        // `write_file`/`edit_file` record the content the model produced.
+        let read_ledger: Arc<crate::read::ReadLedger> = Arc::default();
+        let read_file = Arc::new(crate::read::ReadFile::with_ledger(read_ledger.clone()));
         let span_reads: crate::read_symbol::SpanReadLedger = Arc::default();
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
         let mut entries: Vec<Arc<dyn Tool>> = vec![
             read_file.clone(),
-            Arc::new(crate::write::WriteFile),
-            Arc::new(crate::edit::EditFile),
+            Arc::new(crate::write::WriteFile::with_ledger(read_ledger.clone())),
+            Arc::new(crate::edit::EditFile::with_ledger(read_ledger.clone())),
             Arc::new(crate::delete::DeleteFile),
             // Search results carry a code-map footer; a symbol-shaped grep
             // pattern additionally carries the graph_query pointer, decided
