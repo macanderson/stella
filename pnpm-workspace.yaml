@@ -11,3 +11,11 @@ packages:
 allowBuilds:
   esbuild: true
   sharp: true
+
+# Pin this Next transitive dep to the previous patch: 2.11.1 (a browser-compat
+# DATA release) was published <24h before the `minimumReleaseAge` supply-chain
+# cutoff, which fails `pnpm install --frozen-lockfile`. 2.11.0 (published a day
+# earlier) is identical in kind and safely aged. Drop this override once Next
+# ships a baseline-browser-mapping that clears the release-age window.
+overrides:
+  baseline-browser-mapping: 2.11.0
