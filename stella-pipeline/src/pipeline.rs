@@ -88,6 +88,33 @@ use run_error::RoleResolveError;
 pub use run_error::{PipelineError, PipelineRunError};
 use stage_budget::{PipelineBudgetAbort, budget_abort};
 use task5::BoundHookRunner;
+/// Make a diff that verification hands downstream *incapable of lying*.
+///
+/// An empty diff is ambiguous: it can mean the agent genuinely changed
+/// nothing, OR that the diff machinery is blind to changes that DID happen
+/// (work that was committed, a baseline mismatch, an uncaptured file). Handed
+/// a bare empty string, a judge reads the second case as the first and
+/// concludes "no changes were made" — the archetypal verification lie that
+/// once drove an agent to reinitialize git to beat the check.
+///
+/// The pipeline already has the independent signal that resolves the
+/// ambiguity: `file_changes`, the count of `FileChange` events the turn
+/// emitted. When that is positive but the diff is empty, the honest report is
+/// "the tree changed but the diff could not be captured" — a *couldn't
+/// verify*, never a *verified nothing*. Every consumer (judge, guidance,
+/// evidence) then sees the truth.
+fn verification_honest_diff(diff_text: String, file_changes: u32) -> String {
+    if file_changes > 0 && diff_text.trim().is_empty() {
+        format!(
+            "[{file_changes} file-change event(s) were observed this turn, but the diff could \
+             not be captured — the change is real; the diff is blind to it. This is NOT evidence \
+             that nothing changed; verify the result on its own merits.]"
+        )
+    } else {
+        diff_text
+    }
+}
+
 /// Minimal fallback when the caller supplies no stable system prefix.
 const DEFAULT_SYSTEM_PROMPT: &str =
     "You are a precise, careful software engineering agent. Make the smallest correct change.";
@@ -1315,8 +1342,10 @@ impl<'a> Pipeline<'a> {
         // simple lookup, only if the turn unexpectedly touched files (the
         // zero-diff guard, L-E2). "Touched files" = FileChange events observed
         // OR a non-empty diff.
-        (state.diff_lines, state.diff_text) =
+        let (gathered_lines, gathered_diff) =
             self.gather_diff(surface, &state.untracked_before).await;
+        state.diff_lines = gathered_lines;
+        state.diff_text = verification_honest_diff(gathered_diff, state.file_changes);
         let files_touched = state.file_changes > 0 || !state.diff_text.trim().is_empty();
         let should_verify = assessment.class.verifies_unconditionally()
             || (assessment.class == TaskClass::SimpleLookup && files_touched);
@@ -1560,11 +1589,13 @@ impl<'a> Pipeline<'a> {
                     // Inconclusive — escalate to the model judge (judge ≠
                     // worker; a judge-call failure falls back to a heuristic).
                     let evidence_summary = format!(
-                        "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {})",
+                        "flip_achieved={}; touched_tests={:?}; diff_lines={} (budget {}); \
+                         file_change_events={}",
                         inputs.flip_achieved,
                         inputs.touched_tests_passed,
                         state.diff_lines,
                         self.config.diff_budget_lines,
+                        state.file_changes,
                     );
                     let verdict = match self
                         .judge(
@@ -1686,7 +1717,7 @@ impl<'a> Pipeline<'a> {
             )
             .await?;
         state.diff_lines = diff_lines;
-        state.diff_text = diff_text;
+        state.diff_text = verification_honest_diff(diff_text, state.file_changes);
         state.revisions += 1;
         Ok(())
     }
