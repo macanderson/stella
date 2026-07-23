@@ -271,6 +271,62 @@ pub fn cost_summary(cost_usd: f64, model: &str, elapsed: Duration) {
     );
 }
 
+/// The end-of-run recap (settings `enable_recap`): a deterministic synthesis
+/// of the outcome and what changed, printed after the file and cost panels in
+/// text mode. No model call — it reads the run's own facts. Complements the
+/// file-list panel with the "so what": did it complete, was it verified, and
+/// a created/modified/deleted tally.
+pub fn recap_panel(
+    status: &stella_pipeline::PipelineStatus,
+    verdict: Option<&stella_pipeline::Verdict>,
+    files: &[(String, String)],
+) {
+    use stella_pipeline::PipelineStatus;
+    let headline = match status {
+        PipelineStatus::Completed => match verdict {
+            Some(v) if v.passed && v.deterministic => {
+                "✓ completed — verified (deterministic)".to_string()
+            }
+            Some(v) if v.passed => "✓ completed — verified".to_string(),
+            _ => "✓ completed".to_string(),
+        },
+        PipelineStatus::VerificationFailed { verdict } => {
+            format!("✗ verification failed — {}", verdict.summary)
+        }
+        PipelineStatus::Aborted { reason } => format!("⚠ aborted — {reason}"),
+    };
+
+    let mut created = 0usize;
+    let mut modified = 0usize;
+    let mut deleted = 0usize;
+    for (_, op) in files {
+        match op.to_ascii_lowercase().as_str() {
+            o if o.contains("creat") || o.contains("add") => created += 1,
+            o if o.contains("delet") || o.contains("remov") => deleted += 1,
+            _ => modified += 1,
+        }
+    }
+    let changes = if files.is_empty() {
+        "no files changed".to_string()
+    } else {
+        let mut parts = Vec::new();
+        if created > 0 {
+            parts.push(format!("{created} created"));
+        }
+        if modified > 0 {
+            parts.push(format!("{modified} modified"));
+        }
+        if deleted > 0 {
+            parts.push(format!("{deleted} deleted"));
+        }
+        parts.join(" · ")
+    };
+
+    println!("\n  {} Recap", "◆".dimmed());
+    println!("    {headline}");
+    println!("    {changes}");
+}
+
 /// Print the welcome banner: the STELLA block-letter logomark swept with the
 /// stellar gradient, then the session info line. (The previous banner was a
 /// hand-pasted figlet that had drifted into garbage — it did not actually

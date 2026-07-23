@@ -4,11 +4,10 @@ import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
  * Shared layout options (nav title, links) consumed by both the docs layout
  * and the home/landing layout.
  *
- * Branding: the Stella horizontal lockup (gold chevron+cells mark + "stella"
- * wordmark) with a muted "docs" qualifier. Two lockups are shipped — an ink
- * wordmark for the light Paper surface and a paper wordmark for the dark Night
- * surface — swapped by the `.dark` class so the wordmark always has contrast
- * while the gold mark stays constant.
+ * Branding: the Stella wordmark ("stella" + yellow star, docs/brand/) with a
+ * muted "docs" qualifier. Two cuts ship — an ink wordmark for the light Paper
+ * surface and a snow wordmark for the dark Night surface — swapped by the
+ * `.dark` class so the letters always have contrast while the yellow star holds.
  */
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -17,15 +16,15 @@ export function baseOptions(): BaseLayoutProps {
         <span className="inline-flex items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/brand/lockup-light.svg"
+            src="/brand/stella-logo-light.svg"
             alt="Stella"
-            className="h-6 w-auto dark:hidden"
+            className="h-7 w-auto dark:hidden"
           />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/brand/lockup-dark.svg"
+            src="/brand/stella-logo-dark.svg"
             alt="Stella"
-            className="hidden h-6 w-auto dark:block"
+            className="hidden h-7 w-auto dark:block"
           />
           <span className="rounded-md border border-fd-border px-1.5 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-fd-muted-foreground">
             docs
