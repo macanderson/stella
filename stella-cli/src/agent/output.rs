@@ -133,6 +133,16 @@ pub(super) fn event_sender_for_run(
     sender: mpsc::UnboundedSender<AgentEvent>,
     format: OutputFormat,
 ) -> (EventSender, bool) {
+    // An arena run (`stella arena`) records its contextgraph-trace journal at
+    // this same persist-first boundary. The recorder is wired programmatically
+    // by the subcommand, never by ambient env, so it cannot become a
+    // repository-selected append primitive.
+    if let Some(recorder) = crate::arena::installed_recorder() {
+        return (
+            crate::arena::recording_event_sender(sender, recorder),
+            false,
+        );
+    }
     if format == OutputFormat::StreamJson {
         match configured_durable_stream_path() {
             Ok(Some(path)) => {
