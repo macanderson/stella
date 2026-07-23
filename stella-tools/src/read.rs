@@ -22,7 +22,9 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::registry::Tool;
 
-const MAX_LINES: usize = 2000;
+/// Crate-visible so `read_symbol` (which reads through this tool) can name
+/// the cap honestly when a symbol's span exceeds it.
+pub(crate) const MAX_LINES: usize = 2000;
 
 #[derive(Default)]
 pub struct ReadFile {

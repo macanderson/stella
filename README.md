@@ -366,6 +366,7 @@ are also accepted case-insensitively.
 | `bash` | Run a shell command (timeout kill; `trace: true` echoes each line) — **off by default**, registered only with `"tools": {"bash": "on"}` in settings (any scope) |
 | `grep` · `glob` | Regex content search (ripgrep) · glob file discovery (fd) |
 | `graph_query` | Query the indexed code graph: symbol definitions/references, file imports/importers/neighborhood — auto-built at session start, refreshed live |
+| `read_symbol` | Read a named symbol's exact source span, resolved through the code graph — no line-offset guessing; multiple definitions are listed, never silently picked |
 | `build_project` · `run_tests` | Build/test with the workspace's toolchain (cargo/npm/go/make) |
 | `run_lint` · `format_code` | The project's own linter/formatter (cargo clippy/fmt, or package.json `lint`/`format` scripts), spawned argv-style — no shell |
 | `run_script` | Run a verb the project itself declares (Makefile target, package.json script, cargo alias); unknown names list the discovered vocabulary |

@@ -96,6 +96,8 @@ pub const RESERVED_NAMES: &[&str] = &[
     "project_overview",
     // File CRUD
     "read_file",
+    // Graph-resolved span read (reads through the same `read_file` instance)
+    "read_symbol",
     "write_file",
     "edit_file",
     "delete_file",

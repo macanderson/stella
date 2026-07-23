@@ -30,6 +30,7 @@ pub mod overview;
 pub mod process;
 pub mod project;
 pub mod read;
+pub mod read_symbol;
 pub mod registry;
 pub mod repo;
 pub mod sandbox;

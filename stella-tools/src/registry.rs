@@ -56,6 +56,12 @@ pub struct ToolRegistry {
     late_tools: std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>,
     root: PathBuf,
     touched: std::sync::Mutex<FileTouchLedger>,
+    /// Paths `read_symbol` resolved and read, shared with the registered
+    /// tool instance and drained once per execution into the file-touch
+    /// ledger — the symbol's file is resolved through the code graph
+    /// mid-execution, so [`ToolRegistry::classify_file_op`] cannot see it in
+    /// the input the way it sees `read_file`'s `path`.
+    span_reads: crate::read_symbol::SpanReadLedger,
     /// The session's memory-citation ledger, shared with the registered
     /// `cite_memory` tool instance and drained per execution by
     /// [`ToolRegistry::take_memory_citations`].
@@ -227,9 +233,13 @@ impl ToolRegistry {
         let mcp_usage: stella_core::mcp_usage::McpUsageLedger = Arc::default();
         let task_board: crate::tasks::TaskBoardHandle = Arc::default();
         let spawn_queue: crate::tasks::SpawnQueue = Arc::default();
+        // `read_symbol` reads through this same instance, so the per-file
+        // read tally ("read N× this session") counts both surfaces as one.
+        let read_file = Arc::new(crate::read::ReadFile::default());
+        let span_reads: crate::read_symbol::SpanReadLedger = Arc::default();
         let mut tools: HashMap<String, Arc<dyn Tool>> = HashMap::new();
         let mut entries: Vec<Arc<dyn Tool>> = vec![
-            Arc::new(crate::read::ReadFile::default()),
+            read_file.clone(),
             Arc::new(crate::write::WriteFile),
             Arc::new(crate::edit::EditFile),
             Arc::new(crate::delete::DeleteFile),
@@ -286,6 +296,10 @@ impl ToolRegistry {
         // the chicken-and-egg gate.
         entries.push(Arc::new(crate::overview::ProjectOverview));
         entries.push(Arc::new(crate::graph::CodeGraphQuery));
+        entries.push(Arc::new(crate::read_symbol::ReadSymbol::new(
+            read_file,
+            span_reads.clone(),
+        )));
         if let Some(media) = media_backend {
             entries.push(match &media_host_context {
                 Some((gate, ids, journal)) => {
@@ -343,6 +357,7 @@ impl ToolRegistry {
             late_tools: std::sync::RwLock::new(HashMap::new()),
             root,
             touched: std::sync::Mutex::new(FileTouchLedger::default()),
+            span_reads,
             citations,
             agent_uses: std::sync::Mutex::new(crate::agent_use::AgentUseLedger::default()),
             mcp_usage,
@@ -650,6 +665,32 @@ impl ToolRegistry {
             if let Some(pending) = pending_op {
                 self.record_touch(pending, pre_content, name, input, bus.as_ref());
             }
+            // `read_symbol` resolves its file through the code graph
+            // mid-execution, so its `R` event cannot be classified from the
+            // input up front like `read_file`'s: the tool recorded each
+            // resolved path and the drain here lands the same
+            // one-R-event-per-successful-read in the ledger.
+            if name == "read_symbol" {
+                let resolved: Vec<String> =
+                    std::mem::take(&mut *self.span_reads.lock().unwrap_or_else(|p| p.into_inner()));
+                for path in resolved {
+                    if let Some(full) = crate::resolve_within_root(&self.root, &path)
+                        && let Some(normalized) = normalize_workspace_path(&self.root, &path)
+                    {
+                        self.record_touch(
+                            PendingTouch {
+                                path: normalized,
+                                full,
+                                op: FileOp::Read,
+                            },
+                            None,
+                            name,
+                            input,
+                            bus.as_ref(),
+                        );
+                    }
+                }
+            }
             // A new/updated map changes what is covered — rebuild (also
             // resets nothing: the hinted set survives via re-insertion
             // below being per-slice, and a freshly saved map needs no hint
@@ -673,8 +714,10 @@ impl ToolRegistry {
         // FRESH map covers, say so once per (session, slice) — meeting the
         // grep habit where it lives. Appended to the result text, outside
         // the cached prompt prefix, so the hint costs no cache stability.
-        if matches!(name, "grep" | "glob" | "read_file" | "graph_query")
-            && let ToolOutput::Ok { content } = &mut output
+        if matches!(
+            name,
+            "grep" | "glob" | "read_file" | "read_symbol" | "graph_query"
+        ) && let ToolOutput::Ok { content } = &mut output
         {
             let mut haystack = String::new();
             for key in ["path", "target", "pattern"] {
@@ -1454,6 +1497,7 @@ mod tests {
         let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
         for expected in [
             "read_file",
+            "read_symbol",
             "write_file",
             "edit_file",
             "delete_file",
@@ -1751,6 +1795,60 @@ mod tests {
         );
     }
 
+    /// Issue #330 witness: `read_symbol` dispatches through the registry,
+    /// returns exactly the graph-resolved span, lands the same `R`
+    /// file-touch event a `read_file` of that file would, and shares one
+    /// per-file read tally with `read_file`.
+    #[tokio::test]
+    async fn read_symbol_reads_the_exact_span_and_lands_a_file_touch_read_event() {
+        let (root, reg) = bare_registry(None);
+        std::fs::write(
+            root.path().join("lib.rs"),
+            "fn before() {}\n\nfn span_me() {\n    let x = 1;\n}\n",
+        )
+        .unwrap();
+
+        let out = reg
+            .execute(
+                "read_symbol",
+                &serde_json::json!({"name": "span_me", "reason": "witness"}),
+            )
+            .await;
+        match &out {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("fn span_me (lib.rs:3-5)"), "{content}");
+                assert!(content.contains("3\tfn span_me() {"), "{content}");
+                assert!(!content.contains("before"), "exactly the span: {content}");
+            }
+            other => panic!("read_symbol must dispatch: {other:?}"),
+        }
+
+        // The read landed in the file-touch ledger as an `R` on the resolved
+        // path — audit parity with `read_file`.
+        let touched = reg.files_touched();
+        assert!(
+            touched
+                .iter()
+                .any(|(path, ops)| path == "lib.rs" && ops.contains('R')),
+            "read_symbol must land an R event: {touched:?}"
+        );
+
+        // And the per-file read tally is shared: a `read_file` of the same
+        // file counts as the second read this session.
+        let second = reg
+            .execute("read_file", &serde_json::json!({"path": "lib.rs"}))
+            .await;
+        match &second {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains("read 2× this session"),
+                    "one tally across both read surfaces: {content}"
+                );
+            }
+            other => panic!("read_file must read: {other:?}"),
+        }
+    }
+
     #[test]
     fn read_only_flags_partition_the_registry_correctly() {
         // The engine parallelizes on this flag — a mutating tool marked
@@ -1761,6 +1859,7 @@ mod tests {
             let expected = matches!(
                 schema.name.as_str(),
                 "read_file"
+                    | "read_symbol"
                     | "grep"
                     | "glob"
                     | "gather_context"

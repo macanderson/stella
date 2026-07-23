@@ -58,7 +58,7 @@ mod watch;
 
 pub use error::GraphError;
 pub use frames::PROVIDER_ID;
-pub use graph::{CodeGraph, FileNeighborhood, NeighborhoodSymbol};
+pub use graph::{CodeGraph, FileNeighborhood, NeighborhoodSymbol, SymbolSpan};
 pub use import::{ImportEdge, ImportKind};
 pub use lang::Language;
 pub use storage::{StorageExtract, StorageExtractor, StorageSnapshot};

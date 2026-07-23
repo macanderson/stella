@@ -25,13 +25,14 @@ Tool names are their exact identifiers — the agent dispatches by name, and the
 
 ### Always available
 
-These 38 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 39 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
 | Tool | Description | Access |
 | --- | --- | --- |
 | `read_file` | Read a file, returned with 1-based line numbers; `offset`/`limit` read a range. | Read-only |
+| `read_symbol` | Read a named symbol's exact source span, resolved through the code graph — no line-offset guessing. Multiple definitions are listed (pick one with `path`), never silently chosen. | Read-only |
 | `write_file` | Create a file or overwrite an existing one — parent directories are created as needed. | Mutating |
 | `edit_file` | Replace an exact substring in a file — exactly-once by default, every occurrence with `replace_all`. | Mutating |
 | `delete_file` | Delete a file — preferred over shelling out to `rm`, so the deletion lands in the file-touch audit log. | Mutating |
@@ -107,7 +108,7 @@ These 38 tools register in every session — no configuration, no prerequisites.
 | `task_assign` | Delegate a board task to a parallel sub-agent — the briefing is passed verbatim, so write it self-contained. | Mutating |
 
 <Callout type="info">
-`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. The read-only partition is exactly: `read_file`, `grep`, `glob`, `graph_query`, `project_overview`, `list_scripts`, `gather_context`, `explorations`, `ci_status`, `repo_status`, `repo_diff`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_search`, `web_fetch`, `web_extract_assets` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer. (`web_download` writes a file, so it is mutating.)
+`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `list_scripts`, `gather_context`, `explorations`, `ci_status`, `repo_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_search`, `web_fetch`, `web_extract_assets` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer. (`web_download` writes a file, so it is mutating.)
 </Callout>
 
 ### Conditionally registered
@@ -215,7 +216,7 @@ The other three session tools are read-only **discovery** tools layered over the
 
 Set `STELLA_LEAN_TOOLS=1` to advertise only a lean core toolset (file CRUD, search, build/test/verify, `ask_user`, and `bash` when the opt-in has enabled it) plus the discovery tools; everything else stays out of the prompt until a `tool_search` surfaces it. Matched tools are *activated* — advertised for the rest of the session. Set the variable to a comma-separated list of tool names to choose your own core. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 38 always-on tools, up to 54 native tools with the `bash` and `web` opt-ins, the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 39 always-on tools, up to 55 native tools with the `bash` and `web` opt-ins, the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 
