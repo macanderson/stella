@@ -28,7 +28,7 @@ use stella_pipeline::{
 };
 use stella_protocol::event::BudgetMode;
 use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput};
-use stella_store::{Store, TelemetryRow};
+use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool, CustomToolSet};
 use stella_tools::hook_runner::ShellHookRunner;
