@@ -1516,7 +1516,7 @@ pub fn run_tools_listing() -> Result<(), String> {
     );
     println!(
         "\n  {}",
-        "custom (.stella/tools/, ~/.config/stella/tools/):".dimmed()
+        "custom (.stella/tools/, ~/.stella/tools/):".dimmed()
     );
     if report.tools.is_empty() {
         println!(
@@ -1567,7 +1567,7 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
             if !dir.is_dir() {
                 return Err(format!(
                     "`{}` is not a directory — pass a directory of *.toml manifests, or omit \
-                     the value to check .stella/tools/ and ~/.config/stella/tools/",
+                     the value to check .stella/tools/ and ~/.stella/tools/",
                     dir.display()
                 ));
             }
@@ -1578,7 +1578,7 @@ pub fn run_tools_validation(dir: Option<&std::path::Path>) -> Result<(), String>
             println!(
                 "  {} {}",
                 "checking:".dimmed(),
-                ".stella/tools/, ~/.config/stella/tools/".dimmed()
+                ".stella/tools/, ~/.stella/tools/".dimmed()
             );
             validate::validate_default(&workspace_root)
         }
@@ -2015,7 +2015,7 @@ fn print_help() {
         "/files".bright_magenta()
     );
     println!(
-        "  {}      List custom agents (⚡ from .stella/agents or ~/.config/stella/agents)",
+        "  {}      List custom agents (⚡ from .stella/agents or ~/.stella/agents)",
         "/agents".bright_magenta()
     );
     println!(
