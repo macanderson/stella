@@ -79,20 +79,24 @@ impl ContextProvider for ContextStore {
                 reads: true,
                 writes: true,
                 egress: false,
+                // Local plane: nothing leaves the machine, so no egress scopes.
+                egress_scopes: vec![],
             },
         }
     }
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
+            // `filters` and the `upsert`/`subscribe` flags were removed in the
+            // CGP normative sweep (#33): durability is now declared on
+            // `DataFlow.writes` (ADR 0004), and query filters are no longer a
+            // separately advertised capability.
             query: QueryCapability {
                 kinds: store_kinds(),
-                filters: vec!["anchors".to_string(), "as_of".to_string()],
             },
-            upsert: true,
             graph: true,
             embeddings_fingerprint: Some(self.fingerprint().id()),
-            subscribe: false,
+            ..Default::default()
         }
     }
 
@@ -223,6 +227,7 @@ mod tests {
             max_frames: 10,
             max_tokens: 4000,
             as_of: None,
+            representation_preferences: vec![],
         }
     }
 
@@ -240,7 +245,9 @@ mod tests {
     async fn store_capabilities_report_upsert_graph_and_fingerprint() {
         let (_dir, store) = seeded_store().await;
         let caps = store.capabilities();
-        assert!(caps.upsert);
+        // Durability moved from `capabilities.upsert` to `data_flow.writes`
+        // in CGP #33 (ADR 0004).
+        assert!(store.info().data_flow.writes);
         assert!(caps.graph);
         assert_eq!(
             caps.embeddings_fingerprint.as_deref(),
@@ -303,6 +310,7 @@ mod tests {
                     reads: true,
                     writes: false,
                     egress: false,
+                    egress_scopes: vec![],
                 },
             }
         }
@@ -311,7 +319,6 @@ mod tests {
             Capabilities {
                 query: QueryCapability {
                     kinds: store_kinds(),
-                    filters: vec![],
                 },
                 ..Capabilities::default()
             }

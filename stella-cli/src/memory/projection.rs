@@ -36,7 +36,7 @@ pub(super) fn project_recalled_frame(
         kind,
         uri,
         method,
-        content: frame.content.trim().to_string(),
+        content: frame.content.as_deref().unwrap_or("").trim().to_string(),
         token_cost: frame.token_cost,
         id: Some(frame.id),
     })

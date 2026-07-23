@@ -1529,6 +1529,7 @@ mod tests {
             max_frames: 10,
             max_tokens: 4000,
             as_of: None,
+            representation_preferences: vec![],
         };
         store.recall(&q).await.unwrap();
         assert_eq!(
@@ -1584,6 +1585,7 @@ mod tests {
             max_frames: 5,
             max_tokens: 2000,
             as_of: None,
+            representation_preferences: vec![],
         };
         let result = store.recall(&q).await.unwrap();
         assert!(
@@ -1639,6 +1641,7 @@ mod tests {
             max_frames: 10,
             max_tokens: 4000,
             as_of: None,
+            representation_preferences: vec![],
         };
         let result = store
             .recall_scoped(&q, &["billing".to_string()])

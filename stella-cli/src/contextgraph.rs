@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use contextgraph_host::{ContextProvider, Host, HostError, ProviderResult};
+use contextgraph_types::Representation;
 use contextgraph_types::{
     Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, ProviderInfo,
 };
@@ -47,6 +48,7 @@ fn local_info(name: &str) -> ProviderInfo {
             reads: true,
             writes: false,
             egress: false,
+            egress_scopes: vec![],
         },
     }
 }
@@ -214,7 +216,6 @@ pub fn session_host(
                 kinds: ["memory", "episode", "fact", "snippet", "symbol", "doc"]
                     .map(String::from)
                     .to_vec(),
-                filters: Vec::new(),
             },
             ..Capabilities::default()
         },
@@ -226,7 +227,6 @@ pub fn session_host(
             graph: true,
             query: contextgraph_types::capability::QueryCapability {
                 kinds: ["symbol", "snippet", "graph"].map(String::from).to_vec(),
-                filters: Vec::new(),
             },
             ..Capabilities::default()
         },
@@ -300,10 +300,21 @@ mod tests {
             id: id.to_string(),
             kind: contextgraph_types::FrameKind::Memory,
             title: id.to_string(),
-            content: format!("content of {id}"),
+            content: Some(format!("content of {id}")),
             uri: None,
             score,
             token_cost,
+            content_digest: None,
+            representation: Representation::Full,
+            content_fidelity: None,
+            canonical_content_hash: None,
+            content_ref: None,
+            transform: None,
+            minimum_content_fidelity: None,
+            inline_content_requirement: None,
+            canonical_token_cost: None,
+            tokenizer_ref: None,
+
             valid_from: None,
             valid_to: None,
             recorded_at: None,
@@ -361,6 +372,7 @@ mod tests {
             max_frames,
             max_tokens,
             as_of: None,
+            representation_preferences: vec![],
         }
     }
 
@@ -464,7 +476,8 @@ mod tests {
         // production path, end to end.
         let kept = recall_via_host(&host, &q).await;
         assert!(
-            kept.iter().any(|f| f.frame.content.contains("sqlite")),
+            kept.iter()
+                .any(|f| f.frame.content.as_deref().unwrap_or("").contains("sqlite")),
             "the seeded node surfaces through the registry-routed path"
         );
     }
@@ -486,7 +499,6 @@ mod tests {
             Capabilities {
                 query: contextgraph_types::capability::QueryCapability {
                     kinds: self.kinds.clone(),
-                    filters: Vec::new(),
                 },
                 ..Capabilities::default()
             }
@@ -524,7 +536,12 @@ mod tests {
         q.query_text = Some("open the sqlite connection in wal mode".to_string());
         let result = provider.query(&q).await.expect("fan-out");
         assert!(result.frames.iter().any(|f| f.id == "plane-graph"));
-        assert!(result.frames.iter().any(|f| f.content.contains("sqlite")));
+        assert!(
+            result
+                .frames
+                .iter()
+                .any(|f| f.content.as_deref().unwrap_or("").contains("sqlite"))
+        );
         assert!(result.truncated, "a plane provider's drop report survives");
 
         // Kind-filtered to `graph`: the registry routes the store away (it
@@ -574,7 +591,6 @@ mod tests {
                     kinds: ["memory", "episode", "fact", "snippet", "symbol", "doc"]
                         .map(String::from)
                         .to_vec(),
-                    filters: Vec::new(),
                 },
                 ..Capabilities::default()
             },
@@ -600,7 +616,6 @@ mod tests {
                 graph: true,
                 query: contextgraph_types::capability::QueryCapability {
                     kinds: ["symbol", "snippet", "graph"].map(String::from).to_vec(),
-                    filters: Vec::new(),
                 },
                 ..Capabilities::default()
             },

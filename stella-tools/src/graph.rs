@@ -193,7 +193,9 @@ fn render_frames(frames: &[stella_graph::ContextFrame]) -> String {
         .take(MAX_FRAMES)
         .map(|f| {
             let label = f.citation_label.as_deref().unwrap_or(&f.title);
-            let content = f.content.trim();
+            // CGP #33 made frame content optional (a `reference` frame carries
+            // none); a contentless frame renders as its label alone.
+            let content = f.content.as_deref().unwrap_or("").trim();
             if content.is_empty() {
                 format!("- {label}")
             } else {

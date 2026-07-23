@@ -16,7 +16,9 @@
 use std::collections::{HashMap, HashSet};
 
 use contextgraph_types::frame::FrameEmbedding;
-use contextgraph_types::{ContextFrame, ContextQuery, ContextQueryResult, Provenance};
+use contextgraph_types::{
+    ContextFrame, ContextQuery, ContextQueryResult, Provenance, Representation,
+};
 
 use crate::error::ContextError;
 use crate::store::{
@@ -356,10 +358,20 @@ pub(crate) fn frame_from_node(
         id: node.public_id.clone(),
         kind: node.kind.to_frame_kind(),
         title: node.display_name.clone(),
-        content: node.content.clone(),
+        content: Some(node.content.clone()),
         uri: node.uri.clone(),
         score: score.clamp(0.0, 1.0),
         token_cost: estimate_tokens(&node.content) + estimate_tokens(&node.display_name),
+        content_digest: None,
+        representation: Representation::Full,
+        content_fidelity: None,
+        canonical_content_hash: None,
+        content_ref: None,
+        transform: None,
+        minimum_content_fidelity: None,
+        inline_content_requirement: None,
+        canonical_token_cost: None,
+        tokenizer_ref: None,
         valid_from: None,
         valid_to: None,
         recorded_at: Some(node.recorded_at.clone()),
@@ -590,10 +602,20 @@ mod tests {
             id: id.into(),
             kind: FrameKind::Snippet,
             title: id.into(),
-            content: String::new(),
+            content: Some(String::new()),
             uri: None,
             score: 0.5,
             token_cost,
+            content_digest: None,
+            representation: Representation::Full,
+            content_fidelity: None,
+            canonical_content_hash: None,
+            content_ref: None,
+            transform: None,
+            minimum_content_fidelity: None,
+            inline_content_requirement: None,
+            canonical_token_cost: None,
+            tokenizer_ref: None,
             valid_from: None,
             valid_to: None,
             recorded_at: None,
@@ -760,6 +782,7 @@ mod tests {
             max_frames: 10,
             max_tokens: 4000,
             as_of: None,
+            representation_preferences: vec![],
         }
     }
 
@@ -821,7 +844,12 @@ mod tests {
             !result.used_lexical_fallback,
             "strong coverage → real grounding, not fallback"
         );
-        assert!(result.frames.iter().any(|f| f.content.contains("sqlite")));
+        assert!(
+            result
+                .frames
+                .iter()
+                .any(|f| f.content.as_deref().unwrap_or("").contains("sqlite"))
+        );
         // Every frame is humanly citable (`L-C4`).
         assert!(result.frames.iter().all(|f| {
             f.citation_label

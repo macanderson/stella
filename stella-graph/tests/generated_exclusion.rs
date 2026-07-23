@@ -19,6 +19,7 @@ fn query(text: &str) -> ContextQuery {
         max_frames: 50,
         max_tokens: 20_000,
         as_of: None,
+        representation_preferences: vec![],
     }
 }
 

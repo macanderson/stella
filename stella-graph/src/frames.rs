@@ -19,7 +19,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use contextgraph_types::{ContextFrame, ContextQuery, FrameKind, Provenance, Relation};
+use contextgraph_types::{
+    ContextFrame, ContextQuery, FrameKind, Provenance, Relation, Representation,
+};
 use rusqlite::Connection;
 
 use crate::error::GraphError;
@@ -291,10 +293,20 @@ fn frame(
         id,
         kind,
         title,
-        content,
+        content: Some(content),
         uri,
         score,
         token_cost,
+        content_digest: None,
+        representation: Representation::Full,
+        content_fidelity: None,
+        canonical_content_hash: None,
+        content_ref: None,
+        transform: None,
+        minimum_content_fidelity: None,
+        inline_content_requirement: None,
+        canonical_token_cost: None,
+        tokenizer_ref: None,
         valid_from: None,
         valid_to: None,
         recorded_at: None,
