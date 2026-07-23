@@ -205,6 +205,11 @@ pub fn event_signature(event: &AgentEvent) -> String {
         // exists only to keep this function total.
         AgentEvent::TextDelta { .. } => "text_delta".to_string(),
         AgentEvent::Reasoning { .. } => "reasoning".to_string(),
+        // A discarded speculation is timing-dependent — which stream attempt
+        // failed (and so which read-only pool is dropped) varies run to run —
+        // so, like `TextDelta`, [`structural_diff`] excludes it before
+        // comparing; the signature exists only to keep this function total.
+        AgentEvent::SpeculationDiscarded { .. } => "speculation_discarded".to_string(),
         AgentEvent::ToolStart { call } => format!("tool_start:{}", call.name),
         // A tool_result's structural identity is that it answered a call and
         // whether it errored — not its duration or output body.
@@ -264,14 +269,6 @@ pub fn event_signature(event: &AgentEvent) -> String {
         AgentEvent::BlockRegistered { kind, .. } => format!("block_registered:{kind:?}"),
         AgentEvent::StepManifest { blocks, .. } => {
             format!("step_manifest:blocks={}", blocks.len())
-        }
-        // A discarded speculation pool (#415) is a run-to-run scheduling
-        // artifact, excluded from the structural comparison above like
-        // TextDelta / receipts. The signature only keeps this function total:
-        // occurrence plus the speculated tool's name, never the volatile
-        // call_id or human-readable reason.
-        AgentEvent::SpeculationDiscarded { name, .. } => {
-            format!("speculation_discarded:{name}")
         }
     }
 }
@@ -444,6 +441,8 @@ mod tests {
             spent_usd: spent,
             limit_usd: None,
             mode: BudgetMode::Observed,
+            session_spent_usd: None,
+            session_limit_usd: None,
         }
     }
     fn complete() -> AgentEvent {
