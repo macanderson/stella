@@ -1511,6 +1511,7 @@ mod tests {
             "verify_done",
             "build_project",
             "run_tests",
+            "diagnostics",
             "run_lint",
             "format_code",
             "list_scripts",
@@ -1864,6 +1865,7 @@ mod tests {
                     | "glob"
                     | "gather_context"
                     | "explorations"
+                    | "diagnostics"
                     | "list_scripts"
                     | "ci_status"
                     | "search_issues"
