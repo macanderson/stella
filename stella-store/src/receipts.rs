@@ -224,7 +224,9 @@ mod tests {
     #[test]
     fn block_registration_is_idempotent_on_the_content_addressed_id() {
         let store = Store::in_memory().unwrap();
-        let id = store.begin_execution("run", "p", "anthropic", "opus").unwrap();
+        let id = store
+            .begin_execution("run", "p", "anthropic", "opus")
+            .unwrap();
         store.record_context_block(id, &block("blk_a", 0)).unwrap();
         // Re-registering the same block (identical content re-enters context)
         // must be a silent no-op, never an error or a duplicate row.
@@ -239,9 +241,15 @@ mod tests {
     #[test]
     fn manifest_round_trips_in_wire_order_with_its_header() {
         let store = Store::in_memory().unwrap();
-        let id = store.begin_execution("run", "p", "anthropic", "opus").unwrap();
-        store.record_context_block(id, &block("blk_sys", 0)).unwrap();
-        store.record_context_block(id, &block("blk_tail", 3)).unwrap();
+        let id = store
+            .begin_execution("run", "p", "anthropic", "opus")
+            .unwrap();
+        store
+            .record_context_block(id, &block("blk_sys", 0))
+            .unwrap();
+        store
+            .record_context_block(id, &block("blk_tail", 3))
+            .unwrap();
         let manifest = StepManifestRow {
             turn_instance: 0,
             step: 3,
@@ -282,7 +290,9 @@ mod tests {
     #[test]
     fn re_emitting_a_shorter_manifest_leaves_no_stale_tail_rows() {
         let store = Store::in_memory().unwrap();
-        let id = store.begin_execution("run", "p", "anthropic", "opus").unwrap();
+        let id = store
+            .begin_execution("run", "p", "anthropic", "opus")
+            .unwrap();
         let three = StepManifestRow {
             turn_instance: 1,
             step: 2,
@@ -308,6 +318,10 @@ mod tests {
         };
         store.record_step_manifest(id, &shorter).unwrap();
         let back = store.step_manifest(id, 1, 2).unwrap();
-        assert_eq!(back.len(), 1, "a shorter re-emission must replace, not append");
+        assert_eq!(
+            back.len(),
+            1,
+            "a shorter re-emission must replace, not append"
+        );
     }
 }

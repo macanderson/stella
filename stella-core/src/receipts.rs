@@ -22,7 +22,7 @@ use stella_protocol::{
     ModelCallRole,
 };
 
-use crate::estimator::CHARS_PER_TOKEN;
+use crate::estimator::{CHARS_PER_TOKEN, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 
 /// `sha256` hex of a string. Byte-wise hex (the sha2 0.11 output type does not
@@ -107,7 +107,11 @@ fn decompose(messages: &[CompletionMessage]) -> Vec<BlockDraft> {
     for message in messages {
         match message.role {
             MessageRole::System => {
-                drafts.push(BlockDraft::new(BlockKind::SystemPrefix, &message.content, None));
+                drafts.push(BlockDraft::new(
+                    BlockKind::SystemPrefix,
+                    &message.content,
+                    None,
+                ));
             }
             MessageRole::User => {
                 // The recalled frames live inside this message; splitting them
@@ -148,10 +152,10 @@ fn decompose(messages: &[CompletionMessage]) -> Vec<BlockDraft> {
     if let Some(last) = drafts.last_mut() {
         last.cache_zone = CacheZone::Volatile;
     }
-    if let Some(first) = drafts.first_mut() {
-        if first.kind == BlockKind::SystemPrefix {
-            first.cache_zone = CacheZone::StablePrefix;
-        }
+    if let Some(first) = drafts.first_mut()
+        && first.kind == BlockKind::SystemPrefix
+    {
+        first.cache_zone = CacheZone::StablePrefix;
     }
     drafts
 }
@@ -197,9 +201,12 @@ impl ReceiptLedger {
         role: ModelCallRole,
         provider: &str,
         model: &str,
-        estimated_input_tokens: u64,
         events: &EventSender,
     ) {
+        // The manifest's estimate is the same conversation estimate the driver
+        // pairs with `StepUsage` (a drift sample), computed here from the same
+        // messages so the two events always agree.
+        let estimated_input_tokens = estimate_conversation_tokens(messages);
         let drafts = decompose(messages);
         let mut blocks = Vec::with_capacity(drafts.len());
         for draft in &drafts {
@@ -297,7 +304,14 @@ mod tests {
         let mut ledger = ReceiptLedger::new(0);
         ledger.set_effective_budget(136_363, 1.1);
         let messages = convo();
-        ledger.emit_step_receipt(&messages, 0, ModelCallRole::Worker, "anthropic", "opus", 42, &events);
+        ledger.emit_step_receipt(
+            &messages,
+            0,
+            ModelCallRole::Worker,
+            "anthropic",
+            "opus",
+            &events,
+        );
 
         let evts = drain(&mut rx);
         let manifest = evts
@@ -326,11 +340,11 @@ mod tests {
         let mut ledger = ReceiptLedger::new(0);
         let messages = convo();
 
-        ledger.emit_step_receipt(&messages, 0, ModelCallRole::Worker, "p", "m", 1, &events);
+        ledger.emit_step_receipt(&messages, 0, ModelCallRole::Worker, "p", "m", &events);
         let _ = drain(&mut rx);
         // Same conversation on the next step: no NEW registrations, and the
         // blocks report resident_since_step == 0 (they arrived on step 0).
-        ledger.emit_step_receipt(&messages, 1, ModelCallRole::Worker, "p", "m", 1, &events);
+        ledger.emit_step_receipt(&messages, 1, ModelCallRole::Worker, "p", "m", &events);
         let evts = drain(&mut rx);
 
         let new_registrations = evts
@@ -355,7 +369,10 @@ mod tests {
     fn identical_tool_output_resolves_to_the_same_block_id() {
         // Two tool results with byte-identical output share a content-addressed
         // id — the property dedup/supersession identities rely on.
-        let a = serde_json::to_string(&ToolOutput::Ok { content: "same".into() }).unwrap();
+        let a = serde_json::to_string(&ToolOutput::Ok {
+            content: "same".into(),
+        })
+        .unwrap();
         let id1 = block_id(BlockKind::ToolResult, &a);
         let id2 = block_id(BlockKind::ToolResult, &a);
         assert_eq!(id1, id2);
