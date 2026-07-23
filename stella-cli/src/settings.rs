@@ -124,6 +124,11 @@ pub struct Settings {
     /// subject to repository trust and the non-overridable managed ceiling.
     #[serde(default)]
     pub tools: Option<ToolsSettings>,
+    /// `on` = print an end-of-run recap in text mode: a deterministic
+    /// synthesis of the outcome (completed/verified/failed/aborted) and what
+    /// changed, beside the file and cost panels. No model call. Default off.
+    #[serde(default)]
+    pub enable_recap: Option<Toggle>,
     /// Authority ceilings are honored only from the org-managed settings
     /// file. The serde name is intentionally short because the containing
     /// file is already the policy source.
@@ -564,6 +569,13 @@ impl Settings {
             .is_some_and(Toggle::is_on)
     }
 
+    /// Whether the end-of-run recap is enabled for this workspace. Default
+    /// off; only an explicit `"enable_recap": "on"` in the scope chain turns
+    /// it on (a later `"off"` turns it back off — project wins per field).
+    pub fn recap_enabled(&self) -> bool {
+        self.enable_recap.is_some_and(Toggle::is_on)
+    }
+
     /// Whether the web tool family is enabled for this workspace. Same
     /// posture as [`Settings::bash_tool_enabled`]: default OFF everywhere,
     /// only an explicit `"tools": {"web": "on"}` in the chain turns it on.
@@ -973,6 +985,22 @@ mod tests {
     fn bash_tool_defaults_off_and_the_project_scope_wins_per_field() {
         // Absent everywhere → off.
         assert!(!Settings::default().bash_tool_enabled());
+        // Recap mirrors the same on/off-string switch discipline.
+        assert!(!Settings::default().recap_enabled(), "recap defaults off");
+        assert!(
+            serde_json::from_str::<Settings>(r#"{"enable_recap":"on"}"#)
+                .unwrap()
+                .recap_enabled(),
+            "\"on\" enables the recap"
+        );
+        assert!(
+            !serde_json::from_str::<Settings>(r#"{"enable_recap":"off"}"#)
+                .unwrap()
+                .recap_enabled()
+        );
+        // A typo'd value is a loud parse error, not a silent false (the whole
+        // point of the Toggle enum over a bool).
+        assert!(serde_json::from_str::<Settings>(r#"{"enable_recap":true}"#).is_err());
         let dir = tempfile::tempdir().unwrap();
         let silent = write(dir.path(), "silent.json", r#"{"providers": {}}"#);
         let merged = Settings::load_from(std::slice::from_ref(&silent)).unwrap();

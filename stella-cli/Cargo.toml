@@ -58,3 +58,7 @@ rpassword.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 rusqlite.workspace = true
+# The protocol's own conformance suite (§3.6), pinned to the same rev as the
+# types/host we consume. Wired into `contextgraph.rs` tests so "CGP-conformant"
+# is a checked claim about the providers this CLI ships, not a documented one.
+contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "58a933a2e1f894ae98adc9994bd9d0062a610ae8" }

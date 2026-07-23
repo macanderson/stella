@@ -124,6 +124,7 @@ fn config_debug_never_leaks_the_api_key() {
         hooks: None,
         engine_settings: None,
         tools_bash: false,
+        enable_recap: false,
         tools_web: false,
         authority: crate::settings::AuthorityPolicy::default(),
         credential_source: Some(stella_model::credential::CredentialSource::EnvVar),

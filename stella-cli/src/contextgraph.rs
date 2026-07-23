@@ -535,4 +535,115 @@ mod tests {
         let ids: Vec<&str> = result.frames.iter().map(|f| f.id.as_str()).collect();
         assert_eq!(ids, vec!["plane-graph"]);
     }
+
+    // ---- CGP conformance -------------------------------------------------
+    //
+    // The providers this host registers are green on the protocol's own
+    // conformance suite (§3.6), verified in-tree — not merely asserted to be
+    // by documentation. Both are exercised through `run_conformance` exactly
+    // as `session_host` constructs them, so a regression that made a shipped
+    // provider lie about cost, drop a citation label, or fail to shut down
+    // cleanly turns this suite red.
+
+    use contextgraph_conformance::{
+        CHECK_FRAME_VALIDITY, CheckStatus, ConformanceReport, ProviderTarget, run_conformance,
+    };
+
+    /// Render a report's failures for a panic message, so a red run names the
+    /// exact contract that broke rather than just "not conformant".
+    fn conformance_failures(report: &ConformanceReport) -> String {
+        report
+            .failures()
+            .map(|check| format!("{}: {}", check.name, check.evidence))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    #[tokio::test]
+    async fn workspace_memory_provider_is_cgp_conformant() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = seeded_store(&dir).await;
+        // Constructed exactly as `session_host` builds the shipped
+        // `workspace-memory` provider: the store behind the plane registry,
+        // advertising the kinds it serves.
+        let provider = MemoryProvider {
+            plane: memory_plane(store, vec![]),
+            info: local_info("workspace-memory"),
+            caps: Capabilities {
+                query: contextgraph_types::capability::QueryCapability {
+                    kinds: ["memory", "episode", "fact", "snippet", "symbol", "doc"]
+                        .map(String::from)
+                        .to_vec(),
+                    filters: Vec::new(),
+                },
+                ..Capabilities::default()
+            },
+        };
+        let report = run_conformance(ProviderTarget::InProcess(Box::new(provider))).await;
+        assert!(
+            report.passed(),
+            "workspace-memory is not CGP-conformant: {}",
+            conformance_failures(&report)
+        );
+    }
+
+    #[tokio::test]
+    async fn code_graph_provider_is_cgp_conformant() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // The `code-graph` provider as `session_host` registers it. With no
+        // index on disk it returns zero frames — permitted by §3.4 — so this
+        // pins handshake, budget honesty, and clean shutdown for the graph leg.
+        let provider = GraphProvider {
+            workspace_root: dir.path().to_path_buf(),
+            info: local_info("code-graph"),
+            caps: Capabilities {
+                graph: true,
+                query: contextgraph_types::capability::QueryCapability {
+                    kinds: ["symbol", "snippet", "graph"].map(String::from).to_vec(),
+                    filters: Vec::new(),
+                },
+                ..Capabilities::default()
+            },
+        };
+        let report = run_conformance(ProviderTarget::InProcess(Box::new(provider))).await;
+        assert!(
+            report.passed(),
+            "code-graph is not CGP-conformant: {}",
+            conformance_failures(&report)
+        );
+    }
+
+    #[tokio::test]
+    async fn conformance_gate_catches_a_frame_without_a_citation_label() {
+        // Teeth: a provider that returns a bare-id frame (§3.4 — "NEVER a
+        // bare uuid") must FAIL frame-validity. This proves the two passing
+        // tests above are a real gate that would catch a regression, not a
+        // suite that waves everything through.
+        let mut bare_id = frame("bare-id", 0.9, 8);
+        bare_id.citation_label = None;
+        let report =
+            run_conformance(ProviderTarget::InProcess(scripted("bad", vec![bare_id]))).await;
+        assert!(
+            !report.passed(),
+            "a frame with no citation label must not be judged conformant"
+        );
+        assert!(
+            report.checks.iter().any(
+                |check| check.name == CHECK_FRAME_VALIDITY && check.status == CheckStatus::Fail
+            ),
+            "the missing citation label must surface as a frame-validity failure"
+        );
+    }
+
+    #[test]
+    fn pinned_protocol_version_is_the_expected_draft() {
+        // Tripwire: our conformance is verified against this exact wire
+        // version. If a pin bump moves the protocol version, this fails loudly
+        // so conformance is re-audited rather than silently assumed to hold.
+        assert_eq!(
+            contextgraph_types::PROTOCOL_VERSION,
+            "contextgraph/1.0-draft",
+            "CGP protocol version changed — re-verify the conformance suite before bumping the pin"
+        );
+    }
 }
