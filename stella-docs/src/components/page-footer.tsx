@@ -131,7 +131,7 @@ export function PageFooter({ path, title }: { path: string; title: string }) {
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 rounded-lg border border-fd-border bg-fd-card px-2.5 py-1.5 text-xs font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground"
           >
-            <Heart className="size-3.5 text-pink-500" aria-hidden />
+            <Heart className="size-3.5" aria-hidden />
             Sponsor
           </a>
         </div>

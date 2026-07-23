@@ -4,10 +4,10 @@ import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
  * Shared layout options (nav title, links) consumed by both the docs layout
  * and the home/landing layout.
  *
- * Branding: the Stella wordmark ("stella" + yellow star, docs/brand/) with a
- * muted "docs" qualifier. Two cuts ship — an ink wordmark for the light Paper
+ * Branding: the monochrome Stella wordmark ("stella" + star, docs/brand/) with
+ * a muted "docs" qualifier. Two cuts ship — an ink wordmark for the light Paper
  * surface and a snow wordmark for the dark Night surface — swapped by the
- * `.dark` class so the letters always have contrast while the yellow star holds.
+ * `.dark` class so the whole mark always has contrast in either theme.
  */
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -51,7 +51,7 @@ export function baseOptions(): BaseLayoutProps {
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="size-5 text-pink-500"
+            className="size-5"
           >
             <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
           </svg>
