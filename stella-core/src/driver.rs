@@ -91,9 +91,7 @@ use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 use tokio::sync::mpsc::UnboundedSender;
 
 mod settlement;
-use settlement::{
-    BudgetWarnings, axis_label, check_budget, emit_budget_warning, record_settled_cost,
-};
+use settlement::{BudgetWarnings, check_budget, emit_budget_warning, record_settled_cost};
 
 /// Everything about a turn's execution that isn't the provider/tools
 /// themselves: prompt shape, retry/compaction/loop tuning, and hard
