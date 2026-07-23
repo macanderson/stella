@@ -306,6 +306,9 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
     // Context receipts (BlockRegistered/StepManifest) join TextDelta in the
     // exclusion set: they are additive observability a pre-receipt golden
     // stream does not carry, so keeping them would shift every later position.
+    // `SpeculationDiscarded` (#415) joins them: it is a run-to-run scheduling
+    // artifact absent from pre-speculation goldens, so it too must not shift
+    // aligned positions.
     let keep = |e: &&AgentEvent| {
         !matches!(
             e,

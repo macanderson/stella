@@ -200,12 +200,12 @@ mod tests {
         let read_fd = fds[0];
         let value = read_and_close_fd(read_fd).unwrap();
         assert_eq!(value, "openrouter-test-secret");
-        // EBADF proves ownership was consumed before any later subprocess.
-        assert_eq!(unsafe { libc::fcntl(read_fd, libc::F_GETFD) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::EBADF)
-        );
+        // Ownership of the read end is consumed by the reader. Its closure on
+        // the fail path is proven deterministically in
+        // `memory_hardening_precedes_read_and_closes_fd_on_failure`; both paths
+        // close through the same `file` drop at function exit. Re-checking the
+        // raw fd number here would be racy under the parallel harness — a
+        // sibling test can reuse the freed number immediately.
     }
 
     #[test]
@@ -237,23 +237,47 @@ mod tests {
 
     #[test]
     fn memory_hardening_precedes_read_and_closes_fd_on_failure() {
-        let file = tempfile::tempfile().unwrap();
-        (&file).write_all(&[0xff, b'\n']).unwrap();
-        (&file).rewind().unwrap();
-        let fd = file.into_raw_fd();
+        let mut fds = [0_i32; 2];
+        // SAFETY: valid two-element output buffer.
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (read_fd, write_fd) = (fds[0], fds[1]);
 
-        let err =
-            read_and_close_fd_with_hardener(fd, || Err("synthetic hardening failure".to_string()))
-                .unwrap_err();
+        // Invalid UTF-8 waits unread in the pipe. If a credential byte were
+        // read before hardening, the error below would be the UTF-8 failure.
+        // SAFETY: two-byte source buffer, matching count, valid fd.
+        assert_eq!(
+            unsafe { libc::write(write_fd, [0xff_u8, b'\n'].as_ptr().cast(), 2) },
+            2
+        );
+
+        let err = read_and_close_fd_with_hardener(read_fd, || {
+            Err("synthetic hardening failure".to_string())
+        })
+        .unwrap_err();
 
         // The hardening error wins over the invalid UTF-8 waiting in the FD,
-        // proving no credential bytes were read first. EBADF proves ownership
-        // was still consumed on that fail-closed path.
+        // proving no credential bytes were read first.
         assert_eq!(err, "synthetic hardening failure");
-        assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFD) }, -1);
+
+        // The fail-closed path still consumed ownership of the read end. Probe
+        // the open-file description, not the freed fd *number*: with the last
+        // reader gone, writing to the retained write end fails with EPIPE.
+        // (A raw `fcntl(read_fd, F_GETFD) == -1` check would be racy under the
+        // parallel test harness — a sibling test can reuse the number the
+        // instant it is freed, and `fcntl` would then report that fd's flags.)
+        // Rust ignores SIGPIPE process-wide, so the write returns EPIPE rather
+        // than raising a signal.
+        // SAFETY: one-byte source buffer, matching count, still-owned write fd.
+        assert_eq!(
+            unsafe { libc::write(write_fd, [0_u8].as_ptr().cast(), 1) },
+            -1
+        );
         assert_eq!(
             std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::EBADF)
+            Some(libc::EPIPE)
         );
+
+        // SAFETY: we still own the write end; close it to avoid leaking the fd.
+        assert_eq!(unsafe { libc::close(write_fd) }, 0);
     }
 }
