@@ -1,4 +1,4 @@
-//! The orchestrator MCP pre-fetch hook (issue #248 Phase 1): [`McpPrefetchPort::prefetch`]
+//! The orchestrator MCP pre-fetch hook (issue #248): [`McpPrefetchPort::prefetch`]
 //! is consulted once at the top of `run_best_of_n`, and its result — when
 //! `Some` — rides in every candidate's shared message history rather than
 //! each candidate independently paying to look it up.

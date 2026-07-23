@@ -1,4 +1,4 @@
-//! Golden-trajectory replay harness ( Phase 4 item 3). Two jobs,
+//! Golden-trajectory replay harness. Two jobs,
 //! both pure: **validate** that an `AgentEvent` stream obeys the protocol's
 //! structural invariants, and **structurally diff** two streams (kinds + order,
 //! ignoring volatile fields like durations and exact costs) so a Rust-stack
@@ -6,13 +6,11 @@
 //!
 //! # Reference trajectories are a documented follow-up
 //!
-//! The Phase 4 exit criterion is "golden replay green on the fixture set". The
-//! fixtures under `tests/fixtures/` are **synthetic** streams that exercise the
-//! invariants and the differ. *Recording real TS-engine trajectories* on fixed
-//! tasks and checking the Rust stack against them is the next step
-//! ( Phase 4 item 3, "record TS-engine trajectories … replay
-//! through the Rust stack") — it is deliberately not faked here. This module is
-//! the machinery those recordings will be validated with once they exist.
+//! The fixtures under `tests/fixtures/` are **synthetic** streams that exercise
+//! the invariants and the differ. *Recording real TS-engine trajectories* on
+//! fixed tasks and checking the Rust stack against them is the next step — it is
+//! deliberately not faked here. This module is the machinery those recordings
+//! will be validated with once they exist.
 //!
 //! # Torn tails (L-T1)
 //!
@@ -434,7 +432,7 @@ mod tests {
         }
     }
 
-    // ---- stage ordering -------------------------------------------------
+    // stage ordering
 
     #[test]
     fn canonical_forward_ordering_is_legal() {
@@ -487,7 +485,7 @@ mod tests {
         assert!(v[0].reason.contains("illegal stage transition"));
     }
 
-    // ---- tool pairing ---------------------------------------------------
+    // tool pairing
 
     #[test]
     fn matched_tool_calls_pass() {
@@ -511,7 +509,7 @@ mod tests {
         assert!(v[0].reason.contains("no preceding tool_start"));
     }
 
-    // ---- terminal -------------------------------------------------------
+    // terminal
 
     #[test]
     fn two_completes_are_flagged() {
@@ -531,7 +529,7 @@ mod tests {
         assert!(v.iter().any(|x| x.reason.contains("not the last event")));
     }
 
-    // ---- budget monotonic ----------------------------------------------
+    // budget monotonic
 
     #[test]
     fn monotonic_budget_passes_and_regression_is_flagged() {
@@ -541,7 +539,7 @@ mod tests {
         assert!(v[0].reason.contains("backwards"));
     }
 
-    // ---- structural diff ------------------------------------------------
+    // structural diff
 
     #[test]
     fn identical_kind_streams_are_equivalent_despite_volatile_fields() {
@@ -595,7 +593,7 @@ mod tests {
         assert_eq!(diff[0].right.as_deref(), Some("complete"));
     }
 
-    // ---- JSONL round-trip + torn tail ----------------------------------
+    // JSONL round-trip + torn tail
 
     #[test]
     fn jsonl_round_trips() {

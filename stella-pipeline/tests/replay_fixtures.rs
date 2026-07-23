@@ -1,5 +1,5 @@
-//! Golden-trajectory replay harness, driven against synthetic fixtures
-//! ( Phase 4 item 3). These fixtures are **synthetic** streams
+//! Golden-trajectory replay harness, driven against synthetic fixtures.
+//! These fixtures are **synthetic** streams
 //! that exercise the harness's invariants and its structural differ; recording
 //! real TS-engine trajectories on fixed tasks and replaying the Rust stack
 //! against them is the documented next step (see `replay.rs`'s module doc) —

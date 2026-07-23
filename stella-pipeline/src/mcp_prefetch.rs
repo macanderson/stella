@@ -1,4 +1,4 @@
-//! The orchestrator's Best-of-N MCP pre-fetch hook (issue #248 Phase 1):
+//! The orchestrator's Best-of-N MCP pre-fetch hook (issue #248):
 //! [`fold`] is called once at the top of a fan-out, folding shared context
 //! into every candidate's starting messages instead of each candidate
 //! independently paying to look it up. Split out of `pipeline.rs` to keep

@@ -698,9 +698,7 @@ impl<'a> Pipeline<'a> {
         })
     }
 
-    // ------------------------------------------------------------------
     // Stage: triage
-    // ------------------------------------------------------------------
 
     async fn triage(
         &self,
@@ -754,9 +752,7 @@ impl<'a> Pipeline<'a> {
         })
     }
 
-    // ------------------------------------------------------------------
     // Stage: plan
-    // ------------------------------------------------------------------
 
     async fn plan_stage(
         &self,
@@ -836,9 +832,7 @@ impl<'a> Pipeline<'a> {
         Ok(fallback_plan())
     }
 
-    // ------------------------------------------------------------------
     // Stage: scope review
-    // ------------------------------------------------------------------
 
     /// Returns `Ok(Some(plan))` to proceed (possibly trimmed), `Ok(None)` if
     /// the user aborted/emptied the plan, or `Err` if headless without bypass.
@@ -906,9 +900,7 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    // ------------------------------------------------------------------
     // Stage: execute + verify — candidate generation and selection
-    // ------------------------------------------------------------------
 
     /// Run `n` candidates sequentially over the session ports (the real
     /// working tree): the single-shot path, and the shared-tree degradation
@@ -1025,7 +1017,7 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<(CandidateResult, Option<String>), PipelineError> {
-        // Orchestrator pre-fetch (issue #248 Phase 1) — see `crate::mcp_prefetch::fold`.
+        // Orchestrator pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
         let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, goal, n, base_messages).await;
         let base_messages: &[CompletionMessage] = prefetched.as_deref().unwrap_or(base_messages);
         let Some(port) = self.candidate_workspaces else {
@@ -1251,9 +1243,7 @@ impl<'a> Pipeline<'a> {
         Ok((best, Some(worker_label)))
     }
 
-    // ------------------------------------------------------------------
     // Stages: execute + verify + revise (one candidate)
-    // ------------------------------------------------------------------
 
     #[allow(clippy::too_many_arguments)]
     async fn run_candidate(
@@ -1732,9 +1722,7 @@ impl<'a> Pipeline<'a> {
         Ok((dl, dt))
     }
 
-    // ------------------------------------------------------------------
     // Stage: judge
-    // ------------------------------------------------------------------
 
     /// One distress-guidance call ([`guidance_prompt`]): best-effort and
     /// never a verdict — the failure it reacts to is already deterministic,
@@ -1836,9 +1824,7 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    // ------------------------------------------------------------------
     // Shared helpers
-    // ------------------------------------------------------------------
 
     /// Resolve a role to a concrete provider via the router + provider
     /// resolver. Reads `self.providers` as a copy of its `&'a` reference so the

@@ -314,7 +314,7 @@ pub trait CandidateWorkspacePort: Send + Sync {
     async fn create(&self) -> Result<Box<dyn CandidateWorkspace>, WorkspaceError>;
 }
 
-/// Orchestrator MCP pre-fetch (issue #248 Phase 1): gathered ONCE before a
+/// Orchestrator MCP pre-fetch (issue #248): gathered ONCE before a
 /// best-of-N fan-out and folded into every candidate's shared message
 /// history, instead of N candidates each independently paying to look up the
 /// same external context — the common "candidates all need the same DB
@@ -354,9 +354,7 @@ pub trait ApprovalGate: Send + Sync {
     async fn review(&self, proposal: &ScopeProposal) -> ScopeDecision;
 }
 
-// ---------------------------------------------------------------------
 // No-op / default port implementations
-// ---------------------------------------------------------------------
 //
 // These let a caller run the pipeline before every subsystem is wired (the
 // whole point of the port boundary) and give tests trivial doubles for the
@@ -497,7 +495,7 @@ pub struct PipelinePorts<'a> {
     /// Candidate isolation (L-E7): one snapshot per candidate and passing-only
     /// adoption. Also required for authored witnesses at `candidates = 1`.
     pub candidate_workspaces: Option<&'a dyn CandidateWorkspacePort>,
-    /// Orchestrator MCP pre-fetch (issue #248 Phase 1) — see [`crate::mcp_prefetch::fold`].
+    /// Orchestrator MCP pre-fetch (issue #248) — see [`crate::mcp_prefetch::fold`].
     pub mcp_prefetch: Option<&'a dyn McpPrefetchPort>,
     /// Step-boundary steering for the EXECUTE engine only — mid-turn user
     /// messages injected as the model's next observation (`stella_core`'s

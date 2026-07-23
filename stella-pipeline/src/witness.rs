@@ -666,7 +666,7 @@ mod tests {
             .collect()
     }
 
-    // ---- parse_witness_command -------------------------------------------
+    // parse_witness_command
 
     #[test]
     fn parses_a_bare_marker_line() {
@@ -770,7 +770,7 @@ mod tests {
         }
     }
 
-    // ---- witness_watchlist ------------------------------------------------
+    // witness_watchlist
 
     #[test]
     fn watchlist_is_created_and_modified_files_only() {
@@ -969,7 +969,7 @@ mod tests {
         );
     }
 
-    // ---- tampered_paths ----------------------------------------------------
+    // tampered_paths
 
     #[test]
     fn untouched_watchlist_reports_no_tampering() {
@@ -999,7 +999,7 @@ mod tests {
         assert_eq!(tampered_paths(&watch, &current), vec!["a.rs", "b.rs"]);
     }
 
-    // ---- prompts -----------------------------------------------------------
+    // prompts
 
     #[test]
     fn witness_prompt_carries_goal_structure_recall_and_marker() {

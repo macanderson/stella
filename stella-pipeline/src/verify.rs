@@ -356,7 +356,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    // ---- FlipOracle transitions ----------------------------------------
+    // FlipOracle transitions
 
     #[test]
     fn a_pass_with_no_prior_failure_proves_nothing() {
@@ -437,7 +437,7 @@ mod tests {
         }
     }
 
-    // ---- normalize_command ---------------------------------------------
+    // normalize_command
 
     #[test]
     fn normalize_collapses_whitespace_and_trims_but_keeps_order() {
@@ -446,7 +446,7 @@ mod tests {
         assert_ne!(normalize_command("a b"), normalize_command("b a"));
     }
 
-    // ---- ladder_decision ------------------------------------------------
+    // ladder_decision
 
     #[test]
     fn red_touched_tests_revise_without_a_judge() {
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(decision, LadderDecision::ModelJudge);
     }
 
-    // ---- judge parsing + fallback --------------------------------------
+    // judge parsing + fallback
 
     #[test]
     fn parses_pass_and_fail_verdicts() {
@@ -588,7 +588,7 @@ mod tests {
         assert!(p.contains("FAIL"));
     }
 
-    // ---- The binding property (L-E11) -----------------------------------
+    // The binding property (L-E11)
 
     /// A reference oracle: replay a sequence of observations and independently
     /// compute whether a genuine flip occurred (a failure of some command

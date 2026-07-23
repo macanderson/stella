@@ -31,7 +31,7 @@ pub struct ScopeThresholds {
 impl Default for ScopeThresholds {
     /// Defaults tuned to let ordinary work through and gate genuinely large
     /// plans: more than 5 steps, more than 8 files, or more than $1.00
-    /// estimated. These mirror the TS CLI's scope-review defaults (PR #661).
+    /// estimated. These mirror the TS CLI's scope-review defaults.
     fn default() -> Self {
         Self {
             max_steps: Some(5),

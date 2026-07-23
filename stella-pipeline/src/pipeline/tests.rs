@@ -28,7 +28,7 @@ use crate::ports::{
     TestInvocation, TestRunner,
 };
 
-// ---- test doubles ---------------------------------------------------
+// test doubles
 
 /// A [`RepoStatusPort`] returning a fixed untracked `path -> fingerprint`
 /// map — the "after execute" snapshot `gather_diff` diffs against a
@@ -537,7 +537,7 @@ fn stages(events: &[AgentEvent]) -> Vec<StageKind> {
         .collect()
 }
 
-// ---- tests ----------------------------------------------------------
+// tests
 
 /// A single-task goal whose test command flips fail→pass submits fast:
 /// deterministic verdict, model judge SKIPPED.
@@ -1357,7 +1357,7 @@ async fn second_consecutive_red_verification_gets_judge_guidance() {
     );
 }
 
-// ---- best-of-N candidate isolation ----------------------------------
+// best-of-N candidate isolation
 
 /// Build a pipeline over panicking session command/repo-status ports (so
 /// any candidate I/O that escapes its workspace fails the test) and run
@@ -1624,7 +1624,7 @@ fn isolated_config(n: u32) -> PipelineConfig {
 /// the shared infra (`run_isolated`, `isolated_config`, ...) stays here.
 mod best_of_n;
 mod chaos;
-/// The orchestrator MCP pre-fetch hook (issue #248 Phase 1) — split out for
+/// The orchestrator MCP pre-fetch hook (issue #248) — split out for
 /// the same file-size reason `tests.rs` itself was split from
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
