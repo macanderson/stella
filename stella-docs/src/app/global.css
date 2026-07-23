@@ -1,28 +1,28 @@
 /**
  * Stella CLI docs — styles.
  *
- * Brand system: "paper & ink, one warm accent." A neutral, high-contrast base —
- * true white / true black with pure-gray chrome (borders, muted, cards carry NO
- * color cast) — so the site reads clean and calm like Vercel rather than tinted.
- * The single accent is the yellow from the Stella wordmark's star (#ffdb00): a
- * warm, golden lemon that ties every surface back to the logo. It is spent
- * deliberately — on the mark, the primary CTA, focus rings, dark-mode links and
- * inline code — never smeared across the neutrals.
+ * Brand system: "paper & ink — pure neutral, no accent color." A calm,
+ * high-contrast monochrome base modeled on Vercel: true white / true black
+ * grounds, a single near-black ink and near-white snow for foreground, and
+ * pure-gray chrome (borders, muted, cards) with NO color cast anywhere. There
+ * is deliberately no brand hue — emphasis comes from contrast, weight, and
+ * whitespace, not color. Primary actions invert (ink fill + paper label in
+ * light, snow fill + ink label in dark), exactly the Vercel primary button.
  *
  * Palette:
- *   Accent yellow #ffdb00 (logo star)   ·  Gold-deep #846500 (AA text/strokes on paper)
- *   Ink #0a0a0a   ·  Paper #ffffff   ·  Night #000000   ·  Snow #ededed
+ *   Ink #0a0a0a  ·  Paper #ffffff  ·  Night #000000  ·  Snow #ededed
+ *   Grays: #646464 / #a1a1a1 (muted text) · #eaeaea / #242424 (hairlines)
  *
- * Contrast rule: bright yellow (#ffdb00) is 15:1 on black — it is the accent for
- * text and fills in DARK mode. On the white LIGHT ground the same yellow is
- * illegible as text (1.4:1), so light-mode interactive TEXT stays monochrome
- * (ink), and any yellow that must carry as *text/thin strokes* on paper drops to
- * a deep gold #846500 (5.5:1, clears AA). The yellow still leads visually in
- * light mode through fills (CTA, mark, focus ring) where contrast is a non-issue.
+ * Contrast rule: interactive text and marks are monochrome and mode-aware —
+ * ink on paper (light), snow on black (dark). Because every accent resolves to
+ * the foreground, contrast is a non-issue in both modes: links clear AA, marks
+ * read on either ground, and the theme toggle (Fumadocs' `.dark` class) flips
+ * everything through one token (`--stella-accent`).
  *
  * Semantic reservation: info/warn/error/success callouts keep Fumadocs' default
- * blue/amber/red/green (from the imported neutral/preset css) — intentionally
- * NOT re-tinted to brand yellow, so a caution icon never reads as a brand accent.
+ * blue/amber/red/green (from the imported neutral/preset css). Those are
+ * FUNCTIONAL status colors, not brand accents — a warning must not read as
+ * decoration — so they stay as-is. Everything the site owns is neutral.
  *
  * The landing-page layer is namespaced `lp-*` so it never leaks into /docs.
  */
@@ -38,28 +38,32 @@
  * ─────────────────────────────────────────────────────────────────────────── */
 
 :root {
-  /* The logo's own yellow is the single brand accent. */
-  --stella-yellow: #ffdb00; /* wordmark star yellow — fills, mark, dark-mode accent */
-  --stella-yellow-deep: #846500; /* AA-legible deep gold — accent text/strokes on paper */
   --stella-ink: #0a0a0a; /* near-black foreground on paper */
   --stella-paper: #ffffff; /* true paper */
+  --stella-snow: #ededed; /* near-white foreground on night */
 
-  /* Mode-aware accent that COMPONENTS reference (icons, diagram strokes, prompt,
-   * brand headline word). Deep gold on the light ground so thin strokes and
-   * small text stay legible; the `.dark` block lifts it to bright yellow. */
-  --stella-accent: var(--stella-yellow-deep);
-  --stella-accent-fill: var(--stella-yellow); /* fills — contrast-safe in both modes */
+  /* Mode-aware neutral "accent" that COMPONENTS reference (icons, diagram
+   * strokes, prompt, brand headline word, marks). Ink on the light ground; the
+   * `.dark` block lifts it to snow. There is no color — this exists only so a
+   * single token flips every mark/stroke with the theme. */
+  --stella-accent: var(--stella-ink);
+  --stella-accent-fill: var(--stella-ink); /* solid fill (CTA) — inverted label */
+  --stella-accent-muted: #646464; /* quieter mark/icon tone on paper */
 
-  /* Legacy aliases — page.tsx / diagrams.tsx / the lp-* layer still reference the
-   * old aurora names. Point them at the mode-aware accent so this stays a
-   * tokens-only change. `azure`/`amber` = mode-aware accent (thin strokes, text);
-   * `cyan` = the bright fill accent. */
+  /* Legacy aliases — page.tsx / diagrams.tsx / the lp-* layer still reference
+   * the old aurora names. Point them all at the neutral mode-aware accent so
+   * this stays a tokens-only change and nothing carries a hue. */
   --stella-azure: var(--stella-accent);
   --stella-amber: var(--stella-accent);
-  --stella-cyan: var(--stella-accent-fill);
+  --stella-cyan: var(--stella-accent);
   --stella-violet: var(--stella-accent);
-  --stella-azure-deep: var(--stella-yellow-deep);
+  --stella-azure-deep: var(--stella-accent);
   --stella-ice: var(--stella-paper);
+
+  /* CTA (inverted primary) surfaces — Vercel's black button on paper. */
+  --stella-cta-bg: var(--stella-ink);
+  --stella-cta-fg: var(--stella-paper);
+  --stella-cta-bg-hover: #383838;
 
   /* Light mode — pure paper, neutral grays, monochrome interactive text. */
   --color-fd-background: #ffffff;
@@ -77,12 +81,18 @@
   --color-fd-primary-foreground: #ffffff; /* text on an ink fill */
   --color-fd-secondary: #f4f4f5;
   --color-fd-secondary-foreground: #0a0a0a;
-  --color-fd-ring: var(--stella-yellow-deep); /* focus ring — gold accent, clears 3:1 on paper */
+  --color-fd-ring: #0a0a0a; /* focus ring — neutral ink, clears contrast on paper */
 }
 
 .dark {
-  /* Dark mode — true black ground, bright yellow accent that carries as text. */
-  --stella-accent: var(--stella-yellow);
+  /* Dark mode — true black ground, snow foreground. Accent lifts to snow. */
+  --stella-accent: var(--stella-snow);
+  --stella-accent-fill: var(--stella-snow);
+  --stella-accent-muted: #a1a1a1;
+
+  --stella-cta-bg: var(--stella-snow);
+  --stella-cta-fg: var(--stella-ink);
+  --stella-cta-bg-hover: #c9c9c9;
 
   --color-fd-background: #000000;
   --color-fd-foreground: #ededed;
@@ -95,63 +105,57 @@
   --color-fd-border: #242424; /* quiet neutral hairline on black */
   --color-fd-accent: #171717; /* hover/selected — lifted above card */
   --color-fd-accent-foreground: #ededed;
-  --color-fd-primary: var(--stella-yellow); /* links/active glow yellow on black */
-  --color-fd-primary-foreground: #000000; /* text on a yellow fill */
+  --color-fd-primary: #ededed; /* links/active = snow on black */
+  --color-fd-primary-foreground: #000000; /* text on a snow fill */
   --color-fd-secondary: #171717;
   --color-fd-secondary-foreground: #ededed;
-  --color-fd-ring: var(--stella-yellow);
-}
-
-/* Inline code glows yellow in dark mode so it reads as part of the system.
- * (Left neutral in light mode — yellow code text is illegible on paper.) */
-.dark code {
-  color: var(--stella-yellow);
+  --color-fd-ring: #ededed;
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
  * Landing page (the (home) route only). Pure-CSS, namespaced `lp-*`.
  * ─────────────────────────────────────────────────────────────────────────── */
 
-/* Faint terminal grid behind the hero, masked to fade out. Kept whisper-quiet. */
+/* Faint terminal grid behind the hero, masked to fade out. Whisper-quiet and
+ * neutral — a texture, not a color. */
 .lp-hero-grid {
   background-image:
     linear-gradient(
       to right,
-      color-mix(in oklch, var(--stella-accent-fill) 6%, transparent) 1px,
+      color-mix(in oklch, var(--color-fd-foreground) 5%, transparent) 1px,
       transparent 1px
     ),
     linear-gradient(
       to bottom,
-      color-mix(in oklch, var(--stella-accent-fill) 6%, transparent) 1px,
+      color-mix(in oklch, var(--color-fd-foreground) 5%, transparent) 1px,
       transparent 1px
     );
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
 }
 
-/* Soft warm glow anchored to the top of the hero — a hint, not a spotlight. */
+/* Soft neutral vignette at the top of the hero — depth, not a spotlight. */
 .lp-hero-glow {
   background: radial-gradient(
     ellipse 60% 50% at 50% -10%,
-    color-mix(in oklch, var(--stella-accent-fill) 14%, transparent),
+    color-mix(in oklch, var(--color-fd-foreground) 6%, transparent),
     transparent 70%
   );
 }
 
-/* The "stella" wordmark in the headline — solid brand accent, legible in both
- * modes (deep gold on paper, bright yellow on black). */
+/* The "stella" wordmark in the headline — solid foreground, mode-aware. */
 .lp-brand-text {
   color: var(--stella-accent);
 }
 
-/* Primary CTA — flat yellow fill with an ink label. High contrast on paper and
- * black alike, and unmistakably the brand accent. */
+/* Primary CTA — Vercel's inverted primary: ink fill + paper label in light,
+ * snow fill + ink label in dark. Unmistakably the primary action, no hue. */
 .lp-cta {
-  background: var(--stella-yellow);
-  color: #0a0a0a;
+  background: var(--stella-cta-bg);
+  color: var(--stella-cta-fg);
 }
 .lp-cta:hover {
-  background: #ffe23d;
+  background: var(--stella-cta-bg-hover);
 }
 
 .lp-terminal {
@@ -160,7 +164,7 @@
     monospace;
 }
 
-/* The `>` prompt + caret in the terminal card, in the mode-aware accent. */
+/* The `>` prompt + caret in the terminal card, in the mode-aware foreground. */
 .lp-prompt {
   color: var(--stella-accent);
 }
