@@ -113,9 +113,14 @@ pub fn render_orientation_block(root: &Path) -> Option<String> {
         ));
     }
 
-    let entry_points = entry_point_paths(&graph, &all_files);
-    if !entry_points.is_empty() {
-        lines.push(format!("Entry points: {}", entry_points.join(", ")));
+    // Same bound as `code_section`: deriving entry points costs one
+    // `importers_of` query per file, so past the scan limit we skip the line
+    // rather than pay an unbounded per-file scan on the first-response path.
+    if all_files.len() <= ENTRY_POINT_SCAN_LIMIT {
+        let entry_points = entry_point_paths(&graph, &all_files);
+        if !entry_points.is_empty() {
+            lines.push(format!("Entry points: {}", entry_points.join(", ")));
+        }
     }
 
     let storage = graph.storage_snapshot();
