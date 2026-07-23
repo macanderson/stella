@@ -811,6 +811,91 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
     assert!(!s.contains(&StageKind::Judge));
 }
 
+/// A greeting (triage → `chat`) takes the conversational fast path: one plain
+/// completion, no plan / witness / execute / verify / judge. This is the fix
+/// for "typing `hi` authored a witness test". The scripted provider serves
+/// exactly two calls — triage and the conversational reply — so if any work
+/// stage tried to run, the provider would be exhausted and the run would error.
+#[tokio::test]
+async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
+    // triage → "chat"; then the single conversational reply. No third call.
+    let provider = ScriptedProvider::new(vec![
+        text_result("chat"),
+        text_result("Hi! How can I help with your codebase?"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "");
+    let tools = EmptyTools;
+    let recall = NoContextRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("hi", &mut messages, &mut budget)
+        .await
+        .expect("run succeeds");
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    assert_eq!(outcome.final_text, "Hi! How can I help with your codebase?");
+    assert!(outcome.verdict.is_none(), "no verification for a greeting");
+    assert_eq!(outcome.revisions, 0);
+
+    // The assistant turn is adopted into the trajectory for follow-up context.
+    assert!(matches!(
+        messages.last(),
+        Some(m) if m.content == "Hi! How can I help with your codebase?"
+    ));
+
+    let events = drain(&mut rx);
+    let s = stages(&events);
+    // No work stage ran — only triage, recall, and the terminal complete.
+    for forbidden in [
+        StageKind::Plan,
+        StageKind::ScopeReview,
+        StageKind::Witness,
+        StageKind::Execute,
+        StageKind::Verify,
+        StageKind::Judge,
+    ] {
+        assert!(!s.contains(&forbidden), "{forbidden:?} must not run for chat");
+    }
+    // The reply reached the user as streamed text.
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Text { delta } if delta == "Hi! How can I help with your codebase?"
+        )),
+        "the conversational reply is emitted as text"
+    );
+}
+
 /// A multi-step plan above the scope-review thresholds, running headless
 /// with no bypass, is a named error (never a silent auto-approve).
 #[tokio::test]

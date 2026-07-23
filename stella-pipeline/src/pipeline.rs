@@ -67,7 +67,8 @@ use crate::ports::{
 };
 use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review};
 use crate::triage::{
-    TaskAssessment, TaskClass, parse_triage_response, resolve_task_class, triage_prompt,
+    TaskAssessment, TaskClass, parse_triage_response, resolve_conversational, resolve_task_class,
+    triage_prompt,
 };
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
@@ -118,6 +119,16 @@ fn verification_honest_diff(diff_text: String, file_changes: u32) -> String {
 /// Minimal fallback when the caller supplies no stable system prefix.
 const DEFAULT_SYSTEM_PROMPT: &str =
     "You are a precise, careful software engineering agent. Make the smallest correct change.";
+
+/// The system prompt for the conversational fast path. Swapped in for
+/// [`DEFAULT_SYSTEM_PROMPT`] when triage classified the input as chat so the
+/// reply reads as a normal, brief conversational turn rather than a work plan.
+const CONVERSATIONAL_SYSTEM_PROMPT: &str =
+    "You are Stella, a careful software engineering agent. The user's latest \
+     message is a greeting, small talk, or a question about you — not a coding \
+     task. Reply briefly and warmly in plain prose: no tools, no code, no plan, \
+     no test. Do not invent a task. If it fits, add one short line inviting \
+     them to describe a change, bug, or question about their codebase.";
 
 /// Small fixed system prompt for the independent witness author.
 const WITNESS_SYSTEM_PROMPT: &str = "You are a precise test author. You write minimal failing tests that pin down intended \
@@ -537,6 +548,19 @@ impl<'a> Pipeline<'a> {
             goal, &frames,
         )));
 
+        // --- Conversational fast path. -------------------------------------
+        // Triage classified this as chat, not a software task (a greeting,
+        // small talk, a question about the agent), and the deterministic floor
+        // saw no task signal to overrule it (triage::resolve_conversational).
+        // Answer in one plain, tool-less completion and skip plan → witness →
+        // execute → verify entirely. This is the fix for "typing `hi` authored
+        // a witness test": a non-task must never enter the work pipeline.
+        if assessment.conversational {
+            return self
+                .run_conversational(messages, budget, &mut total_cost)
+                .await;
+        }
+
         // --- 3. Plan (skipped for simple/single-task). ---------------------
         let plan: Option<Vec<PlanStep>> = if task_class.plans() {
             let repo_structure = self.repo.structure_summary().await;
@@ -773,9 +797,102 @@ impl<'a> Pipeline<'a> {
         Ok(match assessment {
             Some(assessment) => TaskAssessment {
                 class: resolve_task_class(Some(assessment.class), goal),
+                // The deterministic floor may VETO a `chat` classification: a
+                // goal carrying real task signal is work no matter what the
+                // cheap triage model guessed (never swallow a task as chat).
+                conversational: resolve_conversational(assessment.conversational, goal),
                 ..assessment
             },
             None => TaskAssessment::from_class(resolve_task_class(None, goal)),
+        })
+    }
+
+    // Conversational fast path
+
+    /// Answer a non-task (greeting / small talk / meta question) in a single
+    /// plain completion, then return. No plan, no witness, no execute turn, no
+    /// verify — the whole reason this path exists is that a bare `hi` must
+    /// never enter the work pipeline. Runs the worker provider with a
+    /// conversational system prompt; [`Self::metered_raw_call`] carries no
+    /// tools, so the model cannot touch the tree even if it tried.
+    async fn run_conversational(
+        &self,
+        messages: &mut Vec<CompletionMessage>,
+        budget: &mut BudgetGuard,
+        total_cost: &mut f64,
+    ) -> Result<PipelineOutcome, PipelineRunError> {
+        let resolved = match self.resolve_provider(Role::Worker) {
+            Ok(r) => r,
+            Err(error) => {
+                return Err(PipelineRunError::new(error.into_pipeline_error(), *total_cost));
+            }
+        };
+        if let Some(fb) = &resolved.fallback {
+            self.emit_fallback(fb);
+        }
+        // Keep the running conversation for coherent multi-turn small talk, but
+        // swap the leading (guaranteed — pushed in `run`) engineering system
+        // prompt for the conversational one so the reply is a chat turn.
+        let mut convo = messages.clone();
+        convo[0] = CompletionMessage::system(CONVERSATIONAL_SYSTEM_PROMPT);
+
+        let overrides = RoleCallOverrides::default();
+        let reply = match self
+            .metered_raw_call(
+                RawCall {
+                    role: ModelCallRole::Worker,
+                    resolved: &resolved,
+                    messages: convo,
+                    policy: RetryPolicy::standard(),
+                    overrides: &overrides,
+                    timeout: None,
+                },
+                budget,
+                total_cost,
+            )
+            .await
+        {
+            Ok(result) => result.text,
+            Err(RawCallError::Budget(abort)) => {
+                return Ok(self.aborted_before_execute(
+                    TaskClass::SimpleLookup,
+                    *total_cost,
+                    &abort.reason,
+                ));
+            }
+            // Even chat needs the model; if it is down, abort cleanly rather
+            // than fabricate a reply.
+            Err(RawCallError::Provider | RawCallError::Timeout) => {
+                return Ok(self.aborted_before_execute(
+                    TaskClass::SimpleLookup,
+                    *total_cost,
+                    "conversational reply unavailable",
+                ));
+            }
+        };
+
+        // Adopt the assistant turn into the running trajectory (the same thing
+        // the worked path does via `*messages = best.messages`) so a follow-up
+        // keeps context.
+        messages.push(CompletionMessage::assistant(reply.clone()));
+        self.emit(AgentEvent::Text {
+            delta: reply.clone(),
+        });
+        self.emit(AgentEvent::Stage {
+            name: StageKind::Complete,
+        });
+        self.emit(AgentEvent::Complete {
+            model: resolved.model_ref.to_string(),
+            cost_usd: *total_cost,
+        });
+        Ok(PipelineOutcome {
+            status: PipelineStatus::Completed,
+            task_class: TaskClass::SimpleLookup,
+            final_text: reply,
+            total_cost_usd: *total_cost,
+            verdict: None,
+            revisions: 0,
+            candidates_run: 1,
         })
     }
 
