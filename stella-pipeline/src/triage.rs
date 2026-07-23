@@ -80,6 +80,15 @@ impl TaskClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskAssessment {
     pub class: TaskClass,
+    /// Whether the input is conversational — a greeting, small talk, or a
+    /// question about the agent rather than a software task at all. When set,
+    /// the pipeline answers in one plain completion and skips plan → witness →
+    /// execute → verify entirely (the escape hatch a bare `hi` needs so it
+    /// never gets forced into authoring a witness test). Orthogonal to
+    /// [`TaskClass`]: "is this even a task" is a different axis from "how big
+    /// is the task", so it rides its own field instead of a bottom variant of
+    /// the ordered ceremony ladder. See [`resolve_conversational`].
+    pub conversational: bool,
     /// Whether an independently authored witness test is warranted.
     pub require_witness: Option<bool>,
     /// Whether a separate model reviewing the result is warranted.
@@ -92,6 +101,7 @@ impl TaskAssessment {
     pub fn from_class(class: TaskClass) -> Self {
         Self {
             class,
+            conversational: false,
             require_witness: None,
             require_judge: None,
         }
@@ -143,15 +153,66 @@ fn parse_flag(lower: &str, key: &str) -> Option<bool> {
 /// Tolerant by construction: the class comes from the same keyword scan the
 /// bare-token contract always used, so a model that ignores the structured
 /// format still classifies correctly and simply expresses no assurance
-/// opinion. Returns `None` only when no class keyword appears at all.
+/// opinion. A `chat` answer sets [`TaskAssessment::conversational`] (see
+/// [`classify_conversational`]). Returns `None` only when neither a class
+/// keyword nor a chat signal appears at all.
 pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
-    let class = classify_triage_response(text)?;
+    let conversational = classify_conversational(text);
+    let class = match classify_triage_response(text) {
+        Some(class) => class,
+        // A pure `chat` answer carries no orchestration keyword. Park the class
+        // at the cheapest tier — it is never consulted, since the
+        // conversational path skips plan/witness/execute/verify. Neither a
+        // class nor a chat signal means the response is unparseable: fall
+        // through to the deterministic floor exactly as before.
+        None if conversational => TaskClass::SimpleLookup,
+        None => return None,
+    };
     let lower = text.to_ascii_lowercase();
     Some(TaskAssessment {
         class,
+        conversational,
         require_witness: parse_flag(&lower, "witness"),
         require_judge: parse_flag(&lower, "judge"),
     })
+}
+
+/// Whether a triage response classifies the input as conversational — a `chat`
+/// CLASS answer (a greeting, small talk, a question about the agent), not a
+/// software task.
+///
+/// Scans in the same first-recognized-class-keyword-wins order as
+/// [`classify_triage_response`], but resolves to a boolean: `true` only when
+/// the first class token is a chat token. That ordering is load-bearing — a
+/// justification that mentions "chat" *after* a real class token
+/// (`CLASS: lookup — just answering a chat about the code`) must not misfire,
+/// because routing to chat is terminal no-work and a false positive silently
+/// drops a real task.
+pub fn classify_conversational(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    for raw in lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        match raw {
+            "chat" | "greeting" | "smalltalk" | "small_talk" => return true,
+            // Any real class token appearing first overrules a later "chat".
+            "lookup" | "simple" | "simple_lookup" | "read" | "explain" | "single"
+            | "single_task" | "task" | "fix" | "multi" | "multi_step" | "multistep" | "complex"
+            | "plan" => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether the input should take the conversational (no-work) path. Triage's
+/// `chat` classification only stands when the deterministic floor found no
+/// positive task signal — the same asymmetry [`resolve_task_class`] relies on:
+/// the deterministic layer can only ever *add* work, so it may **veto** "this
+/// is just chat" (raising a real task back onto the work path) but never
+/// manufacture it. A cheap triage model that over-eagerly calls a real task
+/// "chat" is overruled the moment the goal carries an enumeration, conjoined
+/// imperatives, or cross-cutting scope words.
+pub fn resolve_conversational(model_says_chat: bool, goal: &str) -> bool {
+    model_says_chat && deterministic_floor(goal) == TaskClass::SimpleLookup
 }
 
 /// Parse a triage model's classification response into a [`TaskClass`].
@@ -331,19 +392,27 @@ fn conjoined_imperative(lower: &str) -> bool {
     false
 }
 
-/// The system+user prompt handed to the Role::Triage model to classify a
-/// goal. A tiny, fixed instruction (the triage model is a cheap/fast tier,
-///): it must answer with exactly one bare token.
+/// The prompt handed to the Role::Triage model to classify a user message. A
+/// tiny, fixed instruction for a cheap/fast tier: it asks for three labeled
+/// lines (`CLASS`/`WITNESS`/`JUDGE`), but the parser tolerates a bare class
+/// token too ([`parse_triage_response`]). The first line offers `chat` so a
+/// non-task (a greeting, small talk) has somewhere to land instead of being
+/// forced onto the work path.
 pub fn triage_prompt(goal: &str) -> String {
     format!(
-        "Classify the following software task, and decide what assurance its \
-         result actually warrants. Answer with EXACTLY these three lines and \
+        "Classify the following user message, and decide what assurance its \
+         result actually warrants. Do NOT assume it is a software task — it may \
+         just be conversation. Answer with EXACTLY these three lines and \
          nothing else:\n\
-         CLASS: lookup|single|multi\n\
+         CLASS: chat|lookup|single|multi\n\
          WITNESS: yes|no\n\
          JUDGE: yes|no\n\n\
-         CLASS is how much orchestration the work needs:\n\
-         - `lookup`  — a read/explain/search question that changes no files\n\
+         CLASS is what the message needs:\n\
+         - `chat`    — NOT a software task: a greeting (`hi`), thanks, small \
+         talk, or a question about you. Reply conversationally; touch no files, \
+         write no plan, no test.\n\
+         - `lookup`  — a read/explain/search question about the code that \
+         changes no files\n\
          - `single`  — one concrete code change\n\
          - `multi`   — genuinely multi-step work spanning several changes\n\n\
          WITNESS is whether a failing test should be written first to pin the \
@@ -498,6 +567,69 @@ mod tests {
     }
 
     #[test]
+    fn a_chat_answer_parses_as_conversational_and_parks_the_class() {
+        // The whole point: a greeting must have somewhere to land. A `chat`
+        // CLASS carries no orchestration keyword, so the class parks at the
+        // cheapest tier and the conversational flag is what the pipeline reads.
+        let a = parse_triage_response("CLASS: chat\nWITNESS: no\nJUDGE: no")
+            .expect("a chat answer parses");
+        assert!(a.conversational);
+        assert_eq!(a.class, TaskClass::SimpleLookup);
+
+        // A bare `chat` token works too (models that ignore the format).
+        let bare = parse_triage_response("chat").expect("a bare chat token parses");
+        assert!(bare.conversational);
+    }
+
+    #[test]
+    fn classify_conversational_is_first_class_keyword_wins() {
+        assert!(classify_conversational("chat"));
+        assert!(classify_conversational("CLASS: chat — greeting, no task"));
+        assert!(classify_conversational("greeting"));
+        // A real class token appearing FIRST overrules a later "chat": routing
+        // to no-work is terminal, so a justification must never flip it.
+        assert!(!classify_conversational(
+            "CLASS: lookup — just answering a chat about the code"
+        ));
+        assert!(!classify_conversational("multi"));
+        assert!(!classify_conversational(""));
+        assert!(!classify_conversational("hmm, not sure"));
+    }
+
+    #[test]
+    fn a_non_chat_answer_is_not_conversational() {
+        assert!(!parse_triage_response("single").unwrap().conversational);
+        assert!(
+            !parse_triage_response("CLASS: lookup\nWITNESS: no\nJUDGE: no")
+                .unwrap()
+                .conversational
+        );
+        // A class carried by `from_class` is never conversational.
+        assert!(!TaskAssessment::from_class(TaskClass::SimpleLookup).conversational);
+    }
+
+    #[test]
+    fn the_floor_vetoes_conversational_when_there_is_task_signal() {
+        // A bare greeting has no task signal → chat stands.
+        assert!(resolve_conversational(true, "hi"));
+        assert!(resolve_conversational(true, "hey there, how are you?"));
+        // The model has to say chat in the first place.
+        assert!(!resolve_conversational(false, "hi"));
+        // But positive task signal overrules an over-eager `chat`: an
+        // enumeration, conjoined imperatives, or cross-cutting scope is real
+        // work no matter what the cheap triage model guessed.
+        assert!(!resolve_conversational(
+            true,
+            "add the field and then update the migration"
+        ));
+        assert!(!resolve_conversational(
+            true,
+            "rename all callers of foo across the codebase"
+        ));
+        assert!(!resolve_conversational(true, "add a field and update it"));
+    }
+
+    #[test]
     fn a_judge_opinion_is_required_to_skip_the_judge() {
         // `wants_judge` is only consulted after the ladder came back
         // inconclusive, so silence must never mean "skip".
@@ -553,8 +685,9 @@ mod tests {
     }
 
     #[test]
-    fn triage_prompt_names_all_three_tokens_and_the_goal() {
+    fn triage_prompt_names_all_four_class_tokens_and_the_goal() {
         let p = triage_prompt("Fix the failing test");
+        assert!(p.contains("chat"));
         assert!(p.contains("lookup"));
         assert!(p.contains("single"));
         assert!(p.contains("multi"));
