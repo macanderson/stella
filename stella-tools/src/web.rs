@@ -117,9 +117,7 @@ impl WebAuthConfig {
         let path = match std::env::var_os("STELLA_WEB_AUTH_FILE") {
             Some(explicit) => PathBuf::from(explicit),
             None => match std::env::var_os("HOME") {
-                Some(home) => PathBuf::from(home)
-                    .join(".stella")
-                    .join("web_auth.toml"),
+                Some(home) => PathBuf::from(home).join(".stella").join("web_auth.toml"),
                 None => return Ok(Self::default()),
             },
         };

@@ -181,10 +181,7 @@ impl TrackerStore {
             return Some(PathBuf::from(path));
         }
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        Some(
-            home.join(".stella")
-                .join("integrations.json"),
-        )
+        Some(home.join(".stella").join("integrations.json"))
     }
 
     /// A store at the default path, or `None` when homeless (callers treat
