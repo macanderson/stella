@@ -217,6 +217,28 @@ pub enum AgentEvent {
         /// overflow fallback when eviction alone cannot reach budget.
         #[serde(default)]
         summarized: usize,
+        /// The `block_id`s each pass stubbed (spec §6.2) — identities, not just
+        /// counts, so the receipt records *which* blocks left context and a
+        /// later pass can prove a block was evicted before it was ever cited or
+        /// referenced (the wasted-carry signal). Each vec's length equals its
+        /// count field. `serde(default)` — absent on pre-identity journals.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        evicted_blocks: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        deduped_blocks: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        superseded_blocks: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        aged_blocks: Vec<String>,
+        /// The budget this pass actually compared against — the raw compaction
+        /// budget divided by the model's calibration factor — and that factor.
+        /// The event's `before/after_tokens` are raw estimates; these are the
+        /// numbers the eviction loop's stopping condition used, so the receipt
+        /// lines up with the decision (#364 item 1). `0` on pre-receipt journals.
+        #[serde(default)]
+        effective_budget_tokens: u64,
+        #[serde(default)]
+        calibration_factor: f64,
     },
     /// Emitted after every provider/media call that spends money
     /// The TUI HUD renders spend live from this
@@ -796,15 +818,21 @@ mod tests {
     }
 
     #[test]
-    fn compaction_event_carries_counts() {
+    fn compaction_event_carries_counts_and_block_identities() {
         let event = AgentEvent::Compaction {
             before_tokens: 10_000,
             after_tokens: 4_000,
-            evicted: 3,
-            deduped: 2,
+            evicted: 2,
+            deduped: 1,
             superseded: 1,
             aged: 1,
             summarized: 0,
+            evicted_blocks: vec!["blk_ev1".into(), "blk_ev2".into()],
+            deduped_blocks: vec!["blk_dd1".into()],
+            superseded_blocks: vec!["blk_sup".into()],
+            aged_blocks: vec!["blk_age".into()],
+            effective_budget_tokens: 136_363,
+            calibration_factor: 1.1,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"type\":\"compaction\""), "{json}");
@@ -813,11 +841,37 @@ mod tests {
             AgentEvent::Compaction {
                 before_tokens,
                 after_tokens,
+                evicted_blocks,
+                effective_budget_tokens,
                 ..
             } => {
                 assert!(after_tokens < before_tokens);
+                // Identities, not just counts — which blocks left context.
+                assert_eq!(evicted_blocks, vec!["blk_ev1", "blk_ev2"]);
+                assert_eq!(effective_budget_tokens, 136_363);
             }
             other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_compaction_without_identities_still_parses() {
+        // A journal written before §6.2 has counts but no identity fields; it
+        // must still deserialize (additive contract), with empty identity vecs.
+        let old =
+            r#"{"type":"compaction","before_tokens":9,"after_tokens":4,"evicted":1,"deduped":0}"#;
+        match serde_json::from_str::<AgentEvent>(old).unwrap() {
+            AgentEvent::Compaction {
+                evicted,
+                evicted_blocks,
+                effective_budget_tokens,
+                ..
+            } => {
+                assert_eq!(evicted, 1);
+                assert!(evicted_blocks.is_empty());
+                assert_eq!(effective_budget_tokens, 0);
+            }
+            other => panic!("old compaction must parse: {other:?}"),
         }
     }
 

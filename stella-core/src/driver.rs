@@ -522,7 +522,7 @@ impl<'a> Engine<'a> {
         budget: &mut BudgetGuard,
         events: &EventSender,
     ) -> f64 {
-        let (compaction_budget, _factor) = self.effective_compaction_budget(calibration_model);
+        let (compaction_budget, factor) = self.effective_compaction_budget(calibration_model);
         if let Some(report) = compact(messages, compaction_budget) {
             let _ = events.send(AgentEvent::Compaction {
                 before_tokens: report.before_tokens,
@@ -532,6 +532,14 @@ impl<'a> Engine<'a> {
                 superseded: report.superseded,
                 aged: report.aged,
                 summarized: 0,
+                // Identities, not just counts (spec §6.2): which blocks each
+                // pass stubbed, and the budget the decision actually used.
+                evicted_blocks: report.evicted_blocks,
+                deduped_blocks: report.deduped_blocks,
+                superseded_blocks: report.superseded_blocks,
+                aged_blocks: report.aged_blocks,
+                effective_budget_tokens: compaction_budget,
+                calibration_factor: factor,
             });
         }
         // Overflow fallback: still over budget after every pure pass means
@@ -541,7 +549,9 @@ impl<'a> Engine<'a> {
         if self.config.summarize_overflow
             && crate::estimator::estimate_conversation_tokens(messages) > compaction_budget
         {
-            return self.summarize_overflow_span(messages, budget, events).await;
+            return self
+                .summarize_overflow_span(messages, budget, compaction_budget, factor, events)
+                .await;
         }
         0.0
     }
@@ -552,6 +562,8 @@ impl<'a> Engine<'a> {
         &self,
         messages: &mut Vec<CompletionMessage>,
         budget: &mut BudgetGuard,
+        compaction_budget: u64,
+        factor: f64,
         events: &EventSender,
     ) -> f64 {
         let before_tokens = crate::estimator::estimate_conversation_tokens(messages);
@@ -637,6 +649,15 @@ impl<'a> Engine<'a> {
             superseded: 0,
             aged: 0,
             summarized: replaced,
+            // The summary splices a new block rather than stubbing existing
+            // ones; naming that summary block is deferred (spec §6.2). It
+            // targets the same effective budget as the pure passes.
+            evicted_blocks: Vec::new(),
+            deduped_blocks: Vec::new(),
+            superseded_blocks: Vec::new(),
+            aged_blocks: Vec::new(),
+            effective_budget_tokens: compaction_budget,
+            calibration_factor: factor,
         });
         cost_usd
     }
