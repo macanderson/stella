@@ -16,6 +16,7 @@ members = [
   "stella-serve",
   "stella-tui",
   "stella-cli",
+  "bench/loop-bench",
 ]
 
 [workspace.package]

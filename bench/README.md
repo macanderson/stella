@@ -11,6 +11,7 @@ Three entry points:
 |---|---|---|
 | [`harbor_adapter/`](harbor_adapter/) | A Harbor *installed-agent* adapter — run Stella on Terminal-Bench 2.x / SWE-bench in the same container + verifier as Claude Code, Codex CLI, Terminus, etc. | Docker, `harbor`, a provider key |
 | [`run_swebench.py`](run_swebench.py) | A standalone SWE-bench *prediction* harness — clone each instance, run Stella, emit the official predictions JSONL. No Harbor. | `git`, a provider key (Docker only for the official scoring step) |
+| [`loop-bench/`](loop-bench/) | A cheap **turn-loop + context-query correctness** harness: runs N tasks on a flash-tier model, budget-capped, and reports loop health (silent-death / zero-work / stuck-loop) and `project_overview`/`graph_query` adoption — the signals the pass-rate number hides. | `cargo`, Docker, `harbor`, a key |
 | [`smoke/smoke_test.py`](smoke/smoke_test.py) | An **offline, zero-cost** self-test of the adapter wiring for CI. | just the built `stella` binary |
 
 For development and the offline smoke test, build the native binary:
@@ -36,6 +37,26 @@ fails the check. This is what CI runs.
 python3 bench/smoke/smoke_test.py                       # auto-locate the binary
 python3 bench/smoke/smoke_test.py --stella-bin ./target/release/stella
 ```
+
+## Loop-bench (cheap loop + context-query correctness)
+
+The full benchmark measures *pass rate* — expensive, and dominated by model
+quality. `loop-bench` measures the thing the pass rate hides and that a **cheap**
+model exposes just as well: did the loop actually *run*, or abort having done
+nothing? did it die silently? did `project_overview`/`graph_query` get used?
+
+```bash
+cargo run -p loop-bench -- --n 4                     # 4 tasks, flash model, $0.20/task
+cargo run -p loop-bench -- --tasks fix-git,prove-plus-comm -m openrouter/z-ai/glm-5.2
+cargo run -p loop-bench -- --analyze-only --jobs-dir <dir> --job-name <name>   # free, re-read a finished run
+```
+
+It shells out to the `stella` binary + `harbor` (no stella-crate deps, compiles
+in seconds), parses each trial's `stella-events.jsonl`, and prints a per-task
+verdict (`solved` / `ran (unsolved)` / `ZERO-WORK` / `SILENT-DEATH`) plus tool
+and context-tool counts. It **exits non-zero when the loop misbehaved** (a
+zero-work non-pass) even if some tasks passed — so it gates CI on loop health,
+not pass rate. Set `STELLA_BINARY` to a linux build for the amd64 containers.
 
 ## Harbor (Terminal-Bench 2.x, containerized head-to-head)
 

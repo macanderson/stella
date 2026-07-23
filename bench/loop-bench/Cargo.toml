@@ -1,0 +1,15 @@
+[package]
+name = "loop-bench"
+version = "0.1.0"
+edition = "2024"
+description = "Inexpensive turn-loop + context-query correctness harness over Terminal-Bench"
+publish = false
+
+[[bin]]
+name = "loop-bench"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
