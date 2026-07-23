@@ -4,10 +4,9 @@
 //! `stella-model`'s `ApiKey` (same redacted-`Debug`, `reveal`-only contract).
 //! `stella-media` may not depend on `stella-model` (parallel-workstream
 //! isolation — see the crate-level doc), so the secret type is duplicated
-//! here rather than imported. The security contract is identical to
-//! : the value is never `Display`ed, its `Debug` is
-//! redacted, and the only accessor is [`ApiKey::reveal`], used solely to
-//! build an `Authorization` header.
+//! here rather than imported. The security contract: the value is never
+//! `Display`ed, its `Debug` is redacted, and the only accessor is
+//! [`ApiKey::reveal`], used solely to build an `Authorization` header.
 //!
 //! Full credential *resolution* (CLI flag → env → file → interactive prompt)
 //! stays in `stella-model`/CLI glue; this crate only needs to hold a key it

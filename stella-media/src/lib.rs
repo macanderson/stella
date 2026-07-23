@@ -1,9 +1,8 @@
-//! # stella-media — multimodal generation (Phase 5)
+//! # stella-media — multimodal generation
 //!
 //! Image, SVG, and video generation for the Oxagen CLI, all client-side and
 //! all BYOK, through one [`MediaProvider`] port and the same artifact
-//! discipline as the rest of the engine (
-//!).
+//! discipline as the rest of the engine.
 //!
 //! ## What's here
 //! * [`provider`] — the [`MediaProvider`] trait plus its request/response
@@ -29,7 +28,7 @@
 //! ## Deliberate architecture deviation (recorded follow-up)
 //! nominally places vendor media HTTP clients in
 //! `stella-model` (alongside the chat/embedding adapters). They live **here**
-//! instead, so this Phase-5 workstream stays self-contained and this crate
+//! instead, so this workstream stays self-contained and this crate
 //! does **not** depend on `stella-model`. The consequences of that isolation:
 //! the redacted [`credential::ApiKey`] and the [`error::MediaError`] category
 //! set are minimal self-contained copies of `stella-model`'s `ApiKey` /

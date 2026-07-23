@@ -60,8 +60,7 @@ const SVG_NS: &str = "http://www.w3.org/2000/svg";
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
 /// Recommended attempt budget for [`SvgPipeline::generate`]: one initial
-/// generation plus two repair rounds ( step 2, "max 2
-/// repair rounds").
+/// generation plus two repair rounds.
 pub const DEFAULT_SVG_ATTEMPTS: u32 = 3;
 
 /// A named SVG failure. `Parse` carries the line/col of the offending token
@@ -139,8 +138,7 @@ pub struct ProcessedSvg {
 
 /// A model-backed SVG generator, injected by CLI glue (this crate must not
 /// depend on `stella-model`). `prior_error` carries the previous attempt's
-/// parse/validation failure so the model can repair it (
-/// §4 step 2).
+/// parse/validation failure so the model can repair it.
 #[async_trait]
 pub trait SvgGenerator: Send + Sync {
     async fn generate(&self, prompt: &str, prior_error: Option<&str>) -> String;
@@ -180,7 +178,7 @@ impl SvgPipeline {
     /// Generate SVG through `generator` with a bounded repair loop: up to
     /// `max_attempts` tries, feeding each parse/validation error back into
     /// the next generation, then failing with the last error
-    /// ( step 2; property: the loop always terminates).
+    /// (the loop always terminates).
     /// `max_attempts` is clamped to at least 1.
     pub async fn generate(
         generator: &dyn SvgGenerator,
@@ -204,7 +202,7 @@ impl SvgPipeline {
     }
 }
 
-// ── serialization (whitelist walk) ──────────────────────────────────────
+// serialization (whitelist walk)
 
 /// Elements dropped entirely, subtree and all. Case-insensitive so a
 /// `<SCRIPT>` variant can't slip through. `<style>` is dropped because its CSS
@@ -562,7 +560,7 @@ mod tests {
         assert!(out.svg.contains(">hello world<"), "{}", out.svg);
     }
 
-    // ── repair loop ──────────────────────────────────────────────────────
+    // repair loop
 
     struct ScriptedGenerator {
         outputs: std::sync::Mutex<Vec<String>>,

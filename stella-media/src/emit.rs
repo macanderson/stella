@@ -1,6 +1,5 @@
 //! Emit-shape helpers: turn media job transitions into `stella_protocol`
-//! event *values* (event vocabulary in
-//!). These return `AgentEvent`s as plain data — this
+//! event *values*. These return `AgentEvent`s as plain data — this
 //! crate has no channel dependency, so the caller owns how they reach the
 //! renderer. Centralizing the mapping means a `MediaJob` and a
 //! `MediaJobStatus` translate to `MediaProgress`/`MediaComplete` one way, not

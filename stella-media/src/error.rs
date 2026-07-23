@@ -4,11 +4,10 @@
 //! auth / malformed / cancelled / terminal) with its own type because
 //! `stella-media` may not depend on `stella-model` (parallel-workstream
 //! isolation, see the crate-level doc). Two categories are added beyond the
-//! chat provider's set, both required by:
+//! chat provider's set:
 //!
-//! * [`MediaError::ContentPolicy`] — a provider refusal (
-//!   §7 lists content-policy refusals as a failure shape the fixtures must
-//!   cover); terminal, never retried.
+//! * [`MediaError::ContentPolicy`] — a provider refusal; terminal, never
+//!   retried.
 //! * [`MediaError::CostDenied`] — the video cost gate
 //!   said no; terminal.
 

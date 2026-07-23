@@ -4,10 +4,9 @@
 //! [`crate::http`] policy so a 401 means the same thing everywhere.
 //!
 //! Deliberate architecture deviation (documented at the crate root): these
-//! vendor HTTP clients live in `stella-media`, not `stella-model` where
-//! nominally places them, so this Phase-5 workstream
-//! stays self-contained. Folding them into `stella-model`'s provider set is a
-//! recorded follow-up.
+//! vendor HTTP clients live in `stella-media`, not `stella-model`, so this
+//! workstream stays self-contained. Folding them into `stella-model`'s
+//! provider set is a recorded follow-up.
 //!
 //! Coverage is recorded-fixture-first (wiremock transcripts, including the
 //! failure shapes: auth 401, rate-limit 429, content-policy refusal, and a

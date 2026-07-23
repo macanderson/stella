@@ -4,8 +4,8 @@
 //!
 //! `generate_image` is sync-ish (one HTTP round trip, bytes back);
 //! `generate_video` submits an async job and returns a [`MediaJob`] handle
-//! that `poll_video` reconciles against the provider (
-//! §3–§6). Neither method touches the filesystem: they return in-memory
+//! that `poll_video` reconciles against the provider. Neither method touches
+//! the filesystem: they return in-memory
 //! [`MediaArtifact`] bytes, and the caller persists through
 //! [`crate::artifact::ArtifactStore`] — so the artifact-root jail
 //! is enforced in exactly one place.
@@ -168,7 +168,7 @@ impl ImageRequest {
     }
 }
 
-/// A video generation request (cost-gated §6).
+/// A video generation request (cost-gated).
 #[derive(Clone, Debug)]
 pub struct VideoRequest {
     /// Host-derived, retry-stable operation key. Provider adapters may pass
