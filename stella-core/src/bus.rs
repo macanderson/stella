@@ -69,6 +69,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use stella_protocol::AgentEvent;
 
 // Event names — the catalog
 
@@ -801,6 +802,64 @@ impl HookBus {
     }
 }
 
+/// Bridge the policy/extension audit plane into an `AgentEvent` stream
+/// (receipts spec §6.4, #364 gap 6): subscribes an observer that maps the
+/// four audit event names — `policy.evaluated`, `policy.blocked`,
+/// `approval.requested`, `secret.detected` — onto
+/// [`AgentEvent::PolicyDecision`], content-free. Whatever journal the host
+/// hangs off `events` is what makes the plane durable; the bus itself still
+/// never writes (its module contract), and every other event name passes
+/// through untouched.
+///
+/// `subject` is the gated chain's event name (`tool.call.requested`,
+/// `file.updated`, …) — or the workspace-relative path for a secret
+/// detection. `outcome` is the decision record's compact JSON (`decision` +
+/// `handlers_consulted`) or the detector's kind list; neither ever carries
+/// file contents or a secret value.
+pub fn bridge_policy_plane(
+    bus: &HookBus,
+    events: crate::event_sender::EventSender,
+) -> HookSubscription {
+    use stella_protocol::PolicyKind;
+    bus.on("*", move |event| {
+        let kind = match event.name.as_str() {
+            names::POLICY_EVALUATED => PolicyKind::Evaluated,
+            names::POLICY_BLOCKED => PolicyKind::Blocked,
+            names::APPROVAL_REQUESTED => PolicyKind::ApprovalRequested,
+            names::SECRET_DETECTED => PolicyKind::SecretDetected,
+            _ => return Ok(()),
+        };
+        let (subject, outcome) = if kind == PolicyKind::SecretDetected {
+            (
+                event.payload["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                event.payload["kinds"].to_string(),
+            )
+        } else {
+            (
+                event.payload["event_name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                serde_json::json!({
+                    "decision": event.payload["decision"],
+                    "handlers_consulted": event.payload["handlers_consulted"],
+                })
+                .to_string(),
+            )
+        };
+        events
+            .send(AgentEvent::PolicyDecision {
+                kind,
+                subject,
+                outcome,
+            })
+            .map_err(|e| e.to_string())
+    })
+}
+
 /// An observer that forwards every envelope into a `tokio` channel — the
 /// bridge from the bus's inline delivery to an extension's own async task:
 /// `bus.on("*", forward_to(tx)).detach()`.
@@ -1045,6 +1104,85 @@ mod tests {
             .iter()
             .map(|e| e.name.clone())
             .collect()
+    }
+
+    // ---- policy-plane bridge (receipts spec §6.4) ----------------------
+
+    #[test]
+    fn bridge_maps_the_audit_plane_onto_policy_decision_events() {
+        use stella_protocol::PolicyKind;
+        let bus = HookBus::new("bridge-test");
+        bus.on_blocking(names::TOOL_CALL_REQUESTED, |_| HookDecision::Deny {
+            reason: "not on my watch".into(),
+        })
+        .detach();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let _bridge = bridge_policy_plane(&bus, crate::event_sender::EventSender::new(tx));
+
+        // A denied chain → policy.evaluated + policy.blocked, both bridged.
+        let outcome = bus.emit_blocking(HookEventDraft::new(
+            names::TOOL_CALL_REQUESTED,
+            serde_json::json!({ "tool": "bash", "input": {"command": "rm -rf /"} }),
+        ));
+        assert!(!outcome.allowed());
+        // A secret detection is bridged with the path as subject.
+        bus.emit_named(
+            names::SECRET_DETECTED,
+            serde_json::json!({ "path": "src/config.rs", "kinds": ["aws_key"] }),
+        );
+        // A non-audit event must NOT be bridged.
+        bus.emit_named(names::FILE_READ, serde_json::json!({ "path": "a.rs" }));
+
+        let bridged: Vec<AgentEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let kinds: Vec<PolicyKind> = bridged
+            .iter()
+            .map(|e| match e {
+                AgentEvent::PolicyDecision { kind, .. } => *kind,
+                other => panic!("only PolicyDecision events cross the bridge: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                PolicyKind::Evaluated,
+                PolicyKind::Blocked,
+                PolicyKind::SecretDetected
+            ],
+            "{bridged:?}"
+        );
+        match &bridged[1] {
+            AgentEvent::PolicyDecision {
+                subject, outcome, ..
+            } => {
+                assert_eq!(subject, names::TOOL_CALL_REQUESTED);
+                assert!(outcome.contains("deny"), "{outcome}");
+                // Content-free: the decision record, never the tool input.
+                assert!(!outcome.contains("rm -rf"), "{outcome}");
+            }
+            other => panic!("expected PolicyDecision: {other:?}"),
+        }
+        match &bridged[2] {
+            AgentEvent::PolicyDecision {
+                subject, outcome, ..
+            } => {
+                assert_eq!(subject, "src/config.rs");
+                assert!(outcome.contains("aws_key"), "{outcome}");
+            }
+            other => panic!("expected PolicyDecision: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dropping_the_bridge_subscription_stops_the_flow() {
+        let bus = HookBus::new("bridge-drop");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let bridge = bridge_policy_plane(&bus, crate::event_sender::EventSender::new(tx));
+        drop(bridge); // un-detached subscription unsubscribes on drop
+        bus.emit_named(
+            names::SECRET_DETECTED,
+            serde_json::json!({ "path": "a.rs", "kinds": ["token"] }),
+        );
+        assert!(rx.try_recv().is_err(), "no bridge, no events");
     }
 
     // ---- catalog -------------------------------------------------------

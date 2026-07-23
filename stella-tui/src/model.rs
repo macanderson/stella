@@ -613,6 +613,12 @@ impl SessionModel {
             // Internal accounting for read-only speculation that never
             // committed — no visible model state to update.
             AgentEvent::SpeculationDiscarded { .. } => {}
+            // Typed decision twins (receipts spec §6.3/§6.4) — the prose
+            // events they mirror already updated the visible state.
+            AgentEvent::LoopDetected { .. }
+            | AgentEvent::BudgetDenied { .. }
+            | AgentEvent::RetriesExhausted { .. }
+            | AgentEvent::PolicyDecision { .. } => {}
         }
         self.evict_transcript_overflow();
     }

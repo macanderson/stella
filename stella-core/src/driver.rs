@@ -82,7 +82,7 @@ use crate::compaction::compact;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, run_hooks, select_matchers};
-use crate::loop_detect::{CallRecord, LoopDetectionConfig, detect_loop};
+use crate::loop_detect::{CallRecord, LoopDetectionConfig, LoopVerdict, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff_observed};
@@ -836,6 +836,29 @@ impl<'a> Engine<'a> {
         let reason = verdict
             .evidence()
             .unwrap_or_else(|| "loop detected".to_string());
+        // The typed twin of the prose steer/abort (receipts spec §6.3): a
+        // receipt parses this instead of string-matching "stuck-loop
+        // detected:" prefixes. Emitted for both outcomes — `aborted` says
+        // whether this detection steered or killed the turn.
+        let (kind, pattern, repeats) = match &verdict {
+            LoopVerdict::ExactRepeat { tool, count, .. } => {
+                ("exact_repeat", vec![tool.clone()], *count)
+            }
+            LoopVerdict::ShortCycle { pattern, repeats } => (
+                "short_cycle",
+                pattern.iter().map(|c| c.name.clone()).collect(),
+                *repeats,
+            ),
+            LoopVerdict::NoLoop => return None,
+        };
+        let _ = events.send(AgentEvent::LoopDetected {
+            turn_instance: self.config.turn_instance,
+            kind: kind.to_string(),
+            pattern,
+            repeats,
+            evidence: reason.clone(),
+            aborted: *loop_steered,
+        });
         if !*loop_steered {
             *loop_steered = true;
             let text = format!(
@@ -985,6 +1008,12 @@ impl<'a> Engine<'a> {
             armed: true,
         };
         let incomplete_events = events.clone();
+        // Every failed attempt's reason, accumulated through the observer:
+        // retry.rs returns retry history only for calls that COMMIT, so on
+        // exhaustion this is the sole record of the doomed attempts
+        // (receipts spec §6.3 — RetriesExhausted). A std Mutex (not RefCell)
+        // so the future holding `&` stays Send.
+        let attempt_reasons: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
         let RetryOutcome {
             value: (result, speculation_future),
             retries,
@@ -996,7 +1025,11 @@ impl<'a> Engine<'a> {
             // Per-attempt duration (retry.rs times each dispatch
             // individually): the failed call's own latency, never
             // cumulative across earlier attempts or backoff sleeps.
-            |attempt, _error, attempt_duration| {
+            |attempt, error, attempt_duration| {
+                attempt_reasons
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(error.to_string());
                 let _ = incomplete_events.send(AgentEvent::UsageIncomplete {
                     role: self.call_role,
                     provider: self.provider.id().to_string(),
@@ -1015,6 +1048,13 @@ impl<'a> Engine<'a> {
             }
             Err(error) => {
                 cancel_guard.disarm();
+                let reasons =
+                    std::mem::take(&mut *attempt_reasons.lock().unwrap_or_else(|p| p.into_inner()));
+                let _ = events.send(AgentEvent::RetriesExhausted {
+                    turn_instance: self.config.turn_instance,
+                    attempts: reasons.len() as u32,
+                    reasons,
+                });
                 let message = error.to_string();
                 let _ = events.send(AgentEvent::Error {
                     message: message.clone(),
@@ -1245,6 +1285,17 @@ impl<'a> Engine<'a> {
                 attachments: Vec::new(),
             });
         }
+        // The typed twin of the prose denial (receipts spec §6.3). Mode is
+        // `Enforced` by construction — only enforced budgets abort.
+        let _ = events.send(AgentEvent::BudgetDenied {
+            scope: match axis {
+                BudgetAxis::Turn => stella_protocol::BudgetScope::Turn,
+                BudgetAxis::Session => stella_protocol::BudgetScope::Session,
+            },
+            spent_usd,
+            limit_usd,
+            mode: stella_protocol::BudgetMode::Enforced,
+        });
         let axis = match axis {
             BudgetAxis::Turn => "turn",
             BudgetAxis::Session => "session",

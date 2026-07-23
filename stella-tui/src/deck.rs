@@ -935,6 +935,36 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::SpeculationDiscarded { name, reason, .. } => {
             (TraceKind::Tool, format!("discarded {name} ({reason})"))
         }
+        AgentEvent::LoopDetected {
+            kind,
+            repeats,
+            aborted,
+            ..
+        } => (
+            TraceKind::Other,
+            format!(
+                "loop {kind} ×{repeats}{}",
+                if *aborted {
+                    " — aborted"
+                } else {
+                    " — steered"
+                }
+            ),
+        ),
+        AgentEvent::BudgetDenied {
+            spent_usd,
+            limit_usd,
+            ..
+        } => (
+            TraceKind::Other,
+            format!("budget denied ${spent_usd:.4}/${limit_usd:.2}"),
+        ),
+        AgentEvent::RetriesExhausted { attempts, .. } => {
+            (TraceKind::Other, format!("retries exhausted ({attempts})"))
+        }
+        AgentEvent::PolicyDecision { kind, subject, .. } => {
+            (TraceKind::Other, format!("policy {kind:?}: {subject}"))
+        }
         AgentEvent::ToolResult {
             output,
             duration_ms,

@@ -94,6 +94,11 @@ pub struct ToolRegistry {
     /// "this area is already mapped" hints on search-tool results.
     exploration_coverage: std::sync::Mutex<ExplorationCoverage>,
     bus: std::sync::RwLock<Option<HookBus>>,
+    /// The live policy-plane bridge subscription (receipts spec §6.4), if
+    /// [`ToolRegistry::bridge_policy_plane`] wired one. Held so a re-bridge
+    /// (a new turn's event channel) replaces — unsubscribes — the previous
+    /// observer instead of accumulating stale senders.
+    policy_bridge: std::sync::Mutex<Option<stella_core::bus::HookSubscription>>,
     process_free: bool,
 }
 
@@ -372,6 +377,7 @@ impl ToolRegistry {
             storage_index: std::sync::Mutex::new(StorageIndex::default()),
             exploration_coverage,
             bus: std::sync::RwLock::new(None),
+            policy_bridge: std::sync::Mutex::new(None),
             process_free,
         }
     }
@@ -396,6 +402,27 @@ impl ToolRegistry {
             );
         }
         *self.bus.write().unwrap_or_else(|p| p.into_inner()) = Some(bus);
+    }
+
+    /// Bridge the attached bus's policy/extension audit plane into an
+    /// `AgentEvent` stream (receipts spec §6.4, #364 gap 6): every
+    /// `policy.evaluated` / `policy.blocked` / `approval.requested` /
+    /// `secret.detected` the bus emits lands as a content-free
+    /// [`stella_protocol::AgentEvent::PolicyDecision`] on `events`, so
+    /// whatever journal the host hangs off that stream carries the policy
+    /// plane too — previously a process-ephemeral ring that evaporated at
+    /// exit. Returns `false` (registering nothing) when no bus is attached:
+    /// the plane doesn't exist without one. Call after [`Self::attach_bus`];
+    /// calling again (a new turn's event channel) replaces the previous
+    /// bridge, so stale senders never accumulate as observer failures.
+    pub fn bridge_policy_plane(&self, events: stella_core::EventSender) -> bool {
+        let Some(bus) = self.bus() else {
+            return false;
+        };
+        let subscription = stella_core::bus::bridge_policy_plane(&bus, events);
+        // Dropping the previous subscription (if any) unsubscribes it.
+        *self.policy_bridge.lock().unwrap_or_else(|p| p.into_inner()) = Some(subscription);
+        true
     }
 
     /// The attached hook bus, if any (cheap clone — shared inner).

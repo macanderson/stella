@@ -1306,6 +1306,30 @@ async fn stuck_loop_steers_once_then_aborts_on_re_detection() {
         steers[0],
         AgentEvent::Steered { text } if text.contains("looping")
     ));
+    // Typed decisions (receipts spec §6.3): each detection also lands as a
+    // parseable LoopDetected — the steer with `aborted: false`, the kill
+    // with `aborted: true` — so receipts never string-match Error prefixes.
+    let detections: Vec<(&str, &Vec<String>, bool)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::LoopDetected {
+                kind,
+                pattern,
+                aborted,
+                ..
+            } => Some((kind.as_str(), pattern, *aborted)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        detections.len(),
+        2,
+        "one typed event per detection (steer + abort): {detections:?}"
+    );
+    assert_eq!(detections[0].0, "exact_repeat");
+    assert_eq!(detections[0].1, &vec!["bash".to_string()]);
+    assert!(!detections[0].2, "first detection steers");
+    assert!(detections[1].2, "second detection aborts");
     // The warning precedes the abort's Error event — steer first, abort
     // second.
     let steer_pos = events
@@ -1507,6 +1531,21 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
         events
             .iter()
             .any(|e| matches!(e, AgentEvent::BudgetTick { .. }))
+    );
+    // Typed decision (receipts spec §6.3): the denial is parseable, not
+    // just a prose Error. Scope is the axis that tripped; mode is
+    // Enforced by construction (only enforced budgets abort).
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::BudgetDenied {
+                scope: stella_protocol::BudgetScope::Turn,
+                mode: BudgetMode::Enforced,
+                spent_usd,
+                limit_usd,
+            } if *spent_usd > *limit_usd
+        )),
+        "expected a typed BudgetDenied: {events:?}"
     );
 }
 
