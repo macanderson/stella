@@ -59,6 +59,14 @@ fn definition_frames_have_human_citation_labels_and_provenance() {
 
     assert_eq!(frame.kind, FrameKind::Symbol);
     assert!(frame.has_valid_score());
+    // §B3: the declared inline token_cost is the canonical `budget_tokens`
+    // count over the content, exact — a metering host is told the truth.
+    assert!(
+        frame.declares_honest_token_cost(),
+        "token_cost {} must equal the canonical inline count {}",
+        frame.token_cost,
+        frame.expected_inline_token_cost(),
+    );
 
     // Provenance carries the provider id `code-graph` and a file entry.
     assert!(
