@@ -36,6 +36,7 @@ use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 use crate::config::Dialect;
 
 mod authority;
+mod context;
 mod managed;
 mod merge;
 mod private;
@@ -43,6 +44,10 @@ mod private;
 #[path = "settings/private_state_tests.rs"]
 mod private_state_tests;
 pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
+// Only `ContextSettings` is consumed today (the inert `Settings::context`
+// field). The nested types (`LearningMode`, `GovernanceMode`, …) live in
+// `settings::context`; a later phase re-exports them here as it wires them in.
+pub use context::ContextSettings;
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in
@@ -129,6 +134,14 @@ pub struct Settings {
     /// changed, beside the file and cost panels. No model call. Default off.
     #[serde(default)]
     pub enable_recap: Option<Toggle>,
+    /// Adaptive-context lifecycle configuration (the `context` block). INERT
+    /// in Phase 0: deserialized, round-tripped, and merged, but read by no
+    /// code yet — `context.lifecycle.enabled` defaults `false`, which is what
+    /// preserves current behavior. `None` = the block was absent. Whole-block
+    /// last-wins across scopes (see [`Settings::overlay_scope`]). See
+    /// [`ContextSettings`].
+    #[serde(default)]
+    pub context: Option<ContextSettings>,
     /// Authority ceilings are honored only from the org-managed settings
     /// file. The serde name is intentionally short because the containing
     /// file is already the policy source.

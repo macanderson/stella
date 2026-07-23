@@ -23,8 +23,11 @@ formula = "stella"
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
-contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "9fb559aa4d3ec4cf062e59dab113eae4e175c5fa" }
-contextgraph-host = { git = "https://github.com/macanderson/context-graph-protocol", rev = "9fb559aa4d3ec4cf062e59dab113eae4e175c5fa" }
+contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
+contextgraph-host = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
+# The host execution-trace journal + replay oracles (sketch stage) — the
+# vocabulary `stella arena` records for the arena-bench runner to judge.
+contextgraph-trace = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
 stella-core = { path = "../stella-core" }
 stella-model = { path = "../stella-model" }
 stella-tools = { path = "../stella-tools" }
@@ -61,4 +64,4 @@ rusqlite.workspace = true
 # The protocol's own conformance suite (§3.6), pinned to the same rev as the
 # types/host we consume. Wired into `contextgraph.rs` tests so "CGP-conformant"
 # is a checked claim about the providers this CLI ships, not a documented one.
-contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "9fb559aa4d3ec4cf062e59dab113eae4e175c5fa" }
+contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }

@@ -418,7 +418,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "contextgraph-conformance"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=9fb559aa4d3ec4cf062e59dab113eae4e175c5fa#9fb559aa4d3ec4cf062e59dab113eae4e175c5fa"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
 dependencies = [
  "async-trait",
  "clap",
@@ -433,7 +433,7 @@ dependencies = [
 [[package]]
 name = "contextgraph-host"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=9fb559aa4d3ec4cf062e59dab113eae4e175c5fa#9fb559aa4d3ec4cf062e59dab113eae4e175c5fa"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -442,14 +442,26 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.19",
  "tokio",
 ]
 
 [[package]]
+name = "contextgraph-trace"
+version = "0.1.0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
+dependencies = [
+ "contextgraph-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "contextgraph-types"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=9fb559aa4d3ec4cf062e59dab113eae4e175c5fa#9fb559aa4d3ec4cf062e59dab113eae4e175c5fa"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
 dependencies = [
  "serde",
 ]
@@ -1714,6 +1726,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
+name = "loop-bench"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lru"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2815,6 +2836,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "ryu-js"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2911,6 +2938,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_json_canonicalizer"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe52319a927259afbfa5180c5157cd8167edfd3e8c254f9558c7fef44c5649f2"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3062,13 +3100,14 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-cli"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "clap",
  "colored",
  "contextgraph-conformance",
  "contextgraph-host",
+ "contextgraph-trace",
  "contextgraph-types",
  "dotenvy",
  "futures-util",
@@ -3100,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3116,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3124,6 +3163,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "sha2 0.11.0",
  "stella-protocol",
  "thiserror 2.0.19",
@@ -3132,7 +3172,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3151,7 +3191,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "contextgraph-types",
  "notify",
@@ -3177,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "stella-mcp"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "base64",
@@ -3198,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "stella-media"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "base64",
@@ -3218,7 +3258,7 @@ dependencies = [
 
 [[package]]
 name = "stella-model"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "base64",
@@ -3239,7 +3279,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "rusqlite",
  "serde",
@@ -3253,7 +3293,7 @@ dependencies = [
 
 [[package]]
 name = "stella-pipeline"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3268,7 +3308,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "serde",
@@ -3278,7 +3318,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "serde",
@@ -3291,7 +3331,7 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "base64",
  "libc",
@@ -3306,7 +3346,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "async-trait",
  "base64",
@@ -3331,7 +3371,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui"
-version = "0.4.84"
+version = "0.4.87"
 dependencies = [
  "arboard",
  "crossterm",
@@ -3505,7 +3545,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

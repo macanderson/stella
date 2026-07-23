@@ -20,6 +20,7 @@
 mod accounted_call;
 mod agent;
 mod agents_installed;
+mod arena;
 mod attachments;
 mod auth_cmd;
 mod cache_insight;
@@ -197,6 +198,38 @@ enum Command {
         /// a change that flips a failing test to passing can submit without
         /// a model-judge call. Omitted, verification always escalates to the
         /// judge.
+        #[arg(long, value_name = "CMD")]
+        test_command: Option<String>,
+    },
+
+    /// arena-bench adapter: run the task in --task-dir (prompt in TASK.md)
+    /// while recording a contextgraph-trace journal the arena runner judges
+    /// with the protocol's replay oracles. Speaks the adapter contract
+    /// (--task-dir/--journal/--state-dir/--resume); see
+    /// https://github.com/macanderson/arena-bench.
+    Arena {
+        /// The episode workspace; the prompt is read from TASK.md inside it.
+        #[arg(long)]
+        task_dir: std::path::PathBuf,
+
+        /// The contextgraph-trace journal to append (crash-safe, per-event).
+        #[arg(long)]
+        journal: std::path::PathBuf,
+
+        /// Agent state that persists across episodes (memory arm).
+        #[arg(long)]
+        state_dir: std::path::PathBuf,
+
+        /// Present when re-invoked after a chaos kill: recover the journal,
+        /// declare what was recovered, continue the same session.
+        #[arg(long)]
+        resume: bool,
+
+        /// Use the raw step-loop instead of the staged pipeline.
+        #[arg(long)]
+        no_pipeline: bool,
+
+        /// Test command for the pipeline's deterministic verify ladder.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
     },
@@ -1293,6 +1326,26 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 cli.globals.output_format,
                 !no_pipeline,
                 test_command.as_deref(),
+            ))?;
+        }
+        Command::Arena {
+            task_dir,
+            journal,
+            state_dir,
+            resume,
+            no_pipeline,
+            test_command,
+        } => {
+            rt()?.block_on(arena::run_arena(
+                cfg,
+                arena::ArenaArgs {
+                    task_dir,
+                    journal,
+                    state_dir,
+                    resume,
+                    no_pipeline,
+                    test_command,
+                },
             ))?;
         }
         Command::Goal { goal, no_pipeline } => {

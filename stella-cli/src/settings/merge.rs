@@ -76,6 +76,13 @@ impl Settings {
         if let Some(authority) = scope.managed_authority {
             self.managed_authority = Some(authority);
         }
+        // Adaptive-context config: whole-block last-wins (a higher-precedence
+        // scope that declares `context` replaces a lower one's). Inert in
+        // Phase 0 — nothing reads it — so no trust restoration is needed (it
+        // carries no credential or egress authority).
+        if let Some(context) = &scope.context {
+            self.context = Some(context.clone());
+        }
     }
 
     fn merge_snapshots(scopes: &[&Settings]) -> Self {

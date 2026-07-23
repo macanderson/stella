@@ -720,4 +720,60 @@ mod tests {
             .await;
         assert!(!allowed.is_error(), "a non-matching command runs normally");
     }
+
+    // Phase 0: representative `.stella/rules/*.md` fixtures must parse under the
+    // CURRENT `stella_core::rules` parser — the format Phase 2's importer will
+    // read back as read-only mirrors. Captures both a promoted guard rule and a
+    // full context-as-code directive (inferred, advisory).
+    const GUARD_RULE_FIXTURE: &str =
+        include_str!("../tests/fixtures/rules/no-hand-edited-migrations.md");
+    const DIRECTIVE_RULE_FIXTURE: &str =
+        include_str!("../tests/fixtures/rules/api-integration-coverage.md");
+
+    #[test]
+    fn guard_rule_fixture_parses_as_a_guarded_rule_without_metadata() {
+        let rule = stella_core::rules::rule_from_file(
+            ".stella/rules/no-hand-edited-migrations.md",
+            GUARD_RULE_FIXTURE,
+        )
+        .expect("guard rule parses");
+        assert_eq!(rule.id, "no-hand-edited-migrations");
+        assert_eq!(
+            rule.description,
+            "Never hand-edit an already-applied migration file."
+        );
+        let guard = rule.guard.expect("guard frontmatter present");
+        assert_eq!(guard.tool.as_deref(), Some("Edit"));
+        assert_eq!(
+            guard.deny_path_glob.as_deref(),
+            Some("migrations/*-applied/**")
+        );
+        assert!(guard.deny_command_glob.is_none());
+        // A pure guard rule declares no lifecycle metadata and so has no errors.
+        assert!(rule.metadata.is_none());
+        assert!(rule.metadata_errors.is_empty());
+    }
+
+    #[test]
+    fn directive_rule_fixture_parses_with_context_metadata() {
+        let rule = stella_core::rules::rule_from_file(
+            ".stella/rules/api-integration-coverage.md",
+            DIRECTIVE_RULE_FIXTURE,
+        )
+        .expect("directive rule parses");
+        assert_eq!(rule.id, "api-integration-coverage");
+        // Empty errors proves every enum (record_kind/enforcement/origin) and
+        // timestamp in the frontmatter parsed to a valid value.
+        assert!(
+            rule.metadata_errors.is_empty(),
+            "unexpected metadata errors: {:?}",
+            rule.metadata_errors
+        );
+        let meta = rule.metadata.expect("context metadata present");
+        assert_eq!(meta.record_id, "dir_api_integration_coverage_v1");
+        assert_eq!(meta.confidence, 88);
+        // `scope_paths` is canonicalized (sorted, deduped) by the parser.
+        assert_eq!(meta.scope_paths, vec!["docs/api/**", "src/api/**"]);
+        assert_eq!(meta.supporting_evidence_ids.len(), 3);
+    }
 }

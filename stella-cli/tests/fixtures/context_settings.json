@@ -1,0 +1,35 @@
+{
+  "context": {
+    "lifecycle": {
+      "enabled": false
+    },
+    "learning": {
+      "mode": "off"
+    },
+    "governance": {
+      "mode": "solo"
+    },
+    "promotion": {
+      "inferred_directive": {
+        "min_observations": 3,
+        "min_distinct_tasks": 3,
+        "auto_activate_at_confidence": 85,
+        "initial_enforcement": "advisory"
+      },
+      "blocking_directive": {
+        "requires_explicit_confirmation": true
+      }
+    },
+    "efficacy": {
+      "min_attributable_uses": 5,
+      "not_helpful_ratio_threshold": 0.8,
+      "min_attribution_confidence": 80,
+      "receipt_display_min_attribution_confidence": 80
+    },
+    "retention": {
+      "raw_observation_days": 30,
+      "proposal_days": 30,
+      "inferred_directive_review_days": 180
+    }
+  }
+}

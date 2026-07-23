@@ -1673,4 +1673,308 @@ mod tests {
         // A second warm is a no-op — the vector already exists.
         assert_eq!(store.warm_now().await.unwrap(), 0);
     }
+
+    // ==================================================================
+    // Phase 0 characterization: `ContextQuery.as_of` bitemporal semantics
+    // ==================================================================
+    //
+    // The adaptive-context plan forbids *assuming* what `as_of` means
+    // (knowledge cutoff, world validity, or both). These tests PIN the
+    // observed contract of the two temporal readers that back it —
+    // `edges_as_of` (the public `facts_as_of`) and `neighbors` (the only
+    // consumer of `ContextQuery.as_of` inside `recall`). The characterized
+    // contract, which any future bitemporal API must preserve or migrate
+    // deliberately:
+    //
+    //   `as_of` filters on TRANSACTION / BELIEF time ONLY — the half-open
+    //   interval `[recorded_at, superseded_at)`:
+    //     * `as_of = None`      -> currently believed (`superseded_at IS NULL`)
+    //     * `as_of = Some(t)`   -> `recorded_at <= t AND
+    //                              (superseded_at IS NULL OR superseded_at > t)`
+    //   The start is INCLUSIVE (`t == recorded_at` is visible); the end is
+    //   EXCLUSIVE (`t == superseded_at` is NOT visible).
+    //
+    //   `as_of` DOES NOT consult world-validity (`valid_from` / `valid_to`).
+    //   An edge whose world-validity window has closed in the past is still
+    //   returned as long as it remains believed. This is the decisive
+    //   discriminator between "transaction time" and "world validity / both".
+
+    // Fixed, equal-length UTC instants so lexicographic order over the TEXT
+    // columns matches chronological order (the store compares timestamps as
+    // strings).
+    const T0: &str = "2026-01-01T00:00:00Z"; // before anything is recorded
+    const T1: &str = "2026-02-01T00:00:00Z"; // edge recorded (== recorded_at)
+    const T1_5: &str = "2026-02-15T00:00:00Z"; // strictly inside [T1, T2)
+    const T2: &str = "2026-03-01T00:00:00Z"; // edge superseded (== superseded_at)
+    const T3: &str = "2026-04-01T00:00:00Z"; // after supersession / world-validity
+
+    fn concept(conn: &Connection, name: &str) -> i64 {
+        upsert_node(conn, &NodeInput::new(NodeKind::Concept, name), T1).unwrap()
+    }
+
+    /// Sorted `(src_id, dst_id)` pairs visible to `edges_as_of` at `as_of`.
+    fn edge_pairs(conn: &Connection, as_of: Option<&str>) -> Vec<(i64, i64)> {
+        let mut v: Vec<(i64, i64)> = edges_as_of(conn, as_of)
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.src_id, e.dst_id))
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Sorted neighbor ids of `seed` visible to `neighbors` at `as_of`.
+    fn neighbor_ids(conn: &Connection, seed: i64, as_of: Option<&str>) -> Vec<i64> {
+        let mut v: Vec<i64> = neighbors(conn, &[seed], as_of)
+            .unwrap()
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn as_of_none_returns_only_currently_believed_edges() {
+        let (_dir, store) = tmp_store();
+        let conn = store.conn();
+        let (a, b, c) = (
+            concept(&conn, "a"),
+            concept(&conn, "b"),
+            concept(&conn, "c"),
+        );
+        let props = serde_json::json!({});
+        // Two beliefs recorded at T1: a->b and a->c.
+        let e_ab =
+            insert_edge(&conn, "relates_to", a, b, 1.0, &props, None, None, T1, None).unwrap();
+        insert_edge(&conn, "relates_to", a, c, 1.0, &props, None, None, T1, None).unwrap();
+        // a->b is later corrected away (superseded at T2). Never deleted.
+        close_edge(&conn, e_ab, T2, T2).unwrap();
+
+        // `None` == "currently believed": a->b is gone, a->c remains.
+        assert_eq!(edge_pairs(&conn, None), vec![(a, c)]);
+        assert_eq!(neighbor_ids(&conn, a, None), vec![c]);
+        // Undirected: c still sees a; b no longer does.
+        assert_eq!(neighbor_ids(&conn, c, None), vec![a]);
+        assert_eq!(neighbor_ids(&conn, b, None), Vec::<i64>::new());
+    }
+
+    #[test]
+    fn as_of_reconstructs_half_open_transaction_interval() {
+        let (_dir, store) = tmp_store();
+        let conn = store.conn();
+        let (a, b) = (concept(&conn, "a"), concept(&conn, "b"));
+        let props = serde_json::json!({});
+        // a->b believed from T1, superseded at T2: valid transaction interval
+        // is the half-open [T1, T2).
+        let e = insert_edge(&conn, "relates_to", a, b, 1.0, &props, None, None, T1, None).unwrap();
+        close_edge(&conn, e, T2, T2).unwrap();
+
+        // Before it was recorded: not yet believed.
+        assert_eq!(edge_pairs(&conn, Some(T0)), Vec::<(i64, i64)>::new());
+        assert_eq!(neighbor_ids(&conn, a, Some(T0)), Vec::<i64>::new());
+
+        // At exactly recorded_at (T1): INCLUSIVE start -> visible.
+        assert_eq!(edge_pairs(&conn, Some(T1)), vec![(a, b)]);
+        assert_eq!(neighbor_ids(&conn, a, Some(T1)), vec![b]);
+
+        // Strictly inside [T1, T2): visible.
+        assert_eq!(edge_pairs(&conn, Some(T1_5)), vec![(a, b)]);
+        assert_eq!(neighbor_ids(&conn, a, Some(T1_5)), vec![b]);
+
+        // At exactly superseded_at (T2): EXCLUSIVE end -> NOT visible.
+        // This is the line that pins the interval as half-open, not closed.
+        assert_eq!(edge_pairs(&conn, Some(T2)), Vec::<(i64, i64)>::new());
+        assert_eq!(neighbor_ids(&conn, a, Some(T2)), Vec::<i64>::new());
+
+        // After supersession: still not visible.
+        assert_eq!(edge_pairs(&conn, Some(T3)), Vec::<(i64, i64)>::new());
+        assert_eq!(neighbor_ids(&conn, a, Some(T3)), Vec::<i64>::new());
+    }
+
+    #[test]
+    fn as_of_ignores_world_validity_valid_from_valid_to() {
+        // THE DISCRIMINATOR. An edge whose world-validity window closed in the
+        // past (`valid_to = T1`) but which is still BELIEVED (`superseded_at IS
+        // NULL`) must remain visible to every `as_of` query at or after its
+        // `recorded_at`. If `as_of` consulted world validity (or "both"), a
+        // query at T3 > valid_to would hide it — it does not. Proves the filter
+        // is transaction/belief time only.
+        let (_dir, store) = tmp_store();
+        let conn = store.conn();
+        let (a, b) = (concept(&conn, "a"), concept(&conn, "b"));
+        let props = serde_json::json!({});
+        // Recorded at T1, world-valid only across [T0, T1], never superseded.
+        insert_edge(
+            &conn,
+            "relates_to",
+            a,
+            b,
+            1.0,
+            &props,
+            Some(T0), // valid_from
+            Some(T1), // valid_to — world-validity ends in the past
+            T1,       // recorded_at
+            None,     // supersedes -> superseded_at stays NULL (still believed)
+        )
+        .unwrap();
+
+        // Still believed now, despite a closed world-validity window.
+        assert_eq!(edge_pairs(&conn, None), vec![(a, b)]);
+        assert_eq!(neighbor_ids(&conn, a, None), vec![b]);
+
+        // And still visible as-of T3, long after valid_to (T1): as_of never
+        // reads valid_to.
+        assert_eq!(edge_pairs(&conn, Some(T3)), vec![(a, b)]);
+        assert_eq!(neighbor_ids(&conn, a, Some(T3)), vec![b]);
+
+        // Only transaction time gates it: before recorded_at it is invisible.
+        assert_eq!(edge_pairs(&conn, Some(T0)), Vec::<(i64, i64)>::new());
+    }
+
+    // ============================================================
+    // Phase 0 fixtures: schema-version migration is a lossless,
+    // idempotent replay carrying representative rows
+    // ============================================================
+    //
+    // `open`-ing a legacy `context.db` must migrate it to `SCHEMA_VERSION`
+    // without losing data, and re-opening must be a no-op. These fixtures carry
+    // the SAME representative rows the `as_of_*` tests characterize (a
+    // superseded edge, an edge whose world-validity closed in the past, a
+    // memory) so the migration is shown to preserve both the data AND the
+    // transaction-time semantics — not just an empty schema.
+
+    /// A raw connection migrated up to `version` with `user_version` stamped,
+    /// so `ContextStore::open` sees a legacy db to upgrade. The `node`/`edge`
+    /// tables are identical across v1..v3, so the crate's writers apply to any
+    /// version >= 1; the `memory` table requires v2.
+    fn open_legacy(path: &std::path::Path, version: i64) -> Connection {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(MIGRATION_V1).unwrap();
+        if version >= 2 {
+            conn.execute_batch(MIGRATION_V2).unwrap();
+        }
+        conn.pragma_update(None, "user_version", version).unwrap();
+        conn
+    }
+
+    #[test]
+    fn migrates_v1_context_db_preserving_bitemporal_edges() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let (a, b, c) = {
+            let conn = open_legacy(&path, 1);
+            let props = serde_json::json!({});
+            let a = upsert_node(&conn, &NodeInput::new(NodeKind::Concept, "a"), T1).unwrap();
+            let b = upsert_node(&conn, &NodeInput::new(NodeKind::Concept, "b"), T1).unwrap();
+            let c = upsert_node(&conn, &NodeInput::new(NodeKind::Concept, "c"), T1).unwrap();
+            // A belief a->b that was later corrected away (superseded at T2).
+            let e_ab =
+                insert_edge(&conn, "relates_to", a, b, 1.0, &props, None, None, T1, None).unwrap();
+            close_edge(&conn, e_ab, T2, T2).unwrap();
+            // A still-believed belief a->c whose world-validity window closed in
+            // the past (valid_to = T1) — the `as_of` discriminator row.
+            insert_edge(
+                &conn,
+                "relates_to",
+                a,
+                c,
+                1.0,
+                &props,
+                Some(T0),
+                Some(T1),
+                T1,
+                None,
+            )
+            .unwrap();
+            let v: i64 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, 1, "fixture really is a v1 db before open");
+            (a, b, c)
+        };
+
+        // Open through the store: migrate v1 -> SCHEMA_VERSION.
+        let store = ContextStore::open(&path).unwrap();
+        store.integrity_check().unwrap();
+        {
+            let conn = store.conn();
+            let v: i64 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, SCHEMA_VERSION, "v1 db upgraded to current");
+            // Currently believed = only a->c (a->b superseded; a->c's past
+            // valid_to is ignored by transaction-time queries).
+            assert_eq!(edge_pairs(&conn, None), vec![(a, c)]);
+            // Both edges still physically present, reconstructable as-of T1.
+            assert_eq!(edge_pairs(&conn, Some(T1)), vec![(a, b), (a, c)]);
+        }
+
+        // Re-open: replay is a no-op — same version, same data.
+        drop(store);
+        let store2 = ContextStore::open(&path).unwrap();
+        let conn = store2.conn();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+        assert_eq!(edge_pairs(&conn, None), vec![(a, c)]);
+    }
+
+    #[test]
+    fn migrates_v2_context_db_preserving_memories() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let mem_public = "mem_phase0fixturememory0001";
+        {
+            let conn = open_legacy(&path, 2);
+            // Production writes a memory as a canonical `memory` row plus a
+            // retrievable mirror `node` in one transaction; reproduce both.
+            insert_memory(
+                &conn,
+                mem_public,
+                "reflection",
+                "prefer rg over grep",
+                0.5,
+                T1,
+            )
+            .unwrap();
+            upsert_node(
+                &conn,
+                &NodeInput::new(NodeKind::Memory, "prefer rg over grep")
+                    .with_content("prefer rg over grep")
+                    .with_uri(format!("memory://{mem_public}")),
+                T1,
+            )
+            .unwrap();
+            let v: i64 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, 2, "fixture really is a v2 db before open");
+        }
+
+        let store = ContextStore::open(&path).unwrap();
+        store.integrity_check().unwrap();
+        {
+            let conn = store.conn();
+            let v: i64 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, SCHEMA_VERSION, "v2 db upgraded to current");
+            // The canonical memory row survived the migration.
+            let content: String = conn
+                .query_row(
+                    "SELECT content FROM memory WHERE public_id = ?1",
+                    params![mem_public],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(content, "prefer rg over grep");
+        }
+        // And it is still retrievable through the mirror node (the recall
+        // surface behind `stella memory`).
+        let mem_nodes = store.memory_nodes().unwrap();
+        assert_eq!(mem_nodes.len(), 1);
+        assert_eq!(mem_nodes[0].content, "prefer rg over grep");
+    }
 }
