@@ -418,7 +418,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 [[package]]
 name = "contextgraph-conformance"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=9fb559aa4d3ec4cf062e59dab113eae4e175c5fa#9fb559aa4d3ec4cf062e59dab113eae4e175c5fa"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
 dependencies = [
  "async-trait",
  "clap",
@@ -433,7 +433,7 @@ dependencies = [
 [[package]]
 name = "contextgraph-host"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=9fb559aa4d3ec4cf062e59dab113eae4e175c5fa#9fb559aa4d3ec4cf062e59dab113eae4e175c5fa"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -442,14 +442,26 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.19",
  "tokio",
 ]
 
 [[package]]
+name = "contextgraph-trace"
+version = "0.1.0"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
+dependencies = [
+ "contextgraph-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "contextgraph-types"
 version = "0.1.0"
-source = "git+https://github.com/macanderson/context-graph-protocol?rev=9fb559aa4d3ec4cf062e59dab113eae4e175c5fa#9fb559aa4d3ec4cf062e59dab113eae4e175c5fa"
+source = "git+https://github.com/macanderson/context-graph-protocol?rev=6f8d7ef13b2528c26913c6472405408ba2584a85#6f8d7ef13b2528c26913c6472405408ba2584a85"
 dependencies = [
  "serde",
 ]
@@ -3069,6 +3081,7 @@ dependencies = [
  "colored",
  "contextgraph-conformance",
  "contextgraph-host",
+ "contextgraph-trace",
  "contextgraph-types",
  "dotenvy",
  "futures-util",

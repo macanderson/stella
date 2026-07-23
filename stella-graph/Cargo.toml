@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "9fb559aa4d3ec4cf062e59dab113eae4e175c5fa" }
+contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
