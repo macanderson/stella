@@ -117,12 +117,33 @@ impl SqliteMediaOperationJournal {
         Self::init(connection, retention)
     }
 
+    /// One secure open attempt, retried while a concurrent first-open is
+    /// initializing the same journal.
+    ///
+    /// The loser of that race can observe the winner's freshly created WAL
+    /// sidecars *between* its own secure preparation and validation — the
+    /// exact signature the sidecar-injection defense fails closed on.
+    /// Retrying from scratch resolves the ambiguity safely: the re-run
+    /// preparation now finds the sidecars up front and subjects them to the
+    /// same owner-only validation as any pre-existing pair, so a genuinely
+    /// untrusted injection still fails (`security_tests` pin that a single
+    /// attempt never tolerates an appearing sidecar).
     fn open_private(
         path: &Path,
         forbidden_root: Option<&Path>,
         retention: MediaOperationRetention,
     ) -> Result<Self, MediaError> {
-        Self::open_private_with_hook(path, forbidden_root, retention, |_| {})
+        let mut attempts = 0;
+        loop {
+            match Self::open_private_with_hook(path, forbidden_root, retention, |_| {}) {
+                Ok(journal) => return Ok(journal),
+                Err(error) if attempts < INIT_RETRY_ATTEMPTS && is_sidecar_race(&error) => {
+                    attempts += 1;
+                    std::thread::sleep(INIT_RETRY_DELAY);
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     fn open_private_with_hook(
@@ -556,7 +577,7 @@ impl PreparedSidecar {
             None => match std::fs::symlink_metadata(&self.path) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
                 Ok(_) => Err(journal_error(format!(
-                    "journal SQLite sidecar {} appeared after secure preparation; refusing initialization",
+                    "journal SQLite sidecar {} {SIDECAR_APPEARED}; refusing initialization",
                     self.path.display()
                 ))),
                 Err(error) => Err(journal_error(format!(
