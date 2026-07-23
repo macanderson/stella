@@ -1,8 +1,8 @@
 //! OAuth connections to issue trackers (`stella connect github|linear`).
 //!
 //! Stores tracker credentials in a user-global, owner-only (0600) JSON file
-//! — `~/.config/stella/integrations.json` — following the same threat model
-//! as `~/.config/stella/credentials.toml` (plaintext secrets guarded by file
+//! — `~/.stella/integrations.json` — following the same threat model
+//! as `~/.stella/credentials.toml` (plaintext secrets guarded by file
 //! permissions, no OS keychain). The store is consumed by
 //! [`crate::issues::detect_issue_backend`], which is what turns a stored
 //! connection into registered issue tools.
@@ -157,7 +157,7 @@ struct IntegrationsFile {
     trackers: BTreeMap<String, TrackerConnection>,
 }
 
-/// The owner-only JSON store at `~/.config/stella/integrations.json`
+/// The owner-only JSON store at `~/.stella/integrations.json`
 /// (override with `STELLA_INTEGRATIONS_FILE` — used by tests and unusual
 /// setups). User-global on purpose: a GitHub/Linear account connection is a
 /// property of the person, not the workspace — unlike `.stella/private/mcp_oauth.json`,
@@ -182,8 +182,7 @@ impl TrackerStore {
         }
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
         Some(
-            home.join(".config")
-                .join("stella")
+            home.join(".stella")
                 .join("integrations.json"),
         )
     }
