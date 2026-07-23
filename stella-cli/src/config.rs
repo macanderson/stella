@@ -487,6 +487,8 @@ pub struct Config {
     /// construction via `agent::registry_options` — the default tool
     /// surface has no shell.
     pub tools_bash: bool,
+    /// End-of-run recap in text mode (settings `enable_recap`).
+    pub enable_recap: bool,
     /// Whether the web tool family is enabled (`tools.web`; absent = OFF).
     /// Same threading as `tools_bash` — the default tool surface has no
     /// network egress.
@@ -630,6 +632,7 @@ impl Config {
         cfg.engine_settings = settings.agent_engine_config.clone();
         cfg.authority = settings.authority_policy;
         cfg.tools_bash = settings.bash_tool_enabled() && cfg.authority.bash_allowed;
+        cfg.enable_recap = settings.recap_enabled();
         cfg.tools_web = settings.web_tools_enabled() && cfg.authority.web_allowed;
         Ok(cfg)
     }
@@ -749,6 +752,7 @@ impl Config {
                     hooks: None,
                     engine_settings: None,
                     tools_bash: false,
+                    enable_recap: false,
                     tools_web: false,
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
@@ -943,6 +947,7 @@ impl Config {
             hooks: None,
             engine_settings: None,
             tools_bash: false,
+            enable_recap: false,
             tools_web: false,
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),

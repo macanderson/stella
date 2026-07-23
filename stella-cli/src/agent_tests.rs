@@ -599,6 +599,7 @@ fn cfg_for(provider_id: &str) -> Config {
         hooks: None,
         engine_settings: None,
         tools_bash: false,
+        enable_recap: false,
         tools_web: false,
         authority: crate::settings::AuthorityPolicy::default(),
     }

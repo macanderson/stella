@@ -484,6 +484,9 @@ async fn run_pipeline_one_shot(
                     &format!("{}/{}", cfg.provider.id, cfg.model_id),
                     turn_start.elapsed(),
                 );
+                if cfg.enable_recap {
+                    tui::recap_panel(&outcome.status, outcome.verdict.as_ref(), &files);
+                }
                 println!();
             }
 
