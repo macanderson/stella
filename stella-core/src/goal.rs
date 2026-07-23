@@ -696,8 +696,7 @@ mod tests {
 
         // Round 1: the worker spends on a tool-calling step ($0.05, recorded
         // into the budget guard), then its next model call errors → the turn
-        // aborts. The reported cost must reflect that $0.05, not $0 — the
-        // aborted turn's spend used to be dropped from GoalOutcome.cost_usd.
+        // aborts. The reported cost must reflect that $0.05, not $0.
         let tool_step = CompletionResult {
             text: String::new(),
             tool_calls: vec![ToolCall {

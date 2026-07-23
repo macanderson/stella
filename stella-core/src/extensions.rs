@@ -54,9 +54,7 @@
 
 use crate::rules::parse_frontmatter;
 
-// ============================================================================
 // Kinds
-// ============================================================================
 
 /// The three definition kinds the sync adopts and the loaders read. The
 /// directory name is identical across every convention involved
@@ -86,9 +84,7 @@ impl ExtensionKind {
     }
 }
 
-// ============================================================================
 // Definitions + parsing
-// ============================================================================
 
 /// A custom slash command: a prompt template invoked as `/name`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,9 +271,7 @@ pub fn agent_from_file(path: &str, raw: &str) -> Result<AgentDef, ExtensionDiagn
     })
 }
 
-// ============================================================================
 // Command expansion
-// ============================================================================
 
 /// The placeholder a command body may use to position its arguments.
 pub const ARGUMENTS_PLACEHOLDER: &str = "$ARGUMENTS";
@@ -298,9 +292,7 @@ pub fn expand_command(body: &str, args: &str) -> String {
     }
 }
 
-// ============================================================================
 // Name-merged loading (user-global, then workspace — workspace wins)
-// ============================================================================
 
 /// Merge definitions by `key`, later entries overriding earlier ones while
 /// keeping the first-seen ordering position — the same semantics as
@@ -322,9 +314,7 @@ pub fn merge_by_name<T>(items: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
         .collect()
 }
 
-// ============================================================================
 // Symlink-sync planning
-// ============================================================================
 
 /// One directory entry found while scanning a source directory
 /// (`.claude/<kind>` or `.agents/<kind>`), as reported by the CLI's scanner.
@@ -484,9 +474,7 @@ pub fn plan_extension_sync(
     plan
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

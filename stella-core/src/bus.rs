@@ -70,9 +70,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// ============================================================================
 // Event names — the catalog
-// ============================================================================
 
 /// The event-name catalog. Names are dotted, lowercase, and namespaced;
 /// subscriptions match exactly, by namespace wildcard (`file.*`, `tool.*`,
@@ -293,9 +291,7 @@ pub mod names {
     }
 }
 
-// ============================================================================
 // Envelope + decisions
-// ============================================================================
 
 /// The uniform envelope every hook event is delivered in. Serializes to the
 /// documented JSON shape (`id`, `name`, `timestamp`, `session_id`,
@@ -398,9 +394,7 @@ pub struct ExtensionFailure {
     pub timestamp: String,
 }
 
-// ============================================================================
 // Subscriptions
-// ============================================================================
 
 /// Result type observer handlers return: `Err` reports a handled failure
 /// (isolated exactly like a panic — logged + `extension.error`).
@@ -471,9 +465,7 @@ impl Drop for HookSubscription {
     }
 }
 
-// ============================================================================
 // The bus
-// ============================================================================
 
 #[derive(Default)]
 struct AmbientContext {
@@ -849,9 +841,7 @@ fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-// ============================================================================
 // Payload hygiene — redaction + sensitivity helpers
-// ============================================================================
 
 /// High-precision secret shapes the scanner recognizes. Deliberately a
 /// short list of near-zero-false-positive patterns rather than an entropy
@@ -988,9 +978,7 @@ pub fn is_sensitive_path(path: &str) -> bool {
         || base.ends_with(".key")
 }
 
-// ============================================================================
 // Timestamps — ISO 8601 UTC without a date-time dependency
-// ============================================================================
 
 fn now_iso8601_utc() -> String {
     let millis = SystemTime::now()
@@ -1031,9 +1019,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

@@ -1089,7 +1089,7 @@ async fn enforced_budget_aborts_the_turn_cleanly_between_steps() {
     );
 }
 
-/// Exit criterion ( Phase 2): "synthetic 200-step turn
+/// Exit criterion: "synthetic 200-step turn
 /// (scripted provider incl. 429s, stream drop, context pressure)
 /// survives across three dialects (GLM 5.2, Anthropic, OpenAI
 /// shapes)". "Dialect" at this layer (`stella-core`, which never

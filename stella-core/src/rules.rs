@@ -1,4 +1,4 @@
-//! Workspace rules engine ( Phase 2 item 5; ported from
+//! Workspace rules engine (ported from
 //! `apps/cli/src/rules/{types,loader,enforce,promote}.ts`).
 //!
 //! A rule is a binding instruction for the agent. The engine models two tiers:
@@ -74,9 +74,7 @@ pub use metadata::{
     render_rule_metadata,
 };
 
-// ============================================================================
 // Types (ports `rules/types.ts`)
-// ============================================================================
 
 /// A machine-enforceable guard that blocks a tool call violating the rule
 /// (TS: `RuleGuard`).
@@ -139,9 +137,7 @@ impl Rule {
     }
 }
 
-// ============================================================================
 // Discovery port + frontmatter parsing (ports `rules/loader.ts`)
-// ============================================================================
 
 /// One markdown file's raw content, already read from disk by a
 /// [`RuleSource`] implementation.
@@ -379,9 +375,7 @@ pub fn load_rules(source: &dyn RuleSource, opts: &LoadRulesOptions) -> Vec<Rule>
     merge_rule_files(files)
 }
 
-// ============================================================================
 // Enforcement (ports `rules/enforce.ts`)
-// ============================================================================
 
 /// The system-prompt section listing active rules (Tier 1: soft adherence;
 /// TS: `renderRulesSection`). Empty string when there are no rules.
@@ -560,9 +554,7 @@ pub fn evaluate_guards(rules: &[Rule], action: &ProposedAction<'_>) -> GuardChec
     GuardCheck { violations }
 }
 
-// ============================================================================
 // Rule-promotion data model + mining (ports the pure half of `promote.ts`)
-// ============================================================================
 
 /// Where one occurrence of a candidate lesson came from (TS:
 /// `RuleEvidence["source"]`). `TraceReasoning` is reserved for parity with
@@ -843,9 +835,7 @@ pub fn decide_promotion(approve: bool, file_exists: bool) -> PromoteStatus {
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

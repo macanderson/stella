@@ -28,9 +28,7 @@ use stella_protocol::{ModelRef, Role};
 
 use crate::ports::Clock;
 
-// ---------------------------------------------------------------------
 // Provider profiles
-// ---------------------------------------------------------------------
 
 /// A caller-supplied description of one configured (BYOK key present)
 /// provider. `stella-core` never sees the real
@@ -93,9 +91,7 @@ impl ProviderProfile {
     }
 }
 
-// ---------------------------------------------------------------------
 // Role table (explicit pins)
-// ---------------------------------------------------------------------
 
 /// Explicit per-role pins (L-M6: per-function model overrides are the core
 /// abstraction, not an afterthought). The CLI populates pins from the
@@ -139,9 +135,7 @@ impl RoleTable {
     }
 }
 
-// ---------------------------------------------------------------------
 // Circuit breaker
-// ---------------------------------------------------------------------
 
 /// A provider's current disposition, always *derived* from the last
 /// recorded outcome plus the clock — never stored directly, so time only
@@ -275,9 +269,7 @@ impl CircuitBreaker {
     }
 }
 
-// ---------------------------------------------------------------------
 // Resolution result
-// ---------------------------------------------------------------------
 
 /// A breaker-forced provider substitution — maps directly onto
 /// `AgentEvent::ProviderFallback`'s fields. `stella-core` has no event
@@ -349,9 +341,7 @@ pub enum RouterError {
     NoDefaultForRole { role: Role },
 }
 
-// ---------------------------------------------------------------------
 // Router
-// ---------------------------------------------------------------------
 
 /// Resolves a `Role` to a `ModelRef`, applying (in order, per
 /// "Resolution: explicit pin > per-role config >
@@ -368,7 +358,7 @@ pub struct Router {
     role_table: RoleTable,
     /// Configured providers in preference order — first = most preferred,
     /// mirroring `stella-cli::config::PROVIDERS`'s existing preference
-    /// ordering ( Phase 2 item 2).
+    /// ordering.
     profiles: Vec<ProviderProfile>,
     breaker: CircuitBreaker,
 }

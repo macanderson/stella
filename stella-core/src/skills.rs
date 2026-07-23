@@ -66,9 +66,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-// ============================================================================
 // Types
-// ============================================================================
 
 /// Where a skill came from — informs display and the small selection
 /// tie-break that nudges freshly-learned preferences up (see
@@ -105,9 +103,7 @@ pub struct Skill {
     pub origin: SkillOrigin,
 }
 
-// ============================================================================
 // Discovery port + parsing
-// ============================================================================
 
 /// One skill file's raw content, already read from disk by a [`SkillSource`]
 /// implementation.
@@ -366,9 +362,7 @@ pub fn load_skills(source: &dyn SkillSource, opts: &LoadSkillsOptions) -> Vec<Sk
     load_skills_with_diagnostics(source, opts).skills
 }
 
-// ============================================================================
 // Selection — the "super important" part (pure lexical + domain scoring)
-// ============================================================================
 
 /// How [`select_skills`] scores and trims. All scalar, so cheap to copy.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -475,9 +469,7 @@ pub fn select_skills(
     selected
 }
 
-// ============================================================================
 // Rendering — the volatile context block injected after the stable prefix
-// ============================================================================
 
 /// Chars-per-token divisor — [`crate::estimator`]'s constant, shared so the
 /// two heuristics can never drift on the divisor (3.5 biases the estimate
@@ -554,9 +546,7 @@ pub fn render_skills_section(selected: &[SelectedSkill]) -> String {
     out
 }
 
-// ============================================================================
 // Auto-creation — mining observations into new skills (the user requirement)
-// ============================================================================
 
 /// One mineable observation — a recurring style preference or reflection
 /// lesson — already extracted from whatever store it came from. Mirrors
@@ -799,9 +789,7 @@ pub fn decide_auto_creation(
     AutoCreateDecision::Create { path }
 }
 
-// ============================================================================
 // Install-proposal vocabulary (registry search + confirmed install)
-// ============================================================================
 
 /// A proposal to install a skill from a registry, produced by the
 /// search/install glue after querying the registry and shown to the user for
@@ -829,9 +817,7 @@ pub enum InstallDecision {
     Declined,
 }
 
-// ============================================================================
 // Lexical helpers — shared with the rules miner via `crate::mining`
-// ============================================================================
 
 use crate::mining::{jaccard, terms};
 
@@ -849,9 +835,7 @@ fn union_domains(cluster: &[SkillObservation]) -> Vec<String> {
     out
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

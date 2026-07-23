@@ -95,8 +95,7 @@ impl LoopVerdict {
     }
 
     /// A human-readable evidence string for the driver to surface when it
-    /// aborts ( Phase 2 step 4: "the driver can intervene").
-    /// `None` for `NoLoop`.
+    /// aborts. `None` for `NoLoop`.
     pub fn evidence(&self) -> Option<String> {
         match self {
             LoopVerdict::NoLoop => None,

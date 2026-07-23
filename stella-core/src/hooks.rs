@@ -1,4 +1,4 @@
-//! Lifecycle hooks engine ( Phase 2 item 5; ported from
+//! Lifecycle hooks engine (ported from
 //! `apps/cli/src/settings/hooks.ts`).
 //!
 //! Hooks are shell commands declared in workspace settings that fire on
@@ -372,9 +372,7 @@ pub async fn run_hooks(
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
