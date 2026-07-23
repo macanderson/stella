@@ -486,6 +486,25 @@ fn journal_error(message: impl Into<String>) -> MediaError {
     MediaError::Artifact(message.into())
 }
 
+/// How many times [`OperationJournal::open_private`] retries when it loses the
+/// first-open sidecar race — a concurrent initializer's freshly created WAL
+/// sidecars appearing between this open's secure preparation and validation.
+const INIT_RETRY_ATTEMPTS: u32 = 40;
+/// Backoff between those retries.
+const INIT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(25);
+/// The validation-failure phrase [`PreparedSidecar::validate`] emits when a
+/// sidecar appears after preparation; [`is_sidecar_race`] keys the retry on it.
+const SIDECAR_APPEARED: &str = "appeared after secure preparation";
+
+/// Whether an open failed because a concurrent first-open's sidecars appeared
+/// mid-preparation (the recoverable race) rather than a genuine untrusted
+/// injection (which must still fail closed). Restored with its three constants
+/// after the #390/#391 merge dropped their definitions while leaving
+/// `open_private`'s references to them (main did not compile).
+fn is_sidecar_race(error: &MediaError) -> bool {
+    matches!(error, MediaError::Artifact(message) if message.contains(SIDECAR_APPEARED))
+}
+
 struct PreparedPrivateSqlite {
     path: PathBuf,
     #[cfg(unix)]
