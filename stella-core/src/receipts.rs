@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 use stella_protocol::{
     AgentEvent, BlockKind, BlockOrigin, CacheZone, CompletionMessage, ManifestEntry, MessageRole,
-    ModelCallRole,
+    ModelCallRole, ToolOutput,
 };
 
 use crate::estimator::{CHARS_PER_TOKEN, estimate_conversation_tokens};
@@ -46,6 +46,18 @@ fn block_id(kind: BlockKind, content: &str) -> String {
     format!(
         "blk_{}",
         &sha256_hex(&format!("{}\0{}", kind_tag(kind), content))[..24]
+    )
+}
+
+/// The `block_id` of a tool result, computed from the same canonical content
+/// (`serde_json` of the output) that [`decompose`] uses — so a result compaction
+/// stubs resolves to the exact block the manifest cited. Shared with
+/// `crate::compaction` so its `Compaction` report can name evicted/deduped/
+/// superseded/aged blocks by identity, not just count (spec §6.2).
+pub(crate) fn tool_result_block_id(output: &ToolOutput) -> String {
+    block_id(
+        BlockKind::ToolResult,
+        &serde_json::to_string(output).unwrap_or_default(),
     )
 }
 

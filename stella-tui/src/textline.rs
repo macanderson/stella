@@ -418,7 +418,10 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         // Context receipts (spec §4/§5) are observability, not transcript
         // narration — they never produce a rendered line.
         | AgentEvent::BlockRegistered { .. }
-        | AgentEvent::StepManifest { .. } => None,
+        | AgentEvent::StepManifest { .. }
+        // A discarded speculation pool (#415) is internal bookkeeping, not
+        // transcript narration.
+        | AgentEvent::SpeculationDiscarded { .. } => None,
         AgentEvent::Retry { attempt, reason } => Some(retry(*attempt, reason)),
         AgentEvent::Steered { text } => Some(steered(text)),
         AgentEvent::Compaction {
@@ -429,6 +432,9 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             superseded,
             aged,
             summarized,
+            // Block identities + effective budget ride the event for receipts
+            // (spec §6.2); the transcript line stays a count summary.
+            ..
         } => Some(compaction(
             *before_tokens,
             *after_tokens,
@@ -820,6 +826,12 @@ mod tests {
                 superseded: 0,
                 aged: 0,
                 summarized: 0,
+                evicted_blocks: vec![],
+                deduped_blocks: vec![],
+                superseded_blocks: vec![],
+                aged_blocks: vec![],
+                effective_budget_tokens: 0,
+                calibration_factor: 0.0,
             },
             AgentEvent::BudgetTick {
                 spent_usd: 0.1,
