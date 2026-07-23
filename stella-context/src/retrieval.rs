@@ -361,7 +361,11 @@ pub(crate) fn frame_from_node(
         content: Some(node.content.clone()),
         uri: node.uri.clone(),
         score: score.clamp(0.0, 1.0),
-        token_cost: estimate_tokens(&node.content) + estimate_tokens(&node.display_name),
+        // §B3: the declared inline cost must equal the protocol's canonical
+        // count (`budget_tokens` = ceil(bytes/4)) over the content field, with
+        // no tolerance — the title is NOT part of the inline content, so it is
+        // not counted here. `pack_to_budget` packs against this same value.
+        token_cost: contextgraph_types::budget_tokens(&node.content),
         content_digest: None,
         representation: Representation::Full,
         content_fidelity: None,
@@ -393,12 +397,6 @@ pub fn is_lexical_fallback(frame: &ContextFrame) -> bool {
         .provenance
         .iter()
         .any(|p| p.method.as_deref() == Some(LEXICAL_FALLBACK_METHOD))
-}
-
-/// A rough token estimate (~4 chars/token). Honest enough for budgeting; a
-/// real tokenizer is a follow-up but would not change the packing invariants.
-pub(crate) fn estimate_tokens(text: &str) -> u32 {
-    (text.chars().count() as u32).div_ceil(4)
 }
 
 /// Cosine similarity, guarding zero-norm vectors (defined as 0 similarity).
@@ -857,6 +855,31 @@ mod tests {
                 .map(|l| !l.is_empty())
                 .unwrap_or(false)
         }));
+    }
+
+    #[tokio::test]
+    async fn recalled_frames_declare_honest_token_cost() {
+        // §B3: a full frame's `token_cost` MUST equal `budget_tokens` over its
+        // inline content — exact, no tolerance. This drives the real `recall`
+        // builder with a query that provably surfaces a frame (same shape as
+        // `recall_returns_cited_budget_respecting_frames`), so the check has a
+        // non-empty result to bite on rather than passing vacuously.
+        let (_dir, store) = seeded().await;
+        let q = base_query(
+            "open the database",
+            "open the sqlite connection in wal mode with foreign keys on",
+        );
+        let result = store.recall(&q).await.unwrap();
+        assert!(!result.frames.is_empty(), "the query must surface a frame");
+        for frame in &result.frames {
+            assert!(
+                frame.declares_honest_token_cost(),
+                "frame {:?} declares token_cost {} but its content is worth {} budget tokens (§B3)",
+                frame.id,
+                frame.token_cost,
+                frame.expected_inline_token_cost(),
+            );
+        }
     }
 
     #[tokio::test]
