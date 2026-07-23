@@ -133,6 +133,10 @@ fn config_debug_never_leaks_the_api_key() {
 
 #[test]
 fn resolved_config_carries_the_authority_computed_during_settings_load() {
+    // `load_with_settings` reads the process-wide trusted-engine-config env
+    // var; hold the binary env lock so a concurrent test setting it to a
+    // malformed value can't make this load fail (setenv races any getenv).
+    let _env = crate::test_env::lock();
     let authority = crate::settings::AuthorityPolicy {
         project_prompts_allowed: true,
         project_custom_tools_allowed: false,
