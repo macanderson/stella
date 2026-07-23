@@ -816,7 +816,6 @@ impl<'a> Engine<'a> {
             self.call_role,
             self.provider.id(),
             &result.model,
-            estimated_input_tokens,
             events,
         );
 

@@ -217,6 +217,17 @@ fn memory_citation_rows(registry: &ToolRegistry) -> Vec<stella_store::MemoryCita
         .collect()
 }
 
+/// Serialize a serde enum (BlockKind / CacheZone / ModelCallRole) to its stable
+/// snake_case tag for storage, falling back to `"unknown"` if it somehow does
+/// not serialize to a string. Keeps the store string-typed while the wire
+/// carries the real enum.
+fn enum_tag<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".into())
+}
+
 pub(crate) fn warn_store_write_failed(what: &str) {
     eprintln!(
         "  {} store write failed — {what} for this execution is incomplete",
@@ -287,6 +298,67 @@ pub(crate) fn persist_event(
         crate::model_catalog::note_wire_model(actual_provider, model);
     } else if matches!(event, AgentEvent::UsageIncomplete { .. }) {
         usage_complete = false;
+    } else if let AgentEvent::BlockRegistered {
+        block_id,
+        kind,
+        origin,
+        token_cost,
+        content_digest,
+        citation_label,
+    } = event
+    {
+        // Context receipts (spec §4). Best-effort — a receipt write failure
+        // never fails the paid-call accounting boundary (these rows are
+        // observability, not billing), and the block also survives verbatim in
+        // the generic `events` table via record_event above.
+        let _ = store.record_context_block(
+            execution_id,
+            &ContextBlockRow {
+                block_id: block_id.clone(),
+                kind: enum_tag(kind),
+                origin_turn: origin.turn_instance,
+                origin_step: origin.step as u64,
+                call_id: origin.call_id.clone(),
+                memory_id: origin.memory_id.clone(),
+                token_cost: *token_cost,
+                content_digest: content_digest.clone(),
+                citation_label: citation_label.clone(),
+            },
+        );
+    } else if let AgentEvent::StepManifest {
+        turn_instance,
+        step,
+        role,
+        provider,
+        model,
+        blocks,
+        effective_budget_tokens,
+        calibration_factor,
+        estimated_input_tokens,
+    } = event
+    {
+        let _ = store.record_step_manifest(
+            execution_id,
+            &StepManifestRow {
+                turn_instance: *turn_instance,
+                step: *step as u64,
+                provider: provider.clone(),
+                model: model.clone(),
+                call_role: enum_tag(role),
+                effective_budget_tokens: *effective_budget_tokens,
+                calibration_factor: *calibration_factor,
+                estimated_input_tokens: *estimated_input_tokens,
+                blocks: blocks
+                    .iter()
+                    .map(|b| ManifestBlockRow {
+                        block_id: b.block_id.clone(),
+                        cache_zone: enum_tag(&b.cache_zone),
+                        token_cost: b.token_cost,
+                        resident_since_step: b.resident_since_step as u64,
+                    })
+                    .collect(),
+            },
+        );
     }
     let complete = recorded && telemetry_ok && usage_complete;
     if !complete {
