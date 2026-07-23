@@ -52,8 +52,7 @@ pub(crate) fn parse_retry_after_ms(headers: &reqwest::header::HeaderMap) -> Opti
 }
 
 /// Best-effort extraction of the human `message` from a provider's
-/// structured error body (issue #250: 401/403 used to discard the body
-/// entirely). OpenAI, Anthropic, and every OpenAI-compatible gateway
+/// structured error body. OpenAI, Anthropic, and every OpenAI-compatible gateway
 /// (OpenRouter, xAI, DeepSeek, Z.ai, Gemini direct) nest it under an `error`
 /// object — `{"error": {"message": "...", ...}}`; Bedrock/AWS report the
 /// same field flat at the top level — `{"message": "...", "__type": ...}`.
@@ -310,15 +309,8 @@ mod tests {
         assert_eq!(end, None);
     }
 
-    // ---- classify_http_status (issue #271: terminal-on-first-attempt +
-    // invalid-model recovery hint; issue #250: sharper 401/403/402 auth
-    // diagnostics) --------------------------------------------------------
-
     /// The real-world repro (issue #271): OpenRouter answers a doubled/typo'd
     /// model slug with HTTP 400 and a body naming the exact slug it rejected.
-    /// On origin/main this classified fine as `Terminal` (so it was already
-    /// non-retryable) but the message carried no pointer to a fix — this
-    /// assertion is what's new.
     #[test]
     fn classify_http_status_400_invalid_model_names_a_recovery_hint() {
         let err = classify_http_status(
@@ -372,10 +364,8 @@ mod tests {
         assert!(!msg.contains("--model"), "{msg}");
     }
 
-    /// Issue #250: on origin/main, 401/403 discarded the response body
-    /// entirely (`format!("{label} rejected the credential (HTTP {status})")`,
-    /// no `body` in scope at all) — the provider's own reason never reached
-    /// the user. This is the fold-in.
+    /// Issue #250: a 401 must fold the provider's own reason into the message
+    /// rather than discarding the response body, so the user sees why.
     #[test]
     fn classify_http_status_401_folds_in_the_provider_reason_and_a_credential_hint() {
         let err = classify_http_status(
@@ -468,9 +458,8 @@ mod tests {
         assert!(msg.contains("out of credits"), "{msg}");
     }
 
-    /// The rest of the ladder (429/5xx) is untouched by this change — pinned
-    /// here so a future edit to the 401/403/402/model-hint arms can't
-    /// silently regress the retryable side.
+    /// 429/5xx stay retryable — pinned here so a future edit to the
+    /// 401/403/402/model-hint arms can't silently regress the retryable side.
     #[test]
     fn classify_http_status_429_and_5xx_stay_retryable() {
         let rate_limited = classify_http_status(

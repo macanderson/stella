@@ -86,9 +86,7 @@ async fn get_json(label: &str, url: &str, headers: &[(&str, &str)]) -> Result<St
 /// cannot spin the refresh.
 const MAX_PAGES: usize = 10;
 
-// ---------------------------------------------------------------------
 // OpenRouter
-// ---------------------------------------------------------------------
 
 /// A USD-per-TOKEN decimal string ("0.000003") → USD per million tokens.
 /// OpenRouter prices are strings, sometimes "-1" for dynamically-priced
@@ -177,9 +175,7 @@ pub async fn fetch_openrouter(base_url: &str) -> Result<Vec<ProviderModel>, Stri
     parse_openrouter(&body)
 }
 
-// ---------------------------------------------------------------------
 // Anthropic
-// ---------------------------------------------------------------------
 
 /// One page of Anthropic's `GET /v1/models`.
 fn parse_anthropic_page(body: &str) -> Result<(Vec<ProviderModel>, Option<String>), String> {
@@ -252,9 +248,7 @@ pub async fn fetch_anthropic(
     Ok(models)
 }
 
-// ---------------------------------------------------------------------
 // Gemini
-// ---------------------------------------------------------------------
 
 /// One page of Gemini's `GET /models` (the `ListModels` surface). Rows
 /// that can't serve chat (`generateContent` absent from
@@ -329,9 +323,7 @@ pub async fn fetch_gemini(base_url: &str, api_key: &ApiKey) -> Result<Vec<Provid
     Ok(models)
 }
 
-// ---------------------------------------------------------------------
 // OpenAI-compatible (OpenAI, xAI, DeepSeek, Z.ai, local, custom gateways)
-// ---------------------------------------------------------------------
 
 /// Parse the OpenAI-shape `GET /models` document: `{"data": [{"id": …}]}`.
 pub fn parse_openai_compatible(label: &str, body: &str) -> Result<Vec<ProviderModel>, String> {

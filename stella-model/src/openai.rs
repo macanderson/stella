@@ -1,17 +1,11 @@
 //! OpenAI adapter — the Responses API (`POST /responses`), not the
-//! Chat Completions API. This is the third of the three provider dialects
-//! Phase 2's exit criterion requires ( step 1,
-//! : "Responses API (streaming, tool-use, reasoning
-//! effort)"). Before this file existed, `stella-cli` routed `OPENAI_API_KEY`
-//! through `zai::ZaiProvider` pointed at a different base URL — that works
-//! only because `/v1/chat/completions` happens to also exist on OpenAI's
-//! account, but it is not the wire shape the spec calls for and it is not a
-//! structurally distinct dialect from Z.ai's, which defeated the point of
-//! having three dialects in the exit criterion. The Responses API is
-//! genuinely different: an `input` *items* array instead of a flat
-//! `messages` array, an `output` items array instead of `choices`, and
-//! `function_call`/`function_call_output` items instead of an accumulating
-//! `tool_calls` delta array — see the wire types below.
+//! Chat Completions API. Routing `OPENAI_API_KEY` through an OpenAI-compatible
+//! shim works only because `/v1/chat/completions` also exists on OpenAI's
+//! account, but it is not the wire shape and is not structurally distinct from
+//! Z.ai's dialect. The Responses API is genuinely different: an `input` *items*
+//! array instead of a flat `messages` array, an `output` items array instead
+//! of `choices`, and `function_call`/`function_call_output` items instead of
+//! an accumulating `tool_calls` delta array — see the wire types below.
 
 use std::collections::BTreeMap;
 
@@ -299,7 +293,7 @@ enum OpenAiStreamEvent {
 /// on `function_call` items (to learn the `call_id`/`name` before argument
 /// deltas start arriving); `message` items and anything else are ignored —
 /// their text arrives via `response.output_text.delta` regardless of which
-/// item it belongs to, which is all Phase 2's single-turn aggregation needs.
+/// item it belongs to, which is all the single-turn aggregation needs.
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum OpenAiOutputItem {

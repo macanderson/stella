@@ -66,16 +66,16 @@ struct AnthropicRequest<'a> {
     messages: Vec<AnthropicMessage>,
     stream: bool,
     /// Sampling temperature, forwarded from `CompletionRequest.temperature`.
-    /// Omitted when `None` so Anthropic applies its own default — dropping it
-    /// unconditionally (the prior bug) meant a caller-set temperature was
-    /// silently ignored. Also omitted whenever `thinking` is set: the
-    /// Messages API rejects any temperature != 1 alongside extended thinking,
-    /// and the engine's default (0.0) would fail every thinking turn.
+    /// Omitted when `None` so Anthropic applies its own default (dropping it
+    /// unconditionally would silently ignore a caller-set temperature). Also
+    /// omitted whenever `thinking` is set: the Messages API rejects any
+    /// temperature != 1 alongside extended thinking, and the engine's default
+    /// (0.0) would fail every thinking turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     /// Sampling overrides from `CompletionRequest.params`, skipped when
-    /// `None` so a request without overrides serializes byte-identical to
-    /// before (the prompt-cache contract). Only the subset the Messages API
+    /// `None` so a request without overrides serializes byte-identically
+    /// (the prompt-cache contract). Only the subset the Messages API
     /// speaks — the rest of `GenerationParams` has no slot here and is
     /// silently dropped per the never-fail contract.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,14 +218,9 @@ const EPHEMERAL_CACHE: AnthropicCacheControl = AnthropicCacheControl { kind: "ep
 /// replayed history at the full input rate. Pairs with the system-block
 /// marker (two of the four allowed breakpoints). Block-level is the
 /// placement this adapter sends (never a top-level `cache_control` request
-/// field, which Anthropic's documented behavior for unknown parameters
-/// says would 400) — see `stella-model/tests/live_smoke.rs`'s
-/// `anthropic_smoke` (#274) for the live-wire status of that claim: as of
-/// 2026-07-21 it's still unverified end-to-end (the one available
-/// credential hit an account-billing 400 before the request shape was ever
-/// evaluated), so treat "top-level would 400" as an inherited assumption
-/// from PR #221, not a confirmed fact, until that smoke test reports a
-/// clean pass.
+/// field, which Anthropic's unknown-parameter handling would reject with a
+/// 400); `tests/live_smoke.rs::anthropic_smoke` tracks whether that holds
+/// end-to-end.
 fn stamp_tail_cache_breakpoint(messages: &mut [AnthropicMessage]) {
     let Some(block) = messages.last_mut().and_then(|m| m.content.last_mut()) else {
         return;
@@ -355,8 +350,8 @@ fn attachment_blocks(message: &CompletionMessage) -> Vec<AnthropicContentBlock> 
 /// Streamed SSE payloads from the Messages API's `content_block_delta`
 /// events. Anthropic's stream sends several event *types*
 /// (`message_start`, `content_block_start`, `content_block_delta`,
-/// `message_delta`, `message_stop`); Phase 0 only needs to aggregate text
-/// deltas and the final usage block.
+/// `message_delta`, `message_stop`); this adapter only needs to aggregate
+/// text deltas and the final usage block.
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AnthropicStreamEvent {

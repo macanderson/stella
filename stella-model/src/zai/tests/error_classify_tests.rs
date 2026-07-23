@@ -19,10 +19,9 @@ fn hi_request() -> CompletionRequest {
 /// The live repro behind issue #271, reproduced through the public
 /// `complete()` API exactly as it happens for real: a mistyped/decommissioned
 /// model slug gets OpenRouter's `HTTP 400 "<slug> is not a valid model ID"`.
-/// This must both stay non-retryable (already true on `origin/main` — a 400
-/// falls to `classify_http_status`'s `Terminal` arm, and `Terminal` was
-/// already excluded from `stella-core::retry::retry_with_backoff`'s retry
-/// set) AND now carry a recovery hint, which `origin/main` did not have.
+/// Must stay non-retryable (a 400 falls to `classify_http_status`'s `Terminal`
+/// arm, which `stella-core::retry::retry_with_backoff` excludes) AND carry a
+/// recovery hint.
 #[tokio::test]
 async fn complete_maps_openrouter_400_invalid_model_to_a_terminal_error_with_a_recovery_hint() {
     let server = MockServer::start().await;
@@ -47,10 +46,10 @@ async fn complete_maps_openrouter_400_invalid_model_to_a_terminal_error_with_a_r
     assert!(msg.contains("--model provider/slug"), "{msg}");
 }
 
-/// Issue #250: a revoked/mistyped OpenRouter key. On `origin/main` this and
-/// the 403 test below produce the byte-identical
-/// `"OpenRouter rejected the credential (HTTP {401,403})"` — no reason, no
-/// way to tell a bad key from a valid key the account just can't use yet.
+/// Issue #250: a revoked/mistyped OpenRouter key. The message must carry the
+/// provider's own reason — without it, a 401 and the 403 test below read as
+/// the byte-identical "rejected the credential", giving no way to tell a bad
+/// key from a valid key the account just can't use yet.
 #[tokio::test]
 async fn complete_maps_openrouter_401_to_auth_error_with_the_provider_reason() {
     let server = MockServer::start().await;
@@ -107,10 +106,8 @@ async fn complete_maps_openrouter_403_model_not_enabled_to_a_distinct_hint() {
 }
 
 /// Issue #250: some gateways answer out-of-credits with HTTP 402 rather than
-/// folding it into a 403. On `origin/main` a 402 falls into the generic
-/// `Terminal("{label} HTTP {status}: {body}")` bucket — a message with no
-/// dedicated billing wording, just whatever text the gateway happened to
-/// send. Must stay non-retryable either way.
+/// folding it into a 403. The 402 must get dedicated billing wording rather
+/// than falling into the generic `Terminal` bucket, and stay non-retryable.
 #[tokio::test]
 async fn complete_maps_openrouter_402_to_a_terminal_billing_error() {
     let server = MockServer::start().await;

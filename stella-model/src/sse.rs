@@ -1,9 +1,7 @@
 //! Minimal, dependency-free Server-Sent-Events line parser shared by every
-//! streaming adapter. Retiring "raw SSE parsing quality" as a Phase 0 risk
-//! means this parser is unit-tested against the exact
-//! chunking pathologies a real HTTP stream produces: a `data:` line split
-//! across two reads, multiple events in one read, and a trailing partial
-//! line held over to the next chunk.
+//! streaming adapter. Unit-tested against the exact chunking pathologies a
+//! real HTTP stream produces: a `data:` line split across two reads, multiple
+//! events in one read, and a trailing partial line held over to the next chunk.
 
 /// One parsed SSE event: the concatenation of every `data:` line in the
 /// event, newline-joined (per the SSE spec), plus the event name if the
@@ -227,7 +225,7 @@ mod tests {
         assert_eq!(events[0].data, "real");
     }
 
-    // ---- CRLF event delimiters (SSE spec line endings) -------------------
+    // CRLF event delimiters (SSE spec line endings)
 
     #[test]
     fn handles_crlf_event_delimiters() {
@@ -249,7 +247,7 @@ mod tests {
         assert_eq!(events[0].data, "split");
     }
 
-    // ---- Utf8Decoder: multi-byte characters split across chunks ----------
+    // Utf8Decoder: multi-byte characters split across chunks
 
     #[test]
     fn utf8_decoder_reassembles_a_multibyte_char_split_across_two_pushes() {

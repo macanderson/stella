@@ -390,8 +390,6 @@ mod tests {
         ))
     }
 
-    // ---- ApiKey::from_env (unchanged narrow primitive) ---------------
-
     #[test]
     fn debug_never_prints_the_secret_value() {
         let key = ApiKey::new("sk-super-secret-value");
@@ -480,8 +478,6 @@ mod tests {
         }
     }
 
-    // ---- CredentialsFile -------------------------------------------------
-
     #[test]
     fn missing_file_loads_as_empty_not_an_error() {
         let path = temp_credentials_path("missing");
@@ -567,8 +563,6 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    // ---- remove / provider_ids / empty (stella auth set/remove/list) ----
-
     #[test]
     fn remove_reports_whether_an_entry_existed_and_drops_it() {
         let path = temp_credentials_path("remove");
@@ -612,8 +606,6 @@ mod tests {
         ));
     }
 
-    // ---- ApiKey::resolve precedence (per-provider-per-source) --------
-    //
     // Each test below exercises the chain for a distinct provider id/env
     // var pair so tests can run in parallel without racing on shared env
     // state.

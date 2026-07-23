@@ -28,18 +28,13 @@
 //! **The Anthropic `cache_control` question** (the other half of #274):
 //! `anthropic.rs`'s `stamp_tail_cache_breakpoint` places `cache_control`
 //! only on content BLOCKS (the system block, and the last block of the
-//! final message) — never as a top-level request field. That was already
-//! asserted against a mock in `anthropic::tests::request_serializes_both_cache_breakpoints`,
-//! and PR #221's commit message claimed a top-level field "would 400", but
-//! neither had ever been checked against the real API. `anthropic_smoke`
-//! below is built to close that gap: it sends a system prompt long enough
-//! to clear Anthropic's minimum cacheable-prefix floor (so a real cache
-//! write is actually exercised, not just accepted-but-inert) and asserts
-//! the call succeeds. As of the 2026-07-21 run it is STILL OPEN — the only
-//! available credential hit an account-billing rejection before the
-//! request shape was ever evaluated (see the "2026-07-21 run" note on
-//! `anthropic_smoke` for the exact evidence and how to re-run it once
-//! resolved).
+//! final message) — never as a top-level request field, which the assumption
+//! holds would 400. That placement is asserted against a mock in
+//! `anthropic::tests::request_serializes_both_cache_breakpoints`;
+//! `anthropic_smoke` below checks it against the real API by sending a system
+//! prompt long enough to clear Anthropic's minimum cacheable-prefix floor (so
+//! a real cache write is exercised, not just accepted-but-inert) and asserting
+//! the call succeeds.
 
 use stella_model::anthropic::AnthropicProvider;
 use stella_model::bedrock::BedrockProvider;
@@ -261,21 +256,12 @@ fn armed_key_skips_cleanly_when_the_gate_is_on_but_no_key_resolves() {
 /// the FIRST call — a second run within the ~5-minute TTL should show a
 /// `cached_input_tokens` read instead of a `cache_write_tokens` write).
 ///
-/// **2026-07-21 run** (see #274 for the full evidence): STILL OPEN, not
-/// settled. The only available `ANTHROPIC_API_KEY` returned HTTP 400 with
-/// body `"Your credit balance is too low to access the Anthropic API."` —
-/// an account-billing rejection, not a wire-shape one (Anthropic's 400 for
-/// an actually-malformed request names the offending field in
-/// `invalid_request_error`; this body names a balance instead). That
-/// distinction matters: this run neither confirms nor refutes block-level
-/// `cache_control` acceptance — it never got far enough to test the
-/// request shape at all. `openrouter_smoke` DID run clean on the same
-/// invocation (`model=openrouter/auto`, `cost_usd=0.000275`), so the
-/// suite's wiring and credential resolution are proven; only the Anthropic
-/// account needs a balance before this specific question can close. Re-run
+/// A billing/quota 400 (`"credit balance is too low"`) is NOT a wire-shape
+/// verdict: Anthropic names the offending field in `invalid_request_error`
+/// when a request is actually malformed, so a balance rejection never
+/// exercises the request shape at all. Re-run with
 /// `STELLA_LIVE_SMOKE=1 cargo test -p stella-model --test live_smoke \
-/// anthropic_smoke -- --nocapture` once funded and update this note with
-/// the real verdict.
+/// anthropic_smoke -- --nocapture`.
 #[tokio::test]
 async fn anthropic_smoke() {
     let Some(key) = armed_key("anthropic", "ANTHROPIC_API_KEY", &[]) else {
@@ -294,15 +280,13 @@ async fn anthropic_smoke() {
             r.usage.cached_input_tokens,
             r.text
         ),
-        // Deliberately does NOT say "rejected the request shape" — the
-        // 2026-07-21 run hit an account-billing 400 that never got that
-        // far (see the doc comment above), so pre-judging the cause here
-        // would have printed something false on the exact failure this
-        // suite exists to distinguish from a real regression. `e` already
-        // carries the provider's own status + body (never a raw
-        // credential) — a human reading it tells wire-shape apart from
-        // auth/quota/billing; see "2026-07-21 run" above for why this
-        // suite doesn't try to auto-classify that itself.
+        // Deliberately does NOT say "rejected the request shape": a failure
+        // here can be an account-billing 400 that never reached shape
+        // validation, so pre-judging the cause would print something false on
+        // the exact failure this suite exists to distinguish from a real
+        // regression. `e` already carries the provider's own status + body
+        // (never a raw credential), so a human reading it tells wire-shape
+        // apart from auth/quota/billing.
         Err(e) => panic!(
             "anthropic live smoke did not return a parseable 200 — could be a genuine \
              wire-shape regression OR an unrelated account/auth/quota/billing problem; \

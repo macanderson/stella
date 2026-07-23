@@ -1,11 +1,9 @@
 //! Gemini direct adapter — Google's native `generativelanguage.googleapis.com`
-//! generateContent API (`gemini-functions` dialect),
-//! replacing the OpenAI-compatibility shim `stella-cli` previously pointed
-//! `ZaiProvider` at. The shim works for plain chat but is not the wire shape
-//! Gemini needs, and drops everything Gemini-specific: thinking level,
-//! thought-signature round-trips (required for Gemini 3 function calling),
-//! cached-token accounting, and the native media endpoints (Imagen/Veo)
-//! that later phases hang off this same adapter family.
+//! generateContent API (`gemini-functions` dialect). A plain OpenAI-compatibility
+//! shim works for chat but is not the wire shape Gemini needs, and drops
+//! everything Gemini-specific: thinking level, thought-signature round-trips
+//! (required for Gemini 3 function calling), cached-token accounting, and the
+//! native media endpoints (Imagen/Veo) that share this adapter family.
 //!
 //! The wire types and stream aggregation here are shared with
 //! `vertex.rs` — Vertex AI speaks the identical `generateContent` response

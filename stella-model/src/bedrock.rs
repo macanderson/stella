@@ -986,11 +986,9 @@ pub(crate) mod sigv4 {
 
         /// Golden vector generated with botocore 1.43.46's `SigV4Auth` (the
         /// AWS reference implementation) for this exact request shape, with
-        /// the clock frozen to `20260711T123456Z` — the generator script and
-        /// its output are archived under `verifications/` for the PR. Pins
-        /// the full composition: canonical request (double-encoded model id
-        /// in the path), string to sign, key derivation, and header
-        /// formatting.
+        /// the clock frozen to `20260711T123456Z`. Pins the full composition:
+        /// canonical request (double-encoded model id in the path), string to
+        /// sign, key derivation, and header formatting.
         #[test]
         fn sign_matches_botocore_golden_vector_without_session_token() {
             let output = sign(&SigningInput {

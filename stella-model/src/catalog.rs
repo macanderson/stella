@@ -201,11 +201,6 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(true)),
-                // Real adapter now exists (stella_model::openai) — this row
-                // used to be OpenaiJson, which was wrong: OpenAI was never
-                // routed through Chat Completions, only through the generic
-                // ZaiProvider pointed at OpenAI's base URL as a stand-in
-                // until the Responses API adapter landed.
                 CatalogEntry::new(
                     "gpt-5.5",
                     "openai",
@@ -247,9 +242,6 @@ impl Catalog {
                     },
                 )
                 .with_reasoning(Some(false)),
-                // The native Gemini-direct adapter (stella_model::gemini) —
-                // this row used to be OpenaiJson while requests routed
-                // through Google's OpenAI-compatibility shim as a stand-in.
                 CatalogEntry::new(
                     "gemini-3-pro",
                     "gemini",
