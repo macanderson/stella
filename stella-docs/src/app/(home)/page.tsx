@@ -68,10 +68,10 @@ export default function HomePage() {
         <div className="relative mx-auto flex max-w-5xl flex-col items-center px-4 py-24 text-center sm:py-32">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/brand/mark.svg"
+            src="/brand/mark-star.svg"
             alt=""
             aria-hidden
-            className="mb-8 h-14 w-auto drop-shadow-[0_0_28px_rgba(63,224,255,0.35)]"
+            className="mb-8 h-14 w-auto drop-shadow-[0_0_26px_rgba(255,219,0,0.30)]"
           />
           <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-card px-3 py-1 text-xs font-medium text-fd-muted-foreground">
             <Terminal className="size-3.5 text-[var(--stella-azure)]" aria-hidden />
@@ -183,7 +183,7 @@ export default function HomePage() {
         <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-fd-muted-foreground sm:flex-row">
           <span className="inline-flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/brand/mark-flat.svg" alt="" aria-hidden className="h-4 w-auto opacity-80" />
+            <img src="/brand/mark-star.svg" alt="" aria-hidden className="h-4 w-auto opacity-80" />
             <span className="font-mono">stella</span>
           </span>
           <div className="flex items-center gap-5">
