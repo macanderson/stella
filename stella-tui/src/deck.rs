@@ -932,6 +932,9 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::TextDelta { text } => (TraceKind::Text, snip(text)),
         AgentEvent::Reasoning { delta } => (TraceKind::Reasoning, snip(delta)),
         AgentEvent::ToolStart { call } => (TraceKind::Tool, format!("{}()", call.name)),
+        AgentEvent::SpeculationDiscarded { name, reason, .. } => {
+            (TraceKind::Tool, format!("discarded {name} ({reason})"))
+        }
         AgentEvent::ToolResult {
             output,
             duration_ms,
@@ -1001,6 +1004,10 @@ fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         AgentEvent::Steered { text } => (
             TraceKind::Other,
             format!("steer: {}", text.chars().take(40).collect::<String>()),
+        ),
+        AgentEvent::SpeculationDiscarded { name, reason, .. } => (
+            TraceKind::Other,
+            format!("speculation discarded: {name} ({reason})"),
         ),
         AgentEvent::Compaction {
             before_tokens,

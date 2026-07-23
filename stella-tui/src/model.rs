@@ -586,6 +586,9 @@ impl SessionModel {
             | AgentEvent::BlockRegistered { .. }
             | AgentEvent::StepManifest { .. }
             | AgentEvent::GoalVerdict { .. } => {}
+            // A discarded speculation pool (#415) is store/telemetry
+            // bookkeeping; no user-visible panel state depends on it.
+            AgentEvent::SpeculationDiscarded { .. } => {}
             AgentEvent::Error { message, retryable } => {
                 self.pending_scope_review = None;
                 self.pending_ask_user = None;
@@ -610,6 +613,9 @@ impl SessionModel {
                     cost_usd: *cost_usd,
                 });
             }
+            // Internal accounting for read-only speculation that never
+            // committed — no visible model state to update.
+            AgentEvent::SpeculationDiscarded { .. } => {}
         }
         self.evict_transcript_overflow();
     }

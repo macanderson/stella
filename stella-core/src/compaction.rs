@@ -23,9 +23,13 @@
 use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
 
 use crate::estimator::{estimate_conversation_tokens, estimate_message_tokens};
+use crate::receipts::tool_result_block_id;
 
-/// What a compaction pass did, for the `Compaction` event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// What a compaction pass did, for the `Compaction` event. Carries both the
+/// counts (back-compat) and the **identities** — the `block_id`s each pass
+/// stubbed — so the receipt records *which* blocks left context, not just how
+/// many (spec §6.2). Each `*_blocks` vec's length equals its count.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CompactionReport {
     pub before_tokens: u64,
     pub after_tokens: u64,
@@ -35,6 +39,13 @@ pub struct CompactionReport {
     pub superseded: usize,
     /// Large old outputs middle-out truncated instead of dropped whole.
     pub aged: usize,
+    /// `block_id`s evicted (pass 4), deduped (pass 1), superseded (pass 2), and
+    /// aged (pass 3) — the content-addressed identity of each stubbed result,
+    /// matching the id the manifest cited for it.
+    pub evicted_blocks: Vec<String>,
+    pub deduped_blocks: Vec<String>,
+    pub superseded_blocks: Vec<String>,
+    pub aged_blocks: Vec<String>,
 }
 
 const EVICTION_STUB: &str =
@@ -95,6 +106,22 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
     let mut superseded = 0usize;
     let mut aged = 0usize;
     let mut evicted = 0usize;
+    // Identities alongside the counts — the block_id each pass stubbed (§6.2).
+    let mut deduped_blocks: Vec<String> = Vec::new();
+    let mut superseded_blocks: Vec<String> = Vec::new();
+    let mut aged_blocks: Vec<String> = Vec::new();
+    let mut evicted_blocks: Vec<String> = Vec::new();
+    // Each tool result's ORIGINAL block_id, captured before any pass mutates it,
+    // keyed by call_id (unique per result). A result aged then evicted in the
+    // same call must be recorded under the id the manifest cited, not the id of
+    // its intermediate aged content.
+    let original_ids: std::collections::HashMap<String, String> = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::Tool)
+        .flat_map(|m| &m.tool_results)
+        .map(|r| (r.call_id.clone(), tool_result_block_id(&r.output)))
+        .collect();
+    let id_of = |call_id: &str| original_ids.get(call_id).cloned().unwrap_or_default();
 
     // Index of the last Tool message — its results answer the most recent
     // assistant tool calls and must never be evicted or deduped away.
@@ -127,6 +154,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                     && let Some(&kept_at) = seen.get(content)
                     && kept_at > idx
                 {
+                    deduped_blocks.push(id_of(&result.call_id));
                     result.output = ToolOutput::Ok {
                         content: dedup_stub(),
                     };
@@ -191,6 +219,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
         for (idx, call_id) in stale {
             for result in &mut messages[idx].tool_results {
                 if result.call_id == call_id {
+                    superseded_blocks.push(id_of(&result.call_id));
                     result.output = ToolOutput::Ok {
                         content: supersession_stub(),
                     };
@@ -227,6 +256,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                             content: aged_payload,
                         }
                     };
+                    aged_blocks.push(id_of(&result.call_id));
                     aged += 1;
                 }
             }
@@ -258,6 +288,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                     ToolOutput::Error { message } => (message.len(), true),
                 };
                 if payload_len > 400 {
+                    evicted_blocks.push(id_of(&result.call_id));
                     result.output = if is_error {
                         ToolOutput::Error {
                             message: EVICTION_STUB.to_string(),
@@ -290,6 +321,10 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
         deduped,
         superseded,
         aged,
+        evicted_blocks,
+        deduped_blocks,
+        superseded_blocks,
+        aged_blocks,
     })
 }
 
@@ -382,6 +417,36 @@ mod tests {
             ToolOutput::Ok { content } => assert!(content.contains("evicted")),
             _ => panic!("expected stub"),
         }
+    }
+
+    #[test]
+    fn eviction_reports_the_block_identity_the_manifest_cited() {
+        // §6.2: the report names WHICH block was evicted, by the same
+        // content-addressed id the receipt manifest recorded for it — so a
+        // later pass can prove that block was dropped before it was ever used.
+        let old_output = ToolOutput::Ok {
+            content: "old ".repeat(2000),
+        };
+        let expected = crate::receipts::tool_result_block_id(&old_output);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("do things"),
+            assistant_with_call("c1"),
+            tool_msg("c1", "old ".repeat(2000)),
+            assistant_with_call("c2"),
+            tool_msg("c2", "new ".repeat(2000)),
+        ];
+        let report = compact(&mut messages, 2500).expect("compaction should run");
+        assert_eq!(
+            report.evicted_blocks.len(),
+            report.evicted,
+            "one identity per evicted block"
+        );
+        assert!(
+            report.evicted_blocks.contains(&expected),
+            "evicted_blocks {:?} must name the evicted output's block_id {expected}",
+            report.evicted_blocks
+        );
     }
 
     #[test]

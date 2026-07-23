@@ -16,10 +16,11 @@ members = [
   "stella-serve",
   "stella-tui",
   "stella-cli",
+  "bench/loop-bench",
 ]
 
 [workspace.package]
-version = "0.4.83"
+version = "0.4.85"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT OR Apache-2.0"
