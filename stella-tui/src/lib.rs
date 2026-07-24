@@ -83,9 +83,6 @@ pub use deck::{
 };
 pub use deck_render::render_deck;
 pub use deck_shell::{DeckOptions, run_deck};
-pub use fleet_dashboard::{
-    FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,
-};
 pub use deck_ui::{
     DeckAction, DeckUi, IssueField, IssuesMode, IssuesPanel, ScopeAction, SkillPrompt, SkillsFocus,
     SkillsPanel, TypeAhead, handle_deck_key, ingest_inbound,
@@ -96,6 +93,9 @@ pub use envelope::{
     IssueAction, IssueRow, McpSearchItem, McpSearchOutcome, McpServerInfo, NotificationInfo,
     Secret, SessionInfo, SessionPhase, SkillOp, SkillRow, SkillScope, SkillSearchHit, SkillsView,
     SplashCue, WorkspaceInput,
+};
+pub use fleet_dashboard::{
+    FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,
 };
 pub use graph::{GraphEdge, GraphNode, GraphSnapshot};
 pub use resource::ResourceMonitor;
