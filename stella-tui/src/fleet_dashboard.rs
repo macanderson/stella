@@ -379,10 +379,8 @@ impl FleetBoard {
                     .clone()
                     .unwrap_or_else(|| file_verb(*kind).to_string());
                 row.last_diff = diff.clone();
-                row.action = LastAction::Tool(format!(
-                    "{verb}  {}  +{added}-{removed}",
-                    short_path(path)
-                ));
+                row.action =
+                    LastAction::Tool(format!("{verb}  {}  +{added}-{removed}", short_path(path)));
             }
             AgentEvent::ToolResult { output, .. } => {
                 let preview = match output {
@@ -524,7 +522,8 @@ fn display_order(board: &FleetBoard, sort: SortKey, now: Instant) -> Vec<usize> 
         SortKey::ToolAgo => order.sort_by(|&a, &b| {
             let ta = board.rows[a].tool_ago(now).unwrap_or(Duration::ZERO);
             let tb = board.rows[b].tool_ago(now).unwrap_or(Duration::ZERO);
-            tb.cmp(&ta).then_with(|| board.rows[a].id.cmp(&board.rows[b].id))
+            tb.cmp(&ta)
+                .then_with(|| board.rows[a].id.cmp(&board.rows[b].id))
         }),
         SortKey::Elapsed => order.sort_by(|&a, &b| {
             board.rows[b]
@@ -922,7 +921,10 @@ fn render_detail(
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::raw("   "),
-        Span::styled(entry.status.label(), Style::default().fg(entry.status.color())),
+        Span::styled(
+            entry.status.label(),
+            Style::default().fg(entry.status.color()),
+        ),
         Span::styled(format!(" · tool-ago {tool_ago}"), theme::muted()),
     ]));
     // last: <tool> <arg>
@@ -946,13 +948,19 @@ fn render_detail(
                 theme::TEXT_TERTIARY
             };
             lines.push(Line::from(Span::styled(
-                format!("         {}", truncate(l, area.width.saturating_sub(10) as usize)),
+                format!(
+                    "         {}",
+                    truncate(l, area.width.saturating_sub(10) as usize)
+                ),
                 Style::default().fg(color),
             )));
         }
     } else if let Some(out) = &entry.last_output {
         lines.push(Line::from(Span::styled(
-            format!("         {}", truncate(out, area.width.saturating_sub(10) as usize)),
+            format!(
+                "         {}",
+                truncate(out, area.width.saturating_sub(10) as usize)
+            ),
             theme::muted(),
         )));
     }
