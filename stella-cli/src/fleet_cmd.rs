@@ -46,9 +46,9 @@ use stella_fleet::{
     WatchConfig, WorkerControls, WorkerOutcome, WorktreeManager,
 };
 use stella_protocol::{AgentEvent, CompletionMessage, PrStatus};
-use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
 use stella_tools::ToolRegistry;
 use stella_tools::hook_runner::ShellHookRunner;
+use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::agent;
