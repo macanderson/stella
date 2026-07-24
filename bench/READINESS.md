@@ -23,8 +23,15 @@ review, which is outside this repository's control; this report makes the run
 | Original design anchor | `ec7ee03…` (0.4.49) — **superseded** |
 | Frozen claim binary | `target/x86_64-unknown-linux-gnu/release/stella` |
 | Binary format | ELF 64-bit x86-64, glibc 2.17 floor (`…-gnu.2.17`), stripped, 27,754,176 bytes |
-| **Binary SHA-256** | `9069b990088834af8cf7be17e29aca897cbd5e92b3e153dddaec60fe20b1c047` |
+| **Binary SHA-256** | `9069b990088834af8cf7be17e29aca897cbd5e92b3e153dddaec60fe20b1c047` (reference — *host-specific*, see note) |
 | Build stamp | `STELLA_BUILD_GIT_SHA=fa2ec5bdae6db739628f2c37bad2ffb3ce6fe4ef` |
+
+> **Reproducibility:** release builds bake in the builder's rustup/cargo source
+> paths (under `/Users/macanderson/…` here), so the byte-exact SHA above is
+> host-specific and will differ on another machine. It is a *reference* proving
+> the toolchain works and the stamp is correct — the authoritative binary
+> identity is the source-commit stamp plus the SHA the run manifest freezes for
+> the exact uploaded binary (the adapter re-verifies the upload SHA per trial).
 | Toolchain | rustc/cargo 1.97.0 via `rustup which`; zig 0.16.0 + `cargo-zigbuild`; per-build Zig caches |
 
 ### Freeze decision (maintainer-approved)

@@ -43,11 +43,16 @@ raw trials, and disclosed comparator below.
   amendment is verified green on `fa2ec5b` — focused usage-completeness tests
   pass (stella-store 5/5, stella-cli 3/3, stella-pipeline 8/8, including
   abort-spend retention and per-paid-call metering) and the
-  `STELLA_DISABLE_REFLECTION` opt-out is present. The frozen claim binary (see
-  Binary target) is
+  `STELLA_DISABLE_REFLECTION` opt-out is present. A reference claim binary from
+  the preparation build (see Binary target) is
   `sha256:9069b990088834af8cf7be17e29aca897cbd5e92b3e153dddaec60fe20b1c047`
   (`x86_64-unknown-linux-gnu`, glibc 2.17 floor, stripped, stamped
-  `STELLA_BUILD_GIT_SHA=fa2ec5bdae6db739628f2c37bad2ffb3ce6fe4ef`).
+  `STELLA_BUILD_GIT_SHA=fa2ec5bdae6db739628f2c37bad2ffb3ce6fe4ef`). Because
+  release builds bake in the builder's rustup/cargo source paths, that byte-exact
+  SHA is host-specific and is *not* a reproducible cross-machine identity — the
+  authoritative binary identity is the source-commit stamp above plus the SHA
+  frozen in the run manifest for the exact binary the launcher uploads (the
+  adapter verifies the uploaded binary's SHA against the host binary per trial).
 - Binary target: `x86_64-unknown-linux-gnu`, built against glibc 2.17 from a
   clean checkout equal to its freshly fetched upstream. The claim build exports
   the full `git rev-parse HEAD` value as `STELLA_BUILD_GIT_SHA`; ordinary
