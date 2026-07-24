@@ -17,7 +17,7 @@ use std::path::Path;
 
 use clap::Subcommand;
 use colored::Colorize as _;
-use stella_store::usage::UsageStore;
+use stella_store::usage::{PrunePolicy, UsageStore};
 use stella_store::{Store, identity};
 
 use crate::stats::StatsFormat;
@@ -41,6 +41,40 @@ pub enum UsageCmd {
         /// Walk the hub's project registry instead of just the cwd
         #[arg(long)]
         all: bool,
+    },
+    /// Bound the hub's growth: drop old rows, cap the row count, and GC
+    /// deleted projects. Cloud-safe by default — never drops an org's
+    /// un-acked drain rows without --force
+    Prune {
+        /// Drop rows older than this window: N followed by d, w, h, mo, or y
+        /// (e.g. 90d, 12w, 720h, 3mo). A bare number means days
+        #[arg(long, value_name = "AGE")]
+        older_than: Option<String>,
+
+        /// Hard ceiling on retained telemetry rows; evict the oldest prunable
+        /// rows until at/under it
+        #[arg(long, value_name = "N")]
+        max_rows: Option<i64>,
+
+        /// GC rollup for projects whose checkout is gone and were never
+        /// org-registered. A project on an unmounted volume reads as "gone"
+        /// (its rollup re-replicates on next sync, so this is recoverable)
+        #[arg(long)]
+        gc_deleted: bool,
+
+        /// Also drop un-acked cloud rows — breaks a pending drain. Off by
+        /// default; the cursor guard holds unless this is set
+        #[arg(long)]
+        force: bool,
+
+        /// VACUUM afterwards to hand freed pages back to the filesystem (also
+        /// automatic for a large prune)
+        #[arg(long)]
+        vacuum: bool,
+
+        /// Report what would be pruned without deleting anything
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -68,6 +102,14 @@ pub fn run_usage(cmd: Option<UsageCmd>) -> Result<(), String> {
     }) {
         UsageCmd::Report { format, org } => report(format, org.as_deref()),
         UsageCmd::Sync { all } => sync(all),
+        UsageCmd::Prune {
+            older_than,
+            max_rows,
+            gc_deleted,
+            force,
+            vacuum,
+            dry_run,
+        } => prune(older_than, max_rows, gc_deleted, force, vacuum, dry_run),
     }
 }
 
@@ -215,6 +257,127 @@ fn sync_one(hub: &UsageStore, root: &Path) -> Result<u64, String> {
         .map_err(|e| format!("replication failed: {e}"))
 }
 
+/// Parse a retention window (`90d`, `12w`, `720h`, `3mo`, `1y`; a bare number is
+/// days) into a SQLite datetime modifier like `"-90 days"`. SQLite has no
+/// `weeks` modifier, so weeks fold into days.
+fn parse_age_window(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let (num, unit) = s.split_at(split);
+    let n: i64 = num.parse().map_err(|_| {
+        format!("invalid --older-than '{s}': expected N<unit>, e.g. 90d, 12w, 720h, 3mo, 1y")
+    })?;
+    let modifier = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "d" | "day" | "days" => format!("-{n} days"),
+        "w" | "week" | "weeks" => format!("-{} days", n.saturating_mul(7)),
+        "h" | "hour" | "hours" => format!("-{n} hours"),
+        "mo" | "month" | "months" => format!("-{n} months"),
+        "y" | "year" | "years" => format!("-{n} years"),
+        other => {
+            return Err(format!(
+                "invalid --older-than unit '{other}' (use d, w, h, mo, or y)"
+            ));
+        }
+    };
+    Ok(modifier)
+}
+
+fn prune(
+    older_than: Option<String>,
+    max_rows: Option<i64>,
+    gc_deleted: bool,
+    force: bool,
+    vacuum: bool,
+    dry_run: bool,
+) -> Result<(), String> {
+    if older_than.is_none() && max_rows.is_none() && !gc_deleted {
+        return Err(
+            "nothing to prune — pass at least one of --older-than, --max-rows, or --gc-deleted"
+                .into(),
+        );
+    }
+    let older_than = older_than.as_deref().map(parse_age_window).transpose()?;
+    if max_rows.is_some_and(|n| n < 0) {
+        return Err("--max-rows must not be negative".into());
+    }
+
+    let hub = open_hub()?;
+
+    // The store enforces the "unregistered" invariant; the CLI owns the
+    // filesystem check for "the checkout is gone".
+    let gc_project_ids = if gc_deleted {
+        hub.registered_projects()
+            .map_err(|e| format!("cannot list hub projects: {e}"))?
+            .into_iter()
+            .filter(|(_, _, root)| !Path::new(root).exists())
+            .map(|(id, _, _)| id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let report = hub
+        .prune(&PrunePolicy {
+            older_than,
+            max_rows,
+            gc_project_ids,
+            force,
+            vacuum,
+            dry_run,
+        })
+        .map_err(|e| format!("prune failed: {e}"))?;
+
+    let verb = if dry_run { "would remove" } else { "removed" };
+    if report.gc_projects > 0 {
+        println!(
+            "{verb} {} row(s) from {} deleted project(s)",
+            report.gc_rows, report.gc_projects
+        );
+    }
+    if report.aged_out > 0 || report.rollups_aged_out > 0 {
+        println!(
+            "{verb} {} aged-out telemetry row(s) and {} rollup row(s)",
+            report.aged_out, report.rollups_aged_out
+        );
+    }
+    if report.ceiling_evicted > 0 {
+        println!(
+            "{verb} {} row(s) to meet the --max-rows ceiling",
+            report.ceiling_evicted
+        );
+    }
+    if report.protected_unacked > 0 {
+        println!(
+            "{}",
+            format!(
+                "kept {} un-acked cloud row(s) inside the age window — pass --force to drop them",
+                report.protected_unacked
+            )
+            .yellow()
+        );
+    }
+    if report.still_over_ceiling > 0 {
+        println!(
+            "{}",
+            format!(
+                "still {} row(s) over --max-rows (un-acked cloud rows) — drain them, or re-run with --force",
+                report.still_over_ceiling
+            )
+            .yellow()
+        );
+    }
+    if report.vacuumed {
+        println!("vacuumed the hub and re-anchored cloud cursors");
+    }
+
+    let removed =
+        report.aged_out + report.rollups_aged_out + report.ceiling_evicted + report.gc_rows;
+    if removed == 0 && report.gc_projects == 0 && report.still_over_ceiling == 0 {
+        println!("nothing to prune — the hub is already within policy");
+    }
+    Ok(())
+}
+
 pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
     match cmd {
         CloudCmd::Status => {
@@ -260,5 +423,37 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             println!("commit .stella/workspace.json so every clone reports as this workspace");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_age_window;
+
+    #[test]
+    fn age_window_units_map_to_sqlite_modifiers() {
+        assert_eq!(parse_age_window("90d").unwrap(), "-90 days");
+        assert_eq!(parse_age_window("90").unwrap(), "-90 days", "bare = days");
+        assert_eq!(
+            parse_age_window("12w").unwrap(),
+            "-84 days",
+            "weeks fold to days"
+        );
+        assert_eq!(parse_age_window("720h").unwrap(), "-720 hours");
+        assert_eq!(parse_age_window("3mo").unwrap(), "-3 months");
+        assert_eq!(parse_age_window("1y").unwrap(), "-1 years");
+        assert_eq!(
+            parse_age_window(" 30D ").unwrap(),
+            "-30 days",
+            "trim + case"
+        );
+    }
+
+    #[test]
+    fn age_window_rejects_garbage() {
+        assert!(parse_age_window("").is_err());
+        assert!(parse_age_window("d").is_err(), "no number");
+        assert!(parse_age_window("90x").is_err(), "unknown unit");
+        assert!(parse_age_window("-5d").is_err(), "no leading sign");
     }
 }
