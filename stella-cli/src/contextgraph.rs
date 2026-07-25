@@ -288,7 +288,7 @@ pub enum Admission {
     ///
     /// The transport is up (scopes are only knowable from the handshake), but
     /// the host's own consent gate refuses every query to it and **the query
-    /// payload is never transmitted** (`docs/context-reuse.md` §3.5) — so it
+    /// payload is never transmitted** (`docs/context-reuse.md` §4) — so it
     /// contributes nothing to a turn and no workspace content reaches it. The
     /// admission is reported as a refusal because that is what it is
     /// operationally: a source that will serve no frames until consent exists.

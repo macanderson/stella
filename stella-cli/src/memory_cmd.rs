@@ -317,7 +317,7 @@ pub fn run_memory_validate() -> Result<(), String> {
 /// Extract workspace-relative file-path anchors from memory text. A path
 /// anchor is a token matching the pattern `word/word[/word…]` with at least
 /// one slash and a recognized source extension, e.g. `stella-cli/src/agent.rs`,
-/// `src/lib.rs`, `docs/hooks.md`.
+/// `src/lib.rs`, `docs/context-reuse.md`.
 fn extract_path_anchors(text: &str) -> Vec<String> {
     let exts = [
         "rs", "py", "ts", "tsx", "js", "jsx", "go", "md", "sql", "toml",
