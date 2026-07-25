@@ -593,8 +593,18 @@ impl ToolRegistry {
                     .as_deref()
                     .map(|content| extractor.extract(path, content))
                     .unwrap_or_default();
-                let snapshot = match self.storage_snapshot() {
-                    Ok(snapshot) => snapshot,
+                // The persisted half opens SQLite, so it goes to the blocking
+                // pool (#549). The `.await` happens BEFORE the overlay merge
+                // takes the `storage_index` std mutex — a guard held across an
+                // await would make this future non-`Send`.
+                let persisted = {
+                    let root = self.root.clone();
+                    tokio::task::spawn_blocking(move || crate::graph::load_storage_snapshot(&root))
+                        .await
+                        .unwrap_or_else(|_| Err("the storage map load was cancelled".into()))
+                };
+                let snapshot = match persisted {
+                    Ok(persisted) => self.merge_storage_overlay(persisted),
                     Err(message) => return ToolOutput::Error { message },
                 };
                 let manifest_layer = crate::schema_gate::manifest_layer_for(&self.root, path);
@@ -974,9 +984,18 @@ impl ToolRegistry {
         Ok(())
     }
 
-    /// Fresh persisted storage map merged with the session overlay.
-    fn storage_snapshot(&self) -> Result<stella_graph::StorageSnapshot, String> {
-        let mut snapshot = crate::graph::load_storage_snapshot(&self.root)?;
+    /// Merge the session overlay into a freshly loaded persisted storage map.
+    ///
+    /// The other half of the old `storage_snapshot` — the persisted load
+    /// (`crate::graph::load_storage_snapshot`, which opens SQLite and reads
+    /// the storage rows plus the manifest) — is now the caller's, so an async
+    /// caller can put it on the blocking pool (#549). This half is pure
+    /// in-memory merging and holds a `std::sync::Mutex` guard, so it must
+    /// stay synchronous and away from any await.
+    fn merge_storage_overlay(
+        &self,
+        mut snapshot: stella_graph::StorageSnapshot,
+    ) -> stella_graph::StorageSnapshot {
         let index = self.storage_index.lock().unwrap_or_else(|p| p.into_inner());
         for rel in index.baseline.relations.iter().chain(index.session.iter()) {
             if let Some(existing) = snapshot
@@ -1000,7 +1019,7 @@ impl ToolRegistry {
                 snapshot.relations.push(rel.clone());
             }
         }
-        Ok(snapshot)
+        snapshot
     }
 
     /// Record what a landed write created: grow the session overlay, and —

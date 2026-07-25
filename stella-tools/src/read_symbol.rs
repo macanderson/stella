@@ -84,20 +84,26 @@ impl Tool for ReadSymbol {
         };
 
         // Same open → query → shutdown discipline (and on-first-use build) as
-        // `graph_query` — no held handles across turns.
-        let graph = match crate::graph::open_or_build(root) {
-            Ok(g) => g,
-            Err(message) => return ToolOutput::Error { message },
+        // `graph_query` — no held handles across turns. The whole synchronous
+        // region (the open runs a full `index_all` catch-up pass) goes to the
+        // blocking pool so it never occupies a runtime worker (#549); the
+        // handle lives and dies inside the closure and only the plain
+        // `SymbolSpan` data crosses back.
+        let spans = {
+            let root = root.to_path_buf();
+            let name = name.to_string();
+            tokio::task::spawn_blocking(move || {
+                let graph = crate::graph::open_or_build(&root)?;
+                let spans = graph.definition_spans(&name);
+                graph.shutdown();
+                spans.map_err(|e| format!("code-graph lookup failed: {e}"))
+            })
+            .await
+            .unwrap_or_else(|_| Err("the code-graph symbol lookup was cancelled".into()))
         };
-        let spans = graph.definition_spans(name);
-        graph.shutdown();
         let mut spans = match spans {
             Ok(spans) => spans,
-            Err(e) => {
-                return ToolOutput::Error {
-                    message: format!("code-graph lookup failed: {e}"),
-                };
-            }
+            Err(message) => return ToolOutput::Error { message },
         };
         if spans.is_empty() {
             return ToolOutput::Error {
