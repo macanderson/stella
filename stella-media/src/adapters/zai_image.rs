@@ -100,6 +100,9 @@ impl MediaProvider for ZaiImageProvider {
     }
 
     async fn generate_image(&self, req: ImageRequest) -> Result<MediaArtifact, MediaError> {
+        // `req.n` is not forwarded: CogView's request carries no candidate
+        // count here, and the cost below is priced for one image — the number
+        // the spend gate approved. One request, one candidate, one charge.
         let body = ImageGenRequest {
             model: &self.model,
             prompt: &req.prompt,

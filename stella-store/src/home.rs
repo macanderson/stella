@@ -99,14 +99,11 @@ fn merge_dir_into(legacy: &std::path::Path, target: &std::path::Path) -> u64 {
 
     let mut failures = 0u64;
     for name in &names {
-        // Sidecars are handled with their base — or, orphaned, not at all.
-        if let Some(base) = name.to_str().and_then(sqlite_base_of) {
-            if present.contains(std::ffi::OsStr::new(base)) {
-                continue;
-            }
-            // An orphan `-wal`/`-shm` carries nothing recoverable on its
-            // own; migrating it could only confuse a database at the target
-            // that it has no relationship to.
+        // A `-wal`/`-shm` is never moved by this loop: with its base present
+        // it travels as part of that family below, and orphaned it carries
+        // nothing recoverable on its own — migrating it could only confuse a
+        // database at the target it has no relationship to.
+        if name.to_str().and_then(sqlite_base_of).is_some() {
             continue;
         }
 

@@ -12,8 +12,7 @@
 //! repository root under the cooperative claim discipline, so siblings
 //! fail fast by name on a conflicting path instead of clobbering each
 //! other); a plan author *explicitly* opts genuinely divergent work into
-//! [`Isolation::Isolated`] (a dedicated git worktree per task) (
-//! "git-worktree isolation").
+//! [`Isolation::Isolated`] — a dedicated git worktree per task.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
@@ -91,6 +90,7 @@ impl Task {
     }
 
     /// Add dependency edges (builder style).
+    #[must_use]
     pub fn depends_on(mut self, deps: impl IntoIterator<Item = impl Into<TaskId>>) -> Self {
         self.depends_on.extend(deps.into_iter().map(Into::into));
         self
@@ -98,6 +98,7 @@ impl Task {
 
     /// Declare workspace-relative paths this task will touch (builder
     /// style) — the fleet claims them for the attempt's duration.
+    #[must_use]
     pub fn claims(mut self, paths: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.claims.extend(paths.into_iter().map(Into::into));
         self
@@ -106,6 +107,7 @@ impl Task {
     /// Opt this task into running in the shared tree (builder style). A
     /// no-op since share-by-default landed; kept for plan-construction code
     /// that states the intent explicitly.
+    #[must_use]
     pub fn shared_tree(mut self) -> Self {
         self.isolation = Isolation::SharedTree;
         self
@@ -113,6 +115,7 @@ impl Task {
 
     /// Opt this task into a dedicated git worktree (builder style) — the
     /// deliberate exception for divergent work (see [`Isolation::Isolated`]).
+    #[must_use]
     pub fn isolated(mut self) -> Self {
         self.isolation = Isolation::Isolated;
         self
@@ -161,6 +164,10 @@ fn format_cycle(cycle: &[TaskId]) -> String {
 }
 
 impl Plan {
+    /// A plan over `tasks`, in the author's order. Construction never
+    /// validates — call [`validate`](Self::validate) (or any scheduling
+    /// method, which calls it first) to reject duplicate ids, dangling
+    /// dependencies, and cycles.
     pub fn new(tasks: Vec<Task>) -> Self {
         Self { tasks }
     }

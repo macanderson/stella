@@ -1,10 +1,30 @@
+//! One reading of a finished pipeline run, shared by every surface.
+//!
+//! A [`PipelineStatus`] has to be projected four different ways — a store
+//! label, a JSON `reason`, an episodic-memory outcome, and the process exit
+//! `Result` — and each surface (one-shot, deck, fleet, arena) needs the same
+//! projections. Keeping them here, as total `match`es over the enum, is what
+//! stops `stella run --output-format json` and the audit row from disagreeing
+//! about whether the same run passed.
+//!
+//! Cost accounting lives here for the same reason: [`settled_cost_since`] is
+//! the one place a spend delta is clamped, so a provider that reports a
+//! non-monotonic total can never bill a negative amount into the ledger.
+
 use stella_context::EpisodeOutcome;
 use stella_pipeline::{PipelineOutcome, PipelineRunError, PipelineStatus};
 
+/// Spend settled between two reads of the same cumulative counter, floored at
+/// zero. The floor is not defensive noise: a cancelled turn reads the guard
+/// after the dispatch it is unwinding, and a provider whose reported total
+/// ever moves backwards must not credit the ledger.
 pub(crate) fn settled_cost_since(start_usd: f64, current_usd: f64) -> f64 {
     (current_usd - start_usd).max(0.0)
 }
 
+/// The `(outcome label, cost)` pair an execution row closes out with. A hard
+/// pipeline error still reports the spend of the stages that ran before it —
+/// the run cost real money whether or not it produced an answer.
 pub(crate) fn pipeline_execution_closeout(
     result: &Result<PipelineOutcome, PipelineRunError>,
 ) -> (&'static str, f64) {

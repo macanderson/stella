@@ -29,6 +29,7 @@ use serde::Deserialize;
 
 use crate::config::McpTransport;
 use crate::error::McpError;
+use crate::http::truncate;
 
 /// The official MCP Registry — the default when `mcp.registry_url` is unset.
 /// The API shape is the generic "MCP Server Registry API" standard, so any
@@ -281,17 +282,29 @@ impl RegistryServer {
         }
         for package in &self.packages {
             if let Some((transport, auth)) = package_to_transport(package) {
-                let kind = package
-                    .transport
-                    .as_ref()
-                    .map(|t| t.kind.as_str())
-                    .unwrap_or("stdio");
+                // The label is the operator's only look at what an install is
+                // about to write into `mcp.toml` — and for a package that is a
+                // command line this process will later spawn. Spelling out
+                // `cmd args…` rather than the transport kind is what makes an
+                // entry whose `runtimeHint` is a shell visibly different from
+                // a conventional `npx` one; a registry is publisher-supplied
+                // data, so the human is the last gate before spawn.
+                let detail = match &transport {
+                    McpTransport::Stdio { cmd, args, .. } => {
+                        let mut line = cmd.clone();
+                        for arg in args {
+                            line.push(' ');
+                            line.push_str(arg);
+                        }
+                        line
+                    }
+                    McpTransport::Http { url, .. } => url.clone(),
+                };
                 options.push(InstallOption {
                     label: format!(
-                        "{} · {} · {}",
+                        "{} · {} · {detail}",
                         non_empty(&package.registry_type, "package"),
                         package.identifier,
-                        kind
                     ),
                     transport,
                     auth,
@@ -561,15 +574,6 @@ impl RegistryClient {
             count: response.metadata.count,
         })
     }
-}
-
-/// Char-boundary-safe truncation for diagnostic bodies (mirrors [`crate::http`]).
-fn truncate(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(max_chars).collect();
-    format!("{head}…")
 }
 
 #[cfg(test)]

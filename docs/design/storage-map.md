@@ -1,7 +1,7 @@
 # Design: The Storage Map — Vendor-Agnostic Storage Layer Indexing for Zero Drift
 
 **Status:** Phases A–C implemented, D partial, E adapters implemented ·
-**Date:** 2026-07-19
+**Date:** 2026-07-19  
 **Implemented:** the canonical model, addresses, and deep SQL extraction
 (`stella-graph/src/storage/` — types, constraints, defaults, PK/FK,
 `ALTER TABLE … ADD COLUMN`, `COMMENT ON` harvesting); the

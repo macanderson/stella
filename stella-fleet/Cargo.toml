@@ -1,6 +1,9 @@
 [package]
 name = "stella-fleet"
-description = "Multi-agent fleet: planner DAG, git-worktree isolation (isolate-by-default), SQLite commit ledger, PR/CI monitor with capped deferred waits."
+# Share-by-default is the crate's actual contract (see `plan::Isolation`): tasks
+# run in the one repository root under cooperative claims, and a plan author
+# opts genuinely divergent work into a per-task git worktree.
+description = "Multi-agent fleet: planner DAG, share-by-default tasks with opt-in git-worktree isolation, SQLite commit ledger, PR/CI monitor with capped deferred waits."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 //! Read-only queries over the workspace's `.stella` SQLite stores.
 //!
-//! The observatory deliberately does **not** go through [`stella-store`]'s
+//! The observatory deliberately does **not** go through `stella-store`'s
 //! `Store::open`: opening the store creates `.stella/` and runs schema
 //! migrations — writes — and an observer must never mutate what it observes.
 //! Instead every request opens the database file with
@@ -362,29 +362,34 @@ impl Observatory {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
         };
-        let raw = collect_rows(
-            &conn,
-            "SELECT name, ok, duration_ms, bytes_out FROM tool_calls",
-            |r| {
-                Ok(json!({
-                    "name": r.get::<_, String>(0)?,
-                    "ok": r.get::<_, i64>(1)? != 0,
-                    "duration_ms": r.get::<_, i64>(2)?,
-                    "bytes_out": r.get::<_, i64>(3)?,
-                }))
-            },
-        )?;
+        // Folded row by row rather than through `collect_rows`: this is the one
+        // query with no `LIMIT` (every tool call ever, for an exact p50), so
+        // materializing it as JSON first would allocate an object per call.
+        let sql = "SELECT name, ok, duration_ms, bytes_out FROM tool_calls";
+        let mut stmt = match conn.prepare(sql) {
+            Ok(stmt) => stmt,
+            Err(e) if is_missing_table(&e) => return Ok(json!([])),
+            Err(e) => return Err(e.into()),
+        };
+        let scanned = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)? != 0,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
         let mut by_name: std::collections::BTreeMap<String, (i64, i64, Vec<i64>, i64)> =
             std::collections::BTreeMap::new();
-        for row in &raw {
-            let name = row["name"].as_str().unwrap_or_default().to_string();
+        for call in scanned {
+            let (name, ok, duration_ms, bytes_out) = call?;
             let entry = by_name.entry(name).or_default();
             entry.0 += 1;
-            if !row["ok"].as_bool().unwrap_or(true) {
+            if !ok {
                 entry.1 += 1;
             }
-            entry.2.push(row["duration_ms"].as_i64().unwrap_or(0));
-            entry.3 += row["bytes_out"].as_i64().unwrap_or(0);
+            entry.2.push(duration_ms);
+            entry.3 += bytes_out;
         }
         let mut rows: Vec<Value> = by_name
             .into_iter()
@@ -677,11 +682,16 @@ fn open_read_only(path: &Path) -> Option<Connection> {
     if !path.exists() {
         return None;
     }
-    Connection::open_with_flags(
+    let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .ok()
+    .ok()?;
+    // WAL means a writing session never blocks this reader, but a checkpoint
+    // or a migration's exclusive lock still can. Wait it out (the same 5 s the
+    // writing stores use) instead of 500-ing a dashboard poll on SQLITE_BUSY.
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(5_000));
+    Some(conn)
 }
 
 /// Run a query collecting every row; a missing table degrades to `[]` so a

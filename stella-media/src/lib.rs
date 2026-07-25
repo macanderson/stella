@@ -14,8 +14,7 @@
 //!   (async video), OpenAI gpt-image (image). Recorded-fixture tested;
 //!   runtime-skipped live smokes (L-V4).
 //! * [`artifact`] — [`ArtifactStore`]: the single writer to
-//!   `.stella/artifacts/`, path-traversal-proof, with a crash-atomic manifest
-//!
+//!   `.stella/artifacts/`, path-traversal-proof, with a crash-atomic manifest.
 //! * [`svg`] — the [`SvgPipeline`]: validate → sanitize → optimize with a
 //!   bounded model-repair loop, treating LLM SVG as untrusted code (L-V2).
 //! * [`preview`] — the terminal preview ladder (kitty / iTerm2 / plain), pure
@@ -27,9 +26,12 @@
 //!   cache (L-V3).
 //! * [`emit`] — helpers turning job transitions into `stella_protocol` event
 //!   *values* (`MediaProgress` / `MediaComplete`), no channel dependency.
+//! * [`operation_journal`] — the host-owned durable idempotency journal
+//!   ([`MediaOperationJournal`]), so a retried submission cannot pay twice.
+//!   Its SQLite implementation is Unix-only and blocking; see the module docs.
 //!
 //! ## Deliberate architecture deviation (recorded follow-up)
-//! nominally places vendor media HTTP clients in
+//! The workstream spec nominally places vendor media HTTP clients in
 //! `stella-model` (alongside the chat/embedding adapters). They live **here**
 //! instead, so this workstream stays self-contained and this crate
 //! does **not** depend on `stella-model`. The consequences of that isolation:

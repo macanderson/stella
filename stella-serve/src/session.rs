@@ -57,17 +57,37 @@ pub struct Session {
 impl Session {
     /// Spawn the session thread and begin the turn. Frames start arriving
     /// immediately; the terminal one is [`ServerFrame::TurnComplete`].
+    ///
+    /// Infallible by construction: if the thread cannot be created the returned
+    /// session already holds a `TurnComplete { Aborted }` frame, so the caller
+    /// drives one code path either way.
     pub fn start(spec: SessionSpec) -> Session {
         let (frame_tx, frame_rx) = mpsc::unbounded_channel::<ServerFrame>();
         let pending = Pending::default();
-        let thread = {
-            let pending = pending.clone();
-            std::thread::spawn(move || run_session(spec, frame_tx, pending))
+        // Fallible spawn on purpose: a host that opens more turns than the OS
+        // will grant threads must see a cleanly aborted turn on the wire, not
+        // the panic bare `std::thread::spawn` raises when creation fails.
+        // Naming the thread also makes a wedged session legible in a dump.
+        let abort_tx = frame_tx.clone();
+        let thread_pending = pending.clone();
+        let builder = std::thread::Builder::new().name("stella-serve-session".to_string());
+        let spawned = builder.spawn(move || run_session(spec, frame_tx, thread_pending));
+        let thread = match spawned {
+            Ok(thread) => Some(thread),
+            Err(err) => {
+                let _ = abort_tx.send(ServerFrame::TurnComplete {
+                    outcome: TurnOutcomeWire::Aborted {
+                        reason: ServeError::SessionThreadFailed(err.to_string()).to_string(),
+                        cost_usd: 0.0,
+                    },
+                });
+                None
+            }
         };
         Session {
             frames: frame_rx,
             pending,
-            thread: Some(thread),
+            thread,
         }
     }
 

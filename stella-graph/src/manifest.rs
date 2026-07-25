@@ -305,7 +305,16 @@ pub fn append_meaning(
     origin: &str,
 ) -> std::io::Result<()> {
     let path = manifest_path(root);
-    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    // Only a *missing* manifest starts from empty text. A file that exists
+    // but cannot be read (permissions, a transient I/O fault) must fail here
+    // rather than be silently replaced by a one-entry file — this is the
+    // durable half of the storage map, and the meaning in it is not
+    // rebuildable from source (spec §5b).
+    let mut text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
     if text.is_empty() {
         text.push_str(
             "# stella.storage.toml — the storage map's durable half.\n\
@@ -323,7 +332,23 @@ pub fn append_meaning(
         toml_escape(intent.trim()),
         toml_escape(origin),
     ));
-    std::fs::write(&path, text)
+    // Write-then-rename rather than truncate-in-place: a crash (or a full
+    // disk) partway through a direct write would leave a committed file
+    // truncated mid-entry, i.e. invalid TOML that no longer parses — and
+    // with it every intent sentence a human ever wrote. The temp file is a
+    // sibling of the manifest, so the rename is atomic on the same
+    // filesystem. The `sync_all` before the rename is what makes that
+    // atomicity mean something after a power loss: without it the rename can
+    // land while the temp file's bytes are still only in the page cache,
+    // publishing an empty or half-written manifest under the real name.
+    let tmp = path.with_extension("toml.tmp");
+    {
+        use std::io::Write as _;
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+    }
+    std::fs::rename(&tmp, &path)
 }
 
 fn toml_escape(text: &str) -> String {

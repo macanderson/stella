@@ -30,6 +30,7 @@
 //! server-initiated request or notification (sampling, roots, progress). The
 //! transport drops those silently.
 
+use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -260,7 +261,8 @@ impl McpClient {
     }
 
     /// Build the transport for `config`, then run the full handshake +
-    /// tool discovery. `timeout` bounds each underlying request.
+    /// tool discovery. `timeout` bounds the whole handshake and becomes the
+    /// per-call timeout for every later [`McpClient::call_tool`].
     pub async fn connect(config: &McpServerConfig, timeout: Duration) -> Result<Self, McpError> {
         Self::connect_with_auth(config, timeout, None).await
     }
@@ -291,14 +293,28 @@ impl McpClient {
     /// Run `initialize` → negotiate the version → `notifications/initialized`
     /// → `tools/list` (all pages). On success the client is ready for
     /// [`McpClient::call_tool`].
+    ///
+    /// Bounded by the per-call timeout, exactly like the reconnect handshake:
+    /// a freshly-spawned server that accepts the connection and then never
+    /// answers `initialize` must not hang the caller forever. (Nothing below
+    /// this layer imposes a deadline on the stdio path — the transport just
+    /// waits on its `oneshot` — so this is the only bound that exists.)
     pub async fn initialize(&mut self) -> Result<(), McpError> {
         let name = self.name.clone();
+        let call_timeout = self.call_timeout;
         let handshake = {
             let conn = self.conn.get_mut();
             let transport = conn.transport.as_deref().ok_or_else(|| {
                 McpError::Closed(format!("client `{name}` has no transport to initialize"))
             })?;
-            run_handshake(&name, transport).await?
+            tokio::time::timeout(call_timeout, run_handshake(&name, transport))
+                .await
+                .map_err(|_elapsed| {
+                    McpError::Closed(format!(
+                        "server `{name}` did not complete the handshake within {:.1}s",
+                        call_timeout.as_secs_f64()
+                    ))
+                })??
         };
         self.negotiated_version = handshake.negotiated_version;
         self.server_info = handshake.server_info;
@@ -337,10 +353,11 @@ impl McpClient {
             self.reconnect_locked(&mut conn).await?;
         }
 
-        match self
-            .request_once(&conn, "tools/call", raw_params.clone())
-            .await
-        {
+        // `raw_params` is moved into the attempt rather than cloned: the retry
+        // path below re-serializes from `params` instead, so the common case
+        // (no drop) never deep-clones a tool input that may be megabytes of
+        // file content.
+        match self.request_once(&conn, "tools/call", raw_params).await {
             RequestOutcome::Ok(raw) => {
                 conn.mark_healthy();
                 decode_call_result(tool, raw)
@@ -374,7 +391,10 @@ impl McpClient {
                 if !reconnected {
                     return Err(err);
                 }
-                match self.request_once(&conn, "tools/call", raw_params).await {
+                match self
+                    .request_once(&conn, "tools/call", to_value(&params)?)
+                    .await
+                {
                     RequestOutcome::Ok(raw) => {
                         conn.mark_healthy();
                         decode_call_result(tool, raw)
@@ -699,35 +719,41 @@ fn normalize_schema(schema: Value) -> Value {
 
 /// Concatenate a `tools/call` content array into a single model-visible
 /// string: text verbatim, everything else a compact placeholder.
+///
+/// Text blocks are *borrowed* rather than cloned into an intermediate `Vec`:
+/// a tool that returns a large file reads back as one multi-megabyte text
+/// block, and the old shape copied it twice (once per part, once by `join`)
+/// on the hot path of every MCP call.
 pub fn render_content(blocks: &[ContentBlock]) -> String {
-    let mut parts: Vec<String> = Vec::new();
+    let mut out = String::new();
     for block in blocks {
-        let piece = match block.kind.as_str() {
-            "text" => block.text.clone().unwrap_or_default(),
-            "image" => "[image]".to_string(),
-            "audio" => "[audio]".to_string(),
-            "resource" => match block.resource.as_ref().and_then(|r| r.uri.clone()) {
-                Some(uri) => format!("[resource: {uri}]"),
-                None => "[resource]".to_string(),
+        let piece: Cow<'_, str> = match block.kind.as_str() {
+            "text" => Cow::Borrowed(block.text.as_deref().unwrap_or_default()),
+            "image" => Cow::Borrowed("[image]"),
+            "audio" => Cow::Borrowed("[audio]"),
+            "resource" => match block.resource.as_ref().and_then(|r| r.uri.as_deref()) {
+                Some(uri) => Cow::Owned(format!("[resource: {uri}]")),
+                None => Cow::Borrowed("[resource]"),
             },
-            "resource_link" => match &block.uri {
-                Some(uri) => format!("[resource: {uri}]"),
-                None => "[resource]".to_string(),
+            "resource_link" => match block.uri.as_deref() {
+                Some(uri) => Cow::Owned(format!("[resource: {uri}]")),
+                None => Cow::Borrowed("[resource]"),
             },
             // A block with no `type` is malformed; fall back to any text it
             // carried, else a generic marker.
-            "" => block
-                .text
-                .clone()
-                .unwrap_or_else(|| "[unknown]".to_string()),
+            "" => Cow::Borrowed(block.text.as_deref().unwrap_or("[unknown]")),
             // An unknown but named type: summarize by its name.
-            other => format!("[{other}]"),
+            other => Cow::Owned(format!("[{other}]")),
         };
-        if !piece.is_empty() {
-            parts.push(piece);
+        if piece.is_empty() {
+            continue;
         }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&piece);
     }
-    parts.join("\n")
+    out
 }
 
 #[cfg(test)]

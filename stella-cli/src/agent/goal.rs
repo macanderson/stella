@@ -349,8 +349,8 @@ pub async fn run_goal_cmd(
 ///
 /// The judge is routed by role (`resolve_cross_family_judge`): when a second
 /// provider family is configured and the `Router` selects it, the judge runs
-/// on a DIFFERENT model family than the worker (bias-resistant assessment,
-///) and a one-line notice is printed. With a single
+/// on a DIFFERENT model family than the worker (bias-resistant assessment)
+/// and a one-line notice is printed. With a single
 /// configured family — or on any discovery/build failure — the judge is the
 /// worker provider itself, identical to before: no second provider is built
 /// and no extra cost is incurred. Text-mode rendering only — goal and

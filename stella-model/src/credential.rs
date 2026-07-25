@@ -1,6 +1,8 @@
-//! Credential resolution. Never `Display`/`Debug`-leaks the secret value —
-//! credentials are never logged, never in trace JSONL
-//!
+//! Credential resolution. Never `Display`/`Debug`-leaks the secret value:
+//! [`ApiKey`] has no `Display` at all and a redacted `Debug`, so a credential
+//! cannot reach a log line, a trace JSONL record, or a panic message even by
+//! accident — `reveal` is the one sanctioned read, for building an auth
+//! header.
 //!
 //! Resolution order: CLI flag -> env var ->
 //! provider-native config (`~/.stella/credentials.toml` here; the AWS
@@ -41,8 +43,14 @@ pub enum CredentialError {
 /// only `Interactive` results get written back to the credentials file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialSource {
+    /// An explicit `--api-key`-style flag on the invocation — highest
+    /// precedence, since it is the most deliberate thing the user can say.
     CliFlag,
+    /// The provider's documented environment variable (`ANTHROPIC_API_KEY`,
+    /// `ZAI_API_KEY`, …).
     EnvVar,
+    /// A `[credentials]` row in `~/.stella/credentials.toml` — including one
+    /// a previous interactive prompt wrote back.
     ConfigFile,
     /// A literal `providers.<id>.api_key` in a merged settings scope
     /// (user/org/project `settings.json`). `ApiKey::resolve` itself never
@@ -52,6 +60,8 @@ pub enum CredentialSource {
     /// "this file" (`ConfigFile`) apart from "this declarative config"
     /// (`SettingsJson`) instead of both reporting as the same source.
     SettingsJson,
+    /// Typed at the masked prompt on first use. The one source `resolve`
+    /// persists — see the write-back note on [`CredentialSource`] itself.
     Interactive,
 }
 
@@ -61,6 +71,10 @@ pub enum CredentialSource {
 pub struct ApiKey(String);
 
 impl ApiKey {
+    /// Wrap an already-resolved secret. The narrow constructor for callers
+    /// that obtained the value some other way (a settings literal, a test
+    /// fixture, an AWS/Vertex token minted elsewhere); the resolution chain
+    /// itself goes through [`ApiKey::resolve`].
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
@@ -352,6 +366,17 @@ fn write_err(path: &Path, e: std::io::Error) -> CredentialError {
 /// the moment it exists on Unix (via `OpenOptions::mode`, applied at
 /// creation — never a create-then-chmod race). `0600` has no group/other
 /// bits, so it is unaffected by any reasonable `umask`.
+///
+/// The contents are `fsync`ed before returning, so the caller's follow-up
+/// `rename` cannot publish a name whose data is still only in the page
+/// cache: a crash between the two would otherwise leave a credentials file
+/// that exists but reads back empty or truncated, which is worse than the
+/// old file surviving. (`Write::flush` on a `File` is a no-op — it has no
+/// userspace buffer — so it never provided this.) The parent directory
+/// entry itself is still not fsynced; a crash immediately after `rename`
+/// can therefore lose the *replacement* on a hard-crash filesystem, which
+/// is the acceptable half of the tradeoff — the previous, valid file
+/// survives.
 #[cfg(unix)]
 fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     use std::io::Write;
@@ -370,7 +395,7 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| write_err(path, e))?;
     file.write_all(bytes).map_err(|e| write_err(path, e))?;
-    file.flush().map_err(|e| write_err(path, e))?;
+    file.sync_all().map_err(|e| write_err(path, e))?;
     Ok(())
 }
 

@@ -117,6 +117,9 @@ impl ZaiProvider {
         &self.session_id
     }
 
+    /// Point this adapter at another OpenAI-compatible endpoint — the
+    /// mainland Z.ai host, a gateway, a local server, or a mock in tests.
+    #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
@@ -126,6 +129,7 @@ impl ZaiProvider {
     /// `X-Title` its display name (shown on openrouter.ai rankings and in
     /// the user's activity feed). Harmless on any other OpenAI-compatible
     /// endpoint, but only the OpenRouter build path sets it.
+    #[must_use]
     pub fn with_attribution(
         mut self,
         referer: impl Into<String>,
@@ -141,6 +145,7 @@ impl ZaiProvider {
     /// catalog list pricing in `CompletionResult::cost_usd`, which is what
     /// makes budget metering real for a gateway whose routed models (and
     /// therefore prices) are not in our seed catalog.
+    #[must_use]
     pub fn with_usage_accounting(mut self) -> Self {
         self.usage_accounting = true;
         self
@@ -153,6 +158,7 @@ impl ZaiProvider {
     /// shared Chat Completions adapter misreported itself as Z.ai — an
     /// xAI 401 read "Z.ai rejected the API key", pointing the user at the
     /// wrong credential.
+    #[must_use]
     pub fn with_identity(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
         self.id = id.into();
         self.label = label.into();
@@ -293,14 +299,6 @@ fn map_openrouter_effort(effort: ReasoningEffort) -> &'static str {
     }
 }
 
-/// Build OpenRouter's `reasoning` object from the request's reasoning/effort
-/// pair. Rules: an explicit off (`reasoning == Some(false)`) always wins and
-/// sends `{"enabled": false}` — a pinned effort must not resurrect thinking
-/// the caller suppressed; otherwise a pinned effort sends
-/// `{"effort": …}` (implicitly enabling); a bare `Some(true)` with no effort
-/// sends `{"enabled": true}` and lets the gateway pick the level; and
-/// neither set keeps the field off the wire entirely (provider default,
-/// byte-stable with the pre-field body).
 /// Whether a terminal provider error says reasoning cannot be turned off.
 /// Matched on the upstream's own wording rather than a status code: the same
 /// 400 covers every other malformed-request cause, and only this one is
@@ -314,6 +312,14 @@ fn rejects_disabled_reasoning(detail: &str) -> bool {
             || detail.contains("mandatory for this endpoint"))
 }
 
+/// Build OpenRouter's `reasoning` object from the request's reasoning/effort
+/// pair. Rules: an explicit off (`reasoning == Some(false)`) always wins and
+/// sends `{"enabled": false}` — a pinned effort must not resurrect thinking
+/// the caller suppressed; otherwise a pinned effort sends
+/// `{"effort": …}` (implicitly enabling); a bare `Some(true)` with no effort
+/// sends `{"enabled": true}` and lets the gateway pick the level; and
+/// neither set keeps the field off the wire entirely (provider default,
+/// byte-stable with the pre-field body).
 fn openrouter_reasoning(
     reasoning: Option<bool>,
     effort: Option<ReasoningEffort>,
@@ -354,7 +360,9 @@ fn xai_supports_reasoning_effort(model: &str) -> bool {
     // `grok-4-` stem; named variants (`grok-4-fast-reasoning`) are not, and the
     // point releases (`grok-4.5`) don't match the `grok-4-` prefix at all.
     if let Some(rest) = model.strip_prefix("grok-4-") {
-        return !(!rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()));
+        let dated_snapshot_of_the_original =
+            !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit());
+        return !dated_snapshot_of_the_original;
     }
     true
 }
@@ -845,10 +853,15 @@ impl ZaiProvider {
         // default. Same family of provider-quirk gate as the sampling-param and
         // thinking-shape omissions in the sibling adapters.
         let disables_reasoning = self.id == "openrouter" && req.reasoning == Some(false);
+        // Only that one path can ever need a second attempt, so only it pays
+        // for the retained copy: the request owns the whole replayed message
+        // history, and cloning it on every turn of every identity would
+        // duplicate the conversation once per model call for nothing.
+        if !disables_reasoning {
+            return self.complete_attempt(req, observer, false).await;
+        }
         match self.complete_attempt(req.clone(), observer, false).await {
-            Err(ProviderError::Terminal(detail))
-                if disables_reasoning && rejects_disabled_reasoning(&detail) =>
-            {
+            Err(ProviderError::Terminal(detail)) if rejects_disabled_reasoning(&detail) => {
                 self.complete_attempt(req, observer, true).await
             }
             other => other,

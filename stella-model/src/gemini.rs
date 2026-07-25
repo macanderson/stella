@@ -78,6 +78,7 @@ impl GeminiProvider {
 
     /// Override the base URL — used by conformance tests against a mock
     /// server, and by anyone routing through a private proxy.
+    #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
@@ -329,8 +330,8 @@ pub(crate) struct GeminiInboundPart {
 /// Cumulative usage — each chunk reports the running totals, so the last
 /// assignment wins. `candidates_token_count` excludes thinking tokens; the
 /// engine's one `output_tokens` figure includes them (they are billed
-/// output), per the "normalization lives in the adapter" rule
-///
+/// output), per the "normalization lives in the adapter" rule that keeps
+/// every per-vendor usage quirk out of the core.
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GeminiUsageMetadata {

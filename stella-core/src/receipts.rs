@@ -94,9 +94,18 @@ fn kind_tag(kind: BlockKind) -> &'static str {
     }
 }
 
-/// The engine's raw per-block token estimate — the same char heuristic the
-/// conversation estimator uses, applied to one block's content, so a block's
-/// cost is on the same scale as `StepUsage.estimated_input_tokens`.
+/// The engine's raw per-block token estimate: one block's content over the
+/// conversation estimator's [`CHARS_PER_TOKEN`] divisor, so a block's cost is
+/// on the same scale as `StepUsage.estimated_input_tokens`.
+///
+/// The counting UNIT differs and is worth stating rather than assuming: this
+/// counts chars, the conversation estimator counts bytes
+/// (`crate::estimator::estimate_message_tokens` sums `str::len`). For ASCII
+/// the two agree exactly; for multi-byte content a manifest's summed
+/// `token_cost` reads lower than the same step's `estimated_input_tokens`.
+/// Reconciling the units is a receipts-fidelity change (every stored
+/// manifest's numbers move), not a comment fix, so the divergence is named
+/// here rather than papered over.
 fn estimate_tokens(content: &str) -> u32 {
     (content.chars().count() as f64 / CHARS_PER_TOKEN).ceil() as u32
 }

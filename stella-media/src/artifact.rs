@@ -1,20 +1,24 @@
-//! The artifact store: the single writer to `.stella/artifacts/`
-//! ("the agent cannot overwrite arbitrary paths via
-//! a generation tool"). Every generated file lands as `<id>.<ext>` *inside*
-//! the caller-supplied root, and a manifest row records its provenance
-//!
+//! The artifact store: the single writer to `.stella/artifacts/`, so the
+//! agent cannot overwrite arbitrary paths via a generation tool. Every
+//! generated file lands as `<id>.<ext>` *inside* the caller-supplied root, and
+//! a manifest row records its provenance.
 //!
 //! Path-traversal safety is structural: ids are generated here (never
-//! caller-supplied), and the filename is sanitized to `[a-z0-9_.-]` with any
-//! path separator or `..` stripped, so no id or label can escape the root.
-//! The sanitizer is exercised directly by a hostile-input test even though
-//! the generated-id path already makes escape impossible.
+//! caller-supplied), and the filename is sanitized to `[a-z0-9_-]` — every
+//! other byte, including `.` and both path separators, is dropped, so neither
+//! a separator nor a `..` can survive into a filename fragment and no id or
+//! label can escape the root. The sanitizer is exercised directly by a
+//! hostile-input test even though the generated-id path already makes escape
+//! impossible.
 //!
-//! The manifest is `manifest.json` (a JSON array). Writes are crash-atomic:
-//! the store reads the current array, appends, serializes to a sibling temp
-//! file, then `rename`s it over the manifest — so a crash mid-write never
-//! leaves a partially written or corrupt manifest ("append-safe" in the
-//! crash-consistency sense for the single-process CLI).
+//! The manifest is `manifest.json` (a JSON array). Writes are atomic against
+//! process death: the store reads the current array, appends, serializes to a
+//! sibling temp file, then `rename`s it over the manifest — so a crash
+//! mid-write never leaves a partially written or corrupt manifest. Neither
+//! the temp file nor the directory is `fsync`ed, so this is crash-atomicity
+//! for the single-process CLI, not power-loss durability, and the read →
+//! append → rename cycle assumes a single writer: two concurrent stores over
+//! one root can lose a row.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -185,14 +189,15 @@ impl ArtifactStore {
         hasher.update(nanos.to_le_bytes());
         let digest = hasher.finalize();
         let mut hex = String::with_capacity(16);
-        for byte in &digest[..8] {
-            hex.push_str(&format!("{byte:02x}"));
-        }
+        push_hex(&mut hex, &digest[..8]);
         format!("med_{hex}")
     }
 
     /// Append a row via read → append → temp-write → atomic rename, so the
-    /// manifest is never observed half-written.
+    /// manifest is never observed half-written. The whole array is rewritten
+    /// per save, which is O(n) in rows and fine at CLI volumes (a handful of
+    /// artifacts per session); it is the reason the manifest wants a bound or
+    /// an append-only format before it becomes a long-lived log.
     fn append_manifest(&self, entry: &ManifestEntry) -> Result<(), MediaError> {
         let mut entries = self.entries()?;
         entries.push(entry.clone());
@@ -227,8 +232,8 @@ fn default_extension(kind: MediaKind) -> &'static str {
 }
 
 /// Reduce a path component to a safe filename fragment: keep only
-/// `[a-z0-9_.-]` (lowercased), drop everything else — in particular path
-/// separators and `.` runs that could form `..`. Guarantees the result
+/// `[a-z0-9_-]` (lowercased), drop everything else — in particular path
+/// separators and the `.` runs that could form `..`. Guarantees the result
 /// contains no separator and is not a traversal token.
 fn sanitize_component(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
@@ -246,10 +251,19 @@ fn sanitize_component(raw: &str) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut hex = String::with_capacity(64);
-    for byte in digest {
-        hex.push_str(&format!("{byte:02x}"));
-    }
+    push_hex(&mut hex, &digest[..]);
     hex
+}
+
+/// Append `bytes` to `out` as lowercase hex. Spelled out rather than
+/// `format!("{byte:02x}")` per byte: that allocates and drops a `String` for
+/// every byte of every digest, on a path that runs twice per saved artifact.
+fn push_hex(out: &mut String, bytes: &[u8]) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for &byte in bytes {
+        out.push(DIGITS[usize::from(byte >> 4)] as char);
+        out.push(DIGITS[usize::from(byte & 0x0f)] as char);
+    }
 }
 
 fn now_unix_secs() -> u64 {

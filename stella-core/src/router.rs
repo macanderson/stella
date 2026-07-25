@@ -311,8 +311,8 @@ impl RouterDecision {
 }
 
 /// Router resolution failures — always a loud, named error, never a silent
-/// guess (mirrors the catalog's "unknown slug is a hard error" rule,
-///, at the routing layer).
+/// guess (mirrors the catalog's "unknown slug is a hard error" rule, applied
+/// at the routing layer).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RouterError {
     /// No `ProviderProfile`s were supplied at all — the router-level

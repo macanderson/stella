@@ -1,8 +1,9 @@
 //! The set of languages the code graph indexes, and the mapping from a file
 //! extension to its tree-sitter grammar + query pair.
 //!
-//! Grammars are **native** (not WASM)
-//! (stella-graph: "tree-sitter parsers (native, not WASM)").
+//! Grammars are **native**, not WASM: each one is linked in at build time
+//! from its own `tree-sitter-*` crate, so there is no runtime loader and no
+//! asset to resolve relative to the binary's install path.
 
 use std::path::Path;
 

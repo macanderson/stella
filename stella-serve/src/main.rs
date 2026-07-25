@@ -102,5 +102,11 @@ async fn probe_health(port: u16) -> std::io::Result<bool> {
         .await?;
     let mut response = String::new();
     stream.read_to_string(&mut response).await?;
-    Ok(response.lines().next().is_some_and(|l| l.contains("200")))
+    // Match the status line exactly rather than searching the whole line for
+    // "200": a container orchestrator restarts the process on our verdict, so
+    // it must not be swayed by a `200` appearing anywhere else in the head.
+    Ok(response
+        .lines()
+        .next()
+        .is_some_and(|status| status.starts_with("HTTP/1.1 200")))
 }

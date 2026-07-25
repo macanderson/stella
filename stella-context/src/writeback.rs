@@ -74,6 +74,7 @@ impl EpisodeInput {
     }
 
     /// Tag with one or more workspace domains.
+    #[must_use]
     pub fn with_domains<I, S>(mut self, domains: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -139,6 +140,7 @@ impl FactAssertion {
     }
 
     /// Tag the fact edge with one or more workspace domains.
+    #[must_use]
     pub fn with_domains<I, S>(mut self, domains: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -210,6 +212,7 @@ impl MemoryInput {
     }
 
     /// Tag with one or more workspace domains.
+    #[must_use]
     pub fn with_domains<I, S>(mut self, domains: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -280,18 +283,21 @@ impl ContextDelta {
     }
 
     /// Add a content node.
+    #[must_use]
     pub fn with_node(mut self, node: NodeInput) -> Self {
         self.nodes.push(node);
         self
     }
 
     /// Add an episode.
+    #[must_use]
     pub fn with_episode(mut self, ep: EpisodeInput) -> Self {
         self.episodes.push(ep);
         self
     }
 
     /// Add a fact assertion.
+    #[must_use]
     pub fn with_fact(mut self, fact: FactAssertion) -> Self {
         self.facts.push(fact);
         self
@@ -303,6 +309,10 @@ impl ContextDelta {
 /// makes re-indexing cheap (`L-C2`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpsertReceipt {
+    /// Node upsert *operations*, not distinct nodes: an episode and a memory
+    /// each mirror one node, and every fact counts its subject and its object.
+    /// Re-asserting a fact about the same subject therefore increments this
+    /// even though no new row appears — read it as work done, not as growth.
     pub nodes_upserted: usize,
     pub episodes_written: usize,
     pub memories_written: usize,
@@ -390,10 +400,14 @@ impl ContextStore {
         // Embed only the missing content. An empty batch would error, so guard.
         let mut new_vectors: Vec<(String, Vec<f32>)> = Vec::with_capacity(missing.len());
         if !missing.is_empty() {
-            let texts: Vec<String> = missing.iter().map(|(_, c)| c.clone()).collect();
+            // Split rather than clone: the embedder wants `&[String]`, and
+            // copying every body into a second vector doubled the peak memory
+            // of a large delta (a full-workspace first index is exactly the
+            // case where the bodies are biggest).
+            let (hashes, texts): (Vec<String>, Vec<String>) = missing.into_iter().unzip();
             let embeddings = self.embedder().embed(&texts).await?;
-            for ((hash, _), emb) in missing.iter().zip(embeddings) {
-                new_vectors.push((hash.clone(), emb.vector));
+            for (hash, emb) in hashes.into_iter().zip(embeddings) {
+                new_vectors.push((hash, emb.vector));
             }
         }
 

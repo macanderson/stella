@@ -1,6 +1,8 @@
 [package]
 name = "stella-pipeline"
-description = "evaluate -> enhance -> route -> execute -> judge -> revise orchestration; triage fast paths; scope-review gate; flip-oracle + deterministic verification ladder; evidence-based judge; best-of-N."
+# Keep the stage list in step with the one in `src/lib.rs`; it is the first
+# thing a reader sees on the crate's registry page.
+description = "evaluate -> enhance -> route -> witness -> execute -> verify -> judge -> revise orchestration; triage fast paths; scope-review gate; flip-oracle + deterministic verification ladder; evidence-based judge; best-of-N."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

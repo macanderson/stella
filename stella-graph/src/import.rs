@@ -237,8 +237,8 @@ fn append_ext(path: &Path, ext: &str) -> PathBuf {
 
 /// If `candidate` is an existing regular file inside `root`, return its
 /// forward-slash path relative to `root`; otherwise `None`. Canonicalization
-/// resolves any `..` segments and symlinks so the root-jail check is honest
-/// ( workspace-root jail).
+/// resolves any `..` segments and symlinks so the workspace-root jail check
+/// is honest: a specifier that climbs out of the tree resolves to nothing.
 fn existing_within_root(candidate: &Path, root: &Path) -> Option<String> {
     if !candidate.is_file() {
         return None;

@@ -12,15 +12,21 @@
 //!
 //! # What it does
 //!
-//! - **Indexes** Rust, TypeScript, TSX, JavaScript, Python, and SQL: symbols
-//!   (functions, methods, structs/classes/enums/traits/interfaces; for SQL,
-//!   tables/views/schema enums — the rows the schema gate reads) and import
-//!   edges (`file → module/file`), via compile-time tree-sitter queries
-//!   (L-L2).
+//! - **Indexes** Rust, TypeScript, TSX, JavaScript, Python, SQL, Go, Java, C,
+//!   and PHP (see [`Language`]): symbols (functions, methods,
+//!   structs/classes/enums/traits/interfaces; for SQL, tables/views/schema
+//!   enums — the rows the schema gate reads) and import edges
+//!   (`file → module/file`), via compile-time tree-sitter queries (L-L2).
 //! - **Resolves** Python relative imports (`from . import x`,
-//!   `from ..pkg import y`) and TS/JS relative specifiers (`./x`, `../y`,
-//!   `index.*`) to real files; bare package specifiers are recorded
-//!   unresolved.
+//!   `from ..pkg import y`), TS/JS relative specifiers (`./x`, `../y`,
+//!   `index.*`), and the literal-path imports of C (`#include "x.h"`) and PHP
+//!   (`require '…'`) to real files; bare package specifiers, Rust `use` paths,
+//!   Java packages, and PHP namespaces are recorded unresolved — the edge
+//!   survives even when its target is outside the tree.
+//! - **Maps storage** through vendor-neutral adapters ([`storage`]): SQL DDL,
+//!   Prisma, TS/JS ORMs (Drizzle, TypeORM, Mongoose, DynamoDB), and Python
+//!   ORMs (Django, SQLAlchemy) all reduce to one layer/namespace/relation/field
+//!   model, merged with the committed [`manifest`] at snapshot time.
 //! - **Warms at mount** and re-indexes live via an in-process `notify`
 //!   watcher (L-C1).
 //! - **Skips byte-identical content** on re-index (L-C2).

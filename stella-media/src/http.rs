@@ -85,6 +85,14 @@ pub(crate) fn classify_http_error(
 /// (Z.ai image/video endpoints hand back a URL rather than inline base64).
 /// A non-success status is classified with [`classify_http_error`]; transport
 /// failures become [`MediaError::Transport`].
+///
+/// Two bounds this does **not** impose, both recorded: the response is
+/// buffered whole with no maximum size ([`READ_TIMEOUT`] bounds silence, not
+/// total transfer, so a slow-but-steady body can grow unbounded in memory),
+/// and `url` is taken from the provider's response and fetched as-is, with
+/// reqwest's default redirect following. Both are contained today by the URL
+/// coming from an authenticated vendor endpoint over TLS and by no
+/// credentials being sent on this request — not by anything here.
 pub(crate) async fn download_bytes(
     client: &reqwest::Client,
     url: &str,

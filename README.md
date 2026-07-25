@@ -52,7 +52,8 @@ below. It is built in Rust as a workspace of focused crates.
 - **Budget enforcement** — A `--budget` flag aborts cleanly between steps, never
   mid-tool.
 - **Goal & fleet modes** — `goal` works in judged rounds; `fleet` fans a task DAG
-  out to parallel workers, each in its own git worktree.
+  out to parallel workers that share one tree under cooperative file claims, or
+  take their own git worktree when a task opts in.
 - **Lifecycle hooks** — Shell-command hooks (`SessionStart`, `PreToolUse`,
   `PostToolUse`) configurable in `settings.json`.
 
@@ -294,7 +295,7 @@ queue. `--plain` (or `STELLA_PLAIN=1`, or piped stdio) falls back to the line RE
 | `/files` | Show the Files-Touched panel — `[C·R·U·D] path` per file |
 | `/models` `/config` | List providers/models · show resolved configuration |
 | `/rename <name>` `/color <name>` | Rename the tab · switch accent color |
-| `/pipeline` | Toggle witness-verified staged turns (Command Deck; see `stella-docs/content/docs/inference-pipeline.mdx`) |
+| `/pipeline` | Toggle witness-verified staged turns (Command Deck; see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)) |
 | `/clear` `/help` | Clear history · show help |
 | `/exit` or `Ctrl-D` | Exit |
 
@@ -319,10 +320,12 @@ stella fleet "fix the flaky auth test" "tighten the CI cache key"   # two isolat
 stella fleet --plan .stella/fleet.toml --max-concurrency 2 --budget 5.0
 ```
 
-One git worktree + `fleet/<task>` branch per task, wave-scheduled by dependency,
-recorded in `.stella/private/fleet.db`. A plan file is the serde form of the fleet DAG:
-`[[tasks]]` entries with `id`, `title`, `prompt`, optional `depends_on`, and
-`isolation`.
+Wave-scheduled by dependency and recorded in `.stella/private/fleet.db`. Workers
+share the repository root by default, coordinated by cooperative file claims; a
+task with `isolation = "isolated"` gets its own git worktree under
+`.stella/worktrees/` on a `fleet/<slug>-<hash>` branch instead. A plan file is
+the serde form of the fleet DAG: `[[tasks]]` entries with `id`, `title`,
+`prompt`, optional `depends_on`, and `isolation`.
 
 ### Code graph queries
 
@@ -354,7 +357,8 @@ stella inspect   # the exact context a past model call was sent, rebuilt from
 uses the staged pipeline by default; `--no-pipeline` falls back to the raw
 step-loop. In pipeline mode, `--test-command <cmd>` arms deterministic
 verification with your own test; without it an independent witness author
-writes a failing test whose fail→pass flip proves the work (`stella-docs/content/docs/inference-pipeline.mdx`).
+writes a failing test whose fail→pass flip proves the work
+([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)).
 Post-turn reflection remains enabled for one-shot text, JSON, and stream-JSON
 runs. Ephemeral automation can suppress that additional model call explicitly
 with `STELLA_DISABLE_REFLECTION=1`; the truthy values `true`, `yes`, and `on`
@@ -365,6 +369,7 @@ are also accepted case-insensitively.
 | Tool | Description |
 |---|---|
 | `read_file` · `write_file` · `edit_file` · `delete_file` | File CRUD with surgical exact-substring edits |
+| `apply_edits` | One transactional batch of exact-substring edits across many files — every edit validates first, and if any fails nothing is written (`dry_run` validates without writing) |
 | `bash` | Run a shell command (timeout kill; `trace: true` echoes each line) — **off by default**, registered only with `"tools": {"bash": "on"}` in settings (any scope) |
 | `grep` · `glob` | Regex content search (ripgrep) · glob file discovery (fd) |
 | `graph_query` | Query the indexed code graph: symbol definitions/references, file imports/importers/neighborhood — auto-built at session start, refreshed live |
@@ -376,11 +381,17 @@ are also accepted case-insensitively.
 | `start_process` · `read_output` · `send_stdin` · `stop_process` | Long-running processes (dev servers, REPLs, watchers) from an argv vector — capped output ring, SIGTERM-then-kill stop, reaped at session end |
 | `repo_status` · `repo_diff` · `repo_commit` · `repo_push` · `repo_pull` · `repo_rollback` | Vendor-neutral repository tools: structured status, hunk-level pending-change diffs for pre-commit self-review, pathspec-explicit commits, pushes that structurally refuse the default branch (never forced), fast-forward-only pulls, restore-named-paths rollback |
 | `verify_done` | Replay new test files against `git HEAD` to prove the change works |
+| `project_overview` · `gather_context` | Orient in the workspace in one pass · one deterministic context sweep (greps, globs, symbol lookups, bounded excerpts) saved as a reusable pack |
 | `explorations` · `save_exploration` | Shared codebase maps — explore once, reuse everywhere |
-| `save_memory` | Persist a lesson into every future session's system prompt |
+| `save_memory` · `cite_memory` | Persist a lesson into every future session's system prompt · cite a recalled memory so it earns its place |
+| `task_create` · `task_list` · `task_start` · `task_complete` · `task_cancel` · `task_assign` | The session task board — one row per deliverable, exactly one in progress, `task_assign` delegates to a parallel sub-agent |
+| `search_skills` · `install_skill` · `skill_search` · `tool_search` · `mcp_search` | Discovery at the session layer: search the public skills registry and install from it (with confirmation), search the skills already installed, or rank this session's tools / MCP servers instead of carrying all of them in the prompt |
 | `ci_status` | CI runs + failure logs via `gh` |
 | `screenshot` | Capture the screen as verification evidence |
-| `generate_image` | Text-to-image via your provider key, saved under `.stella/artifacts/` — registered only when a media-capable key is set |
+| `web_fetch` · `web_extract_assets` · `web_download` · `web_search` | Read a URL as markdown/text/HTML · mine a page's stylesheets, scripts, and design tokens · download an asset into the workspace · ranked search results — **off by default**, opt in with `"tools": {"web": "on"}`; `web_search` additionally needs your own `BRAVE_API_KEY` or `TAVILY_API_KEY` |
+| `generate_svg` | Validate, sanitize, and save an agent-authored SVG under `.stella/artifacts/` — scripts, handlers, and external references stripped |
+| `generate_image` · `generate_video` · `poll_video` | Text-to-image/video via your provider key, saved under `.stella/artifacts/` — registered only when a media-capable key is set (video is behind a cost confirmation) |
+| `ask_user` | Put a 2–6 option multiple-choice question to you when the decision is genuinely yours; a headless run gets a named error instead of a hang |
 | `create_issue` · `update_issue` · `close_issue` · `search_issues` · `get_issue` · `list_labels` · `list_members` · `start_work_on_issue` | Issue tracking (GitHub/Linear) — registered only when a tracker is connected (`stella connect github\|linear`, `LINEAR_API_KEY`, or `gh` auth) |
 
 All file tools are workspace-root-pinned, and every read/write/edit/delete is
@@ -407,9 +418,15 @@ running unsandboxed.
 
 **Conditional tools:** issue tools need `LINEAR_API_KEY` or a `gh auth login`;
 `graph_query` needs the code-graph index (auto-built at session start);
-`generate_image` needs
-`ZAI_API_KEY` or `OPENAI_API_KEY`. Without their prerequisites, these tools are
-not registered.
+`generate_image` needs `ZAI_API_KEY` or `OPENAI_API_KEY`. Without their
+prerequisites, these tools are not registered.
+
+**The web tools are opt-in too.** `web_fetch`, `web_extract_assets`, and
+`web_download` register only with `"tools": {"web": "on"}` in a `settings.json`
+scope; `web_search` additionally needs your own `BRAVE_API_KEY` or
+`TAVILY_API_KEY`. They are the only built-ins that talk to a host other than
+your model provider, which is why they are off until you say otherwise. See
+[the web tools](https://stella.oxagen.sh/docs/agent-tools#web-opt-in).
 
 ## Memory and context
 
@@ -533,7 +550,7 @@ flowchart TD
 
 ## Workspace layout
 
-Fourteen `stella-*` crates make up the workspace. The Context Graph Protocol
+Fifteen `stella-*` crates make up the workspace. The Context Graph Protocol
 (CGP) —
 the retrieval abstraction Stella's recall routes through — now lives in its own
 repository and is pulled in as a pinned git dependency, not as workspace members.
@@ -549,11 +566,12 @@ repository and is pulled in as a pinned git dependency, not as workspace members
 | `stella-protocol` | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports |
 | `stella-context` | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts |
 | `stella-graph` | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python/SQL) |
-| `stella-pipeline` | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → judge (`stella-docs/content/docs/inference-pipeline.mdx`) |
-| `stella-fleet` | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, git-worktree isolation per task |
+| `stella-pipeline` | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → judge ([docs](https://stella.oxagen.sh/docs/inference-pipeline)) |
+| `stella-fleet` | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task |
 | `stella-media` | Multimodal generation behind one `MediaProvider` port — `generate_svg` always on; `generate_image` and `generate_video`/`poll_video` registered when a media-capable key is set (video behind a headless cost gate) |
 | `stella-tui` | The Command Deck — a pure event-fold core + thin crossterm shell |
 | `stella-observatory` | The Observatory — `stella observe`'s loopback-only telemetry dashboard over the local SQLite stores |
+| `stella-serve` | A separate headless binary (not part of the `stella` CLI): drives the engine over a wire protocol so a host process runs the Rust core, remoting every model and tool call back — the engine holds no ambient authority |
 | Context Graph Protocol | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it via git. |
 
 The repo is a **monorepo**: alongside the Rust workspace, the documentation
@@ -579,8 +597,11 @@ pnpm dev         # serve the docs at http://localhost:3400
 pnpm build       # production build (what docs.yml CI runs)
 ```
 
-Docs content is MDX under `stella-docs/content/docs/`. Docs-only changes run
-the fast `docs` workflow in CI instead of the Rust gate.
+Docs content is MDX under `stella-docs/content/docs/`. On a pull request a
+docs-only change runs the fast `docs` workflow instead of the Rust gate; the
+merge queue does not honor `paths-ignore`, so it still pays the full gate once
+queued — deliberately, since the required check has to report on the merged
+result.
 
 To try your working copy against real projects before a release, install it as
 `stella-dev` — it lives side by side with the released `stella`:

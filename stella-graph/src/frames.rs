@@ -13,8 +13,8 @@
 //! These are synchronous SQLite reads plus small, bounded file reads (to quote
 //! a definition's source or a reference's line); `stella-context` wraps them
 //! for its async `ContextPlane`. Budget-packing here mirrors the retrieval
-//! contract ( / L-C5): frames declare a
-//! `token_cost` and assembly never exceeds `max_tokens`/`max_frames`.
+//! contract (L-C5): frames declare a `token_cost` and assembly never exceeds
+//! `max_tokens`/`max_frames`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -188,9 +188,8 @@ pub(crate) fn query(
     }
     // Anchors (open files / mentioned symbols) drive neighborhood lookups.
     for anchor in &q.anchors {
-        if let Some(rel) = anchor_to_rel(anchor, root) {
-            collected.extend(neighbors(conn, root, &rel)?);
-        }
+        let rel = anchor_to_rel(anchor, root);
+        collected.extend(neighbors(conn, root, &rel)?);
     }
 
     // Filter by requested kinds, dedup by id (highest score wins).
@@ -454,22 +453,27 @@ fn candidate_identifiers(text: &str) -> Vec<String> {
     out
 }
 
-/// Turn a `file://…` (or plain path) anchor into a root-relative path, if it
-/// resolves inside the workspace.
-fn anchor_to_rel(anchor: &str, root: &Path) -> Option<String> {
+/// Turn a `file://…` (or plain path) anchor into a root-relative path.
+/// An anchor under `root` (directly, or after canonicalization) yields its
+/// relative path; anything else is passed through as if it were already
+/// workspace-relative — which is why this is total rather than fallible.
+/// Every use of the result is a store lookup keyed by path, so an anchor that
+/// names nothing indexed simply yields no frames — it never reaches the
+/// filesystem.
+fn anchor_to_rel(anchor: &str, root: &Path) -> String {
     let raw = anchor.strip_prefix("file://").unwrap_or(anchor);
     let path = Path::new(raw);
     if let Ok(rel) = path.strip_prefix(root) {
-        return Some(import::rel_to_slash(rel));
+        return import::rel_to_slash(rel);
     }
     if let Ok(canonical) = path.canonicalize()
         && let Ok(rel) = canonical.strip_prefix(root)
     {
-        return Some(import::rel_to_slash(rel));
+        return import::rel_to_slash(rel);
     }
     // Fall back to treating the remainder as already workspace-relative; a
     // path that matches nothing just yields no frames.
-    Some(raw.trim_start_matches('/').to_string())
+    raw.trim_start_matches('/').to_string()
 }
 
 fn budget_pack(frames: Vec<ContextFrame>, max_frames: u32, max_tokens: u32) -> Vec<ContextFrame> {

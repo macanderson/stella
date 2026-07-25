@@ -447,8 +447,7 @@ async fn brave_search(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        let mut preview = body;
-        preview.truncate(300);
+        let preview = crate::exec::truncate_preview(&body, 300);
         return Err(format!("Brave search: HTTP {status}: {preview}"));
     }
     let json: Value =
@@ -491,8 +490,7 @@ async fn tavily_search(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        let mut preview = body;
-        preview.truncate(300);
+        let preview = crate::exec::truncate_preview(&body, 300);
         return Err(format!("Tavily search: HTTP {status}: {preview}"));
     }
     let json: Value =

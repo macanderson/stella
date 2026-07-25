@@ -25,12 +25,12 @@ pub(crate) struct Request {
 }
 
 impl Request {
-    /// Case-insensitive header lookup.
+    /// Case-insensitive header lookup. Names are lowercased at parse time, so
+    /// this matches without allocating a lowercased copy of `name`.
     pub fn header(&self, name: &str) -> Option<&str> {
-        let name = name.to_ascii_lowercase();
         self.headers
             .iter()
-            .find(|(k, _)| *k == name)
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
 
@@ -48,13 +48,18 @@ impl Request {
 pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0_u8; 8192];
+    // Rescanning the whole buffer after every read would be quadratic in the
+    // head size on a path an unauthenticated peer controls; a terminator can
+    // only straddle a read boundary by three bytes, so resume the search there.
+    let mut scanned = 0_usize;
     let head_end = loop {
-        if let Some(pos) = find_head_end(&buf) {
-            break pos;
+        if let Some(pos) = find_head_end(&buf[scanned..]) {
+            break scanned + pos;
         }
         if buf.len() > MAX_REQUEST_BYTES {
             return Ok(None);
         }
+        scanned = buf.len().saturating_sub(3);
         let n = stream.read(&mut chunk).await?;
         if n == 0 {
             return Ok(None);
@@ -77,6 +82,11 @@ pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Opti
         }
     }
 
+    // `Content-Length` only: chunked bodies are not decoded, so a chunked POST
+    // parses as an empty body and fails validation with a 400. That is safe
+    // rather than a smuggling hole precisely because this layer serves one
+    // request per connection and then closes — leftover bytes are never
+    // reinterpreted as a second request.
     let content_length = headers
         .iter()
         .find(|(k, _)| k == "content-length")
@@ -131,6 +141,10 @@ pub(crate) async fn write_sse_head(stream: &mut TcpStream) -> std::io::Result<()
 }
 
 /// Write one SSE `data:` frame carrying a JSON payload.
+///
+/// Single-line framing is sound because the payload is always `serde_json`
+/// output, which escapes newlines inside strings — a raw `\n` would otherwise
+/// split one frame into two and desynchronize the host's parser.
 pub(crate) async fn write_sse_frame(stream: &mut TcpStream, json: &str) -> std::io::Result<()> {
     stream.write_all(b"data: ").await?;
     stream.write_all(json.as_bytes()).await?;

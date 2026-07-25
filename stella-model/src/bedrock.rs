@@ -84,6 +84,7 @@ impl BedrockProvider {
     /// server, and by anyone routing through a private proxy. Signing is
     /// unaffected beyond the `host` header (a mock server never verifies
     /// signatures; a proxy forwards them).
+    #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url_override = Some(base_url.into());
         self
@@ -687,10 +688,23 @@ impl Provider for BedrockProvider {
                     text.push_str(&t);
                 }
                 if let Some(tool_use) = block.tool_use {
+                    // A no-argument Converse tool call omits `input` on the
+                    // wire, so the `#[serde(default)]` field deserializes to
+                    // `Value::Null` — which is the malformed-call sentinel
+                    // `driver.rs::execute_with_repair` checks for. Normalize
+                    // it to an empty object so a perfectly valid no-arg call
+                    // is never "repaired", and so a tool deserializing its
+                    // input as an object is never handed `null` (the same
+                    // rule `gemini.rs` applies to its own absent `args`).
+                    let input = if tool_use.input.is_null() {
+                        serde_json::json!({})
+                    } else {
+                        tool_use.input
+                    };
                     tool_calls.push(ToolCall {
                         call_id: tool_use.tool_use_id,
                         name: tool_use.name,
-                        input: tool_use.input,
+                        input,
                     });
                 }
             }
@@ -1295,6 +1309,46 @@ mod tests {
             result.tool_calls[0].input,
             serde_json::json!({"path": "src/lib.rs"})
         );
+    }
+
+    /// A no-argument Converse tool call omits `input` entirely, so the
+    /// `#[serde(default)]` field lands as `Value::Null`. It must surface as
+    /// an empty object: `Value::Null` is the malformed-call sentinel
+    /// `driver.rs::execute_with_repair` checks for, and a valid no-arg call
+    /// reported as null would be wrongly "repaired" (the twin of gemini.rs's
+    /// `complete_normalizes_a_no_arg_call_to_an_empty_object_not_null`).
+    #[tokio::test]
+    async fn complete_normalizes_a_no_arg_tool_use_to_an_empty_object_not_null() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output": {"message": {"role": "assistant", "content": [
+                    {"toolUse": {"toolUseId": "tooluse_now", "name": "now"}}
+                ]}},
+                "stopReason": "tool_use",
+                "usage": {"inputTokens": 5, "outputTokens": 2}
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = test_provider(&server.uri());
+        let result = provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("what time is it")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].name, "now");
+        assert_eq!(result.tool_calls[0].input, serde_json::json!({}));
+        assert!(!result.tool_calls[0].input.is_null());
     }
 
     #[tokio::test]

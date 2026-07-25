@@ -1,7 +1,15 @@
 [package]
 name = "loop-bench"
+# Deliberately NOT `version.workspace = true`: this is a dev harness, not a
+# shipped artifact, so it stays off the release train that syncs the product
+# crates in lockstep.
 version = "0.1.0"
 edition = "2024"
+# Inherited so the harness is held to the same MSRV as the crates it measures
+# — it uses edition-2024 let-chains, which the workspace floor already covers.
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Inexpensive turn-loop + context-query correctness harness over Terminal-Bench"
 publish = false
 

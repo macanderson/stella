@@ -5,6 +5,20 @@
 //! state, opaque handles, and timestamps. The host identity carries its own
 //! trusted expiry, so expired rows can be deleted without making an old retry
 //! fresh: the same expired identity is rejected before any insert.
+//!
+//! # Calling contract
+//! Every method here is **blocking** — SQLite I/O behind a `Mutex`, plus
+//! bounded `std::thread::sleep` backoff on a contended first open (up to
+//! ~1s in [`SqliteMediaOperationJournal::open`] and ~2s inside the schema
+//! initialization it drives). An async caller must therefore reach it through
+//! `spawn_blocking`, never straight from a runtime worker.
+//!
+//! [`SqliteMediaOperationJournal`]'s file-persisted constructors are
+//! **Unix-only**: the secure-open discipline they enforce (owner-only 0700
+//! parent, owner-only 0600 single-link database and sidecars, `O_NOFOLLOW`,
+//! post-open identity re-validation) has no portable equivalent, so on other
+//! platforms they fail closed rather than persist a weaker journal.
+//! [`SqliteMediaOperationJournal::open_in_memory`] is portable.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -47,23 +61,46 @@ impl Default for MediaOperationRetention {
     }
 }
 
+/// How far one claimed operation has progressed. The handle carried by each
+/// completed state is the opaque key a replay needs (our artifact id, or the
+/// provider's job id) — never prompt text, a label, or a path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MediaOperationState {
+    /// Claimed, nothing submitted yet — the only state [`claim`] creates.
+    ///
+    /// [`claim`]: MediaOperationJournal::claim
     Pending,
+    /// An image was generated and persisted under `artifact_id`.
     ImageCompleted { artifact_id: String },
+    /// A video job was submitted and is in flight at the provider.
     VideoSubmitted { provider_job_id: String },
+    /// A submitted video job reached a terminal, downloaded state.
     VideoCompleted { provider_job_id: String },
 }
 
+/// The outcome of claiming an operation key — the fork every paid submission
+/// branches on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MediaOperationClaim {
+    /// This caller owns the key; it may submit.
     New,
+    /// The key was already claimed; replay this state instead of spending
+    /// again.
     Existing(MediaOperationState),
+    /// The host identity's expiry has already passed. Nothing is claimed and
+    /// no submission may follow — a stale retry must not become fresh by
+    /// arriving after its row was pruned.
     Expired,
 }
 
 /// Object-safe authority port injected beside the spend gate and host ID.
+/// Implementations must be durable and safe across processes: the whole point
+/// is that a retried submission after a crash cannot pay a second time.
 pub trait MediaOperationJournal: Send + Sync {
+    /// Claim `operation_key` for one submission, or report what already holds
+    /// it. `expires_at` is the host identity's own trusted expiry (unix
+    /// seconds); reusing a key with a different kind, provider, or expiry is
+    /// an error, not a fresh claim.
     fn claim(
         &self,
         operation_key: &str,
@@ -72,10 +109,22 @@ pub trait MediaOperationJournal: Send + Sync {
         expires_at: u64,
     ) -> Result<MediaOperationClaim, MediaError>;
 
+    /// Advance a claimed operation to a completed/submitted state. Only the
+    /// pending → completed and video-submitted → video-completed transitions
+    /// (and a re-statement of the current state) are accepted; anything else
+    /// is rejected rather than silently overwritten.
     fn finalize(&self, operation_key: &str, state: MediaOperationState) -> Result<(), MediaError>;
 
+    /// Mark the in-flight video job `provider_job_id` complete, keyed by the
+    /// provider's handle rather than the operation key — the path a resume
+    /// takes, which knows the job id and not the original claim. Returns
+    /// whether a matching row was found; a job this journal never saw is
+    /// `Ok(false)`, not an error.
     fn complete_video(&self, provider_id: &str, provider_job_id: &str) -> Result<bool, MediaError>;
 
+    /// Release a claim that never submitted, so the key can be retried.
+    /// Deliberately a no-op on an operation that has already progressed past
+    /// pending: a submission that may have spent money is never un-recorded.
     fn cancel(&self, operation_key: &str) -> Result<(), MediaError>;
 }
 
@@ -88,6 +137,9 @@ pub struct SqliteMediaOperationJournal {
 }
 
 impl SqliteMediaOperationJournal {
+    /// Open (creating if absent) a journal at `path` under the secure-open
+    /// discipline described in the module docs. Blocking, and Unix-only —
+    /// elsewhere it fails closed rather than persist a weaker journal.
     pub fn open(
         path: impl AsRef<Path>,
         retention: MediaOperationRetention,
@@ -111,6 +163,11 @@ impl SqliteMediaOperationJournal {
         Self::open_private(path.as_ref(), Some(&workspace_root), retention)
     }
 
+    /// A portable, non-persistent journal for tests and ephemeral hosts. It
+    /// buys idempotency only within one process lifetime — a crash forgets
+    /// every claim, which is exactly what the persisted journal exists to
+    /// prevent — so production hosts want [`Self::open`] or
+    /// [`Self::open_outside`].
     pub fn open_in_memory(retention: MediaOperationRetention) -> Result<Self, MediaError> {
         let connection = Connection::open_in_memory()
             .map_err(|error| journal_error(format!("cannot open journal: {error}")))?;
@@ -186,6 +243,8 @@ impl SqliteMediaOperationJournal {
         })
     }
 
+    /// [`MediaOperationJournal::claim`] with the clock injected, so expiry
+    /// and pruning are testable without sleeping. `now` is unix seconds.
     pub fn claim_at(
         &self,
         operation_key: &str,
@@ -233,8 +292,11 @@ impl SqliteMediaOperationJournal {
                 || stored_provider != provider_id
                 || stored_expiry != sql_integer(expires_at)
             {
+                // The expiry is part of the identity, not a mutable field: a
+                // retry that moves it forward is a different request wearing
+                // the same key, so name both possibilities in the message.
                 return Err(journal_error(
-                    "operation key has conflicting media identity",
+                    "operation key is already claimed with a conflicting media identity or expiry",
                 ));
             }
             let state = decode_state(&state, handle)?;
@@ -476,6 +538,11 @@ fn kind_name(kind: MediaKind) -> &'static str {
     }
 }
 
+/// Which `kind` column value a finalized state belongs to. Only the image and
+/// video families have states, so a `MediaKind::Svg` row — claimable, but with
+/// no state to finalize into — can never pass `finalize`'s kind check. That is
+/// consistent today (SVG is generated locally and spends nothing, so nothing
+/// claims a key for it) and is the thing to revisit if SVG ever goes paid.
 fn state_kind(state: &MediaOperationState) -> &'static str {
     match state {
         MediaOperationState::Pending | MediaOperationState::ImageCompleted { .. } => "image",

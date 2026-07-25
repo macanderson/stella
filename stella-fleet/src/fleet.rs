@@ -131,6 +131,9 @@ impl FleetConfig {
         }
     }
 
+    /// Bound one wave's fan-out (builder style). `0` is clamped to `1` at
+    /// dispatch time, so a wave always makes progress.
+    #[must_use]
     pub fn with_max_concurrency(mut self, n: usize) -> Self {
         self.max_concurrency = n;
         self
@@ -295,6 +298,7 @@ where
     /// (builder style). Without this, a plan that declares claims fails
     /// dispatch with [`FleetError::ClaimsWithoutStore`] — claims are never
     /// silently unenforced.
+    #[must_use]
     pub fn with_claim_store(mut self, store: Store) -> Self {
         self.claims = Some(store);
         self
@@ -310,6 +314,7 @@ where
     /// session about to lose its cached prefix is resumed before a colder one
     /// gets the slot instead. Without this call (the default) every wave
     /// dispatches in `ready_tasks`' order, unchanged from before #269.
+    #[must_use]
     pub fn with_cache_warmth(mut self, lookup: CacheWarmthLookup) -> Self {
         self.warmth = Some(lookup);
         self
@@ -370,6 +375,14 @@ where
         //     launching further workers once the cap is crossed. Combined with
         //     each child's per-child remaining-budget sub-cap (fleet_cmd), the
         //     aggregate honors the flag.
+        //
+        //     The gate is a snapshot, not a reservation: up to
+        //     `max_concurrency` workers can pass it before any of them records
+        //     spend, so the worst-case overshoot is one in-flight window's
+        //     cost. That is exactly why `fleet_cmd` divides the cap by the
+        //     concurrency width before handing each child its own guard —
+        //     a caller wiring this crate directly must do the same or accept
+        //     the window.
         if let BudgetOutcome::AbortTurn { .. } = self.lock_budget().evaluate() {
             return Err(FleetError::BudgetExhausted {
                 task: task.id.clone(),
@@ -383,6 +396,14 @@ where
         // Claims are per-attempt: released even when the worker failed (its
         // work sits committed on its branch; holding on would starve
         // dependents and retries).
+        //
+        // Release is a straight-line statement, NOT a `Drop` guard, so two
+        // paths skip it: a [`FleetWorker`] that panics, and a caller that
+        // drops this future mid-flight (cancellation). The claim rows are
+        // durable (`file_locks` in the workspace store), so either leaves a
+        // row that blocks the next claimant until it is cleared by hand —
+        // the conflict error at least names this run id. A `Drop`-guarded
+        // release is the fix; it is deliberately not smuggled in here.
         self.release_claims(task);
         result
     }

@@ -112,6 +112,20 @@ impl ServerState {
 
 /// Bind and serve until the accept loop errors. `on_ready` fires once with the
 /// bound address (so a `:0` bind can report its port).
+///
+/// # Operational limits
+///
+/// This is a sidecar for one trusted host, not an internet-facing server, and
+/// the deployment must supply what it deliberately omits:
+///
+/// - **No admission control.** Connections and turns are both unbounded; a
+///   turn holds an OS thread from `POST /v1/turns` until its stream ends.
+/// - **No per-turn deadline.** A reverse request the host never answers parks
+///   its engine step, and therefore its thread, indefinitely.
+/// - **Turn ids are sequential**, so they are guessable by anyone holding the
+///   token — the token is the only tenancy boundary, one process per tenant.
+/// - **No read timeout**, so a peer that dribbles a request head holds a
+///   connection open. Front it with a proxy or a private network.
 pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> std::io::Result<()> {
     let listener = TcpListener::bind(config.bind).await?;
     on_ready(listener.local_addr()?);
@@ -141,7 +155,15 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
     if req.method == "GET" && segs.as_slice() == ["healthz"] {
         return write_json(&mut stream, "200 OK", br#"{"status":"ok"}"#).await;
     }
-    if req.bearer() != Some(state.token.as_str()) {
+    // Compared in constant time: `==` on a `&str` stops at the first differing
+    // byte, which leaks the shared secret one byte at a time to a caller that
+    // can time its own 401s. A missing header stays a hard `false` so an
+    // empty configured token cannot authorize an anonymous request.
+    let authorized = match req.bearer() {
+        Some(presented) => constant_time_eq(presented.as_bytes(), state.token.as_bytes()),
+        None => false,
+    };
+    if !authorized {
         return write_json(
             &mut stream,
             "401 Unauthorized",
@@ -237,7 +259,13 @@ async fn handle_events(
         }
     };
 
-    write_sse_head(stream).await?;
+    // From here the session is out of the registry entry and owned by this
+    // connection, so every exit path must also drop the registry entry —
+    // otherwise a turn whose stream never opened lingers in the map forever.
+    if let Err(err) = write_sse_head(stream).await {
+        state.turns().remove(id);
+        return Err(err);
+    }
     while let Some(frame) = session.next_frame().await {
         let done = matches!(frame, ServerFrame::TurnComplete { .. });
         let json = serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string());
@@ -315,4 +343,18 @@ async fn handle_provider_result(
 
 fn error_body(message: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "error": message })).unwrap_or_default()
+}
+
+/// Compare two secrets without an early exit, so the time taken does not depend
+/// on how many leading bytes matched.
+///
+/// The length difference is still observable (unavoidable without hashing) —
+/// that reveals the token's length, not its bytes. A dedicated crate (`subtle`)
+/// would be the rigorous answer; the workspace's "no new deps casually" rule
+/// makes a six-line fold the better trade for one comparison per request.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0_u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }

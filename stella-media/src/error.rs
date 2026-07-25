@@ -1,5 +1,5 @@
-//! Typed media errors (fail loud, recover
-//! gracefully — never `panic!` in the hot path). This mirrors
+//! Typed media errors: fail loud, recover gracefully, never `panic!` on
+//! provider input. This mirrors
 //! `stella_protocol::ProviderError`'s category shape (transport / rate-limit /
 //! auth / malformed / cancelled / terminal) with its own type because
 //! `stella-media` may not depend on `stella-model` (parallel-workstream
@@ -37,14 +37,13 @@ pub enum MediaError {
     #[error("media provider auth error: {0}")]
     Auth(String),
 
-    /// The provider refused the prompt on safety/content-policy grounds
+    /// The provider refused the prompt on safety/content-policy grounds.
     /// Terminal.
     #[error("media provider refused the request (content policy): {0}")]
     ContentPolicy(String),
 
-    /// A capability was requested that no configured key can serve
-    /// ("fails loudly, naming which keys would enable
-    /// it"). Terminal.
+    /// A capability was requested that no configured key can serve. Fails
+    /// loudly, naming the keys that would enable it. Terminal.
     #[error(
         "media capability `{capability}` is unavailable with the configured providers; \
          set one of these to enable it: {enabling_keys}"
@@ -64,7 +63,7 @@ pub enum MediaError {
     #[error("media request cancelled")]
     Cancelled,
 
-    /// The cost gate denied a video job above the confirmation threshold
+    /// The cost gate denied a video job above the confirmation threshold.
     /// Terminal.
     #[error(
         "cost gate denied the job (estimated ${estimated_usd:.4}, threshold ${threshold_usd:.4})"

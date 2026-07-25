@@ -36,8 +36,11 @@ impl std::error::Error for InvalidUtf8 {}
 /// perfectly valid UTF-8 once reassembled.
 #[derive(Debug, Default)]
 pub struct Utf8Decoder {
-    /// At most 3 bytes: a UTF-8 sequence is 1–4 bytes, so a valid-but-
-    /// incomplete tail can never exceed 3 buffered bytes.
+    /// Carries at most 3 bytes *between* calls: a UTF-8 sequence is 1–4
+    /// bytes, so a valid-but-incomplete tail can never exceed 3 buffered
+    /// bytes once `push` has returned. (Inside `push` it transiently holds
+    /// those leftovers concatenated with the whole incoming chunk, which is
+    /// what makes the boundary-split case a single contiguous validation.)
     tail: Vec<u8>,
 }
 

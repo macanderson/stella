@@ -1,4 +1,4 @@
-//! PR / CI monitor ("PR/CI monitor").
+//! The PR / CI monitor.
 //!
 //! Everything runs behind the [`GhCli`] port (real impl shells to `gh`), so
 //! the reconciliation and the capped-wait state machine are exercised against
@@ -158,8 +158,10 @@ pub enum CiRunStatus {
     Queued,
     InProgress,
     Completed,
-    /// Any other gh status (`waiting`, `requested`, …) — treated as still
-    /// active (not completed), so it keeps the wait alive under the caps.
+    /// A gh status this build does not model (`waiting`, `requested`,
+    /// `pending` and friends are folded into [`Queued`](Self::Queued)) —
+    /// treated as still active (not completed), so an unrecognized status
+    /// keeps the wait alive under the caps rather than ending it green.
     Other(String),
 }
 
@@ -454,6 +456,7 @@ impl<H: GhCli> Monitor<H> {
     }
 
     /// Override the watch tuning (builder style).
+    #[must_use]
     pub fn with_config(mut self, config: WatchConfig) -> Self {
         self.config = config;
         self
@@ -461,14 +464,17 @@ impl<H: GhCli> Monitor<H> {
 
     /// Inject a [`Sleeper`] — the seam tests use to advance the clock instead
     /// of really sleeping.
+    #[must_use]
     pub fn with_sleeper(mut self, sleeper: Box<dyn Sleeper>) -> Self {
         self.sleeper = sleeper;
         self
     }
 
-    /// The live status of a PR (number or URL). Always reconciled against
-    /// `gh` — never a cached value (L-V3). Maps gh's `state`/`isDraft` onto
-    /// [`PrStatus`].
+    /// The live status of a PR — `pr` is anything `gh pr view` resolves: a
+    /// number, a URL, or a branch name (the fleet passes the worker's branch,
+    /// which is how a run's PR is found without knowing its number). Always
+    /// reconciled against `gh` — never a cached value (L-V3). Maps gh's
+    /// `state`/`isDraft` onto [`PrStatus`].
     pub async fn pr_status(&self, pr: &str) -> Result<PrStatus, MonitorError> {
         let out = self
             .gh
@@ -523,6 +529,12 @@ impl<H: GhCli> Monitor<H> {
     /// evidence (a changed snapshot or an actively-running job); bounded by
     /// the cumulative cap, the stall window, and the startup grace. Never
     /// raises a global timeout — this wait owns its own caps.
+    ///
+    /// A poll that *errors* (gh rate-limited, offline, not authenticated) ends
+    /// the watch immediately with that `Err` — the wait is not retried across a
+    /// transient failure. Callers that watch a long CI run over a flaky link
+    /// should re-invoke; the caps are recomputed from the new call's start, so
+    /// a retry loop of its own needs its own bound.
     pub async fn watch_ci(&self, git_ref: &str) -> Result<CiWatchOutcome, MonitorError> {
         let start = self.clock.now_ms();
         let mut last_progress = start;

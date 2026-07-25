@@ -98,8 +98,8 @@ pub fn iterm2_image(bytes: &[u8], name: Option<&str>) -> String {
 
 /// The plain-path fallback rung: a single human line pointing at the on-disk
 /// artifact. Previews are always additive to the artifact, never a substitute
-///, so this is the safe floor for `--no-preview`, CI,
-/// and unknown terminals.
+/// for it, so this is the safe floor for `--no-preview`, CI, and unknown
+/// terminals.
 pub fn plain_line(path: &str) -> String {
     format!("[image] saved to {path}")
 }
@@ -107,6 +107,11 @@ pub fn plain_line(path: &str) -> String {
 /// Render an image to the chosen rung, falling back to the plain path line
 /// when the rung has no inline-image capability. `path` is always available
 /// so the plain rung (and `--no-preview`) can cite the on-disk artifact.
+///
+/// The inline rungs base64 the whole image into the returned string (~4/3 the
+/// byte size, on top of the caller's copy), so a caller previewing something
+/// large should choose [`PreviewRung::Plain`] rather than push tens of
+/// megabytes of escape sequence through a terminal.
 pub fn render(rung: PreviewRung, bytes: &[u8], path: &str, name: Option<&str>) -> String {
     match rung {
         PreviewRung::Kitty => kitty_image(bytes),

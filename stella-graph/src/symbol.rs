@@ -1,7 +1,8 @@
 //! Extracted symbols: the function/method/type declarations the indexer
 //! pulls out of a source file. Kinds are the cross-language superset the
-//! spec names ("Symbol (function/type/module)";
-//! task brief: "functions, methods, structs/classes/enums/traits/interfaces").
+//! spec names — a symbol is a function, a type, or a module-level
+//! declaration: functions, methods, structs, classes, enums, traits, and
+//! interfaces, plus the SQL schema objects the storage map needs.
 
 /// What kind of declaration a symbol is. Stored as its lowercase [`Self::tag`]
 /// in `code_graph_symbols.kind`.
@@ -75,8 +76,8 @@ impl SymbolKind {
         }
     }
 
-    /// The human keyword used in citation labels (
-    /// L-C4). Functions and methods both read as `fn`, matching the spec's
+    /// The human keyword used in citation labels (L-C4). Functions and
+    /// methods both read as `fn`, matching the spec's
     /// worked example `fn run_turn (stella-core/src/driver.rs:160)`.
     pub(crate) fn keyword(self) -> &'static str {
         match self {

@@ -1,8 +1,12 @@
 # Stella serve surface — the headless engine for Oxagen
 
-**Status:** proposed. **Date:** 2026-07-20. **Owner:** Mac Anderson.
-**Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) — the
-host side. This document is the *Stella* side of the same integration.
+**Status:** Implemented as the `stella-serve` crate (`Session`, `ServerFrame`,
+the HTTP/SSE transport) — ADR-033 Option B, the Rust sidecar. It builds its own
+binary and nothing in `stella-cli` links it, so a change here never reaches a
+`stella` user. **Date:** 2026-07-20. **Owner:** Mac Anderson.
+**Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
+the host side. That repository is private to Oxagen; this document is the
+*Stella* side of the same integration and is self-contained without it.
 
 ---
 

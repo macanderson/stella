@@ -11,8 +11,10 @@
 //!    embedded HTML file with zero external references (no CDN, no fonts,
 //!    no analytics) — it renders fully offline.
 //! 2. **Observer never mutates.** Every database open is
-//!    `SQLITE_OPEN_READ_ONLY` (see [`db`]); a live `stella` session writing
-//!    telemetry is never blocked or altered by a dashboard tab.
+//!    `SQLITE_OPEN_READ_ONLY` (see the `db` module); a live `stella` session
+//!    writing telemetry is never blocked or altered by a dashboard tab —
+//!    `stella-store` keeps these files in WAL mode, so a reader and the
+//!    writing session never contend for the same lock.
 //! 3. **No new dependencies.** The HTTP layer is a deliberately tiny
 //!    GET-only HTTP/1.1 responder over `tokio`'s `TcpListener` — the
 //!    workspace already ships everything required. A router the size of a
@@ -23,8 +25,8 @@
 //! `Content-Length`.
 //!
 //! Every `/api/*` route accepts `?project=<id>`: the id is resolved against
-//! the cross-project rollup's `projects` table ([`global`]) and, when known,
-//! that project's workspace root replaces the serving root for the request —
+//! the cross-project rollup's `projects` table (the `global` module) and, when
+//! known, that project's workspace root replaces the serving root for the request —
 //! the dashboard's project switcher. Unknown ids fall back to the serving
 //! workspace rather than erroring, so a stale dropdown never breaks the page.
 
@@ -64,6 +66,7 @@ pub enum ServeError {
 }
 
 /// A minimal HTTP response: status line, content type, body bytes.
+#[derive(Debug)]
 pub struct Response {
     pub status: &'static str,
     pub content_type: &'static str,
@@ -92,6 +95,7 @@ impl Response {
 
 /// Route a request path to a response. Pure function of (workspace, path) —
 /// the unit tests drive this directly, no sockets involved.
+#[must_use]
 pub fn respond(workspace_root: &Path, path: &str) -> Response {
     let (route, query) = match path.split_once('?') {
         Some((r, q)) => (r, Some(q)),
@@ -247,6 +251,7 @@ fn host_is_local(head: &str) -> bool {
 async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
     let mut buf = vec![0_u8; 8192];
     let mut read = 0;
+    let mut head_complete = false;
     // Read until the end of the request head (or the cap — a GET with no
     // body never legitimately exceeds it).
     while read < buf.len() {
@@ -256,6 +261,7 @@ async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result
         }
         read += n;
         if buf[..read].windows(4).any(|w| w == b"\r\n\r\n") {
+            head_complete = true;
             break;
         }
     }
@@ -265,7 +271,18 @@ async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result
         (Some(m), Some(p)) => (m, p),
         _ => return Ok(()),
     };
-    let response = if !host_is_local(&head) {
+    let response = if !head_complete {
+        // A head with no terminator inside the cap is refused *before* routing.
+        // Otherwise it is a hole straight through the rebinding gate below: pad
+        // the request line past 8 KiB (`/api/executions?pad=aaa…`) and `Host`
+        // never lands in the buffer at all, so `host_is_local`'s "no Host means
+        // no browser" allowance would wave the rebound request through while the
+        // route still parses out of the truncated path.
+        Response::error(
+            "431 Request Header Fields Too Large",
+            "request head exceeded the 8 KiB cap before its terminator",
+        )
+    } else if !host_is_local(&head) {
         // DNS-rebinding defense: a web page that resolves an attacker domain to
         // 127.0.0.1 can otherwise read this loopback dashboard cross-origin
         // (prompts, touched-file paths, memory, code graph). A rebound request
@@ -276,13 +293,14 @@ async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result
     } else {
         Response::error("405 Method Not Allowed", "GET only")
     };
-    let head = format!(
+    // Named apart from the request `head` above — same word, opposite direction.
+    let response_head = format!(
         "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         response.status,
         response.content_type,
         response.body.len(),
     );
-    stream.write_all(head.as_bytes()).await?;
+    stream.write_all(response_head.as_bytes()).await?;
     stream.write_all(&response.body).await?;
     stream.shutdown().await
 }
@@ -995,6 +1013,46 @@ mod tests {
         stream.read_to_string(&mut body).await.unwrap();
         assert!(body.starts_with("HTTP/1.1 200 OK"));
         assert!(body.contains("\"runs\":2"));
+        server.abort();
+    }
+
+    /// Padding the request line to the 8 KiB head cap used to be served: the
+    /// route still parsed out of the truncated path, while every header —
+    /// `Host` included — sat past the cap, and an absent Host is allowed. That
+    /// handed a rebound page the whole dashboard cross-origin. A head with no
+    /// terminator inside the cap is now refused before routing.
+    ///
+    /// Sized to *exactly* the cap so the server consumes every byte the client
+    /// wrote: closing a socket with unread bytes still in its receive queue
+    /// sends an RST, which would race the client's read of the response.
+    #[tokio::test]
+    async fn unterminated_request_head_is_refused_not_routed() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let ws = seeded_workspace();
+        let root = ws.path().to_path_buf();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let _ = serve(root, 0, move |addr| {
+                let _ = tx.send(addr);
+            })
+            .await;
+        });
+        let addr = rx.await.unwrap();
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let prefix = "GET /api/overview?pad=";
+        let suffix = " HTTP/1.1\r\n";
+        let pad = "a".repeat(8192 - prefix.len() - suffix.len());
+        let request = format!("{prefix}{pad}{suffix}");
+        assert_eq!(request.len(), 8192, "fills the cap without terminating");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut body = String::new();
+        stream.read_to_string(&mut body).await.unwrap();
+        assert!(
+            body.starts_with("HTTP/1.1 431"),
+            "an unterminated head must be refused, got: {}",
+            body.lines().next().unwrap_or_default()
+        );
+        assert!(!body.contains("\"runs\""), "no telemetry may leak");
         server.abort();
     }
 }

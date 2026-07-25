@@ -1,6 +1,6 @@
 ---
 title: Agent engine config
-description: Configure each engine agent — default, worker, judge, triage — with its own model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config in settings.json, or interactively in the SETTINGS tab's config panel.
+description: Give each engine agent — default, worker, judge, triage — its own model, gateway, prompt, reasoning effort, and sampling parameters via agent_engine_config.
 ---
 
 The `agent_engine_config` object in [`settings.json`](/docs/configuration/settings)
@@ -10,7 +10,7 @@ configures the four engine agents individually:
 | --- | --- |
 | `default` | The interactive / step-loop agent (`stella chat`, the Command Deck, `--no-pipeline`) — and the **model source for the pipeline's execute turns** (see [Model precedence](#model-precedence)) |
 | `worker` | The [pipeline](/docs/inference-pipeline)'s execute-turn **tuning** — prompt, effort, reasoning, params (plan rides it too) |
-| `judge` | The pipeline's verify judge and [goal mode](/docs/agent-modes/goal-mode)'s round judge — the witness author also rides the judge's model, falling back to the worker when no judge resolves |
+| `judge` | The pipeline's verify judge and [goal mode](/docs/agent-modes#outcome-driven-goal-mode)'s round judge — the witness author also rides the judge's model, falling back to the worker when no judge resolves |
 | `triage` | The pipeline's fast task classifier |
 
 Every field is optional, and it merges across the same user → org-managed →

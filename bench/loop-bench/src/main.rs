@@ -33,6 +33,16 @@
 //! # analyze a finished jobs dir without spending anything
 //! cargo run -p loop-bench -- --analyze-only --jobs-dir /path/to/jobs --job-name my-run
 //! ```
+//!
+//! Run it from the workspace root: the harbor adapter is put on `PYTHONPATH`
+//! by the relative path `ADAPTER_PYTHONPATH`.
+//!
+//! Exit codes, for the CI job that gates on this:
+//!
+//! - `0` — every trial that reported did real work (or passed).
+//! - `1` — the loop misbehaved on at least one trial, *or* no trial artifacts
+//!   were found at all (the run never produced anything to judge).
+//! - `2` — bad invocation: the task list resolved to nothing.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -59,6 +69,11 @@ const DEFAULT_POOL: &[&str] = &[
 /// Loop and context correctness do not need a strong model — only a running
 /// one — so the default optimizes for cost, not pass rate.
 const DEFAULT_MODEL: &str = "openrouter/z-ai/glm-4.7-flash";
+
+/// Where the harbor adapter package lives, relative to the workspace root.
+/// harbor loads `stella_harbor:StellaAgent` by import path, so this has to be
+/// on `PYTHONPATH` — which is also why this tool must be run from the root.
+const ADAPTER_PYTHONPATH: &str = "bench/harbor_adapter";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -116,13 +131,27 @@ struct Args {
 /// stream and its verifier reward.
 #[derive(Debug, Default, Clone, serde::Serialize)]
 struct TrialReport {
+    /// The Terminal-Bench task name, parsed off the `<task>__<id>` trial dir.
     task: String,
+    /// The verifier's reward, or `None` when the trial produced no
+    /// `verifier/reward.txt` (it never got that far, or is still running).
+    /// `None` is NOT zero: an unfinished trial must not read as a failure.
     reward: Option<f64>,
+    /// `step_usage` events — one per model call, including the retried and
+    /// non-worker (triage/plan/judge) ones.
     model_calls: u32,
+    /// `tool_start` events. Zero is the signal this harness exists for; see
+    /// `zero_work` below.
     tool_calls: u32,
+    /// Mutating file tools among `tool_calls` — the cheapest proxy for "the
+    /// agent actually changed the repo" as opposed to reading around it.
     file_writes: u32,
     project_overview_calls: u32,
     graph_query_calls: u32,
+    /// Pipeline stages in first-seen order, de-duplicated: this is the set of
+    /// stages the turn reached, not a transition log, so a verify → execute
+    /// repair loop appears once. For a zero-work stop the pipeline has not
+    /// looped yet, so the last entry is exactly where it died.
     stages: Vec<String>,
     /// A terminal event (`complete` or a non-retryable `error`) reached the
     /// stream. Its absence is a *silent death* — the loop stopped with no
@@ -131,6 +160,9 @@ struct TrialReport {
     /// The turn ended without executing a single tool call. Paired with a
     /// non-pass, this is the "chose nothing" death the hardening work targets.
     zero_work: bool,
+    /// The last `error` event's message, truncated for the table. Retryable
+    /// warnings land here too — it is the most recent explanation, not a
+    /// verdict.
     last_error: Option<String>,
 }
 
@@ -213,9 +245,20 @@ fn resolve_tasks(args: &Args) -> Vec<String> {
     if !args.tasks.is_empty() {
         return args.tasks.clone();
     }
+    // `--n 0` would measure nothing, so it floors at one task. Asking for more
+    // than the pool holds silently under-measures the run — say so, because a
+    // green gate over fewer tasks than the operator asked for is a lie.
+    let want = args.n.max(1);
+    let pool = DEFAULT_POOL.len();
+    if want > pool {
+        eprintln!(
+            "warning: --n {want} exceeds the {pool} tasks in the default pool; \
+             running {pool} (pass --tasks to name more)"
+        );
+    }
     DEFAULT_POOL
         .iter()
-        .take(args.n.max(1))
+        .take(want)
         .map(|s| s.to_string())
         .collect()
 }
@@ -223,14 +266,26 @@ fn resolve_tasks(args: &Args) -> Vec<String> {
 /// Build and run the harbor command. Returns Err(exit_code) on a non-zero
 /// harbor exit — non-fatal, since partial results are still worth analyzing.
 fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
-    let stella_binary = args.stella_binary.clone().unwrap_or_else(|| {
+    // A non-positive (or NaN) cap denies the very first model call, which
+    // would report as a zero-work loop failure for every task — the harness
+    // manufacturing the signal it gates on. Warn loudly rather than hand
+    // harbor a cap that cannot pass.
+    if args.budget <= 0.0 || !args.budget.is_finite() {
         eprintln!(
-            "warning: no --stella-binary / $STELLA_BINARY set; the adapter will \
-             fall back to target/release/stella (must be a LINUX build for the \
-             amd64 task containers)"
+            "warning: --budget {} is not a spendable cap; every trial will be denied \
+             before its first tool call and report as a loop failure",
+            args.budget
         );
-        String::new()
-    });
+    }
+    // The adapter is imported by path, so it has to exist relative to the cwd.
+    // Catch the wrong-directory mistake here instead of inside harbor, where
+    // it surfaces as an opaque Python ImportError per trial.
+    if !Path::new(ADAPTER_PYTHONPATH).is_dir() {
+        eprintln!(
+            "warning: {ADAPTER_PYTHONPATH} not found relative to the current directory; \
+             run loop-bench from the workspace root or harbor cannot import the adapter"
+        );
+    }
 
     let mut cmd = Command::new("harbor");
     cmd.arg("run")
@@ -247,15 +302,22 @@ fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
     }
 
     cmd.env("STELLA_BUDGET", format!("{:.4}", args.budget));
-    if !stella_binary.is_empty() {
-        cmd.env("STELLA_BINARY", &stella_binary);
+    match &args.stella_binary {
+        Some(path) => {
+            cmd.env("STELLA_BINARY", path);
+        }
+        None => eprintln!(
+            "warning: no --stella-binary / $STELLA_BINARY set; the adapter will \
+             fall back to target/release/stella (must be a LINUX build for the \
+             amd64 task containers)"
+        ),
     }
     // The adapter is loaded by import path; make it importable.
     let pythonpath = match std::env::var("PYTHONPATH") {
         Ok(existing) if !existing.is_empty() => {
-            format!("bench/harbor_adapter:{existing}")
+            format!("{ADAPTER_PYTHONPATH}:{existing}")
         }
-        _ => "bench/harbor_adapter".to_string(),
+        _ => ADAPTER_PYTHONPATH.to_string(),
     };
     cmd.env("PYTHONPATH", pythonpath);
 
@@ -296,10 +358,22 @@ fn analyze(job_dir: &Path) -> Vec<TrialReport> {
             continue;
         };
         let events_path = path.join("agent").join("stella-events.jsonl");
-        let Ok(raw) = std::fs::read_to_string(&events_path) else {
-            continue;
+        // A trial with no readable stream is the WORST outcome — the agent
+        // never started, or died before writing a line — so it must not be
+        // dropped from the table. Skipping it made a launch failure look like
+        // a clean run with fewer rows, and left the gate green.
+        let mut report = match std::fs::read_to_string(&events_path) {
+            Ok(raw) => distill_events(task, &raw),
+            Err(err) => TrialReport {
+                task: task.to_string(),
+                zero_work: true,
+                last_error: Some(truncate(
+                    &format!("no event stream ({}): {err}", events_path.display()),
+                    90,
+                )),
+                ..Default::default()
+            },
         };
-        let mut report = distill_events(task, &raw);
         report.reward = read_reward(&path);
         reports.push(report);
     }
@@ -336,7 +410,13 @@ fn distill_events(task: &str, raw: &str) -> TrialReport {
                 match name {
                     "project_overview" => r.project_overview_calls += 1,
                     "graph_query" => r.graph_query_calls += 1,
-                    "write_file" | "edit_file" => r.file_writes += 1,
+                    // The content-producing file tools in the catalog.
+                    // `apply_edits` is the batch form of `edit_file` and was
+                    // missing here, so a run that edited exclusively in
+                    // batches reported zero writes. `delete_file` is
+                    // deliberately excluded: counting removals as writes would
+                    // let a destructive loop look productive.
+                    "write_file" | "edit_file" | "apply_edits" => r.file_writes += 1,
                     _ => {}
                 }
             }
@@ -365,20 +445,33 @@ fn distill_events(task: &str, raw: &str) -> TrialReport {
     r
 }
 
+/// Clamp `s` to at most `n` characters *including* the ellipsis. The bound has
+/// to cover the marker: a plain `take(n) + "…"` yields `n + 1` characters,
+/// which overflowed the fixed-width task column and shifted every cell on that
+/// row one place right.
 fn truncate(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
-        s.to_string()
-    } else {
-        s.chars().take(n).collect::<String>() + "…"
+        return s.to_string();
     }
+    if n == 0 {
+        return String::new();
+    }
+    s.chars().take(n - 1).collect::<String>() + "…"
 }
+
+/// Width of the rendered table, in columns: 24 (task) + 14 (verdict) + 6 + 6 +
+/// 5 + 4 + 4 for the counters, plus the eight separator spaces and the six of
+/// `reward`. The verdict column is exactly as wide as the longest verdict
+/// string, `ran (unsolved)` — an 8-wide column overflowed it and shifted every
+/// counter on that row.
+const TABLE_WIDTH: usize = 77;
 
 fn print_table(reports: &[TrialReport]) {
     println!(
-        "\n{:<24} {:>8} {:>6} {:>6} {:>5} {:>4} {:>4}  reward",
+        "\n{:<24} {:>14} {:>6} {:>6} {:>5} {:>4} {:>4}  reward",
         "task", "verdict", "calls", "tools", "wr", "ov", "gq"
     );
-    println!("{}", "─".repeat(84));
+    println!("{}", "─".repeat(TABLE_WIDTH));
     let mut solved = 0usize;
     let mut loop_broken = 0usize;
     let mut overview_used = 0usize;
@@ -386,7 +479,7 @@ fn print_table(reports: &[TrialReport]) {
     for r in reports {
         let reward = r.reward.map(|v| format!("{v:.1}")).unwrap_or("-".into());
         println!(
-            "{:<24} {:>8} {:>6} {:>6} {:>5} {:>4} {:>4}  {}",
+            "{:<24} {:>14} {:>6} {:>6} {:>5} {:>4} {:>4}  {}",
             truncate(&r.task, 24),
             r.loop_verdict(),
             r.model_calls,
@@ -400,6 +493,18 @@ fn print_table(reports: &[TrialReport]) {
             && r.reward != Some(1.0)
         {
             println!("{:>26}└ {err}", "");
+        }
+        // A silent death says nothing about itself, so name the last stage it
+        // reached — for a zero-work stop the pipeline has not looped, so this
+        // is exactly where it vanished. It is the only actionable datum such a
+        // run leaves behind, and the reason `stages` is collected at all.
+        if r.silent()
+            && let Some(stage) = r.stages.last()
+        {
+            println!(
+                "{:>26}└ vanished in stage `{stage}` (no terminal event)",
+                ""
+            );
         }
         if r.reward == Some(1.0) {
             solved += 1;
@@ -415,7 +520,7 @@ fn print_table(reports: &[TrialReport]) {
         }
     }
     let n = reports.len();
-    println!("{}", "─".repeat(84));
+    println!("{}", "─".repeat(TABLE_WIDTH));
     println!(
         "LOOP: {loop_broken}/{n} broken (silent-death or zero-work)   \
          CONTEXT: project_overview {overview_used}/{n}, graph_query {graph_used}/{n}   \
@@ -518,6 +623,31 @@ mod tests {
         assert!(!r.silent(), "work happened, so it is not silent");
         assert_eq!(r.loop_verdict(), "solved");
         assert!(!r.loop_broken());
+    }
+
+    #[test]
+    fn a_batched_edit_counts_as_a_file_write() {
+        // `apply_edits` is the batch form of `edit_file`; a run that only ever
+        // edits in batches must not report zero writes.
+        let stream = ev(&[
+            r#"{"type":"tool_start","call":{"name":"apply_edits"}}"#,
+            r#"{"type":"tool_start","call":{"name":"delete_file"}}"#,
+        ]);
+        let r = distill_events("batch", &stream);
+        assert_eq!(r.tool_calls, 2);
+        assert_eq!(r.file_writes, 1, "a deletion is not a write");
+    }
+
+    #[test]
+    fn a_truncated_value_still_fits_its_column() {
+        // The ellipsis has to come out of the budget, not be appended past it,
+        // or the fixed-width task column shifts the whole row.
+        assert_eq!(truncate("abc", 3), "abc");
+        assert_eq!(truncate("abcd", 3), "ab…");
+        assert_eq!(truncate("abcd", 3).chars().count(), 3);
+        assert_eq!(truncate("abc", 0), "");
+        // Multi-byte input must be split on characters, never bytes.
+        assert_eq!(truncate("ααββ", 3), "αα…");
     }
 
     #[test]

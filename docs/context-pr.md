@@ -1,7 +1,7 @@
 # Context PRs
 
-**Status:** Canonical specification
-**Owner:** Stella
+**Status:** Canonical specification  
+**Owner:** Stella  
 **Principle:** Git is the authoritative, human-governed policy ledger. Every
 other representation of durable steering — the context store, the compiled
 context frame, a provider cache — is derived from it or subordinate to it.

@@ -122,6 +122,19 @@ impl Settings {
         if !trust.hooks && project.hooks.is_some() {
             merged.hooks = trusted_only.hooks.clone();
         }
+        // `context_providers` sits on the SAME code-execution boundary as
+        // hooks and `.stella/mcp.toml`, and was missing from it. An `enabled`
+        // stdio entry spawns its `command` at admission time (the conformance
+        // suite runs on its own connection first, so the process starts before
+        // anything has vetted it) — the identical `git clone && stella` RCE
+        // `load_mcp_plan` gates against. An http entry is no safer: the same
+        // untrusted file supplies the `egress_consent` that lets the query
+        // payload, which carries workspace content, leave the machine. So an
+        // untrusted project scope keeps whatever the user/managed scopes
+        // declared and contributes nothing of its own.
+        if !trust.hooks && !project.context_providers.is_empty() {
+            merged.context_providers = trusted_only.context_providers.clone();
+        }
         if !trust.credentials {
             for (id, project_entry) in &project.providers {
                 let touches_credentials = project_entry.base_url.is_some()
@@ -179,6 +192,10 @@ impl Settings {
     ///   key to an attacker-controlled host on the first model call. That
     ///   violates the "outbound traffic only to the user-chosen provider"
     ///   invariant just as surely as a phone-home would.
+    /// - **External context providers** — a `context_providers` entry spawns a
+    ///   command (stdio) or opens an egress-consented connection (http) at
+    ///   session start, and grants itself the consent that lets workspace
+    ///   content leave the machine.
     ///
     /// The user and org-managed scopes always load. Project hooks and
     /// credential-routing fields load only when explicitly trusted; project
@@ -205,6 +222,16 @@ impl Settings {
             eprintln!(
                 "  ! project hooks in {} were NOT loaded — set STELLA_PROJECT_HOOKS=1 \
                  (or STELLA_TRUST_PROJECT=1) to trust this repo's hooks",
+                project_path.display()
+            );
+        }
+
+        if !trust.hooks && !project.context_providers.is_empty() {
+            eprintln!(
+                "  ! project context providers in {} were NOT loaded — set \
+                 STELLA_TRUST_PROJECT=1 to let this repo run its context sources \
+                 (a stdio source runs a command on your machine; an http one can \
+                 send workspace content off it)",
                 project_path.display()
             );
         }

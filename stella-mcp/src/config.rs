@@ -4,10 +4,12 @@
 //! whole-file document ([`McpConfig`]) and a single entry
 //! ([`McpServerConfig`]) round-trip through serde + TOML.
 //!
-//! Security: a `stdio` server inherits **no**
-//! ambient environment. Only the keys listed in its `env` table reach the
-//! child — nothing else, so an `ANTHROPIC_API_KEY` in the parent shell can
-//! never leak into an MCP subprocess.
+//! Security: a `stdio` server inherits **no** ambient
+//! credential. Only the keys listed in its `env` table — plus `PATH`, the one
+//! deliberate exception without which a bare runner (`npx`, `uvx`, `docker`)
+//! could not resolve at all — reach the child, so an `ANTHROPIC_API_KEY` in
+//! the parent shell can never leak into an MCP subprocess. See
+//! [`crate::stdio`] for the scrub itself.
 
 use std::collections::BTreeMap;
 
@@ -172,14 +174,16 @@ pub struct McpServerConfig {
 #[serde(tag = "transport", rename_all = "snake_case")]
 pub enum McpTransport {
     /// Spawn a child process and speak newline-delimited JSON-RPC over its
-    /// stdio. The child's environment is *scrubbed* except for `env`.
+    /// stdio. The child's environment is *scrubbed* except for `env` and the
+    /// inherited `PATH`.
     Stdio {
         cmd: String,
         #[serde(default)]
         args: Vec<String>,
-        /// The only environment variables passed to the child. Everything
-        /// else — including every credential in the parent shell — is
-        /// stripped.
+        /// The environment variables passed to the child, on top of the
+        /// inherited `PATH` (see [`crate::stdio`]). Everything else —
+        /// including every credential in the parent shell — is stripped. An
+        /// entry named `PATH` here overrides the inherited one.
         #[serde(default)]
         env: BTreeMap<String, String>,
     },

@@ -1,5 +1,14 @@
 # Project scripts index
 
+**Status:** Implemented — this document is the reference for shipped behaviour,
+not a proposal, and the code cites it as such: `stella-tools/src/scripts.rs`
+(the detection core), `stella-tools/src/catalog.rs` (the `list_scripts` /
+`run_script` declarations), `stella-tools/src/project.rs` (`build_project` /
+`run_tests` as verb shortcuts over the same index), `stella-cli/src/main.rs`
+(the `stella scripts` subcommand), and `stella-cli/src/agent/prompt.rs` (the
+`## Project scripts` prompt section). The future tense below is the original
+drafting voice; read it as a description of what exists.
+
 Every workspace has the same seven jobs — install, build, check, start,
 test, lint, format — spelled differently by every package manager. Today the agent
 rediscovers that spelling with model calls: read `package.json`, guess the

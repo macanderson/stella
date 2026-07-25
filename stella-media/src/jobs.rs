@@ -22,7 +22,13 @@ const JOBS_NAME: &str = "jobs.json";
 
 /// A small JSON-backed store of in-flight video jobs, rooted at the artifacts
 /// directory. Reads and writes the whole file (a handful of jobs, not a
-/// database); writes are crash-atomic via temp-write-then-rename.
+/// database); writes are atomic against process death via
+/// temp-write-then-rename, with the read-modify-write serialized across
+/// threads *and* processes by an advisory lock on a sibling `jobs.json.lock`
+/// (a plain rename is atomic but does not stop two racers from both reading
+/// the pre-image and one losing its row). Nothing is `fsync`ed, so this is
+/// crash consistency, not power-loss durability — a lost record costs a
+/// resume, and the truth is always the provider's anyway.
 #[derive(Debug, Clone)]
 pub struct JobStore {
     path: PathBuf,
@@ -34,6 +40,13 @@ struct JobsFile {
     jobs: Vec<PersistedMediaJob>,
 }
 
+/// The on-disk shape of a [`MediaJob`]. Deliberately *not* the same struct:
+/// `label` is derived from the user's prompt, and prompt-derived text does not
+/// go to disk here any more than it does in the operation journal — this file
+/// is opaque identifiers and money, nothing about what was asked for. A
+/// resumed job therefore comes back labelled with its artifact id (see
+/// `From<PersistedMediaJob> for MediaJob`), which is what the events and the
+/// filename already use.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PersistedMediaJob {
     artifact_id: String,
@@ -62,6 +75,8 @@ impl From<&MediaJob> for PersistedMediaJob {
 impl From<PersistedMediaJob> for MediaJob {
     fn from(job: PersistedMediaJob) -> Self {
         Self {
+            // The prompt-derived label was not persisted; the artifact id is
+            // the stable identity a resume can honestly reconstruct.
             label: job.artifact_id.clone(),
             artifact_id: job.artifact_id,
             provider_id: job.provider_id,

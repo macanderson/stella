@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attachment::Attachment;
-use crate::tool::{ToolCall, ToolResult};
+use crate::tool::{ToolCall, ToolResult, ToolSchema};
 
 /// Who authored one message in the conversation. Tool results are
 /// represented as a `Tool` message carrying the `tool_call_id` they answer,
@@ -108,6 +108,8 @@ pub struct CompletionMessage {
 }
 
 impl CompletionMessage {
+    /// The system message — message index 0, the byte-stable prompt prefix
+    /// every provider's cache breakpoint sits behind (L-E8).
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::System,
@@ -118,6 +120,8 @@ impl CompletionMessage {
         }
     }
 
+    /// A text-only user message. Serializes byte-for-byte as it did before
+    /// attachments existed, so it never perturbs a cached prefix.
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::User,
@@ -175,10 +179,9 @@ pub struct CompletionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<GenerationParams>,
     /// Tool schemas the model may call, in the engine's one internal shape
-    /// (`crate::tool::ToolSchema`); each adapter translates to its own
-    /// dialect.
+    /// ([`ToolSchema`]); each adapter translates to its own dialect.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<crate::tool::ToolSchema>,
+    pub tools: Vec<ToolSchema>,
 }
 
 /// Token accounting for a single completion, normalized across providers
@@ -210,6 +213,7 @@ pub struct CompletionUsage {
 
 impl CompletionUsage {
     /// A reported terminal envelope whose counters are all legitimately zero.
+    #[must_use]
     pub fn reported_zero() -> Self {
         Self {
             reported: true,
@@ -219,6 +223,7 @@ impl CompletionUsage {
 
     /// Whether the adapter proved this accounting envelope came from the
     /// provider's authoritative terminal usage frame.
+    #[must_use]
     pub fn is_complete(&self) -> bool {
         self.reported
     }

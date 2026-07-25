@@ -1909,10 +1909,6 @@ impl SummarizerHealth {
     }
 }
 
-/// Flatten the tool calls of the CURRENT turn — assistant messages after
-/// the last user message — in chronological order, for
-/// `crate::loop_detect::detect_loop`. Windowing at the user boundary
-/// matters: identical calls across turns are the user re-asking a
 /// Prefix of the engine-injected stuck-loop steering message
 /// ([`Engine::check_loop_detection`]). User-role on the wire like every
 /// steer, but engine-generated, not a real user turn — treating it as a

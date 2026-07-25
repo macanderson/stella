@@ -15,6 +15,12 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use crate::exec;
 use crate::registry::Tool;
 
+/// Single-quote a path for the capture chain's `bash -c` line, escaping any
+/// embedded quote the POSIX way (`'\''`).
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
 pub struct Screenshot;
 
 #[async_trait]
@@ -55,15 +61,20 @@ impl Tool for Screenshot {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let file = dir.join(format!("{stamp}-{label}.png"));
-        let path = file.display();
+        // The capture chain needs a shell (the `||` fallbacks), so the path
+        // is quoted rather than passed as argv. The workspace root is not
+        // ours to assume well-formed: a directory named `it's mine` would
+        // otherwise close the literal and hand the remainder to `bash -c`
+        // as code.
+        let path = shell_quote(&file.to_string_lossy());
 
         // Platform capture chain: macOS screencapture; Linux grim (Wayland)
         // then import (X11/ImageMagick). Each is silent + non-interactive.
         let command = if cfg!(target_os = "macos") {
-            format!("screencapture -x '{path}'")
+            format!("screencapture -x {path}")
         } else {
             format!(
-                "grim '{path}' 2>/dev/null || import -window root '{path}' 2>/dev/null || \
+                "grim {path} 2>/dev/null || import -window root {path} 2>/dev/null || \
                  (echo 'no capture backend (grim or imagemagick import)' >&2; exit 1)"
             )
         };

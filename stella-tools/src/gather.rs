@@ -283,10 +283,17 @@ fn excerpt(content: &str, match_lines: &[usize]) -> String {
             .collect()
     };
     for anchor in anchors {
-        let start = anchor.saturating_sub(EXCERPT_CONTEXT_LINES + 1);
-        let end = (anchor + EXCERPT_CONTEXT_LINES).min(lines.len());
+        // Both ends are clamped into the file, and a merge only ever widens
+        // the window: the grep that produced these anchors ran BEFORE this
+        // read, so a file truncated in between (or an out-of-order anchor
+        // list) would otherwise build a `start > end` window and panic the
+        // slice below — inside a tool that must only ever return an error.
+        let start = anchor
+            .saturating_sub(EXCERPT_CONTEXT_LINES + 1)
+            .min(lines.len());
+        let end = (anchor + EXCERPT_CONTEXT_LINES).min(lines.len()).max(start);
         match windows.last_mut() {
-            Some((_, last_end)) if start <= *last_end => *last_end = end,
+            Some((_, last_end)) if start <= *last_end => *last_end = (*last_end).max(end),
             _ => windows.push((start, end)),
         }
     }
@@ -734,10 +741,13 @@ async fn list_packs(root: &Path) -> ToolOutput {
 }
 
 fn render_pack(pack: &ContextPack, status: &str) -> String {
+    // Shorten by CHARACTERS, not bytes: `git_head` is deserialized from a
+    // pack file on disk (shared through the tree, hand-editable), so a
+    // non-ASCII value would panic a byte slice at offset 8.
     let head = pack
         .git_head
         .as_deref()
-        .map(|h| format!(" @ {}", &h[..h.len().min(8)]))
+        .map(|h| format!(" @ {}", h.chars().take(8).collect::<String>()))
         .unwrap_or_default();
     let mut out = format!(
         "# Context pack `{}` — {}\ngathered {}{head} · {} files tracked · {status}\n",

@@ -47,6 +47,7 @@ pub enum CacheCause {
 impl CacheCause {
     /// The one-line probable-cause hint, kept here so the CLI receipt and the
     /// deck panel print byte-identical wording.
+    #[must_use]
     pub fn hint(self) -> &'static str {
         match self {
             Self::OptInNeverEngaged => {
@@ -66,6 +67,7 @@ impl CacheCause {
 
     /// The stable machine token (matches the serde `snake_case` wire form) —
     /// for the `stella stats --format json|csv` receipts.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::OptInNeverEngaged => "opt_in_never_engaged",
