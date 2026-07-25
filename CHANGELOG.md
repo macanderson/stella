@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.5.28] — 2026-07-25
+
 ## Before 0.5.27
 
 This file was introduced at 0.5.27. Earlier releases are recorded only in their
