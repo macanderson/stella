@@ -118,8 +118,10 @@ references, allowed event classes, the closed provider/model catalog,
 process-free isolation, issue time, and expiry. The administrator-managed file
 is opened without following a terminal symlink and must be an owner/root-owned,
 single-link regular file that is not group/other writable. Privileged startup
-environment values and credential references are snapshotted before project
-dotenv loading and restored afterward. Invalid enrollment bytes cannot register
+environment values, credential references, and the exact
+loader/interpreter/VCS command-execution names a project dotenv file may never
+set are snapshotted before project dotenv loading and restored afterward.
+Invalid enrollment bytes cannot register
 arbitrary scrub names. Every delivery rechecks expiry and credential-domain
 separation.
 

@@ -472,6 +472,38 @@ fn pre_dotenv_snapshot_restores_every_privileged_control_and_credential_ref() {
 }
 
 #[test]
+fn pre_dotenv_snapshot_restores_loader_and_interpreter_control_names() {
+    let _env = crate::test_env::lock();
+    // Exact deny-list names only: a snapshot holds concrete names, so the
+    // wildcard shapes (`LD_*`, `CARGO_*_RUNNER`, …) are the dotenv loader's
+    // job, not this one.
+    let names = [
+        "BASH_ENV",
+        "SHELLOPTS",
+        "NODE_OPTIONS",
+        "PYTHONPATH",
+        "RUSTC_WRAPPER",
+        "GIT_ASKPASS",
+    ];
+    let _restore = EnvRestore::capture(&names);
+    for name in names {
+        unsafe { std::env::remove_var(name) };
+    }
+    let snapshot = StartupAuthoritySnapshot::capture(None);
+    for name in names {
+        unsafe { std::env::set_var(name, format!("project-{name}")) };
+    }
+    let rejected = snapshot.restore_after_project_env(&names.map(str::to_string));
+    assert_eq!(rejected.len(), names.len());
+    for name in names {
+        assert!(
+            std::env::var_os(name).is_none(),
+            "project value survived: {name}"
+        );
+    }
+}
+
+#[test]
 fn invalid_enrollment_cannot_register_arbitrary_scrub_names() {
     let arbitrary = "STELLA_ATTACKER_CHOSEN_SCRUB_TARGET";
     assert!(!stella_tools::exec::is_sensitive_env_name(arbitrary));

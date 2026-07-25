@@ -155,8 +155,13 @@ into the environment at startup, most-specific file first. Template files
 (`.env.example`, `.env.sample`, `.env.dist`) and non-`.local` mode files
 (`.env.production`) are never read. **Your live shell always wins** — a value
 already exported (or `OPENROUTER_API_KEY=… stella …`) is never overwritten by a
-file, so unset a stale export if you mean to switch. Disable the whole mechanism
-with `STELLA_NO_ENV_FILE=1`; see what loaded with `STELLA_ENV_DEBUG=1`.
+file, so unset a stale export if you mean to switch. A small deny-list of
+loader, interpreter and VCS command-execution names (`LD_*`, `DYLD_*`,
+`BASH_ENV`, `NODE_OPTIONS`, `PYTHONPATH`, `GIT_SSH*`, `RUSTC_WRAPPER`, `PATH`, …)
+is **never applied** from a project file — a cloned repo must not be able to
+redirect which programs run — and `stella config` names anything it refused.
+Disable the whole mechanism with `STELLA_NO_ENV_FILE=1`; see what loaded with
+`STELLA_ENV_DEBUG=1`.
 
 ```bash
 stella models    # list providers, models, and key status

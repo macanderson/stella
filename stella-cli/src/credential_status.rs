@@ -90,20 +90,28 @@ pub fn provider_config_for(id: &str, settings: &Settings) -> ProviderConfig {
 }
 
 /// A one-line summary of which project `.env*` files contributed which
-/// variable NAMES (never values) — the same information `STELLA_ENV_DEBUG`
-/// prints to stderr, but surfaced unconditionally in `stella config` rather
-/// than gated behind that flag. `None` when nothing was loaded.
+/// variable NAMES (never values), plus any name the deny-list refused to apply
+/// and the file that named it — the same information `STELLA_ENV_DEBUG` prints
+/// to stderr, but surfaced unconditionally in `stella config` rather than
+/// gated behind that flag. `None` when nothing was loaded and nothing was
+/// refused.
 pub fn env_files_summary(loaded: &Loaded) -> Option<String> {
-    if loaded.names.is_empty() {
-        return None;
+    let mut parts = Vec::new();
+    if !loaded.names.is_empty() {
+        let files = loaded
+            .files
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("{files} ({})", loaded.names.join(", ")));
     }
-    let files = loaded
-        .files
-        .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!("{files} ({})", loaded.names.join(", ")))
+    // A refused name is reported even when the file contributed nothing else,
+    // so "my .env is being ignored" always has a visible answer.
+    if let Some(refused) = loaded.refused_summary() {
+        parts.push(format!("refused (never applied): {refused}"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" — "))
 }
 
 /// The display label for a resolved [`CredentialSource`]: which env var
@@ -247,6 +255,7 @@ mod tests {
             name_files: [("STELLA_TEST_LABEL_B_KEY".to_string(), local_file)]
                 .into_iter()
                 .collect(),
+            ..Default::default()
         };
         assert_eq!(
             label_for(&provider, CredentialSource::EnvVar, Some(&loaded)),
@@ -282,6 +291,7 @@ mod tests {
             ],
             names: vec!["OPENROUTER_API_KEY".to_string(), "FOO".to_string()],
             name_files: Default::default(),
+            refused: Default::default(),
         };
         let summary = env_files_summary(&loaded).unwrap();
         assert!(summary.contains(".env.local"));
@@ -293,6 +303,19 @@ mod tests {
     #[test]
     fn env_files_summary_is_none_when_nothing_loaded() {
         assert!(env_files_summary(&Loaded::default()).is_none());
+    }
+
+    #[test]
+    fn env_files_summary_reports_refusals_even_when_nothing_else_loaded() {
+        let loaded = Loaded {
+            refused: [("LD_PRELOAD".to_string(), PathBuf::from("/proj/.env.local"))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let summary = env_files_summary(&loaded).unwrap();
+        assert!(summary.contains("LD_PRELOAD"), "{summary}");
+        assert!(summary.contains(".env.local"), "{summary}");
     }
 
     // provider_config_for: unknown-id fallback for `stella auth list`

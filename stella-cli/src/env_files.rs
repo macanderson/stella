@@ -23,6 +23,15 @@
 //!   is applied first and application never overwrites, so it wins over the
 //!   less specific. (Consequence worth knowing: a value still *exported* in
 //!   your shell shadows a project file — unset it if you mean to switch.)
+//! - **Never applied**: a small deny-list of loader, interpreter and VCS
+//!   command-execution names ([`is_denied_env_name`]) — `LD_*`, `DYLD_*`,
+//!   `BASH_ENV`, `NODE_OPTIONS`, `GIT_SSH*`, `RUSTC_WRAPPER`, `PATH`, … A
+//!   cloned repository's dotenv file is untrusted input, and those names
+//!   redirect which program runs rather than configure Stella, so applying
+//!   one would turn `git clone && stella` into code execution — the same
+//!   threat the `.stella/mcp.toml` trust gate closes (`agent.rs`
+//!   `load_mcp_plan`). Refusals are recorded on [`Loaded::refused`] and shown
+//!   by `stella config`; the rest of the file still loads.
 //!
 //! Loading is confined to the current project: the search walks up from the
 //! working directory to the nearest ancestor that actually contains a
@@ -34,13 +43,84 @@
 //!
 //! Set `STELLA_NO_ENV_FILE=1` to disable the whole mechanism.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
 
 use crate::OutputFormat;
+
+/// Environment variable names a project dotenv file may never set, as exact
+/// names. The wildcard shapes live in [`DENIED_ENV_PREFIXES`] and
+/// [`DENIED_ENV_PREFIX_SUFFIX`]; [`is_denied_env_name`] is the whole policy.
+///
+/// `pub(crate)` because `enterprise_telemetry::StartupAuthoritySnapshot` also
+/// snapshots these names across dotenv loading — one list, policed twice,
+/// rather than two lists that can drift apart.
+pub(crate) const DENIED_ENV_NAMES: &[&str] = &[
+    // Shell entry points: a value here runs code in every shell Stella (or a
+    // tool it spawns) starts.
+    "BASH_ENV",
+    "ENV",
+    "SHELLOPTS",
+    "IFS",
+    // Which binary a name resolves to at all.
+    "PATH",
+    // Tool configuration that names a command to execute.
+    "RIPGREP_CONFIG_PATH",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_PAGER",
+    "GIT_EDITOR",
+    "GIT_ASKPASS",
+    "GIT_PROXY_COMMAND",
+    "GIT_TEMPLATE_DIR",
+    "GIT_ATTR_NOSYSTEM",
+    // Interpreter pre-load / module-resolution hooks.
+    "NODE_OPTIONS",
+    "NODE_REPL_EXTERNAL_MODULE",
+    "PYTHONSTARTUP",
+    "PYTHONPATH",
+    "PERL5OPT",
+    "RUBYOPT",
+    "RUSTC_WRAPPER",
+];
+
+/// Denied name prefixes: dynamic-loader injection (`LD_PRELOAD`,
+/// `DYLD_INSERT_LIBRARIES`, …), git's ssh program (`GIT_SSH`,
+/// `GIT_SSH_COMMAND`) and git's config redirection (`GIT_CONFIG_GLOBAL`,
+/// `GIT_CONFIG_COUNT`, …, which can inject any of the exec-bearing config
+/// keys).
+const DENIED_ENV_PREFIXES: &[&str] = &["LD_", "DYLD_", "GIT_SSH", "GIT_CONFIG_"];
+
+/// Denied `<prefix>…<suffix>` shapes: cargo's per-target runner
+/// (`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER`) names the program cargo
+/// executes for a built binary.
+const DENIED_ENV_PREFIX_SUFFIX: &[(&str, &str)] = &[("CARGO_", "_RUNNER")];
+
+/// Whether a project dotenv file is forbidden from setting `name`.
+///
+/// These names decide *which program runs*, not how Stella behaves, so a
+/// cloned repository naming one is asking for code execution rather than for
+/// configuration — refuse it and let the rest of the file load (a deny-list,
+/// not an allow-list, because the whole point of the feature is that a project
+/// may carry arbitrary credentials).
+///
+/// Matching is ASCII case-insensitive, for parity with
+/// `stella_tools::exec::is_sensitive_env_name` and with Windows environment
+/// semantics, where `Path` and `PATH` are one variable.
+pub(crate) fn is_denied_env_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    DENIED_ENV_NAMES.contains(&upper.as_str())
+        || DENIED_ENV_PREFIXES
+            .iter()
+            .any(|prefix| upper.starts_with(prefix))
+        || DENIED_ENV_PREFIX_SUFFIX.iter().any(|(prefix, suffix)| {
+            upper.len() >= prefix.len() + suffix.len()
+                && upper.starts_with(prefix)
+                && upper.ends_with(suffix)
+        })
+}
 
 /// What a load pass applied, for an optional diagnostic line. `files` are the
 /// dotenv files that actually contributed at least one variable (most-specific
@@ -54,12 +134,32 @@ pub struct Loaded {
     /// display surface (`stella config`) attribute e.g. `OPENROUTER_API_KEY`
     /// to `.env.local` by name, rather than only "loaded from a dotenv file"
     /// in aggregate.
-    pub name_files: std::collections::BTreeMap<String, PathBuf>,
+    pub name_files: BTreeMap<String, PathBuf>,
+    /// Names a dotenv file asked for that [`is_denied_env_name`] refused,
+    /// mapped to the file that named them, so a user can find the offending
+    /// file. Refused names are never applied to the process environment.
+    pub refused: BTreeMap<String, PathBuf>,
 }
 
 impl Loaded {
     fn is_empty(&self) -> bool {
-        self.names.is_empty()
+        self.names.is_empty() && self.refused.is_empty()
+    }
+
+    /// A value-free rendering of what was refused and where it came from —
+    /// `LD_PRELOAD (.env.local), NODE_OPTIONS (.env)`. `None` when a project's
+    /// dotenv files named nothing on the deny-list.
+    pub fn refused_summary(&self) -> Option<String> {
+        if self.refused.is_empty() {
+            return None;
+        }
+        Some(
+            self.refused
+                .iter()
+                .map(|(name, path)| format!("{name} ({})", file_name_of(path)))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
     }
 
     /// The dotenv file that contributed `name`, if any — `None` when `name`
@@ -91,8 +191,8 @@ pub fn maybe_load() -> Loaded {
 
     let mut names = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
-    let mut name_files = std::collections::BTreeMap::new();
-    for (key, value, path) in plan {
+    let mut name_files = BTreeMap::new();
+    for (key, value, path) in plan.assignments {
         // SAFETY: called only from `main` during single-threaded process
         // startup, before the tokio runtime or any worker threads exist — no
         // concurrent `getenv`/`setenv` can race this write.
@@ -107,20 +207,26 @@ pub fn maybe_load() -> Loaded {
         files,
         names,
         name_files,
+        refused: plan.refused,
     }
 }
 
-/// The ordered list of assignments a load would apply, given a predicate for
-/// "this name is already set" (the live environment, in production). Pure over
-/// the filesystem + predicate — no process-environment mutation — so the
-/// precedence and shell-wins rules are unit-testable without env races.
-fn plan_from(
-    start: &Path,
-    home: Option<&Path>,
-    is_set: impl Fn(&str) -> bool,
-) -> Vec<(String, String, PathBuf)> {
+/// What a load pass would do: the ordered assignments to apply, and the names
+/// the deny-list refused (each mapped to the file that named it).
+#[derive(Debug, Default)]
+struct Plan {
+    assignments: Vec<(String, String, PathBuf)>,
+    refused: BTreeMap<String, PathBuf>,
+}
+
+/// The [`Plan`] a load would carry out, given a predicate for "this name is
+/// already set" (the live environment, in production). Pure over the
+/// filesystem + predicate — no process-environment mutation — so the
+/// precedence, shell-wins and deny-list rules are unit-testable without env
+/// races.
+fn plan_from(start: &Path, home: Option<&Path>, is_set: impl Fn(&str) -> bool) -> Plan {
     let Some(base) = find_base(start, home) else {
-        return Vec::new();
+        return Plan::default();
     };
     let files = collect_files(&base);
     plan_assignments(&files, is_set)
@@ -220,13 +326,11 @@ fn classify(name: &str) -> Option<u8> {
 /// the first (most-specific) file that defines it and that neither the
 /// environment (`is_set`) nor an earlier file has already claimed — so the live
 /// shell wins over every file, and a more specific file wins over a less
-/// specific one.
-fn plan_assignments(
-    files: &[(u8, PathBuf)],
-    is_set: impl Fn(&str) -> bool,
-) -> Vec<(String, String, PathBuf)> {
+/// specific one. A name [`is_denied_env_name`] rejects is never applied at all,
+/// and is recorded in [`Plan::refused`] instead.
+fn plan_assignments(files: &[(u8, PathBuf)], is_set: impl Fn(&str) -> bool) -> Plan {
     let mut claimed: HashSet<String> = HashSet::new();
-    let mut out: Vec<(String, String, PathBuf)> = Vec::new();
+    let mut plan = Plan::default();
     for (_rank, path) in files {
         // dotenvy's parser (quotes, escapes, multi-line values, `export`
         // prefixes, `#` comments) as a non-mutating iterator — we apply our own
@@ -238,14 +342,22 @@ fn plan_assignments(
             let Ok((key, value)) = item else {
                 continue; // a malformed line must not abort the whole file
             };
+            // Deliberately ahead of the `is_set` filter: `PATH` and `IFS` are
+            // exported in every real shell, so testing "already set" first
+            // would drop them into the silent skip path and report nothing —
+            // a refusal the user never sees is not a refusal they can act on.
+            if is_denied_env_name(&key) {
+                plan.refused.entry(key).or_insert_with(|| path.clone());
+                continue;
+            }
             if is_set(&key) || claimed.contains(&key) {
                 continue;
             }
             claimed.insert(key.clone());
-            out.push((key, value, path.clone()));
+            plan.assignments.push((key, value, path.clone()));
         }
     }
-    out
+    plan
 }
 
 /// Emit a concise, value-free confirmation of what [`maybe_load`] applied —
@@ -262,17 +374,35 @@ pub fn announce(loaded: &Loaded, format: OutputFormat) {
     {
         return;
     }
-    let file_list = loaded
-        .files
-        .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    eprintln!(
-        "{} {}",
-        "env:".dimmed(),
-        format!("loaded {} from {file_list}", loaded.names.join(", ")).dimmed(),
-    );
+    if !loaded.names.is_empty() {
+        let file_list = loaded
+            .files
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "{} {}",
+            "env:".dimmed(),
+            format!("loaded {} from {file_list}", loaded.names.join(", ")).dimmed(),
+        );
+    }
+    if let Some(refused) = loaded.refused_summary() {
+        eprintln!(
+            "{} {}",
+            "env:".dimmed(),
+            format!("refused (never applied): {refused}").dimmed(),
+        );
+    }
+}
+
+/// A dotenv file's bare name for display (`.env.local`), degrading to the full
+/// path when it has no valid-UTF-8 file name.
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 #[cfg(test)]
@@ -321,6 +451,7 @@ mod tests {
         let plan = plan_assignments(&files, |k| shell.contains(k));
 
         let map: std::collections::HashMap<_, _> = plan
+            .assignments
             .iter()
             .map(|(k, v, _)| (k.clone(), v.clone()))
             .collect();
@@ -350,6 +481,7 @@ mod tests {
         let files = collect_files(d);
         let plan = plan_assignments(&files, |_| false);
         let map: std::collections::HashMap<_, _> = plan
+            .assignments
             .iter()
             .map(|(k, v, _)| (k.clone(), v.clone()))
             .collect();
@@ -393,6 +525,112 @@ mod tests {
         assert_eq!(find_base(home, Some(home)), None);
     }
 
+    // The deny-list: a cloned repo's dotenv file must not be able to redirect
+    // which program Stella (or anything it spawns) executes.
+
+    #[test]
+    fn loader_interpreter_and_vcs_exec_names_are_refused_while_the_rest_still_loads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        write(
+            d,
+            ".env",
+            "LD_PRELOAD=/tmp/evil.so\n\
+             DYLD_INSERT_LIBRARIES=/tmp/evil.dylib\n\
+             BASH_ENV=/tmp/evil.sh\n\
+             GIT_SSH_COMMAND=/tmp/evil\n\
+             GIT_CONFIG_COUNT=1\n\
+             NODE_OPTIONS=\"--require /tmp/evil.js\"\n\
+             PYTHONPATH=/tmp/evil\n\
+             RUSTC_WRAPPER=/tmp/evil\n\
+             CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=/tmp/evil\n\
+             PATH=/tmp/evil/bin\n\
+             ld_preload=/tmp/evil-lowercase.so\n\
+             OPENROUTER_API_KEY=sk-project\n",
+        );
+
+        let files = collect_files(d);
+        // `PATH` is exported in every real shell — the deny check must still
+        // report it, so it cannot hide behind the "already set" filter.
+        let plan = plan_assignments(&files, |k| k == "PATH");
+
+        let applied: Vec<&str> = plan
+            .assignments
+            .iter()
+            .map(|(k, _, _)| k.as_str())
+            .collect();
+        assert_eq!(
+            applied,
+            ["OPENROUTER_API_KEY"],
+            "only the credential may be applied"
+        );
+
+        for name in [
+            "LD_PRELOAD",
+            "DYLD_INSERT_LIBRARIES",
+            "BASH_ENV",
+            "GIT_SSH_COMMAND",
+            "GIT_CONFIG_COUNT",
+            "NODE_OPTIONS",
+            "PYTHONPATH",
+            "RUSTC_WRAPPER",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER",
+            "PATH",
+            "ld_preload",
+        ] {
+            assert!(
+                plan.refused.contains_key(name),
+                "{name} must be reported as refused"
+            );
+        }
+
+        let loaded = Loaded {
+            refused: plan.refused,
+            ..Default::default()
+        };
+        let summary = loaded.refused_summary().unwrap();
+        // Names and the offending file, never values.
+        assert!(summary.contains("LD_PRELOAD (.env)"), "{summary}");
+        assert!(!summary.contains("evil.so"), "{summary}");
+    }
+
+    #[test]
+    fn deny_list_matches_exact_prefix_and_wrapped_shapes_but_not_ordinary_names() {
+        for denied in [
+            "PATH",
+            "path",
+            "IFS",
+            "ENV",
+            "SHELLOPTS",
+            "LD_LIBRARY_PATH",
+            "DYLD_LIBRARY_PATH",
+            "GIT_SSH",
+            "GIT_SSH_COMMAND",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_ASKPASS",
+            "RIPGREP_CONFIG_PATH",
+            "PERL5OPT",
+            "RUBYOPT",
+            "NODE_REPL_EXTERNAL_MODULE",
+            "PYTHONSTARTUP",
+            "CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER",
+        ] {
+            assert!(is_denied_env_name(denied), "{denied} must be denied");
+        }
+        for allowed in [
+            "OPENROUTER_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "DATABASE_URL",
+            "STELLA_MODEL",
+            "LDAP_URL", // `LD_` is a prefix, `LDAP` is not
+            "GIT_AUTHOR_NAME",
+            "CARGO_TERM_COLOR",
+            "NODE_ENV",
+        ] {
+            assert!(!is_denied_env_name(allowed), "{allowed} must load");
+        }
+    }
+
     // Loaded::file_for (stella config's "which file, which name")
 
     #[test]
@@ -404,6 +642,7 @@ mod tests {
             name_files: [("OPENROUTER_API_KEY".to_string(), local.clone())]
                 .into_iter()
                 .collect(),
+            ..Default::default()
         };
         assert_eq!(loaded.file_for("OPENROUTER_API_KEY"), Some(local.as_path()));
         // A name that was never loaded from a dotenv file (a real shell

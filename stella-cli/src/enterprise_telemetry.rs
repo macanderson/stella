@@ -437,9 +437,23 @@ pub(crate) struct StartupAuthoritySnapshot {
 }
 
 impl StartupAuthoritySnapshot {
+    /// The privileged control names, the loader/interpreter/VCS
+    /// command-execution names a project dotenv file may never set
+    /// (`env_files::DENIED_ENV_NAMES`), and any managed credential reference.
+    ///
+    /// The dotenv loader already refuses those names outright — the same trust
+    /// posture `.stella/mcp.toml` gets in `agent::load_mcp_plan` ("a cloned
+    /// repo's .stella/mcp.toml can name an arbitrary stdio command — RCE on
+    /// `git clone && stella`"). Snapshotting them as well means a *second*
+    /// loader, one that does not report the names it parsed, still cannot
+    /// reopen the hole. A snapshot is a concrete set of names, so it can only
+    /// cover the exact-name subset: the wildcard shapes (`LD_*`, `DYLD_*`,
+    /// `GIT_SSH*`, `GIT_CONFIG_*`, `CARGO_*_RUNNER`) are covered by
+    /// `env_files::is_denied_env_name` alone.
     pub(crate) fn capture(managed: Option<&Value>) -> Self {
         let mut names: BTreeSet<String> = PRIVILEGED_ENV_NAMES
             .iter()
+            .chain(crate::env_files::DENIED_ENV_NAMES.iter())
             .map(|name| (*name).to_string())
             .collect();
         if let Some(raw) = managed {
