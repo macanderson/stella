@@ -20,7 +20,6 @@ class Stella < Formula
   version "0.5.14"
   license "AGPL-3.0-only"
   head "https://github.com/macanderson/stella.git", branch: "main"
-
   depends_on "rust" => :build
 
   def install
