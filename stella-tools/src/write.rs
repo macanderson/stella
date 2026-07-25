@@ -80,7 +80,12 @@ impl Tool for WriteFile {
             }
         }
 
-        match tokio::fs::write(&full_path, content).await {
+        match crate::atomic_write::replace_file_atomically(
+            full_path.clone(),
+            content.as_bytes().to_vec(),
+        )
+        .await
+        {
             Ok(()) => {
                 self.ledger.record_known(root, path, content);
                 let bytes = content.len();

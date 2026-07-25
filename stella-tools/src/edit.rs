@@ -196,7 +196,12 @@ impl Tool for EditFile {
             content.replacen(old_string, new_string, 1)
         };
 
-        match tokio::fs::write(&full_path, &new_content).await {
+        match crate::atomic_write::replace_file_atomically(
+            full_path.clone(),
+            new_content.as_bytes().to_vec(),
+        )
+        .await
+        {
             Ok(()) => {
                 // The model knows the bytes it just produced — record them so
                 // its own edit is never later misattributed as drift.

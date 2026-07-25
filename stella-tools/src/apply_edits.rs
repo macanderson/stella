@@ -318,11 +318,25 @@ impl Tool for ApplyEdits {
         let mut written: Vec<&String> = Vec::new();
         for key in &order {
             let (path, full, _, simulated) = &files[key];
-            if let Err(e) = tokio::fs::write(full, simulated).await {
+            if let Err(e) = crate::atomic_write::replace_file_atomically(
+                full.clone(),
+                simulated.as_bytes().to_vec(),
+            )
+            .await
+            {
                 let mut rollback_note = String::new();
                 for prior in &written {
                     let (prior_path, prior_full, original, _) = &files[*prior];
-                    if tokio::fs::write(prior_full, original).await.is_err() {
+                    // The rollback especially must not truncate: a failed
+                    // rollback with a truncating write turns a partial batch
+                    // into a destroyed file.
+                    if crate::atomic_write::replace_file_atomically(
+                        prior_full.clone(),
+                        original.as_bytes().to_vec(),
+                    )
+                    .await
+                    .is_err()
+                    {
                         rollback_note.push_str(&format!(
                             "\n  ROLLBACK FAILED for `{prior_path}` — restore it manually from \
                              the content you last read"
