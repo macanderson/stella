@@ -36,19 +36,157 @@ favicons, app icons, a 26px header slug. It is not a standalone logo.
 
 ## Colour
 
-Monochrome, on purpose.
+<!-- BEGIN generated colour — docs/brand/build.py -->
+
+The identity is **gold on deep navy: a star against night sky**.
+
+Defined once in [`tokens.json`](tokens.json) and generated into every
+consumer by `build.py` — the TUI's `palette.rs`, the docs site's
+`tokens.css`, and the observatory's `:root` block. Hand-syncing a hex code
+across three crates is what produced the palettes this replaced.
+
+### Ground (dark)
+
+The night sky the whole identity sits on. `ground` is the app background; `surface` and `raised` step up for cards and popovers.
 
 | Token | Value | Use |
 | --- | --- | --- |
-| Ink | `#0A0A0A` | letters and mark on a light ground |
-| Paper | `#FAFAFA` | letters and mark on a dark ground |
+| `night` | `#050912` | Deepest ground -- full-bleed backdrops, the splash, OG art. |
+| `ground` | `#080D1A` | App background. The default dark canvas. |
+| `surface` | `#0F1729` | Card / panel surface, one step above ground. |
+| `raised` | `#172137` | Raised surface -- popovers, selected rows, hovered cells. |
+| `hairline` | `#22304C` | Seam / rule. Deliberately 1.47:1 on ground: decorative only, never the sole carrier of structure. |
 
-There is no brand hue in the logo. This repo carries three rival palettes — the
-docs site's neutral paper-&-ink (`stella-docs/src/app/global.css`), the TUI's
-aurora-on-navy (`stella-tui/src/theme.rs`), and the observatory's cyan
-(`stella-observatory/src/assets/index.html`). A monochrome mark sits correctly
-on all three instead of arbitrating between them. Leave it that way until those
-three are reconciled; a coloured logo would just become a fourth opinion.
+### Brand
+
+Gold. Reserved for brand, active/running, and progress -- never a general-purpose highlight.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `gold` | `#FFDD00` | The brand hue. On dark ground only, or as a fill under an ink label. |
+| `gold-deep` | `#E0B800` | Pressed / gradient-deep stop, and the leading stop of the progress fill. |
+| `gold-ink` | `#7A5E00` | The ONLY warm text tone permitted on a light ground -- 6.12:1 on paper. |
+
+### Text (dark ground)
+
+Cool neutrals for the dark canvas. `text-tertiary` clears AA body text on night and ground only -- see contracts.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `text-primary` | `#EDF1F8` | Primary text. |
+| `text-secondary` | `#94A3BC` | Secondary text. The safe small-text tone on every dark ground. |
+| `text-tertiary` | `#6B7C99` | Labels and captions. AA body on night/ground; large-text or UI only on surface/raised. |
+
+### Status
+
+Always paired with a glyph. Hue alone never carries meaning.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `success` | `#34D399` | Success / done / added. |
+| `warning` | `#FF7A1A` | Warning / needs-input. Orange, not yellow -- yellow is the brand hue. |
+| `danger` | `#FF5C7A` | Error / failed / removed. |
+
+### Status (light ground)
+
+The same three meanings, darkened along their own hue until they clear AA on paper. The dark-ground status tones are light colours -- `success` is 1.72:1 on white -- so a light surface needs its own set for the same reason gold does.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `success-ink` | `#16744F` | Success on a light ground -- 5.76:1 on paper. |
+| `warning-ink` | `#B04A00` | Warning on a light ground -- 5.49:1 on paper. Still orange, not yellow. |
+| `danger-ink` | `#C8102E` | Error on a light ground -- 5.88:1 on paper. |
+
+### Ground (light)
+
+The paper mode. Accent text here is ink, never gold.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| `paper` | `#FFFFFF` | Light background. |
+| `snow` | `#F4F4F5` | Light surface, one step in from paper. |
+| `ink` | `#0A0A0A` | Primary text on paper. Also the label laid over a gold fill. |
+| `muted` | `#5B6270` | Secondary text on paper. |
+
+### The four rules
+
+1. Gold is NEVER text on a light ground -- it is 1.35:1 on white against the 4.5 required. On paper, gold appears only as a FILL under an ink label (14.70:1). Light-mode accent text is ink. gold-ink is the only warm text tone permitted on paper.
+
+2. Warning is orange, not yellow. Yellow is conventionally 'warning' in a terminal, and making it the brand hue collides; orange separates cleanly. Status must always pair colour with a glyph, never rely on hue alone.
+
+3. Gold is reserved for brand, active/running, and progress. It is not a general-purpose highlight -- if everything is gold, nothing is.
+
+4. The wordmark stays ink/paper; the MARK carries the gold. hairline is deliberately below 3.0 contrast and must never be the only thing conveying structure.
+
+### Why gold is asymmetric
+
+Gold is a light colour. On the navy ground it is **14.40:1** — brilliant, and comfortably past the 4.5 body-text floor. On white it is
+**1.35:1**, which is not a near miss: it is roughly a third of
+what legibility requires, and no amount of weight or size fixes it.
+
+So gold behaves differently in the two modes, and that is a design
+decision rather than an oversight:
+
+- On dark, gold is **text** — the accent, the active state, the progress fill.
+- On light, gold is only ever a **fill**, with an ink label on top at **14.70:1**.
+- When light mode genuinely needs a warm *text* tone, it uses `gold-ink` at **6.12:1** — the only warm text tone permitted on paper.
+
+A palette that behaved identically in both modes would have to give up
+either the brilliance of the gold on dark or legibility on light. This
+one gives up neither.
+
+### Measured contrast
+
+Every pair below is asserted by `build.py` on each run, computed with the
+WCAG 2.1 relative-luminance formula. AA is 4.5:1 for body text and 3.0:1
+for large text and UI.
+
+| Foreground | Ground | Ratio | Floor | |
+| --- | --- | --- | --- | --- |
+| `text-primary` | `ground` | 17.12:1 | 4.5 | body text on the app canvas |
+| `text-secondary` | `ground` | 7.60:1 | 4.5 | secondary body text |
+| `text-tertiary` | `ground` | 4.59:1 | 4.5 | captions on the app canvas |
+| `text-primary` | `surface` | 15.78:1 | 4.5 | body text on cards |
+| `text-secondary` | `surface` | 7.00:1 | 4.5 | secondary text on cards |
+| `text-tertiary` | `surface` | 4.23:1 | 3.0 | captions on cards -- large text / UI only, 4.23:1 |
+| `text-primary` | `raised` | 14.16:1 | 4.5 | body text on popovers |
+| `text-secondary` | `raised` | 6.28:1 | 4.5 | secondary text on popovers |
+| `text-tertiary` | `raised` | 3.80:1 | 3.0 | captions on popovers -- large text / UI only, 3.80:1 |
+| `gold` | `ground` | 14.40:1 | 4.5 | brand / active / progress on the canvas |
+| `gold` | `night` | 14.79:1 | 4.5 | brand on the deepest ground |
+| `gold` | `surface` | 13.27:1 | 4.5 | brand on cards |
+| `gold-deep` | `ground` | 10.18:1 | 4.5 | pressed / gradient-deep on the canvas |
+| `success` | `ground` | 10.09:1 | 4.5 | status text on the canvas |
+| `warning` | `ground` | 7.44:1 | 4.5 | status text on the canvas |
+| `danger` | `ground` | 6.52:1 | 4.5 | status text on the canvas |
+| `success` | `surface` | 9.30:1 | 4.5 | status text on cards |
+| `warning` | `surface` | 6.85:1 | 4.5 | status text on cards |
+| `danger` | `surface` | 6.01:1 | 4.5 | status text on cards |
+| `ink` | `paper` | 19.80:1 | 4.5 | body text on paper |
+| `muted` | `paper` | 6.13:1 | 4.5 | secondary text on paper |
+| `gold-ink` | `paper` | 6.12:1 | 4.5 | the only warm text tone on paper |
+| `ink` | `snow` | 18.01:1 | 4.5 | body text on the light surface |
+| `muted` | `snow` | 5.58:1 | 4.5 | secondary text on the light surface |
+| `success-ink` | `paper` | 5.76:1 | 4.5 | status text on paper |
+| `warning-ink` | `paper` | 5.49:1 | 4.5 | status text on paper |
+| `danger-ink` | `paper` | 5.88:1 | 4.5 | status text on paper |
+| `success-ink` | `snow` | 5.24:1 | 4.5 | status text on the light surface |
+| `warning-ink` | `snow` | 4.99:1 | 4.5 | status text on the light surface |
+| `danger-ink` | `snow` | 5.35:1 | 4.5 | status text on the light surface |
+| `ink` | `gold` | 14.70:1 | 4.5 | RULE 1 -- the only way gold appears on a light ground: as a fill under an ink label |
+| `gold` | `night` | 14.79:1 | 3.0 | RULE 4 -- the mark's gold against the icon tile |
+
+And the pairs that must *stay* illegible, so the asymmetry cannot be
+"fixed" by accident:
+
+| Foreground | Ground | Ratio | Ceiling | |
+| --- | --- | --- | --- | --- |
+| `gold` | `paper` | 1.35:1 | &lt; 4.5 | RULE 1 -- gold is never text on a light ground. Use ink, or gold-ink for a warm tone. |
+| `gold` | `snow` | 1.23:1 | &lt; 4.5 | RULE 1 -- gold is never text on a light ground. |
+| `gold-deep` | `paper` | 1.90:1 | &lt; 4.5 | RULE 1 -- gold-deep is not a light-ground text tone either. Use gold-ink. |
+| `hairline` | `ground` | 1.47:1 | &lt; 3.0 | RULE 4 -- hairline stays sub-3.0 so nobody is tempted to let it carry structure alone. |
+
+<!-- END generated colour -->
 
 ## Files
 
@@ -63,12 +201,19 @@ regardless of the surrounding theme.
 | `wordmark-ink.svg` · `wordmark-paper.svg` | wordmark, fixed colour |
 | `mark.svg` | mark, `currentColor` |
 | `mark-ink.svg` · `mark-paper.svg` | mark, fixed colour |
+| `mark-gold.svg` | mark in brand gold — for dark grounds where `currentColor` can't reach (an `<img>`, the observatory) |
 | `lockup-ink.svg` · `lockup-paper.svg` | mark + wordmark, horizontal |
-| `favicon.svg` | mark on a rounded ink tile, 200² |
-| `appicon.svg` | mark on a squircle ink tile, 512² |
+| `favicon.svg` | gold mark on a rounded navy tile, 200² |
+| `appicon.svg` | gold mark on a squircle navy tile, 512² |
 
 Icons carry a tile rather than sitting on transparency, so a favicon stays
-legible against any browser-tab colour.
+legible against any browser-tab colour. The tile is navy and the mark is gold:
+at 16px the icon is often the only brand surface a user sees, so it is the one
+place the mark must carry the hue rather than inherit it.
+
+There is deliberately **no** `wordmark-gold.svg`. The wordmark stays ink/paper
+(rule 4) — gold is 1.35:1 on white, so a gold wordmark would be unusable on
+every light ground the wordmark is expected to sit on.
 
 ## Clear space and minimum size
 

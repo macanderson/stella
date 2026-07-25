@@ -68,7 +68,7 @@ export default function HomePage() {
         <div className="lp-hero-grid pointer-events-none absolute inset-0" aria-hidden />
         <div className="lp-hero-glow pointer-events-none absolute inset-0" aria-hidden />
         <div className="relative mx-auto flex max-w-5xl flex-col items-center px-4 py-20 text-center sm:py-32">
-          <Mark className="mb-8 h-12 w-auto text-fd-foreground sm:h-14" />
+          <Mark className="lp-mark mb-8 h-12 w-auto sm:h-14" />
           <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-card px-3 py-1 text-xs font-medium text-fd-muted-foreground">
             <Terminal className="size-3.5" aria-hidden />
             A terminal coding agent that proves its work
