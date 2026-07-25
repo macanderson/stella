@@ -131,6 +131,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     if ui.context_open {
         render_context_overlay(ui, area, buf);
     }
+    if ui.inspect_open {
+        render_inspect_overlay(ui, area, buf);
+    }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
@@ -594,6 +597,178 @@ fn render_context_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         .block(block)
         .scroll((ui.context_scroll as u16, 0))
         .render(popup, buf);
+}
+
+/// The INSPECT overlay (`⌃g`): the model calls this execution recorded, and
+/// the reconstructed context of the one selected — what was actually sent,
+/// system prompt included, rebuilt from the receipts rather than from any live
+/// UI state. Two modes in one popup, keyed off `ui.inspect_view`.
+fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+    let w = area.width.saturating_sub(6).min(120);
+    let h = area.height.saturating_sub(4).min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    Clear.render(popup, buf);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let title;
+
+    if ui.inspect_pending && ui.inspect_view.is_none() {
+        title = " inspect · reconstructing ";
+        lines.push(Line::from(Span::styled(
+            "  reconstructing the call's context from the recorded receipt…",
+            theme::muted(),
+        )));
+    } else if let Some(view) = ui.inspect_view.clone() {
+        title = " inspect · context sent ";
+        let call = &view.call;
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  turn {} · step {} · call-seq {} · {}",
+                call.turn_instance, call.step, call.call_seq, call.call_role
+            ),
+            theme::accent().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  {} / {} · {} message(s)",
+                call.provider,
+                call.model,
+                view.messages.len()
+            ),
+            theme::muted(),
+        )));
+        // The two failure modes read very differently and are never merged:
+        // an unresolved block is a documented coverage gap, a digest mismatch
+        // means the journal is torn or was altered.
+        if view.unresolved > 0 {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  ! {} block(s) unresolved — synthetic results, discarded speculation, \
+                     or attachments",
+                    view.unresolved
+                ),
+                Style::default().fg(theme::WARN),
+            )));
+        }
+        if view.digest_mismatches > 0 {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  !! {} block(s) did not re-hash to the recorded digest — journal torn \
+                     or altered",
+                    view.digest_mismatches
+                ),
+                Style::default().fg(theme::DANGER),
+            )));
+        }
+        if view.verified {
+            lines.push(Line::from(Span::styled(
+                "  verified · every journal-resolved block re-hashed to its recorded digest",
+                Style::default().fg(theme::SUCCESS),
+            )));
+        }
+        for (index, message) in view.messages.iter().enumerate() {
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                format!("  ─── [{index}] {} ───", message.role),
+                theme::accent().add_modifier(Modifier::BOLD),
+            )));
+            // Wrap by hand: Paragraph's own wrap would fight the scroll offset
+            // (rows would no longer equal lines, so the clamp below would lie).
+            for raw in message.content.lines() {
+                for chunk in wrap_chars(raw, (w as usize).saturating_sub(6)) {
+                    lines.push(Line::from(Span::styled(
+                        format!("    {chunk}"),
+                        Style::default().fg(theme::INK),
+                    )));
+                }
+            }
+        }
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            " ↑/↓ pgup/pgdn scroll · esc/← back to calls · q close",
+            theme::muted(),
+        )));
+    } else {
+        title = " inspect · recorded calls ";
+        lines.push(Line::from(Span::styled(
+            "  every model call this execution recorded a receipt for",
+            theme::muted(),
+        )));
+        lines.push(Line::default());
+        if ui.inspect_calls.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "    no receipts for this execution yet — run a turn, then reopen",
+                theme::muted(),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "    TURN  STEP  SEQ  ROLE            PROVIDER    MODEL",
+                theme::muted(),
+            )));
+        }
+        for (index, call) in ui.inspect_calls.iter().enumerate() {
+            let selected = index == ui.inspect_sel;
+            let style = if selected {
+                theme::accent().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::INK)
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {} {:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {}",
+                    if selected { "›" } else { " " },
+                    call.turn_instance,
+                    call.step,
+                    call.call_seq,
+                    truncate_chars(&call.call_role, 14),
+                    truncate_chars(&call.provider, 10),
+                    truncate_chars(&call.model, 22),
+                ),
+                style,
+            )));
+        }
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            " ↑/↓ select · ⏎ show the context it was sent · r refresh · esc close",
+            theme::muted(),
+        )));
+    }
+
+    // Clamp the scroll to the measured content so ↓ can't run off the end.
+    let inner_h = (h as usize).saturating_sub(2);
+    let max_scroll = lines.len().saturating_sub(inner_h);
+    ui.inspect_scroll = ui.inspect_scroll.min(max_scroll);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::accent())
+        .title(title);
+    Paragraph::new(lines)
+        .block(block)
+        .scroll((ui.inspect_scroll as u16, 0))
+        .render(popup, buf);
+}
+
+/// Hard-wrap one logical line to `width` characters, char-safe. Returns at
+/// least one (possibly empty) chunk so a blank source line still occupies a row
+/// — the scroll clamp counts rows, so dropping blanks would desync it.
+fn wrap_chars(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    let chars: Vec<char> = s.chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars
+        .chunks(width)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
 }
 
 /// Char-safe prefix truncation with an ellipsis.
@@ -1327,6 +1502,7 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("↑", "with prompts queued: open the queue editor"),
             ("←", "SESSIONS overlay — every session on this machine"),
             ("→", "CONTEXT overlay — active skills + MCP servers"),
+            ("ctrl-g", "INSPECT — the context sent on any recorded call"),
         ],
         DeckTab::Agents => &[
             ("← →", "switch panes — executions / installed"),
