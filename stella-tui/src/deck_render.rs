@@ -737,6 +737,14 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             " ↑/↓ select · ⏎ show the context it was sent · r refresh · esc close",
             theme::muted(),
         )));
+        // The whole popup scrolls by `inspect_scroll`, and the list-mode key
+        // handler only moves `inspect_sel` — it never touches the scroll. Track
+        // the selection here so the `›` row stays on-screen when the call list
+        // is taller than the popup. The rows are preceded by three fixed lines
+        // (title · blank · header), so the selected row is at `3 + inspect_sel`.
+        let inner_h = (h as usize).saturating_sub(2);
+        let sel_line = 3 + ui.inspect_sel;
+        ui.inspect_scroll = scroll_window_start(lines.len(), sel_line, inner_h);
     }
 
     // Clamp the scroll to the measured content so ↓ can't run off the end.
