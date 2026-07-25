@@ -217,6 +217,113 @@ fn changing_a_file_changes_its_frames_content_digest() {
     );
 }
 
+/// A barrel file's import frame must survive budget-packing. `budget_pack`
+/// *skips* a frame that would exceed `max_tokens` rather than truncating it, so
+/// an uncapped listing of 300 edges means the caller silently gets no import
+/// context at all — the failure mode is invisible. The listing is capped at 50
+/// edges plus a `+N more` marker; the structured relations stay complete,
+/// because they carry no inline content and cost the frame's declared
+/// `token_cost` nothing.
+#[test]
+fn barrel_file_import_frame_is_capped_and_survives_the_budget() {
+    let ws = TempDir::new().unwrap();
+    let dbdir = TempDir::new().unwrap();
+    const EDGES: usize = 300;
+    let mut barrel = String::new();
+    for i in 0..EDGES {
+        fs::write(
+            ws.path().join(format!("mod_{i}.ts")),
+            format!("export const v{i} = {i};\n"),
+        )
+        .unwrap();
+        barrel.push_str(&format!("export * from \"./mod_{i}\";\n"));
+    }
+    fs::write(ws.path().join("index.ts"), &barrel).unwrap();
+
+    let graph = CodeGraph::open(ws.path(), &dbdir.path().join("context.db")).unwrap();
+    graph.index_all().unwrap();
+
+    let frames = graph.imports_of(&ws.path().join("index.ts")).unwrap();
+    let frame = frames
+        .iter()
+        .find(|f| f.kind == FrameKind::Graph)
+        .expect("barrel file has an import frame");
+
+    let content = frame
+        .content
+        .as_deref()
+        .expect("import frames carry content");
+    assert_eq!(
+        content.lines().count(),
+        51,
+        "50 edges plus the `+N more` marker: {content}"
+    );
+    assert!(
+        content.lines().last().unwrap().starts_with("+250 more"),
+        "the elision must be visible: {content}"
+    );
+    // Every edge is still reachable structurally — only the prose is capped.
+    assert_eq!(frame.relations.len(), EDGES);
+
+    // The point of the cap. 800 tokens comfortably holds the capped listing
+    // (~280) but not the uncapped 300-edge one (~1650), and `budget_pack`
+    // *skips* an over-budget frame rather than truncating it — so without the
+    // cap this query returns no import context at all.
+    assert!(
+        frame.token_cost < 800,
+        "capped listing should cost well under the budget; got {}",
+        frame.token_cost
+    );
+    let packed = graph
+        .query(&ContextQuery {
+            anchors: vec![ws.path().join("index.ts").display().to_string()],
+            kinds: vec![FrameKind::Graph],
+            ..query("imports", 20, 800)
+        })
+        .unwrap();
+    assert!(
+        packed.iter().any(|f| f.id == frame.id),
+        "the capped import frame must fit the budget"
+    );
+}
+
+/// A multi-sentence goal yields dozens of identifier tokens, each costing a SQL
+/// round trip plus a snippet file read. We deliberately stop looking after the
+/// first 12 distinct tokens — the frames past that are budget-packed away
+/// anyway, so the lookups are pure cost.
+#[test]
+fn query_stops_looking_after_twelve_distinct_identifiers() {
+    let ws = TempDir::new().unwrap();
+    let dbdir = TempDir::new().unwrap();
+    const NAMES: usize = 30;
+    let mut src = String::new();
+    for i in 0..NAMES {
+        src.push_str(&format!("pub fn sym_{i:02}() {{}}\n"));
+    }
+    fs::write(ws.path().join("wide.rs"), &src).unwrap();
+    let graph = CodeGraph::open(ws.path(), &dbdir.path().join("context.db")).unwrap();
+    graph.index_all().unwrap();
+
+    // Every one of the 30 names is indexed and would match on its own.
+    assert_eq!(graph.definitions("sym_00").unwrap().len(), 1);
+    assert_eq!(graph.definitions("sym_29").unwrap().len(), 1);
+
+    let goal: Vec<String> = (0..NAMES).map(|i| format!("sym_{i:02}")).collect();
+    // Budget deliberately ample: the bound under test is the identifier cap,
+    // not `budget_pack`.
+    let frames = graph
+        .query(&query(&goal.join(" "), 1000, 1_000_000))
+        .unwrap();
+    assert_eq!(
+        frames.len(),
+        12,
+        "only the first 12 distinct tokens are looked up"
+    );
+    // …and it is the *first* twelve, in query order.
+    assert!(frames.iter().any(|f| f.title == "fn sym_00"));
+    assert!(frames.iter().all(|f| f.title != "fn sym_12"));
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

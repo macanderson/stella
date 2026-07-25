@@ -272,7 +272,7 @@ pub fn run_memory_validate() -> Result<(), String> {
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let rows = validate_memories(&workspace_root)?;
     if rows.is_empty() {
-        println!("No memories to validate — .stella/private/context.db is empty or missing.");
+        println!("no memories to validate — .stella/private/context.db is empty or missing");
         return Ok(());
     }
 

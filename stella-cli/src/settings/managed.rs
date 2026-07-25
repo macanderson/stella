@@ -62,9 +62,12 @@ fn read_managed_settings(path: &Path) -> std::io::Result<String> {
         .open(path)?;
     let metadata = file.metadata()?;
     let owner = metadata.uid();
+    // SAFETY: `geteuid` takes no arguments, touches no pointers, and cannot
+    // fail — it is unsafe only because it is an extern fn.
+    let euid = unsafe { libc::geteuid() };
     if !metadata.is_file()
         || metadata.nlink() != 1
-        || (owner != unsafe { libc::geteuid() } && owner != 0)
+        || (owner != euid && owner != 0)
         || metadata.mode() & 0o022 != 0
     {
         return Err(std::io::Error::new(

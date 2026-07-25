@@ -243,42 +243,56 @@ pub(crate) async fn select_impacted(root: &Path) -> ImpactSelection {
         Ok(relevant) => relevant,
         Err(early) => return early,
     };
-    let graph = match crate::graph::open_or_build(root) {
-        // The index-pass warning has no home in a test SELECTION (its only
-        // note field belongs to the stand-down arm), so it is dropped rather
-        // than printed to stderr as it used to be.
-        Ok((graph, _index_warning)) => graph,
-        Err(e) => {
+    // The open runs a full `index_all` pass and the walk is a stream of
+    // SQLite reads, so the whole synchronous region goes to the blocking
+    // pool (#549). The graph handle and the `read_error` the importer
+    // closure borrows both stay inside the closure; only the finished
+    // `ImpactSelection` crosses back.
+    let graph_root = root.to_path_buf();
+    let selection = tokio::task::spawn_blocking(move || {
+        let graph = match crate::graph::open_or_build(&graph_root) {
+            Ok(graph) => graph,
+            Err(e) => {
+                return ImpactSelection::FullSuite {
+                    note: format!(
+                        "impact selection unavailable (cannot open the code graph: {e}) — \
+                         ran the full suite"
+                    ),
+                };
+            }
+        };
+        // A store read error mid-walk would make importers look empty — an
+        // under-selection — so it is recorded and turned into a loud stand-down
+        // instead of being swallowed.
+        let mut read_error: Option<String> = None;
+        let mut importers = |path: &str| match graph.importer_paths(Path::new(path)) {
+            Ok(list) => list,
+            Err(e) => {
+                read_error = Some(e.to_string());
+                Vec::new()
+            }
+        };
+        let selection = select(&relevant, &mut importers);
+        graph.shutdown();
+        if let Some(e) = read_error {
             return ImpactSelection::FullSuite {
                 note: format!(
-                    "impact selection unavailable (cannot open the code graph: {e}) — \
-                     ran the full suite"
+                    "impact selection unavailable (code-graph read failed: {e}) — ran the \
+                     full suite"
                 ),
             };
         }
-    };
-    // A store read error mid-walk would make importers look empty — an
-    // under-selection — so it is recorded and turned into a loud stand-down
-    // instead of being swallowed.
-    let mut read_error: Option<String> = None;
-    let mut importers = |path: &str| match graph.importer_paths(Path::new(path)) {
-        Ok(list) => list,
-        Err(e) => {
-            read_error = Some(e.to_string());
-            Vec::new()
-        }
-    };
-    let selection = select(&relevant, &mut importers);
-    graph.shutdown();
-    if let Some(e) = read_error {
-        return ImpactSelection::FullSuite {
-            note: format!(
-                "impact selection unavailable (code-graph read failed: {e}) — ran the \
-                 full suite"
-            ),
-        };
-    }
-    selection
+        selection
+    })
+    .await;
+    // A cancelled/panicked blocking task is one more way selection can fail,
+    // and it degrades exactly like the others: the full suite, never an
+    // error and never a silent narrowing.
+    selection.unwrap_or_else(|_| ImpactSelection::FullSuite {
+        note: "impact selection unavailable (the code-graph pass was cancelled) — ran the \
+               full suite"
+            .into(),
+    })
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
-//! The provider registry seam (
-//! §2). One interface — [`ContextProvider`] — behind which context sources
+//! The provider registry seam.
+//! One interface — [`ContextProvider`] — behind which context sources
 //! register: the built-in [`ContextStore`] implements it (so the store is both
 //! the primary backend and a first-class provider), and the shipping CLI's
 //! session recall flows through this registry (`stella-cli/src/contextgraph.rs` wraps
@@ -16,7 +16,7 @@
 //! `contextgraph-host`.
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use contextgraph_types::capability::QueryCapability;
@@ -74,36 +74,46 @@ pub trait ContextProvider: Send + Sync {
 /// run to run. Advertised capabilities end up in `context status` output and in
 /// a host's routing table, and an order that reshuffles every process makes
 /// them impossible to diff.
+///
+/// The list is a constant of the build, so it is computed once and cached:
+/// `capabilities()` runs per provider on every `query_all`/`verify_all`, and
+/// paying nine serde round-trips plus a `HashSet` dedup and a sort per request
+/// buys nothing. Only the clone of the finished list remains per call.
 fn store_kinds() -> Vec<String> {
-    let mut kinds: Vec<String> = [
-        NodeKind::File,
-        NodeKind::Symbol,
-        NodeKind::Concept,
-        NodeKind::Fact,
-        NodeKind::Episode,
-        NodeKind::Person,
-        NodeKind::Artifact,
-        NodeKind::Task,
-        // The kind the store exists for — omitting it routed kind-filtered
-        // memory queries away from the one provider that stores memories.
-        NodeKind::Memory,
-    ]
-    .iter()
-    .map(|k| k.to_frame_kind())
-    // Serialize the FrameKind to its wire string via serde for one source of
-    // truth on the spelling.
-    .filter_map(|fk| {
-        serde_json::to_value(fk)
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-    })
-    .collect::<HashSet<_>>()
-    .into_iter()
-    .collect();
-    // Unstable is enough: the `HashSet` already made every entry unique, so
-    // there are no equal elements whose relative order could matter.
-    kinds.sort_unstable();
-    kinds
+    static KINDS: OnceLock<Vec<String>> = OnceLock::new();
+    KINDS
+        .get_or_init(|| {
+            let mut kinds: Vec<String> = [
+                NodeKind::File,
+                NodeKind::Symbol,
+                NodeKind::Concept,
+                NodeKind::Fact,
+                NodeKind::Episode,
+                NodeKind::Person,
+                NodeKind::Artifact,
+                NodeKind::Task,
+                // The kind the store exists for — omitting it routed kind-filtered
+                // memory queries away from the one provider that stores memories.
+                NodeKind::Memory,
+            ]
+            .iter()
+            .map(|k| k.to_frame_kind())
+            // Serialize the FrameKind to its wire string via serde for one source of
+            // truth on the spelling.
+            .filter_map(|fk| {
+                serde_json::to_value(fk)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+            // Unstable is enough: the `HashSet` already made every entry unique, so
+            // there are no equal elements whose relative order could matter.
+            kinds.sort_unstable();
+            kinds
+        })
+        .clone()
 }
 
 #[async_trait]

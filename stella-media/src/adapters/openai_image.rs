@@ -258,7 +258,7 @@ mod tests {
     // Live smoke (L-V4): gated on the key and an explicit opt-in.
     #[tokio::test]
     async fn live_smoke_generate_image() {
-        if std::env::var("OXAGEN_MEDIA_LIVE").is_err() {
+        if !crate::adapters::live_smoke_enabled() {
             return;
         }
         let key = match ApiKey::from_env("OPENAI_API_KEY") {

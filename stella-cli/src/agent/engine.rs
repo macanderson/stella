@@ -582,26 +582,16 @@ fn build_provider_parts(
         Dialect::Vertex => {
             // The access token is `api_key` (VERTEX_ACCESS_TOKEN via the
             // credential chain); project and location are Vertex-specific
-            // addressing, resolved here with named errors rather than
-            // burying a doomed request.
-            let project = std::env::var("VERTEX_PROJECT_ID")
-                .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
-                .ok()
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| {
-                    "Vertex AI needs a project id — set VERTEX_PROJECT_ID (or \
-                     GOOGLE_CLOUD_PROJECT)"
-                        .to_string()
-                })?;
-            let location = std::env::var("VERTEX_LOCATION")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "global".to_string());
+            // addressing, owned by `stella_model::credential` so a second
+            // host of the engine gets the same variable names, the same
+            // fallback order, and the same named errors without copying them.
+            let addressing =
+                stella_model::credential::VertexAddressing::resolve().map_err(|e| e.to_string())?;
             let mut provider = stella_model::vertex::VertexProvider::new(
                 api_key,
                 model_id.to_string(),
-                project,
-                location,
+                addressing.project,
+                addressing.location,
             );
             if let Some(override_url) = base_url_override {
                 provider = provider.with_base_url(override_url.to_string());
@@ -610,29 +600,17 @@ fn build_provider_parts(
         }
         Dialect::Bedrock => {
             // `api_key` is AWS_ACCESS_KEY_ID via the credential chain; the
-            // rest of the standard AWS env set is read here. Secret
-            // resolution failure is a named error pointing at the exact
+            // rest of the standard AWS env set is resolved by
+            // `stella_model::credential`, alongside the adapter that needs
+            // it. A missing secret is a named error pointing at the exact
             // var, not a doomed unsigned request.
-            let secret = std::env::var("AWS_SECRET_ACCESS_KEY")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| {
-                    "Bedrock needs AWS_SECRET_ACCESS_KEY alongside AWS_ACCESS_KEY_ID".to_string()
-                })?;
-            let session_token = std::env::var("AWS_SESSION_TOKEN")
-                .ok()
-                .filter(|v| !v.is_empty())
-                .map(ApiKey::new);
-            let region = std::env::var("AWS_REGION")
-                .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
-                .ok()
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "us-east-1".to_string());
+            let aws = stella_model::credential::BedrockCredentials::resolve()
+                .map_err(|e| e.to_string())?;
             let mut provider = stella_model::bedrock::BedrockProvider::new(
                 api_key,
-                ApiKey::new(secret),
-                session_token,
-                region,
+                aws.secret_access_key,
+                aws.session_token,
+                aws.region,
                 model_id.to_string(),
             );
             if let Some(override_url) = base_url_override {

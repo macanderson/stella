@@ -116,8 +116,8 @@ pub struct SkillFile {
     pub content: String,
 }
 
-/// The filesystem discovery port for skill files (
-/// §1.3), mirroring [`crate::rules::RuleSource`]. A real implementation
+/// The filesystem discovery port for skill files,
+/// mirroring [`crate::rules::RuleSource`]. A real implementation
 /// (owned by `stella-cli`/`stella-tools`) walks each directory in `roots`, in
 /// the given order, and returns every skill file's contents — discovering
 /// **both** layouts: `<root>/<slug>/SKILL.md` (the `npx skills` ecosystem

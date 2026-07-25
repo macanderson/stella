@@ -48,7 +48,7 @@ pub struct RunOptions {
     pub paste_line_threshold: usize,
     /// When `Some`, structured event/log lines are appended here (L-T8). The
     /// CLI wires the real `~/.local/state/stella/logs/` path when
-    /// `OXAGEN_DEBUG=1`; taking it as an option keeps this crate decoupled
+    /// `STELLA_DEBUG=1`; taking it as an option keeps this crate decoupled
     /// from that location.
     pub debug_log_path: Option<PathBuf>,
     /// Enable mouse capture. **Off by default** so native text selection

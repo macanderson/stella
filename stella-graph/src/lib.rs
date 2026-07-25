@@ -82,6 +82,11 @@ pub use watch::WatchInjector;
 /// always current — no session-start cache to go stale. Best-effort: no
 /// index and no manifest yields an empty snapshot, which makes every
 /// storage mechanism a no-op (spec §11).
+///
+/// This is a pure read: it opens the store with [`store::open_read`], so the
+/// gate never runs DDL on the agent's write path. A store no writer has
+/// migrated yet has no tables to read and yields the same empty snapshot a
+/// missing store does.
 pub fn load_storage_snapshot(workspace_root: &std::path::Path) -> StorageSnapshot {
     let manifest = manifest::StorageManifest::load(workspace_root)
         .ok()
@@ -91,7 +96,7 @@ pub fn load_storage_snapshot(workspace_root: &std::path::Path) -> StorageSnapsho
         .join("private")
         .join("codegraph.db");
     let rows = if db_path.exists() {
-        store::open(&db_path)
+        store::open_read(&db_path)
             .and_then(|conn| store::storage_rows(&conn))
             .unwrap_or_default()
     } else {

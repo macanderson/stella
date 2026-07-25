@@ -153,6 +153,37 @@ async fn healthz_needs_no_auth_and_missing_token_is_rejected() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn zero_max_steps_is_rejected_instead_of_starting_a_doomed_turn() {
+    let addr = start_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+        "max_steps": 0,
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(
+        status.contains("400"),
+        "create status: {status}, body: {body}"
+    );
+    assert!(body.contains("max_steps"), "error names the field: {body}");
+
+    // The ordinary path is untouched.
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+        "max_steps": 1,
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(
+        status.contains("200"),
+        "create status: {status}, body: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn full_turn_round_trips_over_http() {
     let addr = start_server().await;
 

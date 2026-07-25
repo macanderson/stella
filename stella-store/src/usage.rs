@@ -38,7 +38,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::Result;
 
@@ -363,6 +363,14 @@ impl UsageStore {
 
     /// The replication watermark for one project: the highest source-store
     /// `telemetry.rowid` already in the hub. 0 for a never-synced project.
+    ///
+    /// Only "no row" means 0. A genuine read failure (SQLITE_BUSY past the
+    /// timeout, a corrupt page) propagates, because swallowing it as 0 is
+    /// indistinguishable from never-synced and makes
+    /// [`crate::Store::replicate_telemetry_to_usage`] re-ship the project's
+    /// whole telemetry history, every turn, with nothing surfaced. The caller
+    /// discards the result (`let _ =`), so a real error stays best-effort
+    /// rather than failing a turn.
     pub fn telemetry_cursor(&self, project_id: &str) -> Result<i64> {
         Ok(self
             .lock()
@@ -371,6 +379,7 @@ impl UsageStore {
                 params![project_id],
                 |r| r.get(0),
             )
+            .optional()?
             .unwrap_or(0))
     }
 

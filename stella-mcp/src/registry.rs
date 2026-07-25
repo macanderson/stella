@@ -116,9 +116,13 @@ pub struct RegistryServer {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Repository {
+    /// Clone/browse URL of the server's source. Displayed to the operator so
+    /// they can vet an entry before installing it; stella never fetches it.
     pub url: String,
+    /// The forge hosting `url` (`github`, `gitlab`, …) when the entry names one.
     #[serde(default)]
     pub source: Option<String>,
+    /// Path inside the repository holding this server, for monorepo entries.
     #[serde(default)]
     pub subfolder: Option<String>,
 }
@@ -154,12 +158,20 @@ pub struct PackageTransport {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Argument {
+    /// The literal value to place on the spawn command line. Preferred over
+    /// `default`; an argument with neither contributes nothing, because the
+    /// client cannot invent one.
     #[serde(default)]
     pub value: Option<String>,
+    /// The registry's argument `type` (`positional` or `named`). Carried from
+    /// the wire; the spawn mapper appends concrete values in declared order
+    /// and does not reorder by kind.
     #[serde(rename = "type", default)]
     pub kind: Option<String>,
+    /// The flag this argument belongs to (e.g. `--root`) for a named argument.
     #[serde(default)]
     pub name: Option<String>,
+    /// The registry's suggested value, used when `value` is absent.
     #[serde(default)]
     pub default: Option<String>,
 }
@@ -192,14 +204,23 @@ pub struct RegistryRemote {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Header {
+    /// The HTTP header name to send on every request to this remote.
     #[serde(default)]
     pub name: String,
+    /// A literal value. Carried into the transport config only for a header
+    /// that is neither required nor secret — otherwise the operator supplies
+    /// it and this is ignored.
     #[serde(default)]
     pub value: Option<String>,
+    /// Operator-facing explanation of the header, shown when prompting for it.
     #[serde(default)]
     pub description: Option<String>,
+    /// The remote refuses requests without this header, so it is surfaced as
+    /// an [`AuthField`] to collect rather than guessed at.
     #[serde(rename = "isRequired", default)]
     pub is_required: bool,
+    /// The header carries a credential: never preset from the registry
+    /// document, always collected as a secret [`AuthField`].
     #[serde(rename = "isSecret", default)]
     pub is_secret: bool,
 }

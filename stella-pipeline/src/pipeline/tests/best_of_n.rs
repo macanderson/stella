@@ -3,7 +3,8 @@
 //! `isolated_config`, and the other fakes above via `super::*`. The shared
 //! infrastructure itself (`run_isolated`, `isolated_config`,
 //! `FakeWorkspacePort`, `FakeWorkspace`) stays in `tests.rs` — `mcp_prefetch`
-//! and `task5` also depend on it, so it must live in the common ancestor.
+//! and `witness_isolation` also depend on it, so it must live in the common
+//! ancestor.
 
 use super::*;
 

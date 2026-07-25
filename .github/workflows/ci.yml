@@ -2,17 +2,27 @@ name: ci
 
 on:
   pull_request:
-    # Docs-site-only changes are covered by docs.yml — don't spend an hour
-    # of Rust CI on them.
+    # Prose-only changes can't break the Rust build — don't spend an hour of
+    # CI on them. Nothing here goes ungated: the site is built by docs.yml,
+    # and `docs/**` is checked by normative-home.yml, which triggers on
+    # exactly that path and is deliberately isolated from this workflow.
+    # (`*.md` matches the repo root only — GitHub's `*` stops at `/` — so a
+    # crate's own README still pays the gate, which is what we want.)
     paths-ignore:
-      - "stella-docs/**"
+      - "website/**"
+      - "docs/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
       - "package.json"
       - "pnpm-workspace.yaml"
       - "pnpm-lock.yaml"
   push:
     branches: [main]
     paths-ignore:
-      - "stella-docs/**"
+      - "website/**"
+      - "docs/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
       - "package.json"
       - "pnpm-workspace.yaml"
       - "pnpm-lock.yaml"
@@ -44,6 +54,12 @@ concurrency:
   #   ternary already covers this; do not fold merge_group into the PR branch.
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Both jobs only check out, build, and test — nothing here writes to the repo.
+# Without the key, GITHUB_TOKEN falls back to the repository default, which on
+# repos created before the 2023 default change is read/write on every scope.
+permissions:
+  contents: read
 
 jobs:
   check:

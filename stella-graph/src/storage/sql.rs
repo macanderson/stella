@@ -35,31 +35,40 @@ pub(crate) fn extract_sql(grammars: &Grammars, source: &str) -> StorageExtract {
     out
 }
 
-fn walk_sql(node: Node, src: &[u8], out: &mut Vec<RelationDef>) {
-    match node.kind() {
-        "create_table" => {
-            if let Some(mut rel) = relation_header(node, src, RelationKind::Table) {
-                collect_columns(node, src, &mut rel);
-                collect_table_constraints(node, src, &mut rel);
-                out.push(rel);
+/// Pre-order walk emitting one [`RelationDef`] per DDL statement, in source
+/// order. An explicit worklist, not recursion: a deeply-nested statement in an
+/// environment-controlled file must not overflow the thread stack (which aborts
+/// the process). Children are pushed in reverse so popping preserves source
+/// order.
+fn walk_sql(root: Node, src: &[u8], out: &mut Vec<RelationDef>) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "create_table" => {
+                if let Some(mut rel) = relation_header(node, src, RelationKind::Table) {
+                    collect_columns(node, src, &mut rel);
+                    collect_table_constraints(node, src, &mut rel);
+                    out.push(rel);
+                }
+            }
+            "create_view" => {
+                if let Some(rel) = relation_header(node, src, RelationKind::View) {
+                    out.push(rel);
+                }
+            }
+            "create_type" => {
+                if let Some(mut rel) = relation_header(node, src, RelationKind::EnumType) {
+                    rel.enum_values = enum_values(node, src);
+                    out.push(rel);
+                }
+            }
+            _ => {}
+        }
+        for idx in (0..node.child_count() as u32).rev() {
+            if let Some(child) = node.child(idx) {
+                stack.push(child);
             }
         }
-        "create_view" => {
-            if let Some(rel) = relation_header(node, src, RelationKind::View) {
-                out.push(rel);
-            }
-        }
-        "create_type" => {
-            if let Some(mut rel) = relation_header(node, src, RelationKind::EnumType) {
-                rel.enum_values = enum_values(node, src);
-                out.push(rel);
-            }
-        }
-        _ => {}
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk_sql(child, src, out);
     }
 }
 

@@ -2599,7 +2599,7 @@ fn read_tally_footer_does_not_blind_loop_detection() {
         messages.push(read_result(&id, "same", count));
     }
     let verdict = detect_loop(
-        &recent_call_records(&messages),
+        &recent_call_records(&messages, &Default::default()),
         LoopDetectionConfig::default(),
     );
     assert!(
@@ -2619,7 +2619,7 @@ fn read_tally_footer_does_not_blind_loop_detection() {
     }
     assert_eq!(
         detect_loop(
-            &recent_call_records(&changing),
+            &recent_call_records(&changing, &Default::default()),
             LoopDetectionConfig::default()
         ),
         crate::loop_detect::LoopVerdict::NoLoop
@@ -2746,5 +2746,5 @@ async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
 }
 
 mod audit_fixes;
-mod task4;
+mod budget_boundaries;
 mod usage_completeness;

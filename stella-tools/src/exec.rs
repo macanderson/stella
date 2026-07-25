@@ -160,14 +160,16 @@ pub(crate) async fn run_argv_untruncated(
 }
 
 /// SIGKILLs `pid`'s process group on drop unless disarmed — the
-/// cancellation backstop for [`drive`]: when the future driving a tool call
-/// is dropped mid-wait (Esc cancels the turn), the detached process group
-/// must not keep running — and mutating the tree — after the user believes
-/// the turn stopped. Normal exit and the timeout path disarm it.
+/// cancellation backstop for [`drive`] and for the tools that spawn their
+/// own child instead of coming through it ([`crate::bash`],
+/// [`crate::custom`]): when the future driving a tool call is dropped
+/// mid-wait (Esc cancels the turn), the detached process group must not keep
+/// running — and mutating the tree — after the user believes the turn
+/// stopped. Normal exit and the timeout path disarm it.
 #[cfg(unix)]
-struct GroupKillGuard {
-    pid: i32,
-    armed: bool,
+pub(crate) struct GroupKillGuard {
+    pub(crate) pid: i32,
+    pub(crate) armed: bool,
 }
 
 #[cfg(unix)]

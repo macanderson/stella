@@ -311,6 +311,34 @@ pub static PROVIDERS: &[ProviderConfig] = &[
     },
 ];
 
+/// The handful of provider key variables named in the first-run "no API key
+/// found" error. Deliberately a short subset of [`PROVIDERS`]: the full
+/// enumeration lives behind `stella models`, where it is already tabulated
+/// with per-provider key status, instead of hard-wrapping across an
+/// 80-column terminal inside an error message.
+const COMMON_KEY_ENV_VARS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "ZAI_API_KEY",
+    "OPENROUTER_API_KEY",
+];
+
+/// The first-run "no key anywhere" message. This is the single most-hit error
+/// in the product, so it names the two commands built for it — `stella auth
+/// set` writes `~/.stella/credentials.toml` safely (masked prompt, `--stdin`
+/// mode, owner-only perms) and `stella models` tabulates every provider with
+/// its key status — instead of telling the user to hand-edit TOML and then
+/// hard-wrapping all thirteen provider rows across their terminal.
+pub(crate) fn no_api_key_error() -> String {
+    format!(
+        "no API key found.\n\n\
+         Set a provider key, e.g. one of:\n  {}\n\
+         Or run: stella auth set <provider>  (writes ~/.stella/credentials.toml)\n\
+         See every provider and its key status: stella models",
+        COMMON_KEY_ENV_VARS.join(", ")
+    )
+}
+
 /// The `local` pseudo-provider: any OpenAI-compatible endpoint the user
 /// points `--base-url` at (Ollama, vLLM, LM Studio, llama.cpp server, or
 /// anything else speaking Chat Completions). Not in [`PROVIDERS`]: it is
@@ -906,17 +934,7 @@ impl Config {
             }
         }
 
-        Err(format!(
-            "no API key found. Set one of: {}\n\nExample: export ZAI_API_KEY=your_key_here\n\
-             (or put it in a project .env / .env.local, add it to \
-             ~/.stella/credentials.toml, or pass --model provider/model to be prompted \
-             interactively)",
-            PROVIDERS
-                .iter()
-                .map(|p| format!("{} ({})", p.env_var, p.display_name))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
+        Err(no_api_key_error())
     }
 
     #[allow(clippy::too_many_arguments)]

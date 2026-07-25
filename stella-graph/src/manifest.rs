@@ -360,6 +360,15 @@ fn toml_escape(text: &str) -> String {
 
 /// Minimal glob: `**` spans any number of path segments, `*` spans within a
 /// segment. Enough for `migrations/**`, `db/*.sql`, `prisma/schema.prisma`.
+///
+/// Patterns are repo-controlled (`stella.storage.toml` layer `paths`, and
+/// `.gitattributes` via [`crate::generated`]) and evaluated once per file per
+/// index pass, so the `**` search must not be exponential in path depth: a
+/// cloned repo carrying `**/a/**/a/**/x` would otherwise wedge indexing.
+/// Two things keep it polynomial, both semantics-preserving:
+/// consecutive `**` segments collapse (`**/**` matches exactly what `**` does),
+/// and the segment recursion — a pure function of the two suffix positions —
+/// is memoized on `(pat_idx, path_idx)`.
 pub fn glob_match(pattern: &str, path: &str) -> bool {
     fn segments(s: &str) -> Vec<&str> {
         s.split('/').filter(|s| !s.is_empty()).collect()
@@ -395,17 +404,42 @@ pub fn glob_match(pattern: &str, path: &str) -> bool {
         }
         true
     }
-    fn matches(pat: &[&str], path: &[&str]) -> bool {
-        match (pat.first(), path.first()) {
+    /// `memo` is a `(pat.len() + 1) * stride` table of already-decided
+    /// suffix pairs, `stride == path.len() + 1`.
+    fn matches(
+        pat: &[&str],
+        path: &[&str],
+        pi: usize,
+        si: usize,
+        memo: &mut [Option<bool>],
+        stride: usize,
+    ) -> bool {
+        let key = pi * stride + si;
+        if let Some(decided) = memo[key] {
+            return decided;
+        }
+        let result = match (pat.get(pi), path.get(si)) {
             (None, None) => true,
             (Some(&"**"), _) => {
-                matches(&pat[1..], path) || (!path.is_empty() && matches(pat, &path[1..]))
+                matches(pat, path, pi + 1, si, memo, stride)
+                    || (si < path.len() && matches(pat, path, pi, si + 1, memo, stride))
             }
-            (Some(p), Some(s)) if seg_match(p, s) => matches(&pat[1..], &path[1..]),
+            (Some(p), Some(s)) if seg_match(p, s) => {
+                matches(pat, path, pi + 1, si + 1, memo, stride)
+            }
             _ => false,
-        }
+        };
+        memo[key] = Some(result);
+        result
     }
-    matches(&segments(pattern), &segments(path))
+
+    let mut pat = segments(pattern);
+    // `**/**` ≡ `**`, and every extra `**` multiplies the search space.
+    pat.dedup_by(|a, b| *a == "**" && *b == "**");
+    let path = segments(path);
+    let stride = path.len() + 1;
+    let mut memo = vec![None; (pat.len() + 1) * stride];
+    matches(&pat, &path, 0, 0, &mut memo, stride)
 }
 
 /// Single-segment glob for redirect patterns (`refund*` against a
@@ -495,6 +529,27 @@ intent = "Gross amount charged."
         assert!(glob_match("**/schema.prisma", "prisma/schema.prisma"));
         assert!(name_glob_match("refund*", "refund_status"));
         assert!(!name_glob_match("refund*", "payment"));
+    }
+
+    /// The `**` search is repo-controlled input: a `.gitattributes` or a
+    /// `stella.storage.toml` in a cloned repo can carry a pattern whose
+    /// double-recursion is exponential in path depth. Both shapes below take
+    /// astronomically long without the `**` collapse + memo table; both must
+    /// terminate here, and must still answer correctly.
+    #[test]
+    fn pathological_double_star_patterns_terminate() {
+        let deep = vec!["a"; 40].join("/");
+
+        // Adjacent `**` runs: collapsed to a single `**`.
+        let repeated = format!("{}x", "**/".repeat(20));
+        assert!(!glob_match(&repeated, &deep));
+        assert!(glob_match(&repeated, &format!("{deep}/x")));
+
+        // `**` separated by wildcards that all match — the worst case for the
+        // naive recursion, and the one the collapse alone does not fix.
+        let interleaved = format!("{}x", "**/a/".repeat(12));
+        assert!(!glob_match(&interleaved, &deep));
+        assert!(glob_match(&interleaved, &format!("{deep}/x")));
     }
 
     #[test]

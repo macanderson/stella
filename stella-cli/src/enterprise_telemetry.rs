@@ -388,6 +388,27 @@ fn register_verified_credentials(enrollment: &VerifiedEnrollment) {
     ]);
 }
 
+/// Tool names a process-free registry must never surface. Every entry is a
+/// real `stella_tools` tool name registered only inside the process-ful
+/// branch of `ToolRegistry` — pinned by
+/// `every_process_free_forbidden_name_is_a_real_tool`, so a hand-typed name
+/// that matches nothing can no longer pass the proof vacuously.
+pub(crate) const PROCESS_FREE_FORBIDDEN_TOOLS: &[&str] = &[
+    "bash",
+    "grep",
+    "glob",
+    "gather_context",
+    "build_project",
+    "run_tests",
+    "run_lint",
+    "format_code",
+    "run_script",
+    "start_process",
+    "read_output",
+    "send_stdin",
+    "stop_process",
+];
+
 pub(crate) fn prove_process_free_surface(workspace_root: &Path) -> Result<(), String> {
     let registry = stella_tools::ToolRegistry::with_backends_and_options(
         workspace_root.to_path_buf(),
@@ -408,20 +429,10 @@ pub(crate) fn prove_process_free_surface(workspace_root: &Path) -> Result<(), St
         .into_iter()
         .map(|schema| schema.name)
         .collect();
-    let forbidden = [
-        "bash",
-        "grep",
-        "glob",
-        "gather_context",
-        "process_start",
-        "process_write",
-        "process_poll",
-        "test_start",
-        "test_poll",
-        "search_skills",
-        "install_skill",
-    ];
-    if let Some(name) = forbidden.iter().find(|name| names.contains(**name)) {
+    if let Some(name) = PROCESS_FREE_FORBIDDEN_TOOLS
+        .iter()
+        .find(|name| names.contains(**name))
+    {
         return Err(format!(
             "enterprise telemetry process-free registry exposes `{name}`"
         ));

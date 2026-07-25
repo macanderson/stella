@@ -44,6 +44,21 @@ run summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`,
 top-level [`files_touched`](/docs/telemetry/files-touched) telemetry payload — which the
 pipeline summary does **not** carry.
 
+**Failures keep the same key set.** A pipeline run that errors emits every key above, with
+`text` and the pipeline-only keys (`task_class`, `verdict`, `revisions`, `candidates_run`)
+as explicit `null` rather than missing — so a strict deserializer written against the
+success shape still parses. A failure *before* the agent is constructed — no API key
+configured, an unknown provider or model, a malformed `settings.json` — cannot report a
+model or an event log, so it emits the minimal envelope on stdout alongside the `stella: …`
+line on stderr:
+
+```json
+{ "status": "error", "text": null, "reason": "no API key found. …" }
+```
+
+Under `--output-format text` stdout stays clean in both cases; the diagnostic is the stderr
+line.
+
 ## Configure via environment
 
 Every core flag has an environment variable, so a CI job can be configured without editing

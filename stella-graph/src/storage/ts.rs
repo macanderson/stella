@@ -848,13 +848,27 @@ fn variable_declarators<'a>(root: Node<'a>, src: &'a [u8]) -> Vec<(String, Node<
         .collect()
 }
 
+/// Every descendant of `node` (inclusive) whose kind is `kind`, in source
+/// order.
+///
+/// An explicit worklist rather than recursion, for the reason
+/// [`crate::walk::walk_indexable`] uses one: the tree is environment-controlled
+/// input — generated code with thousands of nested array/object literals, or a
+/// hostile file in a cloned repo — and a recursive descent overflows the thread
+/// stack, which aborts the whole host agent process rather than erroring.
+/// Children are pushed in reverse so popping yields source order, which the
+/// pre-order emission contract of every caller depends on.
 fn collect_kind<'a>(node: Node<'a>, kind: &str, out: &mut Vec<Node<'a>>) {
-    if node.kind() == kind {
-        out.push(node);
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_kind(child, kind, out);
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if node.kind() == kind {
+            out.push(node);
+        }
+        for idx in (0..node.child_count() as u32).rev() {
+            if let Some(child) = node.child(idx) {
+                stack.push(child);
+            }
+        }
     }
 }
 
@@ -1072,6 +1086,44 @@ mod tests {
             .iter()
             .find(|r| r.name == name)
             .unwrap_or_else(|| panic!("relation {name} missing: {:?}", out.relations))
+    }
+
+    /// Source is environment-controlled: a generated bundle or a hostile file
+    /// in a cloned repo can nest thousands of array literals deep. A recursive
+    /// descent overflows the thread stack there, which **aborts the process**
+    /// rather than failing a test — so on the pre-worklist code this test does
+    /// not fail, it crashes the test binary. With the explicit worklist it
+    /// simply returns.
+    #[test]
+    fn deeply_nested_source_does_not_overflow_the_walk() {
+        const DEPTH: usize = 20_000;
+        let src = format!("const deep = {}{};\n", "[".repeat(DEPTH), "]".repeat(DEPTH));
+        let grammars = Grammars::load().expect("grammars compile");
+        let tree = crate::parse::parse_tree(&grammars, Language::TypeScript, &src)
+            .expect("typescript parses");
+
+        let mut found = Vec::new();
+        collect_kind(tree.root_node(), "array", &mut found);
+        assert!(!found.is_empty(), "the nested arrays are reachable");
+    }
+
+    /// The worklist must still emit in source order — every caller of
+    /// [`collect_kind`] relies on pre-order emission (first match wins in
+    /// [`find_descendant`], and relations are reported in file order).
+    #[test]
+    fn collect_kind_emits_in_source_order() {
+        let src = "const a = f(1);\nconst b = g(h(2));\nconst c = i(3);\n";
+        let grammars = Grammars::load().expect("grammars compile");
+        let tree = crate::parse::parse_tree(&grammars, Language::TypeScript, src)
+            .expect("typescript parses");
+
+        let mut calls = Vec::new();
+        collect_kind(tree.root_node(), "call_expression", &mut calls);
+        let texts: Vec<&str> = calls
+            .iter()
+            .map(|n| n.utf8_text(src.as_bytes()).unwrap())
+            .collect();
+        assert_eq!(texts, vec!["f(1)", "g(h(2))", "h(2)", "i(3)"]);
     }
 
     #[test]

@@ -423,6 +423,49 @@ impl Tool for GatherContext {
     }
 }
 
+/// Per-symbol definitions/references answers. `None` means "no code-graph
+/// index at all" and renders as its own note — distinct from a query that
+/// ran and failed.
+type SymbolAnswers = Vec<(String, Option<(ToolOutput, ToolOutput)>)>;
+
+/// Answer definitions + references for every symbol against ONE open graph
+/// handle, so a sweep pays for a single open + `index_all` pass instead of
+/// two per symbol.
+///
+/// Synchronous by design — the caller runs it on the blocking pool, and the
+/// handle never leaves this frame.
+fn graph_sweep(root: &Path, symbols: Vec<String>) -> SymbolAnswers {
+    let graph = match crate::graph::open_or_build(root) {
+        Ok(graph) => graph,
+        // The exact shape the per-symbol `run_query` produced when the open
+        // failed: the same error under both of the symbol's headings.
+        Err(message) => return symbol_failures(symbols, message),
+    };
+    let answers = symbols
+        .into_iter()
+        .map(|symbol| {
+            let defs = crate::graph::run_query_with(&graph, "definitions", &symbol);
+            let refs = crate::graph::run_query_with(&graph, "references", &symbol);
+            (symbol, Some((defs, refs)))
+        })
+        .collect();
+    graph.shutdown();
+    answers
+}
+
+/// One shared failure rendered under both of every symbol's headings.
+fn symbol_failures(symbols: Vec<String>, message: String) -> SymbolAnswers {
+    symbols
+        .into_iter()
+        .map(|symbol| {
+            let error = || ToolOutput::Error {
+                message: message.clone(),
+            };
+            (symbol, Some((error(), error())))
+        })
+        .collect()
+}
+
 /// Run the sweep's sub-queries concurrently, assemble + persist the pack,
 /// and render it.
 async fn gather(
@@ -467,70 +510,29 @@ async fn gather(
         Ok(available) => available,
         Err(message) => return ToolOutput::Error { message },
     };
-    let graph_symbols = inputs.symbols.clone();
-    let graph_root = root.to_path_buf();
-    let graph_task = tokio::task::spawn_blocking(move || {
-        type SymbolAnswers = Vec<(String, Option<(ToolOutput, ToolOutput)>)>;
-        if !graph_on {
-            return graph_symbols
-                .into_iter()
-                .map(|s| (s, None))
-                .collect::<SymbolAnswers>();
-        }
-        // ONE open, ONE index pass, N lookups — the previous shape re-ran
-        // `open_or_build` twice per symbol, so N symbols cost 2N full
-        // workspace walk+hash passes on a worker thread.
-        let (graph, warning) = match crate::graph::open_or_build(&graph_root) {
-            Ok(opened) => opened,
-            Err(message) => {
-                return graph_symbols
-                    .into_iter()
-                    .map(|s| {
-                        let err = || ToolOutput::Error {
-                            message: message.clone(),
-                        };
-                        (s, Some((err(), err())))
-                    })
-                    .collect();
+    // One open, one index pass, every symbol answered against that one
+    // handle — on the blocking pool (#549). The per-symbol `join_all` this
+    // replaces called the synchronous `run_query` twice per symbol, so N
+    // symbols meant 2N full workspace index passes; and because those async
+    // blocks contained no await, `join_all` polled them strictly in
+    // sequence, so the concurrency was never real.
+    let graph_results = {
+        let graph_root = root.to_path_buf();
+        let symbols = inputs.symbols.clone();
+        let cancelled = inputs.symbols.clone();
+        async move {
+            if !graph_on {
+                return symbols.into_iter().map(|symbol| (symbol, None)).collect();
             }
-        };
-        let answers: SymbolAnswers = graph_symbols
-            .into_iter()
-            .map(|symbol| {
-                let defs = crate::graph::with_index_warning(
-                    crate::graph::query(&graph, "definitions", &symbol),
-                    warning.clone(),
-                );
-                let refs = crate::graph::query(&graph, "references", &symbol);
-                (symbol, Some((defs, refs)))
-            })
-            .collect();
-        graph.shutdown();
-        answers
-    });
+            tokio::task::spawn_blocking(move || graph_sweep(&graph_root, symbols))
+                .await
+                .unwrap_or_else(|_| {
+                    symbol_failures(cancelled, "the code-graph sweep was cancelled".into())
+                })
+        }
+    };
     let (glob_results, grep_results, graph_results) =
-        futures_util::join!(glob_results, grep_results, graph_task);
-    // A panicked blocking task must not take the whole pack down: the sweep
-    // still has its glob and grep sections to render.
-    let graph_results = graph_results.unwrap_or_else(|join_error| {
-        inputs
-            .symbols
-            .iter()
-            .map(|symbol| {
-                (
-                    symbol.clone(),
-                    Some((
-                        ToolOutput::Error {
-                            message: format!("code-graph sweep failed: {join_error}"),
-                        },
-                        ToolOutput::Error {
-                            message: format!("code-graph sweep failed: {join_error}"),
-                        },
-                    )),
-                )
-            })
-            .collect()
-    });
+        futures_util::join!(glob_results, grep_results, graph_results);
 
     // ── Fold results into sections + the excerpt worklist ───────────────
     let mut match_files: BTreeMap<String, Vec<usize>> = BTreeMap::new();
