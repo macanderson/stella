@@ -67,10 +67,19 @@ cargo clippy -p stella-tools --all-targets -- -D warnings
 CI runs exactly this, and a red gate is an automatic "not yet":
 
 ```bash
+./scripts/check-no-scratch.sh
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
+Or just `make gate`, which is the four of them in order.
+
+The first one asserts that no tracked file matches a `.gitignore` rule —
+agent-session scratch (repro trees, plans, memory files) must never reach the
+remote (#448). If it fails, either untrack the path with
+`git rm -r --cached <path>` (the files stay on your disk) or narrow the ignore
+rule that is catching real content.
 
 ## Where does my change go? — a workspace tour
 

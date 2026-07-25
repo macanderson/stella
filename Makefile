@@ -67,11 +67,15 @@ bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
 	cd bench/harbor_adapter && uv sync --locked --extra dev && uv run --no-sync pytest -q
 	cd bench/terminal_bench_analysis && uv sync --locked --extra dev && uv run --no-sync pytest -q
 
+.PHONY: no-scratch
+no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
+	@./scripts/check-no-scratch.sh
+
 .PHONY: gate
-gate: format-check lint test ## Full CI gate: fmt-check + clippy + test
+gate: no-scratch format-check lint test ## Full CI gate: no-scratch + fmt-check + clippy + test
 
 .PHONY: check
-check: format-check lint ## Fast pre-push check (fmt + clippy, no tests)
+check: no-scratch format-check lint ## Fast pre-push check (scratch + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)

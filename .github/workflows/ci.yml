@@ -55,6 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Cheap and toolchain-free, so it runs before the Rust setup: a tracked
+      # file that matches .gitignore means agent scratch reached the remote
+      # (#448), or an ignore rule is too broad to ever accept new files.
+      - name: no tracked file is gitignored
+        run: ./scripts/check-no-scratch.sh
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
