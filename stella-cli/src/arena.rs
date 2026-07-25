@@ -561,6 +561,7 @@ mod tests {
         AgentEvent::StepManifest {
             turn_instance: 1,
             step: 0,
+            call_seq: 0,
             role: ModelCallRole::default(),
             provider: "test".into(),
             model: "test-model".into(),

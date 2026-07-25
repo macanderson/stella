@@ -44,9 +44,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use stella_core::hooks::{HookRunner, Hooks};
+use stella_core::receipts::RECEIPT_SEQ_ALLOCATED_BASE;
 use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
@@ -448,6 +449,13 @@ pub struct Pipeline<'a> {
     events: EventSender,
     config: PipelineConfig,
     configured_test: Result<Option<TestInvocation>, crate::witness::TestInvocationError>,
+    /// Monotonic `StepManifest::call_seq` for the management roles that call
+    /// providers directly (`metered_raw_call`). They sit outside any step loop,
+    /// so nothing else keys their receipts apart — several judge calls in one
+    /// run would otherwise all land on the same primary key and overwrite each
+    /// other. Starts at [`RECEIPT_SEQ_ALLOCATED_BASE`], above the seats the
+    /// engine's worker and summarizer reserve.
+    raw_call_seq: AtomicU64,
 }
 
 impl<'a> Pipeline<'a> {
@@ -480,6 +488,7 @@ impl<'a> Pipeline<'a> {
             events: events.into(),
             config,
             configured_test,
+            raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
         }
     }
 

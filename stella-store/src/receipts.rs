@@ -49,6 +49,10 @@ pub struct ManifestBlockRow {
 pub struct StepManifestRow {
     pub turn_instance: u32,
     pub step: u64,
+    /// Which model call at this step: 0 the engine's worker, 1 the overflow
+    /// summarizer, 2+ an allocated management role. See
+    /// `AgentEvent::StepManifest::call_seq`.
+    pub call_seq: u64,
     pub provider: String,
     pub model: String,
     pub call_role: String,
@@ -100,15 +104,17 @@ impl Store {
         let estimated = sqlite_i64("manifest estimated input", row.estimated_input_tokens)?;
         let mut conn = self.lock();
         let tx = conn.transaction()?;
+        let call_seq = sqlite_i64("manifest call seq", row.call_seq)?;
         tx.execute(
             "INSERT OR REPLACE INTO step_receipt
-               (execution_id, turn_instance, step, provider, model, call_role,
+               (execution_id, turn_instance, step, call_seq, provider, model, call_role,
                 effective_budget_tokens, calibration_factor, estimated_input_tokens)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
                 turn,
                 step,
+                call_seq,
                 row.provider,
                 row.model,
                 row.call_role,
@@ -117,12 +123,13 @@ impl Store {
                 estimated,
             ],
         )?;
-        // Clear any prior ordinals for this step before rewriting, so a
+        // Clear any prior ordinals for this call before rewriting, so a
         // shorter re-emitted manifest cannot leave stale tail rows behind.
+        // Scoped by call_seq: the auxiliary calls sharing this step keep theirs.
         tx.execute(
             "DELETE FROM step_manifest
-             WHERE execution_id = ? AND turn_instance = ? AND step = ?",
-            params![execution_id, turn, step],
+             WHERE execution_id = ? AND turn_instance = ? AND step = ? AND call_seq = ?",
+            params![execution_id, turn, step, call_seq],
         )?;
         // token_cost is a property of the block (context_blocks.token_cost),
         // not of a manifest entry, so step_manifest stores only ordering, zone,
@@ -133,13 +140,14 @@ impl Store {
             let message_index = sqlite_i64("manifest message index", block.message_index)?;
             tx.execute(
                 "INSERT INTO step_manifest
-                   (execution_id, turn_instance, step, ordinal, block_id, cache_zone,
-                    resident_since_step, message_index)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                   (execution_id, turn_instance, step, call_seq, ordinal, block_id,
+                    cache_zone, resident_since_step, message_index)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     execution_id,
                     turn,
                     step,
+                    call_seq,
                     ordinal,
                     block.block_id,
                     block.cache_zone,
@@ -186,8 +194,10 @@ impl Store {
         execution_id: i64,
         turn_instance: u32,
         step: u64,
+        call_seq: u64,
     ) -> Result<Vec<ManifestBlockRow>> {
         let step = sqlite_i64("manifest step", step)?;
+        let call_seq = sqlite_i64("manifest call seq", call_seq)?;
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT sm.block_id, sm.cache_zone, cb.token_cost, sm.resident_since_step,
@@ -196,24 +206,105 @@ impl Store {
              LEFT JOIN context_blocks cb
                ON cb.execution_id = sm.execution_id AND cb.block_id = sm.block_id
              WHERE sm.execution_id = ? AND sm.turn_instance = ? AND sm.step = ?
+               AND sm.call_seq = ?
              ORDER BY sm.ordinal",
         )?;
         let rows = stmt
-            .query_map(params![execution_id, i64::from(turn_instance), step], |r| {
-                Ok(ManifestBlockRow {
-                    block_id: r.get(0)?,
-                    cache_zone: r.get(1)?,
-                    // token_cost may be NULL if the block row is missing (a
-                    // manifest referencing an unregistered block — a bug worth
-                    // surfacing, not crashing on); default 0.
-                    token_cost: r.get::<_, Option<i64>>(2)?.unwrap_or(0) as u32,
-                    resident_since_step: r.get::<_, i64>(3)? as u64,
-                    message_index: r.get::<_, i64>(4)? as u64,
+            .query_map(
+                params![execution_id, i64::from(turn_instance), step, call_seq],
+                |r| {
+                    Ok(ManifestBlockRow {
+                        block_id: r.get(0)?,
+                        cache_zone: r.get(1)?,
+                        // token_cost may be NULL if the block row is missing (a
+                        // manifest referencing an unregistered block — a bug worth
+                        // surfacing, not crashing on); default 0.
+                        token_cost: r.get::<_, Option<i64>>(2)?.unwrap_or(0) as u32,
+                        resident_since_step: r.get::<_, i64>(3)? as u64,
+                        message_index: r.get::<_, i64>(4)? as u64,
+                    })
+                },
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Executions with at least one recorded receipt, most recent first.
+    pub fn inspectable_executions(&self, limit: u32) -> Result<Vec<InspectableExecution>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT e.id, e.kind, e.prompt, e.started_at, COUNT(*) AS calls
+             FROM executions e
+             JOIN step_receipt sr ON sr.execution_id = e.id
+             GROUP BY e.id, e.kind, e.prompt, e.started_at
+             ORDER BY e.id DESC LIMIT ?",
+        )?;
+        let rows = stmt
+            .query_map(params![i64::from(limit)], |r| {
+                Ok(InspectableExecution {
+                    execution_id: r.get(0)?,
+                    kind: r.get(1)?,
+                    prompt: r.get(2)?,
+                    started_at: r.get(3)?,
+                    calls: r.get::<_, i64>(4)? as u64,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
+
+    /// Every recorded model call of an execution, in wire order — the index
+    /// `stella inspect` lists and walks. One row per call, not per step: a step
+    /// that ran the worker plus an overflow summarizer appears twice, keyed
+    /// apart by `call_seq`.
+    pub fn recorded_calls(&self, execution_id: i64) -> Result<Vec<RecordedCall>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT turn_instance, step, call_seq, call_role, provider, model,
+                    estimated_input_tokens
+             FROM step_receipt WHERE execution_id = ?
+             ORDER BY turn_instance, step, call_seq",
+        )?;
+        let rows = stmt
+            .query_map(params![execution_id], |r| {
+                Ok(RecordedCall {
+                    turn_instance: r.get::<_, i64>(0)? as u32,
+                    step: r.get::<_, i64>(1)? as u64,
+                    call_seq: r.get::<_, i64>(2)? as u64,
+                    call_role: r.get(3)?,
+                    provider: r.get(4)?,
+                    model: r.get(5)?,
+                    estimated_input_tokens: r.get::<_, i64>(6)? as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+}
+
+/// One execution that has at least one reconstructable model call — the index
+/// `stella inspect` shows when given no arguments. Executions predating the
+/// receipt plane (or run with the store disabled) have no rows and are omitted
+/// rather than listed as empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectableExecution {
+    pub execution_id: i64,
+    pub kind: String,
+    pub prompt: String,
+    pub started_at: String,
+    pub calls: u64,
+}
+
+/// One recorded model call — the header of a receipt, without its blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedCall {
+    pub turn_instance: u32,
+    pub step: u64,
+    pub call_seq: u64,
+    pub call_role: String,
+    pub provider: String,
+    pub model: String,
+    pub estimated_input_tokens: u64,
 }
 
 #[cfg(test)]
@@ -267,6 +358,7 @@ mod tests {
         let manifest = StepManifestRow {
             turn_instance: 0,
             step: 3,
+            call_seq: 0,
             provider: "anthropic".into(),
             model: "opus".into(),
             call_role: "worker".into(),
@@ -292,7 +384,7 @@ mod tests {
         };
         store.record_step_manifest(id, &manifest).unwrap();
 
-        let back = store.step_manifest(id, 0, 3).unwrap();
+        let back = store.step_manifest(id, 0, 3, 0).unwrap();
         assert_eq!(back.len(), 2);
         // Order is the receipt — index 0 is the system prefix.
         assert_eq!(back[0].block_id, "blk_sys");
@@ -312,6 +404,7 @@ mod tests {
         let three = StepManifestRow {
             turn_instance: 1,
             step: 2,
+            call_seq: 0,
             provider: "anthropic".into(),
             model: "opus".into(),
             call_role: "worker".into(),
@@ -334,7 +427,7 @@ mod tests {
             ..three.clone()
         };
         store.record_step_manifest(id, &shorter).unwrap();
-        let back = store.step_manifest(id, 1, 2).unwrap();
+        let back = store.step_manifest(id, 1, 2, 0).unwrap();
         assert_eq!(
             back.len(),
             1,

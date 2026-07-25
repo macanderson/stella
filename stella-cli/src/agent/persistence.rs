@@ -349,6 +349,7 @@ pub(crate) fn persist_event(
     } else if let AgentEvent::StepManifest {
         turn_instance,
         step,
+        call_seq,
         role,
         provider,
         model,
@@ -363,6 +364,7 @@ pub(crate) fn persist_event(
             &StepManifestRow {
                 turn_instance: *turn_instance,
                 step: *step as u64,
+                call_seq: *call_seq,
                 provider: provider.clone(),
                 model: model.clone(),
                 call_role: enum_tag(role),
@@ -596,6 +598,7 @@ mod stream_tests {
         let manifest = AgentEvent::StepManifest {
             turn_instance: 0,
             step: 0,
+            call_seq: 0,
             role: ModelCallRole::Worker,
             provider: "anthropic".into(),
             model: "opus".into(),
@@ -621,7 +624,7 @@ mod stream_tests {
 
         // The manifest reconstructs the step's ordered blocks, token_cost joined
         // back from context_blocks.
-        let entries = store.step_manifest(id, 0, 0).expect("manifest");
+        let entries = store.step_manifest(id, 0, 0, 0).expect("manifest");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].block_id, "blk_tool1");
         assert_eq!(entries[0].cache_zone, "volatile");
@@ -706,7 +709,9 @@ mod stream_tests {
         }
 
         // Reconstruct purely from the persisted store, and prove it byte-exact.
-        let recon = store.reconstruct_step(id, 0, 1).expect("reconstruct");
+        let recon = store
+            .reconstruct_worker_step(id, 0, 1)
+            .expect("reconstruct");
         assert!(
             recon.is_verified(),
             "unresolved={:?} mismatches={:?}",

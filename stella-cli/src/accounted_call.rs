@@ -64,6 +64,7 @@ pub(crate) async fn complete_standalone(
             retry_policy: RetryPolicy::deterministic(),
             timeout: Some(Duration::from_secs(120)),
             estimated_input_tokens: 0,
+            receipt: None,
         },
         &mut budget,
         &stella_core::EventSender::new(tx.clone()),
