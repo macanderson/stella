@@ -311,6 +311,65 @@ pub enum Inbound {
         query: String,
         hits: Vec<EntityHit>,
     },
+    /// INSPECT overlay: every model call this execution recorded a receipt for,
+    /// in wire order. Answers [`WorkspaceInput::InspectRefresh`]. An empty vec
+    /// is a real answer — an execution whose receipts predate the receipts
+    /// plane has none — and the overlay says so rather than hanging.
+    RecordedCalls(Vec<RecordedCallInfo>),
+    /// INSPECT overlay: the reconstructed context of one call, answering
+    /// [`WorkspaceInput::InspectCall`]. Boxed — the message bodies are whole
+    /// prompts, far larger than any other `Inbound` payload, and this variant
+    /// would otherwise set the size of every channel send.
+    InspectedCall(Box<InspectView>),
+}
+
+/// One recorded model call — the INSPECT overlay's row. Mirrors
+/// `stella_store::RecordedCall`; the TUI never links the store crate, so the
+/// driver maps one to the other (same contract as [`IssueRow`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedCallInfo {
+    pub turn_instance: u32,
+    pub step: u64,
+    /// Which call at this step: 0 the engine's worker, 1 the overflow
+    /// summarizer, 2+ a pipeline management role.
+    pub call_seq: u64,
+    pub call_role: String,
+    pub provider: String,
+    pub model: String,
+    pub estimated_input_tokens: u64,
+}
+
+impl RecordedCallInfo {
+    /// The coordinate triple, for the detail header and the request echo.
+    pub fn coordinate(&self) -> (u32, u64, u64) {
+        (self.turn_instance, self.step, self.call_seq)
+    }
+}
+
+/// One message of a reconstructed call, flattened for display: tool calls and
+/// results are already rendered into `content` by the driver, so the overlay
+/// never needs the protocol types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// The reconstructed context of one model call — what the INSPECT overlay
+/// shows. Carries the verification verdict alongside the bytes, because a
+/// transcript you cannot vouch for is worse than none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectView {
+    pub call: RecordedCallInfo,
+    pub messages: Vec<InspectMessage>,
+    /// Every journal-resolved block re-hashed to its recorded digest.
+    pub verified: bool,
+    /// Blocks with no recoverable preimage — a documented coverage gap
+    /// (synthetic results, discarded speculation, attachments).
+    pub unresolved: usize,
+    /// Blocks whose bytes did NOT re-hash — a torn or altered journal. Kept
+    /// distinct from `unresolved`: the two mean very different things.
+    pub digest_mismatches: usize,
 }
 
 /// One row of the ISSUES tab's browse list — a tracker-agnostic mirror of
@@ -700,6 +759,18 @@ pub enum WorkspaceInput {
         field: EntityField,
         query: String,
         seq: u64,
+    },
+    /// INSPECT overlay: list the model calls this execution recorded, so a
+    /// human can pick one. Answered with [`Inbound::RecordedCalls`].
+    InspectRefresh,
+    /// INSPECT overlay: reconstruct one call's context. Answered with
+    /// [`Inbound::InspectedCall`]. A blocking SQLite read on the driver side —
+    /// it replays the block registry and the event journal — so it is served
+    /// off the pump, like [`WorkspaceInput::FocusGraphFile`].
+    InspectCall {
+        turn_instance: u32,
+        step: u64,
+        call_seq: u64,
     },
     /// Tear down the deck.
     Quit,

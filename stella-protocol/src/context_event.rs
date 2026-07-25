@@ -214,8 +214,10 @@ pub struct MissingContextDetected {
 pub struct ArtifactContractSelected {
     /// The selected contract record id.
     pub contract_record_id: String,
-    /// The exact contract version selected.
-    pub contract_version: String,
+    /// The exact contract version selected. An integer, matching the record's
+    /// own `version` — the identity is only stable if both sides agree on the
+    /// type, so this is the one non-string id here.
+    pub contract_version: u32,
 }
 
 /// Stable-ID payload of `contract_validation_completed`.
@@ -313,6 +315,140 @@ mod tests {
         // as Unknown rather than panicking the decoder.
         let env = envelope(event_type::OBSERVATION_RECORDED, json!({ "wrong": true }));
         assert!(matches!(env.decode(), LifecycleEvent::Unknown { .. }));
+    }
+
+    /// The RFC 8785 (JCS) canonical bytes of a value — the same canonicalizer
+    /// crate + version `stella-core::context_record::hash` builds `record_hash`
+    /// preimages with, so an event body's bytes here and there agree.
+    fn jcs<T: Serialize>(value: &T) -> String {
+        serde_json_canonicalizer::to_string(value).expect("canonicalizes")
+    }
+
+    #[test]
+    fn golden_jcs_vectors_for_every_event_body() {
+        // Golden vectors: the exact canonical bytes of each event body. Keys are
+        // sorted and whitespace minimal, so these are hand-verifiable. Renaming,
+        // retyping, adding, or reordering a field breaks exactly one line —
+        // which is the point: these bodies are a wire contract across replays.
+        assert_eq!(
+            jcs(&ObservationRecorded {
+                observation_id: "obs_1".into(),
+                observation_kind: "tool_failure".into(),
+            }),
+            r#"{"observation_id":"obs_1","observation_kind":"tool_failure"}"#
+        );
+        assert_eq!(
+            jcs(&RecordProposalCreated {
+                proposal_id: "prop_1".into(),
+                proposal_kind: "new_record".into(),
+            }),
+            r#"{"proposal_id":"prop_1","proposal_kind":"new_record"}"#
+        );
+        assert_eq!(
+            jcs(&PromotionRecorded {
+                promotion_event_id: "pev_1".into(),
+                source_record_id: "rec_1".into(),
+                result_record_id: "rec_2".into(),
+                action: "accept".into(),
+            }),
+            r#"{"action":"accept","promotion_event_id":"pev_1","result_record_id":"rec_2","source_record_id":"rec_1"}"#
+        );
+        assert_eq!(
+            jcs(&ContextUseRecorded {
+                context_use_id: "cu_1".into(),
+                context_record_id: "rec_1".into(),
+                use_trace_id: "ut_1".into(),
+            }),
+            r#"{"context_record_id":"rec_1","context_use_id":"cu_1","use_trace_id":"ut_1"}"#
+        );
+        assert_eq!(
+            jcs(&ContextUseFeedbackRecorded {
+                context_use_feedback_id: "cuf_1".into(),
+                context_use_id: "cu_1".into(),
+            }),
+            r#"{"context_use_feedback_id":"cuf_1","context_use_id":"cu_1"}"#
+        );
+        assert_eq!(
+            jcs(&MissingContextDetected {
+                missing_context_id: "mc_1".into(),
+                missing_context_kind: "absent_directive".into(),
+            }),
+            r#"{"missing_context_id":"mc_1","missing_context_kind":"absent_directive"}"#
+        );
+        assert_eq!(
+            jcs(&ArtifactContractSelected {
+                contract_record_id: "ctr_1".into(),
+                contract_version: 3,
+            }),
+            r#"{"contract_record_id":"ctr_1","contract_version":3}"#
+        );
+        assert_eq!(
+            jcs(&ContractValidationCompleted {
+                contract_validation_id: "cv_1".into(),
+                contract_record_id: "ctr_1".into(),
+                validation_status: "passed".into(),
+            }),
+            r#"{"contract_record_id":"ctr_1","contract_validation_id":"cv_1","validation_status":"passed"}"#
+        );
+        assert_eq!(
+            jcs(&OutcomeAssessed {
+                outcome_assessment_id: "oa_1".into(),
+            }),
+            r#"{"outcome_assessment_id":"oa_1"}"#
+        );
+        assert_eq!(
+            jcs(&CompiledContextFrameBuilt {
+                compiled_frame_id: "cf_1".into(),
+                frame_hash: "sha256:aa".into(),
+            }),
+            r#"{"compiled_frame_id":"cf_1","frame_hash":"sha256:aa"}"#
+        );
+    }
+
+    #[test]
+    fn golden_jcs_vector_for_the_envelope() {
+        // The envelope's own canonical bytes, with an absent identity field
+        // omitted (never serialized as null, which would change the preimage).
+        let env = envelope(
+            event_type::OUTCOME_ASSESSED,
+            json!({ "outcome_assessment_id": "oa_1" }),
+        );
+        assert_eq!(
+            jcs(&env),
+            r#"{"event_id":"evt_1","event_type":"outcome_assessed","observed_at":"2026-07-20T18:30:00Z","payload":{"outcome_assessment_id":"oa_1"},"schema_version":"1.0-draft","task_id":"task_1"}"#
+        );
+    }
+
+    #[test]
+    fn the_event_type_tokens_are_canonical() {
+        // The discriminator strings are a wire contract: a reader matches on
+        // them, so a rename silently reroutes an event to Unknown.
+        assert_eq!(
+            [
+                event_type::OBSERVATION_RECORDED,
+                event_type::RECORD_PROPOSAL_CREATED,
+                event_type::PROMOTION_RECORDED,
+                event_type::CONTEXT_USE_RECORDED,
+                event_type::CONTEXT_USE_FEEDBACK_RECORDED,
+                event_type::MISSING_CONTEXT_DETECTED,
+                event_type::ARTIFACT_CONTRACT_SELECTED,
+                event_type::CONTRACT_VALIDATION_COMPLETED,
+                event_type::OUTCOME_ASSESSED,
+                event_type::COMPILED_CONTEXT_FRAME_BUILT,
+            ],
+            [
+                "observation_recorded",
+                "record_proposal_created",
+                "promotion_recorded",
+                "context_use_recorded",
+                "context_use_feedback_recorded",
+                "missing_context_detected",
+                "artifact_contract_selected",
+                "contract_validation_completed",
+                "outcome_assessed",
+                "compiled_context_frame_built",
+            ]
+        );
     }
 
     #[test]
