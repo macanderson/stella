@@ -604,16 +604,26 @@ fn open_connection(path: &Path) -> Result<Connection, ContextError> {
 /// Apply pending migrations inside a single transaction, bumping
 /// `user_version` atomically with the DDL.
 ///
-/// **Downgrades are not guarded.** A store stamped by a *newer* binary
-/// (`user_version > SCHEMA_VERSION`) takes the early return and is opened as-is,
-/// so an older stella will happily read and write a schema it does not know —
-/// silently ignoring columns and tables a newer writer depends on. Rejecting
-/// that db is the right behavior, but it turns `open` into an error for anyone
-/// who downgrades, so it belongs in a deliberate change with a migration story,
-/// not here.
+/// **Downgrades are rejected.** A store stamped by a *newer* binary
+/// (`user_version > SCHEMA_VERSION`) is an error rather than an as-is open:
+/// this file holds episodic memory and the bi-temporal fact graph, neither of
+/// which is rebuildable, so an older stella writing into a schema it does not
+/// know would silently violate whatever invariants the newer schema added. The
+/// message mirrors the one `stella_store::Store::migrate` already writes — the
+/// fault is an out-of-date binary, not a broken workspace.
 fn migrate(conn: &Connection) -> Result<(), ContextError> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version >= SCHEMA_VERSION {
+    if version > SCHEMA_VERSION {
+        return Err(ContextError::SchemaTooNew(format!(
+            "context.db is at schema version {version}, but this build only \
+             knows {SCHEMA_VERSION} — your stella binary is out of date, not \
+             the workspace. Upgrade with `brew upgrade stella`, re-run \
+             install.sh, or grab a newer build from \
+             https://github.com/macanderson/stella/releases, then reopen \
+             this workspace."
+        )));
+    }
+    if version == SCHEMA_VERSION {
         return Ok(());
     }
     let tx = conn.unchecked_transaction()?;
@@ -799,10 +809,11 @@ fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
         id: row.get("id")?,
         public_id: row.get("public_id")?,
         // An unrecognized kind reads as `Concept` rather than failing the
-        // whole query: the realistic source is a newer stella having written a
-        // kind this binary predates (see the downgrade note on `migrate`), and
-        // one unknown row must not blind recall to every other row. The node
-        // stays retrievable and citable; only its `FrameKind` is coarsened.
+        // whole query: one unknown row must not blind recall to every other
+        // row. `migrate` rejects a store stamped by a newer stella, so a newer
+        // binary's node kinds no longer reach here — what is left is a
+        // hand-edited or partially restored db. The node stays retrievable and
+        // citable; only its `FrameKind` is coarsened.
         kind: NodeKind::parse(&kind_str).unwrap_or(NodeKind::Concept),
         display_name: row.get("display_name")?,
         content: row.get("content")?,
@@ -1960,6 +1971,33 @@ mod tests {
         }
         conn.pragma_update(None, "user_version", version).unwrap();
         conn
+    }
+
+    /// A store stamped by a *newer* stella must be refused, not opened as-is:
+    /// episodic memory and the fact graph are not rebuildable, so an older
+    /// binary writing into a schema it does not know is unrecoverable data
+    /// loss. The message must name the real fault — an out-of-date binary.
+    #[test]
+    fn rejects_a_context_db_written_by_a_newer_stella() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        {
+            // The full current schema, stamped one version past this build —
+            // exactly what a newer stella leaves behind.
+            let conn = open_legacy(&path, SCHEMA_VERSION + 1);
+            conn.execute_batch(MIGRATION_V3).unwrap();
+        }
+
+        let Err(err) = ContextStore::open(&path) else {
+            panic!("a store stamped by a newer stella must not open");
+        };
+        assert!(
+            matches!(err, ContextError::SchemaTooNew(_)),
+            "unexpected error: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains(&(SCHEMA_VERSION + 1).to_string()), "{msg}");
+        assert!(msg.contains("binary is out of date"), "{msg}");
     }
 
     #[test]

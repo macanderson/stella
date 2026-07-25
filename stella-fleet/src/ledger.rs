@@ -14,6 +14,19 @@
 //! and spend row) go through one transaction
 //! ([`Ledger::finish_attempt`]); WAL journaling is enabled at open so a
 //! reader is never blocked by an in-flight writer.
+//!
+//! Schema: `fleet.db` carries **no version stamp**. Its DDL is convergence —
+//! every statement is `CREATE … IF NOT EXISTS` and the whole batch replays on
+//! every open — so an additive table or index reaches an existing ledger the
+//! next time it is opened, and adding one is the migration. Unlike the
+//! rebuildable `codegraph.db` index, this is *not* a cache: it is the
+//! authoritative record of a subagent's commits and of real money spent, and
+//! nothing can reconstruct it once written. So the absence of a stamp is a
+//! known gap, not a justification: any change that *reshapes* an existing table
+//! (altering or backfilling a column, which the `IF NOT EXISTS` guard silently
+//! skips on an existing file) must introduce versioned migration machinery —
+//! `PRAGMA user_version` plus a stepwise list, as `stella_store::migrations`
+//! does — before it touches this schema.
 
 use std::path::Path;
 
