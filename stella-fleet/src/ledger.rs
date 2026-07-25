@@ -50,6 +50,8 @@ pub struct RunRecord {
 /// a crash mid-attempt still leaves a row naming what was in flight.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptStart {
+    /// The fan-out this attempt belongs to — never a `stella-store`
+    /// `execution_id` or a session id (see the glossary in `AGENTS.md`).
     pub run_id: String,
     pub task_id: TaskId,
     pub worktree_path: String,

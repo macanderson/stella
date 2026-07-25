@@ -292,6 +292,25 @@ the identity that scopes it.
 
 ---
 
+## Glossary — the identifiers that look alike
+
+Five different ids in this workspace can all be read as "one thing the agent
+did", and they are genuinely distinct entities owned by different crates. The
+join keys are correct today (`stella-observatory/src/db.rs` joins both
+`execution_id` and `run_id`), so this is a naming hazard, not a bug — but read
+this before assuming two of them mean the same thing:
+
+| Term | Identifier | Owner | What it is |
+|---|---|---|---|
+| **session** | `SessionRecord::id` | `stella-store/src/sessions.rs` | One run of the CLI, tracked in the cross-process registry under `~/.stella/sessions/`. Stamped onto `executions.session_id` (schema v8) so `Store::session_events` can reassemble a session's whole journal across its turns. |
+| **execution** | `execution_id` | `stella-store/src/ddl.rs` | One row in the `executions` table — the store's unit of work (one goal/turn) with its prompt, provider/model, outcome and cost. The foreign key every child telemetry table hangs off. |
+| **turn** | `turn_instance` | `stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
+| **step** | `(step, call_seq)` | `stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/judge/plan/guidance roles take 1, 2, … |
+| **fleet run** | `run_id` | `stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
+| **task** | `TaskId` / `tasks` row | `stella-fleet/src/plan.rs`, `stella-store` | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
+
+---
+
 ## Code style and conventions
 
 - **`rustfmt` settles all formatting** — default config, no arguments. Don't

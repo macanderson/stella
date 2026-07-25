@@ -116,7 +116,11 @@ impl NotificationStore {
         let json = serde_json::to_string_pretty(notification)
             .map_err(|e| StoreError(format!("cannot serialize notification: {e}")))?;
         let path = self.path_for(&notification.id);
-        crate::write_private_atomic(&path, json.as_bytes(), false)
+        // sync = true: without it the rename can publish a file whose bytes
+        // are still only in the page cache, and a power cut surfaces a
+        // zero-length notification — which `list` skips, silently breaking
+        // the "persist until read" contract this module opens with.
+        crate::write_private_atomic(&path, json.as_bytes(), true)
     }
 
     /// All notifications, newest first. Unreadable files are skipped.

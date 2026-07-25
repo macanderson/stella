@@ -346,34 +346,48 @@ fn write_snapshot<T: Serialize + ?Sized>(dir: &Path, name: &str, value: &T) -> R
 /// outcome), a `waiting_input` status (how prompts that never ran a model
 /// turn — `/help`, `/init` — settle), or a terminal lane status
 /// (`done`/`failed`/`killed` — how sub-session lanes end).
+///
+/// One reverse pass, not a suffix rescan per prompt: a settle record settles
+/// its lane for every prompt EARLIER in the file, so walking backwards while
+/// remembering which lanes have already settled decides exactly the same
+/// predicate in O(n) rather than O(n·m). Journals reach tens of MB on a
+/// long-lived deck session and every resume pays this. The collected output is
+/// reversed at the end to restore dispatch order.
 pub fn unsettled_prompts(records: &[JournalRecord]) -> Vec<(String, String)> {
-    records
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| {
-            let JournalRecord::PromptStarted { agent, text } = r else {
-                return None;
-            };
-            let settled = records[i + 1..].iter().any(|r| match r {
-                JournalRecord::Event { agent: a, event } if a == agent => matches!(
+    let mut settled: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut unsettled: Vec<(String, String)> = Vec::new();
+    for record in records.iter().rev() {
+        match record {
+            JournalRecord::PromptStarted { agent, text } => {
+                if !settled.contains(agent.as_str()) {
+                    unsettled.push((agent.clone(), text.clone()));
+                }
+            }
+            JournalRecord::Event { agent, event } => {
+                if matches!(
                     event,
                     AgentEvent::Complete { .. }
                         | AgentEvent::Error {
                             retryable: false,
                             ..
                         }
-                ),
-                JournalRecord::Status { agent: a, status } if a == agent => {
-                    matches!(
-                        status.as_str(),
-                        "waiting_input" | "done" | "failed" | "killed"
-                    )
+                ) {
+                    settled.insert(agent.as_str());
                 }
-                _ => false,
-            });
-            (!settled).then(|| (agent.clone(), text.clone()))
-        })
-        .collect()
+            }
+            JournalRecord::Status { agent, status } => {
+                if matches!(
+                    status.as_str(),
+                    "waiting_input" | "done" | "failed" | "killed"
+                ) {
+                    settled.insert(agent.as_str());
+                }
+            }
+            _ => {}
+        }
+    }
+    unsettled.reverse();
+    unsettled
 }
 
 /// The last journaled staged-pipeline toggle, if any — resume restores it.

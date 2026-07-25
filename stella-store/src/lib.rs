@@ -551,6 +551,39 @@ fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
     Ok(())
 }
 
+/// Give genuine on-disk corruption the same actionable error the schema-version
+/// branches of [`Store::migrate`] already produce.
+///
+/// Without this a malformed `store.db` reaches the caller as the raw rusqlite
+/// string ("database disk image is malformed"), which `open_store` prints as
+/// `local store unavailable (store: …)` — and then EVERY later session repeats
+/// the warning and runs with zero persistence, because nothing ever tells the
+/// user to move the file aside. `From<rusqlite::Error>` flattens the error to a
+/// `String`, so the code has to be inspected before that conversion happens.
+/// Anything that is not corruption is passed through unchanged.
+fn corrupt_store_error(error: rusqlite::Error, db_path: Option<&Path>) -> StoreError {
+    let corrupt = matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(sqlite, _)
+            if matches!(
+                sqlite.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            )
+    );
+    if !corrupt {
+        return StoreError::from(error);
+    }
+    let path = db_path.map_or_else(
+        || ".stella/private/store.db".to_string(),
+        |path| path.display().to_string(),
+    );
+    StoreError(format!(
+        "store.db cannot be read as a SQLite database ({error}), so it is corrupt or \
+         was overwritten. Move {path} aside and reopen this workspace to start a fresh \
+         one — it holds local telemetry and session replay, never your source."
+    ))
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
     /// The workspace root this store was opened for — stashed so a turn's
@@ -567,15 +600,17 @@ impl Store {
         let (dir, created) = ensure_workspace_state_dir(workspace_root)?;
         harden_workspace_dir(&dir, created)?;
         let db_path = workspace_private_sqlite_path(workspace_root, "store.db")?;
+        let conn = open_private_sqlite(&db_path)?;
         Self::init(
-            open_private_sqlite(&db_path)?,
+            conn,
             Some(workspace_root.to_path_buf()),
+            Some(db_path.as_path()),
         )
     }
 
     /// In-memory store — tests and ephemeral runs.
     pub fn in_memory() -> Result<Self> {
-        Self::init(Connection::open_in_memory()?, None)
+        Self::init(Connection::open_in_memory()?, None, None)
     }
 
     /// The workspace root this store was opened for, if any.
@@ -583,7 +618,10 @@ impl Store {
         self.root.as_deref()
     }
 
-    fn init(conn: Connection, root: Option<PathBuf>) -> Result<Self> {
+    /// `db_path` is the on-disk file behind `conn` (`None` for in-memory), and
+    /// exists only so an unreadable file can be named in the error — see
+    /// [`corrupt_store_error`].
+    fn init(conn: Connection, root: Option<PathBuf>, db_path: Option<&Path>) -> Result<Self> {
         // execute_batch tolerates the row PRAGMA journal_mode returns (a
         // plain pragma_update errors on it). WAL means a read-only caller
         // (`stella stats`) is never blocked by a live session's writes.
@@ -593,12 +631,17 @@ impl Store {
         // synchronous=NORMAL is the standard WAL pairing — durability to the
         // last checkpoint rather than one fsync per event insert on the hot
         // render path (matching stella-graph's store).
+        //
+        // This batch is also the first statement to touch page 1, so it is
+        // where an unreadable file announces itself — mapped here, before the
+        // blanket `From<rusqlite::Error>` flattens the error code away.
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA busy_timeout=5000;
              PRAGMA foreign_keys=ON;",
-        )?;
+        )
+        .map_err(|error| corrupt_store_error(error, db_path))?;
         let store = Self {
             conn: Mutex::new(conn),
             root,
@@ -731,14 +774,22 @@ impl Store {
     pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
         let seq = sqlite_i64("event sequence", seq)?;
         let payload = serde_json::to_string(event).map_err(|e| StoreError(e.to_string()))?;
-        // Read the internally-tagged `type` from the parsed value rather than
+        // Read the internally-tagged `type` by DESERIALIZING it, never by
         // string-scanning for the first `"type":"` literal — the scan silently
         // yields the wrong tag (or "unknown") if serialization is ever
-        // pretty-printed, wrapped, or reordered.
-        let event_type = serde_json::from_str::<serde_json::Value>(&payload)
-            .ok()
-            .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_string))
-            .unwrap_or_else(|| "unknown".into());
+        // pretty-printed, wrapped, or reordered. Deserializing into a
+        // one-field struct rather than a full `serde_json::Value` keeps that
+        // guarantee without materializing a throwaway tree: a `tool_result`
+        // payload carries the complete tool output, and this runs once per
+        // persisted event on the streaming path.
+        #[derive(serde::Deserialize)]
+        struct EventTag {
+            #[serde(rename = "type")]
+            ty: String,
+        }
+        let event_type = serde_json::from_str::<EventTag>(&payload)
+            .map(|tag| tag.ty)
+            .unwrap_or_else(|_| "unknown".into());
         self.lock().execute(
             "INSERT INTO events (execution_id, seq, event_type, payload) VALUES (?, ?, ?, ?)",
             params![execution_id, seq, event_type, payload],
@@ -747,12 +798,19 @@ impl Store {
     }
 
     /// Persist one file-touch row per normalized execution path.
+    ///
+    /// One transaction, like every sibling fan-out writer here: a failure
+    /// partway through the batch (an out-of-range line count tripping
+    /// [`sqlite_i64`] on a later path) rolls the whole set back instead of
+    /// leaving the execution with a truncated file list, and the batch costs
+    /// one WAL commit rather than one per row on the turn-finalize path.
     pub fn record_files_touched(&self, execution_id: i64, files: &[FileTouchRow]) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
         for row in files {
             let lines_added = sqlite_i64("file lines added", row.lines_added)?;
             let lines_removed = sqlite_i64("file lines removed", row.lines_removed)?;
-            conn.execute(
+            tx.execute(
                 "INSERT INTO files_touched \
                  (execution_id, path, ops, lines_added, lines_removed, events) \
                  VALUES (?, ?, ?, ?, ?, ?)",
@@ -766,18 +824,21 @@ impl Store {
                 ],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
-    /// Persist one citation row per execution/memory pair.
+    /// Persist one citation row per execution/memory pair. One transaction —
+    /// see [`Self::record_files_touched`].
     pub fn record_memory_citations(
         &self,
         execution_id: i64,
         citations: &[MemoryCitationRow],
     ) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
         for row in citations {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO memory_citations \
                  (execution_id, memory_id, useful_score, truthful, remark) \
                  VALUES (?, ?, ?, ?, ?)",
@@ -790,34 +851,41 @@ impl Store {
                 ],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
-    /// Record non-aggregated agent invocations from one execution.
+    /// Record non-aggregated agent invocations from one execution. One
+    /// transaction — see [`Self::record_files_touched`].
     pub fn record_agent_uses(&self, execution_id: i64, uses: &[AgentUseRow]) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
         for row in uses {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO agent_uses (execution_id, agent, version, reason) \
                  VALUES (?, ?, ?, ?)",
                 params![execution_id, row.agent, row.version as i64, row.reason],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
     /// Record the skills applied in one execution — one row per skill at its
     /// pinned version, never aggregated (see [`SkillUsageRow`]). The analogue
-    /// of [`Self::record_agent_uses`] for the SKILLS tab.
+    /// of [`Self::record_agent_uses`] for the SKILLS tab. One transaction —
+    /// see [`Self::record_files_touched`].
     pub fn record_skill_usage(&self, execution_id: i64, skills: &[SkillUsageRow]) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
         for row in skills {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO skill_usage (execution_id, skill, version, reason) \
                  VALUES (?, ?, ?, ?)",
                 params![execution_id, row.skill, row.version as i64, row.reason],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -874,11 +942,14 @@ impl Store {
     /// Persist the MCP tool calls recorded during an execution: one row per
     /// call, in drain order. `seq` (the batch index) with UNIQUE
     /// (execution_id, seq) makes re-persisting the same drained batch an error
-    /// rather than a silent double-count.
+    /// rather than a silent double-count. One transaction — see
+    /// [`Self::record_files_touched`] — so a collision partway through leaves
+    /// no partial batch behind, and a corrected retry is possible.
     pub fn record_mcp_usage(&self, execution_id: i64, calls: &[McpUsageRow]) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
         for (seq, row) in calls.iter().enumerate() {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO mcp_usage \
                  (execution_id, seq, server, tool, reason, called_at_ms) \
                  VALUES (?, ?, ?, ?, ?, ?)",
@@ -892,6 +963,7 @@ impl Store {
                 ],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -922,10 +994,12 @@ impl Store {
     /// Record the normalized per-call `tool_calls` log for an execution
     /// (materialized from the `events` stream). `seq` is the call's index in
     /// the drained batch; UNIQUE (execution_id, seq) guards double-writes.
+    /// One transaction — see [`Self::record_files_touched`].
     pub fn record_tool_calls(&self, execution_id: i64, calls: &[ToolCallRow]) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
         for (seq, row) in calls.iter().enumerate() {
-            conn.execute(
+            tx.execute(
                 "INSERT OR REPLACE INTO tool_calls \
                  (execution_id, seq, call_id, name, surface, args_json, args_digest, \
                   reason, ok, error, bytes_out, duration_ms) \
@@ -946,6 +1020,7 @@ impl Store {
                 ],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
