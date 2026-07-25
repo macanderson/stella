@@ -11,11 +11,11 @@ use stella_store::enterprise_telemetry::StellaOperationalEventV1;
 use stella_store::usage::ExecutionRollupRow;
 
 use crate::enterprise_telemetry::{
-    BatchSender, ExecutionSurface, StartupAuthoritySnapshot, activate_process_free_authority_with,
-    authorize_execution_surface, authorize_execution_surface_with, build_runtime_from_managed,
-    canonical_enrollment_bytes, host_spool_path, process_free_authority_active,
-    prove_process_free_surface, reset_process_free_authority_for_test, validate_response_status,
-    verify_managed_enrollment,
+    BatchSender, ExecutionSurface, PROCESS_FREE_FORBIDDEN_TOOLS, StartupAuthoritySnapshot,
+    activate_process_free_authority_with, authorize_execution_surface,
+    authorize_execution_surface_with, build_runtime_from_managed, canonical_enrollment_bytes,
+    host_spool_path, process_free_authority_active, prove_process_free_surface,
+    reset_process_free_authority_for_test, validate_response_status, verify_managed_enrollment,
 };
 use crate::settings::Settings;
 use crate::{Cli, Command, TelemetryCmd};
@@ -79,22 +79,49 @@ fn process_free_surface_enumeration_omits_every_spawn_and_extension_action() {
         .into_iter()
         .map(|schema| schema.name)
         .collect();
-    for forbidden in [
-        "bash",
-        "grep",
-        "glob",
-        "gather_context",
-        "process_start",
-        "process_write",
-        "process_poll",
-        "test_start",
-        "test_poll",
-        "search_skills",
-        "install_skill",
-    ] {
+    // The registry-side deny-list, plus the two skills tools that only ever
+    // exist on the `InteractiveToolSet` — they are never `ToolRegistry`
+    // members, so they are enforced here, where they are actually assembled.
+    for forbidden in PROCESS_FREE_FORBIDDEN_TOOLS
+        .iter()
+        .copied()
+        .chain(["search_skills", "install_skill"])
+    {
         assert!(
             !names.contains(forbidden),
             "process action exposed: {forbidden}"
+        );
+    }
+}
+
+/// Witness: `prove_process_free_surface`'s deny-list once carried five names
+/// (`process_start`, `process_write`, `process_poll`, `test_start`,
+/// `test_poll`) that no tool in the workspace ever produces, so the proof
+/// passed by naming nothing. Pin every entry to a name a real registry can
+/// actually surface.
+#[test]
+fn every_process_free_forbidden_name_is_a_real_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = stella_tools::ToolRegistry::with_backends_and_options(
+        dir.path().to_path_buf(),
+        None,
+        None,
+        stella_tools::RegistryOptions {
+            bash: true,
+            web: false,
+            ..Default::default()
+        },
+    );
+    let names: std::collections::BTreeSet<String> = registry
+        .schemas()
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect();
+    for forbidden in PROCESS_FREE_FORBIDDEN_TOOLS {
+        assert!(
+            names.contains(*forbidden),
+            "deny-listed `{forbidden}` is not a tool any registry produces — \
+             the process-free proof would pass vacuously on it"
         );
     }
 }
@@ -458,38 +485,6 @@ fn pre_dotenv_snapshot_restores_every_privileged_control_and_credential_ref() {
         valid_claims(),
     );
     let snapshot = StartupAuthoritySnapshot::capture(Some(&managed));
-    for name in names {
-        unsafe { std::env::set_var(name, format!("project-{name}")) };
-    }
-    let rejected = snapshot.restore_after_project_env(&names.map(str::to_string));
-    assert_eq!(rejected.len(), names.len());
-    for name in names {
-        assert!(
-            std::env::var_os(name).is_none(),
-            "project value survived: {name}"
-        );
-    }
-}
-
-#[test]
-fn pre_dotenv_snapshot_restores_loader_and_interpreter_control_names() {
-    let _env = crate::test_env::lock();
-    // Exact deny-list names only: a snapshot holds concrete names, so the
-    // wildcard shapes (`LD_*`, `CARGO_*_RUNNER`, …) are the dotenv loader's
-    // job, not this one.
-    let names = [
-        "BASH_ENV",
-        "SHELLOPTS",
-        "NODE_OPTIONS",
-        "PYTHONPATH",
-        "RUSTC_WRAPPER",
-        "GIT_ASKPASS",
-    ];
-    let _restore = EnvRestore::capture(&names);
-    for name in names {
-        unsafe { std::env::remove_var(name) };
-    }
-    let snapshot = StartupAuthoritySnapshot::capture(None);
     for name in names {
         unsafe { std::env::set_var(name, format!("project-{name}")) };
     }

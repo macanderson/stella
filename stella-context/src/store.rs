@@ -163,13 +163,26 @@ DROP TABLE IF EXISTS code_graph_files;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
+    /// A workspace file; surfaces as a `Snippet` frame.
     File,
+    /// A code symbol — function, type, module; surfaces as a `Symbol` frame.
     Symbol,
+    /// A named idea or entity. The general-purpose kind, and the one a stored
+    /// `node.kind` this binary does not recognize reads back as.
     Concept,
+    /// A fact reified as its own retrievable node. Assertions written through
+    /// `FactAssertion` become `edge` rows, not nodes; this is for callers that
+    /// want the fact itself to be a citable frame.
     Fact,
+    /// The mirror node of an `episode` record — what makes a past turn
+    /// recallable.
     Episode,
+    /// A person (author, reviewer, teammate).
     Person,
+    /// A produced artifact — a doc, report, or generated file; surfaces as a
+    /// `Doc` frame.
     Artifact,
+    /// A unit of work (issue, ticket, TODO).
     Task,
     /// A memory (e.g. a post-turn reflection). Mirrors a `memory` record so it
     /// is retrievable and domain-taggable through the normal node pipeline.
@@ -178,6 +191,7 @@ pub enum NodeKind {
 
 impl NodeKind {
     /// The canonical string stored in `node.kind`.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             NodeKind::File => "file",
@@ -229,10 +243,24 @@ impl NodeKind {
 /// never later fail to cite.
 #[derive(Debug, Clone)]
 pub struct NodeInput {
+    /// The typed vocabulary entry this node belongs to; also decides the
+    /// `FrameKind` retrieval surfaces it as.
     pub kind: NodeKind,
+    /// The human citation label (`L-C4`). Mandatory and non-empty —
+    /// `upsert_node` rejects a blank one. It is also the identity key when no
+    /// `uri` is set.
     pub display_name: String,
+    /// The retrievable body: what gets embedded, hashed for the byte-compat
+    /// skip (`L-C2`), and served as a frame's content. Leave it empty for a
+    /// node that exists only as a graph endpoint — empty content is never
+    /// embedded.
     pub content: String,
+    /// Source uri (`file://…`, `memory://…`, `episode://…`). When present it is
+    /// the node's identity key, so two writes with the same uri update one row,
+    /// and it is what a query's `anchors` are matched against.
     pub uri: Option<String>,
+    /// Free-form JSON stored on the node row for consumers reading the graph
+    /// directly. Nothing in the retrieval path reads it back today.
     pub properties: serde_json::Value,
     /// Workspace domain tags (e.g. `["auth", "billing"]`). One or more; stored
     /// via the `node_domains` junction (indexable), never a JSON blob.
@@ -297,12 +325,29 @@ impl NodeInput {
 /// A node read back from the store.
 #[derive(Debug, Clone)]
 pub struct NodeRow {
+    /// The SQLite rowid. Store-internal: edges, the domain junctions, and the
+    /// retrieval pipeline join on it, but it is never surfaced to a host —
+    /// `public_id` is the identity that travels.
     pub id: i64,
+    /// The stable `nod_…` identity, derived from kind + natural key. It is the
+    /// frame id a host holds, reuses, and presents back to `context/verify`.
     pub public_id: String,
+    /// The typed vocabulary entry, mapped onto a `FrameKind` at retrieval. An
+    /// unrecognized stored kind reads back as [`NodeKind::Concept`].
     pub kind: NodeKind,
+    /// The human citation label (`L-C4`) — it becomes the frame's title, and a
+    /// blank one is a `MissingCitation` error rather than an unlabeled frame.
     pub display_name: String,
+    /// The retrievable body, served as the frame's content and the basis of its
+    /// declared `token_cost`.
     pub content: String,
+    /// sha256 of `content`. Keys the embedding index together with the
+    /// fingerprint (`L-C2`), and is what a frame declares as
+    /// `sha256:<content_hash>` so a host can revalidate it without moving the
+    /// body.
     pub content_hash: String,
+    /// Source uri when the node has one — carried onto the frame and into its
+    /// provenance chain.
     pub uri: Option<String>,
     /// Valid time: when the fact became true in the world — may precede
     /// `recorded_at` (observation), never follows it. `None` = unknown,
@@ -314,6 +359,10 @@ pub struct NodeRow {
     /// point-in-time node reader would populate it — not because anything
     /// currently sets it. Read it as "not yet wired", never as "unknown".
     pub valid_from: Option<String>,
+    /// Transaction time the row was **first** written (RFC-3339). `upsert_node`
+    /// updates content in place without touching it, so it is a creation time,
+    /// not a modification time — which is exactly what recall's recency
+    /// ranking sorts on.
     pub recorded_at: String,
 }
 
@@ -555,16 +604,26 @@ fn open_connection(path: &Path) -> Result<Connection, ContextError> {
 /// Apply pending migrations inside a single transaction, bumping
 /// `user_version` atomically with the DDL.
 ///
-/// **Downgrades are not guarded.** A store stamped by a *newer* binary
-/// (`user_version > SCHEMA_VERSION`) takes the early return and is opened as-is,
-/// so an older stella will happily read and write a schema it does not know —
-/// silently ignoring columns and tables a newer writer depends on. Rejecting
-/// that db is the right behavior, but it turns `open` into an error for anyone
-/// who downgrades, so it belongs in a deliberate change with a migration story,
-/// not here.
+/// **Downgrades are rejected.** A store stamped by a *newer* binary
+/// (`user_version > SCHEMA_VERSION`) is an error rather than an as-is open:
+/// this file holds episodic memory and the bi-temporal fact graph, neither of
+/// which is rebuildable, so an older stella writing into a schema it does not
+/// know would silently violate whatever invariants the newer schema added. The
+/// message mirrors the one `stella_store::Store::migrate` already writes — the
+/// fault is an out-of-date binary, not a broken workspace.
 fn migrate(conn: &Connection) -> Result<(), ContextError> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version >= SCHEMA_VERSION {
+    if version > SCHEMA_VERSION {
+        return Err(ContextError::SchemaTooNew(format!(
+            "context.db is at schema version {version}, but this build only \
+             knows {SCHEMA_VERSION} — your stella binary is out of date, not \
+             the workspace. Upgrade with `brew upgrade stella`, re-run \
+             install.sh, or grab a newer build from \
+             https://github.com/macanderson/stella/releases, then reopen \
+             this workspace."
+        )));
+    }
+    if version == SCHEMA_VERSION {
         return Ok(());
     }
     let tx = conn.unchecked_transaction()?;
@@ -750,10 +809,11 @@ fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
         id: row.get("id")?,
         public_id: row.get("public_id")?,
         // An unrecognized kind reads as `Concept` rather than failing the
-        // whole query: the realistic source is a newer stella having written a
-        // kind this binary predates (see the downgrade note on `migrate`), and
-        // one unknown row must not blind recall to every other row. The node
-        // stays retrievable and citable; only its `FrameKind` is coarsened.
+        // whole query: one unknown row must not blind recall to every other
+        // row. `migrate` rejects a store stamped by a newer stella, so a newer
+        // binary's node kinds no longer reach here — what is left is a
+        // hand-edited or partially restored db. The node stays retrievable and
+        // citable; only its `FrameKind` is coarsened.
         kind: NodeKind::parse(&kind_str).unwrap_or(NodeKind::Concept),
         display_name: row.get("display_name")?,
         content: row.get("content")?,
@@ -1911,6 +1971,33 @@ mod tests {
         }
         conn.pragma_update(None, "user_version", version).unwrap();
         conn
+    }
+
+    /// A store stamped by a *newer* stella must be refused, not opened as-is:
+    /// episodic memory and the fact graph are not rebuildable, so an older
+    /// binary writing into a schema it does not know is unrecoverable data
+    /// loss. The message must name the real fault — an out-of-date binary.
+    #[test]
+    fn rejects_a_context_db_written_by_a_newer_stella() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        {
+            // The full current schema, stamped one version past this build —
+            // exactly what a newer stella leaves behind.
+            let conn = open_legacy(&path, SCHEMA_VERSION + 1);
+            conn.execute_batch(MIGRATION_V3).unwrap();
+        }
+
+        let Err(err) = ContextStore::open(&path) else {
+            panic!("a store stamped by a newer stella must not open");
+        };
+        assert!(
+            matches!(err, ContextError::SchemaTooNew(_)),
+            "unexpected error: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains(&(SCHEMA_VERSION + 1).to_string()), "{msg}");
+        assert!(msg.contains("binary is out of date"), "{msg}");
     }
 
     #[test]

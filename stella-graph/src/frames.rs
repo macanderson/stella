@@ -40,6 +40,17 @@ const SNIPPET_MAX_LINES: usize = 60;
 const MAX_REFERENCES: usize = 50;
 /// Max chars of a reference line quoted into a frame.
 const REF_LINE_MAX_CHARS: usize = 200;
+/// Max import edges rendered into an import frame's listing. A barrel/index
+/// file with hundreds of imports otherwise produces one multi-thousand-token
+/// frame, and [`budget_pack`] *skips* an over-budget frame rather than
+/// truncating it — so the caller silently got no import context at all.
+const EDGE_LISTING_MAX: usize = 50;
+/// Max distinct identifier tokens taken from a query's text. Each one costs a
+/// `definitions()` round trip plus a `read_snippet` file read, and an agent
+/// goal running to several sentences yields dozens — past this many we
+/// deliberately stop looking rather than pay for frames budget-packing would
+/// discard anyway.
+const MAX_QUERY_IDENTIFIERS: usize = 12;
 
 // Score bands (all in `[0,1]`, `ContextFrame::has_valid_score`): a direct
 // definition match is the strongest code-graph signal, a graph neighborhood
@@ -181,7 +192,9 @@ pub(crate) fn query(
 ) -> Result<Vec<ContextFrame>, GraphError> {
     let mut collected: Vec<ContextFrame> = Vec::new();
 
-    // Identifier-like tokens in the query drive definition lookups.
+    // Identifier-like tokens in the query drive definition lookups — one SQL
+    // round trip plus one snippet file read each, so the token list is capped
+    // ([`MAX_QUERY_IDENTIFIERS`]).
     let text = q.query_text.as_deref().unwrap_or(&q.goal);
     for token in candidate_identifiers(text) {
         collected.extend(definitions(conn, root, &token)?);
@@ -340,15 +353,25 @@ fn import_relations(root: &Path, rows: &[ImportRow], rel: &str) -> Vec<Relation>
         .collect()
 }
 
+/// Render import edges as a frame body, capped at [`EDGE_LISTING_MAX`] with a
+/// trailing `+N more` line. Only the *rendered* listing is capped: the
+/// structured [`Relation`] list built by [`import_relations`] stays complete,
+/// because relations carry no inline content and so cost the frame's declared
+/// `token_cost` nothing — the budget problem is the prose body, not the edges.
 fn edge_listing(rows: &[ImportRow]) -> String {
-    rows.iter()
+    let mut lines: Vec<String> = rows
+        .iter()
+        .take(EDGE_LISTING_MAX)
         .map(|row| match (&row.to_path, row.kind) {
             (Some(path), _) => format!("{} → {}", row.specifier, path),
             (None, ImportKind::Bare) => format!("{} (external)", row.specifier),
             (None, _) => format!("{} (unresolved)", row.specifier),
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect();
+    if rows.len() > EDGE_LISTING_MAX {
+        lines.push(format!("+{} more", rows.len() - EDGE_LISTING_MAX));
+    }
+    lines.join("\n")
 }
 
 fn file_provenance(uri: &str, range: Option<String>, sha: Option<&str>) -> Provenance {
@@ -427,6 +450,9 @@ fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// Identifier-like tokens in `text`, deduped in first-seen order and capped at
+/// [`MAX_QUERY_IDENTIFIERS`]. The cap is applied *after* the dedup so a
+/// repeated word does not consume the budget.
 fn candidate_identifiers(text: &str) -> Vec<String> {
     const STOPWORDS: &[&str] = &[
         "the", "and", "for", "fix", "add", "use", "let", "get", "set", "new", "all", "not", "are",
@@ -448,6 +474,9 @@ fn candidate_identifiers(text: &str) -> Vec<String> {
         }
         if seen.insert(token.to_string()) {
             out.push(token.to_string());
+            if out.len() >= MAX_QUERY_IDENTIFIERS {
+                break;
+            }
         }
     }
     out

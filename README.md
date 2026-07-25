@@ -65,6 +65,9 @@ below. It is built in Rust as a workspace of focused crates.
   persistence is not currently supported or claimed.
 - For prebuilt / Homebrew install: `curl`.
 - For building from source: **Rust 1.90+** (via [rustup](https://rustup.rs)) and `git`.
+  Building a clone of this repository uses the exact toolchain pinned in
+  `rust-toolchain.toml` (currently 1.97.0) — rustup downloads it automatically on
+  the first `cargo build`, so expect a one-time toolchain fetch.
 - An API key for any supported provider, *or* a local OpenAI-compatible model
   server (Ollama, vLLM, LM Studio, llama.cpp).
 - Optional: [`ripgrep`](https://github.com/BurntSushi/ripgrep) and
@@ -108,6 +111,16 @@ cargo build --release
 ./target/release/stella --version
 ```
 
+### Not on crates.io
+
+The `stella-*` crates are **not published to crates.io** — `publish = false` is
+set once at `[workspace.package]` in the root `Cargo.toml` and inherited by every
+member. The blocker is structural: `stella-context` and `stella-graph` depend on
+the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+crates by git rev, and crates.io forbids git dependencies in a published crate.
+The `cargo install --git …` command above is therefore the only supported cargo
+path — dropping `--git` does **not** install this project.
+
 ## Set your API key
 
 Stella is BYOK and auto-detects the provider from whichever keys you have set.
@@ -148,6 +161,12 @@ route through the dedicated coding endpoint.
 **Credential chain** (first hit wins): `--api-key` flag → provider env var →
 `settings.json` `api_key` → `~/.stella/credentials.toml` → interactive prompt.
 
+`credentials.toml` is written by
+[`stella auth`](https://stella.oxagen.sh/docs/commands/auth) — `auth set <provider>`
+stores a key (prompted and masked unless you pass `--key`/`--stdin`), `auth list`
+shows every stored key redacted alongside the source that actually wins, and
+`auth remove <provider>` deletes one. It never prints a secret value.
+
 **Project `.env` files** — so keys can follow the project you're in, Stella
 reads `.env`, `.env.local`, and `.env.<mode>.local` (e.g. `.env.production.local`)
 from the working directory (or the nearest ancestor within the same git repo)
@@ -155,13 +174,8 @@ into the environment at startup, most-specific file first. Template files
 (`.env.example`, `.env.sample`, `.env.dist`) and non-`.local` mode files
 (`.env.production`) are never read. **Your live shell always wins** — a value
 already exported (or `OPENROUTER_API_KEY=… stella …`) is never overwritten by a
-file, so unset a stale export if you mean to switch. A small deny-list of
-loader, interpreter and VCS command-execution names (`LD_*`, `DYLD_*`,
-`BASH_ENV`, `NODE_OPTIONS`, `PYTHONPATH`, `GIT_SSH*`, `RUSTC_WRAPPER`, `PATH`, …)
-is **never applied** from a project file — a cloned repo must not be able to
-redirect which programs run — and `stella config` names anything it refused.
-Disable the whole mechanism with `STELLA_NO_ENV_FILE=1`; see what loaded with
-`STELLA_ENV_DEBUG=1`.
+file, so unset a stale export if you mean to switch. Disable the whole mechanism
+with `STELLA_NO_ENV_FILE=1`; see what loaded with `STELLA_ENV_DEBUG=1`.
 
 ```bash
 stella models    # list providers, models, and key status
@@ -281,6 +295,39 @@ provider has no resolvable key degrades softly — the role rides the worker
 and a notice says so.
 
 ## Usage
+
+### Command index
+
+The full subcommand surface. Every command also answers `stella <command> --help`;
+each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen.sh/docs/commands).
+
+| Command | What it does |
+|---|---|
+| [`run <prompt>`](https://stella.oxagen.sh/docs/commands/run) | Send a one-shot prompt, non-interactive — the staged pipeline by default |
+| [`chat`](https://stella.oxagen.sh/docs/commands/chat) | Interactive session: the Command Deck TUI (also what a bare `stella` opens) |
+| [`resume [id]`](https://stella.oxagen.sh/docs/commands/resume) | Reopen a durable past session exactly where it stood; `--list` browses them |
+| [`goal <goal>`](https://stella.oxagen.sh/docs/commands/goal) | Work in judged rounds until a judge model confirms the goal is met |
+| [`monitor [target]`](https://stella.oxagen.sh/docs/commands/monitor) | Watch a branch/PR's CI and fix failures until it is fully green |
+| [`fleet <tasks…>`](https://stella.oxagen.sh/docs/commands/fleet) | Fan tasks out to worker agents, wave-scheduled and recorded in a ledger |
+| [`init`](https://stella.oxagen.sh/docs/commands/init) | Infer this workspace's domain taxonomy and build the code-graph index |
+| [`graph <op> <target>`](https://stella.oxagen.sh/docs/commands/graph) | Query the code graph — definitions, references, imports, neighbors (offline) |
+| [`storage <cmd>`](https://stella.oxagen.sh/docs/commands/storage) | Inspect the storage map: layers, namespaces, relations, fields, drift (offline) |
+| [`scripts <cmd>`](https://stella.oxagen.sh/docs/commands/scripts) | List and run the project's package-manager scripts by canonical verb (offline) |
+| [`tools`](https://stella.oxagen.sh/docs/commands/tools) | List every tool available this session; `--validate` checks custom manifests |
+| [`models`](https://stella.oxagen.sh/docs/commands/models) | List configured providers and available models |
+| [`auth <cmd>`](https://stella.oxagen.sh/docs/commands/auth) | Manage BYOK provider keys in `~/.stella/credentials.toml` — never prints a secret |
+| [`config`](https://stella.oxagen.sh/docs/commands/config) | Show the fully resolved configuration |
+| [`mcp <cmd>`](https://stella.oxagen.sh/docs/commands/mcp) | Manage MCP servers: search a registry, install, list, log in, show usage |
+| [`connect <cmd>`](https://stella.oxagen.sh/docs/commands/connect) | Connect GitHub or Linear so the agent gains the issue toolset |
+| [`memory <cmd>`](https://stella.oxagen.sh/docs/commands/memory) | Inspect memories through the citation loop; promote one to a project rule |
+| [`stats`](https://stella.oxagen.sh/docs/commands/stats) | Cost, tokens, and $/resolved task for **this** workspace |
+| [`usage <cmd>`](https://stella.oxagen.sh/docs/commands) | The same numbers across **every** project, from the hub at `~/.stella/usage.db` |
+| [`inspect`](https://stella.oxagen.sh/docs/commands/inspect) | Replay the exact context a past model call was sent, verified against its digests |
+| [`observe`](https://stella.oxagen.sh/docs/commands/observe) | Serve the Observatory dashboard over local telemetry — loopback-only, read-only |
+| [`cloud <cmd>`](https://stella.oxagen.sh/docs/commands) | Show or set the org/workspace identity that scopes replicated telemetry |
+| [`telemetry <cmd>`](https://stella.oxagen.sh/docs/telemetry) | Inspect or flush the managed enterprise spool — off unless explicitly enrolled |
+| [`arena`](https://stella.oxagen.sh/docs/commands) | [arena-bench](https://github.com/macanderson/arena-bench) harness adapter — for benchmarking Stella, not using it |
+| [`version`](https://stella.oxagen.sh/docs/commands/version) | Print the version and exit |
 
 ### Interactive chat (default)
 
@@ -580,7 +627,7 @@ repository and is pulled in as a pinned git dependency, not as workspace members
 | Context Graph Protocol | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it via git. |
 
 The repo is a **monorepo**: alongside the Rust workspace, the documentation
-site ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `stella-docs/`
+site ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `website/`
 (Next.js + Fumadocs), orchestrated by a pnpm workspace at the root. Rust
 crates are deliberately *not* pnpm packages — cargo remains their build
 system; the root `package.json` only bridges convenience scripts.
@@ -602,7 +649,7 @@ pnpm dev         # serve the docs at http://localhost:3400
 pnpm build       # production build (what docs.yml CI runs)
 ```
 
-Docs content is MDX under `stella-docs/content/docs/`. On a pull request a
+Docs content is MDX under `website/content/docs/`. On a pull request a
 docs-only change runs the fast `docs` workflow instead of the Rust gate; the
 merge queue does not honor `paths-ignore`, so it still pays the full gate once
 queued — deliberately, since the required check has to report on the merged

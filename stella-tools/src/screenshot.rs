@@ -13,13 +13,10 @@ use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::exec;
+// Single-quotes the capture path for this module's `bash -c` line — the
+// crate's one POSIX escaper, which `exec` owns because it owns that runner.
+use crate::exec::shell_quote;
 use crate::registry::Tool;
-
-/// Single-quote a path for the capture chain's `bash -c` line, escaping any
-/// embedded quote the POSIX way (`'\''`).
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
 
 pub struct Screenshot;
 

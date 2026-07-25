@@ -423,6 +423,49 @@ impl Tool for GatherContext {
     }
 }
 
+/// Per-symbol definitions/references answers. `None` means "no code-graph
+/// index at all" and renders as its own note — distinct from a query that
+/// ran and failed.
+type SymbolAnswers = Vec<(String, Option<(ToolOutput, ToolOutput)>)>;
+
+/// Answer definitions + references for every symbol against ONE open graph
+/// handle, so a sweep pays for a single open + `index_all` pass instead of
+/// two per symbol.
+///
+/// Synchronous by design — the caller runs it on the blocking pool, and the
+/// handle never leaves this frame.
+fn graph_sweep(root: &Path, symbols: Vec<String>) -> SymbolAnswers {
+    let graph = match crate::graph::open_or_build(root) {
+        Ok(graph) => graph,
+        // The exact shape the per-symbol `run_query` produced when the open
+        // failed: the same error under both of the symbol's headings.
+        Err(message) => return symbol_failures(symbols, message),
+    };
+    let answers = symbols
+        .into_iter()
+        .map(|symbol| {
+            let defs = crate::graph::run_query_with(&graph, "definitions", &symbol);
+            let refs = crate::graph::run_query_with(&graph, "references", &symbol);
+            (symbol, Some((defs, refs)))
+        })
+        .collect();
+    graph.shutdown();
+    answers
+}
+
+/// One shared failure rendered under both of every symbol's headings.
+fn symbol_failures(symbols: Vec<String>, message: String) -> SymbolAnswers {
+    symbols
+        .into_iter()
+        .map(|symbol| {
+            let error = || ToolOutput::Error {
+                message: message.clone(),
+            };
+            (symbol, Some((error(), error())))
+        })
+        .collect()
+}
+
 /// Run the sweep's sub-queries concurrently, assemble + persist the pack,
 /// and render it.
 async fn gather(
@@ -437,8 +480,12 @@ async fn gather(
 
     // ── Concurrent sub-queries ──────────────────────────────────────────
     // Globs and greps reuse the exact Tool impls the model would have
-    // called one by one; graph queries reuse the `graph_query` core. All of
-    // them are read-only and independent, so they run together.
+    // called one by one; graph queries reuse the `graph_query` core. All
+    // three arms are read-only and independent, so they run together — but
+    // only the glob and grep arms interleave as futures. The graph arm is
+    // synchronous SQLite work with no await point inside, so it runs as ONE
+    // `spawn_blocking` over one opened graph: every symbol shares a single
+    // index pass instead of paying its own full walk+hash of the workspace.
     let glob_results = futures_util::future::join_all(inputs.globs.iter().map(|pattern| {
         let input = serde_json::json!({ "pattern": pattern });
         async move {
@@ -463,17 +510,27 @@ async fn gather(
         Ok(available) => available,
         Err(message) => return ToolOutput::Error { message },
     };
-    let graph_results = futures_util::future::join_all(inputs.symbols.iter().map(|symbol| {
-        let symbol = symbol.clone();
+    // One open, one index pass, every symbol answered against that one
+    // handle — on the blocking pool (#549). The per-symbol `join_all` this
+    // replaces called the synchronous `run_query` twice per symbol, so N
+    // symbols meant 2N full workspace index passes; and because those async
+    // blocks contained no await, `join_all` polled them strictly in
+    // sequence, so the concurrency was never real.
+    let graph_results = {
+        let graph_root = root.to_path_buf();
+        let symbols = inputs.symbols.clone();
+        let cancelled = inputs.symbols.clone();
         async move {
             if !graph_on {
-                return (symbol, None);
+                return symbols.into_iter().map(|symbol| (symbol, None)).collect();
             }
-            let defs = crate::graph::run_query(root, "definitions", &symbol);
-            let refs = crate::graph::run_query(root, "references", &symbol);
-            (symbol, Some((defs, refs)))
+            tokio::task::spawn_blocking(move || graph_sweep(&graph_root, symbols))
+                .await
+                .unwrap_or_else(|_| {
+                    symbol_failures(cancelled, "the code-graph sweep was cancelled".into())
+                })
         }
-    }));
+    };
     let (glob_results, grep_results, graph_results) =
         futures_util::join!(glob_results, grep_results, graph_results);
 

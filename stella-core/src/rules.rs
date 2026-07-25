@@ -149,8 +149,8 @@ pub struct RuleFile {
     pub contents: String,
 }
 
-/// The filesystem discovery port for rule files (
-/// §1.3). A real implementation (owned by `stella-cli`/`stella-tools`)
+/// The filesystem discovery port for rule files.
+/// A real implementation (owned by `stella-cli`/`stella-tools`)
 /// walks each directory in `dirs`, in the given order, and returns every
 /// `.md` file's contents — files within one directory sorted by name,
 /// directories skipped silently if they don't exist (mirrors

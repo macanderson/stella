@@ -36,7 +36,10 @@ pub(crate) const TABLES: [&str; 20] = [
 ];
 
 /// `executions` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the spine every other table
-/// keys off, one row per run/goal/turn. `session_id` (v8) is the nullable
+/// keys off, one row per goal/turn. Note that this "run" is NOT the fleet
+/// ledger's `run_id` (one multi-agent fan-out, `stella-fleet/src/ledger.rs`)
+/// and NOT a session — see the glossary in `AGENTS.md` for the five
+/// look-alike identifiers. `session_id` (v8) is the nullable
 /// cross-process session registry id ([`SessionRecord::id`](crate::SessionRecord::id)) stamped by
 /// [`Store::set_execution_session`](crate::Store::set_execution_session) right after the row is opened, linking
 /// per-turn executions back to their session so

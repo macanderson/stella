@@ -8,7 +8,8 @@
 //! - **Auth**: an OAuth2 bearer token, not an API key. The full ADC chain
 //!   (service-account JWT signing, metadata-server exchange) is deliberately
 //!   out of scope for this first cut — the adapter takes a ready token,
-//!   which `stella-cli` resolves from `VERTEX_ACCESS_TOKEN` (documented as
+//!   resolved from `VERTEX_ACCESS_TOKEN` by [`crate::credential::ApiKey`]
+//!   (documented as
 //!   `export VERTEX_ACCESS_TOKEN=$(gcloud auth print-access-token)`), the
 //!   same "ready credential in, provider-native acquisition later" posture
 //!   the credential chain doc already records for Bedrock/Vertex.
@@ -16,7 +17,9 @@
 //!   `{base}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent`,
 //!   where the base host is `aiplatform.googleapis.com` for the `global`
 //!   location and `{location}-aiplatform.googleapis.com` for a pinned
-//!   region.
+//!   region. The project/location pair comes from
+//!   [`crate::credential::VertexAddressing`] — this crate owns the variable
+//!   names and the `global` default, so any host can construct the adapter.
 
 use async_trait::async_trait;
 use stella_protocol::{CompletionRequest, CompletionResult, ProviderError};

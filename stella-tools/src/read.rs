@@ -1,9 +1,17 @@
-//! `read_file` — read a file with optional line range and a line cap.
-//! Mirrors the TS `read_file` tool: 1-based line numbers, `offset`/`limit`
-//! params, and a cap on the number of lines *returned* (`MAX_LINES`) so a huge
-//! file can't flood the context. Note this bounds displayed lines, not bytes:
-//! the file is read into memory first, so a single pathologically long line is
-//! still read in full.
+//! `read_file` — read a file with optional line range, a line cap, and a
+//! byte cap. Mirrors the TS `read_file` tool: 1-based line numbers,
+//! `offset`/`limit` params, and a cap on the number of lines *returned*
+//! ([`MAX_LINES`]) so a huge file can't flood the context.
+//!
+//! Lines alone are not a bound on context, though: a minified bundle, a
+//! single-line JSON fixture, or a generated SQL dump is one or two "lines"
+//! and sails under the line cap. Two byte caps close that: each emitted line
+//! is clipped at [`MAX_LINE_BYTES`] and the whole rendered payload at
+//! [`MAX_RENDER_BYTES`], both with a loud `[… N bytes elided …]` marker and
+//! both named in the trailing footer so the model knows to narrow its range
+//! rather than assume it saw the file. The *memory* half is unchanged — the
+//! file is still read into memory in full before anything is capped — so a
+//! pathologically large file still costs its own size in RAM once.
 //!
 //! The tool also keeps the session's read-state ledger ([`ReadLedger`]): every
 //! successful read records a per-file tally (reported in the tool output) and
@@ -30,6 +38,18 @@ use crate::registry::Tool;
 /// Crate-visible so `read_symbol` (which reads through this tool) can name
 /// the cap honestly when a symbol's span exceeds it.
 pub(crate) const MAX_LINES: usize = 2000;
+
+/// Per-line width cap. Real source lines are far shorter; the cases this
+/// catches are machine-generated (minified JS, base64 blobs, one-line JSON),
+/// where the tail of the line carries no more information than its head.
+/// Looser than `grep`'s column cap on purpose: `read_file` is the tool you
+/// call when you want the file's actual contents.
+const MAX_LINE_BYTES: usize = 1_000;
+
+/// Ceiling on the whole rendered payload. 400 KB is ~114k estimated tokens —
+/// already more than any single tool result should spend, and the point at
+/// which the honest answer is "narrow the range", not "here is everything".
+const MAX_RENDER_BYTES: usize = 400 * 1024;
 
 /// Per-file record of what the model last saw: how many times the file was
 /// read, and the sha256 of the file's full content the last time the model
@@ -196,21 +216,61 @@ impl Tool for ReadFile {
 
                 // `write!` into one pre-sized buffer rather than a `format!`
                 // allocation per line: this is the crate's hottest render
-                // path (up to MAX_LINES lines on every single read).
+                // path (up to MAX_LINES lines on every single read). The
+                // reservation is itself capped — a 5 MB single line must not
+                // make the *buffer* the flood the caps exist to prevent.
                 use std::fmt::Write as _;
                 let mut numbered = String::with_capacity(
-                    lines[start..end].iter().map(|l| l.len() + 8).sum::<usize>() + 64,
+                    lines[start..end]
+                        .iter()
+                        .map(|l| l.len().min(MAX_LINE_BYTES) + 32)
+                        .sum::<usize>()
+                        .min(MAX_RENDER_BYTES + 1024)
+                        + 64,
                 );
+                let mut clipped_lines = 0usize;
+                let mut shown = 0usize;
+                let mut payload_capped = false;
                 for (i, line) in lines[start..end].iter().enumerate() {
+                    if numbered.len() >= MAX_RENDER_BYTES {
+                        payload_capped = true;
+                        break;
+                    }
                     let line_num = start + i + 1;
-                    let _ = writeln!(numbered, "{line_num:>6}\t{line}");
+                    if line.len() <= MAX_LINE_BYTES {
+                        let _ = writeln!(numbered, "{line_num:>6}\t{line}");
+                    } else {
+                        // Char-boundary-safe: `String::truncate`/byte slicing
+                        // would panic mid-UTF-8 on a long non-ASCII line.
+                        let head = crate::exec::truncate_preview(line, MAX_LINE_BYTES);
+                        let elided = line.len() - head.len();
+                        let _ =
+                            writeln!(numbered, "{line_num:>6}\t{head}[… {elided} bytes elided …]");
+                        clipped_lines += 1;
+                    }
+                    shown += 1;
                 }
                 let total = lines.len();
-                let shown = end - start;
                 let _ = write!(
                     numbered,
-                    "\n({shown}/{total} lines shown · read {reads}× this session)"
+                    "\n({shown}/{total} lines shown · read {reads}× this session"
                 );
+                if clipped_lines > 0 {
+                    let _ = write!(
+                        numbered,
+                        " · {clipped_lines} line(s) clipped at the {MAX_LINE_BYTES}-byte \
+                         per-line cap"
+                    );
+                }
+                if payload_capped {
+                    let _ = write!(
+                        numbered,
+                        " · stopped at the {} KB payload cap — re-read with offset/limit to \
+                         continue",
+                        MAX_RENDER_BYTES / 1024
+                    );
+                }
+                numbered.push(')');
                 ToolOutput::Ok { content: numbered }
             }
             Err(e) => ToolOutput::Error {
@@ -351,6 +411,92 @@ mod tests {
         assert_eq!(
             ledger.last_seen_sha(dir.path(), "a.rs"),
             Some(crate::staleness::hex_sha256(b"rewritten\n")),
+        );
+    }
+
+    /// The line cap alone never saw this file: 5 MB on ONE line is a single
+    /// line, so it sailed under `MAX_LINES` and landed in the transcript
+    /// whole (~1.4M estimated tokens — enough to hard-fail the next provider
+    /// call). The width cap must clip it, loudly, and say so.
+    #[tokio::test]
+    async fn a_single_pathologically_long_line_is_clipped_and_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let huge = "x".repeat(5 * 1024 * 1024);
+        std::fs::write(dir.path().join("bundle.min.js"), &huge).unwrap();
+
+        let out = ReadFile::default()
+            .execute(&serde_json::json!({"path": "bundle.min.js"}), dir.path())
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected ok, got: {out:?}");
+        };
+        assert!(
+            content.len() < 64 * 1024,
+            "a 5 MB one-liner must not reach the model whole (got {} bytes)",
+            content.len()
+        );
+        assert!(
+            content.contains("bytes elided"),
+            "elision is loud: {content}"
+        );
+        assert!(
+            content.contains("clipped at the 1000-byte per-line cap"),
+            "the footer names the cap: {content}"
+        );
+        assert!(content.contains("1/1 lines shown"), "{content}");
+    }
+
+    /// Many long lines blow the payload ceiling even though each one is
+    /// individually clipped — the render stops and the footer says so, with
+    /// an honest shown/total count.
+    #[tokio::test]
+    async fn the_total_payload_cap_stops_the_render_and_reports_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let line = "y".repeat(4096);
+        let body: String = std::iter::repeat_n(line.as_str(), 800)
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.path().join("dump.sql"), &body).unwrap();
+
+        let out = ReadFile::default()
+            .execute(&serde_json::json!({"path": "dump.sql"}), dir.path())
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected ok, got: {out:?}");
+        };
+        assert!(
+            content.len() < MAX_RENDER_BYTES + 4096,
+            "payload stays under the ceiling (got {} bytes)",
+            content.len()
+        );
+        assert!(
+            content.contains("stopped at the 400 KB payload cap"),
+            "the footer names the cap: {content}"
+        );
+        assert!(
+            !content.contains("800/800 lines shown"),
+            "the shown count must be the lines actually emitted: {content}"
+        );
+        assert!(content.contains("/800 lines shown"), "{content}");
+    }
+
+    /// The caps must be invisible for ordinary source: no marker, no footer
+    /// noise, byte-identical numbering.
+    #[tokio::test]
+    async fn ordinary_files_are_unaffected_by_the_byte_caps() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn main() {}\nlet x = 1;\n").unwrap();
+        let out = ReadFile::default()
+            .execute(&serde_json::json!({"path": "a.rs"}), dir.path())
+            .await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected ok, got: {out:?}");
+        };
+        assert!(!content.contains("elided"), "{content}");
+        assert!(!content.contains("cap"), "{content}");
+        assert!(
+            content.ends_with("(2/2 lines shown · read 1× this session)"),
+            "{content}"
         );
     }
 

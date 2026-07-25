@@ -1,3 +1,9 @@
+//! Budget-boundary witnesses: an over-cap call is settled spend but the next
+//! provider call never starts, an already-breached turn never pays for
+//! compaction, and a billed completion is charged — and its usage envelope
+//! emitted — exactly once, including when the turn is cancelled with a
+//! speculation still in flight.
+
 use super::*;
 
 struct BilledResultWithBlockedSpeculation {

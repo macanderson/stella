@@ -11,8 +11,14 @@ use serde::{Deserialize, Serialize};
 /// without a second schema language.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolSchema {
+    /// The tool's identifier, as the model must spell it in a
+    /// [`ToolCall::name`]. Unique within one registry.
     pub name: String,
+    /// What the tool does, written for the model rather than for a human
+    /// reader — this text is the whole basis on which it decides to call.
     pub description: String,
+    /// JSON Schema for the object the model must send as
+    /// [`ToolCall::input`].
     pub input_schema: serde_json::Value,
     /// True when the tool cannot mutate any state (filesystem, processes,
     /// environment) — the engine may run consecutive read-only calls from
@@ -27,7 +33,11 @@ pub struct ToolSchema {
 pub struct ToolCall {
     /// Stable id correlating this call to its eventual `ToolResult`.
     pub call_id: String,
+    /// Which tool to run — matches the [`ToolSchema::name`] it was chosen
+    /// from.
     pub name: String,
+    /// The arguments, as the model produced them. Runtime data: validate
+    /// against [`ToolSchema::input_schema`] rather than trusting the shape.
     pub input: serde_json::Value,
 }
 
@@ -36,8 +46,17 @@ pub struct ToolCall {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOutput {
-    Ok { content: String },
-    Error { message: String },
+    /// The tool ran to completion.
+    Ok {
+        /// What the tool produced, as the model will read it.
+        content: String,
+    },
+    /// The tool failed.
+    Error {
+        /// Why it failed, phrased so the model can act on it — the model
+        /// sees this text and retries against it.
+        message: String,
+    },
 }
 
 impl ToolOutput {
@@ -52,7 +71,9 @@ impl ToolOutput {
 /// A tool result reported back to the model, correlated to its call.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
+    /// The [`ToolCall::call_id`] this answers.
     pub call_id: String,
+    /// What running the call produced — success or a named failure.
     pub output: ToolOutput,
 }
 

@@ -27,7 +27,9 @@
 //! the recorded pid — a crashed session leaves readable partial notes,
 //! never a leaked lock. Records are plain JSON files, one per slice, so
 //! they are inspectable, diffable, and shareable through the filesystem
-//! with zero coordination.
+//! with zero coordination — and each one is published by a synced
+//! temp-sibling rename ([`write_atomically`]), never truncated in place,
+//! because the reader skips a corrupt record silently.
 
 use std::collections::BTreeMap;
 
@@ -512,6 +514,46 @@ impl Tool for Explorations {
     }
 }
 
+/// Write `bytes` to `path` via a synced temp sibling and a rename, so a
+/// crash or a full disk can never publish a truncated record.
+///
+/// These files are cross-session shared state holding agent-authored prose
+/// that is not derivable from anything else, and the reader is deliberately
+/// tolerant of junk (a corrupt record is *skipped*, not reported), so a
+/// half-written file would make an exploration silently disappear. Same
+/// discipline — and the same rationale — as `stella-graph`'s manifest write.
+/// The temp name carries the pid because concurrent sessions saving the same
+/// slice is the exact scenario this store exists for, and it keeps the
+/// `.json` extension off the temp so the readers' extension filter skips it.
+async fn write_atomically(
+    dir: &std::path::Path,
+    slice: &str,
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt as _;
+
+    let tmp = dir.join(format!("{slice}.json.tmp.{}", std::process::id()));
+    let write = async {
+        let mut file = tokio::fs::File::create(&tmp).await?;
+        file.write_all(bytes).await?;
+        // The sync is what makes the rename's atomicity mean anything after
+        // a power loss: without it the rename can land while the bytes are
+        // still only in the page cache.
+        file.sync_all().await
+    }
+    .await;
+    if let Err(e) = write {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!("could not write {}: {e}", tmp.display()));
+    }
+    if let Err(e) = tokio::fs::rename(&tmp, path).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!("could not replace {}: {e}", path.display()));
+    }
+    Ok(())
+}
+
 /// Persist an exploration map for a slice.
 pub struct SaveExploration;
 
@@ -626,10 +668,8 @@ impl Tool for SaveExploration {
                 };
             }
         };
-        if let Err(e) = tokio::fs::write(&path, json).await {
-            return ToolOutput::Error {
-                message: format!("could not write {}: {e}", path.display()),
-            };
+        if let Err(message) = write_atomically(&dir, slice, &path, json.as_bytes()).await {
+            return ToolOutput::Error { message };
         }
         let mut note = format!(
             "{} exploration `{slice}` ({} chars, {} files tracked for staleness) — other \
@@ -706,6 +746,38 @@ mod tests {
             other => panic!("read failed: {other:?}"),
         }
 
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The record is published by rename, never truncated in place — and the
+    /// temp sibling must not survive. A leftover `.tmp.<pid>` would be
+    /// invisible to the readers (they filter on the `.json` extension), so a
+    /// regression here fails silently; this is the only thing that catches it.
+    #[tokio::test]
+    async fn a_successful_save_leaves_no_temp_file_behind() {
+        let root = temp_root("atomic");
+        let input = serde_json::json!({
+            "slice": "atomic", "title": "T", "summary": "s", "content": "map"
+        });
+        // Save twice: the second call is the overwrite path, which is the
+        // one that used to truncate an existing record in place.
+        assert!(!SaveExploration.execute(&input, &root).await.is_error());
+        assert!(!SaveExploration.execute(&input, &root).await.is_error());
+
+        let dir = root.join(EXPLORATIONS_DIR);
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files survived: {leftovers:?}");
+        assert!(dir.join("atomic.json").exists(), "the record was published");
+
+        let read = Explorations
+            .execute(&serde_json::json!({"slice": "atomic"}), &root)
+            .await;
+        assert!(!read.is_error(), "{read:?}");
         std::fs::remove_dir_all(&root).ok();
     }
 

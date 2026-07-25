@@ -335,6 +335,24 @@ impl McpToolSet {
         &self.failed
     }
 
+    /// Connected servers that advertised more tools than the per-server cap
+    /// allows, as `(name, dropped)` — the tools past the cap were refused at
+    /// ingest so one over-advertising server cannot eat the model's context
+    /// (#551).
+    ///
+    /// Deliberately **not** folded into [`McpToolSet::failed_servers`]: these
+    /// servers are connected and their kept tools route normally, and callers
+    /// render that list as "server unavailable", which would be a lie here.
+    /// Each `dropped` count is a floor — discovery stops at the cap. Empty for
+    /// every well-behaved server.
+    pub fn over_advertising_servers(&self) -> Vec<(&str, usize)> {
+        self.clients
+            .iter()
+            .filter(|c| c.dropped_tool_count() > 0)
+            .map(|c| (c.name(), c.dropped_tool_count()))
+            .collect()
+    }
+
     /// How many servers are live.
     pub fn connected_count(&self) -> usize {
         self.clients.len()
@@ -532,6 +550,10 @@ fn is_namespaceable(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::{
+        MAX_TOOL_DESCRIPTION_CHARS, MAX_TOOL_RESULT_BYTES, MAX_TOOL_SCHEMA_BYTES,
+        MAX_TOOLS_PER_SERVER,
+    };
     use crate::error::McpError;
     use crate::protocol::PREFERRED_PROTOCOL_VERSION;
     use crate::transport::Transport;
@@ -897,5 +919,309 @@ mod tests {
         // No `with_candidate_safe_servers` call — nothing is allowlisted.
         let set = McpToolSet::from_clients(vec![fs]);
         assert!(set.prefetch_candidate_context().await.is_none());
+    }
+
+    // Context budgets (#551) — nothing an untrusted server pushes at the model
+    // may be unbounded. These drive the real `McpClient` state machine through
+    // the public `McpToolSet` surface, so they witness the cap *and* that the
+    // server keeps working with it applied.
+
+    /// A connected client whose single `tools/call` answers with `text`.
+    async fn client_answering(name: &str, tool: &str, text: &str) -> McpClient {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": tool, "inputSchema": { "type": "object" } }] }),
+        );
+        transport.push_ok(
+            "tools/call",
+            serde_json::json!({ "content": [{ "type": "text", "text": text }] }),
+        );
+        let mut client = McpClient::new(name, Box::new(transport));
+        client.initialize().await.unwrap();
+        client
+    }
+
+    #[tokio::test]
+    async fn an_oversized_tool_result_is_capped_middle_out_with_a_marker() {
+        let flood = format!("HEAD{}TAIL", "x".repeat(MAX_TOOL_RESULT_BYTES * 3));
+        let set = McpToolSet::from_clients(vec![client_answering("flood", "dump", &flood).await]);
+
+        let out = set.execute("mcp__flood__dump", &Value::Null).await;
+        let ToolOutput::Ok { content } = out else {
+            panic!("expected a successful call, got {out:?}");
+        };
+        assert!(
+            content.len() < MAX_TOOL_RESULT_BYTES + 128,
+            "a {} byte result must not reach the model whole (got {})",
+            flood.len(),
+            content.len()
+        );
+        assert!(content.starts_with("HEAD"), "the head survives");
+        assert!(content.ends_with("TAIL"), "the tail survives (L-S3)");
+        assert!(
+            content.contains("... [truncated ") && content.contains(" bytes] ..."),
+            "the elision is explicit and counted"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversized_error_result_is_capped_too() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
+        );
+        transport.push_ok(
+            "tools/call",
+            serde_json::json!({
+                "content": [{ "type": "text", "text": "e".repeat(MAX_TOOL_RESULT_BYTES * 2) }],
+                "isError": true,
+            }),
+        );
+        let mut client = McpClient::new("flood", Box::new(transport));
+        client.initialize().await.unwrap();
+        let set = McpToolSet::from_clients(vec![client]);
+
+        match set.execute("mcp__flood__boom", &Value::Null).await {
+            ToolOutput::Error { message } => assert!(
+                message.len() < MAX_TOOL_RESULT_BYTES + 128,
+                "an error message is model context too: {} bytes",
+                message.len()
+            ),
+            other => panic!("expected a tool error, got {other:?}"),
+        }
+    }
+
+    /// Witness for the hole PR #586 left in #551's context bound. The result
+    /// cap lives in `decode_call_result`, which a JSON-RPC **error object**
+    /// never reaches: the request fails first, and `execute_mcp`'s `Err` arm
+    /// used to interpolate the server's `error.message` verbatim. That is the
+    /// cheapest possible hostile payload — no content array, no `isError`,
+    /// just a huge string in the error field — and it landed in model context
+    /// whole. Distinct from `an_oversized_error_result_is_capped_too` above,
+    /// which exercises the `isError: true` *content* route.
+    #[tokio::test]
+    async fn an_oversized_json_rpc_error_message_is_capped_before_the_model() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
+        );
+        transport.push_err(
+            "tools/call",
+            McpError::JsonRpc {
+                code: -32000,
+                message: "Z".repeat(MAX_TOOL_RESULT_BYTES * 10),
+                data: None,
+            },
+        );
+        let mut client = McpClient::new("flood", Box::new(transport));
+        client.initialize().await.unwrap();
+        let set = McpToolSet::from_clients(vec![client]);
+
+        match set.execute("mcp__flood__boom", &Value::Null).await {
+            ToolOutput::Error { message } => {
+                assert!(
+                    message.len() < MAX_TOOL_RESULT_BYTES + 256,
+                    "a {}-byte server-chosen error message must not reach the model whole \
+                     (got {} bytes)",
+                    MAX_TOOL_RESULT_BYTES * 10,
+                    message.len()
+                );
+                assert!(
+                    message.contains("mcp server `flood` failed calling `boom`"),
+                    "the server is still named"
+                );
+                assert!(
+                    message.contains("... [truncated ") && message.contains(" bytes] ..."),
+                    "the elision is explicit and counted"
+                );
+            }
+            other => panic!("expected a tool error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_under_budget_json_rpc_error_message_is_passed_through_verbatim() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
+        );
+        transport.push_err(
+            "tools/call",
+            McpError::JsonRpc {
+                code: -32602,
+                message: "unknown argument `pth`".into(),
+                data: None,
+            },
+        );
+        let mut client = McpClient::new("files", Box::new(transport));
+        client.initialize().await.unwrap();
+        let set = McpToolSet::from_clients(vec![client]);
+
+        assert_eq!(
+            set.execute("mcp__files__boom", &Value::Null).await,
+            ToolOutput::Error {
+                message: "mcp server `files` failed calling `boom`: json-rpc error -32602: \
+                          unknown argument `pth`"
+                    .into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_under_budget_result_is_byte_identical() {
+        let set = McpToolSet::from_clients(vec![
+            client_answering("files", "read", "small, exact, unmodified").await,
+        ]);
+        assert_eq!(
+            set.execute("mcp__files__read", &Value::Null).await,
+            ToolOutput::Ok {
+                content: "small, exact, unmodified".into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_multibyte_result_is_capped_without_slicing_a_codepoint() {
+        // Every candidate cut point falls mid-codepoint for a 3-byte char.
+        let flood = "漢".repeat(MAX_TOOL_RESULT_BYTES);
+        let set = McpToolSet::from_clients(vec![client_answering("cjk", "dump", &flood).await]);
+
+        let ToolOutput::Ok { content } = set.execute("mcp__cjk__dump", &Value::Null).await else {
+            panic!("expected a successful call");
+        };
+        assert!(content.len() < MAX_TOOL_RESULT_BYTES + 128);
+        assert!(
+            content.chars().all(|c| c == '漢' || c.is_ascii()),
+            "no codepoint may be sliced apart"
+        );
+    }
+
+    #[tokio::test]
+    async fn tools_past_the_per_server_cap_are_dropped_recorded_and_the_server_still_works() {
+        let overflow = 7;
+        let advertised: Vec<Value> = (0..MAX_TOOLS_PER_SERVER + overflow)
+            .map(|i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }))
+            .collect();
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok("tools/list", serde_json::json!({ "tools": advertised }));
+        transport.push_ok(
+            "tools/call",
+            serde_json::json!({ "content": [{ "type": "text", "text": "still routing" }] }),
+        );
+        let mut client = McpClient::new("greedy", Box::new(transport));
+        client.initialize().await.unwrap();
+        assert_eq!(client.tools().len(), MAX_TOOLS_PER_SERVER);
+        assert_eq!(client.dropped_tool_count(), overflow);
+
+        let set = McpToolSet::from_clients(vec![client]);
+        // The overflow is a diagnostic of its own — NOT `failed_servers`,
+        // which callers render as "server unavailable".
+        assert!(set.failed_servers().is_empty());
+        assert_eq!(set.over_advertising_servers(), vec![("greedy", overflow)]);
+
+        // Routes and schemas agree with the truncated tool list…
+        assert_eq!(
+            set.schemas()
+                .iter()
+                .filter(|s| s.name.starts_with("mcp__greedy__"))
+                .count(),
+            MAX_TOOLS_PER_SERVER
+        );
+        // A tool the server DID advertise, past the cap, is neither advertised
+        // nor callable.
+        let dropped = format!("mcp__greedy__t{}", MAX_TOOLS_PER_SERVER + 1);
+        assert!(
+            set.execute(&dropped, &Value::Null).await.is_error(),
+            "a dropped tool is not callable"
+        );
+        // …and a kept tool still calls through normally.
+        assert_eq!(
+            set.execute("mcp__greedy__t0", &Value::Null).await,
+            ToolOutput::Ok {
+                content: "still routing".into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_well_behaved_server_records_no_overflow() {
+        let set = McpToolSet::from_clients(vec![connected_client("files", "read").await]);
+        assert!(set.over_advertising_servers().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_oversized_description_and_schema_are_bounded_at_ingest() {
+        // One tool with a ~1 MB description, one with a ~1 MB schema.
+        let fat_schema = serde_json::json!({
+            "type": "object",
+            "properties": { "blob": { "type": "string", "description": "y".repeat(MAX_TOOL_SCHEMA_BYTES * 64) } },
+        });
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [
+                { "name": "wordy", "description": "z".repeat(1_000_000),
+                  "inputSchema": { "type": "object" } },
+                { "name": "fat", "description": "short", "inputSchema": fat_schema },
+            ] }),
+        );
+        let mut client = McpClient::new("verbose", Box::new(transport));
+        client.initialize().await.unwrap();
+        let set = McpToolSet::from_clients(vec![client]);
+
+        let schemas = set.schemas();
+        let wordy = schemas
+            .iter()
+            .find(|s| s.name == "mcp__verbose__wordy")
+            .expect("wordy is advertised");
+        assert!(
+            wordy.description.chars().count() <= MAX_TOOL_DESCRIPTION_CHARS + 1,
+            "a megabyte description must not reach the model: {} chars",
+            wordy.description.chars().count()
+        );
+
+        let fat = schemas
+            .iter()
+            .find(|s| s.name == "mcp__verbose__fat")
+            .expect("fat is advertised");
+        assert!(
+            serde_json::to_vec(&fat.input_schema).unwrap().len() <= MAX_TOOL_SCHEMA_BYTES,
+            "an over-budget schema must be bounded"
+        );
+        // Bounded *and still valid JSON Schema* — a chopped string would not be.
+        assert_eq!(fat.input_schema, serde_json::json!({ "type": "object" }));
+        assert!(
+            fat.description.contains("permissive"),
+            "the model is told its schema was replaced: {}",
+            fat.description
+        );
     }
 }

@@ -23,6 +23,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /src/target/release/stella-serve /usr/local/bin/stella-serve
 
+# The sidecar needs no privileges at all: it binds 8080 (above 1024, see below),
+# executes no local tools (STELLA_SERVE_TOOLS=remote) and writes nothing to the
+# filesystem — so it must not run as root. Numeric USER so the constraint holds
+# even under a runtime that ignores /etc/passwd.
+RUN useradd --system --uid 10001 --user-group stella
+USER 10001
+
 # Bind all interfaces inside the container; the bearer token is the auth gate and
 # the container runs inside the host's private network / tenant sandbox.
 ENV STELLA_SERVE_BIND=0.0.0.0:8080 \

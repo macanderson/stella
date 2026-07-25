@@ -34,7 +34,7 @@ fn repo_root() -> PathBuf {
 /// a present tree** still fails. Renaming `index.mdx` must not silently
 /// disable the gate.
 fn docs_root() -> Option<PathBuf> {
-    let dir = repo_root().join("stella-docs");
+    let dir = repo_root().join("website");
     dir.is_dir().then_some(dir)
 }
 

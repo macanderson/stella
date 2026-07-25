@@ -7,7 +7,7 @@
 //! and the line delta it caused). Events aggregate by normalized
 //! workspace-relative path into one [`FileTouchRecord`] per file, and the
 //! session payload — [`FileTouchTelemetry`] — serializes to the documented
-//! JSON Schema (see `stella-docs/content/docs/telemetry/files-touched.mdx`):
+//! JSON Schema (see `website/content/docs/telemetry/files-touched.mdx`):
 //!
 //! - `C` — the file went from nonexistent to existing (`lines_added` = the
 //!   new file's full line count).
@@ -195,6 +195,13 @@ impl FileTouchTelemetry {
 #[derive(Debug, Default)]
 pub struct FileTouchLedger {
     records: Vec<FileTouchRecord>,
+    /// Path → index into `records`. The `Vec` stays insertion-ordered
+    /// because "records ordered by first touch" is the documented shape of
+    /// the `files_touched` telemetry payload; this index only removes the
+    /// linear scan every `record`/`get` used to pay under the registry's
+    /// mutex (O(N²) over a session's distinct files). Every push into
+    /// `records` must insert here in the same step.
+    index: std::collections::HashMap<String, usize>,
     /// Total events appended across every record — the ledger's revision.
     /// Assigned under the registry's lock, so `files_touched.updated`
     /// consumers can order aggregate snapshots even when the emissions of
@@ -207,9 +214,11 @@ impl FileTouchLedger {
     /// audit log, its first-occurrence CRUD set, and its line-delta totals in
     /// one step. Aggregation is strictly by the normalized path string.
     pub fn record(&mut self, path: String, event: FileTouchEvent) {
-        let record = match self.records.iter_mut().find(|r| r.path == path) {
-            Some(existing) => existing,
+        let slot = match self.index.get(&path) {
+            Some(&slot) => slot,
             None => {
+                let slot = self.records.len();
+                self.index.insert(path.clone(), slot);
                 self.records.push(FileTouchRecord {
                     path,
                     crud_events: Vec::new(),
@@ -217,9 +226,10 @@ impl FileTouchLedger {
                     lines_removed: 0,
                     events: Vec::new(),
                 });
-                self.records.last_mut().expect("just pushed")
+                slot
             }
         };
+        let record = &mut self.records[slot];
         if !record.crud_events.contains(&event.event) {
             record.crud_events.push(event.event);
         }
@@ -237,7 +247,7 @@ impl FileTouchLedger {
 
     /// The aggregate record for one normalized path, if touched.
     pub fn get(&self, path: &str) -> Option<&FileTouchRecord> {
-        self.records.iter().find(|r| r.path == path)
+        self.index.get(path).map(|&slot| &self.records[slot])
     }
 
     /// The full session payload, records ordered by first touch.

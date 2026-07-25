@@ -93,7 +93,19 @@ impl Tool for CodeGraphQuery {
                     .into(),
             };
         }
-        run_query(root, op, target)
+        // `run_query` opens SQLite and runs a full `index_all` catch-up pass,
+        // which `stella_graph::CodeGraph::index_all`'s own contract says a
+        // caller in an async context must wrap in `spawn_blocking` (#549).
+        // The `CodeGraph` handle is created and dropped inside the closure —
+        // only the rendered `ToolOutput` crosses back.
+        let root = root.to_path_buf();
+        let op = op.to_string();
+        let target = target.to_string();
+        tokio::task::spawn_blocking(move || run_query(&root, &op, &target))
+            .await
+            .unwrap_or_else(|_| ToolOutput::Error {
+                message: "the code-graph query was cancelled".into(),
+            })
     }
 }
 
@@ -127,14 +139,31 @@ pub(crate) fn open_or_build(root: &Path) -> Result<stella_graph::CodeGraph, Stri
     Ok(graph)
 }
 
-/// Open → query → shutdown, entirely synchronous underneath (SQLite reads).
-/// Shared by the tool and the `stella graph` subcommand so both render the
-/// exact same frames.
+/// Open → query → shutdown, entirely synchronous underneath (SQLite reads
+/// plus the [`open_or_build`] catch-up pass). Shared by the tool and the
+/// `stella graph` subcommand so both render the exact same frames.
+///
+/// **Synchronous — an async caller must wrap it in `spawn_blocking`**, the
+/// same contract `stella_graph::CodeGraph::index_all` states.
 pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
     let graph = match open_or_build(root) {
         Ok(g) => g,
         Err(message) => return ToolOutput::Error { message },
     };
+    let output = run_query_with(&graph, op, target);
+    graph.shutdown();
+    output
+}
+
+/// One query against an **already-open** handle, so a caller answering a
+/// batch pays for a single open + `index_all` pass instead of one per query
+/// (`gather_context` sweeps definitions AND references for every symbol).
+/// Opening and shutting the handle is the caller's job.
+pub(crate) fn run_query_with(
+    graph: &stella_graph::CodeGraph,
+    op: &str,
+    target: &str,
+) -> ToolOutput {
     let result = match op {
         "definitions" => graph.definitions(target),
         "references" => graph.references(target),
@@ -142,7 +171,6 @@ pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
         "importers" => graph.importers_of(Path::new(target)),
         "neighbors" => graph.neighbors(Path::new(target)),
         other => {
-            graph.shutdown();
             return ToolOutput::Error {
                 message: format!(
                     "unknown op `{other}` — expected definitions, references, imports, \
@@ -151,7 +179,6 @@ pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
             };
         }
     };
-    graph.shutdown();
 
     match result {
         // Importer edges only exist where import resolution succeeds
@@ -355,6 +382,39 @@ mod tests {
             .execute(&serde_json::json!({"op": "definitions"}), dir.path())
             .await;
         assert!(matches!(no_target, ToolOutput::Error { .. }));
+    }
+
+    /// The #549 witness: `execute` must hand the synchronous open +
+    /// `index_all` pass to the blocking pool rather than running it inline on
+    /// a runtime worker.
+    ///
+    /// On the default single-threaded `#[tokio::test]` runtime a spawned task
+    /// can only run while the test task is suspended at an await point. A
+    /// body with no await at all — what `execute` was before this change —
+    /// returns without ever yielding, so the flag is still `false`. Awaiting
+    /// `spawn_blocking` yields, the spawned task runs, and the flag is set.
+    #[tokio::test]
+    async fn the_query_yields_the_runtime_while_the_index_pass_runs() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = indexed_workspace();
+        let ran = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&ran);
+        tokio::spawn(async move { flag.store(true, Ordering::SeqCst) });
+
+        let out = CodeGraphQuery
+            .execute(
+                &serde_json::json!({"op": "definitions", "target": "greet"}),
+                dir.path(),
+            )
+            .await;
+        assert!(matches!(out, ToolOutput::Ok { .. }), "{out:?}");
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "graph_query blocked the runtime worker: a concurrently spawned task never got \
+             to run while the code-graph index pass was in flight"
+        );
     }
 
     #[tokio::test]

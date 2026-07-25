@@ -97,6 +97,52 @@ pub enum OutputFormat {
     StreamJson,
 }
 
+/// Set once a machine-readable summary object has already reached stdout for
+/// this process, so [`emit_error_summary`] never follows it with a second
+/// envelope describing the same failure. `agent.rs` prints its summary and
+/// then still returns `Err` for a verification failure or a hard pipeline
+/// error, which would otherwise land in `main`'s catch-all twice.
+static JSON_SUMMARY_EMITTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Record that a `--output-format json|stream-json` summary object has been
+/// written to stdout.
+pub(crate) fn note_json_summary_emitted() {
+    JSON_SUMMARY_EMITTED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The stdout envelope for a failure under `--output-format json|stream-json`,
+/// or `None` when the caller asked for human output (a text run must keep
+/// stdout clean; its diagnostic is the stderr line).
+///
+/// Pre-configuration failures — no API key, unknown provider, unknown model, a
+/// malformed settings file — are returned by `run()` before an agent exists,
+/// so they never reach `agent.rs`'s summary. Emitting the same
+/// `{"status":"error","text":null,"reason":…}` shape here means the single
+/// most likely headless failure is no longer answered with empty stdout.
+/// `stream-json` gets it compact, so the line-delimited contract holds.
+pub(crate) fn error_summary_json(format: OutputFormat, msg: &str) -> Option<String> {
+    let value = serde_json::json!({ "status": "error", "text": null, "reason": msg });
+    match format {
+        OutputFormat::Text => None,
+        OutputFormat::Json => {
+            Some(serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()))
+        }
+        OutputFormat::StreamJson => Some(value.to_string()),
+    }
+}
+
+/// Print [`error_summary_json`] unless a summary already went out for this
+/// failure.
+fn emit_error_summary(format: OutputFormat, msg: &str) {
+    if JSON_SUMMARY_EMITTED.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    if let Some(line) = error_summary_json(format, msg) {
+        println!("{line}");
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "stella",
@@ -1183,10 +1229,15 @@ fn main() -> ExitCode {
     // a human output format so it never pollutes json/stream-json.
     env_files::announce(&loaded_env, cli.globals.output_format);
 
+    // Captured before `cli` moves into `run`: the catch-all below needs the
+    // requested format to honour the machine-readable error contract.
+    let output_format = cli.globals.output_format;
+
     match run(cli, &loaded_env) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{} {}", "stella:".red().bold(), e);
+            emit_error_summary(output_format, &e);
             ExitCode::FAILURE
         }
     }

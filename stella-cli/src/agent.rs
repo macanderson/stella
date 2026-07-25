@@ -7,7 +7,7 @@
 //! `AgentEvent` stream live via a spawned draining task.
 
 use std::collections::HashMap;
-use std::io::{IsTerminal, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -115,6 +115,43 @@ pub async fn run_one_shot(
         run_pipeline_one_shot(cfg, prompt, budget_limit, format, test_command).await
     } else {
         run_raw_one_shot(cfg, prompt, budget_limit, format).await
+    }
+}
+
+/// The `--output-format json` summary of a pipeline run. ONE type feeds both
+/// the success and the error arm so the two shapes cannot diverge again: the
+/// error arm used to omit `task_class`/`verdict`/`revisions`/`candidates_run`
+/// outright rather than emitting them as `null`, which broke strict
+/// deserializers (serde non-`Option` fields, `jq -e`, Pydantic) written
+/// against the success shape. `Option` fields are serialized as `null`, never
+/// skipped — the key set is the contract.
+#[derive(serde::Serialize)]
+struct PipelineRunSummary {
+    status: &'static str,
+    text: Option<String>,
+    cost_usd: f64,
+    reason: Option<String>,
+    task_class: Option<String>,
+    verdict: Option<serde_json::Value>,
+    revisions: Option<u32>,
+    candidates_run: Option<u32>,
+    model: String,
+    events: Vec<AgentEvent>,
+    reflection: serde_json::Value,
+}
+
+impl PipelineRunSummary {
+    /// Print the summary to stdout and record that the machine-readable
+    /// contract has been satisfied, so `main`'s catch-all does not follow a
+    /// returned `Err` with a second error envelope for the same failure.
+    fn emit(&self) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(self).unwrap_or_else(|e| format!(
+                "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
+            ))
+        );
+        crate::note_json_summary_emitted();
     }
 }
 
@@ -461,31 +498,26 @@ async fn run_pipeline_one_shot(
     match &result {
         Ok(outcome) => {
             if format == OutputFormat::Json {
-                let status_str = pipeline_status_label(&outcome.status);
-                let reason_str = pipeline_failure_reason(&outcome.status);
-                let summary = serde_json::json!({
-                    "status": status_str,
-                    "text": outcome.final_text,
-                    "cost_usd": outcome.total_cost_usd + reflection_report.cost_usd,
-                    "reason": reason_str,
-                    "task_class": format!("{:?}", outcome.task_class),
-                    "verdict": outcome.verdict.as_ref().map(|v| serde_json::json!({
-                        "passed": v.passed,
-                        "deterministic": v.deterministic,
-                        "summary": v.summary,
-                    })),
-                    "revisions": outcome.revisions,
-                    "candidates_run": outcome.candidates_run,
-                    "model": format!("{}/{}", cfg.provider.id, cfg.model_id),
-                    "events": collected,
-                    "reflection": reflection_json(&reflection_report),
-                });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&summary).unwrap_or_else(|e| format!(
-                        "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
-                    ))
-                );
+                let summary = PipelineRunSummary {
+                    status: pipeline_status_label(&outcome.status),
+                    text: Some(outcome.final_text.clone()),
+                    cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
+                    reason: pipeline_failure_reason(&outcome.status),
+                    task_class: Some(format!("{:?}", outcome.task_class)),
+                    verdict: outcome.verdict.as_ref().map(|v| {
+                        serde_json::json!({
+                            "passed": v.passed,
+                            "deterministic": v.deterministic,
+                            "summary": v.summary,
+                        })
+                    }),
+                    revisions: Some(outcome.revisions),
+                    candidates_run: Some(outcome.candidates_run),
+                    model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+                    events: collected,
+                    reflection: reflection_json(&reflection_report),
+                };
+                summary.emit();
             }
 
             if format == OutputFormat::Text {
@@ -508,24 +540,25 @@ async fn run_pipeline_one_shot(
             // `--output-format json` consumer contracted for: without this,
             // stdout is empty, the collected event log is lost, and only
             // stderr says anything (issue #373, item 2). Same shape as the
-            // success summary, `text: null`, spend read from the guard (the
-            // pipeline metered whatever it spent before failing).
+            // success summary — the pipeline-only keys ride as explicit
+            // `null`, not as missing keys — with `text: null` and spend read
+            // from the guard (the pipeline metered whatever it spent before
+            // failing).
             if format == OutputFormat::Json {
-                let summary = serde_json::json!({
-                    "status": "error",
-                    "text": null,
-                    "cost_usd": budget.session_spent_usd(),
-                    "reason": e.to_string(),
-                    "model": format!("{}/{}", cfg.provider.id, cfg.model_id),
-                    "events": collected,
-                    "reflection": reflection_json(&reflection_report),
-                });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&summary).unwrap_or_else(|e| format!(
-                        "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
-                    ))
-                );
+                let summary = PipelineRunSummary {
+                    status: "error",
+                    text: None,
+                    cost_usd: budget.session_spent_usd(),
+                    reason: Some(e.to_string()),
+                    task_class: None,
+                    verdict: None,
+                    revisions: None,
+                    candidates_run: None,
+                    model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+                    events: collected,
+                    reflection: reflection_json(&reflection_report),
+                };
+                summary.emit();
             }
             Err(e.to_string())
         }
@@ -636,13 +669,24 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         print!("{} ", ">".bright_cyan().bold());
         std::io::stdout().flush().map_err(|e| e.to_string())?;
 
-        let mut input = String::new();
-        let read = std::io::stdin().read_line(&mut input);
-        match read {
-            Ok(0) => break, // EOF (Ctrl+D)
-            Ok(_) => {}
+        // Blocking stdin read off the async runtime's worker threads — the
+        // user thinking at the prompt must not hold a worker hostage while
+        // the session's graph watcher, MCP readers, and journal tasks share
+        // that pool (matches `interactive::TtyAskUserIo::prompt`).
+        let read = tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin()
+                .lock()
+                .read_line(&mut line)
+                .map(|n| (n, line))
+        })
+        .await;
+        let input = match read {
+            Ok(Ok((0, _))) => break, // EOF (Ctrl+D)
+            Ok(Ok((_, line))) => line,
+            Ok(Err(e)) => return Err(format!("read error: {e}")),
             Err(e) => return Err(format!("read error: {e}")),
-        }
+        };
 
         let input = input.trim();
         if input.is_empty() {
@@ -869,7 +913,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             // Proposal 4: A/B recall measurement — on ~1/10 turns (the A/B
             // rate), suppress recall so the outcome is comparable to recalled
             // turns. The suppressed flag rides with the turn for attribution.
-            m.maybe_suppress_recall(STELLA_AB_RECALL_RATE);
+            m.maybe_suppress_recall(AB_RECALL_RATE);
             let block = m.recall_block(input).await;
             inject_recall_block(&mut messages, block);
         }
@@ -2017,6 +2061,7 @@ async fn run_turn(
                 "{{\"status\":\"error\",\"reason\":\"serialize: {e}\"}}"
             ))
         );
+        crate::note_json_summary_emitted();
     }
 
     match outcome {
@@ -2077,6 +2122,7 @@ fn print_help() {
     );
     println!("  {}          Show this help", "/help".bright_magenta());
     println!("  {}          Exit Stella", "/exit".bright_magenta());
+    println!("  {}          Exit Stella", "/quit".bright_magenta());
     println!("  {}         Exit Stella", "Ctrl+D".dimmed());
     println!();
 }

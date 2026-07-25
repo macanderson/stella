@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! `stella-context` — **the context plane**: the single door between the
-//! engine and everything the agent knows that isn't already in the prompt
-//! One SQLite file, one
-//! engine ([`ContextStore`]) holds a bi-temporal property graph, a fingerprinted
-//! embedding index, and episodic memory; on top of it sits a hybrid, budgeted,
-//! cited retrieval pipeline ([`ContextStore::recall`]) and a bi-temporal
-//! write-back path ([`ContextStore::upsert`]). Built-in and external sources
-//! register through one seam ([`ContextProvider`] / [`ProviderRegistry`]).
+//! engine and everything the agent knows that isn't already in the prompt. One
+//! SQLite file, one engine ([`ContextStore`]) holds a bi-temporal property
+//! graph, a fingerprinted embedding index, and episodic memory; on top of it
+//! sits a hybrid, budgeted, cited retrieval pipeline ([`ContextStore::recall`])
+//! and a bi-temporal write-back path ([`ContextStore::upsert`]). Built-in and
+//! external sources register through one seam ([`ContextProvider`] /
+//! [`ProviderRegistry`]).
 //!
 //! # The four jobs this plane does that its providers don't (arch §7)
 //!
@@ -44,6 +44,12 @@
 //! (risk R14); [`Embedder`] is the seam that makes
 //! swapping it in trivial. Wire types are built on `contextgraph-types`, never
 //! duplicated (principle #7 / `L-E1`).
+
+// Every public item here is API a host reads without the source in front of it,
+// and the field-level silence this closes was an audit finding (#558). Under
+// `make lint` (`-D warnings`) an undocumented public item is a build failure,
+// which is the point: the gap cannot reopen one field at a time.
+#![warn(missing_docs)]
 
 mod clock;
 mod embed;

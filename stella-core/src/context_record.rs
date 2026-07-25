@@ -6,17 +6,28 @@
 //! types, cross-field validators, and canonical hashing. (Named `context_record`
 //! rather than `context` to stay unambiguous next to the `stella-context` crate.)
 //!
-//! ## Scope of this installment
+//! ## Scope
 //!
-//! Phase 1 is large; this is **installment 1 of N** — the foundational vertical:
-//! the record taxonomy enums, [`Scope`]/[`SharingScope`], the temporal
-//! primitives, canonical [`hash`]ing, and the cross-field validators that live
-//! entirely on those types. **Deferred to later installments** (their types are
-//! not here yet, so neither are the validators that span them): the
-//! context-use / efficacy web, artifact contracts + validation, outcome
-//! assessments, frame representation / content-fidelity, and the internal
-//! replay-safe events in `stella-protocol`. This module does **not** yet satisfy
-//! the full Phase 1 gate.
+//! The Phase 1 type layer is **complete**: the record taxonomy enums,
+//! [`Scope`]/[`SharingScope`], the temporal primitives and canonical [`hash`]ing
+//! (installment 1); the [`context_use`] efficacy web (2); [`contract`] +
+//! [`outcome`] (3); [`representation`] content fidelity (4); and the internal
+//! replay-safe events, which live in `stella-protocol::context_event` so the
+//! protocol crate stays free of a `stella-core` dependency (5).
+//!
+//! Two Phase 1 line items are deliberately **not** here, because they cannot be:
+//! the ingestion-boundary compatibility adapters (legacy `recorded_at` →
+//! `observed_at`, `valid_to` → `valid_until`, and the legacy memory/fact APIs)
+//! need the ingestion path, so they land with the Phase 2 migration that owns it.
+//!
+//! ## Where a validator lives
+//!
+//! Purity is about I/O, not about arity. A rule that spans two records is still
+//! pure when it needs only the two *values* — those are plain functions taking
+//! both (e.g. [`ContractValidation::validate_against`],
+//! [`OutcomeAssessment::validate_against`]). Only rules needing **identity
+//! resolution** — "does this id name a record that exists?" — are deferred to the
+//! Phase 2/3 repository, since a value layer cannot answer them.
 //!
 //! ## Relationship to the legacy `rules::metadata` types (coexist, do not merge)
 //!
@@ -60,8 +71,8 @@ pub use context_use::{
     MissingContextKind,
 };
 pub use contract::{
-    ArtifactContract, ContractValidation, Requirement, RequirementKind, RequirementResult,
-    RequirementStatus, ValidationStatus,
+    AppliesWhen, ArtifactContract, ContractValidation, Presentation, Requirement, RequirementKind,
+    RequirementResult, RequirementStatus, ValidationStatus,
 };
 pub use hash::{RecordHashError, record_hash};
 pub use kind::{
@@ -69,9 +80,13 @@ pub use kind::{
     EffectiveStatus, KnowledgeKind, MemoryKind, Origin, PromotionAction, RecordProposalKind,
     RecordProposalStatus, RecordStatus,
 };
-pub use outcome::{CompletionStatus, CorrectnessStatus, OutcomeAssessment, OutcomeAssessmentLevel};
+pub use outcome::{
+    CompletionAssessment, CompletionStatus, CorrectnessAssessment, CorrectnessStatus,
+    OutcomeAssessment, OutcomeAssessmentLevel, OutcomeReason,
+};
 pub use representation::{
-    ContentFidelity, InlineContentRequirement, MinimumContentFidelity, Representation,
+    ContentFidelity, FrameContentSpec, InlineContentRequirement, MinimumContentFidelity,
+    Representation, validate_directive_minimum_fidelity,
 };
 pub use scope::{Scope, SharingScope};
 pub use temporal::{TemporalInterval, TemporalQuery};

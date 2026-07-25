@@ -143,7 +143,7 @@ impl Tool for RunTests {
         // selection, or stands down to the full suite with a one-line note —
         // the note rides the report either way, so a widened run is never
         // mistaken for a narrowed one.
-        let mut filter = filter.to_string();
+        let mut filter = SafeFilter::from_input(filter);
         let mut note = String::new();
         if scope.is_some() {
             use crate::impact::ImpactSelection;
@@ -173,7 +173,7 @@ impl Tool for RunTests {
                             tests.len(),
                             changed
                         );
-                        filter = tests.join(" ");
+                        filter = SafeFilter::from_tokens(&tests);
                     } else {
                         // Composing a per-file filter for this runner is not
                         // confidently possible — widen loudly, never guess.
@@ -211,6 +211,72 @@ fn with_note(note: &str, out: ToolOutput) -> ToolOutput {
     }
 }
 
+/// Minimal POSIX single-quote escaping: wrap in `'…'` and close/reopen
+/// around any embedded quote, so the result is one shell word whose content
+/// is exactly `s`.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// A test filter that is safe to interpolate into a `bash -c` line.
+///
+/// Every constructor quotes **each token separately**, which is what lets
+/// this be safe without breaking the filter's documented multi-token
+/// contract: `cargo test --workspace foo bar` still reaches the runner as
+/// two arguments, and `scope:"impacted"`'s file list still arrives as N
+/// paths — but a token can no longer carry shell metacharacters out of its
+/// own word. Wrapping the *whole* filter in one pair of quotes would have
+/// collapsed it to a single argument and broken both.
+///
+/// The type is the enforcement: [`test_command`] takes only a `SafeFilter`,
+/// so an interpolation site cannot accidentally be handed a raw string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SafeFilter(String);
+
+impl SafeFilter {
+    /// A model-supplied filter. Split on whitespace — the same split `bash`
+    /// would have performed — then quote each token, so the token *count*
+    /// is preserved while `;`, `|`, `$(…)`, backticks and newlines lose
+    /// their meaning. Also fixes runner-native syntax that used to be eaten
+    /// by the shell: `go test -run 'TestA|TestB'` was a pipeline before.
+    fn from_input(raw: &str) -> Self {
+        SafeFilter(
+            raw.split_whitespace()
+                .map(shell_quote)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+
+    /// A filter composed from values whose token boundaries are already
+    /// known (`scope:"impacted"`'s selected test files). Strictly better
+    /// than joining on a space and re-splitting: a path *containing* a
+    /// space stays one argument instead of silently becoming two.
+    fn from_tokens<I, S>(tokens: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        SafeFilter(
+            tokens
+                .into_iter()
+                .map(|t| shell_quote(t.as_ref()))
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::fmt::Display for SafeFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// The runner-native test command for `kind` + `filter`, or a named error.
 /// Pure over the detected index — separable from process spawning (the same
 /// discipline as [`lint_argv`]), which is what lets `scope:"impacted"`
@@ -219,7 +285,7 @@ fn test_command(
     index: &ScriptIndex,
     primary: &str,
     kind: &str,
-    filter: &str,
+    filter: &SafeFilter,
 ) -> Result<String, String> {
     Ok(match primary {
         "cargo" => match kind {
@@ -298,6 +364,47 @@ fn test_command(
             }
         }
     })
+}
+
+/// Resolve `build_project`'s or `run_tests`'s command line for the
+/// registry's `command.started` policy chain, mirroring
+/// [`crate::scripts::resolve_command_for_gate`] — best-effort: `None` (no
+/// gating from here) when the index composes nothing, in which case the
+/// tool itself returns the named error. An explicit `command` override also
+/// resolves to `None`: the registry reads that straight off the input, so
+/// detecting the index for it would be wasted work.
+///
+/// Deliberately approximate for `run_tests` with `scope: "impacted"`: the
+/// graph-driven per-file selection is NOT re-run here — it shells out to
+/// git and walks the code graph, and a second run could diverge from the
+/// execute-time one anyway — so the gated line is the un-narrowed command
+/// for this call's `kind`/`filter`. The fence still fires on the real
+/// runner invocation; only the filter half may read wider than what ran.
+/// Resolving twice, best-effort, is `run_script`'s shipped posture.
+pub(crate) async fn resolve_command_for_gate(
+    tool: &str,
+    root: &std::path::Path,
+    input: &Value,
+) -> Option<String> {
+    if input.get("command").and_then(|v| v.as_str()).is_some() {
+        return None;
+    }
+    let index = ScriptIndex::detect(root).await;
+    match tool {
+        "build_project" => index.verb_entry("build").map(|entry| entry.command.clone()),
+        "run_tests" => {
+            let kind = input.get("kind").and_then(|v| v.as_str()).unwrap_or("all");
+            let filter = input.get("filter").and_then(|v| v.as_str()).unwrap_or("");
+            test_command(
+                &index,
+                index.primary_runner()?,
+                kind,
+                &SafeFilter::from_input(filter),
+            )
+            .ok()
+        }
+        _ => None,
+    }
 }
 
 /// Named "nothing configured" error for `run_lint` / `format_code`: says
@@ -482,6 +589,79 @@ impl Tool for FormatCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The security witness. Asserts BOTH halves on purpose: that the shape
+    /// the code used to have really is injectable (otherwise this test
+    /// would pass for the wrong reason and could not catch a regression),
+    /// and that routing the identical filter through `SafeFilter` closes
+    /// it. Deliberately runs a real `bash -c`, because the claim is about
+    /// what a shell does — asserting on the composed string alone would
+    /// only be testing my own idea of shell grammar.
+    #[tokio::test]
+    async fn a_hostile_filter_cannot_start_a_second_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let sentinel = dir.path().join("pwned");
+        let hostile = format!("x; touch {}", sentinel.display());
+
+        // Pre-PR shape: the filter is interpolated raw.
+        let _ = crate::exec::run(&format!("echo {hostile}"), dir.path(), 30).await;
+        assert!(
+            sentinel.exists(),
+            "precondition: a raw interpolation must be injectable, or this test proves nothing"
+        );
+        std::fs::remove_file(&sentinel).unwrap();
+
+        // Fixed shape: same filter, quoted per token.
+        let safe = SafeFilter::from_input(&hostile);
+        let _ = crate::exec::run(&format!("echo {safe}"), dir.path(), 30).await;
+        assert!(
+            !sentinel.exists(),
+            "SafeFilter let `{hostile}` escape its word and start a new command"
+        );
+    }
+
+    /// The multi-token contract the original remediation was afraid of
+    /// breaking: quoting must not collapse a filter into one argument.
+    #[tokio::test]
+    async fn quoting_preserves_the_token_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let safe = SafeFilter::from_input("alpha beta gamma");
+        // `printf '%s\n'` prints one line per argument, so the line count
+        // IS the argument count the runner would have received.
+        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30)
+            .await
+            .unwrap();
+        let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines, vec!["alpha", "beta", "gamma"], "{out}");
+    }
+
+    /// A path containing a space stays ONE argument. The old
+    /// `tests.join(" ")` could not express this — it round-tripped through
+    /// a string and the shell re-split it.
+    #[tokio::test]
+    async fn impact_selection_keeps_a_spaced_path_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let safe = SafeFilter::from_tokens(["tests/a b.rs", "tests/c.rs"]);
+        let (_, out) = crate::exec::run(&format!("printf '%s\\n' {safe}"), dir.path(), 30)
+            .await
+            .unwrap();
+        let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines, vec!["tests/a b.rs", "tests/c.rs"], "{out}");
+    }
+
+    /// Runner-native syntax that the shell used to eat. `go test -run`
+    /// takes a regex, and `|` in an unquoted regex was a pipeline.
+    #[test]
+    fn a_regex_filter_is_no_longer_a_pipeline() {
+        let safe = SafeFilter::from_input("TestA|TestB");
+        assert_eq!(safe.to_string(), r"'TestA|TestB'");
+    }
+
+    #[test]
+    fn an_embedded_quote_is_escaped_not_dropped() {
+        assert_eq!(shell_quote("a'b"), r"'a'\''b'");
+        assert!(SafeFilter::from_input("").is_empty());
+    }
 
     #[tokio::test]
     async fn no_toolchain_is_a_named_error_and_command_overrides() {

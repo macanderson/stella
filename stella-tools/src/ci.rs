@@ -8,6 +8,9 @@ use serde_json::Value;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 
 use crate::exec;
+// The crate's single POSIX single-quote escaper — ref names reach `gh`
+// through a `bash -c` line, so they must never re-tokenize.
+use crate::exec::shell_quote;
 use crate::registry::Tool;
 
 pub struct CiStatus;
@@ -131,11 +134,6 @@ impl Tool for CiStatus {
             },
         }
     }
-}
-
-/// Minimal single-quote shell escaping for ref names.
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// The `gh run list` filter flag that scopes a sub-query to the same target

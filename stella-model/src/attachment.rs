@@ -100,25 +100,35 @@ fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
             }
         },
     };
+    // The base64 the binary kinds put on the wire. For an inline `Data`
+    // source that is *already* the caller's string — the decode above ran
+    // purely as validation — so forward it verbatim instead of paying a second
+    // full-payload transform to reproduce it. The conversation replays every
+    // turn, so this is per attachment per turn on the path the deck uses for
+    // pasted images.
+    let encoded = || match &attachment.source {
+        AttachmentSource::Data { base64 } => base64.clone(),
+        AttachmentSource::Path { .. } => BASE64.encode(&bytes),
+    };
     match attachment.kind() {
         AttachmentKind::Text => WirePart::Text {
             text: inline_text(attachment, &bytes),
         },
         AttachmentKind::Image if caps.images => WirePart::Image {
             media_type: attachment.media_type.clone(),
-            base64: BASE64.encode(&bytes),
+            base64: encoded(),
         },
         AttachmentKind::Pdf if caps.pdfs => WirePart::Pdf {
             name: attachment.name.clone(),
-            base64: BASE64.encode(&bytes),
+            base64: encoded(),
         },
         AttachmentKind::Audio if caps.audio => WirePart::Audio {
             media_type: attachment.media_type.clone(),
-            base64: BASE64.encode(&bytes),
+            base64: encoded(),
         },
         AttachmentKind::Video if caps.video => WirePart::Video {
             media_type: attachment.media_type.clone(),
-            base64: BASE64.encode(&bytes),
+            base64: encoded(),
         },
         kind => WirePart::Text {
             text: degrade_note(attachment, kind),

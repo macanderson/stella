@@ -3,7 +3,7 @@
 
 //! # stella-media — multimodal generation
 //!
-//! Image, SVG, and video generation for the Oxagen CLI, all client-side and
+//! Image, SVG, and video generation for the Stella CLI, all client-side and
 //! all BYOK, through one [`MediaProvider`] port and the same artifact
 //! discipline as the rest of the engine.
 //!

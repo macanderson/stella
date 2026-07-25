@@ -70,8 +70,8 @@ pub fn validate_stream(events: &[AgentEvent]) -> Vec<StreamViolation> {
     violations
 }
 
-/// Canonical rank of a stage in the one-turn data flow (
-/// §5). Forward motion is any non-decreasing rank; the only legal backward
+/// Canonical rank of a stage in the one-turn data flow.
+/// Forward motion is any non-decreasing rank; the only legal backward
 /// motion is the revise/best-of-N loop back to Execute.
 fn stage_rank(stage: StageKind) -> u8 {
     match stage {

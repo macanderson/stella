@@ -75,6 +75,36 @@ fn supersession_stub() -> String {
         .to_string()
 }
 
+/// The marker [`age_content`] splices between the head and tail it keeps.
+/// Named so [`is_compacted_output`] can recognize an aged payload without
+/// duplicating the string.
+const AGE_ELISION_MARKER: &str =
+    "[… middle elided during compaction — re-run the tool for the full output …]";
+
+/// Whether this output is something a compaction pass wrote over a real
+/// tool result, rather than the result itself. The driver uses it to keep
+/// a *pre-compaction* identity for every tool result (#554): compaction
+/// rewrites results in place, so a snapshot taken after a pass would
+/// record the stub's identity and permanently lose the evidence that loop
+/// detection compares. Keeping the predicate here keeps the stub strings
+/// in the one module that writes them.
+///
+/// Deliberately conservative in the one direction that can be wrong: real
+/// tool output that happens to contain [`AGE_ELISION_MARKER`] (reading
+/// this file, say) is treated as compacted, which only means the driver
+/// declines to snapshot an identity for it and falls back to comparing
+/// outputs — the behavior before #554, never a false loop.
+pub(crate) fn is_compacted_output(output: &ToolOutput) -> bool {
+    let payload = match output {
+        ToolOutput::Ok { content } => content,
+        ToolOutput::Error { message } => message,
+    };
+    payload == EVICTION_STUB
+        || *payload == dedup_stub()
+        || *payload == supersession_stub()
+        || payload.contains(AGE_ELISION_MARKER)
+}
+
 /// Middle-out truncate `content` on char boundaries, keeping
 /// [`AGE_KEEP_CHARS`] from each end. Caller guarantees
 /// `content.len() > AGE_THRESHOLD_CHARS`, which the keep windows never
@@ -89,7 +119,7 @@ fn age_content(content: &str) -> String {
         tail_start += 1;
     }
     format!(
-        "{}\n[… middle elided during compaction — re-run the tool for the full output …]\n{}",
+        "{}\n{AGE_ELISION_MARKER}\n{}",
         &content[..head_end],
         &content[tail_start..]
     )
@@ -115,17 +145,36 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
     let mut superseded_blocks: Vec<String> = Vec::new();
     let mut aged_blocks: Vec<String> = Vec::new();
     let mut evicted_blocks: Vec<String> = Vec::new();
-    // Each tool result's ORIGINAL block_id, captured before any pass mutates it,
-    // keyed by call_id (unique per result). A result aged then evicted in the
-    // same call must be recorded under the id the manifest cited, not the id of
-    // its intermediate aged content.
-    let original_ids: std::collections::HashMap<String, String> = messages
+    // Each tool result's ORIGINAL block_id, captured before any pass mutates
+    // it, indexed by POSITION: `original_ids[message_idx][result_idx]`. A
+    // result aged then evicted in the same call must be recorded under the id
+    // the manifest cited, not the id of its intermediate aged content, which is
+    // what capturing up front preserves.
+    //
+    // Deliberately NOT keyed by `call_id`. A call_id is unique only within ONE
+    // step — `driver.rs::snapshot_result_identities` says so and poisons any id
+    // it sees carrying two different outputs — and Gemini/Vertex mint theirs as
+    // `call_{ordinal}` counted per response, so `call_0` recurs on every
+    // assistant step. A `HashMap<call_id, block_id>` keeps only the LAST
+    // occurrence, which collapsed every result sharing a recurring id onto one
+    // identity: pass 1 then read three distinct outputs as duplicates of each
+    // other and stubbed the middle ones, and the receipt cited the wrong block.
+    let original_ids: Vec<Vec<String>> = messages
         .iter()
-        .filter(|m| m.role == MessageRole::Tool)
-        .flat_map(|m| &m.tool_results)
-        .map(|r| (r.call_id.clone(), tool_result_block_id(&r.output)))
+        .map(|m| {
+            m.tool_results
+                .iter()
+                .map(|r| tool_result_block_id(&r.output))
+                .collect()
+        })
         .collect();
-    let id_of = |call_id: &str| original_ids.get(call_id).cloned().unwrap_or_default();
+    let id_at = |message_idx: usize, result_idx: usize| -> String {
+        original_ids
+            .get(message_idx)
+            .and_then(|ids| ids.get(result_idx))
+            .cloned()
+            .unwrap_or_default()
+    };
 
     // Index of the last Tool message — its results answer the most recent
     // assistant tool calls and must never be evicted or deduped away.
@@ -137,35 +186,54 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
     // the prompt prefix — and the provider prompt cache built over it —
     // untouched (#372). Walk forward, recording first occurrences.
     {
+        // Keyed on the content-addressed block id `original_ids` already
+        // computed above, not on a clone of the content: the id IS the
+        // content identity (receipts.rs hashes the serialized output), so
+        // byte-identical outputs still collide exactly — and only those do —
+        // while the map stops paying a full heap copy of every >200-byte
+        // output plus a second full hash pass over it on lookup. The id is
+        // read by POSITION, never through the result's call_id: two results
+        // that merely share a recurring call_id are different content and
+        // must keep different identities here, or dedup destroys one of them.
         let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         // First record positions of the earliest occurrence.
         for (idx, message) in messages.iter().enumerate() {
             if message.role != MessageRole::Tool {
                 continue;
             }
-            for result in &message.tool_results {
+            for (ridx, result) in message.tool_results.iter().enumerate() {
                 if let ToolOutput::Ok { content } = &result.output
                     && content.len() > 200
                 {
-                    seen.entry(content.clone()).or_insert(idx);
+                    // `id_at` yields "" only for an out-of-range position; an
+                    // unidentifiable result is skipped rather than made to
+                    // collide with every other unidentifiable one.
+                    let id = id_at(idx, ridx);
+                    if !id.is_empty() {
+                        seen.entry(id).or_insert(idx);
+                    }
                 }
             }
         }
-        // Then stub every later duplicate.
+        // Then stub every later duplicate. The `> 200` guard stays on the
+        // content, matching the recording pass: the id is finer-grained
+        // (it also covers the Ok/Error tag), never a stand-in for length.
         for (idx, message) in messages.iter_mut().enumerate() {
             if Some(idx) == last_tool_idx || message.role != MessageRole::Tool {
                 continue;
             }
-            for result in &mut message.tool_results {
+            for (ridx, result) in message.tool_results.iter_mut().enumerate() {
                 if let ToolOutput::Ok { content } = &result.output
-                    && let Some(&kept_at) = seen.get(content)
-                    && kept_at < idx
+                    && content.len() > 200
                 {
-                    deduped_blocks.push(id_of(&result.call_id));
-                    result.output = ToolOutput::Ok {
-                        content: dedup_stub(),
-                    };
-                    deduped += 1;
+                    let id = id_at(idx, ridx);
+                    if !id.is_empty() && seen.get(&id).is_some_and(|&kept_at| kept_at < idx) {
+                        deduped_blocks.push(id);
+                        result.output = ToolOutput::Ok {
+                            content: dedup_stub(),
+                        };
+                        deduped += 1;
+                    }
                 }
             }
         }
@@ -179,38 +247,63 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
     // calls because results themselves only carry a call_id.
     {
         use std::collections::HashMap;
-        // call_id -> invocation key. Input serialization is deterministic
-        // for a given call because it round-trips the same serde_json Value.
-        let mut invocation: HashMap<&str, String> = HashMap::new();
-        for message in messages.iter() {
-            for call in &message.tool_calls {
-                invocation.insert(
-                    call.call_id.as_str(),
-                    format!("{}\u{0}{}", call.name, call.input),
+        // The invocation key (tool name + byte-identical input) behind each
+        // tool result, indexed by POSITION like `original_ids`. Resolved by
+        // walking the conversation FORWARD and reading the most recent call
+        // bearing that call_id, so a result is matched to the call it actually
+        // answered. A conversation-wide `call_id -> invocation` map would bind
+        // an old result to a NEWER, unrelated call whenever a provider reuses a
+        // call_id across steps (Gemini/Vertex do, by construction) — and then
+        // stub a live, distinct output as "stale". Input serialization is
+        // deterministic for a given call because it round-trips the same
+        // serde_json Value.
+        let invocation_of: Vec<Vec<Option<String>>> = {
+            let mut pending: HashMap<&str, String> = HashMap::new();
+            let mut per_message: Vec<Vec<Option<String>>> = Vec::with_capacity(messages.len());
+            for message in messages.iter() {
+                for call in &message.tool_calls {
+                    pending.insert(
+                        call.call_id.as_str(),
+                        format!("{}\u{0}{}", call.name, call.input),
+                    );
+                }
+                per_message.push(
+                    message
+                        .tool_results
+                        .iter()
+                        .map(|r| pending.get(r.call_id.as_str()).cloned())
+                        .collect(),
                 );
             }
-        }
-        // Latest tool-message index — and that result's call_id — per
-        // invocation key. The call_id lets the staleness check below compare
-        // ORIGINAL content identities even after pass 1 stubbed a copy.
-        let mut latest: HashMap<&str, (usize, String)> = HashMap::new();
+            per_message
+        };
+        let invocation_at = |message_idx: usize, result_idx: usize| -> Option<&str> {
+            invocation_of
+                .get(message_idx)
+                .and_then(|keys| keys.get(result_idx))
+                .and_then(|key| key.as_deref())
+        };
+        // Latest tool result POSITION per invocation key. The position lets the
+        // staleness check below compare ORIGINAL content identities even after
+        // pass 1 stubbed a copy.
+        let mut latest: HashMap<&str, (usize, usize)> = HashMap::new();
         for (idx, message) in messages.iter().enumerate() {
             if message.role != MessageRole::Tool {
                 continue;
             }
-            for result in &message.tool_results {
-                if let Some(key) = invocation.get(result.call_id.as_str()) {
-                    latest.insert(key.as_str(), (idx, result.call_id.clone()));
+            for ridx in 0..message.tool_results.len() {
+                if let Some(key) = invocation_at(idx, ridx) {
+                    latest.insert(key, (idx, ridx));
                 }
             }
         }
-        let mut stale: Vec<(usize, String)> = Vec::new();
+        let mut stale: Vec<(usize, usize)> = Vec::new();
         for (idx, message) in messages.iter().enumerate() {
             if Some(idx) == last_tool_idx || message.role != MessageRole::Tool {
                 continue;
             }
-            for result in &message.tool_results {
-                let Some(key) = invocation.get(result.call_id.as_str()) else {
+            for (ridx, result) in message.tool_results.iter().enumerate() {
+                let Some(key) = invocation_at(idx, ridx) else {
                     continue;
                 };
                 // Supersession only restubs Ok results. A superseded error is
@@ -220,7 +313,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                 let ToolOutput::Ok { content } = &result.output else {
                     continue;
                 };
-                let Some((latest_idx, latest_call)) = latest.get(key.as_str()) else {
+                let Some(&(latest_idx, latest_ridx)) = latest.get(key) else {
                     continue;
                 };
                 // A later run whose output was byte-identical is redundancy,
@@ -229,22 +322,20 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                 // ORIGINAL content identities (captured before pass 1 could
                 // replace the later copy with a stub).
                 if content.len() > 200
-                    && *latest_idx > idx
-                    && id_of(latest_call) != id_of(&result.call_id)
+                    && latest_idx > idx
+                    && id_at(latest_idx, latest_ridx) != id_at(idx, ridx)
                 {
-                    stale.push((idx, result.call_id.clone()));
+                    stale.push((idx, ridx));
                 }
             }
         }
-        for (idx, call_id) in stale {
-            for result in &mut messages[idx].tool_results {
-                if result.call_id == call_id {
-                    superseded_blocks.push(id_of(&result.call_id));
-                    result.output = ToolOutput::Ok {
-                        content: supersession_stub(),
-                    };
-                    superseded += 1;
-                }
+        for (idx, ridx) in stale {
+            if let Some(result) = messages[idx].tool_results.get_mut(ridx) {
+                superseded_blocks.push(id_at(idx, ridx));
+                result.output = ToolOutput::Ok {
+                    content: supersession_stub(),
+                };
+                superseded += 1;
             }
         }
     }
@@ -260,7 +351,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                 continue;
             }
             let before = estimate_message_tokens(message);
-            for result in &mut message.tool_results {
+            for (ridx, result) in message.tool_results.iter_mut().enumerate() {
                 let (payload, is_error) = match &result.output {
                     ToolOutput::Ok { content } => (content, false),
                     ToolOutput::Error { message } => (message, true),
@@ -276,7 +367,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                             content: aged_payload,
                         }
                     };
-                    aged_blocks.push(id_of(&result.call_id));
+                    aged_blocks.push(id_at(idx, ridx));
                     aged += 1;
                 }
             }
@@ -302,13 +393,13 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                 continue;
             }
             let before = estimate_message_tokens(message);
-            for result in &mut message.tool_results {
+            for (ridx, result) in message.tool_results.iter_mut().enumerate() {
                 let (payload_len, is_error) = match &result.output {
                     ToolOutput::Ok { content } => (content.len(), false),
                     ToolOutput::Error { message } => (message.len(), true),
                 };
                 if payload_len > 400 {
-                    evicted_blocks.push(id_of(&result.call_id));
+                    evicted_blocks.push(id_at(idx, ridx));
                     result.output = if is_error {
                         ToolOutput::Error {
                             message: EVICTION_STUB.to_string(),
@@ -546,6 +637,95 @@ mod tests {
             ToolOutput::Ok { content } => assert_eq!(content, &repeated),
             _ => panic!("earliest copy must survive intact"),
         }
+        match &messages[4].tool_results[0].output {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("earlier tool result"), "got: {content}")
+            }
+            _ => panic!("expected a dedup stub on the later copy"),
+        }
+    }
+
+    #[test]
+    fn recurring_call_id_never_dedups_distinct_outputs() {
+        // Witness for the pass-1 regression in PR #595 (issue #560). Dedup was
+        // keyed on an identity resolved through a `HashMap<call_id, block_id>`,
+        // so a call_id that RECURS collapsed every result carrying it onto the
+        // LAST occurrence's id and they all compared equal. Gemini and Vertex
+        // mint ids as `call_{ordinal}` counted per RESPONSE
+        // (`stella-model/src/gemini.rs`), so `call_0` comes back on every
+        // assistant step: below, three reads of three different files return
+        // three different outputs, all answering `call_0`. The middle one was
+        // replaced by the dedup stub — text asserting the model has already
+        // seen content that was never in the transcript.
+        //
+        // Sized so no other pass can confound the result: each payload is >200
+        // chars (pass 1 considers it) but <=400 (eviction's floor) and far
+        // under AGE_THRESHOLD_CHARS, so even an impossible budget reclaims
+        // nothing and `compact` correctly reports a no-op.
+        let out = |tag: char| tag.to_string().repeat(300);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            assistant_with_call_on("call_0", "src/a.rs"),
+            tool_msg("call_0", out('a')),
+            assistant_with_call_on("call_0", "src/b.rs"),
+            tool_msg("call_0", out('b')),
+            assistant_with_call_on("call_0", "src/c.rs"),
+            tool_msg("call_0", out('c')),
+        ];
+        let report = compact(&mut messages, 1);
+        assert_eq!(
+            report.as_ref().map_or(0, |r| r.deduped),
+            0,
+            "distinct outputs sharing a recurring call_id are not duplicates: {report:?}"
+        );
+        assert_eq!(
+            report.as_ref().map_or(0, |r| r.superseded),
+            0,
+            "three different files are three invocations — none is stale: {report:?}"
+        );
+        for (idx, tag) in [(2usize, 'a'), (4, 'b'), (6, 'c')] {
+            match &messages[idx].tool_results[0].output {
+                ToolOutput::Ok { content } => {
+                    assert_eq!(content, &out(tag), "message {idx} lost its output")
+                }
+                _ => panic!("message {idx}: expected its untouched Ok output"),
+            }
+        }
+    }
+
+    #[test]
+    fn byte_identical_outputs_still_dedup_under_a_recurring_call_id() {
+        // The other half of the contract, and a witness for the receipt half of
+        // the same regression: keying identities by position must not turn
+        // dedup off, and the id it reports must be the id of the block it
+        // actually stubbed. Under the call_id-keyed map both copies resolved to
+        // the LAST result's id, so `deduped_blocks` cited a block that was
+        // never touched.
+        let repeated = "same big output ".repeat(20);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            assistant_with_call_on("call_0", "src/a.rs"),
+            tool_msg("call_0", repeated.clone()),
+            assistant_with_call_on("call_0", "src/b.rs"),
+            tool_msg("call_0", repeated.clone()),
+            assistant_with_call_on("call_0", "src/c.rs"),
+            tool_msg("call_0", "tail".into()),
+        ];
+        let report = compact(&mut messages, 1).expect("should compact");
+        assert_eq!(report.deduped, 1, "{report:?}");
+        assert_eq!(
+            report.deduped_blocks,
+            vec![tool_result_block_id(&ToolOutput::Ok {
+                content: repeated.clone()
+            })],
+            "the receipt must cite the identity of the block it stubbed"
+        );
+        // The EARLIEST copy survives byte-identical (#372)…
+        match &messages[2].tool_results[0].output {
+            ToolOutput::Ok { content } => assert_eq!(content, &repeated),
+            _ => panic!("earliest copy must survive intact"),
+        }
+        // …and only the later duplicate is stubbed.
         match &messages[4].tool_results[0].output {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("earlier tool result"), "got: {content}")
