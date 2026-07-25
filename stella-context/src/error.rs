@@ -45,6 +45,14 @@ pub enum ContextError {
     /// timestamp that isn't RFC-3339, a zero-dimension embedding).
     #[error("invalid context input: {0}")]
     InvalidInput(String),
+
+    /// The store on disk was stamped by a newer stella
+    /// (`user_version > SCHEMA_VERSION`). Episodic memory and the bi-temporal
+    /// fact graph are not rebuildable, so an older binary refuses rather than
+    /// writing into a schema it does not know. Carries the full actionable
+    /// message (the fault is an out-of-date binary, not a broken workspace).
+    #[error("{0}")]
+    SchemaTooNew(String),
 }
 
 #[cfg(test)]
