@@ -1,5 +1,5 @@
 //! Raw per-call cache-gap facts — [`Store::cache_call_gaps`] — split out of
-//! `lib.rs` to keep that file under its size ratchet.
+//! `lib.rs` to keep that file small.
 //!
 //! Every recorded model call, paired with the gap since its session's
 //! previous call, is the raw material a caller (`stella-cli`'s `stats.rs`,

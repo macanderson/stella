@@ -6,7 +6,7 @@
 //! the pricing-aware CLI producer (see [`crate::envelope::Inbound::CacheInsight`])
 //! and was folded into each [`AgentEntry`]; this module reads those folded
 //! aggregates and turns them into the compact strings the deck renders. Kept
-//! out of `deck.rs` to keep that file under its size ratchet, and out of
+//! out of `deck.rs` to keep that file small, and out of
 //! `deck_render.rs` so the formatting is unit-testable without a full frame.
 
 use ratatui::style::Style;
@@ -126,7 +126,7 @@ pub fn fmt_warmth(remaining_secs: Option<u64>) -> String {
 // ── Statline cell span builders ─────────────────────────────────────────────
 //
 // Each returns the `Span`s for one statline cell, so `deck_render` stays thin
-// (and under its size ratchet) and the styling lives next to the formatting it
+// (and small) and the styling lives next to the formatting it
 // dresses. Colors come from [`crate::theme`], matching the surrounding cells.
 
 /// CACHE cell: hit% then the compact read/write token volumes behind it, or the
@@ -285,7 +285,7 @@ mod tests {
     // Complete states — the deck's snapshot-test idiom (assert on a rendered
     // `Buffer`'s flattened text, same pattern as `deck_render`'s own statline
     // tests). Kept here rather than in `deck_render.rs`'s test module purely
-    // to stay under that file's size ratchet; `render_status_bar` is
+    // to keep that file small; `render_status_bar` is
     // `pub(crate)` for exactly this reason.
 
     use ratatui::buffer::Buffer;

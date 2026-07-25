@@ -208,25 +208,28 @@ loop, and the `/pipeline` deck toggle.
 
 ## Workspace layout — where a change goes
 
-Fifteen crates. The one-sentence rule of thumb:
+Fifteen crates. The one-sentence rule of thumb below routes you to the right
+one; **each crate's own `README.md`** (linked from the table) then covers its
+layout, invariants, gotchas, and extension recipe in depth. Read that before
+changing code inside a crate you don't already know.
 
 | You want to… | Crate | Notes |
 |---|---|---|
-| Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | `stella-core` | **No I/O allowed.** Decision logic only. |
-| Add/fix a model provider (SSE, tool-call dialect, pricing) | `stella-model` | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`read_file`, `verify_done`, the opt-in `bash`, …) | `stella-tools` | Implement the `Tool` trait, register in `ToolRegistry`. |
-| Change CLI commands, flags, or agent wiring | `stella-cli` | This is the shipping binary. |
-| Change REPL rendering / panels / keybindings | `stella-tui` | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
-| Touch shared types crossing a crate boundary | `stella-protocol` | **Zero logic, zero I/O — types only.** |
-| Persistence: executions, events, telemetry (SQLite) | `stella-store` | |
-| Retrieval: graph, embeddings, episodic memory | `stella-context` | |
-| Tree-sitter code indexing | `stella-graph` | |
-| Triage → … → judge orchestration plane | `stella-pipeline` | |
-| MCP client (external tool servers) | `stella-mcp` | |
-| Multimodal generation | `stella-media` | |
-| Multi-agent fan-out, worktree isolation | `stella-fleet` | |
-| The Observatory telemetry dashboard (`stella observe`) | `stella-observatory` | Loopback-only, read-only, embedded HTML. |
-| The headless engine server a host process drives over the wire | `stella-serve` | Its **own binary**, not linked into `stella-cli`. Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/design/serve-surface.md`](docs/design/serve-surface.md). |
+| Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](stella-core/README.md) | **No I/O allowed.** Decision logic only. |
+| Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
+| Add/fix a built-in tool (`read_file`, `verify_done`, the opt-in `bash`, …) | [`stella-tools`](stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
+| Change CLI commands, flags, or agent wiring | [`stella-cli`](stella-cli/README.md) | This is the shipping binary. |
+| Change REPL rendering / panels / keybindings | [`stella-tui`](stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
+| Touch shared types crossing a crate boundary | [`stella-protocol`](stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |
+| Persistence: executions, events, telemetry (SQLite) | [`stella-store`](stella-store/README.md) | |
+| Retrieval: graph, embeddings, episodic memory | [`stella-context`](stella-context/README.md) | |
+| Tree-sitter code indexing | [`stella-graph`](stella-graph/README.md) | |
+| Triage → … → judge orchestration plane | [`stella-pipeline`](stella-pipeline/README.md) | |
+| MCP client (external tool servers) | [`stella-mcp`](stella-mcp/README.md) | |
+| Multimodal generation | [`stella-media`](stella-media/README.md) | |
+| Multi-agent fan-out, worktree isolation | [`stella-fleet`](stella-fleet/README.md) | |
+| The Observatory telemetry dashboard (`stella observe`) | [`stella-observatory`](stella-observatory/README.md) | Loopback-only, read-only, embedded HTML. |
+| The headless engine server a host process drives over the wire | [`stella-serve`](stella-serve/README.md) | Its **own binary**, not linked into [`stella-cli`](stella-cli/README.md). Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/design/serve-surface.md`](docs/design/serve-surface.md). |
 | Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it directly via git as `contextgraph-types`/`contextgraph-host` at a pinned rev. Stays dependency-light by contract. |
 
 **Status — what ships.** The live runtime path is
@@ -307,7 +310,7 @@ this before assuming two of them mean the same thing:
 | **turn** | `turn_instance` | `stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
 | **step** | `(step, call_seq)` | `stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/judge/plan/guidance roles take 1, 2, … |
 | **fleet run** | `run_id` | `stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
-| **task** | `TaskId` / `tasks` row | `stella-fleet/src/plan.rs`, `stella-store` | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
+| **task** | `TaskId` / `tasks` row | `stella-fleet/src/plan.rs`, [`stella-store`](stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
 
 ---
 
@@ -387,9 +390,13 @@ be closed by exactly one PR; if a fix spans several, close on the last and
 
 ## Testing approach
 
-- **Property tests** for pure engine logic (`proptest`): compaction,
-  loop detection, budget arithmetic, retry history, calibration drift.
-  These run on every `cargo test`.
+- **Property tests** for pure engine logic (`proptest`): loop detection,
+  retry history, skill selection, and the task board (`stella-core`), plus
+  retrieval fusion (`stella-context`), fleet planning (`stella-fleet`),
+  witness verification (`stella-pipeline`), and render/scroll (`stella-tui`).
+  These run on every `cargo test`. Compaction, eviction, and budget
+  arithmetic are covered by unit tests, not properties — a property test for
+  them is a welcome contribution.
 - **Witness tests** for features — see above.
 - **Wiremock-based adapter tests** for provider SSE parsing and HTTP error
   classification (`stella-model`, `stella-mcp`, `stella-media`).

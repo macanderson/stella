@@ -1,6 +1,6 @@
 //! The overflow summarizer's prompt and span rendering — the pure half of
 //! `driver.rs`'s summarize-on-overflow fallback, split out so the driver
-//! stays within the size ratchet and the render logic is testable alone.
+//! stays small and the render logic is testable alone.
 
 use stella_protocol::{CompletionMessage, MessageRole, ToolOutput};
 

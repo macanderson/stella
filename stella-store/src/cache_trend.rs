@@ -1,5 +1,5 @@
 //! Per-session cache-economics trend — [`Store::session_cache_trend`] —
-//! split out of `lib.rs` to keep that file under its size ratchet.
+//! split out of `lib.rs` to keep that file small.
 //!
 //! `telemetry` already carries every call's cache read/write tokens keyed by
 //! `execution_id`, and `executions.session_id` already chains a multi-turn

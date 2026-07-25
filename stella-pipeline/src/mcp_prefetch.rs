@@ -2,7 +2,7 @@
 //! [`fold`] is called once at the top of a fan-out, folding shared context
 //! into every candidate's starting messages instead of each candidate
 //! independently paying to look it up. Split out of `pipeline.rs` to keep
-//! the orchestrator under the file-size ratchet.
+//! the orchestrator small.
 
 use stella_protocol::CompletionMessage;
 

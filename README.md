@@ -607,23 +607,27 @@ Fifteen `stella-*` crates make up the workspace. The Context Graph Protocol
 the retrieval abstraction Stella's recall routes through — now lives in its own
 repository and is pulled in as a pinned git dependency, not as workspace members.
 
+Every crate carries its own `README.md` — linked from the table below — with its
+file layout, the invariants it enforces, its gotchas, and the recipe for
+extending it.
+
 | Crate | Role |
 |---|---|
-| `stella-cli` | CLI binary — clap surface + agent loop wiring |
-| `stella-core` | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router |
-| `stella-tools` | The built-in tools (CRUD, `grep`/`glob`, build/test/lint/format, `run_script`, the process group, the `repo_*` tools, `verify_done`, issues, CI — plus the opt-in `bash`) |
-| `stella-model` | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing) |
-| `stella-store` | SQLite persistence — executions, events, telemetry, files-touched |
-| `stella-mcp` | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry |
-| `stella-protocol` | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports |
-| `stella-context` | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts |
-| `stella-graph` | Tree-sitter symbol + import-edge indexer (Rust/TS/JS/Python/SQL) |
-| `stella-pipeline` | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → judge ([docs](https://stella.oxagen.sh/docs/inference-pipeline)) |
-| `stella-fleet` | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task |
-| `stella-media` | Multimodal generation behind one `MediaProvider` port — `generate_svg` always on; `generate_image` and `generate_video`/`poll_video` registered when a media-capable key is set (video behind a headless cost gate) |
-| `stella-tui` | The Command Deck — a pure event-fold core + thin crossterm shell |
-| `stella-observatory` | The Observatory — `stella observe`'s loopback-only telemetry dashboard over the local SQLite stores |
-| `stella-serve` | A separate headless binary (not part of the `stella` CLI): drives the engine over a wire protocol so a host process runs the Rust core, remoting every model and tool call back — the engine holds no ambient authority |
+| [`stella-cli`](stella-cli/README.md) | CLI binary — clap surface + agent loop wiring |
+| [`stella-core`](stella-core/README.md) | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router |
+| [`stella-tools`](stella-tools/README.md) | The built-in tools (CRUD, `grep`/`glob`, build/test/lint/format, `run_script`, the process group, the `repo_*` tools, `verify_done`, issues, CI — plus the opt-in `bash`) |
+| [`stella-model`](stella-model/README.md) | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing) |
+| [`stella-store`](stella-store/README.md) | SQLite persistence — executions, events, telemetry, files-touched |
+| [`stella-mcp`](stella-mcp/README.md) | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry |
+| [`stella-protocol`](stella-protocol/README.md) | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports |
+| [`stella-context`](stella-context/README.md) | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts |
+| [`stella-graph`](stella-graph/README.md) | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/PHP) |
+| [`stella-pipeline`](stella-pipeline/README.md) | The orchestration plane above the engine — the default `stella run` path: triage → plan → scope review → witness → execute → verify → judge ([docs](https://stella.oxagen.sh/docs/inference-pipeline)) |
+| [`stella-fleet`](stella-fleet/README.md) | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task |
+| [`stella-media`](stella-media/README.md) | Multimodal generation behind one `MediaProvider` port — `generate_svg` always on; `generate_image` and `generate_video`/`poll_video` registered when a media-capable key is set (video behind a headless cost gate) |
+| [`stella-tui`](stella-tui/README.md) | The Command Deck — a pure event-fold core + thin crossterm shell |
+| [`stella-observatory`](stella-observatory/README.md) | The Observatory — `stella observe`'s loopback-only telemetry dashboard over the local SQLite stores |
+| [`stella-serve`](stella-serve/README.md) | A separate headless binary (not part of the `stella` CLI): drives the engine over a wire protocol so a host process runs the Rust core, remoting every model and tool call back — the engine holds no ambient authority |
 | Context Graph Protocol | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it via git. |
 
 The repo is a **monorepo**: alongside the Rust workspace, the documentation

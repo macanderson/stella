@@ -90,7 +90,7 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //   ddl         (crate-private) every table/index DDL at the CURRENT schema
 //   migrations  (crate-private) versioned upgrades + the fresh-file bootstrap
 //   cache_gaps  per-call cache-gap facts behind the `cache_expired_rewrite`
-//               counter (split out to keep this file under its size ratchet)
+//               counter (split out to keep this file small)
 //   cache_trend per-session cache trend — telemetry already persists these
 //               facts; this groups them by session for `stella stats`
 //   catalog     `catalog.db` — user-tier model catalog (slugs, pricing)
@@ -729,7 +729,7 @@ impl Store {
     }
 
     /// `pub(crate)`: [`crate::cache_gaps`] is a separate module (split out to
-    /// keep this file under its size ratchet) whose `impl Store` block needs
+    /// keep this file small) whose `impl Store` block needs
     /// the same connection access every query method here has.
     pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
         // A poisoned mutex means a panic mid-write; the connection itself

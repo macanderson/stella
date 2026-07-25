@@ -1,6 +1,6 @@
 [package]
 name = "stella-graph"
-description = "Code-graph indexer: tree-sitter parsers (native), symbol + import-edge extraction, incremental re-index on file change. Implemented AS a built-in CGP provider feeding stella-context."
+description = "Code-graph indexer: tree-sitter parsers (native), symbol + import-edge extraction, incremental re-index on file change. Implemented AS a built-in CGP provider; recall reaches it through the CGP host, and it owns codegraph.db independently of stella-context."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

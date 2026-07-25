@@ -18,10 +18,12 @@
 //! the focused agent has a pending gate (scope review / ask-user), in which
 //! case the chord/the gate keys answer it. (On legacy terminals that can't
 //! report a modified Enter, plain `⏎` submits and `⌥⏎` is the line break —
-//! see [`crate::composer::classify_enter`].) Tab hotkeys (`1`–`5`) and agent
-//! controls (`p`/`s`/`r`) only fire when the composer is empty, so they never
-//! eat a keystroke meant for a prompt (the same "quick-pick only when nothing
-//! typed" gate `crate::ui` already uses).
+//! see [`crate::composer::classify_enter`].) Tabs are navigated with `Tab` /
+//! `Shift-Tab` only — digits deliberately never switch tabs, because they
+//! quick-pick `ask_user` answers and must stay typeable as a prompt's first
+//! character. Agent controls (`p`/`s`/`r`) only fire when the composer is
+//! empty, so they never eat a keystroke meant for a prompt (the same
+//! "quick-pick only when nothing typed" gate `crate::ui` already uses).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 

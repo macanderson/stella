@@ -1,9 +1,15 @@
 # Stella serve surface — the headless engine for Oxagen
 
-**Status:** Implemented as the `stella-serve` crate (`Session`, `ServerFrame`,
-the HTTP/SSE transport) — ADR-033 Option B, the Rust sidecar. It builds its own
-binary and nothing in `stella-cli` links it, so a change here never reaches a
-`stella` user. **Date:** 2026-07-20. **Owner:** Mac Anderson.
+**Status:** Partly implemented as the `stella-serve` crate (`Session`,
+`ServerFrame`, the HTTP/SSE transport, bearer auth, remoted tools) — ADR-033
+Option B, the Rust sidecar. It builds its own binary and nothing in
+`stella-cli` links it, so a change here never reaches a `stella` user.
+**This document describes the target surface, not all of it is built:** the
+code today serves one turn per registered id, with no sessions-over-turns, no
+steering, no pause/cancel, no approval gate, no SSE replay via `?after=<seq>`,
+no `Host`-header guard, and no SIGTERM drain. Sections below flag the gaps
+individually; treat `stella-serve/src/` as the state and this doc as the
+destination. **Date:** 2026-07-20. **Owner:** Mac Anderson.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
 the host side. That repository is private to Oxagen; this document is the
 *Stella* side of the same integration and is self-contained without it.
@@ -185,15 +191,18 @@ Oxagen's existing Firecracker/Modal sandbox** (the same isolation
 — the engine does not spawn its own shells server-side. `stella-serve` in server
 mode:
 
-- **binds to a token-gated port only** (no ambient trust); reuses the
-  Observatory's DNS-rebinding `Host`-header guard.
+- **binds to a token-gated port only** (no ambient trust). **Not yet built:**
+  reusing the Observatory's DNS-rebinding `Host`-header guard
+  (`stella-observatory/src/lib.rs::host_is_local`) — `stella-serve` performs no
+  `Host` validation today.
 - **disables the local shell/web tool surface by default** (`--tools remote`),
   delegating all execution to the host's `RemoteToolExecutor`.
 - **does not use `stella-store` or `stella-cli` shell hooks server-side** (per
   ADR-033 §4.1) — persistence and policy are the platform's.
-- adds the **graceful shutdown** the CLI lacks: SIGTERM drains in-flight turns to
-  the next step boundary (soft-stop), then exits; a per-session lifecycle tears
-  down cleanly (the CLI only has SIGPIPE + TUI-drop cleanup).
+- **Not yet built:** the **graceful shutdown** the CLI lacks — SIGTERM draining
+  in-flight turns to the next step boundary (soft-stop), then exiting. There is
+  no signal handling in `stella-serve/src/` today; only the per-session
+  lifecycle tears down cleanly (the CLI has SIGPIPE + TUI-drop cleanup).
 
 ## Metering parity
 
@@ -239,5 +248,5 @@ ADR-033 §7 names).
 
 See `serve-surface.fleet.toml` (this directory) — a `stella fleet --plan` file
 that fans the eight upstream items into gate-verified tasks, each of which passes
-`make gate` (fmt + file-size ratchet + clippy `-D warnings` + `cargo test`)
-before its commit lands.
+`make gate` (no-scratch + doc-citations + fmt `--check` + clippy `-D warnings`
++ `cargo test --workspace`) before its commit lands.

@@ -1,5 +1,5 @@
 //! Best-of-N candidate isolation tests — split out of `tests.rs` to keep it
-//! under the file-size ratchet; a child module, so it reaches `run_isolated`,
+//! small; a child module, so it reaches `run_isolated`,
 //! `isolated_config`, and the other fakes above via `super::*`. The shared
 //! infrastructure itself (`run_isolated`, `isolated_config`,
 //! `FakeWorkspacePort`, `FakeWorkspace`) stays in `tests.rs` — `mcp_prefetch`
