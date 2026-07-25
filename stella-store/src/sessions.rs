@@ -308,7 +308,7 @@ impl SessionRegistry {
 /// Whether `pid` is a live process. Unix: `kill(pid, 0)` (EPERM still means
 /// alive). Elsewhere: assume alive (no downgrade — better to show a stale
 /// in-progress row than to mislabel a live session as crashed).
-fn pid_alive(pid: u32) -> bool {
+pub(crate) fn pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         // `pid_t` is signed: a stored pid that doesn't fit (a corrupt

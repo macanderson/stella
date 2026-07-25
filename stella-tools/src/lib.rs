@@ -11,6 +11,7 @@
 
 pub mod agent_use;
 pub mod apply_edits;
+pub mod atomic_write;
 pub mod bash;
 pub mod catalog;
 pub mod ci;

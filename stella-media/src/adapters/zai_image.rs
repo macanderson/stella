@@ -16,7 +16,9 @@ use stella_protocol::MediaKind;
 
 use crate::credential::ApiKey;
 use crate::error::MediaError;
-use crate::http::{classify_http_error, download_bytes, parse_retry_after_ms};
+use crate::http::{
+    MAX_IMAGE_DOWNLOAD_BYTES, classify_http_error, download_bytes, parse_retry_after_ms,
+};
 use crate::provider::{
     ImageRequest, ImageSize, MediaArtifact, MediaCapabilities, MediaJob, MediaJobStatus,
     MediaProvider, VideoRequest,
@@ -176,7 +178,7 @@ async fn decode_image(client: &reqwest::Client, datum: ImageDatum) -> Result<Vec
             .map_err(|e| MediaError::Malformed(format!("zai image base64: {e}")));
     }
     if let Some(url) = datum.url {
-        return download_bytes(client, &url, "zai").await;
+        return download_bytes(client, &url, "zai", MAX_IMAGE_DOWNLOAD_BYTES).await;
     }
     Err(MediaError::Malformed(
         "zai image datum had neither url nor b64_json".into(),

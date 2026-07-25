@@ -1650,6 +1650,44 @@ impl Store {
         Ok(swept)
     }
 
+    /// Release every claim whose holding process is provably gone. Returns
+    /// how many were released.
+    ///
+    /// This is the escape hatch for claims already stranded in a user's
+    /// workspace. A crashed run cannot release its own, and until they go
+    /// every later run in that workspace fails with a `ClaimConflict` naming
+    /// a run id that no longer exists — with no way to clear it.
+    ///
+    /// Liveness is exact where the age sweep ([`Store::prune_stale_file_locks`])
+    /// is only a heuristic, because every holder identity ends its owner
+    /// prefix in the minting process's pid (`fleet-<ms>-<pid>/<task>`,
+    /// `ses-<ms>-<lane>`). It is also the safer default: the age sweep
+    /// cannot tell a long-running healthy run from a dead one, and
+    /// `acquire_file_lock` never refreshes `acquired_at`, so a long run's
+    /// own live claims eventually look stale to it.
+    ///
+    /// An identity that does not parse is assumed **alive**: a stale refusal
+    /// the user can wait out beats reaping a live rival's claims mid-edit.
+    pub fn release_file_locks_of_dead_holders(&self) -> Result<usize> {
+        let holders: Vec<String> = {
+            let guard = self.lock();
+            let mut statement = guard.prepare("SELECT DISTINCT holder FROM file_locks")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let mut released = 0;
+        for holder in holders {
+            let Some(pid) = holder_pid(&holder) else {
+                continue;
+            };
+            if crate::sessions::pid_alive(pid) {
+                continue;
+            }
+            released += self.release_file_locks_for_holder(&holder)?;
+        }
+        Ok(released)
+    }
+
     /// Upsert one extension-authored workspace rule — the write seam an
     /// extension provider uses to publish a rule without touching
     /// `.stella/rules/`. `contents` is the full rule markdown in the
@@ -2087,4 +2125,12 @@ pub fn fold_citation_stats(rows: &[MemoryCitationRow]) -> Vec<MemoryCitationStat
         entry.quarantined = untruthful_count >= QUARANTINE_NEGATIVES_THRESHOLD;
     }
     stats
+}
+
+/// The pid embedded in a claim holder's owner prefix. Every writer's
+/// identity is `<owner>/<lane-or-task>` where the owner ends in the minting
+/// process's pid (`ses-<ms>-<pid>`, `fleet-<ms>-<pid>`). `None` when the
+/// identity does not parse — the caller must then assume the holder is alive.
+pub fn holder_pid(holder: &str) -> Option<u32> {
+    holder.split('/').next()?.rsplit('-').next()?.parse().ok()
 }

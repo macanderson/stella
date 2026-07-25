@@ -186,28 +186,10 @@ impl JobStore {
     }
 
     fn mutation_lock(&self) -> Result<std::fs::File, MediaError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                MediaError::Artifact(format!("cannot create job store dir: {error}"))
-            })?;
-        }
-        let path = self.path.with_extension("json.lock");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|error| {
-                MediaError::Artifact(format!(
-                    "cannot open job store lock {}: {error}",
-                    path.display()
-                ))
-            })?;
-        file.lock().map_err(|error| {
-            MediaError::Artifact(format!("cannot lock job store {}: {error}", path.display()))
-        })?;
-        Ok(file)
+        // Shared with `ArtifactStore`: both rewrite a whole JSON document
+        // from a pre-image, which is a lost-update race without a lock held
+        // across the read and the write.
+        crate::artifact::mutation_lock(&self.path.with_extension("json.lock"))
     }
 }
 

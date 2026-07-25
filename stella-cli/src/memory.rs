@@ -261,6 +261,15 @@ impl SessionMemory {
             sections.push(skills::render_skills_section(&selected));
         }
 
+        // In-progress workspace maps belong here, not in the cached system
+        // prefix: a draft line names the producing pid and its liveness, so
+        // it differs per process and flips mid-session. Rendering it in the
+        // prefix is what made the prefix non-byte-stable (#639).
+        if let Some(section) = stella_tools::exploration::render_draft_claims(&self.workspace_root)
+        {
+            sections.push(section);
+        }
+
         if sections.is_empty() {
             None
         } else {

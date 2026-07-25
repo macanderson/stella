@@ -25,11 +25,16 @@
 //! A map saved with `status: "draft"` doubles as the in-flight claim
 //! (spec §4c): other sessions see `IN PROGRESS` with liveness derived from
 //! the recorded pid — a crashed session leaves readable partial notes,
-//! never a leaked lock. Records are plain JSON files, one per slice, so
-//! they are inspectable, diffable, and shareable through the filesystem
-//! with zero coordination — and each one is published by a synced
-//! temp-sibling rename ([`write_atomically`]), never truncated in place,
-//! because the reader skips a corrupt record silently.
+//! never a leaked lock. Drafts surface through [`render_draft_claims`], in
+//! the VOLATILE recall block, never through [`render_index`]: the pid and
+//! its liveness vary per process and flip mid-session, and [`render_index`]
+//! lands in the byte-stable cached system prefix.
+//!
+//! Records are plain JSON files, one per slice, so they are inspectable,
+//! diffable, and shareable through the filesystem with zero coordination —
+//! and each one is published by a synced temp-sibling rename
+//! ([`write_atomically`]), never truncated in place, because the reader
+//! skips a corrupt record silently.
 
 use std::collections::BTreeMap;
 
@@ -159,6 +164,21 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Absolute save stamp for the CACHED system prefix.
+///
+/// Derived only from the record's own `created_at_ms`, never from the wall
+/// clock, so the rendered bytes are identical in every process at every
+/// moment. [`age_human`] is not usable here: a relative age re-renders as
+/// time passes, which rotates the byte-stable prefix and makes every
+/// one-shot process pay the cache-WRITE premium on the whole ~15-20k-token
+/// prefix instead of hitting the cache (#639). It stays in use for tool
+/// output, which is not cached.
+fn saved_stamp(created_at_ms: u64) -> String {
+    let iso = stella_core::bus::iso8601_utc_millis(created_at_ms as i64);
+    let day = iso.split('T').next().unwrap_or(&iso);
+    format!("saved {day}")
+}
+
 fn age_human(created_at_ms: u64) -> String {
     let age_ms = now_ms().saturating_sub(created_at_ms);
     let mins = age_ms / 60_000;
@@ -268,11 +288,64 @@ pub fn draft_slices_for_pid(root: &std::path::Path, pid: u32) -> Vec<String> {
     slices
 }
 
+/// Render in-flight draft claims for the VOLATILE recall block.
+///
+/// These never belong in the cached system prefix: a draft line names the
+/// producing process's pid and whether it is still alive, so it differs
+/// between concurrent sessions and flips the moment a producer exits.
+/// Rendering it inside the cached prefix meant the prefix was not
+/// byte-stable, and an unstable prefix pays the cache-write premium on all
+/// ~15-20k of its tokens on every call rather than being read from cache
+/// (#639).
+///
+/// Deliberately cheap: a JSON parse per record, no hashing and no git, so it
+/// can run on every turn. [`summaries_sync`] does a git call plus a per-file
+/// sha256 and would be far too expensive here.
+pub fn render_draft_claims(root: &std::path::Path) -> Option<String> {
+    let dir = root.join(EXPLORATIONS_DIR);
+    let mut lines: Vec<String> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|entry| {
+            let raw = std::fs::read_to_string(entry.path()).ok()?;
+            let record: ExplorationRecord = serde_json::from_str(&raw).ok()?;
+            if record.status != ExplorationStatus::Draft {
+                return None;
+            }
+            let state = match record.pid {
+                Some(pid) if pid_alive(pid) => {
+                    format!("IN PROGRESS by pid {pid} (live) — read the draft before duplicating")
+                }
+                _ => "abandoned draft — partial notes usable, safe to take over".to_string(),
+            };
+            Some(format!(
+                "- `{}` — {} ({state})\n",
+                record.slice, record.title
+            ))
+        })
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    lines.sort();
+    Some(format!("Workspace maps in progress:\n{}", lines.concat()))
+}
+
 /// Render the workspace-maps index for the system prompt (spec §4a):
 /// metadata only, newest-first, dropped-with-notice past `budget_chars`.
-/// Returns `None` when the store is empty (no section, no tokens).
+/// Returns `None` when there is nothing to list (no section, no tokens).
+///
+/// This lands in the CACHED system prefix, so every byte it emits must be
+/// stable across processes and over time. That rules out two things it used
+/// to render: relative ages, and in-progress drafts (whose producer pid and
+/// liveness are per-process and flip mid-session). Drafts are still shown —
+/// in the volatile recall block, via [`render_draft_claims`].
 pub fn render_index(summaries: &[ExplorationSummary], budget_chars: usize) -> Option<String> {
-    if summaries.is_empty() {
+    if !summaries
+        .iter()
+        .any(|s| s.status == ExplorationStatus::Complete)
+    {
         return None;
     }
     let footer = "Read one with the explorations tool ({\"slice\": ...}). Check this list \
@@ -280,30 +353,23 @@ pub fn render_index(summaries: &[ExplorationSummary], budget_chars: usize) -> Op
                   with save_exploration so the next session reuses your map.\n";
     let mut out = String::from("\n## Workspace maps (shared across all Stella sessions)\n");
     let mut dropped = 0usize;
-    for s in summaries {
-        let line = match s.status {
-            ExplorationStatus::Draft => {
-                let live = if s.producer_alive() {
-                    format!(
-                        "IN PROGRESS by pid {} (live), started {} — read the draft before duplicating",
-                        s.pid.unwrap_or(0),
-                        age_human(s.created_at_ms)
-                    )
-                } else {
-                    "abandoned draft — partial notes usable, safe to take over".to_string()
-                };
-                format!("- `{}` — {} ({live})\n", s.slice, s.title)
-            }
-            ExplorationStatus::Complete => format!(
-                "- `{}` — {} ({}, {}, {} files): {}\n",
-                s.slice,
-                s.title,
-                s.freshness.label(s.manifest_len),
-                age_human(s.created_at_ms),
-                s.covered.len(),
-                s.summary
-            ),
-        };
+    // Completed maps only. A draft line carries the producer's pid and its
+    // liveness, both of which differ per process and flip mid-session — in
+    // the cached prefix that is a guaranteed cache miss on every call. They
+    // move to the volatile recall block via [`render_draft_claims`].
+    for s in summaries
+        .iter()
+        .filter(|s| s.status == ExplorationStatus::Complete)
+    {
+        let line = format!(
+            "- `{}` — {} ({}, {}, {} files): {}\n",
+            s.slice,
+            s.title,
+            s.freshness.label(s.manifest_len),
+            saved_stamp(s.created_at_ms),
+            s.covered.len(),
+            s.summary
+        );
         if out.len() + line.len() + footer.len() > budget_chars {
             dropped += 1;
             continue;
@@ -1022,6 +1088,77 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #639 — the cached system prefix must be byte-stable.
+    ///
+    /// The index used to render relative ages and in-progress draft lines.
+    /// A relative age re-renders as time passes and a draft line names the
+    /// producing pid and its liveness, so the prefix differed between
+    /// processes and over time — and an unstable prefix pays the 1.25x
+    /// cache-WRITE premium on all ~15-20k of its tokens on every single
+    /// call instead of being read from cache.
+    #[test]
+    fn the_cached_index_carries_no_wall_clock_or_per_process_bytes() {
+        let root = temp_root("stable-index");
+        let dir = root.join(EXPLORATIONS_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        let record = |slice: &str, status: ExplorationStatus, pid: Option<u32>| {
+            std::fs::write(
+                dir.join(format!("{slice}.json")),
+                serde_json::to_string(&ExplorationRecord {
+                    slice: slice.to_string(),
+                    title: format!("Map {slice}"),
+                    summary: "covers z".into(),
+                    content: "body".into(),
+                    files: vec![],
+                    created_at_ms: 1_700_000_000_000,
+                    git_head: None,
+                    manifest: BTreeMap::new(),
+                    status,
+                    pid,
+                    symbols: vec![],
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        };
+        record("done", ExplorationStatus::Complete, None);
+        // A live draft owned by THIS process: the most volatile line the old
+        // renderer could emit.
+        record("wip", ExplorationStatus::Draft, Some(std::process::id()));
+
+        let index = render_index(&summaries_sync(&root), 4_000).expect("a completed map lists");
+
+        for volatile in ["ago", "just now", "IN PROGRESS", "pid ", "abandoned draft"] {
+            assert!(
+                !index.contains(volatile),
+                "the cached prefix must not carry {volatile:?}:\n{index}"
+            );
+        }
+        assert!(
+            index.contains("`done`"),
+            "completed maps still list:\n{index}"
+        );
+        assert!(
+            !index.contains("`wip`"),
+            "an in-progress draft must not reach the cached prefix:\n{index}"
+        );
+        // The freshness token is absolute, so it is the same bytes forever.
+        assert!(index.contains("saved 2023-11-14"), "{index}");
+        assert_eq!(
+            index,
+            render_index(&summaries_sync(&root), 4_000).unwrap(),
+            "two renders of one store must be byte-identical"
+        );
+
+        // The draft is not lost — it moves to the volatile recall block.
+        let claims = render_draft_claims(&root).expect("the draft is still surfaced");
+        assert!(claims.contains("`wip`"), "{claims}");
+        assert!(claims.contains("IN PROGRESS by pid"), "{claims}");
+        assert!(!claims.contains("`done`"), "{claims}");
+
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -135,26 +135,75 @@ impl ArtifactStore {
             )));
         }
 
-        std::fs::write(&dest, bytes)
-            .map_err(|e| MediaError::Artifact(format!("cannot write {}: {e}", dest.display())))?;
-
+        let sha256 = sha256_hex(bytes);
         let entry = ManifestEntry {
             id: safe_id.clone(),
             kind,
             path: filename.clone(),
-            sha256: sha256_hex(bytes),
+            sha256: sha256.clone(),
             label: label.to_string(),
             created_at: now_unix_secs(),
             byte_size: bytes.len() as u64,
         };
-        self.append_manifest(&entry)?;
-
-        Ok(MediaArtifactRef {
+        let artifact = MediaArtifactRef {
             id: safe_id,
             kind,
-            path: filename,
+            path: filename.clone(),
             label: label.to_string(),
-        })
+        };
+
+        // `create_new`, not `write`: a plain write truncates whatever is
+        // already at this path. Video ids are derived deterministically from
+        // the provider job id, so polling a completed job twice — the normal
+        // resume flow — lands on the same filename, and the truncating write
+        // plus an appending manifest left two contradictory rows for one
+        // path with different digests. On unix this is O_EXCL|O_CREAT, so it
+        // also refuses to follow a symlink planted at `dest`.
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+        {
+            Ok(mut file) => {
+                use std::io::Write as _;
+                file.write_all(bytes).map_err(|e| {
+                    MediaError::Artifact(format!("cannot write {}: {e}", dest.display()))
+                })?;
+                // The manifest row is a durability claim about these bytes.
+                file.sync_all().map_err(|e| {
+                    MediaError::Artifact(format!("cannot fsync {}: {e}", dest.display()))
+                })?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing = std::fs::read(&dest).map_err(|e| {
+                    MediaError::Artifact(format!(
+                        "cannot read existing artifact {}: {e}",
+                        dest.display()
+                    ))
+                })?;
+                let existing_sha = sha256_hex(&existing);
+                if existing_sha != sha256 {
+                    return Err(MediaError::Artifact(format!(
+                        "artifact {filename} already exists with different content \
+                         (existing sha256 {existing_sha}, new {sha256}) — refusing to overwrite"
+                    )));
+                }
+                // Same bytes: the idempotent re-save. Still upsert the row,
+                // so a crash between the write and the manifest append heals
+                // on the next poll rather than leaving an unlisted file.
+                self.upsert_manifest(&entry)?;
+                return Ok(artifact);
+            }
+            Err(e) => {
+                return Err(MediaError::Artifact(format!(
+                    "cannot write {}: {e}",
+                    dest.display()
+                )));
+            }
+        }
+
+        self.upsert_manifest(&entry)?;
+        Ok(artifact)
     }
 
     /// Read the manifest back (for a `gen list`-style listing). A missing
@@ -193,33 +242,100 @@ impl ArtifactStore {
         format!("med_{hex}")
     }
 
-    /// Append a row via read → append → temp-write → atomic rename, so the
-    /// manifest is never observed half-written. The whole array is rewritten
-    /// per save, which is O(n) in rows and fine at CLI volumes (a handful of
-    /// artifacts per session); it is the reason the manifest wants a bound or
-    /// an append-only format before it becomes a long-lived log.
-    fn append_manifest(&self, entry: &ManifestEntry) -> Result<(), MediaError> {
+    /// Insert or replace the row for `entry.path` via read → mutate →
+    /// temp-write → atomic rename, so the manifest is never observed
+    /// half-written and one path never has two rows.
+    ///
+    /// Replace, not append: `path` is physically unique inside the root, so
+    /// a second row for it can only ever contradict the first. Appending is
+    /// what left a re-saved artifact with two rows carrying different
+    /// digests for the same file.
+    ///
+    /// The whole read-modify-write is held under an advisory lock file, and
+    /// the temp name carries pid + counter. Without both, two processes (or
+    /// two `ArtifactStore` handles) could each read the pre-image and lose a
+    /// row, or collide mid-write on one fixed temp path. `JobStore` in this
+    /// crate already solved exactly this; [`mutation_lock`] is that solution
+    /// lifted so both callers share one.
+    ///
+    /// The whole array is rewritten per save, which is O(n) in rows and fine
+    /// at CLI volumes; it is the reason the manifest wants a bound or an
+    /// append-only format before it becomes a long-lived log.
+    fn upsert_manifest(&self, entry: &ManifestEntry) -> Result<(), MediaError> {
+        let _lock = mutation_lock(&self.root.join(format!("{MANIFEST_NAME}.lock")))?;
+
         let mut entries = self.entries()?;
-        entries.push(entry.clone());
+        match entries.iter_mut().find(|row| row.path == entry.path) {
+            Some(existing) => *existing = entry.clone(),
+            None => entries.push(entry.clone()),
+        }
         let body = serde_json::to_string_pretty(&entries)
             .map_err(|e| MediaError::Artifact(format!("cannot serialize manifest: {e}")))?;
 
         let final_path = self.root.join(MANIFEST_NAME);
-        let tmp_path = self.root.join(format!(".{MANIFEST_NAME}.tmp"));
-        std::fs::write(&tmp_path, body).map_err(|e| {
-            MediaError::Artifact(format!(
-                "cannot write temp manifest {}: {e}",
-                tmp_path.display()
-            ))
-        })?;
-        std::fs::rename(&tmp_path, &final_path).map_err(|e| {
-            MediaError::Artifact(format!(
-                "cannot commit manifest {}: {e}",
-                final_path.display()
-            ))
-        })?;
-        Ok(())
+        let sequence = NEXT_MANIFEST_TEMP.fetch_add(1, Ordering::Relaxed);
+        let tmp_path = self.root.join(format!(
+            ".{MANIFEST_NAME}.tmp.{}.{sequence}",
+            std::process::id()
+        ));
+        let commit = (|| {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&tmp_path).map_err(|e| {
+                MediaError::Artifact(format!(
+                    "cannot write temp manifest {}: {e}",
+                    tmp_path.display()
+                ))
+            })?;
+            file.write_all(body.as_bytes()).map_err(|e| {
+                MediaError::Artifact(format!(
+                    "cannot write temp manifest {}: {e}",
+                    tmp_path.display()
+                ))
+            })?;
+            file.sync_all().map_err(|e| {
+                MediaError::Artifact(format!(
+                    "cannot fsync temp manifest {}: {e}",
+                    tmp_path.display()
+                ))
+            })?;
+            drop(file);
+            std::fs::rename(&tmp_path, &final_path).map_err(|e| {
+                MediaError::Artifact(format!(
+                    "cannot commit manifest {}: {e}",
+                    final_path.display()
+                ))
+            })
+        })();
+        if commit.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+        commit
     }
+}
+
+/// Counter for manifest temp names, so a second writer in this process
+/// cannot collide with the first.
+static NEXT_MANIFEST_TEMP: AtomicU64 = AtomicU64::new(0);
+
+/// Take an advisory lock on `path`, creating it if absent, and hold it for
+/// the caller's whole read-modify-write. Shared by [`ArtifactStore`] and
+/// [`crate::jobs::JobStore`] — both rewrite a whole JSON document from a
+/// pre-image, which is a lost-update race without this.
+pub(crate) fn mutation_lock(path: &std::path::Path) -> Result<std::fs::File, MediaError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| MediaError::Artifact(format!("cannot create store dir: {e}")))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| MediaError::Artifact(format!("cannot open lock {}: {e}", path.display())))?;
+    file.lock()
+        .map_err(|e| MediaError::Artifact(format!("cannot lock {}: {e}", path.display())))?;
+    Ok(file)
 }
 
 /// Default file extension per media kind.
@@ -380,8 +496,16 @@ mod tests {
         }
         let entries = store.entries().unwrap();
         assert_eq!(entries.len(), 5);
-        // No stray temp file left behind after the atomic renames.
-        assert!(!store.root().join(".manifest.json.tmp").exists());
+        // No stray temp file left behind after the atomic renames. The name
+        // now carries pid + counter, so this scans rather than probing one
+        // fixed path.
+        let strays: Vec<_> = std::fs::read_dir(store.root())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp."))
+            .collect();
+        assert!(strays.is_empty(), "temp manifests left behind: {strays:?}");
     }
 
     #[test]
@@ -390,5 +514,87 @@ mod tests {
         std::fs::write(store.root().join(MANIFEST_NAME), "{ not an array").unwrap();
         let err = store.entries().unwrap_err();
         assert!(matches!(err, MediaError::Artifact(_)));
+    }
+
+    /// #617 — the resume flow. Video ids come from `artifact_id_for`, which
+    /// hashes the provider job id, so polling a completed job twice lands on
+    /// the same filename with the same bytes. `jobs.remove` only runs after
+    /// the save, so an interrupted first poll *guarantees* a second one.
+    ///
+    /// Before the fix this truncated the file and appended a second manifest
+    /// row for the same path.
+    #[test]
+    fn saving_the_same_id_twice_with_identical_bytes_is_idempotent() {
+        let (_dir, store) = store();
+        let bytes = b"the same video bytes";
+
+        let first = store
+            .save_with_id("med_abc", bytes, MediaKind::Video, "mp4", "clip")
+            .expect("first save");
+        let second = store
+            .save_with_id("med_abc", bytes, MediaKind::Video, "mp4", "clip")
+            .expect("a re-poll of a completed job must not fail");
+
+        assert_eq!(first.path, second.path);
+        let entries = store.entries().unwrap();
+        assert_eq!(entries.len(), 1, "one file must have exactly one row");
+        assert_eq!(entries[0].sha256, sha256_hex(bytes));
+        assert_eq!(
+            std::fs::read(store.root().join(&first.path)).unwrap(),
+            bytes
+        );
+    }
+
+    /// The other half: same id, *different* bytes is a genuine collision.
+    /// Refuse it by name rather than silently destroying the first artifact,
+    /// and leave the original file intact.
+    #[test]
+    fn saving_the_same_id_with_different_bytes_refuses_and_keeps_the_original() {
+        let (_dir, store) = store();
+        let first = store
+            .save_with_id("med_abc", b"original", MediaKind::Video, "mp4", "clip")
+            .expect("first save");
+
+        let err = store
+            .save_with_id("med_abc", b"different", MediaKind::Video, "mp4", "clip")
+            .expect_err("a colliding id must not silently overwrite");
+        match err {
+            MediaError::Artifact(message) => {
+                assert!(
+                    message.contains("refusing to overwrite"),
+                    "the refusal must say what it refused: {message}"
+                );
+            }
+            other => panic!("expected a named Artifact error, got {other:?}"),
+        }
+
+        assert_eq!(
+            std::fs::read(store.root().join(&first.path)).unwrap(),
+            b"original",
+            "the first artifact must survive a rejected collision"
+        );
+        assert_eq!(store.entries().unwrap().len(), 1);
+    }
+
+    /// A same-path row is replaced rather than appended, so the manifest can
+    /// never carry two contradictory digests for one file.
+    #[test]
+    fn a_same_path_row_is_replaced_not_duplicated() {
+        let (_dir, store) = store();
+        let entry = |label: &str| ManifestEntry {
+            id: "med_x".into(),
+            kind: MediaKind::Image,
+            path: "med_x.png".into(),
+            sha256: "deadbeef".into(),
+            label: label.into(),
+            created_at: 0,
+            byte_size: 4,
+        };
+        store.upsert_manifest(&entry("first")).unwrap();
+        store.upsert_manifest(&entry("second")).unwrap();
+
+        let entries = store.entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].label, "second");
     }
 }

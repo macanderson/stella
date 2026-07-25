@@ -1222,11 +1222,15 @@ mod tests {
     #[tokio::test]
     async fn image_artifact_failure_is_reconciliation_required_and_retry_safe() {
         let dir = tempfile::tempdir().expect("tempdir");
+        // A directory where the manifest file belongs: `entries()` cannot
+        // read it, so the save fails at the manifest step. Blocking the temp
+        // file instead would not work — the temp name now carries pid and a
+        // counter, precisely so two writers cannot collide on one path.
         let blocker = dir
             .path()
             .join(".stella")
             .join("artifacts")
-            .join(".manifest.json.tmp");
+            .join("manifest.json");
         let provider = Arc::new(CountingImages {
             submits: AtomicUsize::new(0),
             manifest_blocker: Some(blocker.clone()),

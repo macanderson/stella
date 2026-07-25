@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
     CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ProviderError, ReasoningEffort, ToolCall,
+    MessageRole, ProviderError, ReasoningEffort, ToolCall, ToolCallObserver,
 };
 
 use crate::catalog::{Catalog, Pricing};
@@ -576,6 +576,28 @@ impl Provider for GeminiProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, None).await
+    }
+
+    async fn complete_observed(
+        &self,
+        req: CompletionRequest,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, Some(observer)).await
+    }
+}
+
+impl GeminiProvider {
+    /// Shared body of [`Provider::complete`] and
+    /// [`Provider::complete_observed`]. The request has always been a
+    /// streaming one (`streamGenerateContent?alt=sse`); the only difference
+    /// is whether anything is told about the parts as they land.
+    async fn complete_inner(
+        &self,
+        req: CompletionRequest,
+        observer: Option<&dyn ToolCallObserver>,
+    ) -> Result<CompletionResult, ProviderError> {
         let (system_instruction, contents) = to_gemini_request_parts(&req.messages);
         let body = GeminiRequest {
             system_instruction,
@@ -601,7 +623,7 @@ impl Provider for GeminiProvider {
         }
 
         let (text, tool_calls, usage, finish_reason) =
-            aggregate_gemini_stream("Gemini", response).await?;
+            aggregate_gemini_stream("Gemini", response, observer).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -623,6 +645,7 @@ impl Provider for GeminiProvider {
 pub(crate) async fn aggregate_gemini_stream(
     label: &str,
     response: reqwest::Response,
+    observer: Option<&dyn ToolCallObserver>,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage, Option<FinishReason>), ProviderError> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
@@ -686,14 +709,31 @@ pub(crate) async fn aggregate_gemini_stream(
                         } else {
                             call.args
                         };
-                        tool_calls.push(ToolCall {
+                        let tool_call = ToolCall {
                             call_id,
                             name: call.name,
                             input,
-                        });
+                        };
+                        // Announced whole, with no parse gate: unlike the
+                        // OpenAI dialects there is no fragment reassembly
+                        // here, so `args` is already a `Value` and the call
+                        // is complete the moment its part arrives. The
+                        // announcement is a clone of the exact value pushed,
+                        // so what the observer sees is byte-identical to
+                        // what the completion returns, as the trait requires.
+                        if let Some(observer) = observer {
+                            observer.tool_call_streamed(&tool_call);
+                        }
+                        tool_calls.push(tool_call);
                     } else if let Some(t) = part.text
                         && !part.thought
                     {
+                        // Thought-summary parts stay silent, matching
+                        // anthropic and zai: the deck renders the answer,
+                        // not the model's reasoning.
+                        if let Some(observer) = observer {
+                            observer.text_delta(&t);
+                        }
                         text.push_str(&t);
                     }
                 }
@@ -894,6 +934,144 @@ mod tests {
         assert_eq!(map_thinking_level(ReasoningEffort::High), "high");
         assert_eq!(map_thinking_level(ReasoningEffort::Xhigh), "high");
         assert_eq!(map_thinking_level(ReasoningEffort::Max), "high");
+    }
+
+    /// #612 -- the deck must see the answer as it arrives.
+    ///
+    /// Gemini already streamed on the wire; only `complete_observed` was
+    /// missing, so it inherited the trait's silent default and the deck
+    /// stayed blank until the whole turn completed. Thought-summary parts
+    /// stay silent, matching anthropic and zai.
+    #[tokio::test]
+    async fn complete_observed_streams_answer_deltas_in_order_never_thoughts() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"planning...\",\"thought\":true}]}}]}\n\n",
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hel\"}]}}]}\n\n",
+            "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"lo!\"}]}}]}\n\n",
+        );
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider =
+            GeminiProvider::new(ApiKey::new("k"), "gemini-3-pro").with_base_url(server.uri());
+        let observer = RecordingObserver::new();
+        let result = provider
+            .complete_observed(observed_req("say hello"), &observer)
+            .await
+            .expect("completion should succeed");
+
+        assert_eq!(result.text, "Hello!");
+        assert_eq!(
+            observer.deltas.lock().unwrap().as_slice(),
+            &["Hel".to_string(), "lo!".to_string()],
+            "answer deltas must arrive in order, and thought parts must not"
+        );
+    }
+
+    /// A `functionCall` part arrives whole, so it is announced on arrival --
+    /// and the announced call must be byte-identical to the committed one,
+    /// which is what makes mid-stream tool speculation safe.
+    #[tokio::test]
+    async fn complete_observed_announces_a_tool_call_identical_to_the_committed_one() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.rs\"}}}]}}]}\n\n",
+            "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[]}}]}\n\n",
+        );
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider =
+            GeminiProvider::new(ApiKey::new("k"), "gemini-3-pro").with_base_url(server.uri());
+        let observer = RecordingObserver::new();
+        let result = provider
+            .complete_observed(observed_req("read it"), &observer)
+            .await
+            .expect("completion should succeed");
+
+        let announced = observer.calls.lock().unwrap().clone();
+        assert_eq!(
+            announced.len(),
+            1,
+            "the call must be announced exactly once"
+        );
+        assert_eq!(
+            announced, result.tool_calls,
+            "the announced call must match the committed one exactly"
+        );
+    }
+
+    /// A no-argument call omits `args` on the wire. It must still be
+    /// announced, as `{}` rather than `null` -- the same normalization the
+    /// committed call gets.
+    #[tokio::test]
+    async fn complete_observed_announces_a_no_argument_call_as_an_empty_object() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"repo_status\"}}]}}]}\n\n",
+            "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[]}}]}\n\n",
+        );
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider =
+            GeminiProvider::new(ApiKey::new("k"), "gemini-3-pro").with_base_url(server.uri());
+        let observer = RecordingObserver::new();
+        let result = provider
+            .complete_observed(observed_req("status"), &observer)
+            .await
+            .expect("completion should succeed");
+
+        let announced = observer.calls.lock().unwrap().clone();
+        assert_eq!(announced.len(), 1);
+        assert_eq!(announced[0].input, serde_json::json!({}));
+        assert_eq!(announced, result.tool_calls);
+    }
+
+    /// Shared observer double. Mirrors the anthropic and zai copies.
+    struct RecordingObserver {
+        calls: std::sync::Mutex<Vec<ToolCall>>,
+        deltas: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingObserver {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::Mutex::new(Vec::new()),
+                deltas: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl stella_protocol::ToolCallObserver for RecordingObserver {
+        fn tool_call_streamed(&self, call: &ToolCall) {
+            self.calls.lock().unwrap().push(call.clone());
+        }
+        fn text_delta(&self, delta: &str) {
+            self.deltas.lock().unwrap().push(delta.to_string());
+        }
+    }
+
+    fn observed_req(prompt: &str) -> CompletionRequest {
+        CompletionRequest {
+            messages: vec![
+                CompletionMessage::system("system"),
+                CompletionMessage::user(prompt),
+            ],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        }
     }
 
     #[tokio::test]

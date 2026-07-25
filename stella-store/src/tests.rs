@@ -1588,6 +1588,39 @@ fn holder_wide_release_drops_only_that_holders_claims() {
 }
 
 #[test]
+fn dead_holder_release_frees_only_provably_dead_holders() {
+    let store = Store::in_memory().unwrap();
+    // Alive: this very process. Its claim must survive.
+    let live = format!("ses-1753-{}/lead", std::process::id());
+    store.acquire_file_lock("src/live.rs", &live).unwrap();
+    // Dead: a pid `pid_t::try_from` rejects outright, so it reads as dead on
+    // every platform rather than depending on what is free on this machine.
+    let dead = "fleet-1753-4294967294/t9";
+    store.acquire_file_lock("src/dead.rs", dead).unwrap();
+    // Unparsable: assumed ALIVE. A stale refusal the user can wait out beats
+    // reaping a live rival mid-edit.
+    store
+        .acquire_file_lock("src/opaque.rs", "not-an-identity")
+        .unwrap();
+
+    assert_eq!(store.release_file_locks_of_dead_holders().unwrap(), 1);
+
+    assert!(
+        store.acquire_file_lock("src/dead.rs", &live).unwrap(),
+        "a dead holder's stranded claim must become claimable"
+    );
+    assert!(
+        !store.acquire_file_lock("src/opaque.rs", &live).unwrap(),
+        "an unparsable holder must be assumed alive, not reaped"
+    );
+    assert_eq!(
+        store.file_lock_holder("src/live.rs").unwrap().as_deref(),
+        Some(live.as_str()),
+        "a live holder's claim must be untouched"
+    );
+}
+
+#[test]
 fn stale_lock_sweep_releases_old_claims_only() {
     let store = Store::in_memory().unwrap();
     store.acquire_file_lock("src/fresh.rs", "live").unwrap();

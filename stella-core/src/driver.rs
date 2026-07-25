@@ -1961,9 +1961,11 @@ const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
 ///
 /// `identities` is the turn's snapshot from [`snapshot_result_identities`],
 /// attached to each resolved record so the detector can compare what a call
-/// really produced rather than what compaction left of it (#554). A
-/// `call_id` that is absent — or poisoned by reuse — leaves
-/// `identity: None` and the detector falls back to the output bytes.
+/// really produced rather than what compaction left of it (#554). It is
+/// keyed by [`CallIdentityKey`], so the lookup here must derive the key from
+/// the record's own call. A key that is absent — or poisoned because that
+/// same call produced two different outputs — leaves `identity: None` and
+/// the detector falls back to the output bytes.
 fn recent_call_records(
     messages: &[CompletionMessage],
     identities: &ResultIdentities,
@@ -1995,7 +1997,8 @@ fn recent_call_records(
                         .find(|r| r.output.is_none() && r.call.call_id == result.call_id)
                     {
                         record.output = Some(comparable_output(&result.output));
-                        record.identity = identities.get(&result.call_id).cloned().flatten();
+                        let key = call_identity_key(&record.call);
+                        record.identity = identities.get(&key).cloned().flatten();
                     }
                 }
             }
@@ -2005,11 +2008,45 @@ fn recent_call_records(
     records
 }
 
+/// Identifies a tool call for the purpose of [`ResultIdentities`]: the
+/// provider's `call_id` PLUS the call's name and input.
+///
+/// `call_id` alone is not enough. Providers only guarantee ids unique within
+/// one response, and Gemini and Vertex mint them as `call_{ordinal}` where
+/// the ordinal is local to a single assistant step (`stella-model/src/
+/// gemini.rs`; `vertex.rs` reuses the same aggregation path). So `call_0`
+/// restarts on EVERY step, and a bare-`call_id` key collides across steps by
+/// construction on two real providers — poisoning the id on the first step
+/// whose first call differs, and keeping it poisoned for the rest of the turn.
+///
+/// Name and input are exactly the fields [`loop_detect::same_record`] already
+/// requires to match before two records are "the same", so widening the key
+/// with them cannot merge two calls the detector would have distinguished. It
+/// only stops two UNRELATED calls that happened to share an ordinal from being
+/// treated as one.
+///
+/// Deliberately not positional: [`Engine::apply_overflow_summary`] splices a
+/// span of messages down to a single summary, so any index-derived key would
+/// silently re-point surviving results at another call's evidence after the
+/// first overflow — a WRONG identity, which is far worse than none.
+type CallIdentityKey = (String, String, String);
+
+/// Build the [`CallIdentityKey`] for one tool call. `input` is serialized
+/// rather than hashed so the key stays debuggable; both producers derive it
+/// from the same `ToolCall`, so they always agree.
+fn call_identity_key(call: &ToolCall) -> CallIdentityKey {
+    (
+        call.call_id.clone(),
+        call.name.clone(),
+        call.input.to_string(),
+    )
+}
+
 /// A turn's snapshot of what each tool call really produced, keyed by
-/// `call_id` ([`snapshot_result_identities`]). `None` marks a POISONED id:
-/// the same `call_id` was observed carrying two different uncompacted
-/// outputs, so nothing about it can be trusted.
-type ResultIdentities = HashMap<String, Option<String>>;
+/// [`CallIdentityKey`] ([`snapshot_result_identities`]). `None` marks a
+/// POISONED key: that same call was observed carrying two different
+/// uncompacted outputs, so nothing about it can be trusted.
+type ResultIdentities = HashMap<CallIdentityKey, Option<String>>;
 
 /// Record every tool result's identity into `identities`, keyed by
 /// `call_id` — the driver's answer to #554.
@@ -2030,35 +2067,52 @@ type ResultIdentities = HashMap<String, Option<String>>;
 /// - **A compacted output is never recorded.** Its identity is the stub's,
 ///   not the call's; recording it would overwrite the real one and lose the
 ///   evidence permanently, and every evicted result shares one stub.
-/// - **A `call_id` seen with two different real outputs is poisoned**
-///   (`None`), never overwritten. Providers only guarantee ids unique
-///   within one step and a scripted backend may reuse them across steps —
-///   which [`recent_call_records`] already tolerates. Keeping either
-///   identity would attach one call's evidence to a different call, and a
-///   WRONG identity is far worse than none: it can make two genuinely
-///   different outputs compare equal and abort a healthy turn. Poisoned
-///   ids fall back to comparing the live outputs, i.e. the behavior before
-///   this fix.
+/// - **A call seen with two different real outputs is poisoned** (`None`),
+///   never overwritten. Keeping either identity would attach one call's
+///   evidence to a different call, and a WRONG identity is far worse than
+///   none: it can make two genuinely different outputs compare equal and
+///   abort a healthy turn. Poisoned keys fall back to comparing the live
+///   outputs, i.e. the behavior before this fix. With a
+///   [`CallIdentityKey`] a conflict now means what it says — the same tool,
+///   same arguments, different result, which IS progress — rather than
+///   firing on two unrelated calls that shared a recycled ordinal.
 ///
 /// The identity is computed over [`comparable_output`], the same
 /// normalization the detector compares, so `read_file`'s volatile
 /// session-tally footer does not make every reread a distinct identity.
 fn snapshot_result_identities(messages: &[CompletionMessage], identities: &mut ResultIdentities) {
-    for message in messages.iter().filter(|m| m.role == MessageRole::Tool) {
-        for result in &message.tool_results {
-            if crate::compaction::is_compacted_output(&result.output) {
-                continue;
+    // Calls seen so far that nothing has answered yet, oldest first. The map
+    // is keyed by the CALL, so a result has to be paired back to the call it
+    // answers before its identity can be filed — using the same attachment
+    // rule as [`recent_call_records`], or the two would key differently and
+    // the lookup would silently miss.
+    let mut unanswered: Vec<&ToolCall> = Vec::new();
+    for message in messages {
+        match message.role {
+            MessageRole::Assistant => unanswered.extend(message.tool_calls.iter()),
+            MessageRole::Tool => {
+                for result in &message.tool_results {
+                    let Some(position) = unanswered
+                        .iter()
+                        .rposition(|call| call.call_id == result.call_id)
+                    else {
+                        continue;
+                    };
+                    let call = unanswered.remove(position);
+                    if crate::compaction::is_compacted_output(&result.output) {
+                        continue;
+                    }
+                    let identity =
+                        crate::receipts::tool_result_block_id(&comparable_output(&result.output));
+                    let key = call_identity_key(call);
+                    let conflicts = matches!(
+                        identities.get(&key),
+                        Some(seen) if seen.as_deref() != Some(identity.as_str())
+                    );
+                    identities.insert(key, if conflicts { None } else { Some(identity) });
+                }
             }
-            let identity =
-                crate::receipts::tool_result_block_id(&comparable_output(&result.output));
-            let conflicts = matches!(
-                identities.get(&result.call_id),
-                Some(seen) if seen.as_deref() != Some(identity.as_str())
-            );
-            identities.insert(
-                result.call_id.clone(),
-                if conflicts { None } else { Some(identity) },
-            );
+            MessageRole::System | MessageRole::User => {}
         }
     }
 }

@@ -22,7 +22,7 @@
 //!   names and the `global` default, so any host can construct the adapter.
 
 use async_trait::async_trait;
-use stella_protocol::{CompletionRequest, CompletionResult, ProviderError};
+use stella_protocol::{CompletionRequest, CompletionResult, ProviderError, ToolCallObserver};
 
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
@@ -102,6 +102,29 @@ impl Provider for VertexProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, None).await
+    }
+
+    async fn complete_observed(
+        &self,
+        req: CompletionRequest,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, Some(observer)).await
+    }
+}
+
+impl VertexProvider {
+    /// Shared body of [`Provider::complete`] and
+    /// [`Provider::complete_observed`]. Vertex already spoke
+    /// `streamGenerateContent?alt=sse` and already shared gemini's
+    /// aggregator, so it inherits every announce site from that fix — the
+    /// two adapters differ only in auth and URL.
+    async fn complete_inner(
+        &self,
+        req: CompletionRequest,
+        observer: Option<&dyn ToolCallObserver>,
+    ) -> Result<CompletionResult, ProviderError> {
         let (system_instruction, contents) = to_gemini_request_parts(&req.messages);
         let body = GeminiRequest {
             system_instruction,
@@ -124,7 +147,7 @@ impl Provider for VertexProvider {
         }
 
         let (text, tool_calls, usage, finish_reason) =
-            aggregate_gemini_stream("Vertex AI", response).await?;
+            aggregate_gemini_stream("Vertex AI", response, observer).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -166,6 +189,67 @@ mod tests {
             provider.endpoint(),
             "https://us-central1-aiplatform.googleapis.com/v1/projects/my-project/locations/us-central1/publishers/google/models/gemini-3-pro:streamGenerateContent?alt=sse"
         );
+    }
+
+    /// #612 -- Vertex shares gemini's aggregator, so it inherits every
+    /// announce site for free. This pins that inheritance: if Vertex ever
+    /// grows its own aggregation path, the deck must not silently go blank
+    /// on it again.
+    #[tokio::test]
+    async fn complete_observed_inherits_geminis_announce_sites() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi \"}]}}]}\n\n",
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":{\"path\":\"a.rs\"}}}]}}]}\n\n",
+            "data: {\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[]}}]}\n\n",
+        );
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider = VertexProvider::new(ApiKey::new("ya29.t"), "gemini-3-pro", "p", "global")
+            .with_base_url(server.uri());
+
+        struct Recorder {
+            calls: std::sync::Mutex<Vec<stella_protocol::ToolCall>>,
+            deltas: std::sync::Mutex<Vec<String>>,
+        }
+        impl stella_protocol::ToolCallObserver for Recorder {
+            fn tool_call_streamed(&self, call: &stella_protocol::ToolCall) {
+                self.calls.lock().unwrap().push(call.clone());
+            }
+            fn text_delta(&self, delta: &str) {
+                self.deltas.lock().unwrap().push(delta.to_string());
+            }
+        }
+        let observer = Recorder {
+            calls: std::sync::Mutex::new(Vec::new()),
+            deltas: std::sync::Mutex::new(Vec::new()),
+        };
+
+        let result = provider
+            .complete_observed(
+                CompletionRequest {
+                    messages: vec![CompletionMessage::user("hi")],
+                    max_output_tokens: None,
+                    temperature: None,
+                    effort: None,
+                    tools: vec![],
+                    reasoning: None,
+                    params: None,
+                },
+                &observer,
+            )
+            .await
+            .expect("completion should succeed");
+
+        assert_eq!(
+            observer.deltas.lock().unwrap().as_slice(),
+            &["Hi ".to_string()]
+        );
+        assert_eq!(observer.calls.lock().unwrap().clone(), result.tool_calls);
+        assert_eq!(result.tool_calls.len(), 1);
     }
 
     #[tokio::test]

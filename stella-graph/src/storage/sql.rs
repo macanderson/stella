@@ -108,20 +108,27 @@ fn find_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     node.children(&mut cursor).find(|c| c.kind() == kind)
 }
 
+/// Collect one [`FieldDef`] per `column_definition` under `table`, in source
+/// order. An explicit worklist, not recursion, for the same reason
+/// [`walk_sql`] is one: nesting depth here comes from parsed SQL in whatever
+/// repository the agent was pointed at, and a stack overflow aborts the host
+/// process rather than returning an error anyone can catch. Children are
+/// pushed in reverse so popping preserves source order.
 fn collect_columns(table: Node, src: &[u8], rel: &mut RelationDef) {
-    fn walk(node: Node, src: &[u8], rel: &mut RelationDef) {
+    let mut stack = vec![table];
+    while let Some(node) = stack.pop() {
         if node.kind() == "column_definition" {
             if let Some(field) = decode_column(node, src) {
                 rel.fields.push(field);
             }
-            return; // a column definition never nests another
+            continue; // a column definition never nests another
         }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            walk(child, src, rel);
+        for idx in (0..node.child_count() as u32).rev() {
+            if let Some(child) = node.child(idx) {
+                stack.push(child);
+            }
         }
     }
-    walk(table, src, rel);
 }
 
 /// One `column_definition` node → a [`FieldDef`]: the grammar pins the name;
@@ -748,5 +755,40 @@ mod tests {
             rel.fields[0].comment.as_deref(),
             Some("Gross amount charged.")
         );
+    }
+
+    /// Witness for the worklist conversion in [`collect_columns`].
+    ///
+    /// Nesting depth in an indexed repository's SQL is environment-controlled,
+    /// and a stack overflow aborts the host process rather than returning an
+    /// error. Extraction runs here on a thread with a deliberately small stack
+    /// so the fixture does not have to be large enough to exhaust the default
+    /// 8 MiB main stack: the recursive shape dies on this input, the worklist
+    /// shape returns.
+    #[test]
+    fn deeply_nested_sql_does_not_overflow_the_stack() {
+        const DEPTH: usize = 1_000;
+        const SMALL_STACK: usize = 128 * 1024;
+
+        // The parenthesised expression sits in a *table-level* CHECK, not a
+        // column one: `collect_columns` stops descending at a
+        // `column_definition`, so only a sibling constraint produces depth.
+        let sql = format!(
+            "CREATE TABLE deep (id INT, CHECK ({}1{}));",
+            "(".repeat(DEPTH),
+            ")".repeat(DEPTH),
+        );
+
+        let relations = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(move || extract(&sql).relations)
+            .expect("spawn extraction thread")
+            .join()
+            .expect("deeply nested SQL must not overflow the stack");
+
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].name, "deep");
+        assert_eq!(relations[0].fields.len(), 1);
+        assert_eq!(relations[0].fields[0].name, "id");
     }
 }

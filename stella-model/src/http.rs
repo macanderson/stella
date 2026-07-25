@@ -33,18 +33,47 @@ pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// a broken TLS backend, which is catastrophic and unrelated to any single
 /// request) — never panics on the construction path.
 ///
-/// One caveat this bound does NOT fit: a **non-streaming** caller, where
-/// there is no first token to reset the clock. `bedrock.rs` uses the
-/// unary `Converse` (not `ConverseStream`), so the whole generation
-/// happens before any response byte arrives and a completion that takes
-/// longer than [`STREAM_IDLE_TIMEOUT`] to produce fails as a spurious
-/// retryable `Transport` — a real ceiling on long Bedrock turns until that
-/// adapter either moves to the event-stream transport or takes its own
-/// longer-read-timeout client.
+/// This bound fits streaming callers only. A non-streaming caller has no
+/// first token to reset the clock, so the whole generation must fit inside
+/// one read — see [`unary_client`], which such a caller takes instead.
 pub(crate) fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(STREAM_IDLE_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
+
+/// Read bound for a UNARY provider call. With no stream there is no first
+/// token to reset the read clock, so this single bound has to cover the
+/// entire model generation — extended thinking, a large `max_output_tokens`,
+/// a long tool-argument payload — not just the gap between chunks.
+///
+/// Ten minutes is chosen to sit above any generation a caller would still
+/// want, while staying finite: dropping the bound entirely would let a
+/// provider LB that accepts the connection and then black-holes hang the
+/// turn forever, since there is no engine-level deadline above the model
+/// call to cut it short.
+pub(crate) const UNARY_READ_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// A [`client`] for adapters that issue a **unary** request rather than a
+/// stream, bounded by [`UNARY_READ_TIMEOUT`] instead of
+/// [`STREAM_IDLE_TIMEOUT`].
+///
+/// `bedrock.rs` is the only such adapter: it calls `Converse`, not
+/// `ConverseStream`, so the whole generation happens before the first
+/// response byte arrives. On the shared client that made every completion
+/// slower than [`STREAM_IDLE_TIMEOUT`] fail as `ProviderError::Transport`,
+/// whose `is_retryable()` is true — so the driver re-issued the identical
+/// too-long request and it timed out again, burning the retry budget and
+/// paying for all four attempts (#547).
+///
+/// When Bedrock moves to the event-stream transport this becomes dead code
+/// and the adapter should go back to [`client`].
+pub(crate) fn unary_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(UNARY_READ_TIMEOUT)
         .build()
         .unwrap_or_default()
 }
@@ -327,6 +356,27 @@ mod tests {
     fn client_builds_without_panicking() {
         // Smoke test: the connect-timeout client constructs on this platform.
         let _ = client();
+    }
+
+    #[test]
+    fn the_unary_read_bound_covers_a_whole_generation_not_a_gap_between_chunks() {
+        let _ = unary_client();
+        // The property that makes `unary_client` worth having. A unary caller
+        // has no first token to reset the read clock, so its bound has to
+        // cover the entire generation; if it ever slipped to or below the
+        // stream-idle bound, Bedrock would be back to failing every
+        // completion slower than two minutes as a *retryable* Transport and
+        // paying for all four attempts (#547).
+        //
+        // reqwest exposes no getter for a built client's timeouts, so this
+        // pins the relationship between the two consts the clients are built
+        // from. A wire-level witness would have to out-wait
+        // STREAM_IDLE_TIMEOUT itself — two minutes of wall clock per run.
+        assert!(
+            UNARY_READ_TIMEOUT > STREAM_IDLE_TIMEOUT,
+            "a unary read bound must exceed the per-chunk stream bound: \
+             {UNARY_READ_TIMEOUT:?} vs {STREAM_IDLE_TIMEOUT:?}"
+        );
     }
 
     #[tokio::test]

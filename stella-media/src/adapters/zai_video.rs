@@ -20,7 +20,9 @@ use stella_protocol::{MediaJobState, MediaKind};
 
 use crate::credential::ApiKey;
 use crate::error::MediaError;
-use crate::http::{classify_http_error, download_bytes, parse_retry_after_ms};
+use crate::http::{
+    MAX_VIDEO_DOWNLOAD_BYTES, classify_http_error, download_bytes, parse_retry_after_ms,
+};
 use crate::provider::{
     ImageRequest, MediaArtifact, MediaCapabilities, MediaJob, MediaJobStatus, MediaProvider,
     VideoRequest,
@@ -206,7 +208,8 @@ impl MediaProvider for ZaiVideoProvider {
                     .ok_or_else(|| {
                         MediaError::Malformed("zai video succeeded without a result url".into())
                     })?;
-                let bytes = download_bytes(&self.client, &url, "zai").await?;
+                let bytes =
+                    download_bytes(&self.client, &url, "zai", MAX_VIDEO_DOWNLOAD_BYTES).await?;
                 let artifact = MediaArtifact {
                     kind: MediaKind::Video,
                     bytes,

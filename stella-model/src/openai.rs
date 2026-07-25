@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
     CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ProviderError, ReasoningEffort, ServiceTier, ToolCall, Verbosity,
+    MessageRole, ProviderError, ReasoningEffort, ServiceTier, ToolCall, ToolCallObserver,
+    Verbosity,
 };
 
 use crate::catalog::{Catalog, Pricing};
@@ -297,6 +298,19 @@ enum OpenAiStreamEvent {
         output_index: usize,
         delta: String,
     },
+    /// One `function_call` item's arguments are complete. Modeled only so
+    /// [`ToolCallObserver`] has a precise per-call boundary to announce on;
+    /// the accumulated arguments remain the source of truth, so the wire's
+    /// own copy of them is deliberately not read here.
+    ///
+    /// The chat-completions dialects have no such event and must announce a
+    /// call when the *next* one starts, which leaves a stream's last call
+    /// unannounced. This one does not have that gap.
+    #[serde(rename = "response.function_call_arguments.done")]
+    FunctionCallArgumentsDone {
+        #[serde(default)]
+        output_index: usize,
+    },
     #[serde(rename = "response.completed")]
     Completed { response: OpenAiResponseObject },
     /// The response terminated in failure. The `response.error` object
@@ -522,6 +536,29 @@ impl Provider for OpenAiProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, None).await
+    }
+
+    async fn complete_observed(
+        &self,
+        req: CompletionRequest,
+        observer: &dyn ToolCallObserver,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.complete_inner(req, Some(observer)).await
+    }
+}
+
+impl OpenAiProvider {
+    /// Shared body of [`Provider::complete`] and
+    /// [`Provider::complete_observed`]. The request has always set
+    /// `stream: true` and the response has always been consumed as SSE; the
+    /// only difference is whether anything is told about the parts as they
+    /// land.
+    async fn complete_inner(
+        &self,
+        req: CompletionRequest,
+        observer: Option<&dyn ToolCallObserver>,
+    ) -> Result<CompletionResult, ProviderError> {
         let (instructions, input) = to_openai_input(&req.messages);
         let params = req.params.unwrap_or_default();
         let body = OpenAiRequest {
@@ -591,7 +628,7 @@ impl Provider for OpenAiProvider {
             ));
         }
 
-        let (text, tool_calls, usage) = aggregate_openai_stream(response).await?;
+        let (text, tool_calls, usage) = aggregate_openai_stream(response, observer).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         // Map onto the neutral vocabulary like every sibling adapter, so the
         // engine can tell a tool-calling stop from a natural one. `Length` is
@@ -625,6 +662,7 @@ struct ToolCallAccumulator {
 
 async fn aggregate_openai_stream(
     response: reqwest::Response,
+    observer: Option<&dyn ToolCallObserver>,
 ) -> Result<(String, Vec<ToolCall>, CompletionUsage), ProviderError> {
     let mut decoder = SseDecoder::new();
     let mut text = String::new();
@@ -656,7 +694,12 @@ async fn aggregate_openai_stream(
                     acc.name = name;
                 }
                 OpenAiStreamEvent::OutputItemAdded { .. } => {}
-                OpenAiStreamEvent::OutputTextDelta { delta } => text.push_str(&delta),
+                OpenAiStreamEvent::OutputTextDelta { delta } => {
+                    if let Some(observer) = observer {
+                        observer.text_delta(&delta);
+                    }
+                    text.push_str(&delta);
+                }
                 OpenAiStreamEvent::FunctionCallArgumentsDelta {
                     output_index,
                     delta,
@@ -666,6 +709,34 @@ async fn aggregate_openai_stream(
                         .or_default()
                         .arguments
                         .push_str(&delta);
+                }
+                OpenAiStreamEvent::FunctionCallArgumentsDone { output_index } => {
+                    // Announce from the ACCUMULATOR, not from the event's own
+                    // copy of the arguments: final assembly below parses these
+                    // same bytes, so what the observer is told is exactly what
+                    // the completion will return, as the trait requires.
+                    if let Some(observer) = observer
+                        && let Some(acc) = tool_calls.get(&output_index)
+                        && !acc.call_id.is_empty()
+                    {
+                        // Never announce a call whose input failed to parse —
+                        // speculation on a malformed call would execute
+                        // something the model did not ask for. A broken
+                        // payload still reaches final assembly, where it
+                        // becomes `Value::Null` and the repair path owns it.
+                        let input = if acc.arguments.is_empty() {
+                            Some(serde_json::json!({}))
+                        } else {
+                            serde_json::from_str(&acc.arguments).ok()
+                        };
+                        if let Some(input) = input {
+                            observer.tool_call_streamed(&ToolCall {
+                                call_id: acc.call_id.clone(),
+                                name: acc.name.clone(),
+                                input,
+                            });
+                        }
+                    }
                 }
                 OpenAiStreamEvent::Completed { response } => {
                     completed_seen = true;
@@ -963,6 +1034,128 @@ mod tests {
         assert_eq!(map_reasoning_effort(ReasoningEffort::High), "high");
         assert_eq!(map_reasoning_effort(ReasoningEffort::Xhigh), "high");
         assert_eq!(map_reasoning_effort(ReasoningEffort::Max), "high");
+    }
+
+    /// Shared observer double. Mirrors the anthropic and zai copies.
+    struct RecordingObserver {
+        calls: std::sync::Mutex<Vec<ToolCall>>,
+        deltas: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingObserver {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::Mutex::new(Vec::new()),
+                deltas: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl stella_protocol::ToolCallObserver for RecordingObserver {
+        fn tool_call_streamed(&self, call: &ToolCall) {
+            self.calls.lock().unwrap().push(call.clone());
+        }
+        fn text_delta(&self, delta: &str) {
+            self.deltas.lock().unwrap().push(delta.to_string());
+        }
+    }
+
+    fn observed_req(prompt: &str) -> CompletionRequest {
+        CompletionRequest {
+            messages: vec![CompletionMessage::user(prompt)],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        }
+    }
+
+    async fn observed_stream(sse_body: &'static str) -> (CompletionResult, RecordingObserver) {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        let observer = RecordingObserver::new();
+        let result = provider
+            .complete_observed(observed_req("go"), &observer)
+            .await
+            .expect("completion should succeed");
+        (result, observer)
+    }
+
+    /// #612 -- OpenAI already streamed on the wire; only `complete_observed`
+    /// was missing, so it inherited the trait's silent default and the deck
+    /// stayed blank for the whole turn.
+    #[tokio::test]
+    async fn complete_observed_streams_answer_deltas_in_order() {
+        let (result, observer) = observed_stream(concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo!\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+        ))
+        .await;
+
+        assert_eq!(result.text, "Hello!");
+        assert_eq!(
+            observer.deltas.lock().unwrap().as_slice(),
+            &["Hel".to_string(), "lo!".to_string()]
+        );
+    }
+
+    /// The arguments.done event is a precise per-call boundary, so even a
+    /// stream's LAST tool call is announced -- the gap the chat-completions
+    /// dialects have, where a call can only be announced when the next one
+    /// starts.
+    #[tokio::test]
+    async fn complete_observed_announces_the_last_tool_call_too() {
+        let (result, observer) = observed_stream(concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"\\\"src/lib.rs\\\"}\"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"arguments\":\"{\\\"path\\\":\\\"src/lib.rs\\\"}\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+        ))
+        .await;
+
+        let announced = observer.calls.lock().unwrap().clone();
+        assert_eq!(announced.len(), 1, "the only call must be announced");
+        assert_eq!(
+            announced, result.tool_calls,
+            "the announced call must match the committed one exactly"
+        );
+        assert_eq!(
+            announced[0].input,
+            serde_json::json!({"path": "src/lib.rs"})
+        );
+    }
+
+    /// The contract's hard rule: never announce a call whose input failed to
+    /// parse. Speculating on a malformed call would execute something the
+    /// model never asked for. The broken payload still reaches final
+    /// assembly, where the repair path owns it.
+    #[tokio::test]
+    async fn complete_observed_never_announces_a_call_whose_json_is_broken() {
+        let (result, observer) = observed_stream(concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\": \"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"arguments\":\"{\\\"path\\\": \"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+        ))
+        .await;
+
+        assert!(
+            observer.calls.lock().unwrap().is_empty(),
+            "a call with unparseable arguments must never be announced"
+        );
+        // It still lands in the result, as Null, for the repair path.
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].input, Value::Null);
     }
 
     #[tokio::test]

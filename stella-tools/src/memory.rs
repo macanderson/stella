@@ -90,7 +90,10 @@ impl Tool for SaveMemory {
         }
         let path = dir.join(format!("{slug}.md"));
         let existed = path.exists();
-        if let Err(e) = tokio::fs::write(&path, memory).await {
+        if let Err(e) =
+            crate::atomic_write::replace_file_atomically(path.clone(), memory.as_bytes().to_vec())
+                .await
+        {
             return ToolOutput::Error {
                 message: format!("could not write {}: {e}", path.display()),
             };

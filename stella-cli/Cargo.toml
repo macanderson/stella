@@ -46,7 +46,7 @@ sha2.workspace = true
 hmac.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "signal"] }
 async-trait.workspace = true
 clap.workspace = true
 colored.workspace = true

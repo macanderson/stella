@@ -179,6 +179,16 @@ pub async fn run_fleet(
         let store = stella_store::Store::open(&root).map_err(|e| {
             format!("this plan declares file claims but the workspace store cannot open: {e}")
         })?;
+        // Crash hygiene at run start, mirroring what the deck has always
+        // done (`command_deck.rs`) and the fleet never did — which is why
+        // stranded claims surfaced on fleet runs. Dead-holder release first
+        // and age second: liveness is exact where age is a heuristic, and
+        // `acquire_file_lock` never refreshes `acquired_at`, so the age
+        // sweep alone would eventually mistake a long healthy run's own
+        // claims for stale ones. Best-effort — a sweep that fails must not
+        // stop the run.
+        let _ = store.release_file_locks_of_dead_holders();
+        let _ = store.prune_stale_file_locks(crate::claims::STALE_CLAIM_MAX_AGE_SECS);
         fleet.with_claim_store(store)
     } else {
         fleet

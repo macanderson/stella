@@ -586,7 +586,18 @@ where
         };
         let holder = self.claim_holder(task);
         for (i, path) in task.claims.iter().enumerate() {
-            let failure = match store.acquire_file_lock(path, &holder) {
+            let mut outcome = store.acquire_file_lock(path, &holder);
+            // A refusal may be a ghost: a crashed run cannot release its own
+            // claims, so its rows outlive it and fail every later run in
+            // this workspace with a conflict naming a run id that no longer
+            // exists. Reap provably-dead holders once and retry before
+            // treating the refusal as real. The deck's `ClaimTap` has done
+            // this since it landed; the fleet never did, which is why the
+            // stranded-claim reports came from fleet runs.
+            if matches!(outcome, Ok(false)) && store.release_file_locks_of_dead_holders().is_ok() {
+                outcome = store.acquire_file_lock(path, &holder);
+            }
+            let failure = match outcome {
                 Ok(true) => continue,
                 Ok(false) => FleetError::ClaimConflict {
                     task: task.id.clone(),
@@ -1172,11 +1183,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_foreign_claim_fails_dispatch_by_name_and_rolls_back() {
-        // A claim held by another run (or a crashed one) in the same
-        // workspace: dispatch fails naming that holder, and the paths this
-        // task had already acquired roll back.
+        // A claim held by another LIVE run in the same workspace: dispatch
+        // fails naming that holder, and the paths this task had already
+        // acquired roll back. The rival's identity carries this process's
+        // own pid, so it is provably alive and the dead-holder reap must not
+        // touch it — that distinction is the point of
+        // `a_dead_holders_stranded_claim_does_not_block_a_later_run` below.
         let store = Store::in_memory().unwrap();
-        assert!(store.acquire_file_lock("src/b.rs", "fleet-9/t9").unwrap());
+        let live_rival = format!("fleet-{}/t9", std::process::id());
+        assert!(store.acquire_file_lock("src/b.rs", &live_rival).unwrap());
         let f = fleet(
             FakeWorker::new(0.10),
             OkGit::new(),
@@ -1189,7 +1204,7 @@ mod tests {
         match f.dispatch(&task).await {
             Err(FleetError::ClaimConflict { task, path, holder }) => {
                 assert_eq!((task.as_str(), path.as_str()), ("t1", "src/b.rs"));
-                assert_eq!(holder, "fleet-9/t9");
+                assert_eq!(holder, live_rival);
             }
             other => panic!("expected a claim conflict, got {other:?}"),
         }
@@ -1199,6 +1214,37 @@ mod tests {
         f.dispatch(&sibling)
             .await
             .expect("partial claims roll back");
+    }
+
+    /// #613 — the escape hatch for claims already stranded in the field.
+    ///
+    /// A crashed run cannot release its own claims. Before this, those rows
+    /// outlived it and failed *every* later run in that workspace with a
+    /// conflict naming a run id that no longer exists, and nothing could
+    /// clear them. The holder identity ends in the minting pid, so liveness
+    /// is decidable: a provably-dead holder's claims are reaped and the
+    /// acquire retried.
+    #[tokio::test]
+    async fn a_dead_holders_stranded_claim_does_not_block_a_later_run() {
+        let store = Store::in_memory().unwrap();
+        // `pid_t::try_from` rejects this outright, so it reads as dead on
+        // every platform rather than depending on what pid happens to be
+        // free on the test machine.
+        let dead_rival = "fleet-1753-4294967294/t9";
+        assert!(store.acquire_file_lock("src/b.rs", dead_rival).unwrap());
+
+        let f = fleet(
+            FakeWorker::new(0.10),
+            OkGit::new(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            FleetConfig::new("run1", "HEAD"),
+        )
+        .with_claim_store(store);
+
+        let task = Task::new("t1", "t1", "p").claims(["src/a.rs", "src/b.rs"]);
+        f.dispatch(&task)
+            .await
+            .expect("a dead holder's stranded claim must not block a later run");
     }
 
     #[tokio::test]
