@@ -12,7 +12,9 @@ updates:
       cargo:
         update-types: [minor, patch]
 
-  # GitHub Actions pinned in workflows.
+  # GitHub Actions. Every `uses:` in .github/workflows/ is pinned to a commit
+  # SHA with the human-readable tag in a trailing comment; dependabot bumps the
+  # SHA and the comment together. Keep it that way — see scripts/check-action-pins.sh.
   - package-ecosystem: github-actions
     directory: /
     schedule:

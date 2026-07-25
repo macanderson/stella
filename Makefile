@@ -86,7 +86,7 @@ doc-citations: ## Assert every docs/*.md cited from Rust source resolves (#652)
 gate: no-scratch doc-citations format-check lint test ## Full CI gate: no-scratch + doc-citations + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch format-check lint ## Fast pre-push check (scratch + fmt + clippy, no tests)
+check: no-scratch action-pins format-check lint ## Fast pre-push check (scratch + pins + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
