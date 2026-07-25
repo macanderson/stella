@@ -1753,6 +1753,9 @@ mod verification_honesty {
 
 mod best_of_n;
 mod chaos;
+/// Golden-trajectory recordings of this pipeline's real event stream — a
+/// child module so it reaches the scripted ports above via `super::*`.
+mod golden;
 /// The orchestrator MCP pre-fetch hook (issue #248) — split out for
 /// the same file-size reason `tests.rs` itself was split from
 /// `pipeline.rs`; a child module, so it reaches the fakes above via

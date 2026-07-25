@@ -62,6 +62,13 @@ test-cli: ## Test stella-cli only (the shipping binary)
 test-protocol: ## Test stella-protocol only (shared types)
 	cargo test -p stella-protocol
 
+.PHONY: record-golden
+record-golden: ## Re-record the golden replay trajectories (review the fixture diff!)
+	STELLA_REFRESH_GOLDEN=1 cargo test -p stella-pipeline --lib golden
+	@git --no-pager diff --stat -- stella-pipeline/tests/fixtures/golden || true
+	@echo "Golden trajectories re-recorded. A non-empty diff above is a change to"
+	@echo "the observable event contract — review it as such before committing."
+
 .PHONY: bench-test
 bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
 	cd bench/harbor_adapter && uv sync --locked --extra dev && uv run --no-sync pytest -q
