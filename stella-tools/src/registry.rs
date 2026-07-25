@@ -506,14 +506,19 @@ impl ToolRegistry {
             }
         }
         let input: &Value = ledger_augmented.as_ref().unwrap_or(input);
-        // `run_script` composes its command from the scripts index at
-        // execute time; resolve it up front (best-effort) so the
-        // `command.started` policy chain and the command.* observer events
-        // carry the real command line, exactly like `bash`. A failed
-        // resolution is not gated — the tool itself returns the named error.
-        let resolved_script_command: Option<String> = match (&bus, name) {
+        // `run_script`, `build_project`, and `run_tests` compose their
+        // command from the scripts index at execute time; resolve it up
+        // front (best-effort) so the `command.started` policy chain and the
+        // command.* observer events carry the real command line, exactly
+        // like `bash`. A failed resolution is not gated — the tool itself
+        // returns the named error. Gated on an attached bus so a bus-less
+        // registry never pays for index detection.
+        let resolved_command: Option<String> = match (&bus, name) {
             (Some(_), "run_script") => {
                 crate::scripts::resolve_command_for_gate(&self.root, input).await
+            }
+            (Some(_), "build_project" | "run_tests") => {
+                crate::project::resolve_command_for_gate(name, &self.root, input).await
             }
             _ => None,
         };
@@ -631,13 +636,9 @@ impl ToolRegistry {
         // plus the payload-hygiene detectors, then the observable
         // `tool.call.started` (with content-bearing fields sanitized).
         if let Some(bus) = &bus {
-            if let Err(denied) = self.gate_side_effects(
-                bus,
-                name,
-                input,
-                &pending_ops,
-                resolved_script_command.as_deref(),
-            ) {
+            if let Err(denied) =
+                self.gate_side_effects(bus, name, input, &pending_ops, resolved_command.as_deref())
+            {
                 return denied;
             }
             bus.emit_named(
@@ -667,11 +668,11 @@ impl ToolRegistry {
         };
         if let Some(bus) = &bus {
             let duration_ms = started_at.elapsed().as_millis() as u64;
-            // The command line the tool actually ran: bash's own input,
-            // run_script's index-resolved command, or start_process's
-            // joined argv.
-            let command_line =
-                Self::command_line_for(name, input, resolved_script_command.as_deref());
+            // The command line the tool actually ran: bash's own input, an
+            // explicit build/test command, verify_done's test_cmd,
+            // start_process's joined argv, or the index-resolved command
+            // (see [`Self::command_line_for`]).
+            let command_line = Self::command_line_for(name, input, resolved_command.as_deref());
             match &output {
                 ToolOutput::Error { message } => {
                     bus.emit_named(
@@ -860,9 +861,10 @@ impl ToolRegistry {
     /// detectors for one already-final input: `sensitive_operation.detected`
     /// and `secret.detected` observers first (an auditor sees the attempt
     /// even when a policy then denies it), then the `file.*` chain for a
-    /// classified C/U/D op and the `command.started` chain for `bash`,
-    /// `run_script`, and `start_process` (`resolved_command` is
-    /// `run_script`'s index-resolved command line; see
+    /// classified C/U/D op and the `command.started` chain for every tool
+    /// that runs a command — `bash`, `build_project`, `run_tests`,
+    /// `verify_done`, `run_script`, and `start_process` (`resolved_command`
+    /// is the index-composed command line for the index-backed ones; see
     /// [`Self::command_line_for`]).
     /// These chains gate — `modify` decisions are recorded but not honored
     /// here, because the input was already final after
@@ -1048,17 +1050,23 @@ impl ToolRegistry {
 
     /// The effective command line of one tool call, feeding both the
     /// blocking `command.started` policy chain and the `command.*`
-    /// observer events: `bash`'s own input, `run_script`'s index-resolved
-    /// command (`None` when resolution failed — the tool returns the named
-    /// error itself, ungated), or `start_process`'s space-joined argv. The
-    /// argv spawn MUST ride the same fence as `bash`: it sits in the
-    /// default surface while `bash` is opt-in, and argv[0] may itself be a
-    /// shell (`["bash", "-c", …]`), so leaving it out hands ambient shell
+    /// observer events: `bash`'s own input, `build_project`'s/`run_tests`'s
+    /// `command` override or index-composed runner line, `verify_done`'s
+    /// `test_cmd`, `run_script`'s index-resolved command, or
+    /// `start_process`'s space-joined argv. `resolved_command` is the
+    /// index-composed line for the three index-backed tools (`None` when
+    /// resolution failed — the tool returns the named error itself,
+    /// ungated).
+    ///
+    /// Every tool that reaches `bash -c` MUST ride the same fence as
+    /// `bash`: they sit in the default surface while `bash` is opt-in
+    /// (and `start_process`'s argv[0] may itself be a shell,
+    /// `["bash", "-c", …]`), so leaving any of them out hands ambient shell
     /// execution to the very posture that turned `bash` off.
     fn command_line_for(
         name: &str,
         input: &Value,
-        resolved_script: Option<&str>,
+        resolved_command: Option<&str>,
     ) -> Option<String> {
         match name {
             "bash" => Some(
@@ -1068,7 +1076,20 @@ impl ToolRegistry {
                     .unwrap_or("")
                     .to_string(),
             ),
-            "run_script" => resolved_script.map(str::to_string),
+            // The override wins exactly as it does at execute time; without
+            // one the gate sees the command composed from the scripts
+            // index. A missing/non-string field on either path is `None`:
+            // ungated, and the tool returns its own named error.
+            "build_project" | "run_tests" => input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| resolved_command.map(str::to_string)),
+            "verify_done" => input
+                .get("test_cmd")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            "run_script" => resolved_command.map(str::to_string),
             "start_process" => Some(
                 input
                     .get("argv")
@@ -2840,6 +2861,103 @@ mod tests {
         assert!(
             read.is_error(),
             "no process may exist after a denied spawn: {read:?}"
+        );
+    }
+
+    /// A `command.started` policy that denies shell execution, capturing
+    /// every command line the chain was shown — the posture an extension
+    /// uses to fence command execution.
+    fn deny_shell(reg: &ToolRegistry) -> StdArc<StdMutex<Vec<String>>> {
+        let seen = StdArc::new(StdMutex::new(Vec::new()));
+        let sink = seen.clone();
+        let bus = HookBus::new("sess");
+        bus.on_blocking(hook_names::COMMAND_STARTED, move |event| {
+            sink.lock()
+                .unwrap()
+                .push(event.payload["command"].as_str().unwrap_or("").to_string());
+            HookDecision::Deny {
+                reason: "no shell".into(),
+            }
+        })
+        .detach();
+        reg.attach_bus(bus);
+        seen
+    }
+
+    #[tokio::test]
+    async fn the_command_chain_gates_the_explicit_build_test_and_verify_commands() {
+        // `build_project`, `run_tests`, and `verify_done` all reach
+        // `bash -c` from the DEFAULT surface while `bash` is opt-in, so the
+        // same `command.started` policy that fences `bash` must fence
+        // them — seeing the model's own command text, before anything runs.
+        let (dir, reg) = telemetry_fixture();
+        let commands = deny_shell(&reg);
+
+        for (tool, input) in [
+            (
+                "build_project",
+                serde_json::json!({"command": "touch build-ran.txt"}),
+            ),
+            (
+                "run_tests",
+                serde_json::json!({"command": "touch tests-ran.txt"}),
+            ),
+            (
+                "verify_done",
+                serde_json::json!({
+                    "test_cmd": "touch verify-ran.txt",
+                    "test_files": ["a.rs"],
+                }),
+            ),
+        ] {
+            let out = reg.execute(tool, &input).await;
+            assert!(out.is_error(), "denied {tool} must not execute: {out:?}");
+        }
+
+        assert_eq!(
+            *commands.lock().unwrap(),
+            vec![
+                "touch build-ran.txt",
+                "touch tests-ran.txt",
+                "touch verify-ran.txt",
+            ],
+            "the chain must see each tool's own command line"
+        );
+        // Each denial fired before the shell ran: no marker file exists.
+        for marker in ["build-ran.txt", "tests-ran.txt", "verify-ran.txt"] {
+            assert!(
+                !dir.path().join(marker).exists(),
+                "`{marker}` proves a denied command still ran"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_command_chain_gates_the_index_composed_build_and_test_commands() {
+        // The common case is the model omitting `command` entirely and the
+        // tool composing one from the scripts index — that path must be
+        // fenced with the composed line too, or `{}` reopens the bypass.
+        let (dir, reg) = telemetry_fixture();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        let commands = deny_shell(&reg);
+
+        let out = reg.execute("build_project", &serde_json::json!({})).await;
+        assert!(out.is_error(), "denied build_project must not run: {out:?}");
+        let out = reg
+            .execute(
+                "run_tests",
+                &serde_json::json!({"kind": "unit", "filter": "my_test"}),
+            )
+            .await;
+        assert!(out.is_error(), "denied run_tests must not run: {out:?}");
+
+        assert_eq!(
+            *commands.lock().unwrap(),
+            vec![
+                "cargo build --workspace",
+                "cargo test --workspace --lib --bins my_test",
+            ],
+            "the chain must see the index-composed command line"
         );
     }
 }
