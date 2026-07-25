@@ -157,8 +157,14 @@ const SCHEMA_REPLACED_NOTE: &str = "\n\n[stella: this tool's advertised input sc
 /// un-namespaced name plus its input schema).
 #[derive(Debug, Clone)]
 pub struct McpToolInfo {
+    /// The tool's name exactly as the server advertised it, before
+    /// [`crate::toolset::McpToolSet`] prefixes it with the server namespace.
     pub name: String,
+    /// The server's human-readable description of the tool, forwarded to the
+    /// model verbatim.
     pub description: String,
+    /// The tool's JSON Schema for its arguments (`inputSchema` on the wire),
+    /// passed through unmodified — the client never rewrites a server's schema.
     pub input_schema: Value,
     /// The server advertised this tool as read-only or idempotent, so a
     /// duplicate delivery is harmless and the client may transparently
