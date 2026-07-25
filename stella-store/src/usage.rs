@@ -636,6 +636,22 @@ impl UsageStore {
                 // Roll back: `tx` drops un-committed, so nothing is deleted.
                 return Ok(report);
             }
+
+            // Clamp every cloud cursor to the surviving max `rowid`. Deleting the
+            // table's max rowid frees it, and SQLite hands that freed (lower)
+            // rowid to the next replicated row — which would then land at/below a
+            // cursor left pointing past it and never be surfaced by
+            // `cloud_pending` (`rowid > cursor`). A cursor never legitimately
+            // exceeds `MAX(rowid)` (every acked row survived acking), so this
+            // only lowers a cursor stranded by a delete, never skips an un-acked
+            // row. The `VACUUM` path re-anchors on the stable key below and
+            // supersedes this; it runs here so the non-`VACUUM` path is safe too.
+            tx.execute(
+                "UPDATE cloud_sync_cursors SET last_hub_rowid = \
+                   MIN(last_hub_rowid, COALESCE((SELECT MAX(rowid) FROM telemetry), 0))",
+                [],
+            )?;
+
             tx.commit()?;
         }
 
@@ -681,9 +697,13 @@ impl UsageStore {
 
         conn.execute_batch("VACUUM")?;
 
+        // Re-anchor every cursor atomically: a partial update (an error or crash
+        // mid-loop) would otherwise leave some orgs pointing at stale pre-VACUUM
+        // rowids while others are correct.
+        let tx = conn.unchecked_transaction()?;
         for (org_id, key) in boundaries {
             let new_cursor: i64 = match key {
-                Some((project_id, source_rowid)) => conn
+                Some((project_id, source_rowid)) => tx
                     .query_row(
                         "SELECT rowid FROM telemetry \
                          WHERE project_id = ?1 AND source_rowid = ?2",
@@ -693,11 +713,12 @@ impl UsageStore {
                     .unwrap_or(0),
                 None => 0,
             };
-            conn.execute(
+            tx.execute(
                 "UPDATE cloud_sync_cursors SET last_hub_rowid = ?1 WHERE org_id = ?2",
                 params![new_cursor, org_id],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 }
@@ -1212,6 +1233,59 @@ mod tests {
         let pending = hub.cloud_pending("acme", 10).unwrap();
         let ids: Vec<i64> = pending.iter().map(|e| e.source_rowid).collect();
         assert_eq!(ids, vec![4, 5], "un-acked rows survive the rowid renumber");
+    }
+
+    #[test]
+    fn small_prune_without_vacuum_does_not_strand_replayed_rows() {
+        // A prune below the auto-VACUUM threshold and without `--vacuum` still
+        // frees the deleted rowids; SQLite reuses them for the next insert. The
+        // cursor clamp must stop a replayed row landing at/below a stale cursor
+        // and never draining. (Regression: before the clamp this returned [].)
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = UsageStore::open_at(&tmp.path().join("usage.db")).unwrap();
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[
+                source_row_at(1, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(2, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(3, 0.01, "2000-01-01T00:00:00Z"),
+            ],
+        )
+        .unwrap();
+        let last = hub
+            .cloud_pending("acme", 10)
+            .unwrap()
+            .last()
+            .unwrap()
+            .hub_rowid;
+        hub.ack_cloud_synced("acme", last).unwrap();
+
+        let report = hub
+            .prune(&PrunePolicy {
+                older_than: Some("-1 days".into()),
+                vacuum: false,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 3);
+        assert!(!report.vacuumed, "small prune must not vacuum");
+
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[source_row_at(4, 0.01, "2999-01-01T00:00:00Z")],
+        )
+        .unwrap();
+        let ids: Vec<i64> = hub
+            .cloud_pending("acme", 10)
+            .unwrap()
+            .iter()
+            .map(|e| e.source_rowid)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![4],
+            "a row replicated after a non-vacuum prune must still be drainable"
+        );
     }
 
     #[test]

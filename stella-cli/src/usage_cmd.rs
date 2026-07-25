@@ -267,6 +267,13 @@ fn parse_age_window(s: &str) -> Result<String, String> {
     let n: i64 = num.parse().map_err(|_| {
         format!("invalid --older-than '{s}': expected N<unit>, e.g. 90d, 12w, 720h, 3mo, 1y")
     })?;
+    if n <= 0 {
+        // `0` would prune *everything* older than now — almost always a typo,
+        // and too destructive to accept silently.
+        return Err(format!(
+            "invalid --older-than '{s}': the window must be a positive duration"
+        ));
+    }
     let modifier = match unit.trim().to_ascii_lowercase().as_str() {
         "" | "d" | "day" | "days" => format!("-{n} days"),
         "w" | "week" | "weeks" => format!("-{} days", n.saturating_mul(7)),
@@ -280,6 +287,14 @@ fn parse_age_window(s: &str) -> Result<String, String> {
         }
     };
     Ok(modifier)
+}
+
+/// Whether a project's checkout looks *deleted* (GC-eligible) rather than merely
+/// unreachable. The root being gone while its parent still exists is a deletion;
+/// a missing parent usually means the whole volume/mount is absent (an unplugged
+/// drive, a down network share), which must not trigger GC of local history.
+fn checkout_is_deleted(root: &Path) -> bool {
+    !root.exists() && root.parent().is_some_and(Path::exists)
 }
 
 fn prune(
@@ -309,7 +324,7 @@ fn prune(
         hub.registered_projects()
             .map_err(|e| format!("cannot list hub projects: {e}"))?
             .into_iter()
-            .filter(|(_, _, root)| !Path::new(root).exists())
+            .filter(|(_, _, root)| checkout_is_deleted(Path::new(root)))
             .map(|(id, _, _)| id)
             .collect()
     } else {
@@ -428,7 +443,7 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_age_window;
+    use super::{checkout_is_deleted, parse_age_window};
 
     #[test]
     fn age_window_units_map_to_sqlite_modifiers() {
@@ -455,5 +470,22 @@ mod tests {
         assert!(parse_age_window("d").is_err(), "no number");
         assert!(parse_age_window("90x").is_err(), "unknown unit");
         assert!(parse_age_window("-5d").is_err(), "no leading sign");
+        assert!(parse_age_window("0").is_err(), "zero window is a footgun");
+        assert!(parse_age_window("0d").is_err(), "zero window is a footgun");
+    }
+
+    #[test]
+    fn checkout_is_deleted_distinguishes_gone_from_unreachable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let present = tmp.path().join("repo");
+        std::fs::create_dir(&present).unwrap();
+        // Parent (tempdir) exists, child gone → a real deletion.
+        assert!(checkout_is_deleted(&present.join("missing-child")));
+        // The path itself exists → not deleted.
+        assert!(!checkout_is_deleted(&present));
+        // Parent also absent (whole volume/mount gone) → NOT a deletion.
+        assert!(!checkout_is_deleted(
+            &present.join("gone-parent").join("repo")
+        ));
     }
 }
