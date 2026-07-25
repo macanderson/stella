@@ -10,9 +10,9 @@ What remains here is the material that isn't site content:
   [The Deterministic Engine](papers/deterministic-engine.md) and
   [Stella's Defensible Position](papers/stella-defensible-position.md). The
   live site links to these at their exact paths — don't move or rename them.
-- [`brand/`](brand/BRAND_GUIDELINES.md) — brand guidelines and the logo,
-  mark, wordmark, and icon assets (current aurora-on-navy cuts, plus the
-  retired ember-gold originals under `brand/legacy/`).
+- [`brand/`](brand/) — the logo, mark, wordmark, and icon assets (current
+  cuts at the top level, plus the retired originals under `brand/legacy/`,
+  which holds only assets no longer in use).
 
 Historical design notes for features that have since shipped (pipeline,
 hooks, file-touch telemetry, memory citations, code graph, schema gate) were
