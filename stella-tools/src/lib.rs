@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-tools` — the built-in tool set the agent loop calls.
 //!
 //! Every tool implements [`Tool`], takes a JSON input from the model, and

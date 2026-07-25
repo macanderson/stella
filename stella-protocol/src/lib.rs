@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-protocol` — serde types shared by every crate in the `stella-cli`
 //! workspace: agent events, tool schemas, trace records, and provider
 //! request/response envelopes.

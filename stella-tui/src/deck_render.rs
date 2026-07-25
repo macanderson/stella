@@ -1,7 +1,7 @@
-//! The top-level deck frame: the [`ratatui_comfy_tabs`] tab bar + the active
-//! view + an always-on composer + a status bar, with the splash as a full-frame
-//! overlay until it finishes. This is the tab dispatcher and the one place the
-//! deck's chrome is drawn.
+//! The top-level deck frame: the tab bar + the active view + an always-on
+//! composer + a status bar, with the splash as a full-frame overlay until it
+//! finishes. This is the tab dispatcher and the one place the deck's chrome is
+//! drawn.
 
 use std::time::Duration;
 
@@ -9,9 +9,9 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, StatefulWidget, Widget};
-use ratatui_comfy_tabs::{TabNav, TabNavState};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Widget};
 
 use stella_protocol::{CiStatus, PrStatus};
 
@@ -54,7 +54,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         return;
     }
 
-    // tab bar (comfy-tabs needs exactly 3 rows) | content | run progress bar |
+    // tab bar (bordered, exactly 3 rows) | content | run progress bar |
     // composer | composer footer | statline. The progress bar is always present
     // (idle collapses it to a flat track). The composer grows with its
     // soft-wrapped content up to a cap, then scrolls to keep the cursor visible;
@@ -160,18 +160,26 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
 }
 
-/// The comfy-tabs navigation bar.
+/// The deck's tab navigation bar.
+///
+/// Built from ratatui's own [`Tabs`] inside a full-border [`Block`]: the labels
+/// occupy the single inner row, which is exactly the 3 rows the deck layout
+/// reserves for the bar. Overflow clips on the right (at narrow widths the
+/// rightmost tabs fall off) — the selected tab is always drawn because the
+/// layout never scrolls, matching the previous bar's behaviour at deck widths.
 fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
     let labels: Vec<&str> = DeckTab::ALL.iter().map(|t| t.title()).collect();
-    let selected = tab.index();
-    let nav = TabNav::new(&labels, selected)
+    let tabs = Tabs::new(labels)
+        .select(tab.index())
         .style(theme::muted())
         .highlight_style(theme::accent())
-        .border_style(theme::rule());
-    // Fresh state each frame: the tab set always fits, so there is no scroll to
-    // keep (comfy-tabs handles any overflow itself).
-    let mut state = TabNavState::new(selected);
-    StatefulWidget::render(nav, area, buf, &mut state);
+        .divider(symbols::line::VERTICAL)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::rule()),
+        );
+    Widget::render(tabs, area, buf);
 }
 
 /// The queue editor popup: every waiting prompt as a navigable list, newest

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-mcp` — an **MCP client**. It connects to external Model Context
 //! Protocol servers (stdio child processes and streamable-HTTP endpoints),
 //! discovers their tools, and merges them into the engine's tool registry so

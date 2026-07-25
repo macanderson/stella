@@ -90,4 +90,4 @@ export ANTHROPIC_API_KEY=…        # or OPENAI_API_KEY, GEMINI_API_KEY, a local
 stella run "fix the failing test in src/auth.rs"
 ```
 
-<sub>Dual-licensed MIT OR Apache-2.0 · Rust 1.90+ · <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a></sub>
+<sub>AGPL-3.0-only, commercial licenses available · Rust 1.90+ · <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a></sub>

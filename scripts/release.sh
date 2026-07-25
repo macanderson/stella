@@ -116,7 +116,8 @@ package() {  # <target-triple>
   local tgt="$1" stem="${BIN}-${VERSION}-$1"
   mkdir -p "$DIST/$stem"
   cp "target/${tgt}/release/${BIN}" "$DIST/$stem/${BIN}"
-  cp LICENSE-MIT LICENSE-APACHE README.md "$DIST/$stem/"
+  # AGPL §4/§5 require the license text to travel with every distributed copy.
+  cp LICENSE NOTICE LICENSING.md README.md "$DIST/$stem/"
   tar -C "$DIST" -czf "$DIST/${stem}.tar.gz" "$stem"
   rm -rf "$DIST/${stem:?}"
 }

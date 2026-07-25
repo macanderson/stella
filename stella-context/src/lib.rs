@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-context` — **the context plane**: the single door between the
 //! engine and everything the agent knows that isn't already in the prompt
 //! One SQLite file, one

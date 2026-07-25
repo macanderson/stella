@@ -97,8 +97,8 @@ docs: ## Build rustdoc for the workspace (skip dep docs)
 	cargo doc --workspace --no-deps
 
 .PHONY: deny
-deny: ## cargo deny: advisories, dependency bans, source provenance
-	cargo deny check advisories bans sources
+deny: ## cargo deny: advisories, dependency bans, source provenance, licenses
+	cargo deny check advisories bans sources licenses
 
 .PHONY: vuln-scan
 vuln-scan: ## cargo audit: security vulnerability scan
@@ -176,7 +176,7 @@ audit: ## Run full codebase audit (clippy, tests, supply-chain, dead-code scan)
 	@printf '\n\033[1m=== Tests ===\033[0m\n'
 	cargo test --workspace
 	@printf '\n\033[1m=== Supply chain ===\033[0m\n'
-	cargo deny check advisories bans sources 2>/dev/null || printf '  \033[33mcargo-deny not installed — skipping\033[0m\n'
+	cargo deny check advisories bans sources licenses 2>/dev/null || printf '  \033[33mcargo-deny not installed — skipping\033[0m\n'
 	cargo audit 2>/dev/null || printf '  \033[33mcargo-audit not installed — skipping\033[0m\n'
 	@printf '\n\033[1m=== Unused dependencies ===\033[0m\n'
 	cargo udeps --workspace 2>/dev/null || printf '  \033[33mcargo-udeps not installed — run: cargo install cargo-udeps\033[0m\n'

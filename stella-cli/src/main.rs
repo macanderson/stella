@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella` — a fast, BYOK, model-agnostic terminal coding agent.
 //!
 //! Built on the `stella-*` crate stack: `stella-model` for provider
