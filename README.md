@@ -585,7 +585,7 @@ repository and is pulled in as a pinned git dependency, not as workspace members
 | Context Graph Protocol | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it via git. |
 
 The repo is a **monorepo**: alongside the Rust workspace, the documentation
-site ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `stella-docs/`
+site ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `website/`
 (Next.js + Fumadocs), orchestrated by a pnpm workspace at the root. Rust
 crates are deliberately *not* pnpm packages — cargo remains their build
 system; the root `package.json` only bridges convenience scripts.
@@ -607,7 +607,7 @@ pnpm dev         # serve the docs at http://localhost:3400
 pnpm build       # production build (what docs.yml CI runs)
 ```
 
-Docs content is MDX under `stella-docs/content/docs/`. On a pull request a
+Docs content is MDX under `website/content/docs/`. On a pull request a
 docs-only change runs the fast `docs` workflow instead of the Rust gate; the
 merge queue does not honor `paths-ignore`, so it still pays the full gate once
 queued — deliberately, since the required check has to report on the merged

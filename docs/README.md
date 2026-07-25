@@ -1,8 +1,8 @@
 # docs/
 
 **The product documentation does not live here.** It lives in the
-[`stella-docs/`](../stella-docs/) Next.js + Fumadocs site (deployed at
-<https://stella.oxagen.sh>) — edit `stella-docs/content/docs/` for anything a
+[`website/`](../website/) Next.js + Fumadocs site (deployed at
+<https://stella.oxagen.sh>) — edit `website/content/docs/` for anything a
 Stella *user* should read.
 
 What lives here is the material that isn't site content: design specs a
