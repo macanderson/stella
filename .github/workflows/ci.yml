@@ -2,17 +2,27 @@ name: ci
 
 on:
   pull_request:
-    # Docs-site-only changes are covered by docs.yml — don't spend an hour
-    # of Rust CI on them.
+    # Prose-only changes can't break the Rust build — don't spend an hour of
+    # CI on them. Nothing here goes ungated: the site is built by docs.yml,
+    # and `docs/**` is checked by normative-home.yml, which triggers on
+    # exactly that path and is deliberately isolated from this workflow.
+    # (`*.md` matches the repo root only — GitHub's `*` stops at `/` — so a
+    # crate's own README still pays the gate, which is what we want.)
     paths-ignore:
-      - "stella-docs/**"
+      - "website/**"
+      - "docs/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
       - "package.json"
       - "pnpm-workspace.yaml"
       - "pnpm-lock.yaml"
   push:
     branches: [main]
     paths-ignore:
-      - "stella-docs/**"
+      - "website/**"
+      - "docs/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
       - "package.json"
       - "pnpm-workspace.yaml"
       - "pnpm-lock.yaml"

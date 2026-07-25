@@ -57,9 +57,9 @@ WORD = "stella"
 ROOT = Path(__file__).resolve().parents[2]
 BRAND = ROOT / "docs" / "brand"
 CACHE = BRAND / ".cache"
-SITE_BRAND = ROOT / "stella-docs" / "public" / "brand"
-SITE_ICONS = ROOT / "stella-docs" / "public" / "icons"
-SITE_APP = ROOT / "stella-docs" / "src" / "app"
+SITE_BRAND = ROOT / "website" / "public" / "brand"
+SITE_ICONS = ROOT / "website" / "public" / "icons"
+SITE_APP = ROOT / "website" / "src" / "app"
 OBSERVATORY = ROOT / "stella-observatory" / "src" / "assets"
 TUI = ROOT / "stella-tui" / "src"
 
@@ -378,7 +378,7 @@ def emit_palette_rs() -> None:
 
 
 def emit_tokens_css() -> None:
-    """stella-docs/src/app/tokens.css -- the raw palette as custom properties.
+    """website/src/app/tokens.css -- the raw palette as custom properties.
 
     Mode-aware semantics (which token is "foreground" in dark vs light) stay in
     global.css. This file is the CSS twin of palette.rs: values only.
@@ -734,7 +734,7 @@ def main() -> None:
     # Emitting the geometry as TS keeps the landing page's inline mark and the
     # generated OG card on exactly the same paths as the SVG assets.
     write(
-        ROOT / "stella-docs" / "src" / "components" / "brand.tsx",
+        ROOT / "website" / "src" / "components" / "brand.tsx",
         f"""// {GENERATED}
 //
 // Inline brand geometry. Both components paint with `currentColor`, so they

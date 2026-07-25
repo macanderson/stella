@@ -238,11 +238,11 @@ verified against a pinned SHA-256, and cached under `.cache/` (gitignored).
 `build.py` is the only place the geometry lives. It writes, in one pass:
 
 - these source assets
-- the site's copies under `stella-docs/public/brand/` — copied, not duplicated
+- the site's copies under `website/public/brand/` — copied, not duplicated
   by hand, which is what let the previous generation drift out of step
-- the favicon/PWA/app-icon rasters under `stella-docs/public/icons/` and the
-  Next.js file-convention icons in `stella-docs/src/app/`
-- `stella-docs/src/components/brand.tsx`, so the landing page's inline mark and
+- the favicon/PWA/app-icon rasters under `website/public/icons/` and the
+  Next.js file-convention icons in `website/src/app/`
+- `website/src/components/brand.tsx`, so the landing page's inline mark and
   the generated OG card share the exact paths in these SVGs
 - the mark and wordmark embedded in the observatory binary
 
