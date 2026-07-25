@@ -77,6 +77,12 @@ jobs:
       - name: no tracked file is gitignored
         run: ./scripts/check-no-scratch.sh
 
+      # Also toolchain-free, so it runs before the Rust setup: a floating
+      # `uses:` ref lets the action's owner change what runs with this job's
+      # secrets. Pinning is only durable if something re-checks it (#648).
+      - name: every workflow action is pinned to a commit SHA
+        run: ./scripts/check-action-pins.sh
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:

@@ -29,8 +29,32 @@ main and does everything — no manual steps:
    pass. Its commit carries `[skip release]`, so the sync itself never cuts a
    release. If a sync PR is ever left open (red check, race with another
    merge), the next release supersedes it automatically — no cleanup needed.
+   The same PR **rolls [`CHANGELOG.md`](CHANGELOG.md)**: whatever sits under
+   `## [Unreleased]` moves beneath a new version heading, and `[Unreleased]`
+   is left empty for the next change.
 
 Manual version bumps are therefore only needed for the hand-cut flows below.
+
+## What records a change
+
+Two things, and they are not the same thing:
+
+- **[`CHANGELOG.md`](CHANGELOG.md)** — written by contributors, in the PR that
+  makes the change. This is the durable, curated record. Add a bullet under
+  `## [Unreleased]` whenever a user would notice the change; skip it for
+  internal refactors, tests, and CI.
+- **GitHub Release notes** — generated at publish time by `release.yml` from
+  the commit range. A summary of commits, not a curated record, and not
+  something to edit by hand.
+
+Because every merge releases, most individual releases are small and some have
+no user-facing change at all. Those get a version heading with no bullets. That
+is the correct output, not a gap to fill in: it says the release happened and
+changed nothing a user would notice.
+
+The changelog roll is deliberately non-fatal. If `CHANGELOG.md` is missing or
+has no `## [Unreleased]` heading, `auto-tag.yml` logs a warning and continues —
+a bookkeeping slip must never be the reason a release fails to ship.
 
 ## One-time setup
 

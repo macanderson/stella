@@ -8,11 +8,24 @@
 #   STELLA_VERSION      install a specific version (e.g. "0.1.0" or "v0.1.0")
 #                       instead of the latest release.
 #   STELLA_INSTALL_DIR  install directory (default: $HOME/.local/bin).
+#   STELLA_REQUIRE_PROVENANCE=1
+#                       refuse to install unless the build-provenance
+#                       attestation verifies. Requires `gh`. Off by default
+#                       because `curl | sh` cannot assume gh is present, and
+#                       releases published before provenance was introduced
+#                       carry no attestation.
 #
 # Behavior: detects your OS/arch, downloads the matching prebuilt tarball from
-# the GitHub Release, verifies its SHA-256 against SHA256SUMS, and installs the
+# the GitHub Release, verifies its SHA-256 against SHA256SUMS, verifies the
+# build-provenance attestation when `gh` is available, and installs the
 # `stella` binary. If no prebuilt binary matches your platform, it falls back to
 # `cargo install`.
+#
+# Note the checksum and the attestation answer different questions: SHA256SUMS
+# proves the download was not corrupted, and is fetched over the same channel
+# as the artifact it vouches for. The attestation proves the artifact was built
+# by this repo's release workflow. A verifier that runs and *rejects* an
+# artifact is always fatal, regardless of STELLA_REQUIRE_PROVENANCE.
 #
 # POSIX sh — no bashisms.
 
@@ -130,6 +143,70 @@ sha256_of() {
   fi
 }
 
+# ---- provenance ----------------------------------------------------------
+
+# Verify the GitHub build-provenance attestation for a downloaded artifact.
+#
+# Three outcomes, and the distinction between them is the whole design:
+#
+#   verified      -> continue
+#   contradicted  -> die, always, no override
+#   unverifiable  -> warn and continue, unless STELLA_REQUIRE_PROVENANCE=1
+#
+# "Unverifiable" means no `gh` on PATH, or a gh too old for `attestation
+# verify`. Requiring gh outright would break `curl | sh` for most people, which
+# is the install path this script exists to serve; silently skipping when gh
+# *is* present would waste a guarantee that costs nothing to check.
+verify_provenance() {
+  artifact="$1"
+
+  if ! command -v gh >/dev/null 2>&1; then
+    if [ "${STELLA_REQUIRE_PROVENANCE:-0}" = "1" ]; then
+      die "STELLA_REQUIRE_PROVENANCE=1 but gh is not installed; cannot verify provenance"
+    fi
+    info "provenance not verified (gh not installed) — checksum only"
+    info "  to verify: install gh, then STELLA_REQUIRE_PROVENANCE=1 re-run this installer"
+    return 0
+  fi
+
+  if ! gh attestation verify --help >/dev/null 2>&1; then
+    if [ "${STELLA_REQUIRE_PROVENANCE:-0}" = "1" ]; then
+      die "STELLA_REQUIRE_PROVENANCE=1 but this gh has no 'attestation verify'; upgrade gh"
+    fi
+    info "provenance not verified (gh too old for 'attestation verify') — checksum only"
+    return 0
+  fi
+
+  info "verifying provenance"
+  if out="$(gh attestation verify "$artifact" --repo "$REPO" 2>&1)"; then
+    info "provenance ok"
+    return 0
+  fi
+
+  # Every release published before provenance was added carries no attestation
+  # at all, and so does any release cut from a fork. That is "unverifiable",
+  # not "forged" — treating it as a hard failure would break `curl | sh` for
+  # every older version the moment this landed. Distinguish the two by gh's
+  # own wording rather than collapsing them into one exit code.
+  if printf '%s' "$out" | grep -qi 'no attestation'; then
+    if [ "${STELLA_REQUIRE_PROVENANCE:-0}" = "1" ]; then
+      die "STELLA_REQUIRE_PROVENANCE=1 but ${version} carries no attestation.
+     Releases published before provenance was introduced have none. Install a
+     newer version, or unset STELLA_REQUIRE_PROVENANCE to accept checksum-only."
+    fi
+    info "provenance not verified (no attestation for ${version}) — checksum only"
+    return 0
+  fi
+
+  # Reached only when a verifier ran and actively rejected the artifact.
+  # Never soft, never overridable.
+  die "provenance verification FAILED for $(basename "$artifact") — refusing to install.
+     The checksum matched, but the artifact does not carry a valid build
+     attestation from ${REPO}. Do not install this binary. To see why:
+       gh attestation verify \"$artifact\" --repo ${REPO}
+     Please report it at https://github.com/${REPO}/security"
+}
+
 # ---- cargo fallback ------------------------------------------------------
 
 cargo_fallback() {
@@ -230,6 +307,20 @@ main() {
     die "checksum mismatch for ${asset}: expected ${expected}, got ${actual}"
   fi
   info "checksum ok"
+
+  # SHA256SUMS proves the tarball was not corrupted in transit. It does not
+  # prove where the tarball came from: it is fetched over the same channel,
+  # from the same release, so anything able to replace one could replace both.
+  # The provenance attestation closes that gap — it is bound to the release
+  # workflow at a specific commit and cannot be reissued by whoever holds the
+  # release.
+  #
+  # Verification needs `gh`, which a `curl | sh` install cannot assume. So:
+  # verify whenever gh is present, and let anyone who requires the guarantee
+  # demand it with STELLA_REQUIRE_PROVENANCE=1. A *failed* verification is
+  # always fatal — the soft path is "no verifier available", never "verifier
+  # said no".
+  verify_provenance "${tmpdir}/${asset}"
 
   # Extract. The tarball contains a top-level "stella-<version>-<target>/" dir.
   tar -C "$tmpdir" -xzf "${tmpdir}/${asset}"

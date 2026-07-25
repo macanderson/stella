@@ -23,7 +23,7 @@
 //! `event_sender_for_run` — one-shot runs are one-per-process, exactly like
 //! the env-gated Harbor sink this mirrors.
 //!
-//! [`contextgraph-trace`]: https://github.com/macanderson/context-graph-protocol/blob/main/docs/sketches/host-trace.md
+//! [`contextgraph-trace`]: https://github.com/macanderson/context-graph-protocol/blob/6f8d7ef13b2528c26913c6472405408ba2584a85/docs/sketches/host-trace.md
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;

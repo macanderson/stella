@@ -78,11 +78,15 @@ bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
 no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
 	@./scripts/check-no-scratch.sh
 
+.PHONY: doc-citations
+doc-citations: ## Assert every docs/*.md cited from Rust source resolves (#652)
+	@./scripts/check-doc-citations.sh
+
 .PHONY: gate
-gate: no-scratch format-check lint test ## Full CI gate: no-scratch + fmt-check + clippy + test
+gate: no-scratch doc-citations format-check lint test ## Full CI gate: no-scratch + doc-citations + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch format-check lint ## Fast pre-push check (scratch + fmt + clippy, no tests)
+check: no-scratch action-pins format-check lint ## Fast pre-push check (scratch + pins + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
