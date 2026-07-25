@@ -13,6 +13,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use stella_protocol::MediaKind;
 
 /// A chosen rung of the preview ladder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,27 +97,47 @@ pub fn iterm2_image(bytes: &[u8], name: Option<&str>) -> String {
     format!("\x1b]1337;File={args}:{payload}\x07")
 }
 
-/// The plain-path fallback rung: a single human line pointing at the on-disk
-/// artifact. Previews are always additive to the artifact, never a substitute
-/// for it, so this is the safe floor for `--no-preview`, CI, and unknown
-/// terminals.
-pub fn plain_line(path: &str) -> String {
-    format!("[image] saved to {path}")
+/// The bracketed prefix the plain rung announces an artifact under. Names the
+/// kind that was actually generated — the plain rung is what every non-kitty,
+/// non-iTerm2 terminal and every CI run sees, so calling an `.mp4` an image
+/// there is the most-read wrong string in the module.
+fn kind_label(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Image => "image",
+        MediaKind::Svg => "svg",
+        MediaKind::Video => "video",
+    }
 }
 
-/// Render an image to the chosen rung, falling back to the plain path line
+/// The plain-path fallback rung: a single human line pointing at the on-disk
+/// artifact, prefixed with the artifact's [`MediaKind`]. Previews are always
+/// additive to the artifact, never a substitute for it, so this is the safe
+/// floor for `--no-preview`, CI, and unknown terminals.
+pub fn plain_line(kind: MediaKind, path: &str) -> String {
+    format!("[{}] saved to {path}", kind_label(kind))
+}
+
+/// Render an artifact to the chosen rung, falling back to the plain path line
 /// when the rung has no inline-image capability. `path` is always available
-/// so the plain rung (and `--no-preview`) can cite the on-disk artifact.
+/// so the plain rung (and `--no-preview`) can cite the on-disk artifact, and
+/// `kind` labels it there — the inline rungs render the bytes themselves and
+/// need no label.
 ///
 /// The inline rungs base64 the whole image into the returned string (~4/3 the
 /// byte size, on top of the caller's copy), so a caller previewing something
 /// large should choose [`PreviewRung::Plain`] rather than push tens of
 /// megabytes of escape sequence through a terminal.
-pub fn render(rung: PreviewRung, bytes: &[u8], path: &str, name: Option<&str>) -> String {
+pub fn render(
+    rung: PreviewRung,
+    kind: MediaKind,
+    bytes: &[u8],
+    path: &str,
+    name: Option<&str>,
+) -> String {
     match rung {
         PreviewRung::Kitty => kitty_image(bytes),
         PreviewRung::Iterm2 => iterm2_image(bytes, name),
-        PreviewRung::Plain => plain_line(path),
+        PreviewRung::Plain => plain_line(kind, path),
     }
 }
 
@@ -218,18 +239,37 @@ mod tests {
     #[test]
     fn plain_line_cites_the_path() {
         assert_eq!(
-            plain_line(".stella/artifacts/med_x.png"),
+            plain_line(MediaKind::Image, ".stella/artifacts/med_x.png"),
             "[image] saved to .stella/artifacts/med_x.png"
         );
     }
 
     #[test]
-    fn render_dispatches_by_rung() {
-        assert!(render(PreviewRung::Kitty, b"x", "p", None).contains("\x1b_G"));
-        assert!(render(PreviewRung::Iterm2, b"x", "p", None).contains("1337;File"));
+    fn plain_line_labels_the_kind_it_was_given() {
+        // The fallback rung must not announce a video or an SVG as an image.
         assert_eq!(
-            render(PreviewRung::Plain, b"x", "p", None),
+            plain_line(MediaKind::Video, ".stella/artifacts/med_x.mp4"),
+            "[video] saved to .stella/artifacts/med_x.mp4"
+        );
+        assert_eq!(
+            plain_line(MediaKind::Svg, ".stella/artifacts/med_x.svg"),
+            "[svg] saved to .stella/artifacts/med_x.svg"
+        );
+    }
+
+    #[test]
+    fn render_dispatches_by_rung() {
+        assert!(render(PreviewRung::Kitty, MediaKind::Image, b"x", "p", None).contains("\x1b_G"));
+        assert!(
+            render(PreviewRung::Iterm2, MediaKind::Image, b"x", "p", None).contains("1337;File")
+        );
+        assert_eq!(
+            render(PreviewRung::Plain, MediaKind::Image, b"x", "p", None),
             "[image] saved to p"
+        );
+        assert_eq!(
+            render(PreviewRung::Plain, MediaKind::Video, b"x", "p", None),
+            "[video] saved to p"
         );
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "stella-context"
-description = "THE CONTEXT PLANE: bi-temporal knowledge graph, embedding index, episodic memory, hybrid retrieval, context-frame assembly + token budgeting — one SQLite file, one engine."
+description = "The context plane: bi-temporal knowledge graph, embedding index, episodic memory, hybrid retrieval, context-frame assembly + token budgeting — one SQLite file, one engine."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
