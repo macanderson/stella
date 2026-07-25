@@ -23,13 +23,20 @@ use crate::store::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EpisodeOutcome {
+    /// The episode achieved what it set out to do.
     Success,
+    /// The episode ran to completion but did not achieve its goal (e.g.
+    /// verification failed).
     Failure,
+    /// Some of the goal landed and some did not.
     Partial,
+    /// Stopped before finishing — cancelled, budget-exhausted, or interrupted.
     Aborted,
 }
 
 impl EpisodeOutcome {
+    /// The canonical string stored in `episode.outcome`.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             EpisodeOutcome::Success => "success",
@@ -45,11 +52,24 @@ impl EpisodeOutcome {
 /// `Episode` node (so recall can surface prior turns).
 #[derive(Debug, Clone)]
 pub struct EpisodeInput {
+    /// What happened, in prose. Doubles as the mirror node's retrievable
+    /// content and (truncated) its citation label, so this is the text recall
+    /// actually embeds and surfaces.
     pub summary: String,
+    /// Workspace-relative paths the episode touched, stored as a JSON array on
+    /// the `episode` row.
     pub files_touched: Vec<String>,
+    /// How the episode ended.
     pub outcome: EpisodeOutcome,
+    /// RFC-3339 start of the episode's window.
     pub started_at: String,
+    /// RFC-3339 end of the episode's window. With `summary` and `started_at`
+    /// it forms the episode's stable `epi_…` identity, so re-writing the same
+    /// summary over the same window updates one row instead of appending.
     pub ended_at: String,
+    /// Caller-assigned importance, stored on the `episode` row. Recall does not
+    /// rank by it today (scoring is similarity + recency + graph adjacency);
+    /// it is a hint for consumers and for a future salience-aware ranker.
     pub salience: f32,
     /// Workspace domain tags carried onto the episode's mirror node.
     pub domains: Vec<String>,
@@ -111,13 +131,31 @@ impl EpisodeInput {
 /// concurrent objects.
 #[derive(Debug, Clone)]
 pub struct FactAssertion {
+    /// The node the assertion is about. Upserted with the fact, so an
+    /// assertion can introduce its own endpoints.
     pub subject: NodeInput,
+    /// The relation, stored verbatim as `edge.rel`. With `subject` it is the
+    /// key single-valued supersession matches on.
     pub predicate: String,
+    /// The node the predicate points at. Also upserted with the fact.
     pub object: NodeInput,
+    /// World time the belief became true (`edge.valid_from`) — independent of
+    /// when it was recorded, and it may precede it. `None` = valid since it
+    /// was observed. It also dates the close of the belief this one supersedes.
     pub valid_from: Option<String>,
+    /// World time the belief stops holding (`edge.valid_to`); `None` leaves the
+    /// interval open-ended.
     pub valid_to: Option<String>,
+    /// Edge strength. It is the per-hop contribution in retrieval's
+    /// graph-adjacency signal, so a heavier fact pulls its neighbors further up
+    /// the fused ranking. Defaults to `1.0`.
     pub weight: f64,
+    /// Free-form JSON stored on the edge row, for consumers reading the graph
+    /// directly. Nothing in the retrieval path reads it back today.
     pub properties: serde_json::Value,
+    /// When true the fact coexists with other objects for the same
+    /// `(subject, predicate)` instead of superseding them. Re-asserting the
+    /// exact same triple is a no-op either way.
     pub multivalued: bool,
     /// Domain tags applied to the resulting fact edge.
     pub domains: Vec<String>,
@@ -166,6 +204,8 @@ pub enum MemoryKind {
 }
 
 impl MemoryKind {
+    /// The canonical string stored in `memory.kind`.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             MemoryKind::Reflection => "reflection",
@@ -180,9 +220,17 @@ impl MemoryKind {
 /// similarity + domain overlap + recency.
 #[derive(Debug, Clone)]
 pub struct MemoryInput {
+    /// Which sort of memory this is; stored on the `memory` row.
     pub kind: MemoryKind,
+    /// The lesson/note text. It is both the stored record's body and the
+    /// mirror node's content, so it is what recall embeds and what a returned
+    /// frame carries.
     pub content: String,
+    /// Workspace domain tags carried onto the memory's mirror node; recall
+    /// scores domain overlap against them.
     pub domains: Vec<String>,
+    /// Caller-assigned importance, stored on the `memory` row. As with
+    /// [`EpisodeInput::salience`], recall does not rank by it today.
     pub salience: f32,
 }
 
@@ -246,11 +294,17 @@ impl MemoryInput {
 /// a description (e.g. the `stella init` taxonomy).
 #[derive(Debug, Clone)]
 pub struct DomainInput {
+    /// The domain's unique name, exactly as it appears in the `domains` tag
+    /// lists on nodes, edges, episodes and memories.
     pub name: String,
+    /// Optional prose describing the domain. This is the whole reason to write
+    /// a domain explicitly — a bare tag auto-creates the name with no
+    /// description.
     pub description: Option<String>,
 }
 
 impl DomainInput {
+    /// A domain with the given name and optional description.
     pub fn new(name: impl Into<String>, description: Option<String>) -> Self {
         Self {
             name: name.into(),
@@ -302,6 +356,20 @@ impl ContextDelta {
         self.facts.push(fact);
         self
     }
+
+    /// Add a memory.
+    #[must_use]
+    pub fn with_memory(mut self, memory: MemoryInput) -> Self {
+        self.memories.push(memory);
+        self
+    }
+
+    /// Add an explicit domain definition.
+    #[must_use]
+    pub fn with_domain(mut self, domain: DomainInput) -> Self {
+        self.domains.push(domain);
+        self
+    }
 }
 
 /// What a write-back did — a typed, inspectable receipt (
@@ -314,11 +382,21 @@ pub struct UpsertReceipt {
     /// Re-asserting a fact about the same subject therefore increments this
     /// even though no new row appears — read it as work done, not as growth.
     pub nodes_upserted: usize,
+    /// `episode` rows written (inserted or updated in place by identity).
     pub episodes_written: usize,
+    /// `memory` rows written (inserted or updated in place by identity).
     pub memories_written: usize,
+    /// Fact edges inserted. Re-asserting a `(subject, predicate, object)` that
+    /// is already believed inserts nothing and is not counted.
     pub facts_asserted: usize,
+    /// Prior beliefs closed by a single-valued correction. They are closed and
+    /// linked with `SUPERSEDES`, never deleted (`L-C3`).
     pub facts_superseded: usize,
+    /// Vectors the embedder produced this batch — content with no vector yet
+    /// under the active fingerprint.
     pub embeddings_computed: usize,
+    /// Content that already had a vector for `(content_hash, fingerprint)` and
+    /// so was not re-embedded — the byte-compat skip (`L-C2`).
     pub embeddings_reused: usize,
     /// New domain-tag associations written across all records this batch.
     pub domain_tags_added: usize,
@@ -328,10 +406,19 @@ pub struct UpsertReceipt {
 /// label, never a bare id).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactView {
+    /// The subject node's display name, or `<unknown>` if the row it points at
+    /// is gone.
     pub subject: String,
+    /// The relation, as stored in `edge.rel`.
     pub predicate: String,
+    /// The object node's display name, or `<unknown>` if the row it points at
+    /// is gone.
     pub object: String,
+    /// Transaction time the belief was recorded (RFC-3339).
     pub recorded_at: String,
+    /// Transaction time the belief was closed, or `None` while it is still
+    /// believed. A `facts_as_of(Some(t))` view can show a belief that is
+    /// superseded now but was live at `t`.
     pub superseded_at: Option<String>,
 }
 
@@ -734,6 +821,33 @@ mod tests {
         assert_eq!(receipt.episodes_written, 1);
         assert_eq!(receipt.nodes_upserted, 1, "the episode also indexed a node");
         assert!(store.node_count().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn the_builder_can_write_memories_and_domains() {
+        // Witness: before `with_memory`/`with_domain` existed the builder could
+        // not express the crate's most important record type at all, so every
+        // memory writer had to drop to struct-literal syntax — this body did
+        // not compile.
+        let clock = FixedClock::shared(1_000);
+        let (_dir, store) = store_at(clock);
+        let receipt = store
+            .upsert(
+                ContextDelta::new()
+                    .with_domain(DomainInput::new("auth", Some("login and sessions".into())))
+                    .with_memory(MemoryInput::reflection(
+                        "prefer typed errors over stringly ones",
+                        ["auth"],
+                    )),
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt.memories_written, 1);
+        assert_eq!(receipt.nodes_upserted, 1, "the memory also indexed a node");
+        assert_eq!(
+            receipt.domain_tags_added, 1,
+            "the memory's mirror node carries the declared domain"
+        );
     }
 
     #[tokio::test]
