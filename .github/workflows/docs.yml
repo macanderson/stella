@@ -1,13 +1,13 @@
 name: docs
 
 # The docs site's CI: lint, typecheck, and a production build of
-# stella-docs/. Scoped to the paths that can affect the site, the mirror
+# website/. Scoped to the paths that can affect the site, the mirror
 # image of ci.yml's paths-ignore — every PR runs exactly one of the two
 # (or both, when it genuinely touches both worlds).
 on:
   pull_request:
     paths:
-      - "stella-docs/**"
+      - "website/**"
       - "package.json"
       - "pnpm-workspace.yaml"
       - "pnpm-lock.yaml"
@@ -15,7 +15,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "stella-docs/**"
+      - "website/**"
       - "package.json"
       - "pnpm-workspace.yaml"
       - "pnpm-lock.yaml"
@@ -25,6 +25,10 @@ on:
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Typecheck + build only — there is no Pages deploy here, so read is enough.
+permissions:
+  contents: read
 
 jobs:
   build:
