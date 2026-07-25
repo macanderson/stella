@@ -3,7 +3,7 @@
 
 //! `stella-fleet` — the multi-agent fleet layer.
 //!
-//! Four pieces, one seam:
+//! Five pieces, one seam:
 //!
 //! - [`plan`] — the **planner DAG**: [`Plan`]/[`Task`] with dependency edges,
 //!   share-by-default isolation, wave scheduling ([`Plan::ready_tasks`]), topological
@@ -16,6 +16,11 @@
 //!   every run, task, attempt, commit, lineage edge, and per-task USD spend.
 //! - [`monitor`] — the **PR/CI monitor** over the [`GhCli`] port: live PR
 //!   reconciliation and a capped-deferred-wait CI watcher (L-E4).
+//! - [`cache_schedule`] — **warmest-first scheduling** (issue #269): the pure,
+//!   no-I/O heuristic that orders equal-priority [`RunnableSession`]s by
+//!   soonest-to-expire prompt-cache prefix ([`warmest_first`]), so a session
+//!   about to lose its cached prefix is resumed before a colder one takes the
+//!   slot ([`Fleet::with_cache_warmth`] is the dispatch-side seam).
 //!
 //! and [`fleet`] — **THE dispatch seam** ([`Fleet::dispatch`], L-E9): the one
 //! API subagent fan-out goes through, claiming a task's declared paths as
@@ -37,7 +42,10 @@
 //! [`Plan`]: plan::Plan
 //! [`Task`]: plan::Task
 //! [`Plan::ready_tasks`]: plan::Plan::ready_tasks
+//! [`RunnableSession`]: cache_schedule::RunnableSession
+//! [`warmest_first`]: cache_schedule::warmest_first
 //! [`Fleet::dispatch`]: fleet::Fleet::dispatch
+//! [`Fleet::with_cache_warmth`]: fleet::Fleet::with_cache_warmth
 //! [`Fleet::pause_task`]: fleet::Fleet::pause_task
 //! [`Fleet::resume_task`]: fleet::Fleet::resume_task
 //! [`Fleet::stop_task`]: fleet::Fleet::stop_task
