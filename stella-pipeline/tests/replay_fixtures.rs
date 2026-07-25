@@ -1,9 +1,15 @@
 //! Golden-trajectory replay harness, driven against synthetic fixtures.
-//! These fixtures are **synthetic** streams
-//! that exercise the harness's invariants and its structural differ; recording
-//! real TS-engine trajectories on fixed tasks and replaying the Rust stack
-//! against them is the documented next step (see `replay.rs`'s module doc) —
-//! deliberately not faked here.
+//! These fixtures are **synthetic** streams that exercise the harness's
+//! invariants and its structural differ — hand-authored to hit specific edges
+//! (a torn tail, a judge escalation) that a recording may not happen to
+//! contain.
+//!
+//! Real recordings live elsewhere and are kept distinct on purpose:
+//! `tests/fixtures/golden/` holds trajectories actually recorded from this
+//! pipeline (see `src/pipeline/tests/golden.rs`), and
+//! `tests/reference_conformance.rs` pins what an independent reference engine
+//! must emit before its runs can join them. See
+//! `docs/replay-golden-trajectories.md`.
 
 use std::fs;
 use std::path::PathBuf;
