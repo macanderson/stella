@@ -947,9 +947,12 @@ fn skill_usage_records_per_execution_version_rows() {
     // session plane (executions.session_id / tasks / pull_requests)
     // takes v8; v9 adds fail-closed call-role/completeness, v10 adds lifecycle
     // accounting for execution/telemetry rows, v11 adds the context-receipts
-    // plane (context_blocks / step_manifest / step_receipt), and v12 adds
-    // reconstruction support (context_blocks.content / step_manifest.message_index).
-    assert_eq!(SCHEMA_VERSION, 12);
+    // plane (context_blocks / step_manifest / step_receipt), v12 adds
+    // reconstruction support (context_blocks.content / step_manifest.message_index),
+    // and v13 rekeys both receipt tables on call_seq so the auxiliary calls
+    // sharing a step (overflow summarizer, pipeline management roles) each keep
+    // their own receipt.
+    assert_eq!(SCHEMA_VERSION, 13);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

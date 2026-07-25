@@ -28,7 +28,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 12] = [
+pub(crate) const MIGRATIONS: [Migration; 13] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -67,6 +67,13 @@ pub(crate) const MIGRATIONS: [Migration; 12] = [
     // `step_manifest` grows `message_index` (regroups event-granular blocks into
     // exact messages). Both additive ADD COLUMNs, column-guarded.
     migrate_v11_to_v12,
+    // v12 → v13: receipt coverage for the calls that are not engine steps —
+    // the overflow summarizer and the pipeline's management roles. Both
+    // receipt tables grow `call_seq` and take it into the primary key, so a
+    // summarizer receipt no longer collides with (and is replaced by) the
+    // worker receipt of the step it precedes. A PK change is a table rebuild;
+    // existing rows are all worker calls and backfill to seq 0.
+    migrate_v12_to_v13,
 ];
 
 /// The schema version this build writes — the `PRAGMA user_version` of
@@ -413,8 +420,100 @@ fn migrate_v9_to_v10(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// also tolerates a partial file that somehow already grew them.
 fn migrate_v10_to_v11(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     tx.execute_batch(CONTEXT_BLOCKS_DDL)?;
-    tx.execute_batch(STEP_MANIFEST_DDL)?;
-    tx.execute_batch(STEP_RECEIPT_DDL)?;
+    // The receipt tables changed shape in v13 (the `call_seq` key column), so
+    // they left the shared DDL constants — but a v11 database has its ERA's
+    // shape, which this step must keep producing (the v13 rebuild later in the
+    // chain runs against it).
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS step_manifest (
+           execution_id INTEGER NOT NULL,
+           turn_instance INTEGER NOT NULL,
+           step INTEGER NOT NULL,
+           ordinal INTEGER NOT NULL,
+           block_id TEXT NOT NULL,
+           cache_zone TEXT NOT NULL,
+           resident_since_step INTEGER NOT NULL,
+           PRIMARY KEY (execution_id, turn_instance, step, ordinal)
+         );
+         CREATE INDEX IF NOT EXISTS step_manifest_by_block
+           ON step_manifest(execution_id, block_id);",
+    )?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS step_receipt (
+           execution_id INTEGER NOT NULL,
+           turn_instance INTEGER NOT NULL,
+           step INTEGER NOT NULL,
+           provider TEXT NOT NULL,
+           model TEXT NOT NULL,
+           call_role TEXT NOT NULL,
+           effective_budget_tokens INTEGER NOT NULL,
+           calibration_factor REAL NOT NULL,
+           estimated_input_tokens INTEGER NOT NULL,
+           PRIMARY KEY (execution_id, turn_instance, step)
+         );",
+    )?;
+    Ok(())
+}
+
+/// v12 → v13: `call_seq` joins the primary key of both receipt tables so the
+/// auxiliary calls that share a step with the worker (overflow summarizer,
+/// pipeline management roles) each keep their own receipt instead of replacing
+/// one another. SQLite cannot alter a primary key, so both tables are rebuilt;
+/// every pre-existing row is a worker call and backfills to seq 0.
+fn migrate_v12_to_v13(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "step_manifest", "call_seq")? {
+        tx.execute_batch(
+            "CREATE TABLE step_manifest_v13 (
+               execution_id INTEGER NOT NULL,
+               turn_instance INTEGER NOT NULL,
+               step INTEGER NOT NULL,
+               call_seq INTEGER NOT NULL DEFAULT 0,
+               ordinal INTEGER NOT NULL,
+               block_id TEXT NOT NULL,
+               cache_zone TEXT NOT NULL,
+               resident_since_step INTEGER NOT NULL,
+               message_index INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY (execution_id, turn_instance, step, call_seq, ordinal)
+             );
+             INSERT INTO step_manifest_v13
+               (execution_id, turn_instance, step, call_seq, ordinal, block_id,
+                cache_zone, resident_since_step, message_index)
+             SELECT execution_id, turn_instance, step, 0, ordinal, block_id,
+                    cache_zone, resident_since_step, message_index
+               FROM step_manifest;
+             DROP TABLE step_manifest;
+             ALTER TABLE step_manifest_v13 RENAME TO step_manifest;
+             CREATE INDEX IF NOT EXISTS step_manifest_by_block
+               ON step_manifest(execution_id, block_id);",
+        )?;
+    }
+    if !column_exists(tx, "step_receipt", "call_seq")? {
+        tx.execute_batch(
+            "CREATE TABLE step_receipt_v13 (
+               execution_id INTEGER NOT NULL,
+               turn_instance INTEGER NOT NULL,
+               step INTEGER NOT NULL,
+               call_seq INTEGER NOT NULL DEFAULT 0,
+               provider TEXT NOT NULL,
+               model TEXT NOT NULL,
+               call_role TEXT NOT NULL,
+               effective_budget_tokens INTEGER NOT NULL,
+               calibration_factor REAL NOT NULL,
+               estimated_input_tokens INTEGER NOT NULL,
+               PRIMARY KEY (execution_id, turn_instance, step, call_seq)
+             );
+             INSERT INTO step_receipt_v13
+               (execution_id, turn_instance, step, call_seq, provider, model,
+                call_role, effective_budget_tokens, calibration_factor,
+                estimated_input_tokens)
+             SELECT execution_id, turn_instance, step, 0, provider, model,
+                    call_role, effective_budget_tokens, calibration_factor,
+                    estimated_input_tokens
+               FROM step_receipt;
+             DROP TABLE step_receipt;
+             ALTER TABLE step_receipt_v13 RENAME TO step_receipt;",
+        )?;
+    }
     Ok(())
 }
 
@@ -614,5 +713,82 @@ mod tests {
         // Idempotent on tables already at the v12 shape (fresh files, or a
         // v10→v11 upgrade run by this build's DDL).
         apply_migration(&mut conn, migrate_v11_to_v12, 12).expect("idempotent");
+    }
+
+    #[test]
+    fn v13_migration_rekeys_receipts_on_call_seq_preserving_existing_rows_as_worker_calls() {
+        // A v12-shaped file with one recorded worker step. The rebuild must
+        // keep that row verbatim, backfill it to seq 0, and then accept a
+        // SECOND row at the same (turn, step) — the summarizer receipt that
+        // the old primary key silently replaced.
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE step_manifest (
+               execution_id INTEGER NOT NULL, turn_instance INTEGER NOT NULL, step INTEGER NOT NULL,
+               ordinal INTEGER NOT NULL, block_id TEXT NOT NULL, cache_zone TEXT NOT NULL,
+               resident_since_step INTEGER NOT NULL, message_index INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY (execution_id, turn_instance, step, ordinal));
+             CREATE TABLE step_receipt (
+               execution_id INTEGER NOT NULL, turn_instance INTEGER NOT NULL, step INTEGER NOT NULL,
+               provider TEXT NOT NULL, model TEXT NOT NULL, call_role TEXT NOT NULL,
+               effective_budget_tokens INTEGER NOT NULL, calibration_factor REAL NOT NULL,
+               estimated_input_tokens INTEGER NOT NULL,
+               PRIMARY KEY (execution_id, turn_instance, step));
+             INSERT INTO step_manifest
+               (execution_id, turn_instance, step, ordinal, block_id, cache_zone,
+                resident_since_step, message_index)
+               VALUES (1, 0, 2, 0, 'blk_sys', 'stable_prefix', 0, 0);
+             INSERT INTO step_receipt
+               (execution_id, turn_instance, step, provider, model, call_role,
+                effective_budget_tokens, calibration_factor, estimated_input_tokens)
+               VALUES (1, 0, 2, 'anthropic', 'opus', 'worker', 136363, 1.1, 40);",
+        )
+        .expect("v12 receipts shape");
+        assert!(!column_exists(&conn, "step_receipt", "call_seq").unwrap());
+
+        apply_migration(&mut conn, migrate_v12_to_v13, 13).expect("migrate");
+
+        assert!(column_exists(&conn, "step_receipt", "call_seq").unwrap());
+        assert!(column_exists(&conn, "step_manifest", "call_seq").unwrap());
+
+        // The pre-existing worker row survives the rebuild, at seq 0.
+        let (role, seq, budget): (String, i64, i64) = conn
+            .query_row(
+                "SELECT call_role, call_seq, effective_budget_tokens FROM step_receipt
+                 WHERE execution_id = 1 AND turn_instance = 0 AND step = 2",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("worker receipt preserved");
+        assert_eq!((role.as_str(), seq, budget), ("worker", 0, 136363));
+        let block: String = conn
+            .query_row(
+                "SELECT block_id FROM step_manifest WHERE execution_id = 1 AND call_seq = 0",
+                [],
+                |r| r.get(0),
+            )
+            .expect("manifest row preserved");
+        assert_eq!(block, "blk_sys");
+
+        // The regression this migration exists for: a summarizer receipt at the
+        // SAME (turn, step) now coexists instead of replacing the worker's.
+        conn.execute_batch(
+            "INSERT INTO step_receipt
+               (execution_id, turn_instance, step, call_seq, provider, model, call_role,
+                effective_budget_tokens, calibration_factor, estimated_input_tokens)
+               VALUES (1, 0, 2, 1, 'anthropic', 'haiku', 'summarization', 136363, 1.1, 900);",
+        )
+        .expect("an auxiliary call at the same step is no longer a key collision");
+        let calls: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM step_receipt WHERE execution_id = 1 AND step = 2",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(calls, 2, "both calls of the step are recorded");
+
+        // Idempotent on a file already at the v13 shape.
+        apply_migration(&mut conn, migrate_v12_to_v13, 13).expect("idempotent");
     }
 }

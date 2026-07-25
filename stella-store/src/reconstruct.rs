@@ -77,16 +77,32 @@ struct JournalPreimages {
 }
 
 impl Store {
-    /// Reconstruct the exact messages sent on one step from its persisted
-    /// receipt + the event journal. See the module docs for the reconstructable
-    /// boundary; callers should check [`Reconstruction::is_verified`].
-    pub fn reconstruct_step(
+    /// Reconstruct the engine's own worker call at this step — the common case,
+    /// [`Store::reconstruct_call`] at `call_seq` 0.
+    pub fn reconstruct_worker_step(
         &self,
         execution_id: i64,
         turn_instance: u32,
         step: u64,
     ) -> Result<Reconstruction> {
-        let manifest = self.step_manifest(execution_id, turn_instance, step)?;
+        self.reconstruct_call(execution_id, turn_instance, step, 0)
+    }
+
+    /// Reconstruct the exact messages sent on one model call from its persisted
+    /// receipt + the event journal. See the module docs for the reconstructable
+    /// boundary; callers should check [`Reconstruction::is_verified`].
+    ///
+    /// `call_seq` selects which call at this step: 0 is the engine's worker
+    /// (see [`Store::reconstruct_worker_step`]), 1 the overflow summarizer, 2+
+    /// an allocated management role. [`Store::recorded_calls`] enumerates them.
+    pub fn reconstruct_call(
+        &self,
+        execution_id: i64,
+        turn_instance: u32,
+        step: u64,
+        call_seq: u64,
+    ) -> Result<Reconstruction> {
+        let manifest = self.step_manifest(execution_id, turn_instance, step, call_seq)?;
         let blocks: HashMap<String, crate::ContextBlockRow> = self
             .context_blocks(execution_id)?
             .into_iter()
@@ -399,6 +415,7 @@ mod tests {
                 &StepManifestRow {
                     turn_instance: 0,
                     step: 1,
+                    call_seq: 0,
                     provider: "anthropic".into(),
                     model: "opus".into(),
                     call_role: "worker".into(),
@@ -415,7 +432,7 @@ mod tests {
             )
             .unwrap();
 
-        let recon = store.reconstruct_step(id, 0, 1).unwrap();
+        let recon = store.reconstruct_worker_step(id, 0, 1).unwrap();
         assert!(
             recon.is_verified(),
             "unresolved={:?} mismatches={:?}",
@@ -449,6 +466,7 @@ mod tests {
                 &StepManifestRow {
                     turn_instance: 0,
                     step: 0,
+                    call_seq: 0,
                     provider: "z".into(),
                     model: "m".into(),
                     call_role: "worker".into(),
@@ -460,7 +478,7 @@ mod tests {
             )
             .unwrap();
 
-        let recon = store.reconstruct_step(id, 0, 0).unwrap();
+        let recon = store.reconstruct_worker_step(id, 0, 0).unwrap();
         assert!(!recon.is_verified());
         assert_eq!(recon.unresolved, vec!["blk_orphan".to_string()]);
     }
