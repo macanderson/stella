@@ -1001,6 +1001,92 @@ mod tests {
         }
     }
 
+    /// Witness for the hole PR #586 left in #551's context bound. The result
+    /// cap lives in `decode_call_result`, which a JSON-RPC **error object**
+    /// never reaches: the request fails first, and `execute_mcp`'s `Err` arm
+    /// used to interpolate the server's `error.message` verbatim. That is the
+    /// cheapest possible hostile payload — no content array, no `isError`,
+    /// just a huge string in the error field — and it landed in model context
+    /// whole. Distinct from `an_oversized_error_result_is_capped_too` above,
+    /// which exercises the `isError: true` *content* route.
+    #[tokio::test]
+    async fn an_oversized_json_rpc_error_message_is_capped_before_the_model() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
+        );
+        transport.push_err(
+            "tools/call",
+            McpError::JsonRpc {
+                code: -32000,
+                message: "Z".repeat(MAX_TOOL_RESULT_BYTES * 10),
+                data: None,
+            },
+        );
+        let mut client = McpClient::new("flood", Box::new(transport));
+        client.initialize().await.unwrap();
+        let set = McpToolSet::from_clients(vec![client]);
+
+        match set.execute("mcp__flood__boom", &Value::Null).await {
+            ToolOutput::Error { message } => {
+                assert!(
+                    message.len() < MAX_TOOL_RESULT_BYTES + 256,
+                    "a {}-byte server-chosen error message must not reach the model whole \
+                     (got {} bytes)",
+                    MAX_TOOL_RESULT_BYTES * 10,
+                    message.len()
+                );
+                assert!(
+                    message.contains("mcp server `flood` failed calling `boom`"),
+                    "the server is still named"
+                );
+                assert!(
+                    message.contains("... [truncated ") && message.contains(" bytes] ..."),
+                    "the elision is explicit and counted"
+                );
+            }
+            other => panic!("expected a tool error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_under_budget_json_rpc_error_message_is_passed_through_verbatim() {
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [{ "name": "boom", "inputSchema": { "type": "object" } }] }),
+        );
+        transport.push_err(
+            "tools/call",
+            McpError::JsonRpc {
+                code: -32602,
+                message: "unknown argument `pth`".into(),
+                data: None,
+            },
+        );
+        let mut client = McpClient::new("files", Box::new(transport));
+        client.initialize().await.unwrap();
+        let set = McpToolSet::from_clients(vec![client]);
+
+        assert_eq!(
+            set.execute("mcp__files__boom", &Value::Null).await,
+            ToolOutput::Error {
+                message: "mcp server `files` failed calling `boom`: json-rpc error -32602: \
+                          unknown argument `pth`"
+                    .into()
+            }
+        );
+    }
+
     #[tokio::test]
     async fn an_under_budget_result_is_byte_identical() {
         let set = McpToolSet::from_clients(vec![
