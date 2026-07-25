@@ -83,6 +83,12 @@ pub(crate) async fn run_raw_one_shot(
         format == OutputFormat::Text,
         &cfg.authority,
     );
+    if let Some(m) = &mut memory {
+        // Conformance-gated external CGP providers join before the first
+        // recall, or are refused with a reason (#453).
+        m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
+            .await;
+    }
     if let Some(m) = &memory {
         inject_recall_block(&mut messages, m.recall_block(prompt).await);
     }

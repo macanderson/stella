@@ -57,11 +57,13 @@ tempfile.workspace = true
 # Masked TTY prompt for `stella connect … --token` (same crate stella-model
 # uses for the interactive API-key prompt).
 rpassword.workspace = true
+# The protocol's own conformance suite (SPEC.md 3.6), pinned to the same rev as
+# the types/host we consume. A RUNTIME dependency, not just a dev one: #453
+# makes conformance an install/enable-time ADMISSION GATE for external
+# stdio/HTTP providers, so a non-conformant source is refused before it can
+# serve a turn. The same suite still audits the in-tree providers in tests.
+contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 rusqlite.workspace = true
-# The protocol's own conformance suite (§3.6), pinned to the same rev as the
-# types/host we consume. Wired into `contextgraph.rs` tests so "CGP-conformant"
-# is a checked claim about the providers this CLI ships, not a documented one.
-contextgraph-conformance = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }

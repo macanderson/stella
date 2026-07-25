@@ -41,15 +41,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use contextgraph_host::{ContextProvider, Host, HostError, ProviderResult};
+use contextgraph_conformance::{ProviderTarget, run_conformance};
+use contextgraph_host::{
+    ConsentDecision, ConsentRecord, ContextProvider, Host, HostError, ProviderResult,
+};
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameId, ProviderInfo,
-    UsageReport, VerifyRequest, VerifyResponse, canonical_order,
+    Capabilities, ConsentReceipt, ContextFrame, ContextQuery, ContextQueryResult, DataFlow,
+    EgressScope, FrameId, Grantor, ProviderInfo, UsageReport, VerifyRequest, VerifyResponse,
+    canonical_order,
 };
 use stella_context::{
     ContextError, ContextProvider as PlaneProvider, ContextStore, ProviderRegistry,
 };
 use stella_protocol::{ContextProviderUsage, ContextUsage};
+
+use crate::settings::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 
 /// Per-provider recall timeout. Recall runs before every turn, so a wedged
 /// source must cost bounded latency — the host isolates it and the other
@@ -258,6 +264,235 @@ pub fn session_host(
     host
 }
 
+/// What happened when the host was asked to admit an external provider.
+///
+/// A value rather than an error because refusing a provider is a *normal*,
+/// reportable outcome: the session continues on its remaining sources, and the
+/// operator is told exactly which contract the refused one failed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Admission {
+    /// Conformance passed, consent (if any was needed) is on file, and the
+    /// provider is registered on the host.
+    Registered { id: String },
+    /// The entry is present in config but not turned on.
+    Disabled { id: String },
+    /// The config entry cannot be turned into a transport target.
+    Misconfigured { id: String, reason: String },
+    /// The conformance suite failed. The provider is **not** registered.
+    NonConformant { id: String, failures: String },
+    /// The transport could not be established (spawn failed, handshake
+    /// refused, endpoint unreachable).
+    Unreachable { id: String, error: String },
+    /// The provider declares off-machine egress scopes with no recorded
+    /// consent.
+    ///
+    /// The transport is up (scopes are only knowable from the handshake), but
+    /// the host's own consent gate refuses every query to it and **the query
+    /// payload is never transmitted** (`docs/context-reuse.md` §3.5) — so it
+    /// contributes nothing to a turn and no workspace content reaches it. The
+    /// admission is reported as a refusal because that is what it is
+    /// operationally: a source that will serve no frames until consent exists.
+    NeedsEgressConsent { id: String, scopes: Vec<String> },
+}
+
+impl Admission {
+    /// The provider id this outcome concerns.
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Registered { id }
+            | Self::Disabled { id }
+            | Self::Misconfigured { id, .. }
+            | Self::NonConformant { id, .. }
+            | Self::Unreachable { id, .. }
+            | Self::NeedsEgressConsent { id, .. } => id,
+        }
+    }
+
+    /// Whether the provider was admitted to the host.
+    pub fn registered(&self) -> bool {
+        matches!(self, Self::Registered { .. })
+    }
+
+    /// A one-line operator-facing explanation, or `None` when the outcome
+    /// needs no explaining (registered, or simply not enabled).
+    pub fn refusal(&self) -> Option<String> {
+        match self {
+            Self::Registered { .. } | Self::Disabled { .. } => None,
+            Self::Misconfigured { id, reason } => Some(format!(
+                "context provider `{id}` is misconfigured: {reason}"
+            )),
+            Self::NonConformant { id, failures } => Some(format!(
+                "context provider `{id}` refused: it is not CGP-conformant ({failures})"
+            )),
+            Self::Unreachable { id, error } => {
+                Some(format!("context provider `{id}` is unreachable: {error}"))
+            }
+            Self::NeedsEgressConsent { id, scopes } => Some(format!(
+                "context provider `{id}` refused: it sends workspace content off this machine \
+                 under scope(s) {} — add them to `context_providers.{id}.egress_consent` to allow it",
+                scopes.join(", ")
+            )),
+        }
+    }
+}
+
+/// Register every **enabled** external CGP provider from user config onto
+/// `host`, gating each on the conformance suite and on egress consent.
+///
+/// Returns one [`Admission`] per configured entry, in config order, so a
+/// caller can report refusals without inspecting the host. One provider's
+/// refusal never affects another's — the same isolation the query fan-out
+/// gives, applied at admission time.
+pub async fn register_external_providers(
+    host: &mut Host,
+    configured: &ContextProviderSettings,
+) -> Vec<Admission> {
+    let mut admissions = Vec::with_capacity(configured.len());
+    for (id, config) in configured {
+        admissions.push(admit_external_provider(host, id, config).await);
+    }
+    admissions
+}
+
+/// Admit one configured provider: validate → conformance-gate → connect →
+/// consent-gate.
+///
+/// The order matters. Conformance runs on its **own** connection, before the
+/// session host holds one, so a provider that fails is never registered even
+/// transiently — "refuse before it serves a turn" is only true if the refusal
+/// happens before registration, not after.
+async fn admit_external_provider(
+    host: &mut Host,
+    id: &str,
+    config: &ExternalContextProvider,
+) -> Admission {
+    if !config.enabled {
+        return Admission::Disabled { id: id.to_string() };
+    }
+    let endpoint = match config.target() {
+        Ok(endpoint) => endpoint,
+        Err(reason) => {
+            return Admission::Misconfigured {
+                id: id.to_string(),
+                reason,
+            };
+        }
+    };
+    if let Some(refusal) = conformance_refusal(id, conformance_target(&endpoint)).await {
+        return refusal;
+    }
+    match connect(host, id, &endpoint).await {
+        Ok(()) => {}
+        Err(error) => {
+            return Admission::Unreachable {
+                id: id.to_string(),
+                error,
+            };
+        }
+    }
+    grant_declared_egress_consent(host, id, config)
+}
+
+/// The conformance suite's view of a validated endpoint.
+fn conformance_target(endpoint: &ProviderEndpoint) -> ProviderTarget {
+    match endpoint {
+        ProviderEndpoint::Stdio { program, args } => ProviderTarget::Stdio {
+            program: program.clone(),
+            args: args.clone(),
+        },
+        ProviderEndpoint::Http { url } => ProviderTarget::Http { url: url.clone() },
+    }
+}
+
+/// Run the conformance suite against `target`, returning the refusal to
+/// report when it fails and `None` when the provider is clean.
+///
+/// Split out from [`admit_external_provider`] so the gate is exercisable
+/// against an in-process target — a scripted misbehaving provider proves the
+/// gate bites without needing a fixture binary on disk.
+async fn conformance_refusal(id: &str, target: ProviderTarget) -> Option<Admission> {
+    let report = run_conformance(target).await;
+    if report.passed() {
+        return None;
+    }
+    Some(Admission::NonConformant {
+        id: id.to_string(),
+        failures: report
+            .failures()
+            .map(|check| format!("{}: {}", check.name, check.evidence))
+            .collect::<Vec<_>>()
+            .join("; "),
+    })
+}
+
+/// Establish the transport and register the provider on the session host.
+async fn connect(host: &mut Host, id: &str, endpoint: &ProviderEndpoint) -> Result<(), String> {
+    let result = match endpoint {
+        ProviderEndpoint::Stdio { program, args } => host.add_stdio(id, program, args).await,
+        ProviderEndpoint::Http { url } => host.add_http(id, url.clone()).await,
+    };
+    result.map_err(|error| error.to_string())
+}
+
+/// Record the operator's declared consent, then re-evaluate the host's own
+/// gate — and refuse the provider if anything it declares is still uncovered.
+///
+/// Consent is matched against the scopes the provider declared **at handshake
+/// time**, not the ones config guessed at: a provider that quietly widened its
+/// egress since consent was granted is refused rather than grandfathered.
+fn grant_declared_egress_consent(
+    host: &mut Host,
+    id: &str,
+    config: &ExternalContextProvider,
+) -> Admission {
+    let Some(info) = host.provider(id).map(|p| p.info().clone()) else {
+        return Admission::Unreachable {
+            id: id.to_string(),
+            error: "provider vanished immediately after registration".to_string(),
+        };
+    };
+    let grantor = match &config.consent_grantor {
+        Some(who) => Grantor::Human(who.clone()),
+        None => Grantor::Human("local-operator".to_string()),
+    };
+    let now = now_rfc3339();
+    for scope in &config.egress_consent {
+        let scope = EgressScope::from_wire(scope.as_str());
+        host.record_receipt(ConsentReceipt::new(
+            id,
+            &info,
+            scope,
+            grantor.clone(),
+            now.clone(),
+        ));
+    }
+    // The legacy boolean contract: a provider declaring `egress` with NO
+    // scopes is gated on a plain consent record, which any declared consent
+    // satisfies. With no consent declared at all it stays gated below.
+    if info.data_flow.egress
+        && info.data_flow.egress_scopes.is_empty()
+        && !config.egress_consent.is_empty()
+    {
+        host.record_consent(ConsentRecord::new(
+            id,
+            info.data_flow.clone(),
+            config.egress_consent.join(", "),
+        ));
+    }
+
+    match host.consent().evaluate(id, &info) {
+        ConsentDecision::Permitted => Admission::Registered { id: id.to_string() },
+        ConsentDecision::NeedsConsent => Admission::NeedsEgressConsent {
+            id: id.to_string(),
+            scopes: vec!["egress".to_string()],
+        },
+        ConsentDecision::NeedsReceipts(scopes) => Admission::NeedsEgressConsent {
+            id: id.to_string(),
+            scopes: scopes.iter().map(|s| s.as_str().to_string()).collect(),
+        },
+    }
+}
+
 /// The `workspace-memory` capability declaration, shared by `session_host` and
 /// the conformance tests so the suite audits what actually ships.
 fn memory_capabilities() -> Capabilities {
@@ -344,6 +579,7 @@ pub struct HostRecall {
 ///
 /// Failed, timed-out, or budget-lying providers contribute nothing — their
 /// isolation is the point of routing through the host.
+///
 /// It also returns the fan-out's **usage report** — the per-request roll-up of
 /// which providers served how many frames, at what token cost, against which
 /// budget (`docs/context-reuse.md` §2).
@@ -1051,6 +1287,206 @@ mod tests {
             ),
             "the missing citation label must surface as a frame-validity failure"
         );
+    }
+
+    // External-provider seam (#453)
+    //
+    // The admission gate is exercised against IN-PROCESS targets: the gate's
+    // contract — refuse a non-conformant provider before it can serve a turn —
+    // is transport-independent, and an in-process target proves it without a
+    // fixture binary on disk. The transport wiring itself is `Host::add_stdio`
+    // / `add_http`, already covered by the protocol's own suite at the pin.
+
+    use crate::settings::ExternalContextProvider;
+    use crate::settings::context_providers::ContextTransport;
+
+    fn stdio_config(command: &str) -> ExternalContextProvider {
+        ExternalContextProvider {
+            transport: ContextTransport::Stdio,
+            command: Some(command.to_string()),
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
+    /// WITNESS (#453): the conformance suite is an ADMISSION gate. A provider
+    /// that serves a frame with no citation label — a real §3.4 violation —
+    /// must be refused, and must not end up registered on the session host.
+    #[tokio::test]
+    async fn a_non_conformant_provider_is_refused_before_it_can_serve_a_turn() {
+        let mut bare_id = frame("bare-id", 0.9, 8);
+        bare_id.citation_label = None;
+        let target = ProviderTarget::InProcess(scripted("rogue", vec![bare_id]));
+
+        let refusal = conformance_refusal("rogue", target)
+            .await
+            .expect("a frame with no citation label must not be admitted");
+        match &refusal {
+            Admission::NonConformant { id, failures } => {
+                assert_eq!(id, "rogue");
+                assert!(
+                    failures.contains(CHECK_FRAME_VALIDITY),
+                    "the refusal must name the contract that broke: {failures}"
+                );
+            }
+            other => panic!("expected a conformance refusal, got {other:?}"),
+        }
+        assert!(!refusal.registered());
+        assert!(refusal.refusal().is_some(), "a refusal is explained");
+    }
+
+    /// The gate passes a genuinely conformant provider — otherwise "refused"
+    /// would be indistinguishable from "the gate rejects everything".
+    #[tokio::test]
+    async fn a_conformant_provider_clears_the_admission_gate() {
+        let target = ProviderTarget::InProcess(scripted("good", vec![frame("f1", 0.5, 4)]));
+        assert!(
+            conformance_refusal("good", target).await.is_none(),
+            "a conformant provider must not be refused"
+        );
+    }
+
+    /// WITNESS (#453): a declared-but-disabled provider is never spawned, never
+    /// conformance-probed, and never registered. `enabled` defaults false, so
+    /// merely appearing in config — including a merged-in org scope — cannot
+    /// put a provider in the recall path.
+    #[tokio::test]
+    async fn a_disabled_provider_is_never_reached() {
+        let mut host = Host::new();
+        let mut configured = ContextProviderSettings::new();
+        configured.insert("off".to_string(), {
+            let mut config = stdio_config("definitely-not-a-real-program-451");
+            config.enabled = false;
+            config
+        });
+        let admissions = register_external_providers(&mut host, &configured).await;
+        assert_eq!(admissions, vec![Admission::Disabled { id: "off".into() }]);
+        assert!(
+            host.provider_ids().is_empty(),
+            "a disabled entry must not register"
+        );
+    }
+
+    /// A malformed entry is reported as configuration — naming the missing
+    /// field — rather than surfacing later as a process that would not start.
+    #[tokio::test]
+    async fn a_transport_missing_its_required_field_is_a_config_refusal() {
+        let mut host = Host::new();
+        let mut configured = ContextProviderSettings::new();
+        configured.insert(
+            "broken".to_string(),
+            ExternalContextProvider {
+                transport: ContextTransport::Http,
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        let admissions = register_external_providers(&mut host, &configured).await;
+        match &admissions[0] {
+            Admission::Misconfigured { id, reason } => {
+                assert_eq!(id, "broken");
+                assert!(reason.contains("`url`"), "{reason}");
+            }
+            other => panic!("expected a config refusal, got {other:?}"),
+        }
+        assert!(host.provider_ids().is_empty());
+    }
+
+    /// An unspawnable program is a per-provider refusal, not a session
+    /// failure: the remaining sources keep serving.
+    #[tokio::test]
+    async fn an_unreachable_provider_is_refused_without_taking_the_session_down() {
+        let mut host = Host::new();
+        let mut configured = ContextProviderSettings::new();
+        configured.insert(
+            "ghost".to_string(),
+            stdio_config("stella-no-such-cgp-provider-451"),
+        );
+        let admissions = register_external_providers(&mut host, &configured).await;
+        assert!(
+            !admissions[0].registered(),
+            "a program that cannot be reached must not be admitted: {:?}",
+            admissions[0]
+        );
+        assert_eq!(admissions[0].id(), "ghost");
+        assert!(admissions[0].refusal().is_some());
+        assert!(host.provider_ids().is_empty());
+    }
+
+    /// An egress provider with declared consent for every off-machine scope
+    /// it advertises is permitted; the same provider with no consent is not.
+    /// This is the path that has never fired, because every built-in is
+    /// `egress: false`.
+    #[tokio::test]
+    async fn egress_consent_gates_a_provider_that_sends_content_off_the_machine() {
+        use contextgraph_host::ConsentDecision;
+
+        let info = ProviderInfo {
+            name: "acme".to_string(),
+            version: "1".to_string(),
+            data_flow: DataFlow {
+                reads: true,
+                writes: false,
+                egress: true,
+                egress_scopes: vec![EgressScope::ThirdPartyIndex],
+            },
+        };
+
+        // No consent recorded: the host refuses to transmit, so the query
+        // payload — which carries workspace content — never leaves.
+        let bare = Host::new();
+        assert_eq!(
+            bare.consent().evaluate("acme", &info),
+            ConsentDecision::NeedsReceipts(vec![EgressScope::ThirdPartyIndex]),
+            "an unconsented egress scope must gate before any payload moves"
+        );
+
+        // The receipt the admission path writes from config unlocks exactly
+        // that scope, and nothing wider.
+        let mut consented = Host::new();
+        consented.record_receipt(ConsentReceipt::new(
+            "acme",
+            &info,
+            EgressScope::ThirdPartyIndex,
+            Grantor::Human("ada@acme.test".into()),
+            "2026-07-24T00:00:00Z",
+        ));
+        assert_eq!(
+            consented.consent().evaluate("acme", &info),
+            ConsentDecision::Permitted
+        );
+
+        // A receipt for a DIFFERENT scope does not unlock this one — consent
+        // is per-scope, never a blanket egress switch.
+        let mut wrong_scope = Host::new();
+        wrong_scope.record_receipt(ConsentReceipt::new(
+            "acme",
+            &info,
+            EgressScope::OrgTenant,
+            Grantor::Human("ada@acme.test".into()),
+            "2026-07-24T00:00:00Z",
+        ));
+        assert_eq!(
+            wrong_scope.consent().evaluate("acme", &info),
+            ConsentDecision::NeedsReceipts(vec![EgressScope::ThirdPartyIndex]),
+            "consent granted for one scope must not silently cover another"
+        );
+    }
+
+    /// Every built-in stays `egress: false`, which is why the consent prompt
+    /// has never fired — and must keep not firing.
+    #[tokio::test]
+    async fn the_in_tree_providers_still_declare_no_egress() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = ContextStore::open(dir.path().join("context.db")).expect("store");
+        let host = session_host(Arc::new(store), vec![], dir.path().to_path_buf());
+        for id in host.provider_ids() {
+            let info = host.provider(id).expect("registered").info();
+            assert!(
+                !info.data_flow.egress,
+                "built-in `{id}` must never egress without consent"
+            );
+        }
     }
 
     #[test]

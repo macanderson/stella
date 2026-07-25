@@ -168,6 +168,53 @@ impl SessionMemory {
         }
     }
 
+    /// Register every enabled external CGP context provider from settings onto
+    /// this session's host (#453).
+    ///
+    /// Async and separate from [`SessionMemory::open`] because admission does
+    /// real I/O — it spawns or connects to each provider and runs the
+    /// protocol's conformance suite against it — and `open` is called from
+    /// synchronous paths. A refusal is reported, never fatal: the session
+    /// continues on its in-tree sources, which is the same crash-isolation
+    /// discipline the query fan-out applies, moved to admission time.
+    ///
+    /// With no `context_providers` configured (the shipping default) this
+    /// costs one settings read and registers nothing.
+    pub async fn register_external_providers(
+        &mut self,
+        report: impl Fn(String),
+    ) -> Vec<crate::contextgraph::Admission> {
+        let configured = match crate::settings::Settings::load(&self.workspace_root) {
+            Ok(settings) => settings.context_providers,
+            Err(error) => {
+                report(format!(
+                    "external context providers disabled: settings unreadable: {error}"
+                ));
+                return Vec::new();
+            }
+        };
+        if configured.is_empty() {
+            return Vec::new();
+        }
+        let admissions =
+            crate::contextgraph::register_external_providers(&mut self.host, &configured).await;
+        let admitted: Vec<&str> = admissions
+            .iter()
+            .filter(|a| a.registered())
+            .map(|a| a.id())
+            .collect();
+        if !admitted.is_empty() {
+            report(format!(
+                "external context providers admitted: {}",
+                admitted.join(", ")
+            ));
+        }
+        for refusal in admissions.iter().filter_map(|a| a.refusal()) {
+            report(refusal);
+        }
+        admissions
+    }
+
     fn workspace_skills_dir(&self) -> String {
         workspace_skills_dir(&self.workspace_root)
     }

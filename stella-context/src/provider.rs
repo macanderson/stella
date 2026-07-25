@@ -4,10 +4,16 @@
 //! the primary backend and a first-class provider), and the shipping CLI's
 //! session recall flows through this registry (`stella-cli/src/contextgraph.rs` wraps
 //! it as the `workspace-memory` CGP provider, registering the store domain-
-//! scoped). Wiring further sources through this seam — a `stella-graph`
-//! code-graph provider at this layer, a git-history provider, and external CGP
-//! providers adapted from `contextgraph-host` — is designed here but not yet built;
-//! this crate does not depend on `contextgraph-host`.
+//! scoped).
+//!
+//! **External providers register on the CGP host, not here.** Third-party
+//! stdio/HTTP sources are admitted by `stella-cli/src/contextgraph.rs`
+//! (`register_external_providers`, #453) straight onto the
+//! `contextgraph_host::Host`, gated on the protocol's conformance suite and on
+//! egress consent. This registry stays the seam for *in-plane* sources that
+//! share the workspace store's lifetime — a git-history provider, a future
+//! reflection source — which is why this crate still takes no dependency on
+//! `contextgraph-host`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
