@@ -3,7 +3,7 @@
 #
 # Deserializes into `stella_fleet::Plan` ([[tasks]]: id / title / prompt /
 # depends_on / isolation / claims). Built from the canonical spec bundle in
-# THIS directory. Normative inputs for every worker:
+# docs/design/adaptive-context/. Normative inputs for every worker:
 #   docs/design/adaptive-context/stella-adaptive-context-lifecycle.md
 #   docs/design/adaptive-context/adaptive-context-implementation-plan.md
 # Authority/working rules for every worker:
@@ -19,7 +19,7 @@
 #                                           # implementation branch (the build
 #                                           # prompt's multi-phase exception —
 #                                           # this fleet run IS that branch)
-#   stella fleet --plan docs/design/adaptive-context/fleet.plan.toml \
+#   stella fleet --plan docs/design/fleet.plan.toml \
 #     --max-concurrency 3 --budget 200
 #
 #   - Shared tree; same-crate work serialized via depends_on; declared claims
