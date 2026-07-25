@@ -388,6 +388,11 @@ pub fn compose_command(entry: &ScriptEntry, args: &[String]) -> String {
 
 /// Single-quote an argument unless it is a plain word — the composed line
 /// runs through `bash -c` (crate::exec), so args must never re-tokenize.
+///
+/// The plain-word fast path is behaviour, not cosmetics: the composed line is
+/// what `resolve_command_for_gate` hands the registry's `command.started`
+/// policy chain, and operators may match on it. Everything else delegates to
+/// the crate's one escaper, [`crate::exec::shell_quote`].
 fn shell_quote(s: &str) -> String {
     let plain = !s.is_empty()
         && s.chars()
@@ -395,7 +400,7 @@ fn shell_quote(s: &str) -> String {
     if plain {
         s.to_string()
     } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
+        crate::exec::shell_quote(s)
     }
 }
 

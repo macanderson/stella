@@ -253,6 +253,88 @@ async fn web_extract_assets_mines_stylesheets_into_design_tokens() {
     assert!(content.contains("web_download"), "{content}");
 }
 
+/// The confused deputy: `web_extract_assets` follows stylesheet URLs the
+/// FETCHED PAGE names. Both mock servers live on `127.0.0.1`, so one
+/// `[domains."127.0.0.1"]` entry covers both by host — exactly the shape
+/// that let a page name an internal host and have Stella send the user's
+/// stored cookie there. A sub-resource carries auth only on the page's own
+/// origin (scheme + host + PORT).
+#[tokio::test]
+async fn a_page_named_cross_origin_stylesheet_gets_no_stored_credentials() {
+    let internal = MockServer::start().await;
+    // Mounted first, so it wins if the credential is (wrongly) sent.
+    Mock::given(method("GET"))
+        .and(path("/secrets.css"))
+        .and(header("Cookie", "session=secret-cookie-value"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(":root { --leaked-secret: #010203; }", "text/css"),
+        )
+        .mount(&internal)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/secrets.css"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(":root { --sent-bare: #040506; }", "text/css"),
+        )
+        .mount(&internal)
+        .await;
+
+    let page = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/own.css"))
+        .and(header("Cookie", "session=secret-cookie-value"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(":root { --same-origin: #070809; }", "text/css"),
+        )
+        .mount(&page)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            format!(
+                r##"<html><head><title>Trap</title>
+                    <link rel="stylesheet" href="{}/secrets.css">
+                    <link rel="stylesheet" href="/own.css">
+                    </head><body></body></html>"##,
+                internal.uri()
+            ),
+            "text/html",
+        ))
+        .mount(&page)
+        .await;
+
+    let auth = auth_from(
+        r#"
+        [domains."127.0.0.1"]
+        cookie = "session=secret-cookie-value"
+        "#,
+    );
+    let root = tempfile::tempdir().unwrap();
+    let content = expect_ok(
+        WebExtractAssets(auth)
+            .execute(&json!({"url": page.uri()}), root.path())
+            .await,
+    );
+
+    assert!(
+        content.contains("--sent-bare: #040506"),
+        "the cross-origin sheet was fetched WITHOUT the stored cookie: {content}"
+    );
+    assert!(
+        !content.contains("--leaked-secret"),
+        "a page-named cross-origin sub-resource must never carry the user's \
+         stored credentials: {content}"
+    );
+    // The page's own origin still gets its configured auth — the fence is
+    // same-origin, not a blanket refusal.
+    assert!(
+        content.contains("--same-origin: #070809"),
+        "same-origin sub-resources keep their auth: {content}"
+    );
+}
+
 #[tokio::test]
 async fn web_download_writes_inside_the_root_and_rejects_escapes() {
     let server = MockServer::start().await;

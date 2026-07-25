@@ -17,6 +17,14 @@
 //! and would follow the redirect, so scope custom-header secrets to hosts
 //! you trust to redirect.
 //!
+//! Sub-resources named by a fetched page (`web_extract_assets`' stylesheet
+//! list) are fetched SAME-ORIGIN-ONLY with respect to auth: scheme, host and
+//! port must all match the page's final URL, or the request goes out bare.
+//! Without that fence a page could name `https://internal.corp/secrets.css`
+//! and have Stella issue a credentialed request the user never authorized —
+//! a confused deputy the SSRF note below does not cover, because the URL is
+//! chosen by the page rather than by the operator.
+//!
 //! No SSRF guard: an opted-in session can fetch any http(s) URL the host can
 //! reach — including `localhost` and cloud metadata endpoints. This is
 //! deliberate (matching the `bash` opt-in, and required for the "fetch my
@@ -161,9 +169,31 @@ struct Fetched {
     authed_domain: Option<String>,
 }
 
+/// Two URLs share an origin when scheme, host and port all match — the
+/// web's own definition, not just the host. `https://x/` and `http://x/` are
+/// deliberately different origins: a page that downgrades a sub-resource to
+/// plaintext must not take the user's cookie with it.
+fn same_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 /// GET `url_str` with the configured per-domain auth, streaming at most
 /// `cap` bytes. Non-2xx is an error carrying a login hint on 401/403.
-async fn fetch_raw(url_str: &str, auth: &WebAuthConfig, cap: usize) -> Result<Fetched, String> {
+///
+/// `auth_origin` is the confused-deputy fence for PAGE-NAMED sub-resources:
+/// when `Some(page)`, the `web_auth.toml` entry is attached only if this URL
+/// shares `page`'s origin. It gates the lookup rather than the call site
+/// because `WebAuthConfig::for_host` matches subdomains too — an attacker
+/// page naming `https://internal.corp/x.css` would otherwise have Stella
+/// issue a credentialed request the user never authorized.
+async fn fetch_raw(
+    url_str: &str,
+    auth: &WebAuthConfig,
+    cap: usize,
+    auth_origin: Option<&Url>,
+) -> Result<Fetched, String> {
     let url = Url::parse(url_str).map_err(|e| format!("invalid URL `{url_str}`: {e}"))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err(format!(
@@ -175,7 +205,13 @@ async fn fetch_raw(url_str: &str, auth: &WebAuthConfig, cap: usize) -> Result<Fe
         .host_str()
         .ok_or_else(|| format!("URL `{url_str}` has no host"))?
         .to_string();
-    let domain_auth = auth.for_host(&host);
+    // Cross-origin sub-resource: no cookie, no Authorization, no custom
+    // headers — and no per-domain User-Agent either, since none of that
+    // configuration was meant for a host the fetched page chose.
+    let domain_auth = match auth_origin {
+        Some(origin) if !same_origin(&url, origin) => None,
+        _ => auth.for_host(&host),
+    };
     let user_agent = domain_auth
         .and_then(|(_, a)| a.user_agent.as_deref())
         .or(auth.defaults.user_agent.as_deref())
@@ -571,7 +607,7 @@ impl Tool for WebFetch {
             .unwrap_or(DEFAULT_MAX_LENGTH)
             .clamp(200, 400_000);
 
-        let fetched = match fetch_raw(url, auth, FETCH_CAP_BYTES).await {
+        let fetched = match fetch_raw(url, auth, FETCH_CAP_BYTES, None).await {
             Ok(f) => f,
             Err(message) => return ToolOutput::Error { message },
         };
@@ -690,7 +726,7 @@ impl Tool for WebExtractAssets {
             .unwrap_or(DEFAULT_MAX_STYLESHEETS)
             .clamp(0, 24);
 
-        let fetched = match fetch_raw(url, auth, FETCH_CAP_BYTES).await {
+        let fetched = match fetch_raw(url, auth, FETCH_CAP_BYTES, None).await {
             Ok(f) => f,
             Err(message) => return ToolOutput::Error { message },
         };
@@ -724,7 +760,10 @@ impl Tool for WebExtractAssets {
                 ));
                 continue;
             }
-            match fetch_raw(sheet_url, auth, FETCH_CAP_BYTES).await {
+            // Same-origin only: the stylesheet list comes from the FETCHED
+            // PAGE, so a hostile page could otherwise point Stella's stored
+            // credentials at an internal host of its choosing.
+            match fetch_raw(sheet_url, auth, FETCH_CAP_BYTES, Some(&fetched.final_url)).await {
                 Ok(sheet) => {
                     let text = String::from_utf8_lossy(&sheet.bytes);
                     if let Ok(sheet_base) = Url::parse(sheet_url) {
@@ -876,7 +915,7 @@ impl Tool for WebDownload {
                 message: format!("path `{path}` escapes the workspace root"),
             };
         };
-        let fetched = match fetch_raw(url, auth, DOWNLOAD_CAP_BYTES).await {
+        let fetched = match fetch_raw(url, auth, DOWNLOAD_CAP_BYTES, None).await {
             Ok(f) => f,
             Err(message) => return ToolOutput::Error { message },
         };
@@ -889,14 +928,20 @@ impl Tool for WebDownload {
                 ),
             };
         }
-        if let Some(parent) = full.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            return ToolOutput::Error {
-                message: format!("cannot create {}: {e}", parent.display()),
-            };
+        // `tokio::fs` like every other file-writing tool in the crate: this
+        // is an async `execute` and the payload is up to DOWNLOAD_CAP_BYTES,
+        // so a blocking write here parks a runtime worker for 64 MB. A
+        // let-chain condition cannot host the `.await`, hence the `match`.
+        let parent_ready = match full.parent() {
+            Some(parent) => tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("cannot create {}: {e}", parent.display())),
+            None => Ok(()),
+        };
+        if let Err(message) = parent_ready {
+            return ToolOutput::Error { message };
         }
-        if let Err(e) = std::fs::write(&full, &fetched.bytes) {
+        if let Err(e) = tokio::fs::write(&full, &fetched.bytes).await {
             return ToolOutput::Error {
                 message: format!("cannot write {}: {e}", full.display()),
             };
@@ -1004,6 +1049,39 @@ mod tests {
             "#,
         );
         assert!(typo.is_err(), "unknown keys must be a loud parse error");
+    }
+
+    /// The fence `web_extract_assets` puts between a page and the user's
+    /// stored credentials. A stylesheet URL the PAGE chose only carries auth
+    /// when it is the page's own origin — scheme, host AND port.
+    #[test]
+    fn same_origin_is_scheme_host_and_port() {
+        let page = Url::parse("https://example.com/docs/index.html").unwrap();
+        for same in [
+            "https://example.com/a.css",
+            "https://example.com:443/nested/a.css",
+        ] {
+            assert!(
+                same_origin(&Url::parse(same).unwrap(), &page),
+                "{same} is the page's own origin"
+            );
+        }
+        for different in [
+            // The confused deputy from the audit: a page naming an internal
+            // host to have Stella send that host's stored cookie.
+            "https://internal.corp/secrets.css",
+            // `for_host` matches subdomains, which is why the fence must sit
+            // at the lookup rather than at the caller.
+            "https://cdn.example.com/a.css",
+            // A downgrade must not carry the cookie either.
+            "http://example.com/a.css",
+            "https://example.com:8443/a.css",
+        ] {
+            assert!(
+                !same_origin(&Url::parse(different).unwrap(), &page),
+                "{different} must not be treated as the page's origin"
+            );
+        }
     }
 
     #[test]

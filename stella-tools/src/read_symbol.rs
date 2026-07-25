@@ -108,8 +108,8 @@ impl Tool for ReadSymbol {
         if spans.is_empty() {
             return ToolOutput::Error {
                 message: format!(
-                    "no definition of `{name}` in the code graph (index may be stale — \
-                     `stella init` re-indexes) — try graph_query references, or grep"
+                    "no definition of `{name}` in the code graph (index may be \
+                     stale — `stella init` re-indexes) — try graph_query references, or grep"
                 ),
             };
         }
@@ -172,8 +172,9 @@ impl Tool for ReadSymbol {
                 let mut out = format!("{}\n{content}", citation(span));
                 if span_lines > crate::read::MAX_LINES {
                     out.push_str(&format!(
-                        "\n(note: the span is {span_lines} lines and only the first {} are \
-                         shown — read_file offset={} continues it)",
+                        "\n(note: the span is {span_lines} lines and at most the first {} are \
+                         shown — read_file's own footer above is the exact count; \
+                         read_file offset={} continues it)",
                         crate::read::MAX_LINES,
                         span.start_line as usize + crate::read::MAX_LINES
                     ));
