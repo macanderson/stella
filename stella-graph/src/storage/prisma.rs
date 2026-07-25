@@ -227,7 +227,7 @@ fn decode_model(
         }
         if line.starts_with("@@") {
             doc.clear();
-            apply_block_attribute(line, &mut rel);
+            apply_block_attribute(line, &mut rel, &prisma_names);
             continue;
         }
         let Some((name, type_token, attrs)) = field_parts(line) else {
@@ -317,10 +317,20 @@ fn apply_field_attribute(attr: &str, field: &mut FieldDef) {
     }
 }
 
-fn apply_block_attribute(line: &str, rel: &mut RelationDef) {
+/// Fold `@@id([…])` / `@@unique([…])` onto the columns they name.
+///
+/// The bracket list holds *Prisma field* names, which `@map` may have already
+/// renamed to a different database column — so the lookup goes through
+/// `prisma_names` (index-aligned with `rel.fields`) exactly as the
+/// `@relation(fields: …)` fold does. Matching on `FieldDef::name` instead
+/// would silently drop the constraint on every mapped column.
+fn apply_block_attribute(line: &str, rel: &mut RelationDef, prisma_names: &[String]) {
     let mark = |rel: &mut RelationDef, names: Vec<String>, constraint: &str, not_null: bool| {
         for name in names {
-            if let Some(field) = rel.fields.iter_mut().find(|f| f.name == name) {
+            let Some(at) = prisma_names.iter().position(|n| *n == name) else {
+                continue;
+            };
+            if let Some(field) = rel.fields.get_mut(at) {
                 if !field.constraints.iter().any(|c| c == constraint) {
                     field.constraints.push(constraint.to_string());
                 }
@@ -588,6 +598,34 @@ enum PaymentStatus {
         assert!(order_id.constraints.contains(&"PRIMARY KEY".to_string()));
         let qty = rel.fields.iter().find(|f| f.name == "qty").unwrap();
         assert!(!qty.constraints.contains(&"PRIMARY KEY".to_string()));
+    }
+
+    /// `@@id([userId])` names the Prisma *field*, while `@map` has already
+    /// renamed the column it produces. Resolving the list against the column
+    /// names would drop the constraint on every mapped key column — the gate
+    /// would then see a table with no primary key at all.
+    #[test]
+    fn composite_id_resolves_prisma_field_names_not_mapped_columns() {
+        let out = extract(
+            "model Membership {\n\
+             userId Int @map(\"user_id\")\n\
+             teamId Int @map(\"team_id\")\n\
+             @@id([userId, teamId])\n\
+             }\n",
+        );
+        let rel = relation(&out, "Membership");
+        for column in ["user_id", "team_id"] {
+            let field = rel
+                .fields
+                .iter()
+                .find(|f| f.name == column)
+                .unwrap_or_else(|| panic!("column {column} missing: {:?}", rel.fields));
+            assert!(
+                field.constraints.contains(&"PRIMARY KEY".to_string()),
+                "{column} lost its @@id: {:?}",
+                field.constraints
+            );
+        }
     }
 
     #[test]

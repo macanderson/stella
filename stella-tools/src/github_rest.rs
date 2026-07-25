@@ -83,11 +83,7 @@ impl GitHubRest {
                         .and_then(|m| m.as_str())
                         .map(str::to_string)
                 })
-                .unwrap_or_else(|| {
-                    let mut preview = text.clone();
-                    preview.truncate(300);
-                    preview
-                });
+                .unwrap_or_else(|| exec::truncate_preview(&text, 300));
             let hint = if status.as_u16() == 401 {
                 " — token may be expired; run `stella connect github` again"
             } else {

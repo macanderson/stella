@@ -13,7 +13,7 @@ engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
 | Interactive chat | `stella` / `stella chat` | Exploring, iterating, supervising | You, live |
 | One-shot run | `stella run "…"` | Scripts, CI, a single well-defined task | The [staged pipeline](/docs/inference-pipeline) |
 | Raw step loop | `stella run --no-pipeline "…"` | Quick questions, cheap tasks | The model stops when done |
-| Goal mode | `stella goal "…"` | An outcome, not a task list | An independent [judge](/docs/agent-modes/goal-mode) over staged-pipeline rounds (`--no-pipeline` for raw) |
+| Goal mode | `stella goal "…"` | An outcome, not a task list | An independent [judge](/docs/agent-modes#outcome-driven-goal-mode) over staged-pipeline rounds (`--no-pipeline` for raw) |
 | CI monitor | `stella monitor` | "Make CI green and keep it green" | The latest CI run, all-green |
 | Fleet | `stella fleet …` | Many tasks in parallel | Per task, in one shared tree with cooperative [claims](/docs/agent-fleets) (worktrees on opt-in) |
 

@@ -1,6 +1,15 @@
 # Design: Session-Shared Exploration Maps
 
-**Status:** Draft — not yet implemented.
+**Status:** Largely implemented — this is now a reference for shipped behaviour,
+not a proposal. `save_exploration` / `explorations` ship in `stella-tools`
+(`exploration.rs`), and the code cites this document by section as its normative
+source: the staleness oracle (§3b) in `stella-tools/src/staleness.rs`, save-time
+read-path capture (§3d) in `stella-tools/src/exploration.rs`, the prompt
+metadata block (§4a) in `stella-cli/src/agent/prompt.rs`, the Observatory
+startup index (§4e) in `stella-observatory/src/fsview.rs`, and the registry
+wiring (§6) in `stella-tools/src/registry.rs`. Sections carrying no such
+citation may still be aspirational — read the code before assuming a section
+describes the shipped behaviour.
 **Goal:** Any Stella session, at turn 1, knows every exploration map any session
 has ever produced in this workspace, knows *per file* whether each map is still
 valid, and knows what other **live** sessions are currently mapping — so the

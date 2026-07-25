@@ -511,15 +511,18 @@ impl UsageStatsRow {
 ///   (The CLI treats a failed open as observability loss — it warns once
 ///   and the session runs on without persistence.)
 /// - a `.gitignore` covering the *generated* artifacts (databases, their WAL
-///   siblings, the reflections mining log) is dropped once if absent, so
-///   transcripts are never committed and pushed by accident. Deliberately
-///   NOT `*`: settings.json, mcp.toml, tools/, skills/ and memories/ are
-///   user-authored and meant to be committable. Created with `create_new`
-///   so a file that appears concurrently is never truncated (no
-///   check-then-write TOCTOU): `AlreadyExists` — pre-existing or racing —
-///   means "leave it alone", and any other failure stays best-effort
-///   ignored (the DB open right after surfaces a genuinely unusable
-///   directory).
+///   siblings, the reflections mining log, and the whole `private/` subtree)
+///   is ensured, so transcripts are never committed and pushed by accident.
+///   Deliberately NOT `*`: settings.json, mcp.toml, tools/, skills/ and
+///   memories/ are user-authored and meant to be committable. An ABSENT file
+///   is written whole; an EXISTING one is read and gets a single `private/`
+///   line appended when it lacks one — the user's own entries and the file's
+///   mode are preserved, and a file that already ignores `private/` is left
+///   byte-for-byte alone (so reopening a workspace never rewrites it). Both
+///   writes go through the atomic temp+fsync+rename primitive.
+///   Failures here are NOT swallowed: they propagate and the store refuses to
+///   open, because a `.stella/` that cannot be made ignorable is one commit
+///   away from publishing a session's transcripts.
 fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
     let metadata = std::fs::symlink_metadata(dir)
         .map_err(|e| StoreError(format!("cannot inspect {}: {e}", dir.display())))?;
@@ -624,6 +627,19 @@ impl Store {
     fn migrate(&self) -> Result<()> {
         let mut conn = self.lock();
         let mut version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version < 0 {
+            // `user_version` is whatever is in the file header, and the header
+            // is not ours to trust: a negative stamp would index MIGRATIONS
+            // with a wrapped `usize` and panic, taking the session down with
+            // it. Persistence failing is observability loss (the CLI warns and
+            // runs on); persistence PANICKING is a work stoppage.
+            return Err(StoreError(format!(
+                "store.db carries a negative schema version ({version}), so it is not a \
+                 stella store or its header was overwritten. Move \
+                 .stella/private/store.db aside and reopen this workspace to start a \
+                 fresh one."
+            )));
+        }
         if version > SCHEMA_VERSION {
             // A downgrade guard, not a formality: older code writing into a
             // newer shape would silently violate whatever invariants the
@@ -711,7 +727,7 @@ impl Store {
         let seq = sqlite_i64("event sequence", seq)?;
         let payload = serde_json::to_string(event).map_err(|e| StoreError(e.to_string()))?;
         // Read the internally-tagged `type` from the parsed value rather than
-        // string-scanning for the first `"type":"` literal �� the scan silently
+        // string-scanning for the first `"type":"` literal — the scan silently
         // yields the wrong tag (or "unknown") if serialization is ever
         // pretty-printed, wrapped, or reordered.
         let event_type = serde_json::from_str::<serde_json::Value>(&payload)

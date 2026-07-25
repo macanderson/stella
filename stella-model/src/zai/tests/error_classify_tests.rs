@@ -1,5 +1,7 @@
-//! Provider HTTP error-classification tests (issues #271 / #250), split
-//! out of `zai/tests.rs` to keep that file under the 1500-line ratchet cap.
+//! Provider HTTP error-classification tests (issues #271 / #250), split out
+//! of `zai/tests.rs` to keep that file navigable — the status ladder
+//! (401/402/403/429/5xx/invalid-model) is one coherent subject and reads
+//! better on its own than buried among the dialect and streaming tests.
 //! `use super::*;` re-exports the parent test module's helpers and imports.
 
 use super::*;

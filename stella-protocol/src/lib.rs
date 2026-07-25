@@ -1,11 +1,22 @@
-//! `stella-protocol` — serde types shared by every crate in the `stella-cli`
-//! workspace: agent events, tool schemas, trace records, and provider
-//! request/response envelopes.
+//! `stella-protocol` — the serde vocabulary every crate in the `stella-cli`
+//! workspace shares: agent events, tool schemas, multimodal attachments,
+//! model roles, prompt-cache diagnoses, adaptive-context lifecycle events,
+//! provider request/response envelopes, and the [`Provider`] port itself.
 //!
 //! Zero logic, zero I/O. This is the stability contract of the whole
-//! workspace — any
-//! type here that crosses a process/protocol boundary must round-trip through
-//! `serde_json` byte-for-byte (see the `roundtrip` tests in each module).
+//! workspace — any type here that crosses a process/protocol boundary must
+//! round-trip through `serde_json` byte-for-byte (see the round-trip tests in
+//! each module).
+//!
+//! Wire compatibility is additive, but in exactly **one** direction. New
+//! *fields* ride `serde(default)`, so a newer binary parses every older
+//! stream. New [`AgentEvent`] *variants* do not travel backwards: the enum is
+//! internally tagged, so an older binary meets an unrecognized `"type"` with a
+//! hard deserialization error. An event that must survive being read by an
+//! older binary rides the versioned
+//! [`context_event::LifecycleEventEnvelope`] instead, whose payload stays raw.
+
+#![forbid(unsafe_code)]
 
 pub mod attachment;
 pub mod cache;

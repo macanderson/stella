@@ -1,8 +1,8 @@
-//! Live, in-process incremental re-index while a session runs
-//! ("The code-graph watcher is an in-process
-//! `notify` task alive only while a session runs" — no daemon, no background
-//! network listener). Filesystem events are debounced so an editor's
-//! save-storm collapses into a single re-index batch.
+//! Live, in-process incremental re-index while a session runs: the
+//! code-graph watcher is an in-process `notify` task alive only for the
+//! length of a session — no daemon, no background network listener.
+//! Filesystem events are debounced so an editor's save-storm collapses into
+//! a single re-index batch.
 //!
 //! The watcher only *feeds paths*; the actual re-index is one transactional
 //! [`crate::store::apply_changes`] batch (L-L1), run on the blocking pool so

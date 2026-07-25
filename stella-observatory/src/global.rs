@@ -61,11 +61,16 @@ fn open_usage() -> Option<Connection> {
     if !path.exists() {
         return None;
     }
-    Connection::open_with_flags(
+    let conn = Connection::open_with_flags(
         &path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .ok()
+    .ok()?;
+    // Matches the writer's own `busy_timeout=5000`: the hub is written by every
+    // session on the machine, and a checkpoint mid-poll must make the dashboard
+    // wait, not report an empty project list.
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(5_000));
+    Some(conn)
 }
 
 /// Every project `usage.db` knows about, with its rollup headline numbers.

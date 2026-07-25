@@ -71,19 +71,24 @@ pub(super) fn extract(grammars: &Grammars, lang: Language, source: &str) -> Stor
 const DRIZZLE_TABLE_FNS: &[&str] = &["pgTable", "sqliteTable", "mysqlTable"];
 
 fn extract_drizzle(root: Node, src: &[u8], out: &mut StorageExtract) {
+    // Collected once and reused by all three passes below: each call walks the
+    // whole tree, and re-walking it per pass tripled the adapter's cost on
+    // every drizzle file for an identical result.
+    let declarators = variable_declarators(root, src);
+
     // Pre-pass: `pgSchema("billing")` vars, `pgEnum("name", [...])` vars,
     // and table vars (for `.references(() => users.id)` resolution).
     let mut schema_vars: HashMap<String, String> = HashMap::new();
     let mut enum_vars: HashMap<String, (String, Vec<String>)> = HashMap::new();
     let mut table_vars: HashMap<String, String> = HashMap::new();
-    for (var, value) in variable_declarators(root, src) {
-        let Some((callee, args)) = call_with_args(value, src) else {
+    for (var, value) in &declarators {
+        let Some((callee, args)) = call_with_args(*value, src) else {
             continue;
         };
         let bare = callee.rsplit('.').next().unwrap_or(&callee);
         if bare == "pgSchema" || bare == "mysqlSchema" {
             if let Some(name) = first_string_arg(args, src) {
-                schema_vars.insert(var, name);
+                schema_vars.insert(var.clone(), name);
             }
         } else if bare == "pgEnum" {
             if let Some(name) = first_string_arg(args, src) {
@@ -91,18 +96,19 @@ fn extract_drizzle(root: Node, src: &[u8], out: &mut StorageExtract) {
                     .get(1)
                     .map(|n| string_array(*n, src))
                     .unwrap_or_default();
-                enum_vars.insert(var, (name, values));
+                enum_vars.insert(var.clone(), (name, values));
             }
         } else if drizzle_table_call(&callee, &schema_vars).is_some()
             && let Some(name) = first_string_arg(args, src)
         {
-            table_vars.insert(var, name);
+            table_vars.insert(var.clone(), name);
         }
     }
 
     // Emit enums in source order.
-    for (var, value) in variable_declarators(root, src) {
-        if let Some((name, values)) = enum_vars.get(&var)
+    for (var, value) in &declarators {
+        let value = *value;
+        if let Some((name, values)) = enum_vars.get(var)
             && call_with_args(value, src).is_some()
         {
             out.relations.push(RelationDef {
@@ -119,7 +125,8 @@ fn extract_drizzle(root: Node, src: &[u8], out: &mut StorageExtract) {
         }
     }
 
-    for (_, value) in variable_declarators(root, src) {
+    for (_, value) in &declarators {
+        let value = *value;
         let Some((callee, args)) = call_with_args(value, src) else {
             continue;
         };

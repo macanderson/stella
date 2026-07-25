@@ -86,7 +86,14 @@ impl Clock for FixedClock {
 /// Uses Howard Hinnant's `civil_from_days` algorithm (public-domain, exact for
 /// the full proleptic Gregorian range) so there is no dependency and no
 /// off-by-one at month/year boundaries. Negative inputs (pre-1970) render
-/// correctly too, which keeps the formatter total.
+/// correctly too, which keeps the formatter total — no input panics.
+///
+/// The fixed-width, sortable-as-a-string property that bi-temporal range scans
+/// rely on holds for years 0–9999, where the zero-padded year field is exactly
+/// four characters. Outside it the field widens (past 9999) or takes a sign
+/// (before year 0), and string order stops tracking time order. Both ends are
+/// unreachable from a plausible system clock: a clock skewed that far still
+/// renders, it just no longer sorts.
 pub fn format_rfc3339(unix_secs: i64) -> String {
     let days = unix_secs.div_euclid(86_400);
     let secs_of_day = unix_secs.rem_euclid(86_400);

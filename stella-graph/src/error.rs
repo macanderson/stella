@@ -1,8 +1,8 @@
 //! Error type for the code-graph indexer.
 //!
-//! Per ("Fail loud, recover gracefully") every
-//! fallible boundary returns a typed `thiserror` error rather than panicking.
-//! The one hot-path subtlety this crate adds ( quality
+//! Per the "fail loud, recover gracefully" rule, every fallible boundary
+//! returns a typed `thiserror` error rather than panicking.
+//! The one hot-path subtlety this crate adds (the indexer's quality
 //! bar): a tree-sitter *parse* failure on an arbitrary file is **not** a
 //! `GraphError` — it is skipped-with-record inside the indexer so one
 //! unparseable file never aborts a whole index batch (L-L1). `GraphError` is
@@ -19,9 +19,8 @@ pub enum GraphError {
     #[error("code-graph store error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 
-    /// Filesystem I/O failed with the path that faulted attached for
-    /// debugging ( L-T8: a path turns "cannot
-    /// reproduce" into a fix).
+    /// Filesystem I/O failed, with the path that faulted attached for
+    /// debugging (L-T8: a path turns "cannot reproduce" into a fix).
     #[error("code-graph i/o error at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -34,8 +33,8 @@ pub enum GraphError {
     #[error("failed to load the {lang} grammar: {message}")]
     Grammar { lang: &'static str, message: String },
 
-    /// One of the crate's own compile-time `.scm` queries
-    /// ( L-L2) failed to compile against its grammar.
+    /// One of the crate's own compile-time `.scm` queries (L-L2) failed to
+    /// compile against its grammar.
     /// This is a programmer error caught by the crate's own tests, surfaced
     /// as an error rather than a panic so a mis-edit degrades loudly instead
     /// of aborting a host process.

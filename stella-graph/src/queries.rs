@@ -1,6 +1,6 @@
 //! Tree-sitter S-expression queries, one pair (symbols + imports) per
 //! language, as `const &str` **compile-time data** — never loaded from a file
-//! at runtime ( L-L2: built-in assets that resolve
+//! at runtime (L-L2: built-in assets that resolve
 //! relative to the binary's install path broke the moment the artifact was
 //! bundled differently; embedding them as module data is the fix).
 //!

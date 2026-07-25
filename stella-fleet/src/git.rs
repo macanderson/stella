@@ -1,4 +1,4 @@
-//! Git-worktree isolation ("git-worktree isolation").
+//! Git-worktree isolation: a dedicated checkout per divergent task.
 //!
 //! We shell out to the `git` binary through the [`GitCli`] port rather than
 //! linking libgit2/git2 — a deliberate design constraint: the native build is
@@ -193,19 +193,27 @@ fn path_arg(path: &Path) -> Result<&str, WorktreeError> {
 }
 
 /// Turn a task id into a filesystem/branch-safe slug: keep alphanumerics and
-/// `. _ -`, replace everything else with `-`, trim leading/trailing `-`/`.`
-/// (git refs may not start with them), and never yield empty.
+/// `. _ -`, replace everything else with `-`, collapse a run of dots to one,
+/// trim leading/trailing `-`/`.` (git refs may not start with them), and never
+/// yield empty.
 fn slugify(task_id: &str) -> String {
-    let mapped: String = task_id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
+    let mut mapped = String::with_capacity(task_id.len());
+    for c in task_id.chars() {
+        let c = if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+            c
+        } else {
+            '-'
+        };
+        // `git check-ref-format` rejects any ref containing `..` (that is
+        // revision-range syntax), so a task id like `v1..v2` would otherwise
+        // slug into a branch `worktree add -b` refuses outright — a whole task
+        // lost to a cryptic git error at dispatch. Collapse the run instead;
+        // the hash suffix keeps distinct ids distinct anyway.
+        if c == '.' && mapped.ends_with('.') {
+            continue;
+        }
+        mapped.push(c);
+    }
     let trimmed = mapped.trim_matches(['-', '.']);
     if trimmed.is_empty() {
         "task".to_string()
@@ -278,6 +286,7 @@ impl<G: GitCli> WorktreeManager<G> {
     /// Scope worktree/branch names to one run (builder style): the scope is
     /// hashed into every slug, so two runs sharing task ids never collide on
     /// a directory or branch left behind by the earlier run.
+    #[must_use]
     pub fn with_run_scope(mut self, scope: impl Into<String>) -> Self {
         self.run_scope = scope.into();
         self
@@ -526,6 +535,11 @@ mod tests {
         assert_eq!(slugify("--weird--"), "weird");
         assert_eq!(slugify("///"), "task");
         assert_eq!(slugify("t0"), "t0");
+        // A dot run would be revision-range syntax in a ref name; git refuses
+        // such a branch outright, so the slug collapses it.
+        assert_eq!(slugify("v1..v2"), "v1.v2");
+        assert_eq!(slugify("a...b"), "a.b");
+        assert_eq!(slugify(".."), "task");
     }
 
     // create

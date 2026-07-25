@@ -352,8 +352,13 @@ pub trait CandidateWorkspacePort: Send + Sync {
 /// best-of-N fan-out and folded into every candidate's shared message
 /// history, instead of N candidates each independently paying to look up the
 /// same external context — the common "candidates all need the same DB
-/// schema / ticket context" case. Never consulted on a single-shot run
-/// (`candidates <= 1`); see `Pipeline::run_best_of_n`.
+/// schema / ticket context" case.
+///
+/// Consulted exactly where the isolated-candidate path runs
+/// (`Pipeline::run_best_of_n`), which is `candidates > 1` **and** the
+/// single-candidate authored-witness run — an authored witness needs a
+/// disposable workspace even at N=1, so it takes the same route. The plain
+/// single-shot path never reaches it.
 #[async_trait]
 pub trait McpPrefetchPort: Send + Sync {
     /// Best-effort: `None` when there is nothing worth injecting (no
@@ -457,9 +462,18 @@ impl ApprovalGate for AlwaysAbortGate {
     }
 }
 
-/// An [`ApprovalGate`] that prints the proposal to stdout and reads a
-/// y/n/trim response from stdin. For interactive text mode only — headless
-/// runs use [`AutoApproveGate`] or [`AlwaysAbortGate`].
+/// An [`ApprovalGate`] that prints the proposal to stdout and reads a y/n
+/// answer from stdin: `y`/`yes` approves, **everything else — including EOF,
+/// a read error, and the empty line — aborts**. Deliberately fail-closed, and
+/// deliberately without a [`ScopeDecision::Trim`] path: per-step selection
+/// needs a real prompt, and half-implementing it here would let a typo drop
+/// steps silently. For interactive text mode only — headless runs use
+/// [`AutoApproveGate`] or [`AlwaysAbortGate`], and the TUI supplies its own
+/// gate.
+///
+/// Note that [`ApprovalGate::review`] is `async` while this reads stdin with
+/// blocking I/O, so it parks the calling runtime thread until the user
+/// answers.
 pub struct StdioApprovalGate;
 
 #[async_trait]
@@ -477,7 +491,9 @@ impl ApprovalGate for StdioApprovalGate {
             println!("  │ est. cost: ${cost:.4}");
         }
         println!("  └──────────────────────────────────────────────");
-        print!("  Approve? [y/N/a=bort]: ");
+        // `[y/N]`, not `[y/N/a=bort]`: there is no third branch below, so
+        // offering one told the user about a choice that does not exist.
+        print!("  Approve? [y/N]: ");
         let _ = io::stdout().flush();
 
         let stdin = io::stdin();

@@ -51,8 +51,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, ContextFrameRef, ContextUsage, JudgeEvidence, ModelCallRole,
-    ModelRef, Provider, ProviderShare, Role, StageKind,
+    AgentEvent, CompletionMessage, ContextFrameRef, ContextUsage, JudgeEvidence, MessageRole,
+    ModelCallRole, ModelRef, Provider, ProviderShare, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -83,12 +83,12 @@ use crate::witness::{
 mod raw_usage;
 mod run_error;
 mod stage_budget;
-mod task5;
+mod witness_stage;
 use raw_usage::{RawCall, RawCallError};
 use run_error::RoleResolveError;
 pub use run_error::{PipelineError, PipelineRunError};
 use stage_budget::{PipelineBudgetAbort, budget_abort};
-use task5::BoundHookRunner;
+use witness_stage::BoundHookRunner;
 /// Make a diff that verification hands downstream *incapable of lying*.
 ///
 /// An empty diff is ambiguous: it can mean the agent genuinely changed
@@ -725,7 +725,19 @@ impl<'a> Pipeline<'a> {
         };
         match &status {
             PipelineStatus::Completed => self.emit(AgentEvent::Complete {
-                model: worker_model_label.unwrap_or_default(),
+                // The label is `None` only when the candidate path returned
+                // before it resolved a worker (a setup abort that then
+                // degraded to a bare run). Re-resolve rather than emit
+                // `Complete { model: "" }` — a terminal event that names no
+                // model reads to every consumer as "no model ran", which is
+                // exactly backwards on a path that did the work.
+                model: worker_model_label
+                    .or_else(|| {
+                        self.resolve_provider(Role::Worker)
+                            .ok()
+                            .map(|worker| worker.model_ref.to_string())
+                    })
+                    .unwrap_or_default(),
                 cost_usd: total_cost,
             }),
             PipelineStatus::VerificationFailed { verdict } => {
@@ -848,10 +860,23 @@ impl<'a> Pipeline<'a> {
             self.emit_fallback(fb);
         }
         // Keep the running conversation for coherent multi-turn small talk, but
-        // swap the leading (guaranteed — pushed in `run`) engineering system
-        // prompt for the conversational one so the reply is a chat turn.
+        // swap the leading engineering system prompt for the conversational one
+        // so the reply is a chat turn. Only ever *replace* a system message:
+        // `run` seeds one when the caller's history is empty, but a caller that
+        // seeded a non-system first message (the contract asks for a stable
+        // system prefix; nothing enforces it) must not have that message
+        // silently destroyed — prepend in front of it instead. The swap is
+        // local to `convo`, so the caller's own prefix — and its prompt-cache
+        // hits, L-E8 — survive the turn untouched.
         let mut convo = messages.clone();
-        convo[0] = CompletionMessage::system(CONVERSATIONAL_SYSTEM_PROMPT);
+        let leads_with_system = convo
+            .first()
+            .is_some_and(|message| matches!(message.role, MessageRole::System));
+        if leads_with_system {
+            convo[0] = CompletionMessage::system(CONVERSATIONAL_SYSTEM_PROMPT);
+        } else {
+            convo.insert(0, CompletionMessage::system(CONVERSATIONAL_SYSTEM_PROMPT));
+        }
 
         let overrides = RoleCallOverrides::default();
         let reply = match self
@@ -1063,16 +1088,13 @@ impl<'a> Pipeline<'a> {
 
     // Stage: execute + verify — candidate generation and selection
 
-    /// Run `n` candidates sequentially over the session ports (the real
-    /// working tree): the single-shot path, and the shared-tree degradation
-    /// of best-of-N when no [`CandidateWorkspacePort`] is wired.
-    #[allow(clippy::too_many_arguments)]
     /// Last-resort execution when candidate setup failed before the worker
     /// ever ran. Runs exactly one worker turn on the session tree — no
     /// isolation, no authored witness, the simplest path that still does the
     /// work. Returns `None` only when there is no resolvable worker provider
     /// (a true impossibility, not a degradable setup failure), in which case
     /// the caller keeps the original setup abort.
+    #[allow(clippy::too_many_arguments)]
     async fn degrade_to_bare_execution(
         &self,
         goal: &str,
@@ -1106,6 +1128,9 @@ impl<'a> Pipeline<'a> {
         .pop()
     }
 
+    /// Run `n` candidates sequentially over the session ports (the real
+    /// working tree): the single-shot path, and the shared-tree degradation
+    /// of best-of-N when no [`CandidateWorkspacePort`] is wired.
     #[allow(clippy::too_many_arguments)]
     async fn run_shared_candidates(
         &self,
@@ -1500,7 +1525,9 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Execute,
         });
-        let steps: Vec<&PlanStep> = plan.map(|p| p.iter().collect()).unwrap_or_default();
+        // Borrowed, not collected: the steps are only read, so materializing a
+        // `Vec<&PlanStep>` per candidate bought nothing.
+        let steps: &[PlanStep] = plan.unwrap_or_default();
         if steps.is_empty() {
             match self
                 .run_engine_turn(engine, &mut state.messages, budget, &mut state.file_changes)
@@ -1704,10 +1731,17 @@ impl<'a> Pipeline<'a> {
                         passed: true,
                         evidence: evidence.clone(),
                     });
+                    // Scored `Unverified`, NOT `DeterministicPass`: the run
+                    // passes, but no evidence was gathered for it. Claiming
+                    // the ladder's strongest score here would let a
+                    // review-waived candidate tie a genuinely flip-verified
+                    // sibling in best-of-N and then win the smaller-diff
+                    // tiebreak — selection would prefer the candidate that
+                    // proved the least.
                     return state.into_verified(
                         true,
                         &evidence,
-                        score_from_verification(true, None),
+                        score_from_verification(false, None),
                     );
                 }
                 LadderDecision::ModelJudge => {

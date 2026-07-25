@@ -45,6 +45,7 @@ impl AnthropicProvider {
 
     /// Override the base URL — used by conformance tests against a mock
     /// server, and by anyone routing through a private proxy.
+    #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self

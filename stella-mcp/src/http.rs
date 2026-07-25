@@ -79,6 +79,7 @@ impl HttpTransport {
 
     /// Attach an OAuth bearer supplier consulted on every request. When it
     /// yields a token, it *overrides* any static `Authorization` header.
+    #[must_use]
     pub fn with_bearer_source(mut self, source: Arc<OAuthTokenSource>) -> Self {
         self.bearer = Some(source);
         self
@@ -162,7 +163,14 @@ impl HttpTransport {
             }
             return Ok(response);
         }
-        unreachable!("send loop returns on every path within two attempts")
+        // Unreachable today: only a 401 on attempt 0 continues, so attempt 1
+        // always returns. Kept as a typed error rather than `unreachable!` so
+        // a future edit to the retry condition degrades into a bad request
+        // instead of panicking the agent mid-turn.
+        Err(McpError::Transport(format!(
+            "server `{}` did not answer within the allowed re-auth attempts",
+            self.server_name
+        )))
     }
 
     /// Read a `text/event-stream` body and return the JSON-RPC message that
@@ -260,8 +268,11 @@ impl Transport for HttpTransport {
     }
 }
 
-/// Char-boundary-safe truncation for diagnostic bodies.
-fn truncate(s: &str, max_chars: usize) -> String {
+/// Char-boundary-safe truncation for diagnostic bodies. Shared by every
+/// module that quotes an untrusted server's error body back to the user
+/// ([`crate::registry`], [`crate::oauth`]) — one implementation, one set of
+/// multi-byte tests, instead of three copies that could drift apart.
+pub(crate) fn truncate(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
     }

@@ -34,36 +34,45 @@ impl<'a> Pipeline<'a> {
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<CompletionResult, RawCallError> {
-        let messages = match &call.overrides.prompt {
+        // Destructured, so the caller-built message list is MOVED into the
+        // request instead of cloned. The conversational fast path hands this
+        // the whole running transcript, so the clone was a per-call copy of
+        // the entire history for no benefit — nothing reads `call` afterwards.
+        let RawCall {
+            role,
+            resolved,
+            messages,
+            policy,
+            overrides,
+            timeout,
+        } = call;
+        let messages = match &overrides.prompt {
             Some(prompt) => {
-                let mut with_system = Vec::with_capacity(call.messages.len() + 1);
+                let mut with_system = Vec::with_capacity(messages.len() + 1);
                 with_system.push(CompletionMessage::system(prompt.clone()));
-                with_system.extend(call.messages.clone());
+                with_system.extend(messages);
                 with_system
             }
-            None => call.messages.clone(),
+            None => messages,
         };
         let engine = &self.config.engine;
         let req = CompletionRequest {
             messages,
-            max_output_tokens: call
-                .overrides
-                .max_output_tokens
-                .or(engine.max_output_tokens),
-            temperature: call.overrides.temperature.or(engine.temperature),
-            effort: call.overrides.effort.or(engine.effort),
-            reasoning: call.overrides.reasoning.or(engine.reasoning),
-            params: call.overrides.params.or(engine.params),
+            max_output_tokens: overrides.max_output_tokens.or(engine.max_output_tokens),
+            temperature: overrides.temperature.or(engine.temperature),
+            effort: overrides.effort.or(engine.effort),
+            reasoning: overrides.reasoning.or(engine.reasoning),
+            params: overrides.params.or(engine.params),
             tools: Vec::new(),
         };
         match run_accounted_call(
             AccountedCall {
-                provider: call.resolved.provider,
-                role: call.role,
-                model_hint: call.resolved.model_ref.model_id.clone(),
+                provider: resolved.provider,
+                role,
+                model_hint: resolved.model_ref.model_id.clone(),
                 request: req,
-                retry_policy: call.policy,
-                timeout: call.timeout,
+                retry_policy: policy,
+                timeout,
                 estimated_input_tokens: 0,
             },
             budget,

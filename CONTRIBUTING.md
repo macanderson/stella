@@ -29,7 +29,7 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 | Contribution | Where to start | Effort |
 |---|---|---|
 | 🐛 **A bug report with a repro** | [Bug report form](https://github.com/macanderson/stella/issues/new?template=bug_report.yml) | 10 minutes |
-| 🧭 **Docs & examples** — fix a lie in the README before it fools someone else | Any `*.md` file, `--help` text, doc comments | Small |
+| 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `stella-docs/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `stella-model/src/` — copy the shape of an existing adapter | Medium |
 | 🛠 **A new built-in tool** | `stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](stella-tools/src/catalog.rs) | Medium |
 | 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — its own repo, no Stella code required | Medium |
@@ -75,15 +75,47 @@ cargo test --workspace
 
 Or just `make gate`, which is the four of them in order.
 
+**Run `make hooks` once per clone.** It points `core.hooksPath` at `.githooks`,
+whose `pre-push` hook runs `make gate` and aborts the push if it fails — so a
+red gate costs you thirty seconds locally instead of a review round-trip. It is
+advisory and per-clone (`SKIP_GATE=1 git push` bypasses it), not a substitute
+for the server-side checks.
+
 The first one asserts that no tracked file matches a `.gitignore` rule —
 agent-session scratch (repro trees, plans, memory files) must never reach the
 remote (#448). If it fails, either untrack the path with
 `git rm -r --cached <path>` (the files stay on your disk) or narrow the ignore
 rule that is catching real content.
 
+### Changing the docs
+
+The user-facing documentation is not in this repo's markdown — it is the MDX
+under `stella-docs/content/docs/`, published at
+[stella.oxagen.sh](https://stella.oxagen.sh). It needs Node ≥ 20 and pnpm, and
+nothing else; you never have to build Rust to fix a docs page:
+
+```bash
+pnpm install                 # once, from the repo root
+pnpm dev                     # the site at http://localhost:3400
+pnpm typecheck && pnpm build # what the docs CI job runs
+```
+
+Two rules the site enforces silently, so check both before you push:
+
+- Every page needs `title` and `description` frontmatter.
+- A new page must be added to the nearest `meta.json` `pages` array. That array
+  is an allowlist for the sidebar, not a build input — an unlisted page still
+  builds and still answers at its URL, it is just invisible.
+
+A docs-only PR runs the fast `docs` workflow instead of the Rust gate, and
+needs no witness test. Contributor-facing material — design specs, ADRs, the
+research papers — stays in [`docs/`](docs/README.md) instead; several of those
+specs are cited by `file:section` from Rust doc comments, so renaming one means
+chasing the citations in the same PR.
+
 ## Where does my change go? — a workspace tour
 
-Fourteen crates sounds like a lot; the rule of thumb is one sentence each:
+Fifteen crates sounds like a lot; the rule of thumb is one sentence each:
 
 | You want to… | Go to |
 |---|---|
@@ -101,15 +133,18 @@ Fourteen crates sounds like a lot; the rule of thumb is one sentence each:
 | Multimodal generation | `stella-media` |
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |
 | The Observatory telemetry dashboard (`stella observe`) | `stella-observatory` |
+| The headless engine server a host process drives over the wire | `stella-serve` (its own binary, not linked into the CLI) |
 | The Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) |
 
-All of the crates ship in the CLI today: `stella-pipeline` drives the default
+Every crate except `stella-serve` ships in the CLI today: `stella-pipeline` drives the default
 `stella run` path, `stella-fleet` powers `stella fleet`, `stella-tui` is the
 Command Deck (the default interactive shell on a TTY), and `stella-media`
 provides image generation via the `generate_image` tool. The context/graph
 plane is wired too — `stella init` builds the code-graph index and recall fans
-out through the CGP host. See the **status table** in the
-[README](README.md#workspace-layout).
+out through the CGP host. For what each crate is, see the crate table in the
+[README](README.md#workspace-layout); for what actually reaches a `stella`
+user, see **Status — what ships** in
+[AGENTS.md](AGENTS.md#workspace-layout--where-a-change-goes).
 
 ## The ground rules
 
@@ -187,6 +222,13 @@ fix(stella-tui): restore terminal on panic in raw mode
 docs(readme): correct provider table
 ci(release): sign macOS binaries
 ```
+
+**Close the issue you fixed.** Put `Closes #N` in the PR description *and* as a
+trailer on a commit. A `(#367)` in the PR **title** closes nothing — GitHub only
+reads closing keywords from the description and from commit messages. Both spots
+are needed because squash merges build the commit body from commit messages
+rather than the PR body, while the description drives GitHub's linked-issue
+close. Use `Refs #N` when a PR advances an issue without finishing it.
 
 **DCO, not CLA.** Sign every commit (`git commit -s`) to certify the
 [Developer Certificate of Origin](https://developercertificate.org/). You keep

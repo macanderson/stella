@@ -21,10 +21,14 @@ use tokio::sync::oneshot;
 
 use crate::error::ServeError;
 
+/// The reply channel a parked provider step awaits: either the host's completed
+/// model call, or the failure class it wants the engine's retry logic to see.
+type ProviderReply = oneshot::Sender<Result<CompletionResult, ProviderError>>;
+
 /// A registered reply channel, discriminated by the kind of request it answers.
 enum PendingReply {
     Tool(oneshot::Sender<ToolOutput>),
-    Provider(oneshot::Sender<Result<CompletionResult, ProviderError>>),
+    Provider(ProviderReply),
 }
 
 /// A cloneable handle to the shared registry. Cloning shares the same map.
@@ -42,29 +46,17 @@ impl Pending {
     }
 
     /// Register a provider reply channel under `id`.
-    pub(crate) fn register_provider(
-        &self,
-        id: String,
-        reply: oneshot::Sender<Result<CompletionResult, ProviderError>>,
-    ) {
+    pub(crate) fn register_provider(&self, id: String, reply: ProviderReply) {
         self.lock().insert(id, PendingReply::Provider(reply));
     }
 
     /// Resolve a tool request with the host-supplied output. Errors if `id` is
     /// unknown or names a provider request.
     pub fn resolve_tool(&self, id: &str, output: ToolOutput) -> Result<(), ServeError> {
-        match self.take(id)? {
-            PendingReply::Tool(tx) => {
-                // A receive-side drop (the engine step was cancelled) is not an
-                // error to the host: the request is simply gone.
-                let _ = tx.send(output);
-                Ok(())
-            }
-            other => {
-                self.reinsert(id, other);
-                Err(ServeError::RequestKindMismatch(id.to_string(), "tool"))
-            }
-        }
+        // A receive-side drop (the engine step was cancelled) is not an error to
+        // the host: the request is simply gone.
+        let _ = self.take_tool(id)?.send(output);
+        Ok(())
     }
 
     /// Resolve a provider request with the host-supplied result. Errors if `id`
@@ -74,16 +66,8 @@ impl Pending {
         id: &str,
         result: Result<CompletionResult, ProviderError>,
     ) -> Result<(), ServeError> {
-        match self.take(id)? {
-            PendingReply::Provider(tx) => {
-                let _ = tx.send(result);
-                Ok(())
-            }
-            other => {
-                self.reinsert(id, other);
-                Err(ServeError::RequestKindMismatch(id.to_string(), "provider"))
-            }
-        }
+        let _ = self.take_provider(id)?.send(result);
+        Ok(())
     }
 
     /// Drop every in-flight request. Their receivers observe a channel close,
@@ -93,14 +77,39 @@ impl Pending {
         self.lock().clear();
     }
 
-    fn take(&self, id: &str) -> Result<PendingReply, ServeError> {
-        self.lock()
-            .remove(id)
-            .ok_or_else(|| ServeError::UnknownRequest(id.to_string()))
+    /// Take the tool reply channel registered under `id`, leaving a
+    /// wrong-kinded entry untouched.
+    ///
+    /// The kind check and the removal happen under a *single* lock on purpose.
+    /// Removing first and re-inserting on a mismatch looks equivalent but is
+    /// not: during that window the id is absent from the map, so a correctly
+    /// kinded resolve racing a mis-kinded one is rejected as unknown — the host
+    /// sees a 409 for a result it will not send twice and the engine step stays
+    /// parked forever with nobody left to answer it.
+    fn take_tool(&self, id: &str) -> Result<oneshot::Sender<ToolOutput>, ServeError> {
+        let mut map = self.lock();
+        match map.remove(id) {
+            Some(PendingReply::Tool(tx)) => Ok(tx),
+            Some(other) => {
+                map.insert(id.to_string(), other);
+                Err(ServeError::RequestKindMismatch(id.to_string(), "tool"))
+            }
+            None => Err(ServeError::UnknownRequest(id.to_string())),
+        }
     }
 
-    fn reinsert(&self, id: &str, reply: PendingReply) {
-        self.lock().insert(id.to_string(), reply);
+    /// Take the provider reply channel registered under `id`. Same
+    /// single-lock discipline as [`Pending::take_tool`].
+    fn take_provider(&self, id: &str) -> Result<ProviderReply, ServeError> {
+        let mut map = self.lock();
+        match map.remove(id) {
+            Some(PendingReply::Provider(tx)) => Ok(tx),
+            Some(other) => {
+                map.insert(id.to_string(), other);
+                Err(ServeError::RequestKindMismatch(id.to_string(), "provider"))
+            }
+            None => Err(ServeError::UnknownRequest(id.to_string())),
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, PendingReply>> {

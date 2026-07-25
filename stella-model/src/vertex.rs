@@ -73,6 +73,7 @@ impl VertexProvider {
     /// Override the scheme+host — used by conformance tests against a mock
     /// server, and by anyone routing through a private proxy. The
     /// project/location path structure is preserved either way.
+    #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url_override = Some(base_url.into());
         self

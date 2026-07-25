@@ -1,5 +1,5 @@
-//! The hybrid, budgeted, cited retrieval pipeline (
-//! §2.3). [`ContextStore::recall`] fuses three signals
+//! The hybrid, budgeted, cited retrieval pipeline (arch §2.3).
+//! [`ContextStore::recall`] fuses three signals
 //! — vector similarity, recency, and 1-hop graph adjacency — via reciprocal-
 //! rank fusion, dedupes by content hash, diversifies with MMR, then **packs to
 //! the query's token budget and reports what was dropped** (silent truncation
@@ -9,9 +9,9 @@
 //! dressing weak context up as grounding (`L-C6`).
 //!
 //! The scoring/fusion/packing steps are plain synchronous functions over owned
-//! data — brute-force top-k cosine is fine at
-//! CLI-local scale; an ANN accelerator is a size-threshold follow-up.
-//! They are property-tested at the bottom of the file.
+//! data — brute-force top-k cosine is fine at CLI-local scale; an ANN
+//! accelerator is a size-threshold follow-up. They are property-tested at the
+//! bottom of the file.
 
 use std::collections::{HashMap, HashSet};
 
@@ -30,8 +30,11 @@ use crate::store::{
 /// the domains a frame belongs to.
 pub(crate) const DOMAIN_PROVENANCE_KIND: &str = "domain";
 
-/// Provider identity stamped into frame provenance.
-pub(crate) const PROVIDER_ID: &str = "stella-context/0.1";
+/// Provider identity stamped into frame provenance. Built from the crate
+/// version rather than a literal so it cannot drift from the version
+/// `ContextProvider::info` advertises — a hard-coded `0.1` outlived four minor
+/// releases and made every frame's `by` chain misattribute its producer.
+pub(crate) const PROVIDER_ID: &str = concat!("stella-context/", env!("CARGO_PKG_VERSION"));
 /// The lexical-fallback marker written into a frame's provenance chain so a
 /// host can see the frame is a weak-coverage substitute, not graph grounding.
 pub(crate) const LEXICAL_FALLBACK_METHOD: &str = "stella-context/lexical-fallback";
@@ -125,6 +128,25 @@ impl ContextStore {
     /// `domains` slice behaves exactly like [`Self::recall`]. Every returned
     /// frame carries its domains in provenance so a citation view can show
     /// them.
+    ///
+    /// # Query fields not honored yet
+    ///
+    /// Two `ContextQuery` fields are read by nothing below and are documented
+    /// here rather than left for a caller to discover from surprising output:
+    ///
+    /// - `kinds` — kind filtering happens only at the registry seam
+    ///   ([`ProviderRegistry`](crate::ProviderRegistry) routes a query away
+    ///   from a provider whose declared kinds do not intersect). Once the store
+    ///   *is* selected it returns every kind, so a `kinds: [Memory]` query can
+    ///   come back with `File` frames.
+    /// - `representation_preferences` — every frame is minted
+    ///   `Representation::Full` with its whole body inline; the store never
+    ///   offers a digest-only or `content_ref` representation, so a
+    ///   budget-conscious host cannot ask for a cheaper shape.
+    ///
+    /// Both are honest gaps, not intentional policy: honoring them changes
+    /// which frames and how many tokens a recall returns, so they belong in a
+    /// deliberate change with its own tests, not in a silent tightening here.
     pub async fn recall_scoped(
         &self,
         q: &ContextQuery,
@@ -189,7 +211,11 @@ impl ContextStore {
             .iter()
             .map(|(id, v)| (*id, cosine(&query_vec, v)))
             .collect();
-        cos_scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // Ties break on node id. `vectors_for_fingerprint` has no ORDER BY, so
+        // without it two nodes with an identical cosine swap ranks between
+        // runs, and rank is exactly what RRF scores — the same store would
+        // answer the same query in a different order.
+        cos_scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         let coverage = coverage_score(&cos_scored);
 
         // 3b. Domain-overlap ranking (only when the query is domain-scoped):
@@ -238,8 +264,13 @@ impl ContextStore {
 
             // 4a. Recency ranking — recorded_at is fixed-width RFC-3339, so a
             //     descending string sort IS descending time order (no parsing).
+            //     Ties break on descending rowid, which matters more than it
+            //     looks: every node in one `upsert` shares a single `now`, so
+            //     whole batches tie. Leaving those to the scan order ranked a
+            //     batch oldest-first inside a newest-first list, and made the
+            //     order depend on SQLite's unordered scan.
             let mut recency: Vec<&NodeRow> = nodes.iter().collect();
-            recency.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at));
+            recency.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at).then(b.id.cmp(&a.id)));
             let recency_ranked: Vec<i64> = recency.iter().map(|n| n.id).collect();
 
             // 4b. Graph adjacency: 1-hop from anchors + strongest vector hits.
@@ -481,12 +512,17 @@ fn dedup_by_content_hash(
             DedupKey::Content(node.content_hash.as_str())
         };
         let entry = best.entry(key).or_insert((id, f64::MIN));
-        if score > entry.1 {
+        // The lower id wins an exact tie: `fused` is a `HashMap`, so which of
+        // two equally-scored duplicates is visited first varies run to run,
+        // and the survivor is the frame the prompt actually cites.
+        if score > entry.1 || (score == entry.1 && id < entry.0) {
             *entry = (id, score);
         }
     }
     let mut out: Vec<(i64, f64)> = best.into_values().collect();
-    out.sort_by(|a, b| b.1.total_cmp(&a.1));
+    // Same reason: sort by score, then by id, so identical fused scores yield
+    // one stable order rather than whatever the map drained.
+    out.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     out
 }
 
@@ -500,29 +536,42 @@ struct MmrItem {
 /// `λ·relevance − (1−λ)·max_similarity_to_already_selected`. Items without a
 /// vector are treated as maximally diverse (similarity 0), so graph/recency-
 /// only hits are never penalized for lacking an embedding. Returns indices in
-/// selection order. O(n²), fine for CLI-local candidate counts.
+/// selection order.
+///
+/// The diversity penalty is a running maximum folded forward once per pick,
+/// not a rescan of the selected set for every remaining candidate: `max` is
+/// associative, so the two are numerically identical, but the rescan cost
+/// `Θ(n³)` cosines. That mattered because the candidate list is *every live
+/// node* (the recency ranking contributes all of them), so the rescan made
+/// recall latency cubic in lifetime memory size. This form is `Θ(n²)` cosines.
 fn mmr_select(items: &[MmrItem], lambda: f32) -> Vec<usize> {
     let n = items.len();
     let mut selected: Vec<usize> = Vec::with_capacity(n);
     let mut remaining: Vec<usize> = (0..n).collect();
+    // penalty[i] == max cosine between item i and anything already selected,
+    // floored at 0.0 (the fold's identity) so a vector-less item scores as
+    // maximally diverse.
+    let mut penalty: Vec<f32> = vec![0.0; n];
     while !remaining.is_empty() {
         let mut best_pos = 0usize;
         let mut best_score = f32::MIN;
         for (pos, &idx) in remaining.iter().enumerate() {
-            let diversity_penalty = selected
-                .iter()
-                .filter_map(|&s| match (&items[idx].vector, &items[s].vector) {
-                    (Some(a), Some(b)) => Some(cosine(a, b)),
-                    _ => None,
-                })
-                .fold(0.0f32, f32::max);
-            let mmr = lambda * items[idx].relevance - (1.0 - lambda) * diversity_penalty;
+            let mmr = lambda * items[idx].relevance - (1.0 - lambda) * penalty[idx];
             if mmr > best_score {
                 best_score = mmr;
                 best_pos = pos;
             }
         }
-        selected.push(remaining.remove(best_pos));
+        let picked = remaining.remove(best_pos);
+        selected.push(picked);
+        // Fold the new pick into every still-unselected candidate's penalty.
+        if let Some(picked_vec) = &items[picked].vector {
+            for &idx in &remaining {
+                if let Some(v) = &items[idx].vector {
+                    penalty[idx] = penalty[idx].max(cosine(v, picked_vec));
+                }
+            }
+        }
     }
     selected
 }

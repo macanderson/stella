@@ -104,12 +104,35 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
 
 // ── Inline parsing ─────────────────────────────────────────────────────────
 
+/// How many levels of nested emphasis are parsed before the remaining
+/// delimiters render literally.
+///
+/// Bold and italic recurse into their own content, and the content is
+/// re-collected into a fresh `Vec<char>` at every level — so on
+/// model-controlled text (a `Text` transcript entry is never length-capped)
+/// a crafted `**`/`*`/`_` alternation would recurse once per few characters:
+/// O(depth) stack and O(depth × n) work, i.e. a stack overflow the panel
+/// panic boundary cannot catch (it is not a panic). Real prose never nests
+/// emphasis more than two or three deep, so a small cap costs nothing and
+/// bounds both.
+const MAX_EMPHASIS_DEPTH: usize = 8;
+
 /// Parse inline markdown within a single line into styled spans.
 ///
 /// Supports `**bold**`, `*italic*`, `_italic_`, `__bold__`, `` `code` ``,
 /// `[text](url)`, and `~~strike~~`. Unmatched delimiters pass through as
 /// literal text.
 fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
+    parse_inline_spans_at(text, 0)
+}
+
+/// [`parse_inline_spans`] with the current nesting level. Past
+/// [`MAX_EMPHASIS_DEPTH`] the text is emitted verbatim rather than descending
+/// further.
+fn parse_inline_spans_at(text: &str, depth: usize) -> Vec<Span<'static>> {
+    if depth >= MAX_EMPHASIS_DEPTH {
+        return vec![Span::raw(text.to_string())];
+    }
     let chars: Vec<char> = text.chars().collect();
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
@@ -132,7 +155,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
             };
             flush(&mut buf, &mut spans);
             let content: String = chars[i + 2..end].iter().collect();
-            for inner in parse_inline_spans(&content) {
+            for inner in parse_inline_spans_at(&content, depth + 1) {
                 let new_style = inner.style.add_modifier(Modifier::BOLD);
                 spans.push(Span::styled(inner.content.into_owned(), new_style));
             }
@@ -152,7 +175,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
             };
             flush(&mut buf, &mut spans);
             let content: String = chars[i + 1..end].iter().collect();
-            for inner in parse_inline_spans(&content) {
+            for inner in parse_inline_spans_at(&content, depth + 1) {
                 let new_style = inner.style.add_modifier(Modifier::ITALIC);
                 spans.push(Span::styled(inner.content.into_owned(), new_style));
             }

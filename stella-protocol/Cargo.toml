@@ -1,6 +1,6 @@
 [package]
 name = "stella-protocol"
-description = "Serde types + port traits shared by every stella-cli crate: agent events, tool schemas, trace records, provider request/response envelopes, the Provider trait. Zero I/O of its own — the stability contract of the workspace."
+description = "Serde types + port traits shared by every stella-cli crate: agent events, tool schemas, attachments, model roles, provider request/response envelopes, the Provider trait. Zero I/O of its own — the stability contract of the workspace."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

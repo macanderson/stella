@@ -15,7 +15,8 @@
 //! from *tamper exclusion* — the complete filesystem identity of the one test
 //! artifact the witness turn created is snapshotted. A flip is only credited
 //! when its bytes, type, mode, link count, and path remain unchanged at verify
-//! time ([`tampered_paths`]). A worker that edits, replaces, links, renames, or
+//! time ([`witness_identity_matches`] over the [`ArtifactIdentity`] recorded in
+//! [`Witness::files`]). A worker that edits, replaces, links, renames, or
 //! deletes the witness hard-fails the candidate; a model judge cannot override
 //! that authority violation.
 //!
@@ -516,9 +517,9 @@ pub fn is_witness_test_path(path: &str) -> bool {
     }
 }
 
-/// A validated witness: the flip-oracle command plus the filesystem-identity
-/// fingerprint of the one new test artifact the witness turn created (the
-/// tamper baseline for [`tampered_paths`]).
+/// A validated witness: the flip-oracle command plus the filesystem identity
+/// of the one new test artifact the witness turn created (the tamper baseline
+/// [`witness_identity_matches`] is re-checked against at verify time).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Witness {
     /// The user-facing command the flip oracle names in evidence.
@@ -626,6 +627,10 @@ pub fn parse_witness_command(text: &str) -> Option<String> {
 /// baseline; the author's own claims about which files it wrote are never
 /// trusted (a wrong claim would corrupt tamper detection, an observed delta
 /// cannot).
+///
+/// Superseded inside this crate by [`validate_witness_artifact`], which admits
+/// exactly one newly created test file rather than a whole delta; kept as
+/// public API for callers building their own witness acceptance.
 pub fn witness_watchlist(
     before: &HashMap<String, String>,
     after: &HashMap<String, String>,
@@ -642,6 +647,12 @@ pub fn witness_watchlist(
 /// at verify time. Non-empty means the deterministic flip must NOT be
 /// credited — the candidate hard-fails before judge evaluation. Sorted for
 /// deterministic error text.
+///
+/// The pipeline itself enforces the strictly stronger
+/// [`witness_identity_matches`] check (bytes *plus* type, mode, and link
+/// count, read without following symlinks), which a fingerprint comparison
+/// alone cannot express; this remains public for callers whose repo status
+/// carries fingerprints only.
 pub fn tampered_paths(
     watchlist: &HashMap<String, String>,
     current: &HashMap<String, String>,

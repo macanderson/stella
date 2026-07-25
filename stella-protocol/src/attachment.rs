@@ -85,12 +85,14 @@ impl Attachment {
     }
 
     /// The attachment's kind, classified from its MIME type.
+    #[must_use]
     pub fn kind(&self) -> AttachmentKind {
         classify_media_type(&self.media_type)
     }
 
     /// The human-readable label used by chips, transcripts, and degrade
     /// notes: `screenshot.png (image/png, 1.2 MB)`.
+    #[must_use]
     pub fn label(&self) -> String {
         format!(
             "{} ({}, {})",
@@ -104,6 +106,7 @@ impl Attachment {
 /// Classify a MIME type into the attachment kind the wire mapping switches
 /// on. Suffix-aware for structured-syntax types (`application/ld+json` is
 /// text, not binary).
+#[must_use]
 pub fn classify_media_type(media_type: &str) -> AttachmentKind {
     let mime = media_type
         .split(';')
@@ -159,6 +162,7 @@ pub fn classify_media_type(media_type: &str) -> AttachmentKind {
 /// don't recognize — callers decide whether to fall back to
 /// `application/octet-stream` (attach-anything flows) or to skip (paste
 /// auto-detection, where a false positive would swallow typed text).
+#[must_use]
 pub fn media_type_for_path(path: &str) -> Option<&'static str> {
     let ext = std::path::Path::new(path)
         .extension()?
@@ -222,6 +226,7 @@ pub fn media_type_for_path(path: &str) -> Option<&'static str> {
 }
 
 /// `1.2 MB`-style size formatting for chips and degrade notes.
+#[must_use]
 pub fn human_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;

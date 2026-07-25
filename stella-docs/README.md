@@ -6,8 +6,16 @@ destined for **stella.oxagen.sh**.
 Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumadocs.dev)
 (`fumadocs-core` / `fumadocs-ui` / `fumadocs-mdx`) + Tailwind CSS v4. Branded with the
 Stella identity — the aurora chevron+cells mark on a navy-black/Ice palette (see
-`src/app/global.css` for the tokens, `public/brand/` for the logo lockups, and
-`../docs/brand/` for the source assets).
+`src/app/global.css` for the tokens and `public/brand/` for the logo lockups the
+site actually serves).
+
+`../docs/brand/` holds the canonical brand assets for the repo itself (the
+README's lockups, the app icons). **The two directories are copies, not a
+symlink, and they have drifted**: `public/brand/stella-logo-light.svg` and
+`../docs/brand/stella-logo-light.svg` share a name but not a fill. Only
+`stella-logo-{dark,light}.svg` and `public/icons/` are referenced from `src/`;
+the rest of `public/brand/` is unreferenced. Change a mark in one place and you
+have to change it in both — or delete one copy and point at the other.
 
 ## Develop
 
@@ -19,10 +27,18 @@ pnpm dev          # http://localhost:3400
 ## Build
 
 ```bash
-pnpm build        # static export-friendly Next build
+pnpm build        # production Next build (what docs.yml runs in CI)
 pnpm start        # serve the production build on :3400
 pnpm typecheck    # tsc --noEmit
 ```
+
+Every page is prerendered, but this is **not** an `output: "export"` site. Two
+things need a Next.js server: the Fumadocs search route
+(`src/app/api/search/route.ts`) is a real route handler, and `next.config.mjs`
+declares a `redirects()` rule that keeps the old `/docs/agent-modes/goal-mode`
+deep link alive. Moving to a pure static host means swapping the route for
+Fumadocs' static search index and re-expressing that redirect in the host's
+own configuration first.
 
 ## Structure
 
@@ -33,7 +49,8 @@ content/docs/            # all documentation (MDX + meta.json ordering)
   api-providers/         # per-provider pages + the live model catalog
   inference-pipeline.mdx # the staged pipeline: triage → … → judge
   context-engine.mdx     # bi-temporal memory, recall, citation loop
-  agent-modes/           # chat / run / goal / monitor + goal-mode deep dive
+  agent-modes.mdx        # chat / run / goal / monitor / fleet, and which to use
+  agent-engine-paths.mdx # which engine path a given invocation actually takes
   agent-fleets.mdx       # parallel worker fleets in git worktrees
   agent-tools/           # built-in tools, skills, permissions, custom, MCP, hooks
   configuration/         # settings.json scopes, agent-engine config, credentials
@@ -44,6 +61,8 @@ content/docs/            # all documentation (MDX + meta.json ordering)
   extensions.mdx         # the extension event bus
   scripting.mdx          # headless JSON output for CI
   showcase.mdx           # teams shipping with Stella (Oxagen, …)
+  release-notes.mdx      # what's new, per minor release
+  donate.mdx             # how to support the project
 
 src/app/                 # Next.js App Router
   (home)/                # marketing landing page
@@ -65,7 +84,10 @@ src/mdx-components.tsx   # MDX component map
    ```
 
 2. Add its slug to the nearest `meta.json` `pages` array to place it in the sidebar. Use
-   `"---Label---"` entries for section separators.
+   `"---Label---"` entries for section separators. This is not optional: a `pages` array
+   is an allowlist, so a page you forget to list still builds and still answers at its
+   URL — it just vanishes from the sidebar with no warning. `showcase.mdx` sat orphaned
+   that way until it was caught by audit.
 
 3. In prose, wrap any `<placeholder>` or `{brace}` in backticks — a bare `<` or `{`
    breaks MDX parsing.
@@ -75,3 +97,10 @@ src/mdx-components.tsx   # MDX component map
 Deploys as a standard Next.js app. On Vercel, the project auto-detects Next.js + pnpm; set
 the production domain to `stella.oxagen.sh`. `pnpm-workspace.yaml` approves the `esbuild` /
 `sharp` build scripts so `pnpm install` exits cleanly in CI.
+
+**No deploy step lives in this repository.** `.github/workflows/docs.yml`
+typechecks and builds the site on every PR that touches it, but nothing
+publishes: production is wired up outside version control, in the hosting
+provider's dashboard. A contributor therefore cannot tell from the repo how a
+merged docs change reaches stella.oxagen.sh, and nobody but the account holder
+can redeploy it.

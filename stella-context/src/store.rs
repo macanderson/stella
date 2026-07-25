@@ -1,6 +1,6 @@
 //! [`ContextStore`] — the one SQLite file, one engine that backs the context
-//! plane ("SQLite everywhere … one WAL, one backup
-//! story, one file format"). It holds the bi-temporal property graph
+//! plane (arch §3: SQLite everywhere, so there is one WAL, one backup story,
+//! and one file format to reason about). It holds the bi-temporal property graph
 //! (`node` + `edge`), the fingerprinted embedding index (`embedding`),
 //! episodic memory (`episode`), and the embedder-fingerprint registry.
 //!
@@ -158,8 +158,8 @@ DROP TABLE IF EXISTS code_graph_imports;
 DROP TABLE IF EXISTS code_graph_files;
 ";
 
-/// Typed node vocabulary. Stored as its
-/// `as_str` form; retrieval maps it onto an `contextgraph_types::FrameKind`.
+/// Typed node vocabulary. Stored as its `as_str` form; retrieval maps it onto
+/// a `contextgraph_types::FrameKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
@@ -253,18 +253,24 @@ impl NodeInput {
     }
 
     /// Attach retrievable content.
+    // `#[must_use]` on every builder below: they consume and return `self`, so
+    // a dropped result is silent data loss — content or domain tags that never
+    // reach the store, with no error to notice.
+    #[must_use]
     pub fn with_content(mut self, content: impl Into<String>) -> Self {
         self.content = content.into();
         self
     }
 
     /// Attach a source uri (used for anchor matching and provenance).
+    #[must_use]
     pub fn with_uri(mut self, uri: impl Into<String>) -> Self {
         self.uri = Some(uri.into());
         self
     }
 
     /// Tag with one or more workspace domains.
+    #[must_use]
     pub fn with_domains<I, S>(mut self, domains: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -301,12 +307,32 @@ pub struct NodeRow {
     /// Valid time: when the fact became true in the world — may precede
     /// `recorded_at` (observation), never follows it. `None` = unknown,
     /// treated as valid-since-observation.
+    ///
+    /// **Always `None` today.** Only EDGES are versioned (see `MIGRATION_V1`);
+    /// `upsert_node` never writes `node.valid_from`, so this reads back the
+    /// column's NULL for every row. It is kept because the column exists and a
+    /// point-in-time node reader would populate it — not because anything
+    /// currently sets it. Read it as "not yet wired", never as "unknown".
     pub valid_from: Option<String>,
     pub recorded_at: String,
 }
 
-/// The context plane's storage handle. Cheap to clone conceptually (share the
-/// `Arc`s); see [`ContextStore::open`].
+/// The context plane's storage handle. Not `Clone` — the background warm
+/// handle is owned by exactly one store so [`ContextStore::await_warm`] has a
+/// single joiner. Share it with `Arc<ContextStore>`, which is what every
+/// consumer does; the connection and embedder inside are already `Arc`s, so
+/// nothing is duplicated by doing so.
+///
+/// # Retention
+///
+/// Nothing here forgets. `node.superseded_at` is never written (only edges are
+/// versioned), there is no delete or tombstone path, and a node whose uri
+/// changed — a renamed or deleted file — is orphaned live forever, still
+/// serving its last-known content. Recall reads *every* live node and *every*
+/// vector under the active fingerprint on each query, so both the store's size
+/// and a recall's latency grow monotonically with the workspace's lifetime.
+/// That is fine at CLI-local scale and is the plane's first scaling wall; a
+/// forget/compaction path is the tracked follow-up, not an oversight.
 pub struct ContextStore {
     /// The DB path, kept so warming can open its own WAL connection.
     path: PathBuf,
@@ -388,7 +414,12 @@ impl ContextStore {
     }
 
     /// Join the background warm task if one was spawned, returning the number
-    /// of vectors it computed. Returns `Ok(0)` if warming never started.
+    /// of vectors it computed.
+    ///
+    /// The handle is taken, so this is join-once: a second call returns `Ok(0)`
+    /// — the same answer as "warming never started" (no runtime at
+    /// [`Self::open_and_warm`], or an in-memory store). Read `Ok(0)` as "there
+    /// is no warm left to wait for", never as "the index was already complete".
     pub async fn await_warm(&self) -> Result<usize, ContextError> {
         let handle = lock(&self.warm).take();
         match handle {
@@ -523,6 +554,14 @@ fn open_connection(path: &Path) -> Result<Connection, ContextError> {
 
 /// Apply pending migrations inside a single transaction, bumping
 /// `user_version` atomically with the DDL.
+///
+/// **Downgrades are not guarded.** A store stamped by a *newer* binary
+/// (`user_version > SCHEMA_VERSION`) takes the early return and is opened as-is,
+/// so an older stella will happily read and write a schema it does not know —
+/// silently ignoring columns and tables a newer writer depends on. Rejecting
+/// that db is the right behavior, but it turns `open` into an error for anyone
+/// who downgrades, so it belongs in a deliberate change with a migration story,
+/// not here.
 fn migrate(conn: &Connection) -> Result<(), ContextError> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version >= SCHEMA_VERSION {
@@ -589,7 +628,11 @@ async fn warm_index(
     }
 
     let mut embedded = 0usize;
-    // Batch to keep memory bounded on a large first index.
+    // Batch the *embedder* calls and the transactions, so a kill mid-index
+    // loses at most one chunk (`L-L1`) and a backend with a request-size limit
+    // is never handed the whole corpus at once. Note this does NOT bound peak
+    // memory: `pending` above already materialized every un-embedded node's
+    // content. Streaming that query is the fix for very large first indexes.
     const BATCH: usize = 64;
     for chunk in pending.chunks(BATCH) {
         let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
@@ -706,6 +749,11 @@ fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
     Ok(NodeRow {
         id: row.get("id")?,
         public_id: row.get("public_id")?,
+        // An unrecognized kind reads as `Concept` rather than failing the
+        // whole query: the realistic source is a newer stella having written a
+        // kind this binary predates (see the downgrade note on `migrate`), and
+        // one unknown row must not blind recall to every other row. The node
+        // stays retrievable and citable; only its `FrameKind` is coarsened.
         kind: NodeKind::parse(&kind_str).unwrap_or(NodeKind::Concept),
         display_name: row.get("display_name")?,
         content: row.get("content")?,
@@ -878,8 +926,15 @@ pub(crate) struct EdgeView {
     pub superseded_at: Option<String>,
 }
 
-/// Process-local sequence making each edge's `public_id` unique even for two
-/// facts asserted at the same clock second.
+/// Sequence disambiguating two facts asserted within the same clock second,
+/// which would otherwise hash to the same edge `public_id`.
+///
+/// It is **process-local**, so two stella processes writing the same workspace
+/// db concurrently can still mint the same `edg_…` id; `edge.public_id` carries
+/// no UNIQUE constraint, so those rows coexist silently. Nothing reads an edge
+/// by public id today, which is why this is tolerable rather than a bug — a
+/// reader would need the id made collision-proof first (see the audit note on
+/// `insert_edge`).
 static EDGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Insert a fact edge. `supersedes` links to the edge this one replaced (the
@@ -1237,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn open_creates_a_consistent_store_at_schema_version_1() {
+    fn open_creates_a_consistent_store_at_the_current_schema_version() {
         let (_dir, store) = tmp_store();
         store.integrity_check().expect("integrity");
         let conn = store.conn();

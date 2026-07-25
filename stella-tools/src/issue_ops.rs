@@ -498,7 +498,13 @@ pub async fn list_issues(
                 }
             );
             if let Some(assignee) = &filters.assignee {
-                path.push_str(&format!("&assignee={}", assignee.trim_start_matches('@')));
+                // Escaped like `labels` below: the value is model-supplied, so
+                // a raw `&`/`#` would splice extra query parameters into (or
+                // truncate) the request the caller thinks it is making.
+                path.push_str(&format!(
+                    "&assignee={}",
+                    urlencode(assignee.trim_start_matches('@'))
+                ));
             }
             if let Some(label) = &filters.label {
                 path.push_str(&format!("&labels={}", urlencode(label)));

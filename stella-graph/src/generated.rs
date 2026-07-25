@@ -138,8 +138,8 @@ fn is_minified_filename(rel_path: &str) -> bool {
 /// Line-shape sniff for generated/minified content with no path or attribute
 /// signal at all. Operates on raw bytes rather than `str` so it runs ahead of
 /// (and regardless of) UTF-8 validation — a minified bundle's byte-line shape
-/// reads the same either way, and a binary file just never crosses either
-/// threshold below the byte-count floor is meant to protect.
+/// reads the same either way, and a binary file that trips a threshold here
+/// would have been skipped as non-UTF-8 a moment later anyway.
 pub(crate) fn looks_minified(content: &[u8]) -> bool {
     if content.len() < MIN_HEURISTIC_BYTES {
         return false;

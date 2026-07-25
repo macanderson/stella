@@ -306,10 +306,10 @@ impl CodeGraph {
         frames::neighbors(&self.inner.read_guard(), &self.inner.root, &rel)
     }
 
-    /// The CGP-provider query entrypoint: budgeted, provenance-carrying frames
-    ///, in-process shape. Consumed at runtime
-    /// by the CLI's CGP host (`stella-cli/src/contextgraph.rs`, `GraphProvider`), which
-    /// fans recall out to this alongside the memory store on every turn.
+    /// The CGP-provider query entrypoint: budgeted, provenance-carrying
+    /// frames, assembled in-process. Consumed at runtime by the CLI's CGP
+    /// host (`stella-cli/src/contextgraph.rs`, `GraphProvider`), which fans
+    /// recall out to this alongside the memory store on every turn.
     pub fn query(&self, q: &ContextQuery) -> Result<Vec<ContextFrame>, GraphError> {
         frames::query(&self.inner.read_guard(), &self.inner.root, q)
     }

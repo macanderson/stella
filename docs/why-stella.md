@@ -38,7 +38,7 @@ transition *is* the evidence. When you don't hand it a test, the staged pipeline
 (`stella run`, on by default) spawns an independent **witness author** that
 writes the failing test, tamper-excluded from the code under change, so the flip
 cannot be gamed. Deterministic definition of done, enforced by construction —
-see [`pipeline.md`](design/pipeline.md).
+see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline).
 
 ## An engine you can actually reason about
 
@@ -48,7 +48,7 @@ see [`pipeline.md`](design/pipeline.md).
 routing, retry, and budget are plain **synchronous functions over owned data** —
 so the whole decision core is property-testable with no network and no
 filesystem, and adding a vendor or a tool is an *adapter, never a rewrite*. The
-workspace is sixteen focused crates; `stella-protocol` is a zero-logic stability
+workspace is fifteen focused crates; `stella-protocol` is a zero-logic stability
 contract every boundary round-trips through `serde_json` byte-for-byte. There is
 one deterministic step loop — plan, fan tools out in parallel, observe, compact,
 repeat — that you can read top to bottom. No coordinator, no hidden control
@@ -59,7 +59,7 @@ plane.
 | Property | How it works |
 |---|---|
 | **BYOK, model-agnostic** | Nine hosted providers (Anthropic, OpenAI, Gemini, xAI, DeepSeek, Z.ai, OpenRouter, Vertex, Bedrock) plus **any** OpenAI-compatible local server (Ollama, vLLM, LM Studio, llama.cpp). No account, no gateway. Pin per run with `--model provider/id`. |
-| **Zero telemetry egress by default** | Community/default Stella sends no telemetry anywhere. Executions, the full event stream, per-call token/cost telemetry, and a `[C·R·U·D] path` files-touched ledger land in a local `.stella/private/store.db` you can open with any SQLite client — and the store is never a dependency of a turn. The sole exception is an [explicitly enrolled Oxagen Enterprise managed deployment](../stella-docs/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export): a current signed policy may authorize one minimal content-free operational rollup to one exact allowlisted HTTPS sink. |
+| **Zero telemetry egress by default** | Community/default Stella sends no telemetry anywhere. Executions, the full event stream, per-call token/cost telemetry, and a `[C·R·U·D] path` files-touched ledger land in a local `.stella/private/store.db` you can open with any SQLite client — and the store is never a dependency of a turn. The sole exception is an [explicitly enrolled Oxagen Enterprise managed deployment](https://stella.oxagen.sh/docs/telemetry#oxagen-enterprise-managed-export): a current signed policy may authorize one minimal content-free operational rollup to one exact allowlisted HTTPS sink. |
 | **Budget you can trust** | `--budget <usd>` aborts cleanly **between** steps, never mid-tool, so a cap can't corrupt a half-written edit. |
 | **Bounded blast radius** | File tools are workspace-root-pinned; the `bash` tool is **off by default** (settings `tools.bash: "on"` to opt in — the default surface is enumerable argv, no shell); an opt-in `bash` sandbox (Seatbelt / bubblewrap) contains prompt-injection damage and **fails closed**; a cloned repo's own hooks never auto-execute (`STELLA_PROJECT_HOOKS=1` to opt in). |
 
@@ -69,11 +69,13 @@ An **offline tree-sitter code graph** queried instead of grepping (`stella
 graph`, the `graph_query` tool; Rust/TS/JS/Python/SQL, no key needed) ·
 **prompt-cache-native memory** that loads once into a byte-stable system prompt
 at ~0.1× input cost · a **fleet mode** that fans a task DAG out to
-git-worktree-isolated workers, wave-scheduled by dependency · **lifecycle
+wave-scheduled workers — one shared tree under cooperative file claims by
+default, an isolated git worktree per task on request · **lifecycle
 hooks** and an **MCP client** that merges external tools into the registry · and
 the **Command Deck** TUI with PR-style diffs and an editable prompt queue. Deep
-dives: [`hooks.md`](design/hooks.md), [`file-touch-telemetry.md`](design/file-touch-telemetry.md),
-[`memory-citations.md`](design/memory-citations.md).
+dives: [lifecycle hooks](https://stella.oxagen.sh/docs/agent-tools/hooks),
+[the files-touched ledger](https://stella.oxagen.sh/docs/telemetry/files-touched),
+[the memory citation loop](https://stella.oxagen.sh/docs/context-engine#the-citation-loop-memories-that-earn-their-place).
 
 ## What it optimizes for
 

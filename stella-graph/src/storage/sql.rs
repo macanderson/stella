@@ -437,10 +437,17 @@ fn enum_values(node: Node, src: &[u8]) -> Vec<String> {
 /// thin — the same conservative posture as the original gate's scan.
 fn extract_alter_additions(source: &str) -> Vec<FieldAddition> {
     let mut out = Vec::new();
-    let mut offset = 0usize;
+    // 1-based line of the first character of the statement being scanned.
+    // Carried forward statement by statement rather than recounted from the
+    // top of the file each time: recounting is quadratic in a migration with
+    // many statements, and it reported the line of the *previous* statement's
+    // terminator (a statement almost always opens with the newline that
+    // followed the `;`), so every ALTER after the first cited one line short.
+    let mut line = 1u32;
     for statement in source.split(';') {
-        let line = source[..offset].lines().count().max(1) as u32;
-        offset += statement.len() + 1;
+        let leading = statement.len() - statement.trim_start().len();
+        let statement_line = line + statement[..leading].matches('\n').count() as u32;
+        line += statement.matches('\n').count() as u32;
         let trimmed = statement.trim();
         let upper = trimmed.to_ascii_uppercase();
         let Some(rest_at) = upper
@@ -517,7 +524,7 @@ fn extract_alter_additions(source: &str) -> Vec<FieldAddition> {
                 let tail_at = rest.find(real).map(|at| at + real.len()).unwrap_or(0);
                 let mut field = parse_column_tail(&rest[tail_at..]);
                 field.name = skip_leading.trim_matches('"').to_string();
-                field.line = line;
+                field.line = statement_line;
                 out.push(FieldAddition {
                     relation: bare.to_string(),
                     namespace: namespace.to_string(),
@@ -527,7 +534,7 @@ fn extract_alter_additions(source: &str) -> Vec<FieldAddition> {
             }
             let mut field = parse_column_tail(parts.next().unwrap_or(""));
             field.name = skip_leading.trim_matches('"').to_string();
-            field.line = line;
+            field.line = statement_line;
             out.push(FieldAddition {
                 relation: bare.to_string(),
                 namespace: namespace.to_string(),
@@ -545,8 +552,9 @@ fn apply_comments(source: &str, relations: &mut [RelationDef]) {
     for statement in source.split(';') {
         let trimmed = statement.trim();
         let upper = trimmed.to_ascii_uppercase();
-        let (is_column, rest) = if let Some(at) = upper.strip_prefix("COMMENT ON TABLE") {
-            let _ = at;
+        // `to_ascii_uppercase` preserves byte length, so the prefix length
+        // measured on `upper` indexes `trimmed` at the same boundary.
+        let (is_column, rest) = if upper.starts_with("COMMENT ON TABLE") {
             (false, trimmed["COMMENT ON TABLE".len()..].trim_start())
         } else if upper.starts_with("COMMENT ON COLUMN") {
             (true, trimmed["COMMENT ON COLUMN".len()..].trim_start())

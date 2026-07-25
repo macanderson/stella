@@ -664,7 +664,15 @@ impl CssAccumulator {
             }
             let mut value = collapse_ws(&value_src[..end]);
             if value.len() > 160 {
-                value.truncate(157);
+                // Cut on a char boundary: the value is arbitrary UTF-8 from a
+                // fetched stylesheet (`--quote: "«…»"`), and `String::truncate`
+                // PANICS mid-codepoint — a page could otherwise abort the tool
+                // call by choosing where its bytes land.
+                let mut cut = 157;
+                while cut > 0 && !value.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                value.truncate(cut);
                 value.push('…');
             }
             self.custom_props.push((name, value));

@@ -24,8 +24,14 @@ Especially interesting, given what Stella promises:
 
 - **Workspace-root escape** — any way a tool call (file CRUD, `bash`, `grep`/`glob`)
   reaches outside the pinned workspace root: traversal, symlinks, race conditions.
-- **Phone-home violations** — any network traffic to anything other than the
-  user's chosen model provider (or configured MCP servers). Zero is the contract.
+- **Phone-home violations** — telemetry, update checks, or analytics leaving the
+  machine in Community/default mode. Zero is the contract there, and the only
+  governed exception is an explicitly enrolled Oxagen Enterprise seat. Network
+  traffic the user asked for is *not* a violation: the chosen model provider,
+  configured MCP servers, the opt-in `web` tools (`web_fetch` /
+  `web_extract_assets` / `web_download`, and `web_search` against your own
+  Brave/Tavily key), and `gh`/Linear when an issue backend is connected. Traffic
+  from any of those to a host the user did not configure *is* in scope.
 - **Credential exposure** — API keys leaking into logs, telemetry, error
   messages, or files with permissive modes.
 - **Prompt/tool injection with impact** — untrusted content (repo files, MCP

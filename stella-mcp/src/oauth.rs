@@ -28,10 +28,14 @@
 //!    appear — so a login completed mid-session takes effect on the next
 //!    tool call without a reconnect.
 //!
-//! Security: tokens live in an owner-only (0600) JSON file next to
-//! `mcp.toml`, chosen by the caller. No token, verifier, or client secret is
-//! ever logged — [`OAuthTokens`]'s `Debug` is hand-written to redact them,
-//! matching the [`crate::config::McpTransport`] convention.
+//! Security: tokens live in an owner-only (0600) JSON file inside an
+//! owner-only (0700) directory, at a path chosen by the caller. Every open is
+//! `O_NOFOLLOW` and rejects a non-regular or multiply-linked file, so a
+//! planted symlink cannot redirect a token write. Persistence is therefore
+//! **Unix-only**: on any other platform [`TokenStore`] refuses to read or
+//! write rather than fall back to a world-readable file. No token, verifier,
+//! or client secret is ever logged — [`OAuthTokens`]'s `Debug` is hand-written
+//! to redact them, matching the [`crate::config::McpTransport`] convention.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -48,6 +52,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::error::McpError;
+use crate::http::truncate;
 
 /// Refresh an access token this many seconds *before* its stated expiry, so
 /// a token never expires mid-request.
@@ -135,9 +140,16 @@ struct TokenFile {
 }
 
 /// The owner-only JSON token file (path chosen by the caller — the CLI puts
-/// it at `.stella/private/mcp_oauth.json`). Every operation
-/// re-reads and atomically rewrites; contention is a non-issue at this scale
-/// and it keeps concurrent sessions from clobbering each other's logins.
+/// it at `.stella/private/mcp_oauth.json`). Every operation re-reads the whole
+/// file and rewrites it through a temp file + `rename`, so a reader never sees
+/// a half-written store and a crash mid-write leaves the previous one intact.
+///
+/// The read-modify-write is *not* serialized across processes, though: two
+/// sessions logging into different servers at the same instant can each write
+/// a file built from the pre-login snapshot, and the later `rename` wins. The
+/// worst case is one login having to be repeated, which is why this is left
+/// unlocked — a lock file would add a stale-lock failure mode to a
+/// once-per-login operation.
 #[derive(Debug, Clone)]
 pub struct TokenStore {
     path: PathBuf,
@@ -420,14 +432,6 @@ impl OAuthTokenSource {
         Ok(tokens.access_token.clone())
     }
 
-    /// Whether any tokens are loaded or stored (drives the 401-retry choice).
-    pub async fn has_tokens(&self) -> bool {
-        if self.state.lock().await.is_some() {
-            return true;
-        }
-        self.store.get(&self.server).ok().flatten().is_some()
-    }
-
     async fn refresh(&self, tokens: &mut OAuthTokens) -> Result<(), McpError> {
         let Some(refresh_token) = tokens.refresh_token.clone() else {
             return Err(
@@ -515,6 +519,11 @@ impl Default for LoginOptions {
 /// [`TokenStore::put`]. Blocks (async) until the user approves in the
 /// browser, the authorization server reports an error, or `options.timeout`
 /// elapses.
+///
+/// `server_name` is the caller's storage key. This function deliberately does
+/// nothing with it: the flow is driven entirely by `server_url`, and nothing
+/// here logs, so accepting the name only keeps the call site symmetrical with
+/// the [`TokenStore::put`] that follows.
 pub async fn login(
     server_name: &str,
     server_url: &str,
@@ -647,7 +656,8 @@ pub async fn login(
         resource,
     };
     tokens.apply(response, now);
-    let _ = server_name; // (name is the caller's storage key; kept for log-free symmetry)
+    // Accepted for call-site symmetry only — see this function's doc comment.
+    let _ = server_name;
     Ok(tokens)
 }
 
@@ -682,6 +692,14 @@ async fn discover_protected_resource(
 ) -> Option<ProtectedResourceMeta> {
     // The spec'd path: an unauthenticated request answered 401 with
     // `WWW-Authenticate: Bearer resource_metadata="…"`.
+    //
+    // The hint is attacker-controlled data from a server we do not trust, and
+    // following it is an outbound GET this process makes on the server's
+    // behalf — a plain SSRF primitive if the URL may point anywhere (cloud
+    // metadata endpoints, an intranet host). RFC 9728 §3.3 requires the
+    // metadata URL to belong to the protected resource, so anything
+    // cross-origin is ignored and discovery falls back to the well-known
+    // paths under the server's OWN origin.
     if let Ok(response) = http.get(server_url).send().await
         && response.status() == StatusCode::UNAUTHORIZED
         && let Some(value) = response
@@ -689,6 +707,7 @@ async fn discover_protected_resource(
             .get(reqwest::header::WWW_AUTHENTICATE)
             .and_then(|v| v.to_str().ok())
         && let Some(url) = parse_resource_metadata_hint(value)
+        && is_same_origin(&url, server_url)
         && let Some(meta) = fetch_json::<ProtectedResourceMeta>(http, &url).await
     {
         return Some(meta);
@@ -740,6 +759,14 @@ fn well_known_candidates(url: &str, suffix: &str) -> Vec<String> {
     }
     out.push(format!("{origin}/.well-known/{suffix}"));
     out
+}
+
+/// Whether two URLs share a `scheme://host[:port]` origin. Both sides must
+/// actually parse: [`origin_of`] echoes an unparseable input back verbatim, so
+/// requiring a parse keeps two identical pieces of garbage from comparing
+/// equal and passing the check.
+fn is_same_origin(a: &str, b: &str) -> bool {
+    Url::parse(a).is_ok() && Url::parse(b).is_ok() && origin_of(a) == origin_of(b)
 }
 
 /// `scheme://host[:port]` of a URL (falls back to the input on parse failure).
@@ -976,14 +1003,6 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn truncate(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let head: String = s.chars().take(max_chars).collect();
-    format!("{head}…")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1064,6 +1083,32 @@ mod tests {
             Some("https://srv/.well-known/oauth-protected-resource")
         );
         assert_eq!(parse_resource_metadata_hint("Bearer realm=\"x\""), None);
+    }
+
+    #[test]
+    fn resource_metadata_hint_must_be_same_origin() {
+        // RFC 9728 §3.3: only the resource's own origin may publish its
+        // metadata. A hostile MCP server pointing the hint at an intranet or
+        // cloud-metadata host must not turn this client into its fetcher.
+        assert!(is_same_origin(
+            "https://srv.example.com/.well-known/oauth-protected-resource",
+            "https://srv.example.com/mcp"
+        ));
+        assert!(!is_same_origin(
+            "http://169.254.169.254/latest/meta-data/",
+            "https://srv.example.com/mcp"
+        ));
+        // Same host, different scheme/port are different origins.
+        assert!(!is_same_origin(
+            "http://srv.example.com/x",
+            "https://srv.example.com/mcp"
+        ));
+        assert!(!is_same_origin(
+            "https://srv.example.com:8443/x",
+            "https://srv.example.com/mcp"
+        ));
+        // Unparseable input never matches, even against itself.
+        assert!(!is_same_origin("not a url", "not a url"));
     }
 
     #[test]

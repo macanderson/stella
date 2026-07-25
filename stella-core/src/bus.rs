@@ -1139,14 +1139,22 @@ pub fn scan_for_secrets(text: &str) -> Vec<SecretKind> {
 
 /// Whether `text` contains `prefix` immediately followed by at least
 /// `min_run` characters accepted by `charset`.
+///
+/// The run scan is bounded by `.take(min_run)`: only "at least `min_run`"
+/// matters, never the run's full length. Counting the whole run instead made
+/// this quadratic on adversarial input — tool output or a file the model just
+/// read is attacker-shaped text, and something like `"sk-"` repeated across a
+/// 100 KB body is one long accepted run re-scanned to the end from every
+/// prefix position. Bounded, each position costs at most `min_run` chars.
 fn has_prefixed_run(text: &str, prefix: &str, min_run: usize, charset: fn(char) -> bool) -> bool {
     let mut haystack = text;
     while let Some(pos) = haystack.find(prefix) {
         let rest = &haystack[pos + prefix.len()..];
-        if rest.chars().take_while(|c| charset(*c)).count() >= min_run {
+        let run = rest.chars().take_while(|c| charset(*c)).take(min_run);
+        if run.count() >= min_run {
             return true;
         }
-        haystack = &haystack[pos + prefix.len()..];
+        haystack = rest;
     }
     false
 }

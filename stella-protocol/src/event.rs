@@ -5,15 +5,24 @@
 //!
 //! The vocabulary is additive-only: later variants are appended as the
 //! context/media/fleet crates land, never a breaking rename.
+//!
+//! "Additive" is directional, and the asymmetry matters. New *fields* ride
+//! `serde(default)`, so a newer reader parses every older stream. New
+//! *variants* do not survive the other direction: this enum is internally
+//! tagged (`tag = "type"`), so an older binary meets an unrecognized `"type"`
+//! with a hard deserialization error, and the JSONL replay reader treats an
+//! unparseable interior line as fatal. An event that must be readable by an
+//! older binary therefore belongs on the versioned
+//! [`crate::context_event::LifecycleEventEnvelope`], whose payload stays a raw
+//! `Value` — never on this enum.
 
 use serde::{Deserialize, Serialize};
 
 use crate::tool::{ToolCall, ToolOutput};
 
-/// A named point in the turn's data flow
-/// Exactly one stage
-/// vocabulary exists in this workspace — never duplicated per-crate (the
-/// TS-era `StageKind` duplication this structurally forbids, L-E1).
+/// A named point in the turn's data flow. Exactly one stage vocabulary
+/// exists in this workspace — never duplicated per-crate (the TS-era
+/// `StageKind` duplication this structurally forbids, L-E1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StageKind {
@@ -176,9 +185,16 @@ pub enum CacheZone {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
+    /// The turn entered a new pipeline stage. Every stage boundary emits one,
+    /// in the order the pipeline walks them.
     Stage {
         name: StageKind,
     },
+    /// The step's answer text, in full — the authoritative, durable record.
+    /// The field name `delta` is wire-frozen legacy and does NOT mean a
+    /// fragment: the live fragments are [`AgentEvent::TextDelta`], which the
+    /// journal deliberately drops. Consumers must REPLACE any accumulated
+    /// preview with this value, never append it to one.
     Text {
         delta: String,
     },
@@ -194,12 +210,22 @@ pub enum AgentEvent {
     TextDelta {
         text: String,
     },
+    /// One in-order fragment of the model's thinking/extended-reasoning
+    /// stream, for the providers that expose it. Unlike [`AgentEvent::Text`]
+    /// this really is a fragment — consumers accumulate, and the journal
+    /// coalesces a consecutive run into one record.
     Reasoning {
         delta: String,
     },
+    /// The model requested a tool call and the engine is about to run it. The
+    /// matching [`AgentEvent::ToolResult`] correlates by `call.call_id`.
     ToolStart {
         call: ToolCall,
     },
+    /// A tool call finished, successfully or not — `output` is the typed
+    /// [`ToolOutput`], never a bare string, so a failure is inspectable
+    /// without sniffing prose. Correlates to its [`AgentEvent::ToolStart`] by
+    /// `call_id`.
     ToolResult {
         call_id: String,
         output: ToolOutput,
@@ -226,7 +252,13 @@ pub enum AgentEvent {
         name: String,
         reason: String,
     },
+    /// A model call is being retried with backoff. Flushed only for steps
+    /// that COMMIT — a step that exhausts its retries reports the whole
+    /// doomed sequence through [`AgentEvent::RetriesExhausted`] instead.
     Retry {
+        /// 1-indexed ordinal of the attempt that FAILED and triggered this
+        /// retry — the initial call is attempt 1 (mirrors
+        /// `stella-core::retry::RetryAttempt::attempt`).
         attempt: u32,
         reason: String,
     },
@@ -355,10 +387,9 @@ pub enum AgentEvent {
         #[serde(default)]
         calibration_factor: f64,
     },
-    /// Emitted after every provider/media call that spends money
-    /// The TUI HUD renders spend live from this
-    /// stream; nothing user-visible about spend is derived from state that
-    /// isn't also in this event.
+    /// Emitted after every provider/media call that spends money. The TUI HUD
+    /// renders spend live from this stream; nothing user-visible about spend
+    /// is derived from state that isn't also in this event.
     BudgetTick {
         spent_usd: f64,
         limit_usd: Option<f64>,
@@ -468,9 +499,9 @@ pub enum AgentEvent {
         kind: FileChangeKind,
         diff: Option<String>,
     },
-    /// Context recall completed: which frames
-    /// reached the prompt, from which providers, at what token cost. Every
-    /// frame carries a human `citation_label`, never a raw id (L-C4).
+    /// Context recall completed: which frames reached the prompt, from which
+    /// providers, at what token cost. Every frame carries a human
+    /// `citation_label`, never a raw id (L-C4).
     ContextRecall {
         frames: Vec<ContextFrameRef>,
         provider_mix: Vec<ProviderShare>,
@@ -485,8 +516,7 @@ pub enum AgentEvent {
         usage: Option<ContextUsage>,
     },
     /// Context write-back completed: episode summaries, fact upserts,
-    /// supersession (bi-temporal,
-    /// close-not-delete per L-C3).
+    /// supersession (bi-temporal, close-not-delete per L-C3).
     ContextWrite {
         provider: String,
         upserts: u32,
@@ -579,9 +609,9 @@ pub enum AgentEvent {
         question: String,
         options: Vec<String>,
     },
-    /// A media generation job changed state. Video
-    /// jobs are async and long-lived; this event is how the TUI shows
-    /// progress without polling shared state (L-T1).
+    /// A media generation job changed state. Video jobs are async and
+    /// long-lived; this event is how the TUI shows progress without polling
+    /// shared state (L-T1).
     MediaProgress {
         artifact_id: String,
         kind: MediaKind,
@@ -620,6 +650,9 @@ pub enum AgentEvent {
     TaskUpdate {
         tasks: Vec<TaskItem>,
     },
+    /// The turn failed. `retryable` is the source's own classification (see
+    /// [`crate::error::ProviderError::is_retryable`]), never re-derived from
+    /// `message` by a consumer.
     Error {
         message: String,
         retryable: bool,
@@ -665,6 +698,7 @@ impl AgentEvent {
     ///
     /// The same duty applies to the other exhaustively-matched cross-crate
     /// enums this pattern warns about (`ToolOutput`, `BudgetOutcome`).
+    #[must_use]
     pub fn type_tag(&self) -> &'static str {
         match self {
             AgentEvent::Stage { .. } => "stage",
@@ -722,6 +756,7 @@ impl FileChangeKind {
     /// Whether this kind mutated the file — what the pipeline's zero-diff
     /// guard and inline transcript diffs key on. Reads are observability,
     /// not change.
+    #[must_use]
     pub fn is_mutation(self) -> bool {
         !matches!(self, FileChangeKind::Read)
     }
@@ -867,13 +902,27 @@ impl ContextUsage {
     /// per-provider `token_cost` (`docs/context-reuse.md` §2, the arithmetic
     /// identity). A metering pipeline checks this before trusting a total, so
     /// a corrupted number is a checkable failure rather than a silent misbill.
+    ///
+    /// The sum saturates rather than wrapping: this runs over journal bytes a
+    /// consumer did not write, and an audit predicate must answer `false` on a
+    /// corrupt report, never panic on a debug-build overflow.
+    #[must_use]
     pub fn is_consistent(&self) -> bool {
-        self.budget_consumed == self.providers.iter().map(|p| p.token_cost).sum::<u64>()
+        let mut total: u64 = 0;
+        for provider in &self.providers {
+            total = total.saturating_add(provider.token_cost);
+        }
+        self.budget_consumed == total
     }
 
     /// Total frames served across every provider the query reached.
+    #[must_use]
     pub fn total_frames_served(&self) -> u64 {
-        self.providers.iter().map(|p| p.frames_served as u64).sum()
+        let mut total: u64 = 0;
+        for provider in &self.providers {
+            total = total.saturating_add(u64::from(provider.frames_served));
+        }
+        total
     }
 }
 
@@ -997,6 +1046,7 @@ pub enum TaskStatus {
 impl TaskStatus {
     /// Whether the task can still change state. Terminal tasks reject
     /// further transitions (enforced by the board logic in `stella-core`).
+    #[must_use]
     pub fn is_open(self) -> bool {
         matches!(self, TaskStatus::Pending | TaskStatus::InProgress)
     }

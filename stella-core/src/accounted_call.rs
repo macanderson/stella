@@ -13,25 +13,61 @@ use crate::budget::{BudgetGuard, BudgetOutcome};
 use crate::event_sender::EventSender;
 use crate::retry::{RetryPolicy, Sleeper, retry_with_backoff_observed};
 
+/// One fully-specified provider call for [`run_accounted_call`]: what to send,
+/// who to bill it to, and the reliability envelope around it. Non-engine
+/// callers (the overflow summarizer, skill authoring, triage) use this instead
+/// of standing up an [`crate::Engine`] for a call that has no tools, no steps,
+/// and no conversation of its own.
 pub struct AccountedCall<'a> {
+    /// The adapter to dispatch through. Borrowed — this type never owns I/O.
     pub provider: &'a dyn Provider,
+    /// Pipeline role the spend and usage are attributed to.
     pub role: ModelCallRole,
+    /// Model name reported on a `UsageIncomplete` envelope, where no result
+    /// exists to name the model that actually served the call. The successful
+    /// path always reports `result.model` instead, so this is only a hint.
     pub model_hint: String,
+    /// The completion request, cloned once per attempt by the retry loop.
     pub request: CompletionRequest,
+    /// Retry + backoff envelope (`crate::retry`).
     pub retry_policy: RetryPolicy,
+    /// Deadline over the WHOLE retry future, backoff sleeps included. `None`
+    /// leaves the call bounded only by `retry_policy`.
     pub timeout: Option<Duration>,
+    /// The caller's pre-call token estimate, paired with the provider's
+    /// reported usage on `StepUsage` as a drift sample (`crate::estimator`).
     pub estimated_input_tokens: u64,
 }
 
+/// Why an accounted call did not return a usable result. `Budget` is
+/// deliberately not a plain failure: the completion COMMITTED and was paid
+/// for, so it carries the result through for a caller that can still use it
+/// (the overflow summarizer splices its summary in either way).
 pub enum AccountedCallError {
+    /// The provider failed terminally, or retries were exhausted.
     Provider(ProviderError),
+    /// [`AccountedCall::timeout`] expired before the call resolved.
     Timeout,
+    /// The call succeeded, but settling its cost breached an enforced budget.
     Budget {
+        /// The committed, already-paid-for result.
         result: CompletionResult,
+        /// The breaching outcome — always `BudgetOutcome::AbortTurn`.
         outcome: BudgetOutcome,
     },
 }
 
+/// Dispatch one provider call with retry, per-call timeout, budget metering,
+/// and the full accounting event trail (`UsageIncomplete` per failed attempt,
+/// `Retry` per committed retry, then `StepUsage` + `BudgetTick`).
+///
+/// Every failed attempt reports its own content-free `UsageIncomplete`
+/// envelope synchronously, before a later attempt can succeed: a successful
+/// retry can report its own usage but can never make an earlier attempt's
+/// unknown usage knowable after the fact. A deadline that expires during a
+/// backoff sleep — with no paid dispatch in flight — deliberately emits no
+/// `Timeout` envelope, since the preceding attempt already accounted for
+/// itself.
 pub async fn run_accounted_call(
     call: AccountedCall<'_>,
     budget: &mut BudgetGuard,

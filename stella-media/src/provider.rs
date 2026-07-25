@@ -143,6 +143,13 @@ pub struct ImageRequest {
     pub prompt: String,
     pub size: ImageSize,
     /// Number of candidate images (`--n`); at least 1.
+    ///
+    /// **Not yet honoured by the bundled adapters**, which submit and return
+    /// exactly one candidate and price the job with
+    /// [`MediaCapabilities::estimate_image`]`(1, …)`. That is the safe
+    /// direction to be wrong in — a request cannot spend more than the gate
+    /// approved — but a caller passing `n > 1` gets one image, so multi-
+    /// candidate generation is a recorded follow-up, not a supported flag.
     pub n: u32,
     /// A short slug used to label the resulting artifact; the caller derives
     /// it from the prompt.

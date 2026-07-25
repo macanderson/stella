@@ -29,10 +29,11 @@
 //!
 //! ## Cost
 //!
-//! One coalesced repaint per deck tick (see `deck_shell`): the shimmer/pulse are
-//! pure functions of `model.now_ms`, so this never spins a timer of its own and
-//! renders identically on replay. `--no-anim` (and `NO_COLOR`) freeze the motion
-//! to a static frame for CI and recordings.
+//! This module never spins a timer of its own: the shimmer/pulse are pure
+//! functions of `model.now_ms`, so the bar repaints exactly when the deck loop
+//! already redraws (`deck_shell`'s ~30 fps tick, or an inbound event) and
+//! renders identically on replay. `--no-anim` (and `NO_COLOR`) freeze the
+//! motion to a static frame for CI and recordings.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

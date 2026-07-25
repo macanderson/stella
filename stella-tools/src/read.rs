@@ -194,16 +194,23 @@ impl Tool for ReadFile {
                     };
                 }
 
-                let mut numbered = String::new();
+                // `write!` into one pre-sized buffer rather than a `format!`
+                // allocation per line: this is the crate's hottest render
+                // path (up to MAX_LINES lines on every single read).
+                use std::fmt::Write as _;
+                let mut numbered = String::with_capacity(
+                    lines[start..end].iter().map(|l| l.len() + 8).sum::<usize>() + 64,
+                );
                 for (i, line) in lines[start..end].iter().enumerate() {
                     let line_num = start + i + 1;
-                    numbered.push_str(&format!("{line_num:>6}\t{line}\n"));
+                    let _ = writeln!(numbered, "{line_num:>6}\t{line}");
                 }
                 let total = lines.len();
                 let shown = end - start;
-                numbered.push_str(&format!(
+                let _ = write!(
+                    numbered,
                     "\n({shown}/{total} lines shown · read {reads}× this session)"
-                ));
+                );
                 ToolOutput::Ok { content: numbered }
             }
             Err(e) => ToolOutput::Error {

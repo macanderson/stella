@@ -43,19 +43,34 @@
 //!
 //! The pipeline does no I/O itself; it orchestrates over the traits in
 //! [`ports`]: [`ProviderResolver`], [`ContextRecallPort`], [`RepoStructurePort`],
-//! [`TestRunner`], [`DiagnosticRunner`], [`ApprovalGate`], and [`CandidateWorkspacePort`]
-//! (best-of-N candidate isolation) — plus `stella-core`'s `Router`,
-//! `ToolExecutor`, and `Sleeper`. The `stella-cli` glue supplies the real
-//! implementations; every one has a no-op/default here so the pipeline runs
-//! before every subsystem is wired.
+//! [`RepoStatusPort`], [`TestRunner`], [`DiagnosticRunner`], [`ApprovalGate`],
+//! [`CandidateWorkspacePort`] (best-of-N candidate isolation), and
+//! [`McpPrefetchPort`] — plus `stella-core`'s `Router`, `ToolExecutor`, and
+//! `Sleeper`. The `stella-cli` glue supplies the real implementations.
+//!
+//! The always-present ports each have a no-op default here
+//! ([`NoContextRecall`], [`NoRepoStructure`], [`NoRepoStatus`],
+//! [`AutoApproveGate`]/[`AlwaysAbortGate`]) so the pipeline runs before every
+//! subsystem is wired; the two *optional* ones — candidate isolation and MCP
+//! pre-fetch — are `Option` fields on [`PipelinePorts`] instead, because
+//! "unavailable" changes what the run does (it degrades) rather than being a
+//! port that answers with nothing.
 //!
 //! [`ProviderResolver`]: ports::ProviderResolver
 //! [`ContextRecallPort`]: ports::ContextRecallPort
 //! [`RepoStructurePort`]: ports::RepoStructurePort
+//! [`RepoStatusPort`]: ports::RepoStatusPort
 //! [`DiagnosticRunner`]: ports::DiagnosticRunner
 //! [`TestRunner`]: ports::TestRunner
 //! [`ApprovalGate`]: ports::ApprovalGate
 //! [`CandidateWorkspacePort`]: ports::CandidateWorkspacePort
+//! [`McpPrefetchPort`]: ports::McpPrefetchPort
+//! [`NoContextRecall`]: ports::NoContextRecall
+//! [`NoRepoStructure`]: ports::NoRepoStructure
+//! [`NoRepoStatus`]: ports::NoRepoStatus
+//! [`AutoApproveGate`]: ports::AutoApproveGate
+//! [`AlwaysAbortGate`]: ports::AlwaysAbortGate
+//! [`PipelinePorts`]: ports::PipelinePorts
 
 pub mod candidate;
 pub(crate) mod mcp_prefetch;

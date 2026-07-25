@@ -60,6 +60,10 @@ pub(crate) const BUILD_CLAIM: &str = "//build";
 const BUILD_WAIT_MS: u64 = 60_000;
 /// Poll cadence while waiting for the build lane.
 const BUILD_POLL_MS: u64 = 500;
+/// How many dead build-lane holders one acquire may reap before it stops
+/// retrying immediately and falls back to the polled wait. Bounds the only
+/// arm of the acquire loop that does not sleep.
+const MAX_BUILD_LANE_REAPS: u32 = 8;
 
 /// Claims older than this are swept at session start (crash hygiene).
 pub(crate) const STALE_CLAIM_MAX_AGE_SECS: u64 = 6 * 3600;
@@ -243,12 +247,26 @@ impl ToolExecutor for ClaimTap<'_> {
                 | "run_script"
         ) {
             let mut waited = 0u64;
+            let mut reaps = 0u32;
             let acquired = loop {
                 match store.acquire_file_lock(BUILD_CLAIM, &self.holder) {
                     Ok(true) => break true,
                     // A dead process cannot release the lane; reap it and
                     // retry immediately instead of waiting out the bound.
-                    Ok(false) if self.reap_dead_holder(store, BUILD_CLAIM) => {}
+                    // Bounded, because this arm neither sleeps nor yields:
+                    // `reap_dead_holder` reports success on a DELETE that
+                    // matched no row, so an acquire that keeps failing for
+                    // any other reason would spin here forever — pegging a
+                    // runtime worker and hanging the turn with no timeout to
+                    // rescue it. One dead holder needs one reap; the bound
+                    // covers a genuine pile-up after a multi-worker crash and
+                    // otherwise falls through to the waited path below.
+                    Ok(false)
+                        if reaps < MAX_BUILD_LANE_REAPS
+                            && self.reap_dead_holder(store, BUILD_CLAIM) =>
+                    {
+                        reaps += 1;
+                    }
                     Ok(false) if waited < BUILD_WAIT_MS => {
                         tokio::time::sleep(std::time::Duration::from_millis(BUILD_POLL_MS)).await;
                         waited += BUILD_POLL_MS;

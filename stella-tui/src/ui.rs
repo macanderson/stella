@@ -27,9 +27,10 @@ use ratatui::text::Line;
 /// Which surface currently has keyboard focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PanelFocus {
-    /// The composer: printable keys type into a multi-line textarea (`⏎` is
-    /// a line break, `⌘⏎`/`⌃⏎` submits), arrows scroll the transcript until
-    /// the buffer has content to move through. The resting focus of a REPL.
+    /// The composer: printable keys type into a multi-line textarea (a bare
+    /// `⏎` submits, a modified `⏎` inserts a line break — see
+    /// [`classify_enter`]), arrows scroll the transcript until the buffer has
+    /// content to move through. The resting focus of a REPL.
     #[default]
     Composer,
     /// The files-touched panel: arrows select a file / scroll its diff, Enter
@@ -366,9 +367,10 @@ fn handle_composer_key(key: KeyEvent, ui: &mut UiState) -> ShellAction {
             }),
         };
     }
-    // Enter is a textarea key: plain `⏎` breaks the line (preserved verbatim
-    // in the submitted prompt), the `⌘⏎`/`⌃⏎` chord submits — flipped on
-    // legacy terminals that can't report a modified Enter (`enter_submits`).
+    // Enter is a textarea key, one rule on every terminal: a bare `⏎` submits
+    // and a modified `⏎` (`⌘⏎`/`⌃⏎`/`⌥⏎`) breaks the line, preserved verbatim
+    // in the submitted prompt. `enter_submits` only picks which chord the
+    // composer's hint advertises (see [`classify_enter`]).
     match classify_enter(&key) {
         EnterAction::Submit => {
             return match ui.composer.take_submission() {

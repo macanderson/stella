@@ -142,8 +142,13 @@ impl HashEmbedder {
         // Windows of `ngram` chars; for very short inputs fall back to the
         // whole string as one window so we never index empty content to zero.
         let window = self.ngram.min(chars.len());
+        // One reusable buffer rather than a fresh `String` per window: this
+        // loop runs once per character of every indexed node at warm time, so
+        // the per-n-gram allocation was the projection's dominant cost.
+        let mut gram = String::with_capacity(window * 4);
         for start in 0..=(chars.len() - window) {
-            let gram: String = chars[start..start + window].iter().collect();
+            gram.clear();
+            gram.extend(chars[start..start + window].iter());
             let h = fnv1a(gram.as_bytes());
             let bucket = (h % self.dims as u64) as usize;
             // A second, decorrelated hash chooses the sign.
@@ -186,7 +191,12 @@ impl Embedder for HashEmbedder {
 }
 
 /// L2-normalize in place; a zero vector is left as zero (its norm is 0).
-pub fn l2_normalize(v: &mut [f32]) {
+///
+/// Crate-internal on purpose: `embed` is a private module and `lib.rs` does not
+/// re-export this, so a `pub` here advertised an API no consumer could ever
+/// reach. It stays visible to the crate because the ONNX/API embedders that
+/// slot in behind [`Embedder`] normalize the same way.
+pub(crate) fn l2_normalize(v: &mut [f32]) {
     let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > 0.0 {
         for x in v.iter_mut() {
