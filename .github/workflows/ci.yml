@@ -96,10 +96,12 @@ jobs:
         run: cargo install --locked cargo-deny cargo-audit
 
       # Real gate (no `|| true`): advisories + dependency bans + source
-      # provenance, configured in deny.toml. License checking is deliberately
-      # left to a separate track (see deny.toml).
+      # provenance + licenses, configured in deny.toml. The license check is a
+      # hard gate because the workspace is AGPL-3.0-only and dual-licensed —
+      # a dependency we cannot sublicense breaks both the AGPL distribution
+      # and the commercial track (see deny.toml and LICENSING.md).
       - name: cargo deny check
-        run: cargo deny check advisories bans sources
+        run: cargo deny check advisories bans sources licenses
 
       - name: cargo audit
         run: cargo audit

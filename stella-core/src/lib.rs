@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-core` — the step-driver. One model call
 //! per step, message accumulation, retry+backoff, context compaction,
 //! tool-output budget + eviction, loop detection, USD budget metering.

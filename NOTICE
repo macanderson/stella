@@ -1,0 +1,46 @@
+Stella
+Copyright (c) 2026 Oxagen, Inc.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License, version 3, as published by
+the Free Software Foundation. Version 3 is the only version that applies; the
+"or (at your option) any later version" clause is deliberately NOT granted.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program, in the file LICENSE. If not, see <https://www.gnu.org/licenses/>.
+
+
+COMMERCIAL LICENSING
+--------------------
+Stella is dual-licensed. If the AGPL's reciprocal obligations do not work for
+you -- in particular if you want to use, modify, embed, or offer Stella as part
+of a closed-source product or a hosted service without publishing your own
+source -- a separate commercial license is available from Oxagen, Inc. on
+negotiated terms. See LICENSING.md.
+
+
+PRIOR RELEASES
+--------------
+Stella releases up to and including v0.5.14 were published under "MIT OR
+Apache-2.0". That grant is perpetual and irrevocable for the versions it was
+made under: anyone who received those releases keeps their MIT/Apache rights in
+that code, and relicensing cannot claw them back. The AGPL terms in LICENSE
+apply to this and all subsequent versions.
+
+
+THIRD-PARTY COMPONENTS
+----------------------
+Stella links a number of third-party Rust crates, each under its own license
+(predominantly MIT, Apache-2.0, BSD, ISC, Zlib, MPL-2.0 and Unicode-3.0 -- all
+compatible with distribution of the combined work under the AGPL). The
+authoritative, machine-checked allow-list lives in deny.toml under [licenses],
+and CI fails the build on any dependency outside it.
+
+The Context Graph Protocol crates (contextgraph-types, contextgraph-host,
+contextgraph-trace, contextgraph-conformance) are maintained separately at
+https://github.com/macanderson/context-graph-protocol under Apache-2.0, and are
+intentionally NOT covered by this program's AGPL terms.

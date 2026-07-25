@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/macanderson/stella/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/macanderson/stella/ci.yml?branch=main&style=flat-square&logo=github&label=ci" alt="CI status"></a>
   <a href="https://github.com/macanderson/stella/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/macanderson/stella/release.yml?style=flat-square&logo=github&label=release" alt="Release status"></a>
-  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3FE0FF?style=flat-square" alt="License"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-3FE0FF?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/rust-1.90%2B-FFE81A?style=flat-square&logo=rust&logoColor=black" alt="Rust 1.90+">
   <img src="https://img.shields.io/badge/providers-9%20%2B%20local-3FE0FF?style=flat-square" alt="9 providers + local">
 </p>
@@ -593,10 +593,11 @@ scripts/dev.sh uninstall      # remove the link
 
 ## Contributing
 
-Contributions are welcome — MIT OR Apache-2.0, DCO not CLA. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, a tour of the crates, the
-witness-test contract, and style rules. CI runs `fmt`, `clippy -D warnings`,
-tests, and a release build on every PR.
+Contributions are welcome. Stella is AGPL-3.0-only and dual-licensed, so a
+one-time [CLA](CLA.md) signature is required — you keep your copyright, and the
+bot walks you through it on your first PR. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for dev setup, a tour of the crates, the witness-test contract, and style rules.
+CI runs `fmt`, `clippy -D warnings`, tests, and a release build on every PR.
 
 | You have… | Do this |
 |---|---|
@@ -606,5 +607,22 @@ tests, and a release build on every PR.
 
 ## License
 
-Dual-licensed under **MIT OR Apache-2.0** — see [`LICENSE-MIT`](LICENSE-MIT) and
-[`LICENSE-APACHE`](LICENSE-APACHE).
+Stella is **dual-licensed**.
+
+**Open source: [AGPL-3.0-only](LICENSE).** Free to run, read, modify, and
+redistribute. In exchange, if you distribute a modified Stella — or offer one to
+users over a network — you publish your modifications under the same terms.
+Using Stella as a coding tool on your own proprietary codebase is unaffected:
+the AGPL covers Stella itself, not the code you write with it.
+
+**Commercial: [available from Oxagen](LICENSING.md).** If you want to embed
+Stella in a closed-source product, run a modified Stella as a hosted service
+without publishing it, or your procurement process forbids AGPL code, a
+commercial license removes those obligations. Contact <licensing@oxagen.sh>.
+
+[`LICENSING.md`](LICENSING.md) explains which track you are on and why. The
+[Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+is a separate project and stays **Apache-2.0** — depending on it does not put
+your project under the AGPL.
+
+Contributions require a [CLA](CLA.md); you keep your copyright.

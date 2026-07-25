@@ -25,6 +25,7 @@ Stella's definition of done is a test that **fails on the old code and passes on
 - [ ] `cargo test --workspace`
 - [ ] Docs updated where behavior/flags changed (README, `--help`, doc comments)
 - [ ] Commits signed off for DCO (`git commit -s`)
+- [ ] [CLA](../CLA.md) signed (first-time contributors — the bot will prompt you)
 
 ## Ground-rule check
 

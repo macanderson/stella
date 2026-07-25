@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-model` — the `Provider` trait plus its concrete adapters: Z.ai
 //! (GLM 5.2, OpenAI-compatible chat), Anthropic (Messages API), OpenAI
 //! (Responses API), Gemini direct (native generateContent), Vertex AI

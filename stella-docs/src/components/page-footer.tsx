@@ -139,11 +139,18 @@ export function PageFooter({ path, title }: { path: string; title: string }) {
       </div>
       <p className="mt-4 text-xs leading-relaxed text-fd-muted-foreground">
         Stella is <strong className="font-semibold text-fd-foreground">totally free and open source</strong>,
-        dual-licensed <strong className="font-semibold text-fd-foreground">MIT or Apache&nbsp;2.0</strong> — your
-        choice: MIT&apos;s three-paragraph simplicity, or Apache&nbsp;2.0&apos;s explicit patent grant that
-        enterprises prefer. Use it, fork it, embed it, ship it — no account and no Community/default telemetry
-        egress. An explicitly enrolled Oxagen Enterprise managed seat has one signed, content-free operational
-        exception. {" "}
+        licensed <strong className="font-semibold text-fd-foreground">AGPL&nbsp;3.0</strong> — use it, fork it,
+        ship it; if you distribute a modified Stella or run one as a service, you publish your changes too.
+        Writing closed-source code <em>with</em> Stella is unaffected. Need to embed it in a proprietary
+        product? A{" "}
+        <a
+          href="https://github.com/macanderson/stella/blob/main/LICENSING.md"
+          className="underline underline-offset-4 hover:text-fd-foreground"
+        >
+          commercial license
+        </a>{" "}
+        is available. No account and no Community/default telemetry egress. An explicitly enrolled Oxagen
+        Enterprise managed seat has one signed, content-free operational exception. {" "}
         <a
           href="/docs/telemetry#oxagen-enterprise-managed-export"
           className="underline underline-offset-2 hover:text-fd-foreground"

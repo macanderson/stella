@@ -83,9 +83,13 @@ bypassable with `SKIP_GATE=1 git push` or `git push --no-verify`) — not a
 server-side guarantee, which is impossible while the checks can't execute.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
-`cargo deny check advisories bans sources` + `cargo audit`). Note `deny.toml`
-intentionally does **not** gate on licenses; advisories, bans, and source
-provenance are the real gates.
+`cargo deny check advisories bans sources licenses` + `cargo audit`). All four
+are real gates. The license gate matters more than it looks: the workspace is
+AGPL-3.0-only and dual-licensed, so a dependency carrying any further
+restriction (non-commercial clause, field-of-use limit, or no license at all)
+breaks both AGPL redistribution and the commercial track. **If `cargo deny`
+rejects a new dependency, drop the dependency — do not widen the allow-list in
+`deny.toml` without a licensing decision.**
 
 ---
 

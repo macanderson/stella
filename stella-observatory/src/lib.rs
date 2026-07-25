@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! The Stella Observatory — a local, loopback-only dashboard over the
 //! workspace's own telemetry (`.stella/private/store.db`, `.stella/private/fleet.db`).
 //!

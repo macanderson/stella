@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-store` — the session's local SQLite database at
 //! `.stella/private/store.db`: durable state, full execution records, and
 //! analytics-grade telemetry, all on the user's disk (no server, no
