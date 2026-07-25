@@ -247,6 +247,7 @@ mod tests {
             name_files: [("STELLA_TEST_LABEL_B_KEY".to_string(), local_file)]
                 .into_iter()
                 .collect(),
+            refused: Vec::new(),
         };
         assert_eq!(
             label_for(&provider, CredentialSource::EnvVar, Some(&loaded)),
@@ -282,6 +283,7 @@ mod tests {
             ],
             names: vec!["OPENROUTER_API_KEY".to_string(), "FOO".to_string()],
             name_files: Default::default(),
+            refused: Vec::new(),
         };
         let summary = env_files_summary(&loaded).unwrap();
         assert!(summary.contains(".env.local"));
