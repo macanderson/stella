@@ -37,6 +37,14 @@
 //! semantically identical calls almost never share a `call_id`, so using
 //! derived equality here would silently never fire. `same_record` below is
 //! the one place that distinction is made.
+//!
+//! The output a record carries is a *live* conversation message, and the
+//! conversation is not immutable: context compaction rewrites older tool
+//! results in place. A caller that can preserve what a call really produced
+//! passes it as [`CallRecord::identity`], and comparison uses that instead
+//! of the (possibly rewritten) bytes — see `same_record`. This module stays
+//! a pure function over owned data either way; it never learns what
+//! compaction is.
 
 use stella_protocol::{ToolCall, ToolOutput};
 
@@ -51,10 +59,22 @@ const MAX_CYCLE_PERIOD: usize = 4;
 /// ran, or its result message is gone from the window); an unresolved
 /// output never matches anything, because progress cannot be ruled out
 /// without seeing the result.
+///
+/// `identity` is an optional stable id for the output the call *actually*
+/// produced, supplied by the caller. It exists because the output in the
+/// live conversation is not durable: context compaction rewrites older
+/// tool results in place (dedup/supersession stubs, middle-out aging, the
+/// eviction stub), so by the time the detector runs, a streak of
+/// byte-identical outputs can look like `[stub, stub, real]` and no longer
+/// compare equal (#554). A caller that snapshots each result's identity
+/// *before* compaction can hand it in here and keep the evidence.
+/// `None` means "no snapshot available" and falls back to comparing the
+/// outputs themselves.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallRecord {
     pub call: ToolCall,
     pub output: Option<ToolOutput>,
+    pub identity: Option<String>,
 }
 
 /// Threshold configuration for [`detect_loop`]. `Default` gives sensible
@@ -155,11 +175,22 @@ impl LoopVerdict {
 /// bytes every call). An unresolved output (`None`) matches nothing —
 /// including another `None` — because a loop can only be *proven* by two
 /// observed identical outputs.
+///
+/// When BOTH records carry a [`CallRecord::identity`], the identities are
+/// compared instead of the output bytes: the identity is the caller's
+/// snapshot of what the call really produced, and the live output may have
+/// been rewritten in place by compaction since (#554). One or both
+/// identities missing falls back to the output bytes. Either way an
+/// unresolved output still matches nothing — an identity is evidence about
+/// an output that was observed, never a substitute for observing one.
 fn same_record(a: &CallRecord, b: &CallRecord) -> bool {
     a.call.name == b.call.name
         && a.call.input == b.call.input
         && match (&a.output, &b.output) {
-            (Some(a), Some(b)) => a == b,
+            (Some(a_out), Some(b_out)) => match (&a.identity, &b.identity) {
+                (Some(a_id), Some(b_id)) => a_id == b_id,
+                _ => a_out == b_out,
+            },
             _ => false,
         }
 }
@@ -286,7 +317,18 @@ mod tests {
                 input,
             },
             output,
+            // No snapshot: these fixtures exercise the raw-output
+            // comparison. The identity path has its own witness in
+            // `driver::tests::audit_fixes`.
+            identity: None,
         }
+    }
+
+    /// The same record with a caller-supplied output identity attached —
+    /// the shape the driver builds once it has a pre-compaction snapshot.
+    fn with_identity(mut record: CallRecord, identity: &str) -> CallRecord {
+        record.identity = Some(identity.to_string());
+        record
     }
 
     fn call(name: &str, input: serde_json::Value, output: &str) -> CallRecord {
@@ -438,6 +480,94 @@ mod tests {
             records.iter().map(|r| r.call.call_id.clone()).collect();
         assert_eq!(ids.len(), 3, "test fixture sanity: call_ids must differ");
 
+        let config = LoopDetectionConfig {
+            exact_repeat_threshold: 3,
+            short_cycle_repeats: 100,
+        };
+        assert!(detect_loop(&records, config).is_loop());
+    }
+
+    #[test]
+    fn matching_identities_outrank_outputs_rewritten_since() {
+        // The #554 shape: the two older results were stubbed in place by
+        // compaction, so their live outputs no longer match the newest —
+        // but all three carry the same pre-compaction identity.
+        let stub = |path: &str| {
+            with_identity(
+                call(
+                    "read_file",
+                    serde_json::json!({ "path": path }),
+                    "[evicted]",
+                ),
+                "blk_same",
+            )
+        };
+        let records = vec![
+            stub("a.rs"),
+            stub("a.rs"),
+            with_identity(read("a.rs"), "blk_same"),
+        ];
+        let config = LoopDetectionConfig {
+            exact_repeat_threshold: 3,
+            short_cycle_repeats: 100,
+        };
+        assert!(
+            detect_loop(&records, config).is_loop(),
+            "identical identities must count as a repeat even when the live outputs differ"
+        );
+    }
+
+    #[test]
+    fn differing_identities_outrank_outputs_collapsed_since() {
+        // The mirror image: three DIFFERENT outputs all rewritten to the
+        // same stub. Comparing bytes alone would now call this a loop; the
+        // identities prove each call produced different information.
+        let stub = |identity: &str| {
+            with_identity(
+                call(
+                    "read_file",
+                    serde_json::json!({ "path": "a.rs" }),
+                    "[evicted]",
+                ),
+                identity,
+            )
+        };
+        let records = vec![stub("blk_1"), stub("blk_2"), stub("blk_3")];
+        let config = LoopDetectionConfig {
+            exact_repeat_threshold: 3,
+            short_cycle_repeats: 100,
+        };
+        assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
+    }
+
+    #[test]
+    fn an_identity_never_resurrects_an_unresolved_output() {
+        // An identity is evidence ABOUT an observed output, never a
+        // substitute for observing one: `None` still matches nothing.
+        let unresolved = || {
+            with_identity(
+                record("read_file", serde_json::json!({ "path": "a.rs" }), None),
+                "blk_same",
+            )
+        };
+        let records = vec![unresolved(), unresolved(), unresolved()];
+        let config = LoopDetectionConfig {
+            exact_repeat_threshold: 3,
+            short_cycle_repeats: 100,
+        };
+        assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
+    }
+
+    #[test]
+    fn one_sided_identity_falls_back_to_comparing_outputs() {
+        // Only some records were snapshotted (a result that entered the
+        // window after the snapshot). Comparison degrades to the outputs
+        // rather than silently failing to match.
+        let records = vec![
+            with_identity(read("a.rs"), "blk_same"),
+            read("a.rs"),
+            read("a.rs"),
+        ];
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 3,
             short_cycle_repeats: 100,
