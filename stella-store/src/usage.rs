@@ -11,6 +11,12 @@
 //! Direction of flow is one-way: `store.db` → `usage.db`. Nothing here writes
 //! back to a project store, and a missing/again-openable `usage.db` never
 //! blocks a turn — sync is best-effort.
+//!
+//! Retention: the hub accumulates one telemetry row per model call across every
+//! project forever, and rows from deleted checkouts persist. [`UsageStore::prune`]
+//! bounds that growth — by age, by a hard row ceiling, and by GC of unregistered
+//! projects whose checkout is gone — without ever dropping an org's un-acked
+//! cloud-drain rows (see [`UsageStore::prune`] and [`PrunePolicy`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -506,6 +512,286 @@ impl UsageStore {
         }
         Ok(out)
     }
+
+    /// Bound the hub's growth per a [`PrunePolicy`] — the engine behind
+    /// `stella usage prune`. Runs, in order: project GC → age cutoff → row
+    /// ceiling, all in one transaction, then (optionally) `VACUUM`.
+    ///
+    /// The cloud drain is never broken. Age and ceiling pruning only touch a
+    /// row when it is safe to drop — NULL-org (never shipped), already acked
+    /// (`rowid <= cloud_sync_cursors.last_hub_rowid`), or `force`. GC only
+    /// removes *unregistered* projects (no org-scoped rows), so their rows
+    /// never drain either. And because `VACUUM` renumbers `telemetry.rowid`
+    /// (the table's PK is `(project_id, source_rowid)`, so its `rowid` is
+    /// implicit and not VACUUM-stable) while the cloud cursor is stored as a
+    /// `rowid`, every cursor is re-anchored after `VACUUM` against the stable
+    /// `(project_id, source_rowid)` key — see [`Self::vacuum_and_reanchor`].
+    ///
+    /// `dry_run` computes the same report but rolls the transaction back and
+    /// skips `VACUUM`, so nothing is deleted.
+    pub fn prune(&self, policy: &PrunePolicy) -> Result<PruneReport> {
+        let mut conn = self.lock();
+        let mut report = PruneReport::default();
+        // The "safe to drop" predicate, correlated to the `telemetry` row.
+        // `force` collapses it to "everything"; otherwise a row is prunable
+        // only when it is NULL-org or already acked by the cloud drain.
+        let prunable = prunable_predicate(policy.force);
+
+        {
+            let tx = conn.transaction()?;
+
+            // 1) GC unregistered, gone-root projects. The caller supplies the
+            //    set whose checkout is missing; we drop only those with no
+            //    org-scoped rows (all-NULL-org → never drained → safe).
+            for pid in &policy.gc_project_ids {
+                let registered = tx
+                    .query_row(
+                        "SELECT 1 FROM telemetry \
+                         WHERE project_id = ?1 AND org_id IS NOT NULL LIMIT 1",
+                        params![pid],
+                        |_| Ok(()),
+                    )
+                    .is_ok();
+                if registered {
+                    continue;
+                }
+                report.gc_rows +=
+                    tx.execute("DELETE FROM telemetry WHERE project_id = ?1", params![pid])? as u64;
+                tx.execute(
+                    "DELETE FROM execution_rollup WHERE project_id = ?1",
+                    params![pid],
+                )?;
+                tx.execute(
+                    "DELETE FROM tool_usage_rollup WHERE project_id = ?1",
+                    params![pid],
+                )?;
+                tx.execute(
+                    "DELETE FROM telemetry_sync_cursors WHERE project_id = ?1",
+                    params![pid],
+                )?;
+                tx.execute("DELETE FROM projects WHERE project_id = ?1", params![pid])?;
+                report.gc_projects += 1;
+            }
+
+            // 2) Age cutoff. Rows whose `recorded_at` predates `now + modifier`
+            //    are dropped when prunable; org rows that would age out but are
+            //    still un-acked are counted as protected (kept for the drain).
+            //    Rollup tables never drain, so they age out unconditionally.
+            if let Some(modifier) = &policy.older_than {
+                if !policy.force {
+                    report.protected_unacked += tx.query_row(
+                        &format!(
+                            "SELECT COUNT(*) FROM telemetry \
+                             WHERE julianday(recorded_at) < julianday('now', ?1) \
+                               AND NOT {prunable}"
+                        ),
+                        params![modifier],
+                        |r| r.get::<_, i64>(0),
+                    )? as u64;
+                }
+                report.aged_out += tx.execute(
+                    &format!(
+                        "DELETE FROM telemetry \
+                         WHERE julianday(recorded_at) < julianday('now', ?1) \
+                           AND {prunable}"
+                    ),
+                    params![modifier],
+                )? as u64;
+                report.rollups_aged_out += tx.execute(
+                    "DELETE FROM execution_rollup \
+                     WHERE julianday(started_at) < julianday('now', ?1)",
+                    params![modifier],
+                )? as u64;
+                report.rollups_aged_out += tx.execute(
+                    "DELETE FROM tool_usage_rollup WHERE day < date('now', ?1)",
+                    params![modifier],
+                )? as u64;
+            }
+
+            // 3) Hard row ceiling on `telemetry` — evict the oldest prunable
+            //    rows until at/under it. Un-acked org rows can't be evicted
+            //    without `force`, so record any residual overage for the caller.
+            if let Some(max_rows) = policy.max_rows {
+                let total: i64 =
+                    tx.query_row("SELECT COUNT(*) FROM telemetry", [], |r| r.get(0))?;
+                if total > max_rows {
+                    let excess = total - max_rows;
+                    report.ceiling_evicted += tx.execute(
+                        &format!(
+                            "DELETE FROM telemetry WHERE rowid IN (\
+                               SELECT rowid FROM telemetry WHERE {prunable} \
+                               ORDER BY rowid ASC LIMIT ?1)"
+                        ),
+                        params![excess],
+                    )? as u64;
+                    let after: i64 =
+                        tx.query_row("SELECT COUNT(*) FROM telemetry", [], |r| r.get(0))?;
+                    if after > max_rows {
+                        report.still_over_ceiling = (after - max_rows) as u64;
+                    }
+                }
+            }
+
+            if policy.dry_run {
+                // Roll back: `tx` drops un-committed, so nothing is deleted.
+                return Ok(report);
+            }
+
+            // Clamp every cloud cursor to the surviving max `rowid`. Deleting the
+            // table's max rowid frees it, and SQLite hands that freed (lower)
+            // rowid to the next replicated row — which would then land at/below a
+            // cursor left pointing past it and never be surfaced by
+            // `cloud_pending` (`rowid > cursor`). A cursor never legitimately
+            // exceeds `MAX(rowid)` (every acked row survived acking), so this
+            // only lowers a cursor stranded by a delete, never skips an un-acked
+            // row. The `VACUUM` path re-anchors on the stable key below and
+            // supersedes this; it runs here so the non-`VACUUM` path is safe too.
+            tx.execute(
+                "UPDATE cloud_sync_cursors SET last_hub_rowid = \
+                   MIN(last_hub_rowid, COALESCE((SELECT MAX(rowid) FROM telemetry), 0))",
+                [],
+            )?;
+
+            tx.commit()?;
+        }
+
+        // 4) Reclaim file bytes on a large (or explicitly requested) prune, and
+        //    re-anchor the cloud cursors that `VACUUM` would otherwise strand.
+        let deleted =
+            report.aged_out + report.ceiling_evicted + report.gc_rows + report.rollups_aged_out;
+        if deleted > 0 && (policy.vacuum || deleted >= LARGE_PRUNE_ROWS) {
+            Self::vacuum_and_reanchor(&conn)?;
+            report.vacuumed = true;
+        }
+        Ok(report)
+    }
+
+    /// `VACUUM` the hub, keeping every org's cloud cursor pointing at the same
+    /// logical row. `telemetry.rowid` is implicit (composite PK) so `VACUUM`
+    /// renumbers it, but `(project_id, source_rowid)` is stable — so we snapshot
+    /// each org's highest *surviving acked* row by that key before `VACUUM`,
+    /// then set the cursor to that row's new `rowid` afterward. We err low: if
+    /// the boundary row didn't survive the prune, the cursor resets to 0, which
+    /// re-ships the retained acked backlog (idempotent server-side on
+    /// `(workspace_id, source_rowid)`) rather than skipping an un-acked row.
+    fn vacuum_and_reanchor(conn: &Connection) -> Result<()> {
+        // (org_id, boundary key) captured post-delete, pre-VACUUM.
+        let mut boundaries: Vec<(String, Option<(String, i64)>)> = Vec::new();
+        {
+            let mut stmt = conn.prepare("SELECT org_id, last_hub_rowid FROM cloud_sync_cursors")?;
+            let cursors: Vec<(String, i64)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<std::result::Result<_, _>>()?;
+            for (org_id, cursor) in cursors {
+                let key = conn
+                    .query_row(
+                        "SELECT project_id, source_rowid FROM telemetry \
+                         WHERE org_id = ?1 AND rowid <= ?2 ORDER BY rowid DESC LIMIT 1",
+                        params![org_id, cursor],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+                    )
+                    .ok();
+                boundaries.push((org_id, key));
+            }
+        }
+
+        conn.execute_batch("VACUUM")?;
+
+        // Re-anchor every cursor atomically: a partial update (an error or crash
+        // mid-loop) would otherwise leave some orgs pointing at stale pre-VACUUM
+        // rowids while others are correct.
+        let tx = conn.unchecked_transaction()?;
+        for (org_id, key) in boundaries {
+            let new_cursor: i64 = match key {
+                Some((project_id, source_rowid)) => tx
+                    .query_row(
+                        "SELECT rowid FROM telemetry \
+                         WHERE project_id = ?1 AND source_rowid = ?2",
+                        params![project_id, source_rowid],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0),
+                None => 0,
+            };
+            tx.execute(
+                "UPDATE cloud_sync_cursors SET last_hub_rowid = ?1 WHERE org_id = ?2",
+                params![new_cursor, org_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+/// A prune that deletes at least this many rows triggers an automatic `VACUUM`
+/// to hand the reclaimed pages back to the filesystem (a small prune leaves the
+/// freed pages in the file's freelist for reuse). `--vacuum` forces it for any
+/// non-empty prune.
+const LARGE_PRUNE_ROWS: u64 = 10_000;
+
+/// The `telemetry`-row predicate for "safe to drop without breaking the cloud
+/// drain", correlated to the outer `telemetry` row. `force` makes every row
+/// prunable; otherwise a row qualifies only when it is NULL-org (never shipped)
+/// or already acked (`rowid <= cloud_sync_cursors.last_hub_rowid`).
+fn prunable_predicate(force: bool) -> &'static str {
+    if force {
+        "1"
+    } else {
+        "(telemetry.org_id IS NULL \
+          OR telemetry.rowid <= COALESCE( \
+             (SELECT last_hub_rowid FROM cloud_sync_cursors c \
+              WHERE c.org_id = telemetry.org_id), 0))"
+    }
+}
+
+/// Retention knobs for [`UsageStore::prune`]. Every field is opt-in; a policy
+/// with no age, ceiling, or GC set is a no-op.
+#[derive(Debug, Clone, Default)]
+pub struct PrunePolicy {
+    /// A SQLite datetime modifier (e.g. `"-90 days"`); rows older than
+    /// `now + modifier` are dropped. `None` disables age pruning. The CLI
+    /// builds this from `--older-than 90d`.
+    pub older_than: Option<String>,
+    /// Hard ceiling on retained `telemetry` rows; the oldest prunable rows are
+    /// evicted until at/under it. `None` disables the ceiling.
+    pub max_rows: Option<i64>,
+    /// Project ids whose checkout the caller found missing on disk. Each is
+    /// GC'd only if it is *unregistered* (no org-scoped rows in the hub).
+    pub gc_project_ids: Vec<String>,
+    /// Prune even un-acked org rows (breaks a pending cloud drain). Off by
+    /// default; the safety guard above holds unless this is set.
+    pub force: bool,
+    /// `VACUUM` after pruning to reclaim file bytes (also happens automatically
+    /// for a large prune). Cloud cursors are re-anchored across the `VACUUM`.
+    pub vacuum: bool,
+    /// Compute the report without deleting anything (rolls the transaction back
+    /// and skips `VACUUM`).
+    pub dry_run: bool,
+}
+
+/// What [`UsageStore::prune`] did (or, under `dry_run`, would do).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PruneReport {
+    /// `telemetry` rows removed by the age cutoff.
+    pub aged_out: u64,
+    /// Rollup rows (`execution_rollup` + `tool_usage_rollup`) removed by the
+    /// age cutoff. These never drain, so the cursor guard does not apply.
+    pub rollups_aged_out: u64,
+    /// `telemetry` rows evicted to satisfy the row ceiling.
+    pub ceiling_evicted: u64,
+    /// Unregistered, gone-root projects removed.
+    pub gc_projects: u64,
+    /// `telemetry` rows removed by project GC.
+    pub gc_rows: u64,
+    /// Un-acked org rows that would have aged out but were kept for the cloud
+    /// drain (only counted without `force`).
+    pub protected_unacked: u64,
+    /// `telemetry` rows still above the ceiling after eviction because they are
+    /// un-acked and `force` was not set. Non-zero means "run with `--force` to
+    /// go lower, or drain first".
+    pub still_over_ceiling: u64,
+    /// Whether `VACUUM` ran (and cloud cursors were re-anchored).
+    pub vacuumed: bool,
 }
 
 /// One line of the global telemetry report: per (org, provider, model)
@@ -727,6 +1013,278 @@ mod tests {
         assert!(
             hub.cloud_pending("acme", 10).unwrap().is_empty(),
             "an out-of-order ack never rewinds the cursor"
+        );
+    }
+
+    // ---- retention / prune -------------------------------------------------
+
+    fn source_row_at(source_rowid: i64, cost: f64, recorded_at: &str) -> crate::SourceTelemetryRow {
+        let mut r = source_row(source_rowid, cost);
+        r.recorded_at = recorded_at.into();
+        r
+    }
+
+    fn telemetry_rows(hub: &UsageStore) -> i64 {
+        hub.lock()
+            .query_row("SELECT COUNT(*) FROM telemetry", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn age_prune_spares_unacked_org_rows_unless_forced() {
+        let hub = UsageStore::in_memory().unwrap();
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[
+                source_row_at(1, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(2, 0.01, "2000-01-01T00:00:00Z"),
+            ],
+        )
+        .unwrap();
+
+        // Nothing acked → both rows are un-acked. Age-prune matches them but
+        // protects them for the drain.
+        let report = hub
+            .prune(&PrunePolicy {
+                older_than: Some("-1 days".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 0, "un-acked org rows are never dropped");
+        assert_eq!(report.protected_unacked, 2);
+        assert_eq!(telemetry_rows(&hub), 2);
+
+        // --force overrides the guard.
+        let report = hub
+            .prune(&PrunePolicy {
+                older_than: Some("-1 days".into()),
+                force: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 2);
+        assert_eq!(telemetry_rows(&hub), 0);
+    }
+
+    #[test]
+    fn age_prune_drops_acked_and_null_org_rows() {
+        let hub = UsageStore::in_memory().unwrap();
+        // One acked org row + one NULL-org row, both ancient.
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[source_row_at(1, 0.01, "2000-01-01T00:00:00Z")],
+        )
+        .unwrap();
+        let mut local = scope(None, None);
+        local.project_id = "proj_local".into();
+        hub.replicate_telemetry(&local, &[source_row_at(1, 0.01, "2000-01-01T00:00:00Z")])
+            .unwrap();
+        // Ack the org row (its hub rowid is 1).
+        hub.ack_cloud_synced("acme", 1).unwrap();
+
+        let report = hub
+            .prune(&PrunePolicy {
+                older_than: Some("-1 days".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 2, "acked org + NULL-org rows both drop");
+        assert_eq!(report.protected_unacked, 0);
+        assert_eq!(telemetry_rows(&hub), 0);
+    }
+
+    #[test]
+    fn gc_removes_unregistered_projects_only() {
+        let hub = UsageStore::in_memory().unwrap();
+        let mut local = scope(None, None);
+        local.project_id = "proj_local".into();
+        hub.replicate_telemetry(&local, &[source_row(1, 0.01), source_row(2, 0.01)])
+            .unwrap();
+        let mut acme = scope(Some("acme"), Some("ws-1"));
+        acme.project_id = "proj_acme".into();
+        hub.replicate_telemetry(&acme, &[source_row(1, 0.05)])
+            .unwrap();
+
+        // The caller marks BOTH as gone-root; only the unregistered one is GC'd.
+        let report = hub
+            .prune(&PrunePolicy {
+                gc_project_ids: vec!["proj_local".into(), "proj_acme".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.gc_projects, 1);
+        assert_eq!(report.gc_rows, 2);
+        assert_eq!(
+            telemetry_rows(&hub),
+            1,
+            "the registered project's row stays"
+        );
+        assert_eq!(
+            hub.cloud_pending("acme", 10).unwrap().len(),
+            1,
+            "GC never touches a project that can still drain"
+        );
+    }
+
+    #[test]
+    fn ceiling_evicts_oldest_prunable_and_reports_residual() {
+        let hub = UsageStore::in_memory().unwrap();
+        // 3 NULL-org rows (prunable) then 2 un-acked org rows (protected).
+        hub.replicate_telemetry(
+            &scope(None, None),
+            &[
+                source_row(1, 0.01),
+                source_row(2, 0.01),
+                source_row(3, 0.01),
+            ],
+        )
+        .unwrap();
+        let mut acme = scope(Some("acme"), Some("ws-1"));
+        acme.project_id = "proj_acme".into();
+        hub.replicate_telemetry(&acme, &[source_row(1, 0.05), source_row(2, 0.05)])
+            .unwrap();
+
+        // Cap at 1: the 3 NULL-org rows evict, but the 2 un-acked org rows can't.
+        let report = hub
+            .prune(&PrunePolicy {
+                max_rows: Some(1),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.ceiling_evicted, 3);
+        assert_eq!(report.still_over_ceiling, 1, "un-acked rows block the cap");
+        assert_eq!(telemetry_rows(&hub), 2);
+
+        // --force reaches the cap.
+        let report = hub
+            .prune(&PrunePolicy {
+                max_rows: Some(1),
+                force: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.ceiling_evicted, 1);
+        assert_eq!(report.still_over_ceiling, 0);
+        assert_eq!(telemetry_rows(&hub), 1);
+    }
+
+    #[test]
+    fn dry_run_reports_without_deleting() {
+        let hub = UsageStore::in_memory().unwrap();
+        hub.replicate_telemetry(
+            &scope(None, None),
+            &[
+                source_row_at(1, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(2, 0.01, "2000-01-01T00:00:00Z"),
+            ],
+        )
+        .unwrap();
+        let report = hub
+            .prune(&PrunePolicy {
+                older_than: Some("-1 days".into()),
+                vacuum: true, // ignored under dry_run
+                dry_run: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 2, "dry run reports what it would drop");
+        assert!(!report.vacuumed, "dry run never vacuums");
+        assert_eq!(telemetry_rows(&hub), 2, "dry run deletes nothing");
+    }
+
+    #[test]
+    fn vacuum_reanchors_cloud_cursor_across_rowid_renumber() {
+        // A real file-backed hub so VACUUM performs its rowid renumber.
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = UsageStore::open_at(&tmp.path().join("usage.db")).unwrap();
+
+        // Rows 1–2 ancient (age out); 3–5 far-future (retained).
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[
+                source_row_at(1, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(2, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(3, 0.01, "2999-01-01T00:00:00Z"),
+                source_row_at(4, 0.01, "2999-01-01T00:00:00Z"),
+                source_row_at(5, 0.01, "2999-01-01T00:00:00Z"),
+            ],
+        )
+        .unwrap();
+        // Ack the first three (cursor = hub rowid of the 3rd pending row).
+        let pending = hub.cloud_pending("acme", 10).unwrap();
+        let third = pending[2].hub_rowid;
+        hub.ack_cloud_synced("acme", third).unwrap();
+
+        // Drop the two ancient (acked → prunable) rows, then VACUUM — which
+        // renumbers the surviving rowids 3,4,5 down to 1,2,3.
+        let report = hub
+            .prune(&PrunePolicy {
+                older_than: Some("-1 days".into()),
+                vacuum: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 2);
+        assert!(report.vacuumed);
+
+        // The un-acked rows (source_rowid 4 and 5) must still be surfaced. A
+        // naive VACUUM leaves the cursor at the stale rowid 3, so this would be
+        // empty — the re-anchor is what keeps the drain whole.
+        let pending = hub.cloud_pending("acme", 10).unwrap();
+        let ids: Vec<i64> = pending.iter().map(|e| e.source_rowid).collect();
+        assert_eq!(ids, vec![4, 5], "un-acked rows survive the rowid renumber");
+    }
+
+    #[test]
+    fn small_prune_without_vacuum_does_not_strand_replayed_rows() {
+        // A prune below the auto-VACUUM threshold and without `--vacuum` still
+        // frees the deleted rowids; SQLite reuses them for the next insert. The
+        // cursor clamp must stop a replayed row landing at/below a stale cursor
+        // and never draining. (Regression: before the clamp this returned [].)
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = UsageStore::open_at(&tmp.path().join("usage.db")).unwrap();
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[
+                source_row_at(1, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(2, 0.01, "2000-01-01T00:00:00Z"),
+                source_row_at(3, 0.01, "2000-01-01T00:00:00Z"),
+            ],
+        )
+        .unwrap();
+        let last = hub
+            .cloud_pending("acme", 10)
+            .unwrap()
+            .last()
+            .unwrap()
+            .hub_rowid;
+        hub.ack_cloud_synced("acme", last).unwrap();
+
+        let report = hub
+            .prune(&PrunePolicy {
+                older_than: Some("-1 days".into()),
+                vacuum: false,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(report.aged_out, 3);
+        assert!(!report.vacuumed, "small prune must not vacuum");
+
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[source_row_at(4, 0.01, "2999-01-01T00:00:00Z")],
+        )
+        .unwrap();
+        let ids: Vec<i64> = hub
+            .cloud_pending("acme", 10)
+            .unwrap()
+            .iter()
+            .map(|e| e.source_rowid)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![4],
+            "a row replicated after a non-vacuum prune must still be drainable"
         );
     }
 
