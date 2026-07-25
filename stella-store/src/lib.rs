@@ -134,8 +134,9 @@ use migrations::{
 pub use cache_gaps::CacheCallGap;
 pub use catalog::CatalogStore;
 pub use drain::{
-    DRAIN_SCHEMA_VERSION, DrainBatch, DrainRow, MAX_SUPPORTED_SCHEMA_VERSION,
-    MIN_SUPPORTED_SCHEMA_VERSION, OTEL_SCHEMA_VERSION_ATTR, schema_version_supported,
+    CloudIntake, DRAIN_SCHEMA_VERSION, DrainBatch, DrainOutcome, DrainRejection, DrainRow,
+    MAX_SUPPORTED_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, OTEL_SCHEMA_VERSION_ATTR,
+    RejectionClass, drain_org, schema_version_supported,
 };
 // The sidecar journal's writer is deliberately NOT re-exported at the top
 // level: `SessionJournal` here names the DB read-model reassembled by

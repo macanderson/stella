@@ -17,6 +17,23 @@
 //! bounds that growth — by age, by a hard row ceiling, and by GC of unregistered
 //! projects whose checkout is gone — without ever dropping an org's un-acked
 //! cloud-drain rows (see [`UsageStore::prune`] and [`PrunePolicy`]).
+//!
+//! Cloud drain: [`UsageStore::cloud_pending`] stages an org's un-acked rows and
+//! [`UsageStore::ack_cloud_synced`] advances a monotonic per-org cursor that
+//! never rewinds. Because it advances only on a confirmed ack, one row the
+//! intake rejects *permanently* would wedge every newer row for that org — so
+//! [`UsageStore::quarantine_cloud_row`] dead-letters that row (with its
+//! rejection reason, retained for inspection) and steps the cursor over it in a
+//! single transaction (#467). The drain loop that pinpoints such a row lives in
+//! [`crate::drain`].
+//!
+//! Schema: `usage.db` is versioned by *convergence*, not by a `user_version`
+//! migration list (unlike `.stella/private/store.db`, see [`crate::migrations`]).
+//! Every table in [`USAGE_SCHEMA`] is `CREATE ... IF NOT EXISTS` and the whole
+//! batch replays on every open, so an additive table or index reaches an
+//! existing hub the next time it is opened. Adding a table here is the
+//! migration; a table that ever needs a *reshape* would need the versioned
+//! machinery introduced first.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -176,6 +193,26 @@ CREATE TABLE IF NOT EXISTS cloud_sync_cursors (
     org_id         TEXT PRIMARY KEY,
     last_hub_rowid INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS cloud_quarantine (
+    org_id         TEXT NOT NULL,
+    project_id     TEXT NOT NULL,
+    source_rowid   INTEGER NOT NULL,
+    workspace_id   TEXT,
+    repo_id        TEXT NOT NULL DEFAULT '',
+    hub_rowid      INTEGER NOT NULL,
+    recorded_at    TEXT NOT NULL DEFAULT '',
+    provider       TEXT NOT NULL DEFAULT '',
+    model          TEXT NOT NULL DEFAULT '',
+    input_tokens   INTEGER NOT NULL DEFAULT 0,
+    output_tokens  INTEGER NOT NULL DEFAULT 0,
+    cost_usd       REAL NOT NULL DEFAULT 0,
+    reason         TEXT NOT NULL,
+    http_status    INTEGER,
+    quarantined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (org_id, project_id, source_rowid)
+);
+CREATE INDEX IF NOT EXISTS cloud_quarantine_by_org
+    ON cloud_quarantine(org_id, quarantined_at);
 ";
 
 /// The user-tier aggregate store. Read/write, loopback-local, no server.
@@ -496,6 +533,151 @@ impl UsageStore {
             params![org_id, up_to_hub_rowid],
         )?;
         Ok(())
+    }
+
+    /// Dead-letter one permanently-rejected hub row and advance the org cursor
+    /// past it — the head-of-line-blocking escape hatch (#467).
+    ///
+    /// The cursor never rewinds and never advances on an un-acked row, so a
+    /// single row the intake refuses *forever* would otherwise wedge every
+    /// newer row for that org. Once the drain has pinpointed that row
+    /// ([`crate::drain::drain_org`] bisects the batch), this records it with its
+    /// rejection reason and moves the cursor past it in **one transaction**:
+    /// quarantine-then-ack can only ever err toward re-quarantining the same
+    /// row (idempotent on `(org_id, project_id, source_rowid)`), never toward
+    /// skipping one without a record. A crash between the two halves is
+    /// impossible; a crash before the commit replays the whole step.
+    ///
+    /// The row is **never silently dropped**: the quarantine record keeps its
+    /// identity, its content-free telemetry, and why the intake refused it, and
+    /// it survives the retention prune that will eventually reclaim the acked
+    /// `telemetry` row itself (which is why the fields are copied, not joined).
+    ///
+    /// Content-free by construction (#466): the copied columns are identity +
+    /// addressing + per-call telemetry only. No prompt, completion, path, or
+    /// tool payload exists on a hub row to copy, and `reason` is the intake's
+    /// own diagnostic, truncated to [`MAX_QUARANTINE_REASON_BYTES`] so a
+    /// misbehaving intake cannot turn the dead-letter table into a content
+    /// channel.
+    ///
+    /// `advance_to_hub_rowid` is the highest row the caller has *settled* —
+    /// normally `event.hub_rowid`, or a later row when a delivered prefix is
+    /// being acked in the same step. It is clamped to at least the quarantined
+    /// row so the poison row can never be quarantined without being stepped
+    /// over.
+    pub fn quarantine_cloud_row(
+        &self,
+        event: &CloudTelemetryEvent,
+        reason: &QuarantineReason,
+        advance_to_hub_rowid: i64,
+    ) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        let t = &event.telemetry;
+        tx.execute(
+            "INSERT INTO cloud_quarantine \
+             (org_id, project_id, source_rowid, workspace_id, repo_id, hub_rowid, recorded_at, \
+              provider, model, input_tokens, output_tokens, cost_usd, reason, http_status) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(org_id, project_id, source_rowid) DO UPDATE SET \
+               hub_rowid = excluded.hub_rowid, \
+               reason = excluded.reason, \
+               http_status = excluded.http_status",
+            params![
+                event.org_id,
+                event.project_id,
+                event.source_rowid,
+                event.workspace_id,
+                event.repo_id,
+                event.hub_rowid,
+                event.recorded_at,
+                t.provider,
+                t.model,
+                t.input_tokens as i64,
+                t.output_tokens as i64,
+                t.cost_usd,
+                reason.detail(),
+                reason.http_status,
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO cloud_sync_cursors (org_id, last_hub_rowid) VALUES (?1, ?2) \
+             ON CONFLICT(org_id) DO UPDATE SET \
+               last_hub_rowid = MAX(last_hub_rowid, excluded.last_hub_rowid)",
+            params![event.org_id, advance_to_hub_rowid.max(event.hub_rowid)],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// How many rows the cloud drain has dead-lettered for one org — the count
+    /// half of what `stella cloud status` surfaces. `None` counts every org.
+    pub fn cloud_quarantine_count(&self, org_id: Option<&str>) -> Result<i64> {
+        Ok(self.lock().query_row(
+            "SELECT COUNT(*) FROM cloud_quarantine WHERE (?1 IS NULL OR org_id = ?1)",
+            params![org_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Dead-lettered rows for one org, newest first — the inspection view
+    /// behind `stella cloud status`. `None` reports every org.
+    pub fn cloud_quarantined(
+        &self,
+        org_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<QuarantinedRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT org_id, project_id, source_rowid, workspace_id, repo_id, hub_rowid, \
+                    recorded_at, provider, model, cost_usd, reason, http_status, quarantined_at \
+             FROM cloud_quarantine \
+             WHERE (?1 IS NULL OR org_id = ?1) \
+             ORDER BY quarantined_at DESC, hub_rowid DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![org_id, limit as i64], |r| {
+            Ok(QuarantinedRow {
+                org_id: r.get(0)?,
+                project_id: r.get(1)?,
+                source_rowid: r.get(2)?,
+                workspace_id: r.get(3)?,
+                repo_id: r.get(4)?,
+                hub_rowid: r.get(5)?,
+                recorded_at: r.get(6)?,
+                provider: r.get(7)?,
+                model: r.get(8)?,
+                cost_usd: r.get(9)?,
+                reason: r.get(10)?,
+                http_status: r.get(11)?,
+                quarantined_at: r.get(12)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Dead-letter counts grouped by rejection reason, largest group first —
+    /// the "count + reason" rollup `stella cloud status` prints without dumping
+    /// every row. `None` reports every org.
+    pub fn cloud_quarantine_reasons(
+        &self,
+        org_id: Option<&str>,
+    ) -> Result<Vec<(String, Option<i64>, i64)>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT reason, http_status, COUNT(*) AS n FROM cloud_quarantine \
+             WHERE (?1 IS NULL OR org_id = ?1) \
+             GROUP BY reason, http_status ORDER BY n DESC, reason ASC",
+        )?;
+        let rows = stmt.query_map(params![org_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     /// Every project the hub knows: (project_id, name, root_path) — the
@@ -830,6 +1012,89 @@ pub struct CloudTelemetryEvent {
     pub telemetry: crate::TelemetryRow,
 }
 
+/// Hard cap on the bytes of intake diagnostic text a quarantine record keeps.
+///
+/// The reason is the *remote* intake's own words. A hub row is content-free by
+/// construction (#466), so a well-behaved intake has nothing sensitive to quote
+/// back — but the dead-letter table must not become an unbounded channel for
+/// whatever a misbehaving or compromised intake decides to echo, so the store
+/// truncates rather than trusting the peer.
+pub const MAX_QUARANTINE_REASON_BYTES: usize = 512;
+
+/// Why the cloud intake permanently refused one row, as persisted by
+/// [`UsageStore::quarantine_cloud_row`].
+///
+/// Deliberately distinct from the drain's [`crate::drain::DrainRejection`]: only
+/// a **terminal, row-attributable** rejection may ever become a quarantine
+/// record, and the named constructor says so. A transient failure must retry,
+/// and a terminal *batch* failure (bad auth, unsupported schema version) is not
+/// attributable to any one row — dead-lettering either would be silent data
+/// loss. [`crate::drain::DrainRejection::quarantine_reason`] is the only path
+/// the drain loop takes to build one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuarantineReason {
+    /// The intake's HTTP status, when the rejection came over HTTP.
+    pub http_status: Option<u16>,
+    detail: String,
+}
+
+impl QuarantineReason {
+    /// Build a reason for a rejection the caller has already established is
+    /// terminal **and** attributable to this single row. `detail` is truncated
+    /// to [`MAX_QUARANTINE_REASON_BYTES`] on a char boundary.
+    pub fn terminal(http_status: Option<u16>, detail: &str) -> Self {
+        Self {
+            http_status,
+            detail: truncate_on_char_boundary(detail.trim(), MAX_QUARANTINE_REASON_BYTES)
+                .to_string(),
+        }
+    }
+
+    /// The (truncated) intake diagnostic.
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
+/// Longest prefix of `s` that fits in `max` bytes without splitting a `char`.
+fn truncate_on_char_boundary(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// One dead-lettered hub row, retained for inspection after the cloud drain
+/// stepped the org cursor past it (#467).
+///
+/// Content-free by construction (#466): identity, addressing, the per-call
+/// telemetry a `stella cloud status` reader needs to recognize the row, and the
+/// intake's rejection reason. No prompt, completion, path, or tool payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuarantinedRow {
+    pub org_id: String,
+    pub project_id: String,
+    /// Half of the intake's `(workspace_id, source_rowid)` identity — what an
+    /// operator quotes when asking the intake why it refused the row.
+    pub source_rowid: i64,
+    pub workspace_id: Option<String>,
+    pub repo_id: String,
+    /// The hub cursor address the drain advanced past.
+    pub hub_rowid: i64,
+    pub recorded_at: String,
+    pub provider: String,
+    pub model: String,
+    pub cost_usd: f64,
+    /// The intake's diagnostic, truncated to [`MAX_QUARANTINE_REASON_BYTES`].
+    pub reason: String,
+    pub http_status: Option<u16>,
+    pub quarantined_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1014,6 +1279,205 @@ mod tests {
             hub.cloud_pending("acme", 10).unwrap().is_empty(),
             "an out-of-order ack never rewinds the cursor"
         );
+    }
+
+    // ---- poison-row quarantine (#467) --------------------------------------
+
+    /// Seed one org row and hand back the hub plus its pending event.
+    fn hub_with_one_org_row() -> (UsageStore, CloudTelemetryEvent) {
+        let hub = UsageStore::in_memory().unwrap();
+        hub.replicate_telemetry(
+            &scope(Some("acme"), Some("ws-1")),
+            &[source_row(1, 0.05), source_row(2, 0.05)],
+        )
+        .unwrap();
+        let event = hub.cloud_pending("acme", 10).unwrap().remove(0);
+        (hub, event)
+    }
+
+    #[test]
+    fn quarantine_advances_the_cursor_past_the_poison_row_in_one_step() {
+        let (hub, poison) = hub_with_one_org_row();
+        assert_eq!(hub.cloud_pending("acme", 10).unwrap().len(), 2);
+
+        hub.quarantine_cloud_row(
+            &poison,
+            &QuarantineReason::terminal(Some(400), "unknown provider"),
+            poison.hub_rowid,
+        )
+        .unwrap();
+
+        // The org's newer row is now the only pending one — head-of-line
+        // blocking is gone.
+        let still_pending: Vec<i64> = hub
+            .cloud_pending("acme", 10)
+            .unwrap()
+            .iter()
+            .map(|e| e.source_rowid)
+            .collect();
+        assert_eq!(still_pending, vec![2]);
+        assert_eq!(hub.cloud_quarantine_count(Some("acme")).unwrap(), 1);
+    }
+
+    #[test]
+    fn quarantine_never_rewinds_the_monotonic_cursor() {
+        let (hub, first) = hub_with_one_org_row();
+        // Ack everything, then quarantine the *older* row: the cursor must not
+        // walk backwards and re-ship the row already confirmed.
+        let last = hub.cloud_pending("acme", 10).unwrap().pop().unwrap();
+        hub.ack_cloud_synced("acme", last.hub_rowid).unwrap();
+        assert!(hub.cloud_pending("acme", 10).unwrap().is_empty());
+
+        hub.quarantine_cloud_row(
+            &first,
+            &QuarantineReason::terminal(Some(422), "late reject"),
+            first.hub_rowid,
+        )
+        .unwrap();
+
+        assert!(
+            hub.cloud_pending("acme", 10).unwrap().is_empty(),
+            "quarantining an already-acked row must never rewind the cursor"
+        );
+    }
+
+    #[test]
+    fn quarantining_the_same_row_twice_is_idempotent_and_keeps_the_latest_reason() {
+        let (hub, poison) = hub_with_one_org_row();
+        hub.quarantine_cloud_row(
+            &poison,
+            &QuarantineReason::terminal(Some(400), "first diagnosis"),
+            poison.hub_rowid,
+        )
+        .unwrap();
+        hub.quarantine_cloud_row(
+            &poison,
+            &QuarantineReason::terminal(Some(422), "second diagnosis"),
+            poison.hub_rowid,
+        )
+        .unwrap();
+
+        assert_eq!(
+            hub.cloud_quarantine_count(Some("acme")).unwrap(),
+            1,
+            "a replayed quarantine must not double-count"
+        );
+        let rows = hub.cloud_quarantined(Some("acme"), 10).unwrap();
+        assert_eq!(rows[0].reason, "second diagnosis");
+        assert_eq!(rows[0].http_status, Some(422));
+    }
+
+    #[test]
+    fn quarantine_is_org_scoped_and_reports_counts_by_reason() {
+        let hub = UsageStore::in_memory().unwrap();
+        for (org, project) in [("acme", "proj_a"), ("globex", "proj_b")] {
+            let mut s = scope(Some(org), Some("ws-1"));
+            s.project_id = project.into();
+            hub.replicate_telemetry(&s, &[source_row(1, 0.05), source_row(2, 0.05)])
+                .unwrap();
+        }
+        for org in ["acme", "acme", "globex"] {
+            let e = hub.cloud_pending(org, 10).unwrap().remove(0);
+            hub.quarantine_cloud_row(
+                &e,
+                &QuarantineReason::terminal(Some(400), "unknown provider"),
+                e.hub_rowid,
+            )
+            .unwrap();
+        }
+
+        assert_eq!(hub.cloud_quarantine_count(Some("acme")).unwrap(), 2);
+        assert_eq!(hub.cloud_quarantine_count(Some("globex")).unwrap(), 1);
+        assert_eq!(hub.cloud_quarantine_count(None).unwrap(), 3, "all orgs");
+        let reasons = hub.cloud_quarantine_reasons(Some("acme")).unwrap();
+        assert_eq!(
+            reasons,
+            vec![("unknown provider".to_string(), Some(400), 2)]
+        );
+        assert!(
+            hub.cloud_quarantined(Some("globex"), 10)
+                .unwrap()
+                .iter()
+                .all(|q| q.org_id == "globex"),
+            "the inspection view is org-scoped"
+        );
+    }
+
+    /// The hard invariant from #466 / AGENTS.md #3: the dead-letter store keeps
+    /// a row for inspection, so it must not become a content leak. The column
+    /// set is pinned to identity + addressing + content-free telemetry + the
+    /// intake's diagnostic — adding a prompt/completion/path column here fails
+    /// this test.
+    #[test]
+    fn the_quarantine_table_is_content_free_by_construction() {
+        let hub = UsageStore::in_memory().unwrap();
+        let conn = hub.lock();
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info('cloud_quarantine')")
+            .unwrap();
+        let mut columns: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        columns.sort();
+        let mut allowed: Vec<String> = [
+            // identity + addressing
+            "org_id",
+            "project_id",
+            "source_rowid",
+            "workspace_id",
+            "repo_id",
+            "hub_rowid",
+            "recorded_at",
+            // content-free telemetry
+            "provider",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "cost_usd",
+            // why it was refused
+            "reason",
+            "http_status",
+            "quarantined_at",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        allowed.sort();
+        assert_eq!(
+            columns, allowed,
+            "cloud_quarantine columns drifted — a dead-letter record is \
+             identity + telemetry + rejection reason ONLY, never content"
+        );
+    }
+
+    #[test]
+    fn a_quarantine_reason_cannot_grow_without_bound() {
+        let (hub, poison) = hub_with_one_org_row();
+        // A hostile/buggy intake echoing megabytes back must not turn the
+        // dead-letter table into a channel.
+        // The leading ASCII byte puts every multi-byte char on odd offsets, so
+        // the cap lands mid-char and the boundary walk is genuinely exercised.
+        let flood = format!("x{}", "é".repeat(MAX_QUARANTINE_REASON_BYTES));
+        let reason = QuarantineReason::terminal(None, &flood);
+        assert!(reason.detail().len() < MAX_QUARANTINE_REASON_BYTES);
+        assert!(
+            flood.starts_with(reason.detail()),
+            "truncation keeps a valid prefix on a char boundary"
+        );
+
+        hub.quarantine_cloud_row(&poison, &reason, poison.hub_rowid)
+            .unwrap();
+        let stored = hub.cloud_quarantined(Some("acme"), 1).unwrap();
+        assert!(stored[0].reason.len() <= MAX_QUARANTINE_REASON_BYTES);
+    }
+
+    #[test]
+    fn quarantine_reason_trims_and_preserves_short_diagnostics() {
+        let r = QuarantineReason::terminal(Some(400), "  model id not recognized\n");
+        assert_eq!(r.detail(), "model id not recognized");
+        assert_eq!(r.http_status, Some(400));
     }
 
     // ---- retention / prune -------------------------------------------------

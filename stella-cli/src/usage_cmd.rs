@@ -393,6 +393,56 @@ fn prune(
     Ok(())
 }
 
+/// Number of dead-lettered reason groups `cloud status` lists before folding
+/// the tail into a "+N more" line — enough to see the shape of a problem
+/// without turning status into a log dump.
+const QUARANTINE_REASONS_SHOWN: usize = 3;
+
+/// Report rows the cloud drain permanently could not deliver (#467).
+///
+/// A poison row is dead-lettered and the org cursor steps over it so newer rows
+/// keep flowing — which is exactly why it has to be *visible* here: the drain
+/// looks healthy afterwards, and this is the only place the silent casualty
+/// surfaces. Prints nothing when there is nothing to report.
+///
+/// Best-effort: `cloud status` answers about identity first, so an unopenable
+/// hub degrades to a one-line note instead of failing the command.
+fn print_quarantine(org: &str) {
+    let hub = match UsageStore::open_default() {
+        Ok(hub) => hub,
+        Err(e) => {
+            println!("{}   (hub unavailable: {e})", "quarantined:".bold());
+            return;
+        }
+    };
+    let (count, reasons) = match (
+        hub.cloud_quarantine_count(Some(org)),
+        hub.cloud_quarantine_reasons(Some(org)),
+    ) {
+        (Ok(count), Ok(reasons)) => (count, reasons),
+        _ => return,
+    };
+    if count == 0 {
+        return;
+    }
+    println!(
+        "{}   {}",
+        "quarantined:".bold(),
+        format!("{count} row(s) the cloud intake permanently rejected").yellow()
+    );
+    for (reason, status, n) in reasons.iter().take(QUARANTINE_REASONS_SHOWN) {
+        let status = status.map_or_else(String::new, |s| format!("HTTP {s}: "));
+        println!("              {n} x {status}{reason}");
+    }
+    if reasons.len() > QUARANTINE_REASONS_SHOWN {
+        println!(
+            "              +{} more reason(s)",
+            reasons.len() - QUARANTINE_REASONS_SHOWN
+        );
+    }
+    println!("              retained in the hub for inspection; the cursor advanced past them");
+}
+
 pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
     match cmd {
         CloudCmd::Status => {
@@ -410,6 +460,9 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             );
             println!("{}   {}", "repo_id:".bold(), scope.repo_id);
             println!("{}   {}", "project:".bold(), scope.project_id);
+            if let Some(org) = scope.org_id.as_deref() {
+                print_quarantine(org);
+            }
             if scope.org_id.is_none() {
                 println!(
                     "\nregister with `stella cloud register --org <org-id>` — \
