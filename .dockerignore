@@ -1,0 +1,48 @@
+# Docker build-context excludes.
+#
+# This file must live at the REPOSITORY ROOT: the documented build command
+# (packaging/docker/Dockerfile.serve:8) uses `.` as the context, and Docker
+# reads .dockerignore from the context root only — one next to the Dockerfile
+# would be ignored.
+#
+# Without it, the builder stage's `COPY . .` bakes the entire working tree into
+# an image layer, including every path .gitignore deliberately protects:
+# provider API keys in .env*, session transcripts and MCP OAuth tokens under
+# .stella/private/, the full .git/ history, and a multi-GB /target.
+#
+# Patterns are matched against the path relative to the context root, so a bare
+# `.stella/` excludes only the top-level one — the tracked
+# bench/readiness/.../app/.stella/ fixture is untouched, which is what we want.
+#
+# DO NOT exclude a workspace member (root Cargo.toml `members`, including
+# bench/loop-bench): cargo needs every member manifest present to load the
+# workspace, even when building a single --bin.
+
+# Build output and VCS history
+target/
+.git/
+
+# Local secrets and per-workspace private state
+.env
+.env.*
+.stella/
+.oxagen/
+.memories/
+
+# Agent/session scratch — never repository content, and never image content
+.claude/
+.agents/
+.agents.d/
+.agent/
+sandbox/
+verifications/
+
+# Docs site and its node_modules — not part of the cargo build
+stella-docs/
+docs/
+node_modules/
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.swo
