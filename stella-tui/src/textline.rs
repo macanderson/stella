@@ -494,6 +494,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
             frames,
             provider_mix,
             tokens,
+            ..
         } => Some(context_recall(
             frames.len(),
             *tokens,
@@ -897,6 +898,7 @@ mod tests {
                 }],
                 provider_mix: vec![],
                 tokens: 1,
+                usage: None,
             },
             AgentEvent::ContextWrite {
                 provider: "p".into(),
@@ -1014,6 +1016,7 @@ mod tests {
                 frames: 1,
             }],
             tokens: 120,
+            usage: None,
         })
         .expect("recall is an annotation");
         assert_eq!(

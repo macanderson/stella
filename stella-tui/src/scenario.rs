@@ -132,6 +132,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
             ],
             provider_mix: vec![ProviderShare { provider: "code-graph".into(), frames: 1 }, ProviderShare { provider: "memory".into(), frames: 1 }],
             tokens: 210,
+            usage: None,
         }),
         ev(lead, AgentEvent::Stage { name: StageKind::Plan }),
         ev(lead, AgentEvent::Text { delta: "Planning the automations cluster: list, editor, triggers, workflows.".into() }),

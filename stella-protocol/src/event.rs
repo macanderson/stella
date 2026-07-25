@@ -475,6 +475,14 @@ pub enum AgentEvent {
         frames: Vec<ContextFrameRef>,
         provider_mix: Vec<ProviderShare>,
         tokens: u32,
+        /// The CGP usage report for this recall (`docs/context-reuse.md` §2):
+        /// per-provider frame counts and token costs against the requested
+        /// budget, so context cost is meterable rather than merely visible.
+        /// Optional and defaulted — streams recorded before the report existed
+        /// still deserialize (the additive contract), and a recall path with
+        /// no CGP host behind it has none to report.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<ContextUsage>,
     },
     /// Context write-back completed: episode summaries, fact upserts,
     /// supersession (bi-temporal,
@@ -803,6 +811,70 @@ pub struct ManifestEntry {
 pub struct ProviderShare {
     pub provider: String,
     pub frames: u32,
+}
+
+/// One provider's contribution to a recall's cost, as the CGP usage report
+/// defines it (`docs/context-reuse.md` §2 `ProviderUsage`).
+///
+/// Distinct from [`ProviderShare`], which counts only the frames that *won*
+/// fusion and reached the prompt. This counts what the provider **served to
+/// the host** and what the host **rejected** (a budget lie, a consent gate, a
+/// failed leg), with the token cost behind each — the difference between "what
+/// did the model see?" and "what did this turn cost, and who drove it?".
+///
+/// Content-free by construction: a provider id, three numbers. No frame
+/// titles, bodies, URIs, or query text ever enter this type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextProviderUsage {
+    /// The host's routing/consent key for the serving provider.
+    pub provider_id: String,
+    /// Frames accepted — they passed consent, the timeout, and the
+    /// budget-honesty audit.
+    pub frames_served: u32,
+    /// Frames the host dropped whole, e.g. a provider that misdeclared cost.
+    pub frames_rejected: u32,
+    /// This provider's contribution to `budget_consumed`.
+    pub token_cost: u64,
+}
+
+/// The per-request roll-up of what one context recall cost
+/// (`docs/context-reuse.md` §2 `UsageReport`) — the envelope a metering
+/// pipeline bills from, and the answer to "what did this turn's context cost,
+/// and which sources drove it?".
+///
+/// Deliberately **content-free**: budget scalars, an accounting timestamp, and
+/// per-provider counts and costs. The spec's `served_frames` drill-down is
+/// *not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the
+/// same [`AgentEvent::ContextRecall`] already records the frame-granular
+/// identities locally, so an auditor still walks from a total to its frames
+/// without this type ever carrying one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextUsage {
+    /// The query's `max_tokens` — the budget this recall was allowed.
+    pub budget_requested: u32,
+    /// The summed `token_cost` of every served frame.
+    pub budget_consumed: u64,
+    /// The report's accounting snapshot (RFC 3339), stamped by the host. This
+    /// is the *accounting event* time, never the query's bi-temporal `as_of`
+    /// retrieval pin — two different clocks.
+    pub as_of: String,
+    /// One entry per provider the query reached.
+    pub providers: Vec<ContextProviderUsage>,
+}
+
+impl ContextUsage {
+    /// Whether the report re-sums: `budget_consumed` must equal the summed
+    /// per-provider `token_cost` (`docs/context-reuse.md` §2, the arithmetic
+    /// identity). A metering pipeline checks this before trusting a total, so
+    /// a corrupted number is a checkable failure rather than a silent misbill.
+    pub fn is_consistent(&self) -> bool {
+        self.budget_consumed == self.providers.iter().map(|p| p.token_cost).sum::<u64>()
+    }
+
+    /// Total frames served across every provider the query reached.
+    pub fn total_frames_served(&self) -> u64 {
+        self.providers.iter().map(|p| p.frames_served as u64).sum()
+    }
 }
 
 /// Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the
@@ -1207,6 +1279,7 @@ mod tests {
                 frames: 1,
             }],
             tokens: 120,
+            usage: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("citation_label"), "{json}");
@@ -1227,6 +1300,97 @@ mod tests {
                 );
                 assert_eq!(frame.method.as_deref(), Some("tree-sitter/symbol-extract"));
             }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    /// WITNESS (#452): the usage-report envelope rides the recall event and
+    /// round-trips byte-for-byte (AGENTS.md invariant 4), so context cost is a
+    /// meterable record rather than a number that dies with the turn.
+    #[test]
+    fn context_usage_report_round_trips_and_stays_content_free() {
+        let usage = ContextUsage {
+            budget_requested: 1200,
+            budget_consumed: 210,
+            as_of: "2026-07-24T00:00:00Z".into(),
+            providers: vec![
+                ContextProviderUsage {
+                    provider_id: "workspace-memory".into(),
+                    frames_served: 2,
+                    frames_rejected: 0,
+                    token_cost: 90,
+                },
+                ContextProviderUsage {
+                    provider_id: "code-graph".into(),
+                    frames_served: 1,
+                    frames_rejected: 3,
+                    token_cost: 120,
+                },
+            ],
+        };
+        assert!(
+            usage.is_consistent(),
+            "budget_consumed must re-sum from the per-provider costs"
+        );
+        assert_eq!(usage.total_frames_served(), 3);
+
+        let event = AgentEvent::ContextRecall {
+            frames: vec![],
+            provider_mix: vec![],
+            tokens: 210,
+            usage: Some(usage.clone()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AgentEvent = serde_json::from_str(&json).unwrap();
+        match &back {
+            AgentEvent::ContextRecall { usage: round, .. } => {
+                assert_eq!(round.as_ref(), Some(&usage), "byte-for-byte round trip")
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+        assert_eq!(
+            json,
+            serde_json::to_string(&back).unwrap(),
+            "re-serialization must be byte-identical"
+        );
+
+        // Content-free by construction: the envelope carries provider ids,
+        // counts, costs, and a timestamp — never frame text, titles, URIs, or
+        // query text (AGENTS.md invariant 3, #466).
+        let value = serde_json::to_value(&usage).unwrap();
+        let mut fields: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        fields.sort();
+        assert_eq!(
+            fields,
+            ["as_of", "budget_consumed", "budget_requested", "providers"],
+            "no field may be added to the usage envelope without a content review"
+        );
+    }
+
+    /// An inconsistent total is *checkable*, never a silent misbill (§2).
+    #[test]
+    fn a_tampered_usage_total_fails_the_arithmetic_identity() {
+        let usage = ContextUsage {
+            budget_requested: 1200,
+            budget_consumed: 999,
+            as_of: "2026-07-24T00:00:00Z".into(),
+            providers: vec![ContextProviderUsage {
+                provider_id: "workspace-memory".into(),
+                frames_served: 1,
+                frames_rejected: 0,
+                token_cost: 90,
+            }],
+        };
+        assert!(!usage.is_consistent());
+    }
+
+    /// A recall event recorded before the usage report existed must still
+    /// deserialize — the additive contract.
+    #[test]
+    fn a_recall_event_without_a_usage_report_still_parses() {
+        let legacy = r#"{"type":"context_recall","frames":[],"provider_mix":[],"tokens":0}"#;
+        match serde_json::from_str::<AgentEvent>(legacy).unwrap() {
+            AgentEvent::ContextRecall { usage, .. } => assert!(usage.is_none()),
             other => panic!("unexpected variant: {other:?}"),
         }
     }

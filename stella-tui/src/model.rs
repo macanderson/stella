@@ -477,6 +477,7 @@ impl SessionModel {
                 frames,
                 provider_mix: _,
                 tokens,
+                ..
             } => {
                 let labels = frames.iter().map(|f| f.citation_label.clone()).collect();
                 self.transcript.push(TranscriptEntry::ContextRecall {
@@ -1297,6 +1298,7 @@ mod tests {
                 frames: 1,
             }],
             tokens: 100,
+            usage: None,
         });
         match model.transcript.last() {
             Some(TranscriptEntry::ContextRecall { labels, .. }) => {

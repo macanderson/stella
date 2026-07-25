@@ -44,11 +44,12 @@ use async_trait::async_trait;
 use contextgraph_host::{ContextProvider, Host, HostError, ProviderResult};
 use contextgraph_types::{
     Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameId, ProviderInfo,
-    VerifyRequest, VerifyResponse, canonical_order,
+    UsageReport, VerifyRequest, VerifyResponse, canonical_order,
 };
 use stella_context::{
     ContextError, ContextProvider as PlaneProvider, ContextStore, ProviderRegistry,
 };
+use stella_protocol::{ContextProviderUsage, ContextUsage};
 
 /// Per-provider recall timeout. Recall runs before every turn, so a wedged
 /// source must cost bounded latency — the host isolates it and the other
@@ -315,6 +316,15 @@ impl AttributedContextFrame {
     }
 }
 
+/// One recall through the host: the frames that won selection, plus the CGP
+/// usage report for the request that produced them.
+pub struct HostRecall {
+    /// Selected frames, in canonical render order (`docs/context-reuse.md` §1).
+    pub frames: Vec<AttributedContextFrame>,
+    /// The per-request cost roll-up (`docs/context-reuse.md` §2).
+    pub usage: ContextUsage,
+}
+
 /// Fan `query` out through the host, **select** by score, and **render** in
 /// canonical order.
 ///
@@ -334,8 +344,21 @@ impl AttributedContextFrame {
 ///
 /// Failed, timed-out, or budget-lying providers contribute nothing — their
 /// isolation is the point of routing through the host.
-pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> Vec<AttributedContextFrame> {
+/// It also returns the fan-out's **usage report** — the per-request roll-up of
+/// which providers served how many frames, at what token cost, against which
+/// budget (`docs/context-reuse.md` §2).
+///
+/// The report is taken from the fan-out **before** fusion, so it accounts for
+/// what each provider actually served and what the host rejected — a budget
+/// liar's dropped frames, a consent-gated or failed leg — not merely what
+/// survived the merge into the prompt. That distinction is what makes it an
+/// accounting record rather than a debug counter: a provider that is expensive
+/// but always loses fusion is invisible in the frame mix and perfectly visible
+/// here. `as_of` is the accounting-event time this host stamps, never the
+/// query's bi-temporal retrieval pin — two different clocks (§2).
+pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> HostRecall {
     let fanout = host.query_all(query).await;
+    let usage = to_context_usage(&fanout.usage_report(query, now_rfc3339()));
     let mut frames: Vec<AttributedContextFrame> = Vec::new();
     for outcome in fanout.outcomes {
         if let ProviderResult::Frames(result) = outcome.result {
@@ -380,7 +403,48 @@ pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> Vec<Attribute
     let mut ids: Vec<FrameId> = kept.iter().map(AttributedContextFrame::identity).collect();
     canonical_order(&mut ids);
     kept.sort_by_cached_key(|frame| ids.binary_search(&frame.identity()).unwrap_or(usize::MAX));
-    kept
+    HostRecall {
+        frames: kept,
+        usage,
+    }
+}
+
+/// Project the CGP [`UsageReport`] onto the telemetry envelope
+/// (`stella_protocol::ContextUsage`).
+///
+/// Deliberately **lossy in one direction only**: the spec's `served_frames`
+/// drill-down is dropped here because the sibling `frames` field of the same
+/// `ContextRecall` event already records frame-granular identities locally.
+/// What survives is counts, costs, and a timestamp — no titles, no bodies, no
+/// query text, so the event stays content-free (AGENTS.md invariant 3, #466).
+fn to_context_usage(report: &UsageReport) -> ContextUsage {
+    ContextUsage {
+        budget_requested: report.budget_requested,
+        budget_consumed: report.budget_consumed,
+        as_of: report.as_of.clone(),
+        providers: report
+            .providers
+            .iter()
+            .map(|provider| ContextProviderUsage {
+                provider_id: provider.provider_id.clone(),
+                frames_served: provider.frames_served,
+                frames_rejected: provider.frames_rejected,
+                token_cost: provider.token_cost,
+            })
+            .collect(),
+    }
+}
+
+/// The accounting-event timestamp stamped on a usage report (RFC 3339 UTC),
+/// via the context plane's dependency-free formatter. A clock before the epoch
+/// renders as the epoch rather than panicking — a report is an accounting
+/// record, and no timestamp is worth aborting a turn over.
+fn now_rfc3339() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default();
+    stella_context::format_rfc3339(secs)
 }
 
 #[cfg(test)]
@@ -479,7 +543,7 @@ mod tests {
             "b",
             vec![frame("high", 0.9, 10), frame("shared", 0.5, 10)],
         ));
-        let kept = recall_via_host(&host, &query(10, 1_000)).await;
+        let kept = recall_via_host(&host, &query(10, 1_000)).await.frames;
         // Canonical order (§1 D2): by provider id, then frame id — NOT by
         // score, which is query-dependent and must not move rendered bytes.
         let rendered: Vec<(&str, &str)> = kept
@@ -541,7 +605,7 @@ mod tests {
             vec![frame("alpha", 0.9, 10), frame("beta", 0.1, 10)],
         ));
         first.register(scripted("graph", vec![frame("gamma", 0.5, 10)]));
-        let turn_one = render(&recall_via_host(&first, &query(10, 1_000)).await);
+        let turn_one = render(&recall_via_host(&first, &query(10, 1_000)).await.frames);
 
         // Same three frames, same content, completely inverted relevance —
         // and the graph leg registered first this time, so arrival order
@@ -552,12 +616,74 @@ mod tests {
             "mem",
             vec![frame("beta", 0.99, 10), frame("alpha", 0.02, 10)],
         ));
-        let turn_two = render(&recall_via_host(&second, &query(10, 1_000)).await);
+        let turn_two = render(&recall_via_host(&second, &query(10, 1_000)).await.frames);
 
         assert_eq!(
             turn_one, turn_two,
             "an unchanged frame set must render byte-identically across turns (§1 D2/D3)"
         );
+    }
+
+    /// WITNESS (#452, §2): the fan-out's usage report is surfaced — per
+    /// provider, how many frames it served, how many the host rejected, and
+    /// what that cost — against the query's budget, and it re-sums.
+    #[tokio::test]
+    async fn recall_reports_per_provider_frame_counts_and_token_costs() {
+        let mut host = Host::new();
+        host.register(scripted(
+            "mem",
+            vec![frame("m1", 0.9, 4), frame("m2", 0.5, 4)],
+        ));
+        host.register(scripted("graph", vec![frame("g1", 0.7, 4)]));
+
+        let recall = recall_via_host(&host, &query(10, 1_000)).await;
+        let usage = &recall.usage;
+        assert!(
+            usage.is_consistent(),
+            "the report must re-sum from the frames it itemizes: {usage:?}"
+        );
+        assert_eq!(usage.budget_requested, 1_000, "the query's max_tokens");
+        assert_eq!(usage.total_frames_served(), 3);
+        assert!(!usage.as_of.is_empty(), "an accounting snapshot is stamped");
+
+        let mem = usage
+            .providers
+            .iter()
+            .find(|p| p.provider_id == "mem")
+            .expect("every provider the query reached is itemized");
+        assert_eq!(mem.frames_served, 2);
+        assert_eq!(mem.frames_rejected, 0);
+        assert_eq!(mem.token_cost, 8);
+        assert_eq!(usage.budget_consumed, 12, "8 from mem + 4 from graph");
+    }
+
+    /// WITNESS (#452, §2): the report is taken from the fan-out **before**
+    /// fusion, so a provider whose frames the host threw out for lying about
+    /// cost is accounted as `frames_rejected` rather than vanishing. A report
+    /// built from the surviving prompt frames could never show this.
+    #[tokio::test]
+    async fn a_budget_lying_provider_is_reported_as_rejected_not_forgotten() {
+        let mut host = Host::new();
+        host.register(scripted("honest", vec![frame("h1", 0.5, 4)]));
+        // Declares far more than the query's whole budget: the host drops the
+        // leg wholesale, so it contributes nothing to the prompt.
+        host.register(scripted("liar", vec![frame("l1", 0.9, 9_999)]));
+
+        let recall = recall_via_host(&host, &query(10, 1_000)).await;
+        assert!(
+            recall.frames.iter().all(|f| f.provider != "liar"),
+            "a budget liar's frames must never reach the prompt"
+        );
+        let liar = recall
+            .usage
+            .providers
+            .iter()
+            .find(|p| p.provider_id == "liar")
+            .expect("a rejected provider is still itemized");
+        assert_eq!(liar.frames_served, 0);
+        assert_eq!(liar.frames_rejected, 1, "the drop is counted, not lost");
+        assert_eq!(liar.token_cost, 0, "a rejected frame contributes no cost");
+        assert!(recall.usage.is_consistent());
     }
 
     /// WITNESS (#451, §1): selection is still by score — the highest-scoring
@@ -572,7 +698,7 @@ mod tests {
         // budget-honest and only the merge has to choose.
         host.register(scripted("a", vec![frame("aaa", 0.1, 600)]));
         host.register(scripted("z", vec![frame("zzz", 0.9, 600)]));
-        let kept = recall_via_host(&host, &query(10, 1_000)).await;
+        let kept = recall_via_host(&host, &query(10, 1_000)).await.frames;
         assert_eq!(kept.len(), 1, "only one frame fits the budget");
         assert_eq!(
             kept[0].frame.id, "zzz",
@@ -587,7 +713,7 @@ mod tests {
         host.register(scripted("b", vec![frame("b1", 0.8, 600)]));
         // Each provider individually fits 1000 tokens; the merged set must
         // not exceed it either.
-        let kept = recall_via_host(&host, &query(10, 1_000)).await;
+        let kept = recall_via_host(&host, &query(10, 1_000)).await.frames;
         assert_eq!(kept.len(), 1, "second frame would blow the merged budget");
         assert_eq!(kept[0].frame.id, "a1");
         assert_eq!(kept[0].provider, "a");
@@ -642,7 +768,7 @@ mod tests {
         q.query_text = Some("open the sqlite connection in wal mode".to_string());
         // Host → workspace-memory → plane registry → store: the full
         // production path, end to end.
-        let kept = recall_via_host(&host, &q).await;
+        let kept = recall_via_host(&host, &q).await.frames;
         assert!(
             kept.iter()
                 .any(|f| f.frame.content.as_deref().unwrap_or("").contains("sqlite")),
@@ -838,7 +964,7 @@ mod tests {
 
         let mut q = query(5, 4_000);
         q.query_text = Some("conformance probe".to_string());
-        let kept = recall_via_host(&host, &q).await;
+        let kept = recall_via_host(&host, &q).await.frames;
         let held: Vec<FrameId> = kept
             .iter()
             .filter(|f| f.provider == "workspace-memory")

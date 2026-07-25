@@ -36,7 +36,7 @@ use stella_core::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SelectionConfig, Skill, SkillMineConfig,
     SkillObservation,
 };
-use stella_pipeline::{ContextRecallPort, RecalledFrame};
+use stella_pipeline::{ContextRecallPort, Recall, RecalledFrame};
 use stella_protocol::{CompletionMessage, MessageRole, Provider};
 
 use crate::domains::Domains;
@@ -198,7 +198,7 @@ impl SessionMemory {
             return None;
         }
         let mut sections: Vec<String> = Vec::new();
-        let frames = self.recalled_frames(prompt).await;
+        let frames = self.recalled_frames(prompt).await.frames;
         if let Some(section) = render_context_section(&frames) {
             sections.push(section);
         }
@@ -587,7 +587,7 @@ impl SessionMemory {
 
     /// Authoritative prompt and pipeline recall, including a fresh quarantine
     /// read so prior-turn feedback applies immediately.
-    async fn recalled_frames(&self, goal: &str) -> Vec<RecalledFrame> {
+    async fn recalled_frames(&self, goal: &str) -> Recall {
         self.recalled_frames_reporting(goal, |message| eprintln!("  {} {message}", "!".yellow()))
             .await
     }
@@ -596,9 +596,9 @@ impl SessionMemory {
         &self,
         goal: &str,
         mut report: impl FnMut(String),
-    ) -> Vec<RecalledFrame> {
+    ) -> Recall {
         if self.ab_suppressed {
-            return Vec::new();
+            return Recall::default();
         }
         let query = ContextQuery {
             goal: goal.to_string(),
@@ -626,15 +626,24 @@ impl SessionMemory {
                 report(format!(
                     "memory recall disabled: quarantine state unavailable: {error}"
                 ));
-                return Vec::new();
+                return Recall::default();
             }
         };
-        crate::contextgraph::recall_via_host(&self.host, &query)
-            .await
-            .into_iter()
-            .filter_map(project_recalled_frame)
-            .filter(|frame| !is_quarantined_local_memory(frame, &quarantined))
-            .collect()
+        // The usage report accounts for the fan-out that produced this turn's
+        // context, so it is captured even when quarantine or the citation-label
+        // filter later drops every frame: a provider still spent the tokens,
+        // and a cost that vanishes because the host discarded the frames is
+        // exactly the unmeterable cost #452 exists to surface.
+        let recalled = crate::contextgraph::recall_via_host(&self.host, &query).await;
+        Recall {
+            frames: recalled
+                .frames
+                .into_iter()
+                .filter_map(project_recalled_frame)
+                .filter(|frame| !is_quarantined_local_memory(frame, &quarantined))
+                .collect(),
+            usage: Some(recalled.usage),
+        }
     }
 }
 
@@ -682,7 +691,7 @@ fn goal_path_anchors(goal: &str, root: &std::path::Path) -> Vec<String> {
 /// failed recall, including quarantine verification, degrades to no frames (L-C6).
 #[async_trait::async_trait]
 impl ContextRecallPort for SessionMemory {
-    async fn recall(&self, goal: &str) -> Vec<RecalledFrame> {
+    async fn recall(&self, goal: &str) -> Recall {
         self.recalled_frames(goal).await
     }
 }
@@ -1149,7 +1158,7 @@ mod tests {
             .await
             .unwrap();
 
-        let before = ContextRecallPort::recall(&memory, lesson).await;
+        let before = ContextRecallPort::recall(&memory, lesson).await.frames;
         let memory_id = before
             .iter()
             .find(|frame| frame.content.contains("frobnicator"))
@@ -1176,7 +1185,7 @@ mod tests {
                 .unwrap();
         }
 
-        let pipeline_after = ContextRecallPort::recall(&memory, lesson).await;
+        let pipeline_after = ContextRecallPort::recall(&memory, lesson).await.frames;
         assert!(
             pipeline_after
                 .iter()
