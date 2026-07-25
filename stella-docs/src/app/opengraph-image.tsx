@@ -1,14 +1,28 @@
 import { ImageResponse } from "next/og";
-import { WORDMARK_PATH, WORDMARK_VIEW_BOX } from "@/components/brand";
+import {
+  MARK_PATH,
+  MARK_VIEW_BOX,
+  WORDMARK_PATH,
+  WORDMARK_VIEW_BOX,
+} from "@/components/brand";
 
 /**
- * Neutral, Vercel-style social card, generated at build time (next/og) so it
- * stays in sync with the brand and carries no static binary. Pure monochrome:
- * snow on black, one hairline border — the same paper-&-ink system as the site.
+ * The social card, generated at build time (next/og) so it stays in sync with
+ * the brand and carries no static binary.
  *
- * The wordmark is drawn from its outlines rather than set as text, so the card
- * shows the real logo instead of whatever face the renderer happens to fall
- * back to.
+ * It is the brand lockup on the deepest ground: a gold mark beside a paper
+ * wordmark on navy. That split is the palette's rule 4 — the wordmark stays
+ * ink/paper, the mark carries the hue — and it is what makes the card read as
+ * Stella at thumbnail size, where the tagline is illegible anyway.
+ *
+ * Both glyphs are drawn from their outlines rather than set as text, so the
+ * card shows the real logo instead of whatever face the renderer falls back to.
+ *
+ * Colours are literals rather than CSS vars because Satori resolves no
+ * cascade; they are the tokens from docs/brand/tokens.json, named inline.
+ * Measured on `night` #050912: wordmark 17.58:1, mark 14.79:1, tagline 7.80:1,
+ * footer 4.71:1. Keep the markup inside Satori's supported subset — plain
+ * <path> fills only, no gradients, masks, or filters.
  */
 export const alt =
   "Stella — a fast, BYOK, model-agnostic terminal coding agent that proves its work";
@@ -25,8 +39,8 @@ export default function OpengraphImage() {
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          background: "#000000",
-          color: "#ededed",
+          background: "#050912", // night
+          color: "#edf1f8", // text-primary
           padding: "80px",
         }}
       >
@@ -36,25 +50,34 @@ export default function OpengraphImage() {
               display: "flex",
               alignItems: "center",
               gap: "14px",
-              border: "1px solid #333333",
+              border: "1px solid #22304c", // hairline
               borderRadius: "9999px",
               padding: "12px 26px",
               fontSize: "28px",
-              color: "#a1a1a1",
+              color: "#94a3bc", // text-secondary
             }}
           >
-            <span style={{ color: "#ededed", fontWeight: 700 }}>{">_"}</span>
+            <span style={{ color: "#ffdd00", fontWeight: 700 }}>{">_"}</span>
             <span>a terminal coding agent</span>
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex" }}>
+          {/* The lockup: gold mark, paper wordmark. */}
+          <div style={{ display: "flex", alignItems: "center", gap: "36px" }}>
+            <svg
+              viewBox={MARK_VIEW_BOX}
+              width={132}
+              height={132}
+              fill="#ffdd00" // gold — the mark is the one place the hue lives
+            >
+              <path d={MARK_PATH} />
+            </svg>
             <svg
               viewBox={WORDMARK_VIEW_BOX}
-              width={508}
-              height={150}
-              fill="#ededed"
+              width={440}
+              height={130}
+              fill="#edf1f8" // text-primary — the wordmark never takes the gold
             >
               <path d={WORDMARK_PATH} />
             </svg>
@@ -64,7 +87,7 @@ export default function OpengraphImage() {
               display: "flex",
               marginTop: "30px",
               fontSize: "42px",
-              color: "#a1a1a1",
+              color: "#94a3bc", // text-secondary
               maxWidth: "940px",
               lineHeight: 1.25,
             }}
@@ -80,7 +103,7 @@ export default function OpengraphImage() {
             justifyContent: "space-between",
             alignItems: "center",
             fontSize: "28px",
-            color: "#808080",
+            color: "#6b7c99", // text-tertiary — 4.71:1 on night
           }}
         >
           <div style={{ display: "flex" }}>stella.oxagen.sh</div>

@@ -950,7 +950,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::Stage(name) => {
             let style = Style::new()
-                .fg(theme::AURORA_AZURE)
+                .fg(theme::ACCENT_DEEP)
                 .add_modifier(Modifier::BOLD);
             push_labeled(
                 "stage",
@@ -1018,7 +1018,7 @@ pub(crate) fn entry_lines(
             push_labeled(
                 name,
                 Style::new()
-                    .fg(theme::AURORA_AZURE)
+                    .fg(theme::ACCENT_DEEP)
                     .add_modifier(Modifier::BOLD),
                 vec![Span::styled(
                     input.clone(),
@@ -1050,9 +1050,9 @@ pub(crate) fn entry_lines(
             ..
         } => {
             let (glyph, color) = if *ok {
-                ("✓", theme::AURORA_CYAN)
+                ("✓", theme::ACCENT)
             } else {
-                ("✗", theme::AURORA_MAGENTA)
+                ("✗", theme::DANGER)
             };
             // The result labels itself with the tool it answers (resolved
             // from the start entry) so call/result rows read as a pair.
@@ -1158,7 +1158,7 @@ pub(crate) fn entry_lines(
             evicted,
             deduped,
         } => {
-            let style = Style::new().fg(theme::AURORA_AZURE);
+            let style = Style::new().fg(theme::ACCENT_DEEP);
             push_labeled(
                 "⇣ compacted",
                 style,
@@ -1191,7 +1191,7 @@ pub(crate) fn entry_lines(
             );
         }
         TranscriptEntry::ProviderFallback { from, to, reason } => {
-            let style = Style::new().fg(theme::AURORA_AZURE);
+            let style = Style::new().fg(theme::ACCENT_DEEP);
             push_labeled(
                 "⚡ fallback",
                 style,
@@ -1206,7 +1206,7 @@ pub(crate) fn entry_lines(
             labels,
         } => {
             let cited = labels.join(", ");
-            let style = Style::new().fg(theme::AURORA_AZURE);
+            let style = Style::new().fg(theme::ACCENT_DEEP);
             push_labeled(
                 "◉ recalled",
                 style,
@@ -1223,7 +1223,7 @@ pub(crate) fn entry_lines(
             upserts,
             superseded,
         } => {
-            let style = Style::new().fg(theme::AURORA_AZURE);
+            let style = Style::new().fg(theme::ACCENT_DEEP);
             push_labeled(
                 "✎ memory",
                 style,
@@ -1240,7 +1240,7 @@ pub(crate) fn entry_lines(
             kind,
             state,
         } => {
-            let style = Style::new().fg(theme::AURORA_AZURE);
+            let style = Style::new().fg(theme::ACCENT_DEEP);
             push_labeled(
                 "🎞 media",
                 style,
@@ -1258,7 +1258,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::MediaComplete { label, path, kind } => {
             let style = Style::new()
-                .fg(theme::AURORA_AZURE)
+                .fg(theme::ACCENT_DEEP)
                 .add_modifier(Modifier::BOLD);
             push_labeled(
                 "🎨 media",
@@ -1277,9 +1277,9 @@ pub(crate) fn entry_lines(
             deterministic,
         } => {
             let (glyph, color) = if *passed {
-                ("✓", theme::AURORA_CYAN)
+                ("✓", theme::ACCENT)
             } else {
-                ("✗", theme::AURORA_MAGENTA)
+                ("✗", theme::DANGER)
             };
             let tag = if *deterministic {
                 "deterministic"
@@ -1361,7 +1361,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::Commit { sha, message } => {
             let short = sha.chars().take(9).collect::<String>();
-            let style = Style::new().fg(theme::AURORA_AZURE);
+            let style = Style::new().fg(theme::ACCENT_DEEP);
             push_labeled(
                 "● commit",
                 style,
@@ -1415,9 +1415,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::Error { message, retryable } => {
             let tag = if *retryable { " (retryable)" } else { "" };
-            let style = Style::new()
-                .fg(theme::AURORA_MAGENTA)
-                .add_modifier(Modifier::BOLD);
+            let style = Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD);
             push_labeled(
                 "✗ error",
                 style,
@@ -1447,9 +1445,9 @@ fn pr_status_color(status: PrStatus) -> Color {
     // crimson on close.
     match status {
         PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::AURORA_AZURE,
-        PrStatus::Merged => theme::AURORA_CYAN,
-        PrStatus::Closed => theme::AURORA_MAGENTA,
+        PrStatus::Open => theme::ACCENT_DEEP,
+        PrStatus::Merged => theme::ACCENT,
+        PrStatus::Closed => theme::DANGER,
     }
 }
 

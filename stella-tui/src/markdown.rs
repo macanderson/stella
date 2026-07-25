@@ -268,7 +268,7 @@ fn strip_numbered(lead: &str) -> Option<&str> {
 ///
 /// The hierarchy is gold → gold → white, all bold:
 /// * **H1** is a filled ember-gold pill — near-black [`theme::GROUND`] text on
-///   an [`theme::AURORA_CYAN`] background, with a space of padding each side so
+///   an [`theme::ACCENT`] background, with a space of padding each side so
 ///   it reads as a solid title bar. This is the deliberate high-contrast
 ///   replacement for the old washed-out heading.
 /// * **H2** is bold ember-gold text (no fill).
@@ -277,7 +277,7 @@ fn heading_line(content: &str, level: usize) -> Line<'static> {
     if level == 1 {
         // One span so the gold fill is a single unbroken pill behind the text.
         let pill = Style::new()
-            .bg(theme::AURORA_CYAN)
+            .bg(theme::ACCENT)
             .fg(theme::GROUND)
             .add_modifier(Modifier::BOLD);
         return Line::from(Span::styled(format!(" ◆ {content} "), pill));
@@ -285,9 +285,7 @@ fn heading_line(content: &str, level: usize) -> Line<'static> {
     let (prefix, style) = match level {
         2 => (
             "◈ ",
-            Style::new()
-                .fg(theme::AURORA_CYAN)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ),
         _ => (
             "· ",
@@ -440,7 +438,7 @@ mod tests {
         // or a light-text-on-pale-background combination.
         let lines = render("# Rust Async Patterns");
         let span = &lines[0].spans[0];
-        assert_eq!(span.style.bg, Some(theme::AURORA_CYAN), "gold fill");
+        assert_eq!(span.style.bg, Some(theme::ACCENT), "gold fill");
         assert_eq!(span.style.fg, Some(theme::GROUND), "near-black text");
         assert!(span.style.add_modifier.contains(Modifier::BOLD), "bold");
     }

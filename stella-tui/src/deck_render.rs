@@ -779,7 +779,7 @@ fn render_composer(
         // The gold `>>> ` prefix rides every row and scrolls with it.
         let mut spans = vec![Span::styled(
             PROMPT_PREFIX,
-            Style::default().fg(theme::AURORA_CYAN),
+            Style::default().fg(theme::ACCENT),
         )];
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
@@ -878,7 +878,7 @@ fn render_composer_footer(
     let (q_text, q_style) = if pending > 0 && ui.dispatch_held {
         (
             format!("{pending} held"),
-            Style::default().fg(theme::AURORA_MAGENTA),
+            Style::default().fg(theme::DANGER),
         )
     } else if pending > 0 {
         (
@@ -964,9 +964,9 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
         .unwrap_or("idle");
     let dot_color = if ui.color_mode.is_truecolor() && !ui.no_anim {
         let t = (model.now_ms % 1200) as f64 / 1200.0;
-        theme::lighten(theme::AURORA_AZURE, (0.5 - (t - 0.5).abs()) * 0.7)
+        theme::lighten(theme::ACCENT_DEEP, (0.5 - (t - 0.5).abs()) * 0.7)
     } else {
-        theme::AURORA_AZURE
+        theme::ACCENT_DEEP
     };
 
     // Cache economics panel (#267/#269) — CACHE hit%/volumes, SAVED dollars,
@@ -1143,7 +1143,7 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
     let mut bot: Vec<Span<'static>> = vec![Span::styled(
         brand,
         Style::default()
-            .fg(theme::AURORA_CYAN)
+            .fg(theme::ACCENT)
             .add_modifier(Modifier::BOLD),
     )];
     for (i, (label, value, _)) in cells.into_iter().enumerate() {
@@ -1271,9 +1271,9 @@ fn pr_cell(pr: &PrInfo) -> Vec<Span<'static>> {
 fn pr_status_color(status: PrStatus) -> ratatui::style::Color {
     match status {
         PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::AURORA_AZURE,
-        PrStatus::Merged => theme::AURORA_CYAN,
-        PrStatus::Closed => theme::AURORA_MAGENTA,
+        PrStatus::Open => theme::ACCENT_DEEP,
+        PrStatus::Merged => theme::ACCENT,
+        PrStatus::Closed => theme::DANGER,
     }
 }
 

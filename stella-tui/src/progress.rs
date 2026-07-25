@@ -233,10 +233,8 @@ fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
         }
         let (glyph, color, bold) = match state.segments[i] {
             SegState::Done => ("✓", theme::SUCCESS_BRIGHT, false),
-            SegState::Active if state.phase == RunPhase::Error => {
-                ("✗", theme::AURORA_MAGENTA, true)
-            }
-            SegState::Active => ("▸", theme::GOLD_BRIGHT, true),
+            SegState::Active if state.phase == RunPhase::Error => ("✗", theme::DANGER, true),
+            SegState::Active => ("▸", theme::GOLD, true),
             SegState::Pending => ("·", theme::TEXT_DIM, false),
         };
         let mut style = Style::default().fg(color);
@@ -268,7 +266,7 @@ fn telemetry_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
             vec![Span::styled(
                 "failed",
                 Style::default()
-                    .fg(theme::AURORA_MAGENTA)
+                    .fg(theme::DANGER)
                     .add_modifier(Modifier::BOLD),
             )],
             6,
@@ -429,7 +427,7 @@ fn render_track(
                         fg = theme::lighten(fg, 0.2 * (1.0 - de / 1.5));
                     }
                 } else if i == center.round() as usize {
-                    fg = theme::GOLD_BRIGHT;
+                    fg = theme::GOLD;
                 }
             }
 
@@ -437,11 +435,11 @@ fn render_track(
             // cell on truecolor, else a single bright cell.
             if i == head {
                 if state.phase == RunPhase::Error {
-                    fg = theme::AURORA_MAGENTA;
+                    fg = theme::DANGER;
                 } else if truecolor {
                     fg = theme::lighten(fg, pulse);
                 } else {
-                    fg = theme::GOLD_BRIGHT;
+                    fg = theme::GOLD;
                 }
             }
 
@@ -678,7 +676,7 @@ mod tests {
         render_track(&state, 1234, ColorMode::Ansi256, 0, 0, 40, &mut buf);
         let allowed = [
             theme::GOLD,
-            theme::GOLD_BRIGHT,
+            theme::GOLD,
             theme::TEXT_DIM,
             theme::HAIRLINE,
             ratatui::style::Color::Reset,

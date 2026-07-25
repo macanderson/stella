@@ -6,16 +6,28 @@
 <title>Stella — Observatory</title>
 <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
 <style>
-/* ── Brand tokens (docs/brand/ holds the source assets) ─────────────────────── */
+/* ── Brand tokens ────────────────────────────────────────────────────────────
+   The colour block below is generated from docs/brand/tokens.json — edit that
+   and run `make brand`, not this file. Tokens are inlined rather than imported
+   because this page is served as one self-contained document (see the
+   `dashboard_html_has_no_external_references` test in ../../lib.rs).           */
 :root{
-  --night:#050A18; --ink:#0C1424; --surface:#0A1226; --raised:#101A33;
-  --hairline:rgba(63,224,255,.13); --hairline-dim:rgba(63,224,255,.07);
-  --paper:#F4F8FF; --text:#E9F0FE; --text-2:#A9B7D6; --text-3:#7285A8;
-  --accent:#3FE0FF; --accent-hi:#8FEBFF; --accent-2:#4D9FFF;
-  /* Data-mark palette — validated (dataviz six checks, dark surface) */
+  /* BEGIN generated brand palette — docs/brand/build.py */
+  --night:#050912; --ground:#080D1A; --surface:#0F1729;
+  --raised:#172137; --hairline:#22304C;
+  --gold:#FFDD00; --gold-deep:#E0B800;
+  --text:#EDF1F8; --text-2:#94A3BC; --text-3:#6B7C99;
+  --ok:#34D399; --warn:#FF7A1A; --bad:#FF5C7A;
+  /* Semantic alias. The dashboard is dark-only, so this resolves once.
+     Only ONE alias, and only for brand/active/progress: the page's quiet
+     structural labels take --text-3. An `--accent-2` here would just be a
+     licence to paint everything gold, which is what rule 3 forbids. */
+  --accent:var(--gold);
+  /* END generated brand palette */
+  --hairline-dim:rgba(34,48,76,.55);
+  /* Data-mark palette — categorical, deliberately NOT the brand hue: data
+     marks must not read as "active". Validated on the navy ground. */
   --c1:#4D9FFF; --c2:#8F70E8; --c3:#E4408F; --c4:#2FD3C6;
-  /* Status — always paired with a label, never color alone */
-  --ok:#3FD69B; --warn:#F4B24A; --bad:#E5537B;
   --mono:"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
 }
@@ -24,12 +36,12 @@ html{color-scheme:dark}
 body{
   font-family:var(--sans); color:var(--text); background:var(--night);
   background-image:
-    radial-gradient(60% 42% at 50% -6%, rgba(63,224,255,.14), rgba(0,0,0,0) 64%),
-    radial-gradient(1px 1px at 12% 18%, rgba(143,235,255,.35) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 78% 9%,  rgba(143,235,255,.28) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 33% 6%,  rgba(244,248,255,.20) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 61% 22%, rgba(244,248,255,.16) 0 1px, transparent 1px),
-    radial-gradient(1px 1px at 90% 30%, rgba(143,235,255,.20) 0 1px, transparent 1px);
+    radial-gradient(60% 42% at 50% -6%, rgba(255,221,0,.10), rgba(0,0,0,0) 64%),
+    radial-gradient(1px 1px at 12% 18%, rgba(237,241,248,.35) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 78% 9%,  rgba(237,241,248,.28) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 33% 6%,  rgba(255,221,0,.22) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 61% 22%, rgba(237,241,248,.16) 0 1px, transparent 1px),
+    radial-gradient(1px 1px at 90% 30%, rgba(255,221,0,.18) 0 1px, transparent 1px);
   background-repeat:no-repeat,repeat,repeat,repeat,repeat,repeat;
   min-height:100vh; line-height:1.5;
 }
@@ -43,7 +55,7 @@ header .brand .bword{height:21px;width:auto}
 .title{display:flex;flex-direction:column}
 .title b{font-size:19px;letter-spacing:.14em;font-family:var(--mono)}
 .title b em{color:var(--accent);font-style:normal}
-.title span{font:11px var(--mono);letter-spacing:.3em;text-transform:uppercase;color:var(--accent-2)}
+.title span{font:11px var(--mono);letter-spacing:.3em;text-transform:uppercase;color:var(--text-3)}
 .headmeta{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--text-3);flex-wrap:wrap}
 .live{display:inline-flex;align-items:center;gap:7px;color:var(--text-2)}
 .live i{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pulse 2.4s infinite}
@@ -56,12 +68,12 @@ select:focus{outline:1px solid var(--accent)}
 /* ── Nav tabs & timeframe pills ───────────────────────────────────────── */
 nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:4px;
         padding:8px 0;margin-bottom:16px;flex-wrap:wrap;
-        background:linear-gradient(180deg,rgba(5,10,24,.96),rgba(5,10,24,.88));
+        background:linear-gradient(180deg,rgba(8,13,26,.96),rgba(8,13,26,.88));
         border-bottom:1px solid var(--hairline-dim);backdrop-filter:blur(6px)}
 nav.bar button.tab{background:none;border:none;color:var(--text-3);cursor:pointer;
   font:12px var(--mono);letter-spacing:.08em;padding:7px 12px;border-radius:8px}
-nav.bar button.tab:hover{color:var(--text-2);background:rgba(63,224,255,.06)}
-nav.bar button.tab.on{color:var(--accent);background:rgba(63,224,255,.1)}
+nav.bar button.tab:hover{color:var(--text-2);background:rgba(255,221,0,.06)}
+nav.bar button.tab.on{color:var(--accent);background:rgba(255,221,0,.12)}
 .tf{margin-left:auto;display:flex;gap:4px;align-items:center}
 .tf span{font:10px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--text-3);margin-right:4px}
 .tf button{background:none;border:1px solid var(--hairline);color:var(--text-3);cursor:pointer;
@@ -86,7 +98,7 @@ section[data-tab].on{display:block}
   background:linear-gradient(180deg,var(--raised),var(--surface));
   border:1px solid var(--hairline); border-radius:14px; padding:18px 20px;
 }
-.kick{font:10px var(--mono);letter-spacing:.28em;text-transform:uppercase;color:var(--accent-2);margin-bottom:10px}
+.kick{font:10px var(--mono);letter-spacing:.28em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
 .card h2{font-size:14px;letter-spacing:-.01em;margin-bottom:2px}
 
 /* ── Stat tiles ───────────────────────────────────────────────────────── */
@@ -105,7 +117,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td.main{color:var(--text)}
 td.wrap-txt{white-space:normal}
 tr.click{cursor:pointer}
-tr.click:hover td{background:rgba(63,224,255,.05)}
+tr.click:hover td{background:rgba(255,221,0,.05)}
 .scroll-x{overflow-x:auto}
 .scroll-y{max-height:340px;overflow-y:auto}
 .scroll-y-tall{max-height:520px;overflow-y:auto}
@@ -117,7 +129,7 @@ tr.click:hover td{background:rgba(63,224,255,.05)}
 .badge.bad{color:var(--bad);border-color:rgba(229,83,123,.4)}
 .badge.warn{color:var(--warn);border-color:rgba(244,178,74,.4)}
 .badge.dim{color:var(--text-3);border-color:var(--hairline)}
-.badge.accent{color:var(--accent);border-color:rgba(63,224,255,.45)}
+.badge.accent{color:var(--accent);border-color:rgba(255,221,0,.45)}
 .chip{display:inline-block;font:10px var(--mono);color:var(--text-3);
       border:1px solid var(--hairline-dim);border-radius:999px;padding:0 7px;margin:1px 2px}
 
@@ -166,13 +178,13 @@ pre.cfg{font:11px var(--mono);color:var(--text-2);background:rgba(0,0,0,.28);
 .gfile i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px}
 
 /* ── Tooltip ──────────────────────────────────────────────────────────── */
-#tip{position:fixed;pointer-events:none;z-index:50;display:none;background:var(--ink);
+#tip{position:fixed;pointer-events:none;z-index:50;display:none;background:var(--raised);
      border:1px solid var(--hairline);border-radius:8px;padding:8px 11px;
      font:11px var(--mono);color:var(--text-2);max-width:340px;box-shadow:0 8px 28px rgba(0,0,0,.5)}
 #tip b{color:var(--text);display:block;margin-bottom:2px;white-space:normal;word-break:break-all}
 
 /* ── Drawer ───────────────────────────────────────────────────────────── */
-#drawer{position:fixed;inset:0 0 0 auto;width:min(680px,94vw);background:var(--ink);
+#drawer{position:fixed;inset:0 0 0 auto;width:min(680px,94vw);background:var(--raised);
         border-left:1px solid var(--hairline);transform:translateX(102%);
         transition:transform .28s cubic-bezier(.2,.8,.2,1);z-index:40;overflow-y:auto;padding:24px}
 #drawer.open{transform:none}
@@ -196,7 +208,7 @@ pre.cfg{font:11px var(--mono);color:var(--text-2);background:rgba(0,0,0,.28);
 .crumbs .sep{color:var(--text-3);margin:0 3px}
 tr.drill{cursor:pointer}
 tr.drill:hover td{background:var(--raised)}
-.empty code{color:var(--accent);background:rgba(63,224,255,.08);padding:2px 8px;border-radius:6px}
+.empty code{color:var(--accent);background:rgba(255,221,0,.08);padding:2px 8px;border-radius:6px}
 .section-gap{margin-bottom:14px}
 .loop-strip{display:flex;gap:8px;align-items:center;flex-wrap:wrap;
             font:11px var(--mono);color:var(--text-3);margin-bottom:14px}
@@ -346,7 +358,7 @@ footer b{color:var(--text-2)}
         <div class="kick">Throughput</div>
         <h2>Runs per day</h2>
         <div class="legend"><span><i style="background:var(--c1)"></i>resolved</span>
-          <span><i style="background:#7285A8"></i>other outcomes</span></div>
+          <span><i style="background:#6B7C99"></i>other outcomes</span></div>
         <div id="ch-runs"></div>
       </div>
       <div class="card">
@@ -690,7 +702,7 @@ function renderActivity() {
      { key: "output_tokens", label: "output", color: "var(--c2)" }], fmtTok, false);
   renderDaily("ch-runs", withOther,
     [{ key: "resolved", label: "resolved", color: "var(--c1)" },
-     { key: "other", label: "other outcomes", color: "#7285A8" }], v => String(Math.round(v)), true);
+     { key: "other", label: "other outcomes", color: "#6B7C99" }], v => String(Math.round(v)), true);
   renderDaily("ch-toolcalls", days,
     [{ key: "tool_calls", label: "calls", color: "var(--c2)" },
      { key: "tool_errors", label: "errors", color: "var(--bad)" }], v => String(Math.round(v)), false);
@@ -1147,7 +1159,7 @@ function renderConfig(cfg) {
    Assigned to crates in fixed file-count order; the long tail is neutral. */
 const GP = ["#3987e5", "#008300", "#2FD3C6", "#4D9FFF",
             "#199e70", "#E4408F", "#8F70E8", "#e66767"];
-const G_OTHER = "#7285A8";
+const G_OTHER = "#6B7C99";
 const graph = {
   nodes: [], edges: [], groupColor: {}, adj: [],
   t: { x: 0, y: 0, k: 1 }, alpha: 0, selected: -1, hover: -1,
@@ -1277,7 +1289,7 @@ function drawGraph() {
     else if (q) { ctx.globalAlpha = 0.06; }
     else { ctx.globalAlpha = lit ? 0.75 : 0.16; }
     if (lit) ctx.globalAlpha = 0.75;
-    ctx.strokeStyle = lit ? "#3FE0FF" : "#A9B7D6";
+    ctx.strokeStyle = lit ? "#FFDD00" : "#94A3BC";
     ctx.lineWidth = (lit ? 1.6 : 0.7) / k;
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
@@ -1290,7 +1302,7 @@ function drawGraph() {
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.fill();
     if (n.i === graph.selected || n.i === graph.hover) {
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = "#3FE0FF"; ctx.lineWidth = 2 / k;
+      ctx.strokeStyle = "#FFDD00"; ctx.lineWidth = 2 / k;
       ctx.beginPath(); ctx.arc(n.x, n.y, r + 2 / k, 0, 2 * Math.PI); ctx.stroke();
     }
   }
@@ -1306,9 +1318,9 @@ function drawGraph() {
     ctx.globalAlpha = 1;
     const label = n.path.split("/").pop();
     const ly = n.y - nodeRadius(n) - 5 / k;
-    ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(5,10,24,.85)";
+    ctx.lineWidth = 3 / k; ctx.strokeStyle = "rgba(8,13,26,.85)";
     ctx.strokeText(label, n.x, ly);
-    ctx.fillStyle = inFocus || hit || n.i === graph.hover ? "#E9F0FE" : "#A9B7D6";
+    ctx.fillStyle = inFocus || hit || n.i === graph.hover ? "#EDF1F8" : "#94A3BC";
     ctx.fillText(label, n.x, ly);
   }
   ctx.restore();
