@@ -85,10 +85,16 @@ impl Tool for ReadSymbol {
 
         // Same open → query → shutdown discipline (and on-first-use build) as
         // `graph_query` — no held handles across turns.
-        let graph = match crate::graph::open_or_build(root) {
-            Ok(g) => g,
+        let (graph, index_warning) = match crate::graph::open_or_build(root) {
+            Ok(opened) => opened,
             Err(message) => return ToolOutput::Error { message },
         };
+        // A failed index pass is reported to the MODEL, never to stderr —
+        // stderr belongs to the TUI's frame. It rides the two outcomes it
+        // actually explains: a span that isn't there, and one that is stale.
+        let index_note = index_warning
+            .map(|warning| format!("(note: {warning})\n"))
+            .unwrap_or_default();
         let spans = graph.definition_spans(name);
         graph.shutdown();
         let mut spans = match spans {
@@ -102,8 +108,8 @@ impl Tool for ReadSymbol {
         if spans.is_empty() {
             return ToolOutput::Error {
                 message: format!(
-                    "no definition of `{name}` in the code graph (index may be stale — \
-                     `stella init` re-indexes) — try graph_query references, or grep"
+                    "{index_note}no definition of `{name}` in the code graph (index may be \
+                     stale — `stella init` re-indexes) — try graph_query references, or grep"
                 ),
             };
         }
@@ -163,11 +169,12 @@ impl Tool for ReadSymbol {
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
                     .push(span.path.clone());
-                let mut out = format!("{}\n{content}", citation(span));
+                let mut out = format!("{index_note}{}\n{content}", citation(span));
                 if span_lines > crate::read::MAX_LINES {
                     out.push_str(&format!(
-                        "\n(note: the span is {span_lines} lines and only the first {} are \
-                         shown — read_file offset={} continues it)",
+                        "\n(note: the span is {span_lines} lines and at most the first {} are \
+                         shown — read_file's own footer above is the exact count; \
+                         read_file offset={} continues it)",
                         crate::read::MAX_LINES,
                         span.start_line as usize + crate::read::MAX_LINES
                     ));

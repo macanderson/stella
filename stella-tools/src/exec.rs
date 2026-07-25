@@ -284,6 +284,18 @@ pub(crate) async fn run_and_report(
     }
 }
 
+/// POSIX single-quote an argument for a `bash -c` command line, escaping any
+/// embedded quote the only portable way (`'\''`).
+///
+/// The crate's ONE implementation of this security primitive: it lives here
+/// because this module owns the `bash -c` runner every composed command line
+/// eventually reaches ([`run`], [`run_github`]). `scripts::shell_quote`,
+/// `ci::shell_quote`, `screenshot::shell_quote` and `issue_ops::quote` were
+/// four independent copies — the shape that lets one of them drift.
+pub(crate) fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
 /// Cap a preview of REMOTE-supplied text at `max_bytes`, cutting on a char
 /// boundary.
 ///
@@ -478,6 +490,13 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("timed out"), "{err}");
+    }
+
+    #[test]
+    fn shell_quote_neutralizes_embedded_quotes() {
+        assert_eq!(shell_quote("main"), "'main'");
+        assert_eq!(shell_quote("a'b"), r"'a'\''b'");
+        assert_eq!(shell_quote("; rm -rf /"), "'; rm -rf /'");
     }
 
     #[test]

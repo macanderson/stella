@@ -437,8 +437,12 @@ async fn gather(
 
     // ── Concurrent sub-queries ──────────────────────────────────────────
     // Globs and greps reuse the exact Tool impls the model would have
-    // called one by one; graph queries reuse the `graph_query` core. All of
-    // them are read-only and independent, so they run together.
+    // called one by one; graph queries reuse the `graph_query` core. All
+    // three arms are read-only and independent, so they run together — but
+    // only the glob and grep arms interleave as futures. The graph arm is
+    // synchronous SQLite work with no await point inside, so it runs as ONE
+    // `spawn_blocking` over one opened graph: every symbol shares a single
+    // index pass instead of paying its own full walk+hash of the workspace.
     let glob_results = futures_util::future::join_all(inputs.globs.iter().map(|pattern| {
         let input = serde_json::json!({ "pattern": pattern });
         async move {
@@ -463,19 +467,70 @@ async fn gather(
         Ok(available) => available,
         Err(message) => return ToolOutput::Error { message },
     };
-    let graph_results = futures_util::future::join_all(inputs.symbols.iter().map(|symbol| {
-        let symbol = symbol.clone();
-        async move {
-            if !graph_on {
-                return (symbol, None);
-            }
-            let defs = crate::graph::run_query(root, "definitions", &symbol);
-            let refs = crate::graph::run_query(root, "references", &symbol);
-            (symbol, Some((defs, refs)))
+    let graph_symbols = inputs.symbols.clone();
+    let graph_root = root.to_path_buf();
+    let graph_task = tokio::task::spawn_blocking(move || {
+        type SymbolAnswers = Vec<(String, Option<(ToolOutput, ToolOutput)>)>;
+        if !graph_on {
+            return graph_symbols
+                .into_iter()
+                .map(|s| (s, None))
+                .collect::<SymbolAnswers>();
         }
-    }));
+        // ONE open, ONE index pass, N lookups — the previous shape re-ran
+        // `open_or_build` twice per symbol, so N symbols cost 2N full
+        // workspace walk+hash passes on a worker thread.
+        let (graph, warning) = match crate::graph::open_or_build(&graph_root) {
+            Ok(opened) => opened,
+            Err(message) => {
+                return graph_symbols
+                    .into_iter()
+                    .map(|s| {
+                        let err = || ToolOutput::Error {
+                            message: message.clone(),
+                        };
+                        (s, Some((err(), err())))
+                    })
+                    .collect();
+            }
+        };
+        let answers: SymbolAnswers = graph_symbols
+            .into_iter()
+            .map(|symbol| {
+                let defs = crate::graph::with_index_warning(
+                    crate::graph::query(&graph, "definitions", &symbol),
+                    warning.clone(),
+                );
+                let refs = crate::graph::query(&graph, "references", &symbol);
+                (symbol, Some((defs, refs)))
+            })
+            .collect();
+        graph.shutdown();
+        answers
+    });
     let (glob_results, grep_results, graph_results) =
-        futures_util::join!(glob_results, grep_results, graph_results);
+        futures_util::join!(glob_results, grep_results, graph_task);
+    // A panicked blocking task must not take the whole pack down: the sweep
+    // still has its glob and grep sections to render.
+    let graph_results = graph_results.unwrap_or_else(|join_error| {
+        inputs
+            .symbols
+            .iter()
+            .map(|symbol| {
+                (
+                    symbol.clone(),
+                    Some((
+                        ToolOutput::Error {
+                            message: format!("code-graph sweep failed: {join_error}"),
+                        },
+                        ToolOutput::Error {
+                            message: format!("code-graph sweep failed: {join_error}"),
+                        },
+                    )),
+                )
+            })
+            .collect()
+    });
 
     // ── Fold results into sections + the excerpt worklist ───────────────
     let mut match_files: BTreeMap<String, Vec<usize>> = BTreeMap::new();

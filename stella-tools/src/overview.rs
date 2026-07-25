@@ -193,7 +193,14 @@ fn open_graph(root: &Path) -> Option<stella_graph::CodeGraph> {
     // is meant to be the FIRST call in a session, before the background index
     // build could possibly have finished, so it must be able to produce the
     // index it reports on rather than waiting for one to appear.
-    crate::graph::open_or_build(root).ok()
+    // The index-pass warning is dropped here on purpose: this caller already
+    // discards the hard error (a missing index is simply reported as "not
+    // built"), and the report has no per-call note to carry it. It used to
+    // reach the user as an `eprintln!` over the TUI frame; the graph_query /
+    // gather_context surfaces are where it is now reported.
+    crate::graph::open_or_build(root)
+        .ok()
+        .map(|(graph, _)| graph)
 }
 
 fn index_section(graph: &stella_graph::CodeGraph) -> Value {

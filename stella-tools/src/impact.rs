@@ -244,7 +244,10 @@ pub(crate) async fn select_impacted(root: &Path) -> ImpactSelection {
         Err(early) => return early,
     };
     let graph = match crate::graph::open_or_build(root) {
-        Ok(graph) => graph,
+        // The index-pass warning has no home in a test SELECTION (its only
+        // note field belongs to the stand-down arm), so it is dropped rather
+        // than printed to stderr as it used to be.
+        Ok((graph, _index_warning)) => graph,
         Err(e) => {
             return ImpactSelection::FullSuite {
                 note: format!(

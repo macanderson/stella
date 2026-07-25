@@ -110,7 +110,15 @@ impl Tool for CodeGraphQuery {
 /// The `stale answers are worse than none` rule still holds: the pass runs
 /// on every open, and only a hard failure to prepare the store surfaces as
 /// an error to the caller.
-pub(crate) fn open_or_build(root: &Path) -> Result<stella_graph::CodeGraph, String> {
+///
+/// Returns the graph plus an OPTIONAL warning describing a failed index
+/// pass. The warning is returned rather than printed: this is library code,
+/// and Stella's primary surface is a TUI, where an `eprintln!` paints raw
+/// text over the rendered frame. Callers fold it into their own output (see
+/// [`with_index_warning`]).
+pub(crate) fn open_or_build(
+    root: &Path,
+) -> Result<(stella_graph::CodeGraph, Option<String>), String> {
     // The WRITABLE path (creates `.stella/private/`), not the read-only
     // `existing_...` probe — this is the one place a query is allowed to
     // create the index it needs.
@@ -118,23 +126,52 @@ pub(crate) fn open_or_build(root: &Path) -> Result<stella_graph::CodeGraph, Stri
         .map_err(|error| format!("cannot prepare the code graph store: {error}"))?;
     let graph = stella_graph::CodeGraph::open(root, &db_path)
         .map_err(|error| format!("could not open the code graph: {error}"))?;
-    if let Err(error) = graph.index_all() {
-        // A build/refresh failure is not fatal to a query: an existing index
-        // still answers from its last good state, and a brand-new one answers
-        // empty rather than aborting the agent's turn.
-        eprintln!("stella: code graph index pass failed, answering from what exists: {error}");
+    // A build/refresh failure is not fatal to a query: an existing index
+    // still answers from its last good state, and a brand-new one answers
+    // empty rather than aborting the agent's turn.
+    let warning = graph
+        .index_all()
+        .err()
+        .map(|error| format!("code graph index pass failed, answering from what exists: {error}"));
+    Ok((graph, warning))
+}
+
+/// Fold an index-pass warning into a tool result, so the model sees it
+/// where it sees everything else instead of it landing on the process's
+/// stderr (and, in the TUI, on top of the frame).
+pub(crate) fn with_index_warning(out: ToolOutput, warning: Option<String>) -> ToolOutput {
+    let Some(warning) = warning else {
+        return out;
+    };
+    match out {
+        ToolOutput::Ok { content } => ToolOutput::Ok {
+            content: format!("(note: {warning})\n{content}"),
+        },
+        ToolOutput::Error { message } => ToolOutput::Error {
+            message: format!("{message} (note: {warning})"),
+        },
     }
-    Ok(graph)
 }
 
 /// Open → query → shutdown, entirely synchronous underneath (SQLite reads).
 /// Shared by the tool and the `stella graph` subcommand so both render the
 /// exact same frames.
 pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
-    let graph = match open_or_build(root) {
-        Ok(g) => g,
+    let (graph, warning) = match open_or_build(root) {
+        Ok(opened) => opened,
         Err(message) => return ToolOutput::Error { message },
     };
+    let out = query(&graph, op, target);
+    graph.shutdown();
+    with_index_warning(out, warning)
+}
+
+/// Answer one query against an ALREADY-OPEN graph. Split out of
+/// [`run_query`] so a caller with several lookups (`gather_context`'s symbol
+/// sweep) pays for one open — and one full index pass — instead of one per
+/// lookup. `run_query` remains the open/shutdown wrapper, so the tool and
+/// the `stella graph` subcommand render identical frames.
+pub(crate) fn query(graph: &stella_graph::CodeGraph, op: &str, target: &str) -> ToolOutput {
     let result = match op {
         "definitions" => graph.definitions(target),
         "references" => graph.references(target),
@@ -142,7 +179,6 @@ pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
         "importers" => graph.importers_of(Path::new(target)),
         "neighbors" => graph.neighbors(Path::new(target)),
         other => {
-            graph.shutdown();
             return ToolOutput::Error {
                 message: format!(
                     "unknown op `{other}` — expected definitions, references, imports, \
@@ -151,7 +187,6 @@ pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
             };
         }
     };
-    graph.shutdown();
 
     match result {
         // Importer edges only exist where import resolution succeeds

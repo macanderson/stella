@@ -108,8 +108,11 @@ pub struct CreateParams {
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
+/// Single-quote a value for the `gh`/`linear` command lines composed here.
+/// Thin alias for the crate's one escaper ([`crate::exec::shell_quote`]) —
+/// kept under this name because ~24 call sites in this file use it.
 pub(crate) fn quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
+    crate::exec::shell_quote(s)
 }
 
 async fn gh_json(args: String, root: &std::path::Path) -> Result<Value, String> {
