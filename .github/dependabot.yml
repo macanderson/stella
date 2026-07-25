@@ -12,7 +12,11 @@ updates:
       cargo:
         update-types: [minor, patch]
 
-  # GitHub Actions pinned in workflows.
+  # GitHub Actions are pinned to full commit SHAs in every workflow, with the
+  # human-readable tag kept as a trailing comment. Dependabot reads that
+  # comment to know what the pin means and rewrites both halves together, so
+  # an update still arrives as a reviewable version bump rather than an
+  # opaque SHA change.
   - package-ecosystem: github-actions
     directory: /
     schedule:
