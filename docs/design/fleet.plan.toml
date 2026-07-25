@@ -1247,7 +1247,7 @@ and spec differ, the code is right and the delta belongs in the ADR series.
 
 Deliver:
 
-1. stella-docs user docs (Fumadocs .mdx + meta.json registration):
+1. website/ user docs (Fumadocs .mdx + meta.json registration):
    an adaptive-context concepts page (the six semantic families and their
    authority boundaries; the solo ladder; contracts; frames and
    PromptContext; privacy defaults — local-first, user-shared by default,

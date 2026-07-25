@@ -103,15 +103,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release \
-              --target ${{ matrix.target }} \
-              --package stella-cli --bin stella
-          else
-            cargo build --release \
-              --target ${{ matrix.target }} \
-              --package stella-cli --bin stella
-          fi
+          # Every target builds with plain cargo: the two Apple targets share
+          # one universal Apple toolchain, and aarch64-linux builds natively on
+          # ubuntu-24.04-arm. `cross` was tried and abandoned (see the matrix
+          # comments above) and is installed by no step here.
+          cargo build --release \
+            --target ${{ matrix.target }} \
+            --package stella-cli --bin stella
 
       - name: Package tarball
         id: package
