@@ -2955,7 +2955,10 @@ mod tests {
             *commands.lock().unwrap(),
             vec![
                 "cargo build --workspace",
-                "cargo test --workspace --lib --bins my_test",
+                // The filter is shell-quoted per token, so the gated line is
+                // still byte-identical to what would have executed — which
+                // is the property this test exists to protect.
+                "cargo test --workspace --lib --bins 'my_test'",
             ],
             "the chain must see the index-composed command line"
         );
