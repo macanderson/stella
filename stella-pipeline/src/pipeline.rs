@@ -175,6 +175,13 @@ pub struct PipelineConfig {
     /// triage falls through to the full path. The paid call is still awaited
     /// so usage cannot disappear from accounting through cancellation.
     pub triage_latency_ceiling: Duration,
+    /// Latency ceiling on the context-recall port. Recall runs concurrently
+    /// with triage and is advisory (L-C6), never a gate — but nothing bounded
+    /// it, so a wedged embedding call or an unresponsive CGP host hung the
+    /// whole turn before the first stage completed, with no event after
+    /// `Stage { ContextRecall }` to say why. Past this, recall degrades to
+    /// [`crate::ports::Recall::default`] (no frames) and the turn proceeds.
+    pub recall_latency_ceiling: Duration,
     /// Thresholds above which a plan triggers interactive scope review (L-E5).
     pub scope_thresholds: crate::scope::ScopeThresholds,
     /// Whether this run is headless (no interactive approver available).
@@ -224,6 +231,12 @@ impl Default for PipelineConfig {
             engine: EngineConfig::default(),
             role_overrides: PipelineRoleOverrides::default(),
             triage_latency_ceiling: Duration::from_secs(10),
+            // Half the triage ceiling, and recall runs concurrently with
+            // triage — so this can never extend the critical path, it only
+            // stops recall from becoming it. A remote CGP embedding round
+            // trip is 100-500ms and the local path is single-digit ms, so
+            // this is an order of magnitude above the realistic worst case.
+            recall_latency_ceiling: Duration::from_secs(5),
             scope_thresholds: crate::scope::ScopeThresholds::default(),
             headless: false,
             headless_bypass_scope_review: false,
@@ -534,7 +547,14 @@ impl<'a> Pipeline<'a> {
             self.emit(AgentEvent::Stage {
                 name: StageKind::ContextRecall,
             });
-            self.recall.recall(goal).await
+            // The ceiling goes INSIDE the future, not around the join: the
+            // join must still poll triage to completion so its paid usage
+            // cannot disappear from accounting. Recall is unbilled and
+            // advisory, so cancelling it on expiry is safe — unlike triage,
+            // whose own ceiling deliberately still awaits the paid call.
+            tokio::time::timeout(self.config.recall_latency_ceiling, self.recall.recall(goal))
+                .await
+                .unwrap_or_default()
         };
         let (assessment, recalled) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);

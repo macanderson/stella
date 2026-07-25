@@ -83,6 +83,52 @@ impl Utf8Decoder {
     }
 }
 
+/// Ceiling on unterminated buffered event bytes. A provider — or a broken or
+/// hostile proxy between us and one — that streams `data:` bytes and never
+/// sends the blank line would otherwise grow `buf` until the process is
+/// killed: the per-read stall bound only sees *silence*, and a sender that
+/// keeps writing is never silent. 8 MiB matches `stella-mcp`'s decoder,
+/// which forked from this file precisely because this bound was missing, and
+/// is ~4x the largest plausible single event (a base64 `inline_data` image
+/// part on Gemini's `alt=sse` runs about 2 MB).
+const MAX_BUFFERED_EVENT_BYTES: usize = 8 * 1024 * 1024;
+
+/// A terminal decoding failure. Both variants are fatal for the stream: more
+/// bytes cannot repair either one.
+///
+/// Every adapter maps this onto `ProviderError::Malformed`, which is
+/// non-retryable — the correct classification for both, since re-issuing the
+/// request would just re-run the runaway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SseError {
+    /// Bytes that are not merely an incomplete trailing UTF-8 sequence
+    /// (which the decoder buffers) but an actually invalid one.
+    InvalidUtf8,
+    /// A single event exceeded [`MAX_BUFFERED_EVENT_BYTES`] without
+    /// terminating — a runaway or hostile stream, not a large response.
+    EventTooLarge,
+}
+
+impl std::fmt::Display for SseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SseError::InvalidUtf8 => f.write_str("SSE stream contained invalid UTF-8"),
+            SseError::EventTooLarge => write!(
+                f,
+                "SSE event exceeded {MAX_BUFFERED_EVENT_BYTES} bytes without a terminating blank line"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SseError {}
+
+impl From<InvalidUtf8> for SseError {
+    fn from(_: InvalidUtf8) -> Self {
+        SseError::InvalidUtf8
+    }
+}
+
 /// Incremental SSE decoder: feed it raw bytes as they arrive over the wire
 /// (`push_bytes`), drain complete events (`poll`). Handles partial lines,
 /// partial events, and multi-byte characters split across arbitrary chunk
@@ -102,6 +148,9 @@ impl SseDecoder {
     /// unit tests) that hand over `&str` directly; adapters reading a byte
     /// stream must use [`SseDecoder::push_bytes`] so a character split across
     /// two network chunks is reassembled rather than rejected.
+    ///
+    /// Unbounded by design — the wire path is [`SseDecoder::push_bytes`],
+    /// which is where [`MAX_BUFFERED_EVENT_BYTES`] is enforced.
     pub fn push(&mut self, chunk: &str) {
         self.buf.push_str(chunk);
     }
@@ -109,9 +158,17 @@ impl SseDecoder {
     /// Feed a chunk of raw bytes straight off the wire. Incomplete trailing
     /// multi-byte sequences are buffered until the next chunk; only genuinely
     /// invalid UTF-8 is an error.
-    pub fn push_bytes(&mut self, chunk: &[u8]) -> Result<(), InvalidUtf8> {
+    ///
+    /// The size check is deliberately *after* the append: a chunk is only a
+    /// few tens of KiB, so overshooting the cap by one chunk costs nothing,
+    /// and checking first would reject a chunk that completes an event
+    /// already at the limit.
+    pub fn push_bytes(&mut self, chunk: &[u8]) -> Result<(), SseError> {
         let decoded = self.utf8.push(chunk)?;
         self.buf.push_str(&decoded);
+        if self.buf.len() > MAX_BUFFERED_EVENT_BYTES {
+            return Err(SseError::EventTooLarge);
+        }
         Ok(())
     }
 
@@ -119,15 +176,24 @@ impl SseDecoder {
     /// once a blank line terminates it — `\n\n` or, per the SSE spec's line
     /// endings, `\r\n\r\n`; anything after the last blank line stays buffered
     /// for the next `push`/`push_bytes`.
+    ///
+    /// Scans with a cursor and drains **once** at the end. Draining per event
+    /// made this quadratic in the buffered byte count: every event paid a
+    /// memmove of everything after it, so one poll over a buffer holding many
+    /// events cost O(events x bytes).
     pub fn poll(&mut self) -> Vec<SseEvent> {
         let mut events = Vec::new();
-        while let Some((boundary, delim_len)) = next_event_boundary(&self.buf) {
-            let raw_event = self.buf[..boundary].to_string();
-            self.buf.drain(..boundary + delim_len);
-            if raw_event.trim().is_empty() {
-                continue;
+        let mut consumed = 0usize;
+        while let Some((offset, delim_len)) = next_event_boundary(&self.buf[consumed..]) {
+            let boundary = consumed + offset;
+            let raw_event = &self.buf[consumed..boundary];
+            if !raw_event.trim().is_empty() {
+                events.push(parse_event(raw_event));
             }
-            events.push(parse_event(&raw_event));
+            consumed = boundary + delim_len;
+        }
+        if consumed > 0 {
+            self.buf.drain(..consumed);
         }
         events
     }
@@ -139,11 +205,24 @@ impl SseDecoder {
 /// decoder that only split on `\n\n` would buffer a CRLF stream forever.
 fn next_event_boundary(buf: &str) -> Option<(usize, usize)> {
     // CRLF and LF forms cannot overlap-alias (`\r\n\r\n` contains no `\n\n`),
-    // so taking the minimum index across both patterns is well-defined.
-    [("\r\n\r\n", 4usize), ("\n\n", 2usize)]
-        .into_iter()
-        .filter_map(|(pat, len)| buf.find(pat).map(|idx| (idx, len)))
-        .min_by_key(|(idx, _)| *idx)
+    // so the earlier index wins outright.
+    let lf = buf.find("\n\n");
+    // Bound the CRLF search by the LF hit. Searching the whole buffer for a
+    // pattern that is absent — which it is for the entire life of an LF
+    // stream — costs O(remaining) on every call, and that is a quadratic
+    // scan hiding behind a linear-looking `find`. It is the same shape
+    // `poll` was rewritten to remove, and leaving it here would have kept
+    // most of the cost.
+    //
+    // A `\r\n\r\n` starting inside `..lf + 2` is necessarily strictly before
+    // `lf`: it opens with `\r`, and neither `buf[lf]` nor `buf[lf + 1]` can
+    // be one (both are `\n`). So a hit within the bound always wins.
+    let limit = lf.map_or(buf.len(), |idx| (idx + 2).min(buf.len()));
+    match (buf[..limit].find("\r\n\r\n"), lf) {
+        (Some(idx), _) => Some((idx, 4)),
+        (None, Some(idx)) => Some((idx, 2)),
+        (None, None) => None,
+    }
 }
 
 fn parse_event(raw: &str) -> SseEvent {
@@ -353,5 +432,67 @@ mod tests {
         let events = decoder.poll();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].data, "café");
+    }
+
+    #[test]
+    fn push_bytes_refuses_an_event_that_never_terminates() {
+        // A provider, or a broken proxy in front of one, that streams bytes
+        // and never sends the blank line. The per-read stall bound cannot see
+        // this -- a sender that keeps writing is never silent -- so without
+        // the cap the buffer grows until the process is killed.
+        let mut decoder = SseDecoder::new();
+        let chunk = vec![b'x'; 1024 * 1024];
+        let mut pushes = 0;
+        loop {
+            match decoder.push_bytes(&chunk) {
+                Ok(()) => {
+                    pushes += 1;
+                    assert!(pushes < 64, "the cap must stop an unterminated event");
+                }
+                Err(error) => {
+                    assert_eq!(error, SseError::EventTooLarge);
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("without a terminating blank line"),
+                        "the refusal must say why: {error}"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_buffer_holding_many_events_drains_in_one_pass() {
+        // Guards the cursor rewrite of `poll`. Draining per event made this
+        // quadratic -- every event paid a memmove of everything after it --
+        // so a burst that arrives as one buffer cost O(events x bytes).
+        // Correctness is what is asserted; the shape is what makes it fast.
+        const EVENTS: usize = 50_000;
+        let mut wire = String::with_capacity(EVENTS * 24);
+        for n in 0..EVENTS {
+            wire.push_str(&format!("data: {n}\n\n"));
+        }
+        // A trailing partial event must survive for the next chunk.
+        wire.push_str("data: partial");
+
+        let mut decoder = SseDecoder::new();
+        decoder
+            .push_bytes(wire.as_bytes())
+            .expect("a burst of complete events is not a runaway");
+        let events = decoder.poll();
+
+        assert_eq!(events.len(), EVENTS);
+        assert_eq!(events[0].data, "0");
+        assert_eq!(events[EVENTS - 1].data, format!("{}", EVENTS - 1));
+        // The unterminated tail stays buffered rather than being consumed.
+        assert_eq!(decoder.poll().len(), 0);
+        decoder
+            .push_bytes(b"\n\n")
+            .expect("terminating the tail is fine");
+        let tail = decoder.poll();
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].data, "partial");
     }
 }

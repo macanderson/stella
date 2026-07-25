@@ -612,6 +612,86 @@ async fn single_task_with_a_flip_submits_fast_and_skips_the_judge() {
     )));
 }
 
+/// A context-recall port that never answers — a wedged embedding call or an
+/// unresponsive CGP host.
+struct WedgedRecall;
+
+#[async_trait::async_trait]
+impl ContextRecallPort for WedgedRecall {
+    async fn recall(&self, _goal: &str) -> Recall {
+        // Far past any ceiling, so the timeout is what ends this — the test
+        // costs only the ceiling itself, not this sleep.
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        unreachable!("the recall ceiling must fire first")
+    }
+}
+
+/// #616 — recall is advisory (L-C6), so it must never be able to hang a turn.
+///
+/// Nothing bounded `ContextRecallPort::recall`, and it is joined with triage
+/// *before* the first stage completes, so a wedged embedder or an
+/// unresponsive CGP host stopped the whole pipeline with no event after
+/// `Stage { ContextRecall }` to say why. Past the ceiling recall degrades to
+/// no frames and the turn proceeds. Without the timeout this test hangs
+/// rather than fails.
+#[tokio::test]
+async fn a_wedged_context_recall_degrades_instead_of_hanging_the_turn() {
+    let provider = ScriptedProvider::new(vec![text_result("single"), text_result("done")]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![false, true], "@@ -1 +1 @@\n-old\n+new");
+    let tools = EmptyTools;
+    let recall = WedgedRecall;
+    let repo = NoRepoStructure;
+    let repo_status = NoRepoStatus;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let config = PipelineConfig {
+        test_command: Some("cargo test -p x".into()),
+        diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
+        recall_latency_ceiling: std::time::Duration::from_millis(50),
+        ..PipelineConfig::default()
+    };
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        config,
+    );
+
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let outcome = pipeline
+        .run("Fix the failing test", &mut messages, &mut budget)
+        .await
+        .expect("a wedged recall must not fail the run");
+
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    let events = drain(&mut rx);
+    // The stage is still announced — the degrade happens after it, so the
+    // event stream does not silently skip a stage that was entered.
+    assert!(
+        stages(&events).contains(&StageKind::ContextRecall),
+        "the recall stage must still be entered before it degrades"
+    );
+}
+
 /// A mid-turn steer reaches the EXECUTE engine: a message queued on the
 /// steering tap is injected as the execute turn's next observation and so
 /// rides into the returned trajectory. Triage runs as a raw completion (no

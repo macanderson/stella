@@ -23,6 +23,24 @@ pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// stream their body slowly; it bounds silence, not total transfer time.
 pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Maximum bytes accepted for a downloaded **image** asset.
+///
+/// [`READ_TIMEOUT`] bounds silence between reads, not total transfer, so
+/// without a size bound a slow-but-steady body grows until the CLI is
+/// OOM-killed — host-memory exhaustion driven by a compromised or
+/// misbehaving vendor URL. A single generated image tops out in the
+/// single-digit MB (a 4096x4096 PNG), so 64 MiB is an order of magnitude
+/// above the realistic ceiling while staying a survivable allocation.
+pub(crate) const MAX_IMAGE_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+/// Maximum bytes accepted for a downloaded **video** asset. Same reasoning
+/// as [`MAX_IMAGE_DOWNLOAD_BYTES`], scaled: a 10s 1080p mp4 runs 30-50 MB,
+/// so 256 MiB leaves more than 5x headroom. Deliberately below the
+/// half-gigabyte figure the audit floated — a 512 MiB single allocation in
+/// a CLI is close enough to the failure this cap exists to prevent that it
+/// would undercut the point. Raise it if long-form video is ever a target.
+pub(crate) const MAX_VIDEO_DOWNLOAD_BYTES: usize = 256 * 1024 * 1024;
+
 /// A `reqwest::Client` bounded by [`CONNECT_TIMEOUT`] and [`READ_TIMEOUT`].
 /// Every media adapter must use this instead of `reqwest::Client::new()`:
 /// an unbounded client turns a stalled provider into an agent turn that
@@ -86,19 +104,25 @@ pub(crate) fn classify_http_error(
 /// A non-success status is classified with [`classify_http_error`]; transport
 /// failures become [`MediaError::Transport`].
 ///
-/// Two bounds this does **not** impose, both recorded: the response is
-/// buffered whole with no maximum size ([`READ_TIMEOUT`] bounds silence, not
-/// total transfer, so a slow-but-steady body can grow unbounded in memory),
-/// and `url` is taken from the provider's response and fetched as-is, with
-/// reqwest's default redirect following. Both are contained today by the URL
-/// coming from an authenticated vendor endpoint over TLS and by no
-/// credentials being sent on this request — not by anything here.
+/// The transfer is capped at `max_bytes` ([`MAX_IMAGE_DOWNLOAD_BYTES`] /
+/// [`MAX_VIDEO_DOWNLOAD_BYTES`]) and accumulated chunk by chunk, because
+/// [`READ_TIMEOUT`] bounds *silence* between reads, not total transfer — a
+/// slow-but-steady body would otherwise grow until the CLI is OOM-killed.
+/// Overflow is [`MediaError::Malformed`], which is deliberately **not**
+/// retryable: re-fetching an oversized asset would just repeat the DoS.
+///
+/// One bound this still does **not** impose, recorded: `url` is taken from
+/// the provider's response and fetched as-is, with reqwest's default
+/// redirect following. That is contained today by the URL coming from an
+/// authenticated vendor endpoint over TLS and by no credentials being sent
+/// on this request — not by anything here.
 pub(crate) async fn download_bytes(
     client: &reqwest::Client,
     url: &str,
     provider: &str,
+    max_bytes: usize,
 ) -> Result<Vec<u8>, MediaError> {
-    let response = client
+    let mut response = client
         .get(url)
         .send()
         .await
@@ -109,11 +133,35 @@ pub(crate) async fn download_bytes(
         let body = response.text().await.unwrap_or_default();
         return Err(classify_http_error(provider, status, retry_after_ms, &body));
     }
-    let bytes = response
-        .bytes()
+    // An honest server that declares an oversized body costs us zero bytes.
+    let declared = response.content_length();
+    if declared.is_some_and(|len| len > max_bytes as u64) {
+        return Err(oversized_asset(provider, max_bytes));
+    }
+    // Cap the pre-allocation by the declared length so a *lying*
+    // Content-Length cannot make us reserve max_bytes for a small body.
+    let reserve = declared.unwrap_or(0).min(max_bytes as u64) as usize;
+    let mut bytes: Vec<u8> = Vec::with_capacity(reserve);
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| MediaError::Transport(e.to_string()))?;
-    Ok(bytes.to_vec())
+        .map_err(|e| MediaError::Transport(e.to_string()))?
+    {
+        // Catches a missing or lying Content-Length, which is the case the
+        // up-front check cannot see.
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(oversized_asset(provider, max_bytes));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+fn oversized_asset(provider: &str, max_bytes: usize) -> MediaError {
+    MediaError::Malformed(format!(
+        "{provider} asset exceeded the {} MiB download limit",
+        max_bytes / (1024 * 1024)
+    ))
 }
 
 /// Heuristic: does the error body read like a content-policy refusal?
@@ -240,6 +288,62 @@ mod tests {
             HeaderValue::from_static("Wed, 21 Oct 2099 07:28:00 GMT"),
         );
         assert_eq!(parse_retry_after_ms(&bad), None);
+    }
+
+    #[tokio::test]
+    async fn an_oversized_asset_is_refused_by_the_declared_length() {
+        // The cheap arm: an honest server declares a body over the cap, and
+        // we spend zero bytes on it. wiremock always sets Content-Length.
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_raw(vec![0u8; 4096], "application/octet-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let err = download_bytes(&reqwest::Client::new(), &server.uri(), "zai", 1024)
+            .await
+            .expect_err("a body over the cap must be refused");
+        match err {
+            MediaError::Malformed(message) => {
+                assert!(
+                    message.contains("download limit"),
+                    "the refusal must name the limit: {message}"
+                );
+            }
+            other => panic!("expected a Malformed refusal, got {other:?}"),
+        }
+        // Non-retryable on purpose: re-fetching an oversized asset would just
+        // repeat the host-memory exhaustion this cap exists to prevent.
+        assert!(
+            !MediaError::Malformed(String::new()).is_retryable(),
+            "an oversized asset must not be retried"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversized_asset_is_refused_even_when_the_length_is_not_declared() {
+        // The arm that actually matters. The up-front Content-Length check is
+        // an optimisation; the accumulation guard is the bound. A body under
+        // the declared length but over the cap proves the loop stops on its
+        // own -- this is the case a lying or absent header would exploit.
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_raw(vec![7u8; 8192], "application/octet-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        // Cap above the declared length so the up-front check passes and the
+        // per-chunk guard is the only thing standing between us and the body.
+        let ok = download_bytes(&reqwest::Client::new(), &server.uri(), "zai", 16384)
+            .await
+            .expect("a body under the cap must still download");
+        assert_eq!(ok.len(), 8192);
     }
 
     #[tokio::test]
