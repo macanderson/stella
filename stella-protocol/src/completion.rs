@@ -13,9 +13,13 @@ use crate::tool::{ToolCall, ToolResult, ToolSchema};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
+    /// The byte-stable prompt prefix at message index 0.
     System,
+    /// Input from the human operator.
     User,
+    /// Output from the model, including any tool calls it made.
     Assistant,
+    /// A tool result reported back, carrying the `tool_call_id` it answers.
     Tool,
 }
 
@@ -25,10 +29,15 @@ pub enum MessageRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
+    /// Least thinking — cheapest and fastest.
     Low,
+    /// The middle setting most adapters treat as their default.
     Medium,
+    /// More thinking, for harder steps.
     High,
+    /// Above `High`, where the provider exposes a fourth level.
     Xhigh,
+    /// The provider's ceiling.
     Max,
 }
 
@@ -38,8 +47,11 @@ pub enum ReasoningEffort {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verbosity {
+    /// Terse answers.
     Low,
+    /// The provider's usual level of detail.
     Medium,
+    /// Expansive answers.
     High,
 }
 
@@ -49,9 +61,13 @@ pub enum Verbosity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceTier {
+    /// Let the provider pick the tier.
     Auto,
+    /// The account's standard tier.
     Default,
+    /// Cheaper capacity, slower responses.
     Flex,
+    /// Faster paid-tier capacity.
     Priority,
 }
 
@@ -81,8 +97,10 @@ pub struct GenerationParams {
     /// Random seed for deterministic outputs, where supported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
+    /// How much detail to ask for ([`Verbosity`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verbosity: Option<Verbosity>,
+    /// Which capacity tier to route to ([`ServiceTier`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
 }
@@ -91,11 +109,16 @@ pub struct GenerationParams {
 /// assistant made or tool results being reported back.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompletionMessage {
+    /// Who authored this message.
     pub role: MessageRole,
+    /// The message text. Empty on an assistant message that only made tool
+    /// calls, and on a `Tool` message whose payload rides `tool_results`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub content: String,
+    /// Tool calls the assistant made in this message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    /// Tool results being reported back, each naming the call it answers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_results: Vec<ToolResult>,
     /// Multimodal inputs (images, documents, audio, video) accompanying a
@@ -157,6 +180,7 @@ impl CompletionMessage {
 /// adapter ultimately serves it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionRequest {
+    /// The conversation so far, in order, starting with the system message.
     pub messages: Vec<CompletionMessage>,
     /// Upper bound on generated tokens. `None` uses the provider default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,8 +218,13 @@ pub struct CompletionUsage {
     /// non-empty streamed text. Legacy envelopes fail closed.
     #[serde(default)]
     pub reported: bool,
+    /// Tokens the prompt cost, cache hits included.
     pub input_tokens: u64,
+    /// Tokens the model generated.
     pub output_tokens: u64,
+    /// The subset of `input_tokens` served from the provider's prompt cache
+    /// — billed at the cache-read rate, not the input rate. 0 for providers
+    /// that never report a cache hit.
     #[serde(default)]
     pub cached_input_tokens: u64,
     /// Tokens WRITTEN to the provider's prompt cache by this call
@@ -249,10 +278,14 @@ pub enum FinishReason {
 /// The result of a completion.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionResult {
+    /// The answer text, assembled from the stream. Empty when the model
+    /// only made tool calls.
     #[serde(default)]
     pub text: String,
+    /// Tool calls the model requested, in the order it made them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    /// Token accounting for this call ([`CompletionUsage`]).
     pub usage: CompletionUsage,
     /// Concrete model id/slug that produced the result, resolved from the
     /// catalog — never a literal at the call site.
