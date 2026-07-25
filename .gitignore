@@ -143,7 +143,7 @@ deck-snapshots.txt
 # "Icon" pattern never matches it). The trailing class must exclude word
 # characters: a bare "Icon?" also matches any five-character name starting
 # with "icon", and macOS sets core.ignorecase=true, so it silently swallowed
-# stella-docs/public/icons/ — a new file dropped in there could never be
+# website/public/icons/ — a new file dropped in there could never be
 # committed without -f. Match the marker's control character only.
 Icon[^a-zA-Z0-9]
 
