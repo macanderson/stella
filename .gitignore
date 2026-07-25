@@ -61,6 +61,16 @@ Thumbs.db
 .claude/
 .agents/
 .agents.d/
+# Singular ".agent" too — it held tracked agent reflections/lessons until #448.
+.agent/
+
+# Agent session scratch (#448). These are working artifacts of a session, not
+# repository content: a bug-repro tree from a merged PR, "superpowers" plan and
+# spec files describing already-shipped work, and per-session agent memory.
+# They must never reach the remote — scripts/check-no-scratch.sh enforces it in
+# `make gate`, which the pre-push hook runs.
+/sandbox/
+/docs/superpowers/
 
 # Testing
 *.profraw
@@ -130,8 +140,12 @@ rust-project.json
 # Generated deck render dump (written by stella-tui/tests/deck_snapshot.rs)
 deck-snapshots.txt
 # macOS custom-folder-icon marker (the real filename is "Icon\r" — a bare
-# "Icon" pattern never matches it)
-Icon?
+# "Icon" pattern never matches it). The trailing class must exclude word
+# characters: a bare "Icon?" also matches any five-character name starting
+# with "icon", and macOS sets core.ignorecase=true, so it silently swallowed
+# stella-docs/public/icons/ — a new file dropped in there could never be
+# committed without -f. Match the marker's control character only.
+Icon[^a-zA-Z0-9]
 
 # Local verification / audit artifacts — never tracked
 verifications/

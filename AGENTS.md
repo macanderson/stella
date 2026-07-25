@@ -59,10 +59,18 @@ smoke build (thin LTO) in the same required job, and a red gate is an
 automatic "not yet":
 
 ```bash
-make gate                # = fmt --check + clippy -D warnings + test --workspace
+make gate                # = no-scratch + fmt --check + clippy -D warnings + test --workspace
 ```
 
 For a faster pre-push sanity check (no tests): `make check`.
+
+`no-scratch` runs first because it costs milliseconds: it asserts no tracked
+file matches a `.gitignore` rule. **Session scratch must never reach the
+remote** (#448) — your reflections, plans, repro trees, and memory files stay
+on your disk. Add the ignore rule *and* `git rm -r --cached` the path, because
+git honours ignore patterns only for paths it is not already tracking. A
+failure can also mean an ignore rule is too broad to accept new files; the
+script's output tells you which case you're in.
 
 **Run `make hooks` once per clone.** It installs a `pre-push` git hook
 (`core.hooksPath=.githooks`) that runs `make gate` automatically on every push
