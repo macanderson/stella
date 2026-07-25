@@ -212,16 +212,34 @@ fn prompt_for_key(provider_id: &str, env_var: &str) -> Result<String, Credential
 ///
 /// Shape: `[credentials]` table, `provider_id = "key"` per row — flat and
 /// small on purpose; this is a handful of BYOK keys, not a config language.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+///
+/// Deliberately NOT `Debug`: the map holds plaintext provider keys, so a
+/// derived `Debug` would print every secret in the file. [`CredentialsFile`]
+/// formats itself with a hand-written redacting impl instead — the same
+/// posture as [`ApiKey`] above and every other secret-bearing type in the
+/// workspace.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct CredentialsFileData {
     #[serde(default)]
     credentials: BTreeMap<String, String>,
 }
 
-#[derive(Debug)]
 pub struct CredentialsFile {
     path: PathBuf,
     data: CredentialsFileData,
+}
+
+/// Names the file and how many keys it holds; never a key, and never a
+/// provider id's value. Redaction is the whole point — `{:?}` on a loaded
+/// credentials file used to dump every plaintext secret in it.
+impl fmt::Debug for CredentialsFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CredentialsFile")
+            .field("path", &self.path)
+            .field("providers", &self.provider_ids().count())
+            .field("credentials", &"<redacted>")
+            .finish()
+    }
 }
 
 impl CredentialsFile {
@@ -501,6 +519,22 @@ mod tests {
         unsafe {
             std::env::remove_var("STELLA_TEST_EMPTY_CREDENTIAL_VAR");
         }
+    }
+
+    /// The twin of `debug_never_prints_the_secret_value` for [`ApiKey`]:
+    /// `CredentialsFile` holds every configured provider key in plaintext, so
+    /// a derived `Debug` would dump the whole file into any log line, trace
+    /// record, or panic message that formats it.
+    #[test]
+    fn debug_never_prints_a_stored_key() {
+        let mut file = CredentialsFile::empty();
+        file.set("zai", "sk-zai-super-secret-value");
+        file.set("anthropic", "sk-ant-super-secret-value");
+        let debug = format!("{file:?}");
+        assert!(!debug.contains("sk-zai-super-secret-value"), "{debug}");
+        assert!(!debug.contains("sk-ant-super-secret-value"), "{debug}");
+        assert!(debug.contains("redacted"), "{debug}");
+        assert!(debug.contains('2'), "reports the provider count: {debug}");
     }
 
     #[test]

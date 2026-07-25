@@ -83,8 +83,39 @@ async fn get_json(label: &str, url: &str, headers: &[(&str, &str)]) -> Result<St
 /// Hard cap on pagination rounds for the providers that page. Ten pages at
 /// the page sizes requested (≥100/page everywhere) is far beyond any real
 /// listing; the cap exists so a server echoing the same page token forever
-/// cannot spin the refresh.
+/// cannot spin the refresh. Hitting it is an ERROR, not a quiet stop — see
+/// [`page_cap_error`].
 const MAX_PAGES: usize = 10;
+
+/// The error a pagination loop returns when it runs out of rounds with the
+/// provider still offering a next page. Exhausting the cap and finishing
+/// cleanly used to be indistinguishable: both `break` out of the loop and
+/// returned the pages gathered so far as a success, so a provider legitimately
+/// serving more than [`MAX_PAGES`] pages silently produced a truncated catalog
+/// and a model picker missing rows with no explanation.
+fn page_cap_error(label: &str) -> String {
+    format!(
+        "{label} model list did not finish within {MAX_PAGES} pages — refusing a silently \
+         truncated sync"
+    )
+}
+
+/// `{base}{path}?{params}` with every value percent-encoded. Pagination
+/// cursors are provider-controlled opaque tokens, so interpolating one into a
+/// query string lets a value containing `&`, `#`, or `+` truncate the query,
+/// inject a parameter, or decode wrong — and the failure mode is a wrong or
+/// empty page, not an error.
+fn build_url(base: &str, path: &str, params: &[(&str, &str)]) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(&format!("{base}{path}"))
+        .map_err(|e| format!("`{base}` is not a usable base URL: {e}"))?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        for (name, value) in params {
+            pairs.append_pair(name, value);
+        }
+    }
+    Ok(url.into())
+}
 
 // OpenRouter
 
@@ -221,11 +252,13 @@ pub async fn fetch_anthropic(
     let base = base_url.trim_end_matches('/');
     let mut models = Vec::new();
     let mut after: Option<String> = None;
+    let mut finished = false;
     for _ in 0..MAX_PAGES {
-        let url = match &after {
-            Some(id) => format!("{base}/v1/models?limit=1000&after_id={id}"),
-            None => format!("{base}/v1/models?limit=1000"),
-        };
+        let mut params: Vec<(&str, &str)> = vec![("limit", "1000")];
+        if let Some(id) = &after {
+            params.push(("after_id", id.as_str()));
+        }
+        let url = build_url(base, "/v1/models", &params)?;
         let body = get_json(
             "Anthropic",
             &url,
@@ -239,8 +272,14 @@ pub async fn fetch_anthropic(
         models.append(&mut page);
         match next {
             Some(id) => after = Some(id),
-            None => break,
+            None => {
+                finished = true;
+                break;
+            }
         }
+    }
+    if !finished {
+        return Err(page_cap_error("Anthropic"));
     }
     if models.is_empty() {
         return Err("Anthropic model list contained no models — refusing an empty sync".into());
@@ -304,18 +343,26 @@ pub async fn fetch_gemini(base_url: &str, api_key: &ApiKey) -> Result<Vec<Provid
     let base = base_url.trim_end_matches('/');
     let mut models: Vec<ProviderModel> = Vec::new();
     let mut token: Option<String> = None;
+    let mut finished = false;
     for _ in 0..MAX_PAGES {
-        let url = match &token {
-            Some(t) => format!("{base}/models?pageSize=1000&pageToken={t}"),
-            None => format!("{base}/models?pageSize=1000"),
-        };
+        let mut params: Vec<(&str, &str)> = vec![("pageSize", "1000")];
+        if let Some(t) = &token {
+            params.push(("pageToken", t.as_str()));
+        }
+        let url = build_url(base, "/models", &params)?;
         let body = get_json("Gemini", &url, &[("x-goog-api-key", api_key.reveal())]).await?;
         let (mut page, next) = parse_gemini_page(&body)?;
         models.append(&mut page);
         match next {
             Some(t) => token = Some(t),
-            None => break,
+            None => {
+                finished = true;
+                break;
+            }
         }
+    }
+    if !finished {
+        return Err(page_cap_error("Gemini"));
     }
     if models.is_empty() {
         return Err("Gemini model list contained no chat models — refusing an empty sync".into());
@@ -564,6 +611,78 @@ mod tests {
             .expect("fetches both pages");
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, vec!["claude-a", "claude-b"]);
+    }
+
+    /// Pagination cursors are provider-controlled opaque tokens. One carrying
+    /// `&` or `#` used to be interpolated raw into the query string, which
+    /// truncates the query and injects a parameter — and the failure mode is a
+    /// wrong or empty page, never an error. The cursor must arrive at the
+    /// server byte-for-byte as the provider issued it.
+    #[tokio::test]
+    async fn fetch_anthropic_percent_encodes_a_cursor_carrying_query_syntax() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const CURSOR: &str = "claude-a&limit=1#x";
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(query_param("after_id", CURSOR))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"data": [{"id": "claude-b"}], "has_more": false}"#),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"data": [{{"id": "claude-a"}}], "has_more": true, "last_id": "{CURSOR}"}}"#
+            )))
+            .mount(&server)
+            .await;
+
+        let models = fetch_anthropic(&server.uri(), &ApiKey::new("sk-test"))
+            .await
+            .expect("fetches both pages");
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["claude-a", "claude-b"]);
+    }
+
+    /// Exhausting `MAX_PAGES` used to be indistinguishable from a clean
+    /// finish: both broke out of the loop and returned the pages gathered so
+    /// far as a success, so a provider serving more pages than the cap
+    /// silently produced a truncated catalog. It must fail, naming the cap.
+    #[tokio::test]
+    async fn pagination_that_never_terminates_errors_instead_of_truncating() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let gemini = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"models": [{"name": "models/gemini-x", "supportedGenerationMethods": ["generateContent"]}], "nextPageToken": "always-more"}"#,
+            ))
+            .mount(&gemini)
+            .await;
+        let err = fetch_gemini(&gemini.uri(), &ApiKey::new("k"))
+            .await
+            .expect_err("a never-ending cursor is an error, not a partial success");
+        assert!(err.contains("Gemini") && err.contains("10"), "{err}");
+
+        let anthropic = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"data": [{"id": "claude-a"}], "has_more": true, "last_id": "always-more"}"#,
+            ))
+            .mount(&anthropic)
+            .await;
+        let err = fetch_anthropic(&anthropic.uri(), &ApiKey::new("sk-test"))
+            .await
+            .expect_err("a never-ending cursor is an error, not a partial success");
+        assert!(err.contains("Anthropic") && err.contains("10"), "{err}");
     }
 
     #[tokio::test]
