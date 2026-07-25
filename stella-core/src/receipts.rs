@@ -40,12 +40,19 @@ pub const RECEIPT_SEQ_SUMMARIZER: u64 = 1;
 /// and summarizer seats.
 pub const RECEIPT_SEQ_ALLOCATED_BASE: u64 = 2;
 
-/// `sha256` hex of a string. Byte-wise hex (the sha2 0.11 output type does not
-/// implement `LowerHex` directly), matching the context store's `to_hex`.
-fn sha256_hex(s: &str) -> String {
+/// `sha256` hex over the concatenation of `parts`, hashed as a stream. Feeding
+/// the parts one `update` at a time is byte-identical to hashing their joined
+/// bytes, so a caller with a multi-part preimage gets the same digest without
+/// allocating the join — which matters because these run over the whole
+/// transcript on every committed step. Byte-wise hex (the sha2 0.11 output type
+/// does not implement `LowerHex` directly), matching the context store's
+/// `to_hex`.
+fn sha256_hex_parts(parts: &[&[u8]]) -> String {
     use std::fmt::Write as _;
     let mut h = Sha256::new();
-    h.update(s.as_bytes());
+    for part in parts {
+        h.update(part);
+    }
     let mut hex = String::with_capacity(64);
     for byte in h.finalize() {
         let _ = write!(&mut hex, "{byte:02x}");
@@ -53,14 +60,23 @@ fn sha256_hex(s: &str) -> String {
     hex
 }
 
+/// `sha256` hex of a string.
+fn sha256_hex(s: &str) -> String {
+    sha256_hex_parts(&[s.as_bytes()])
+}
+
 /// The content-addressed id of a block: `blk_` + the first 24 hex chars of
 /// `sha256(kind_tag \0 content)`. Mirrors the context store's `nod_…` shape.
 /// Byte-identical blocks of the same kind share an id — the property that makes
 /// dedup/supersession identities and lets residency track a block across steps.
+///
+/// The preimage is hashed as three streamed parts rather than a `format!`-joined
+/// String: the id is unchanged (concatenation is what the stream hashes) and the
+/// per-step copy of every block's full content is gone.
 fn block_id(kind: BlockKind, content: &str) -> String {
     format!(
         "blk_{}",
-        &sha256_hex(&format!("{}\0{}", kind_tag(kind), content))[..24]
+        &sha256_hex_parts(&[kind_tag(kind).as_bytes(), b"\0", content.as_bytes()])[..24]
     )
 }
 
@@ -465,5 +481,26 @@ mod tests {
         assert_eq!(id1, id2);
         assert!(id1.starts_with("blk_"));
         assert_eq!(id1.len(), 4 + 24);
+    }
+
+    #[test]
+    fn streamed_preimage_hashes_exactly_like_the_joined_one() {
+        // `block_id` streams `kind_tag`, a NUL, and the content as three
+        // `update`s instead of allocating the joined String. Every stored
+        // block_id depends on that being the same digest.
+        for kind in [
+            BlockKind::SystemPrefix,
+            BlockKind::ToolResult,
+            BlockKind::AssistantText,
+        ] {
+            for content in ["", "plain", "ünïcödé — 日本語 \u{0}embedded NUL"] {
+                let joined = format!("{}\0{}", kind_tag(kind), content);
+                assert_eq!(
+                    block_id(kind, content),
+                    format!("blk_{}", &sha256_hex(&joined)[..24]),
+                    "streamed and joined preimages must agree for {kind:?}"
+                );
+            }
+        }
     }
 }
