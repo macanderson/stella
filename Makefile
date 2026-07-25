@@ -78,11 +78,15 @@ bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
 no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
 	@./scripts/check-no-scratch.sh
 
+.PHONY: action-pins
+action-pins: ## Assert every workflow `uses:` is pinned to a commit SHA (#648)
+	@./scripts/check-action-pins.sh
+
 .PHONY: gate
-gate: no-scratch format-check lint test ## Full CI gate: no-scratch + fmt-check + clippy + test
+gate: no-scratch action-pins format-check lint test ## Full CI gate: no-scratch + action-pins + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch format-check lint ## Fast pre-push check (scratch + fmt + clippy, no tests)
+check: no-scratch action-pins format-check lint ## Fast pre-push check (scratch + pins + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
