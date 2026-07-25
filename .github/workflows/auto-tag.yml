@@ -180,9 +180,30 @@ jobs:
           # Keep the local build-from-source formula pointing at the release.
           perl -pi -e 's/tag: "v[^"]*"/tag: "v$ENV{NEW_VERSION}"/; s/^  version "[^"]*"/  version "$ENV{NEW_VERSION}"/' packaging/homebrew/stella.rb
 
+          # Roll CHANGELOG.md: whatever contributors put under [Unreleased]
+          # becomes this version's section, and [Unreleased] is left empty for
+          # the next change. Inserting *after* the heading (rather than
+          # renaming it) is what carries the existing bullets down.
+          #
+          # Deliberately tolerant: a missing file or a missing [Unreleased]
+          # heading is skipped, not fatal. This job publishes releases, and a
+          # changelog bookkeeping slip must never be what stops one.
+          if [ -f CHANGELOG.md ] && grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+            RELEASE_DATE="$(date -u +%F)" \
+              perl -pi -e 's/^## \[Unreleased\]$/## [Unreleased]\n\n## [$ENV{NEW_VERSION}] — $ENV{RELEASE_DATE}/' CHANGELOG.md
+            grep -q "^## \[${version}\] " CHANGELOG.md \
+              || echo "::warning::CHANGELOG.md roll did not take for ${version}"
+          else
+            echo "::warning::CHANGELOG.md missing or has no [Unreleased] heading; skipping the roll."
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock packaging/homebrew/stella.rb
+          # An `if`, not `[ -f … ] && git add …`: under `set -e` a false test
+          # in a bare `&&` chain is a non-zero status for the whole line and
+          # would abort the release job.
+          if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
           if git diff --cached --quiet; then
             echo "manifests already at ${version}; nothing to sync."
             exit 0
@@ -200,6 +221,7 @@ jobs:
           - \`[workspace.package].version\` in \`Cargo.toml\` (inherited by every crate)
           - the workspace-member entries in \`Cargo.lock\`
           - \`packaging/homebrew/stella.rb\` (build-from-source formula)
+          - \`CHANGELOG.md\` — whatever was under \`[Unreleased]\` now sits under \`[${version}]\`
 
           The workflow dispatches the required \`ci\` checks onto this branch and merges once they're green (past GitHub's phantom \`action_required\` check suite for this GITHUB_TOKEN-authored PR — see #275); no action is needed unless the dispatched run fails."
 
