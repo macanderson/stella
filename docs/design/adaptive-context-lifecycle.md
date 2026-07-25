@@ -1495,7 +1495,7 @@ Add views for:
 ### 16.9 Documentation
 
 After implementation, publish user-facing documentation under
-stella-docs/content/docs. This RFC remains in docs/design because it is a design
+website/content/docs. This RFC remains in docs/design because it is a design
 and implementation specification, not live product documentation.
 
 ## 17. context-graph-protocol extension
