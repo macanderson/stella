@@ -3,8 +3,8 @@ import type { MetadataRoute } from "next";
 /**
  * PWA manifest for the Stella docs site. Next auto-links this at
  * `/manifest.webmanifest` and adds the corresponding <link rel="manifest">.
- * Icons live under public/icons and were generated from the current gold
- * chevron+cells mark.
+ * Icons live under public/icons and are generated from docs/brand/appicon.svg
+ * by docs/brand/build.py — run `make brand` after changing the mark.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {

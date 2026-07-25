@@ -1,31 +1,21 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
+import { Wordmark } from "@/components/brand";
 
 /**
  * Shared layout options (nav title, links) consumed by both the docs layout
  * and the home/landing layout.
  *
- * Branding: the monochrome Stella wordmark ("stella" + star, docs/brand/) with
- * a muted "docs" qualifier. Two cuts ship — an ink wordmark for the light Paper
- * surface and a snow wordmark for the dark Night surface — swapped by the
- * `.dark` class so the whole mark always has contrast in either theme.
+ * Branding: the Stella wordmark alone (docs/brand/), with a muted "docs"
+ * qualifier. It renders inline from the generated geometry so it paints with
+ * `currentColor` — one asset that inverts with the theme instead of a pair of
+ * per-mode files that have to be kept in step.
  */
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
       title: (
         <span className="inline-flex items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/stella-logo-light.svg"
-            alt="Stella"
-            className="h-7 w-auto dark:hidden"
-          />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/stella-logo-dark.svg"
-            alt="Stella"
-            className="hidden h-7 w-auto dark:block"
-          />
+          <Wordmark className="h-5 w-auto text-fd-foreground" />
           <span className="rounded-md border border-fd-border px-1.5 py-0.5 text-[0.7rem] font-medium uppercase tracking-wide text-fd-muted-foreground">
             docs
           </span>

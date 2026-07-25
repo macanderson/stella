@@ -143,8 +143,20 @@
   );
 }
 
-/* The "stella" wordmark in the headline — solid foreground, mode-aware. */
+/* The brand name set in running text. Space Grotesk Medium is the face the
+   wordmark itself is drawn from, so the name matches the logo rather than
+   approximating it with a generic mono. `-face` sets only the typeface and
+   inherits colour; `-text` adds the full-contrast accent for the headline. */
+.lp-brand-face {
+  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
 .lp-brand-text {
+  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   color: var(--stella-accent);
 }
 

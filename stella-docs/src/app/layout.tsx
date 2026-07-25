@@ -1,7 +1,20 @@
 import "./global.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Space_Grotesk } from "next/font/google";
 import { RootProvider } from "fumadocs-ui/provider/next";
+
+/**
+ * The brand face. The wordmark is Space Grotesk Medium drawn as outlines, so
+ * loading the family here lets brand-name text on the page match the logo
+ * instead of approximating it with a generic mono. Body copy is untouched.
+ */
+const brandFont = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["500"],
+  variable: "--font-brand",
+  display: "swap",
+});
 
 const SITE_URL = "https://stella.oxagen.sh";
 const SITE_NAME = "Stella CLI";
@@ -48,7 +61,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={brandFont.variable}>
       <body className="flex min-h-screen flex-col">
         <RootProvider>{children}</RootProvider>
       </body>

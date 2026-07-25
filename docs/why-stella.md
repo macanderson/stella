@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/stella-logo-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="brand/stella-logo-light.svg">
-    <img src="brand/stella-logo-light.svg" alt="Stella" width="340">
+    <source media="(prefers-color-scheme: dark)" srcset="brand/wordmark-paper.svg">
+    <source media="(prefers-color-scheme: light)" srcset="brand/wordmark-ink.svg">
+    <img src="brand/wordmark-ink.svg" alt="Stella" width="240">
   </picture>
 </p>
 

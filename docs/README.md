@@ -10,9 +10,9 @@ What remains here is the material that isn't site content:
   [The Deterministic Engine](papers/deterministic-engine.md) and
   [Stella's Defensible Position](papers/stella-defensible-position.md). The
   live site links to these at their exact paths — don't move or rename them.
-- [`brand/`](brand/) — the logo, mark, wordmark, and icon assets (current
-  cuts at the top level, plus the retired originals under `brand/legacy/`,
-  which holds only assets no longer in use).
+- [`brand/`](brand/README.md) — the wordmark, mark, and icon assets, plus the
+  generator that produces every one of them. Assets are generated, not
+  hand-edited: change [`brand/build.py`](brand/build.py) and run `make brand`.
 
 Historical design notes for features that have since shipped (pipeline,
 hooks, file-touch telemetry, memory citations, code graph, schema gate) were

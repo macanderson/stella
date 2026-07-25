@@ -40,8 +40,10 @@ pub use db::{DbError, Observatory};
 
 /// The dashboard page, embedded so the binary is self-contained.
 const INDEX_HTML: &str = include_str!("assets/index.html");
-/// The Stella mark, served for the header + favicon.
+/// The Stella mark, served for the favicon.
 const MARK_SVG: &str = include_str!("assets/mark.svg");
+/// The Stella wordmark, served for the header lockup.
+const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
 
 /// Errors starting or running the observatory server.
 #[derive(Debug, thiserror::Error)]
@@ -114,6 +116,13 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 status: "200 OK",
                 content_type: "image/svg+xml",
                 body: MARK_SVG.as_bytes().to_vec(),
+            };
+        }
+        "/assets/wordmark.svg" => {
+            return Response {
+                status: "200 OK",
+                content_type: "image/svg+xml",
+                body: WORDMARK_SVG.as_bytes().to_vec(),
             };
         }
         "/api/meta" => Ok(obs.meta()),
@@ -940,6 +949,11 @@ mod tests {
         );
         let mark = respond(ws.path(), "/assets/mark.svg");
         assert_eq!(mark.content_type, "image/svg+xml");
+        // The header lockup needs both cuts; a missing wordmark route would
+        // render as a broken image rather than failing loudly.
+        let wordmark = respond(ws.path(), "/assets/wordmark.svg");
+        assert_eq!(wordmark.content_type, "image/svg+xml");
+        assert!(String::from_utf8(wordmark.body).unwrap().contains("<svg"));
     }
 
     /// The page must be fully self-contained: any http(s) URL in the HTML

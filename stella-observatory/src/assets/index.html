@@ -37,7 +37,9 @@ body{
 
 /* ── Header ───────────────────────────────────────────────────────────── */
 header{display:flex;align-items:center;gap:14px;padding:22px 0 14px;flex-wrap:wrap}
-header img{width:44px;height:auto}
+header .brand{display:flex;align-items:center;gap:13px}
+header .brand .bmark{width:26px;height:26px}
+header .brand .bword{height:21px;width:auto}
 .title{display:flex;flex-direction:column}
 .title b{font-size:19px;letter-spacing:.14em;font-family:var(--mono)}
 .title b em{color:var(--accent);font-style:normal}
@@ -207,9 +209,12 @@ footer b{color:var(--text-2)}
 <body>
 <div class="wrap">
   <header>
-    <img src="/assets/mark.svg" alt="Stella mark">
+    <div class="brand">
+      <img class="bmark" src="/assets/mark.svg" alt="">
+      <img class="bword" src="/assets/wordmark.svg" alt="Stella">
+    </div>
     <div class="title">
-      <b>S T E L L A <em>·</em> OBSERVATORY</b>
+      <b>OBSERVATORY</b>
       <span>local telemetry · reads .stella only · nothing leaves this machine</span>
     </div>
     <div class="headmeta">
