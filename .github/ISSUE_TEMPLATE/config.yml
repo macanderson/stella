@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📖 Documentation
-    url: https://docs.oxagen.sh/stella
+    url: https://stella.oxagen.sh/docs
     about: Quickstart, provider setup, and the full manual — check here first.
   - name: 🔒 Report a security vulnerability
     url: https://github.com/macanderson/stella/security/advisories/new
