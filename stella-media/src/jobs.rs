@@ -1,7 +1,8 @@
 //! Persisted video-job state so a dollar-cost job is never orphaned by a
 //! dropped terminal. Submitted job handles are written
 //! to `jobs.json` inside the artifacts dir; after a Ctrl-C or a process
-//! restart, `stella gen video --resume <id>` reattaches.
+//! restart, [`resume`] reattaches — reached from the agent side by the
+//! `poll_video` tool. There is no `stella gen` subcommand.
 //!
 //! The truthfulness contract (L-V3): a persisted handle is **never** reported
 //! from cache. [`resume`] loads the handle and reconciles it *live* against

@@ -1,6 +1,6 @@
 //! Derive [`stella_tui::Inbound::CacheInsight`] from a committed
 //! `AgentEvent::StepUsage` (issues #267/#269) — split out of
-//! `command_deck.rs` (already over its file-size ratchet; not a file to
+//! `command_deck.rs` (already oversized; not a file to
 //! grow) so `spawn_forwarder`, the one seam shared by every deck lane (the
 //! lead's turns and every `crate::subsession` worker), only needs a call
 //! site.

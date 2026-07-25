@@ -119,10 +119,11 @@ every panic on every thread, including panel panics the session survives.
   modules directly, so a panic inside a deck tab is not caught and rendered as
   an error card — it takes the process down. Do not assume the boundary covers
   a new tab you add.
-- `deck_ui.rs`'s module header still says "Tab hotkeys (`1`–`5`)". The code
-  disagrees, on purpose: digits never switch tabs (they quick-pick `ask_user`
-  answers and must be typeable as a prompt's first character). Tab / Shift-Tab
-  are the only tab navigation ([`src/deck_ui.rs:1418`](src/deck_ui.rs)).
+- **Digits never switch tabs, deliberately.** They quick-pick `ask_user`
+  answers and must stay typeable as a prompt's first character, so `Tab` /
+  `Shift-Tab` are the only tab navigation
+  ([`src/deck_ui.rs:1418`](src/deck_ui.rs)). Adding a digit hotkey would eat a
+  keystroke meant for the composer.
 - Mouse capture is off by default in both `RunOptions` and `DeckOptions` so
   native terminal selection and copy keep working. The deck's event loop
   discards mouse events entirely today — turning the flag on currently costs

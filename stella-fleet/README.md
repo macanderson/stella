@@ -126,11 +126,15 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   `finish_attempt` uses `unchecked_transaction`, which is sound *only* because
   that mutex is the borrow rusqlite would otherwise enforce and this is the one
   place a transaction is opened. A lock is never held across an `.await`.
-- **The schema is versioned; `ledger.rs`'s module header is stale on this
-  point.** The header still describes a stamp-free convergent DDL, but
-  `migrate` ([`ledger.rs:372`](src/ledger.rs)) stamps `PRAGMA user_version` in
-  the same transaction as the DDL, and `MIGRATION_V2` rebuilt `lineage` to add
-  the uniqueness constraint. Trust the code.
+- **An additive table or index is free; a *reshape* is not.** The base DDL is
+  convergent (`CREATE … IF NOT EXISTS`, replayed on every open), so a new table
+  reaches an existing ledger the next time it is opened. Altering or
+  backfilling a column does not — the `IF NOT EXISTS` guard silently skips it
+  on an existing file, which is exactly how a schema change becomes a runtime
+  `INSERT` failure. That change must land as a numbered `MIGRATION_V<n>` with a
+  matching `version < n` arm; `migrate` ([`ledger.rs:372`](src/ledger.rs))
+  stamps `PRAGMA user_version` in the same transaction as the DDL it applies,
+  the way `MIGRATION_V2` rebuilt `lineage` to add its uniqueness constraint.
 - **Nothing removes worktrees or branches.** `WorktreeManager::remove` exists
   but neither `Fleet` nor `fleet_cmd` calls it; isolated worktrees under
   `.stella/worktrees/<slug>` and their `fleet/<slug>-<hash>` branches are left

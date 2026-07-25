@@ -390,9 +390,13 @@ be closed by exactly one PR; if a fix spans several, close on the last and
 
 ## Testing approach
 
-- **Property tests** for pure engine logic (`proptest`): compaction,
-  loop detection, budget arithmetic, retry history, calibration drift.
-  These run on every `cargo test`.
+- **Property tests** for pure engine logic (`proptest`): loop detection,
+  retry history, skill selection, and the task board (`stella-core`), plus
+  retrieval fusion (`stella-context`), fleet planning (`stella-fleet`),
+  witness verification (`stella-pipeline`), and render/scroll (`stella-tui`).
+  These run on every `cargo test`. Compaction, eviction, and budget
+  arithmetic are covered by unit tests, not properties — a property test for
+  them is a welcome contribution.
 - **Witness tests** for features — see above.
 - **Wiremock-based adapter tests** for provider SSE parsing and HTTP error
   classification (`stella-model`, `stella-mcp`, `stella-media`).

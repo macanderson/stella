@@ -3,8 +3,8 @@
 The code-graph indexer: tree-sitter symbol and import-edge extraction over a
 workspace, persisted in SQLite at `.stella/private/codegraph.db`, and served
 back as `ContextFrame`s. It is implemented **as a built-in CGP provider**
-(`PROVIDER_ID = "code-graph"`) feeding `stella-context`, and `stella init` is
-what builds the index.
+(`PROVIDER_ID = "code-graph"`) that recall reaches through the CGP host, and
+`stella init` is what builds the index.
 
 The boundary is one-directional: this crate depends on `contextgraph-types`
 for the wire shape and **never on `stella-context`**, so the provider can be

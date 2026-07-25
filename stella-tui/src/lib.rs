@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `stella-tui` — the ratatui event-log REPL (ADR-023).
+//! `stella-tui` — the ratatui event-log REPL.
 //!
 //! This crate renders **exclusively** from [`stella_protocol::AgentEvent`]s
 //! (L-T1). It never touches the engine directly: `AgentEvent`s flow in over a

@@ -37,7 +37,8 @@
 //! Run it from the workspace root: the harbor adapter is put on `PYTHONPATH`
 //! by the relative path `ADAPTER_PYTHONPATH`.
 //!
-//! Exit codes, for the CI job that gates on this:
+//! Exit codes, for a caller that wants to gate on this (no CI job runs it
+//! today — it is invoked manually):
 //!
 //! - `0` — every trial that reported did real work (or passed).
 //! - `1` — the loop misbehaved on at least one trial, *or* no trial artifacts

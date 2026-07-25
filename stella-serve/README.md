@@ -192,9 +192,11 @@ the wire would be silently reclassified.
   remoted ports are adapters, not a rewrite) and the "Workspace layout" row for
   this crate, which states the own-binary/not-linked rule.
 - [`../docs/design/serve-surface.md`](../docs/design/serve-surface.md) — the full
-  design. Note it describes a larger target surface than what is implemented
-  (sessions rather than turns, steering, pause/cancel, an approval gate, and SSE
-  replay from `?after=<seq>`); the code today serves one turn per registered id
-  with no resume. Treat the doc as the destination, `src/` as the state.
+  design. Its status line now flags the gaps itself: it describes a larger
+  target surface than what is implemented (sessions rather than turns,
+  steering, pause/cancel, an approval gate, SSE replay from `?after=<seq>`, a
+  `Host`-header guard, and a SIGTERM drain); the code today serves one turn per
+  registered id with no resume. Treat the doc as the destination, `src/` as the
+  state.
 - [`../packaging/docker/Dockerfile.serve`](../packaging/docker/Dockerfile.serve) —
   how the binary is actually deployed, and the constraints that shape `main.rs`.
