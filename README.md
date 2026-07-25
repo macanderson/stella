@@ -340,6 +340,8 @@ stella init      # infer this workspace's domain taxonomy (.stella/domains.toml)
 stella tools     # list every tool available to the agent this session
 stella stats     # cost, tokens, and $/resolved task per provider/model
                  # (--format table|json|csv, --provider <id>)
+stella inspect   # the exact context a past model call was sent, rebuilt from
+                 # recorded receipts (--step N, --call-seq S, --format json)
 ```
 
 ### Global flags

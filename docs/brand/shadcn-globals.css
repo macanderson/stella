@@ -1,0 +1,296 @@
+/* Stella — shadcn/ui + Tailwind v4 theme (Base UI compatible)
+ *
+ * A drop-in `globals.css` carrying the Stella colour system: gold on deep navy,
+ * a star against night sky. Values are oklch to match shadcn's own output, with
+ * the source hex in a comment on every line.
+ *
+ * The normative palette lives in docs/brand/ — see docs/brand/README.md. This
+ * file is the shadcn cut of it, not a second source of truth.
+ *
+ * Three mappings here are deliberate and easy to get wrong:
+ *
+ *   --accent is NOT the brand colour. In shadcn, `accent` is the subtle
+ *   hover/active background for menu items, ghost buttons, and command rows.
+ *   Mapping gold to it turns every hover bright yellow. Gold lives in
+ *   --primary and --ring; --accent is an elevated neutral surface.
+ *
+ *   --primary works in both modes because gold is only ever a FILL with a dark
+ *   label (ink on gold is 14.70:1). Gold as *text* on white is 1.35:1 and fails
+ *   AA outright — never set a foreground to gold on a light ground.
+ *
+ *   --ring differs per mode. Gold is a 14.40:1 focus ring on navy but only
+ *   1.35:1 on paper, so light mode rings with gold-ink (#7A5E00, 6.12:1).
+ *
+ * Warning is orange (#FF7A1A), not yellow: yellow is conventionally "warning"
+ * in a terminal, so promoting it to brand would collide. Status must always
+ * pair colour with an icon, never rely on hue alone.
+ *
+ * ── Typography ───────────────────────────────────────────────────────────────
+ *
+ *   brand   Space Grotesk 500 — the face the wordmark is drawn from. Brand name,
+ *           display headings, branded UI chrome. Use the `brand-wordmark`
+ *           utility, which also applies the wordmark's -0.02em tracking.
+ *   sans    Inter — body and UI text. Deliberately neutral so it does not
+ *           compete with the brand face at paragraph sizes.
+ *   mono    JetBrains Mono — code, telemetry, terminal output. Not Space Mono,
+ *           despite it being Space Grotesk's parent: it is too wide and too
+ *           quirky to read for sustained code.
+ *
+ * All three are OFL. Wire them up one of two ways — the stacks below degrade to
+ * system fonts if you do neither, and every var() carries an inline fallback so
+ * an unwired variable can never invalidate the whole declaration.
+ *
+ *   next/font (preferred in Next.js) — the variable names below match:
+ *
+ *     import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
+ *     const brand = Space_Grotesk({ subsets: ["latin"], weight: ["500"],
+ *                                   variable: "--font-space-grotesk" });
+ *     const sans  = Inter({ subsets: ["latin"], variable: "--font-inter" });
+ *     const mono  = JetBrains_Mono({ subsets: ["latin"],
+ *                                    variable: "--font-jetbrains-mono" });
+ *     // <html className={`${brand.variable} ${sans.variable} ${mono.variable}`}>
+ *
+ *   Self-hosted — drop woff2 files in /public/fonts and uncomment the @font-face
+ *   block below. Prefer this if a strict CSP blocks Google's font host.
+ */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ─── Self-hosted fonts (optional; unnecessary with next/font) ───────────────
+ *
+ * Uncomment and ship the woff2 files to serve the families yourself. The names
+ * here match the fallbacks in @theme, so no other change is needed.
+ *
+ * @font-face {
+ *   font-family: "Space Grotesk";
+ *   src: url("/fonts/space-grotesk-500.woff2") format("woff2");
+ *   font-weight: 500;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ * @font-face {
+ *   font-family: "Inter";
+ *   src: url("/fonts/inter-variable.woff2") format("woff2-variations");
+ *   font-weight: 100 900;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ * @font-face {
+ *   font-family: "JetBrains Mono";
+ *   src: url("/fonts/jetbrains-mono-variable.woff2") format("woff2-variations");
+ *   font-weight: 100 800;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ */
+
+/* ─── Light: paper & ink ─────────────────────────────────────────────────── */
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(1 0 0); /* #FFFFFF paper */
+  --foreground: oklch(0.1448 0 0); /* #0A0A0A ink */
+
+  --card: oklch(1 0 0); /* #FFFFFF */
+  --card-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+  --popover: oklch(1 0 0); /* #FFFFFF */
+  --popover-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+
+  /* Gold fill + ink label — the only correct use of gold on a light ground. */
+  --primary: oklch(0.8987 0.1857 97.86); /* #FFDD00 gold */
+  --primary-foreground: oklch(0.1448 0 0); /* #0A0A0A ink  (14.70:1) */
+
+  --secondary: oklch(0.9674 0.0013 286.38); /* #F4F4F5 snow */
+  --secondary-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+
+  --muted: oklch(0.9674 0.0013 286.38); /* #F4F4F5 snow */
+  --muted-foreground: oklch(0.4952 0.024 264.33); /* #5B6270  (6.13:1) */
+
+  /* Hover / active surface — neutral by design, see header note. */
+  --accent: oklch(0.9527 0.0027 286.35); /* #EFEFF1 */
+  --accent-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+
+  --destructive: oklch(0.5401 0.2003 15.98); /* #C81E45  (5.63:1) */
+  --destructive-foreground: oklch(1 0 0); /* #FFFFFF */
+
+  --border: oklch(0.9223 0.0055 274.96); /* #E4E5E9 */
+  --input: oklch(0.8824 0.0085 271.32); /* #D6D8DE */
+  --ring: oklch(0.4965 0.1015 88.31); /* #7A5E00 gold-ink (6.12:1) */
+
+  /* Extra semantic states shadcn does not ship. Light cuts are deepened so
+     they pass as text on paper; the dark cuts below are the brand values. */
+  --success: oklch(0.5143 0.1075 162.9); /* #0E7A55  (5.34:1) */
+  --success-foreground: oklch(1 0 0); /* #FFFFFF */
+  --warning: oklch(0.5378 0.1552 43.18); /* #B44708  (5.46:1) */
+  --warning-foreground: oklch(1 0 0); /* #FFFFFF */
+
+  --chart-1: oklch(0.4965 0.1015 88.31); /* #7A5E00 gold-ink */
+  --chart-2: oklch(0.5143 0.1075 162.9); /* #0E7A55 green */
+  --chart-3: oklch(0.5461 0.2152 262.88); /* #2563EB azure   (5.17:1) */
+  --chart-4: oklch(0.4907 0.2412 292.58); /* #6D28D9 violet  (7.10:1) */
+  --chart-5: oklch(0.5378 0.1552 43.18); /* #B44708 orange */
+
+  --sidebar: oklch(0.9674 0.0013 286.38); /* #F4F4F5 snow */
+  --sidebar-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+  --sidebar-primary: oklch(0.8987 0.1857 97.86); /* #FFDD00 gold */
+  --sidebar-primary-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+  --sidebar-accent: oklch(0.9527 0.0027 286.35); /* #EFEFF1 */
+  --sidebar-accent-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+  --sidebar-border: oklch(0.9223 0.0055 274.96); /* #E4E5E9 */
+  --sidebar-ring: oklch(0.4965 0.1015 88.31); /* #7A5E00 */
+}
+
+/* ─── Dark: gold on deep navy (the primary Stella surface) ───────────────── */
+
+.dark {
+  --background: oklch(0.1614 0.0289 266.83); /* #080D1A ground */
+  --foreground: oklch(0.9571 0.0103 261.79); /* #EDF1F8  (17.12:1) */
+
+  --card: oklch(0.207 0.038 265.07); /* #0F1729 surface */
+  --card-foreground: oklch(0.9571 0.0103 261.79); /* #EDF1F8 */
+  --popover: oklch(0.2502 0.0444 264.8); /* #172137 raised */
+  --popover-foreground: oklch(0.9571 0.0103 261.79); /* #EDF1F8 */
+
+  --primary: oklch(0.8987 0.1857 97.86); /* #FFDD00 gold  (14.40:1) */
+  --primary-foreground: oklch(0.1448 0 0); /* #0A0A0A ink */
+
+  --secondary: oklch(0.2502 0.0444 264.8); /* #172137 raised */
+  --secondary-foreground: oklch(0.9571 0.0103 261.79); /* #EDF1F8 */
+
+  --muted: oklch(0.207 0.038 265.07); /* #0F1729 surface */
+  --muted-foreground: oklch(0.7121 0.0403 260.66); /* #94A3BC  (7.60:1) */
+
+  --accent: oklch(0.2502 0.0444 264.8); /* #172137 raised */
+  --accent-foreground: oklch(0.9571 0.0103 261.79); /* #EDF1F8 */
+
+  --destructive: oklch(0.6968 0.1978 12.93); /* #FF5C7A  (6.52:1) */
+  --destructive-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+
+  --border: oklch(0.311 0.0541 263.34); /* #22304C hairline */
+  --input: oklch(0.311 0.0541 263.34); /* #22304C hairline */
+  --ring: oklch(0.8987 0.1857 97.86); /* #FFDD00 gold  (14.40:1) */
+
+  --success: oklch(0.7729 0.1535 163.22); /* #34D399  (10.09:1) */
+  --success-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+  --warning: oklch(0.7236 0.1868 48.9); /* #FF7A1A  (7.44:1) */
+  --warning-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+
+  --chart-1: oklch(0.8987 0.1857 97.86); /* #FFDD00 gold    14.40:1 */
+  --chart-2: oklch(0.7729 0.1535 163.22); /* #34D399 green   10.09:1 */
+  --chart-3: oklch(0.7225 0.1482 252.28); /* #5AA9FF azure    7.90:1 */
+  --chart-4: oklch(0.709 0.1592 293.54); /* #A78BFA violet    7.13:1 */
+  --chart-5: oklch(0.7236 0.1868 48.9); /* #FF7A1A orange     7.44:1 */
+
+  --sidebar: oklch(0.207 0.038 265.07); /* #0F1729 surface */
+  --sidebar-foreground: oklch(0.9571 0.0103 261.79); /* #EDF1F8 */
+  --sidebar-primary: oklch(0.8987 0.1857 97.86); /* #FFDD00 gold */
+  --sidebar-primary-foreground: oklch(0.1448 0 0); /* #0A0A0A */
+  --sidebar-accent: oklch(0.2502 0.0444 264.8); /* #172137 raised */
+  --sidebar-accent-foreground: oklch(0.9571 0.0103 261.79); /* #EDF1F8 */
+  --sidebar-border: oklch(0.311 0.0541 263.34); /* #22304C */
+  --sidebar-ring: oklch(0.8987 0.1857 97.86); /* #FFDD00 gold */
+}
+
+/* ─── Tailwind v4 token bridge ───────────────────────────────────────────── */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Typography. Each var() carries an inline fallback: an undefined custom
+     property with no fallback invalidates the entire font-family declaration at
+     computed-value time, which would silently drop the stack to `inherit`. */
+  --font-brand: var(--font-space-grotesk, "Space Grotesk"), ui-sans-serif,
+    system-ui, sans-serif;
+  --font-sans: var(--font-inter, "Inter"), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace,
+    SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ─── Brand typography utilities ─────────────────────────────────────────────
+ *
+ * The wordmark is Space Grotesk Medium tracked -0.02em. `brand-wordmark`
+ * reproduces that setting for the brand name in running text, so the word
+ * matches the logo instead of approximating it.
+ *
+ * Do NOT use this to rebuild the logo from live text — the logo is the outlined
+ * SVG in docs/brand/. This is for prose, headings, and UI chrome.
+ */
+
+@utility brand-wordmark {
+  font-family: var(--font-brand);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+/* Display headings in the brand face, tracked slightly tighter as size grows. */
+@utility brand-display {
+  font-family: var(--font-brand);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    @apply font-mono;
+  }
+}

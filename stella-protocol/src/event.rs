@@ -536,6 +536,16 @@ pub enum AgentEvent {
         /// Monotonic per session — groups the steps of one `run_turn`.
         turn_instance: u32,
         step: usize,
+        /// Disambiguates the several model calls that can share one
+        /// `(turn_instance, step)`. The engine's own worker call is always 0;
+        /// auxiliary calls that ride the same step — the overflow summarizer,
+        /// and the pipeline's triage/judge/plan/guidance roles — take 1, 2, …
+        /// from a per-execution counter. Without it a summarizer receipt and
+        /// the worker receipt it precedes collide on the primary key and the
+        /// auxiliary one is silently replaced. `serde(default)` so manifests
+        /// persisted before this field existed still decode (as the worker 0).
+        #[serde(default)]
+        call_seq: u64,
         role: ModelCallRole,
         provider: String,
         model: String,
@@ -1782,6 +1792,7 @@ mod tests {
         let event = AgentEvent::StepManifest {
             turn_instance: 1,
             step: 3,
+            call_seq: 0,
             role: ModelCallRole::Worker,
             provider: "anthropic".into(),
             model: "claude-opus".into(),

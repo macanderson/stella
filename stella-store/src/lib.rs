@@ -158,7 +158,9 @@ pub(crate) use private::{
     ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,
     open_private_file, open_private_sqlite, read_private_to_string, write_private_atomic,
 };
-pub use receipts::{ContextBlockRow, ManifestBlockRow, StepManifestRow};
+pub use receipts::{
+    ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,
+};
 pub use reconstruct::Reconstruction;
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 pub use telemetry::{SourceTelemetryRow, TelemetryRow};

@@ -11,7 +11,21 @@ use tokio::time::timeout;
 
 use crate::budget::{BudgetGuard, BudgetOutcome};
 use crate::event_sender::EventSender;
+use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryPolicy, Sleeper, retry_with_backoff_observed};
+
+/// Where an auxiliary call sits in the receipt coordinate space, so the context
+/// it sent is reconstructable alongside the engine's own steps. `call_seq` must
+/// be unique within the execution (see `AgentEvent::StepManifest::call_seq`).
+///
+/// `None` on an [`AccountedCall`] means "emit no receipt" — reserved for callers
+/// that are not part of a recorded execution (tests, one-off tooling).
+#[derive(Debug, Clone, Copy)]
+pub struct ReceiptContext {
+    pub turn_instance: u32,
+    pub step: usize,
+    pub call_seq: u64,
+}
 
 pub struct AccountedCall<'a> {
     pub provider: &'a dyn Provider,
@@ -21,6 +35,9 @@ pub struct AccountedCall<'a> {
     pub retry_policy: RetryPolicy,
     pub timeout: Option<Duration>,
     pub estimated_input_tokens: u64,
+    /// Receipt coordinates for this call. `Some` makes the exact context it
+    /// sent reconstructable after the fact; `None` records cost only.
+    pub receipt: Option<ReceiptContext>,
 }
 
 pub enum AccountedCallError {
@@ -99,6 +116,24 @@ pub async fn run_accounted_call(
     }
     let result = outcome.value;
     let provider = call.provider.id();
+    // The context receipt for this call, emitted just before `StepUsage` so the
+    // pair — what the model saw, what it cost — lands together at the settled
+    // boundary, exactly as the engine's step loop does it. Every role routed
+    // through here (the overflow summarizer, and the pipeline's triage / judge /
+    // plan / guidance / conversational roles) is otherwise reconstructable only
+    // as a cost line: without this the prompt it actually sent is unrecoverable.
+    // A fresh ledger per call is correct — these are one-shot contexts, so every
+    // block is first-seen and registers with its bytes.
+    if let Some(receipt) = call.receipt {
+        ReceiptLedger::with_call_seq(receipt.turn_instance, receipt.call_seq).emit_step_receipt(
+            &call.request.messages,
+            receipt.step,
+            call.role,
+            provider,
+            &result.model,
+            events,
+        );
+    }
     let _ = events.send(AgentEvent::StepUsage {
         step: 0,
         role: call.role,
@@ -240,6 +275,7 @@ mod tests {
                 retry_policy: RetryPolicy::new(1, 0, 0),
                 timeout: None,
                 estimated_input_tokens: 1,
+                receipt: None,
             },
             &mut budget,
             &EventSender::new(tx),
@@ -281,6 +317,154 @@ mod tests {
             !serde_json::to_string(&incomplete)
                 .expect("wire")
                 .contains("private failed body")
+        );
+    }
+
+    struct Succeeds;
+
+    #[async_trait]
+    impl Provider for Succeeds {
+        fn id(&self) -> &str {
+            "scripted"
+        }
+
+        async fn complete(
+            &self,
+            _request: CompletionRequest,
+        ) -> Result<CompletionResult, ProviderError> {
+            Ok(CompletionResult {
+                text: "summary".into(),
+                tool_calls: Vec::new(),
+                usage: CompletionUsage::reported_zero(),
+                model: "scripted-model".into(),
+                cost_usd: 0.01,
+                finish_reason: None,
+            })
+        }
+    }
+
+    /// The gap this closes: every role routed through here — the overflow
+    /// summarizer, the pipeline's triage/judge/plan/guidance — used to leave a
+    /// cost line and nothing else, so the prompt it sent was unrecoverable.
+    /// A receipt context makes its system prefix a registered block carrying
+    /// its own bytes, keyed apart from the worker call by `call_seq`.
+    #[tokio::test]
+    async fn a_receipt_context_makes_an_auxiliary_call_reconstructable() {
+        let provider = Succeeds;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let _ = run_accounted_call(
+            AccountedCall {
+                provider: &provider,
+                role: ModelCallRole::Summarization,
+                model_hint: "configured-model".into(),
+                request: CompletionRequest {
+                    messages: vec![
+                        CompletionMessage::system("condense this span faithfully"),
+                        CompletionMessage::user("t0 t1 t2"),
+                    ],
+                    max_output_tokens: None,
+                    temperature: None,
+                    effort: None,
+                    tools: Vec::new(),
+                    reasoning: None,
+                    params: None,
+                },
+                retry_policy: RetryPolicy::new(1, 0, 0),
+                timeout: None,
+                estimated_input_tokens: 1,
+                receipt: Some(ReceiptContext {
+                    turn_instance: 4,
+                    step: 7,
+                    call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
+                }),
+            },
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        // The system prefix registers with its bytes — that is the whole point.
+        let carries_prompt = events.iter().any(|event| {
+            matches!(
+                event,
+                AgentEvent::BlockRegistered { content: Some(c), .. }
+                    if c == "condense this span faithfully"
+            )
+        });
+        assert!(
+            carries_prompt,
+            "the summarizer's own system prompt must be a registered block: {events:?}"
+        );
+        // The manifest is keyed at the auxiliary seat, not over the worker's.
+        let manifest = events
+            .iter()
+            .find(|event| matches!(event, AgentEvent::StepManifest { .. }))
+            .expect("a manifest is emitted");
+        assert!(matches!(
+            manifest,
+            AgentEvent::StepManifest {
+                turn_instance: 4,
+                step: 7,
+                call_seq: 1,
+                role: ModelCallRole::Summarization,
+                ..
+            }
+        ));
+        // Receipt precedes StepUsage, matching the engine's ordering.
+        let manifest_at = events
+            .iter()
+            .position(|e| matches!(e, AgentEvent::StepManifest { .. }))
+            .expect("manifest");
+        let usage_at = events
+            .iter()
+            .position(|e| matches!(e, AgentEvent::StepUsage { .. }))
+            .expect("usage");
+        assert!(
+            manifest_at < usage_at,
+            "receipt lands with, and before, usage"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_receipt_context_emits_no_manifest() {
+        let provider = Succeeds;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let _ = run_accounted_call(
+            AccountedCall {
+                provider: &provider,
+                role: ModelCallRole::SkillAuthor,
+                model_hint: "configured-model".into(),
+                request: CompletionRequest {
+                    messages: vec![CompletionMessage::system("secret standalone prompt")],
+                    max_output_tokens: None,
+                    temperature: None,
+                    effort: None,
+                    tools: Vec::new(),
+                    reasoning: None,
+                    params: None,
+                },
+                retry_policy: RetryPolicy::new(1, 0, 0),
+                timeout: None,
+                estimated_input_tokens: 1,
+                receipt: None,
+            },
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                AgentEvent::StepManifest { .. } | AgentEvent::BlockRegistered { .. }
+            )),
+            "an opt-out caller records cost only, and never its prompt bytes"
         );
     }
 
@@ -336,6 +520,7 @@ mod tests {
                 retry_policy: RetryPolicy::new(3, 250, 250),
                 timeout: Some(Duration::from_millis(100)),
                 estimated_input_tokens: 1,
+                receipt: None,
             },
             &mut budget,
             &EventSender::new(tx),

@@ -393,19 +393,22 @@ pub(crate) const CONTEXT_BLOCKS_DDL: &str = "CREATE TABLE IF NOT EXISTS context_
 /// — the per-step request manifest, normalized one row per (step, block) in
 /// wire order (v11, spec §5). This is the receipt that makes any past step
 /// reconstructable: replaying the fold + this ordering yields exactly what the
-/// model saw. PRIMARY KEY (execution_id, turn_instance, step, ordinal) is the
-/// wire position; the second index is the reverse lookup (every step a given
-/// block was resident) that cost-of-carry and eviction analysis read.
+/// model saw. PRIMARY KEY (execution_id, turn_instance, step, call_seq, ordinal)
+/// is the wire position; `call_seq` separates the several model calls that can
+/// share one step (worker 0, overflow summarizer 1, allocated management roles
+/// 2+ — v13). The second index is the reverse lookup (every step a given block
+/// was resident) that cost-of-carry and eviction analysis read.
 pub(crate) const STEP_MANIFEST_DDL: &str = "CREATE TABLE IF NOT EXISTS step_manifest (
        execution_id INTEGER NOT NULL,
        turn_instance INTEGER NOT NULL,
        step INTEGER NOT NULL,
+       call_seq INTEGER NOT NULL DEFAULT 0,
        ordinal INTEGER NOT NULL,
        block_id TEXT NOT NULL,
        cache_zone TEXT NOT NULL,
        resident_since_step INTEGER NOT NULL,
        message_index INTEGER NOT NULL DEFAULT 0,
-       PRIMARY KEY (execution_id, turn_instance, step, ordinal)
+       PRIMARY KEY (execution_id, turn_instance, step, call_seq, ordinal)
      );
      CREATE INDEX IF NOT EXISTS step_manifest_by_block
        ON step_manifest(execution_id, block_id);";
@@ -416,16 +419,19 @@ pub(crate) const STEP_MANIFEST_DDL: &str = "CREATE TABLE IF NOT EXISTS step_mani
 /// against (raw budget / calibration factor), so the receipt's numbers line up
 /// with the decision that was made. The per-zone cache columns (spec §7) are
 /// added additively by a later migration; this is the increment-1 header only.
-/// PRIMARY KEY (execution_id, turn_instance, step): one receipt per step.
+/// PRIMARY KEY (execution_id, turn_instance, step, call_seq): one receipt per
+/// model call, not per step — a step can carry the worker call plus the
+/// auxiliary calls that ride it (v13).
 pub(crate) const STEP_RECEIPT_DDL: &str = "CREATE TABLE IF NOT EXISTS step_receipt (
        execution_id INTEGER NOT NULL,
        turn_instance INTEGER NOT NULL,
        step INTEGER NOT NULL,
+       call_seq INTEGER NOT NULL DEFAULT 0,
        provider TEXT NOT NULL,
        model TEXT NOT NULL,
        call_role TEXT NOT NULL,
        effective_budget_tokens INTEGER NOT NULL,
        calibration_factor REAL NOT NULL,
        estimated_input_tokens INTEGER NOT NULL,
-       PRIMARY KEY (execution_id, turn_instance, step)
+       PRIMARY KEY (execution_id, turn_instance, step, call_seq)
      );";
