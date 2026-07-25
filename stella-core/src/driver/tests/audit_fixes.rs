@@ -929,17 +929,21 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
         "genuinely changing outputs must not become a loop once compaction stubs them"
     );
 
-    // 4. A backend that reuses ONE call_id for every step (the scripted
-    //    providers in this file do exactly that) makes the snapshot
-    //    ambiguous — the last real output would otherwise be attributed to
-    //    all four calls and abort a healthy polling turn. Such an id is
-    //    poisoned, and comparison falls back to the live outputs.
+    // 4. The same call — same id, same name, same arguments — observed with
+    //    two different outputs makes the snapshot ambiguous: the last real
+    //    output would otherwise be attributed to all four calls and abort a
+    //    healthy polling turn. Such a key is poisoned, and comparison falls
+    //    back to the live outputs.
     let mut reused = history(&|_| "c1".to_string(), &|n| format!("{payload}{n}"));
     let identities = compact_as_run_turn_does(&mut reused);
     assert_eq!(
-        identities.get("c1"),
+        identities.get(&(
+            "c1".to_string(),
+            "read_file".to_string(),
+            serde_json::json!({ "path": "big.rs" }).to_string(),
+        )),
         Some(&None),
-        "a call_id seen with two different outputs must be poisoned, not guessed"
+        "one call seen with two different outputs must be poisoned, not guessed"
     );
     assert_eq!(
         detect_loop(
@@ -949,4 +953,102 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
         LoopVerdict::NoLoop,
         "a reused call_id must never manufacture a repeat"
     );
+}
+
+/// #632 — a provider that recycles one `call_id` per response must not blind
+/// loop detection.
+///
+/// `stella-model/src/gemini.rs` mints ids as `call_{ordinal}` where the
+/// ordinal is local to ONE response, so `call_0` restarts on every assistant
+/// step; `vertex.rs` reuses the same aggregation path. #622 accepted the
+/// `call_id`-keyed identity snapshot on the grounds that "real providers
+/// assign a fresh `call_id` per call". Two real providers do not.
+///
+/// The shape below is what that costs: one unrelated call takes `call_0`
+/// first, which under a `call_id`-only key poisons the id for the rest of
+/// the turn — and then the genuine repeat streak that follows reaches the
+/// detector as `[stub, stub, real]` (compaction having rewritten the older
+/// results in place) with no identity left to compare. Fails before the fix
+/// with `NoLoop`: the runaway-loop guard is simply off on Gemini and Vertex.
+#[test]
+fn a_provider_recycling_call_ids_per_response_still_gets_loop_detection() {
+    let assistant = |call_id: &str, name: &str, input: serde_json::Value| CompletionMessage {
+        role: MessageRole::Assistant,
+        content: String::new(),
+        tool_calls: vec![ToolCall {
+            call_id: call_id.into(),
+            name: name.into(),
+            input,
+        }],
+        tool_results: Vec::new(),
+        attachments: Vec::new(),
+    };
+    let tool = |call_id: &str, content: String| CompletionMessage {
+        role: MessageRole::Tool,
+        content: String::new(),
+        tool_calls: Vec::new(),
+        tool_results: vec![ToolResult {
+            call_id: call_id.into(),
+            output: ToolOutput::Ok { content },
+        }],
+        attachments: Vec::new(),
+    };
+
+    let payload = "y".repeat(3_000);
+    let read_input = serde_json::json!({ "path": "big.rs" });
+
+    // Every step is a fresh Gemini response, so every step's first (only)
+    // call is `call_0`. Step 1 is unrelated work; steps 2-5 are the loop.
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("go"),
+        assistant("call_0", "grep", serde_json::json!({ "pattern": "todo" })),
+        tool("call_0", "no matches".to_string()),
+    ];
+    for _ in 0..4 {
+        messages.push(assistant("call_0", "read_file", read_input.clone()));
+        messages.push(tool("call_0", payload.clone()));
+    }
+
+    // Snapshot where `run_turn` does — before the pass — then compact hard
+    // enough that the older results really are stubbed.
+    let mut identities = HashMap::new();
+    snapshot_result_identities(&messages, &mut identities);
+    assert!(
+        compact(&mut messages, 16).is_some(),
+        "fixture sanity: the budget must force a real compaction pass"
+    );
+    assert!(
+        messages
+            .iter()
+            .flat_map(|m| m.tool_results.iter())
+            .filter(|r| crate::compaction::is_compacted_output(&r.output))
+            .count()
+            >= 2,
+        "fixture sanity: compaction must have stubbed the older results"
+    );
+
+    // The unrelated `grep` no longer costs `read_file` its evidence: they are
+    // different calls that merely share a recycled ordinal.
+    assert_eq!(
+        identities.get(&(
+            "call_0".to_string(),
+            "read_file".to_string(),
+            read_input.to_string(),
+        )),
+        Some(&Some(crate::receipts::tool_result_block_id(
+            &ToolOutput::Ok {
+                content: payload.clone()
+            }
+        ))),
+        "the repeated read's identity must survive an unrelated call at the same ordinal"
+    );
+
+    match detect_loop(
+        &recent_call_records(&messages, &identities),
+        LoopDetectionConfig::default(),
+    ) {
+        LoopVerdict::ExactRepeat { count, .. } => assert_eq!(count, 4),
+        other => panic!("a recycled call_id must not hide a repeat streak: {other:?}"),
+    }
 }
