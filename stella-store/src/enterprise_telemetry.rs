@@ -34,6 +34,15 @@ const MAX_EXPORT_PAGE_ROWS: usize = 256;
 const LEGACY_EXPORT_MIGRATION_BATCH_ROWS: usize = 256;
 const LEGACY_EXPORT_MIGRATION_BATCHES_PER_OPEN: usize = 4;
 const MAX_CORRUPT_SCAN_ROWS: usize = 1_000;
+/// The ceiling on rows one `claim_batch` may READ, as opposed to
+/// [`MAX_CLAIM_EVENTS`], the ceiling on rows it may RETURN. The two are
+/// deliberately different: quarantining a corrupt row consumes a scanned row
+/// without producing a selected one, so a scan capped at the batch size gives
+/// a caller asking for `MAX_CLAIM_EVENTS` zero headroom and returns a short
+/// batch exactly when the leading page is corrupt. Widening the scan cannot
+/// widen the batch — the selection loop stops on `max_events` and on
+/// `max_payload_bytes` independently.
+const MAX_CLAIM_SCAN_ROWS: usize = MAX_CLAIM_EVENTS + MAX_CORRUPT_SCAN_ROWS;
 const MAX_QUARANTINE_DIAGNOSTICS: usize = 128;
 const MAX_CLAIM_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_LEASE_MS: i64 = 5 * 60 * 1_000;
@@ -867,7 +876,7 @@ impl EnterpriseTelemetrySpool {
         }
         let scan_limit = max_events
             .saturating_add(MAX_CORRUPT_SCAN_ROWS)
-            .min(MAX_CLAIM_EVENTS);
+            .min(MAX_CLAIM_SCAN_ROWS);
         let sql_limit = i64::try_from(scan_limit)
             .map_err(|_| StoreError("invalid enterprise telemetry claim limits".into()))?;
         let mut conn = self.lock();

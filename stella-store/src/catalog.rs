@@ -261,14 +261,21 @@ pub struct CatalogStore {
 
 impl CatalogStore {
     /// Open (creating if needed) the catalog at `path`.
+    ///
+    /// Through the crate's private-file primitives, like every sibling store
+    /// (`Store::open`, `UsageStore::open_at`, `EnterpriseTelemetrySpool::open_at`):
+    /// `ensure_private_dir` restricts the parent to 0700 and
+    /// `open_private_sqlite` opens no-follow at 0600 with the owner-and-single-link
+    /// check. catalog.db is not inert — it is the authoritative per-model pricing
+    /// the cost and budget metering reads, so another local account able to write
+    /// it can silently falsify spend accounting.
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| StoreError(format!("cannot create {}: {e}", parent.display())))?;
+            crate::ensure_private_dir(parent)?;
         }
-        let conn = Connection::open(path)?;
+        let conn = crate::open_private_sqlite(path)?;
         conn.busy_timeout(Duration::from_millis(5_000))?;
         let _: String =
             conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;

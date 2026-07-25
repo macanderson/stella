@@ -2039,3 +2039,66 @@ fn telemetry_replicates_to_the_hub_and_heals_missed_turns() {
     let scope = identity::TelemetryScope::resolve(tmp.path());
     assert_eq!(scope.workspace_id.as_deref(), Some("ws-cloud-1"));
 }
+
+/// Genuine on-disk corruption is the likeliest way `store.db` becomes
+/// unopenable, and until now it was the one case that got no actionable
+/// error — just the raw rusqlite string, repeated every session forever.
+#[test]
+fn a_corrupt_store_db_names_the_file_and_the_remedy() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(".stella/private")).unwrap();
+    std::fs::write(
+        tmp.path().join(".stella/private/store.db"),
+        b"this is not a SQLite database, just bytes that landed at that name",
+    )
+    .unwrap();
+    let Err(error) = Store::open(tmp.path()) else {
+        panic!("a malformed store.db must not open");
+    };
+    let error = error.to_string();
+    assert!(
+        error.contains(".stella/private/store.db"),
+        "the error must name the exact file: {error}"
+    );
+    assert!(
+        error.contains("Move") && error.contains("aside"),
+        "the error must name the remedy: {error}"
+    );
+}
+
+/// The per-execution fan-out writers are transactional: a row that fails
+/// validation partway through the batch must take the rows before it with
+/// it, rather than leaving the execution with a truncated file list.
+#[test]
+fn a_failing_file_touch_row_rolls_its_whole_batch_back() {
+    let store = Store::in_memory().unwrap();
+    let id = store
+        .begin_execution("goal", "make tests pass", "zai", "glm-5.2")
+        .unwrap();
+    let rows = [
+        FileTouchRow {
+            path: "src/lib.rs".into(),
+            ops: "U".into(),
+            lines_added: 3,
+            lines_removed: 1,
+            events_json: "[]".into(),
+        },
+        FileTouchRow {
+            path: "src/main.rs".into(),
+            ops: "U".into(),
+            // Past SQLite's INTEGER range — `sqlite_i64` bails on the SECOND
+            // element, after the first has already been inserted.
+            lines_added: u64::MAX,
+            lines_removed: 0,
+            events_json: "[]".into(),
+        },
+    ];
+    store
+        .record_files_touched(id, &rows)
+        .expect_err("an out-of-range line count fails the batch");
+    assert_eq!(
+        store.count("files_touched").unwrap(),
+        0,
+        "the row written before the failure must roll back with it"
+    );
+}
