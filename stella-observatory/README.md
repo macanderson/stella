@@ -170,9 +170,7 @@ surfaces (skills, memories, rules, `reflections.jsonl`, `mcp.toml`,
 `settings.json`, `codegraph.db`), then the test calls `respond()` and asserts on
 the parsed JSON. Two `#[tokio::test]`s use a real socket on port 0 for what
 `respond` cannot cover: the response head (CSP, `nosniff`) and the head-cap
-refusal. `empty_workspace_degrades_to_empty_payloads_not_errors` asserts
-`200 OK` for every route against a bare `TempDir` — a new route belongs in that
-list.
+refusal.
 
 ## Extending it
 
@@ -208,6 +206,6 @@ through `redact`, or emit key names only, the way `mcp_servers` does.
 - [`../website/content/docs/commands/observe.mdx`](../website/content/docs/commands/observe.mdx)
   and [`../website/content/docs/telemetry/dashboard.mdx`](../website/content/docs/telemetry/dashboard.mdx)
   — the user-facing flags and a tour of each tab.
-- [`../stella-store`](../stella-store) writes everything this crate reads
-  (`src/ddl.rs`, `src/usage.rs`); [`../stella-graph`](../stella-graph) writes
-  `codegraph.db`; [`../stella-fleet`](../stella-fleet) writes `fleet.db`.
+- [`../stella-store`](../stella-store) writes everything this crate reads;
+  [`../stella-graph`](../stella-graph) writes `codegraph.db`, and
+  [`../stella-fleet`](../stella-fleet) `fleet.db`.
