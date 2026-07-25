@@ -1,5 +1,7 @@
 //! `bash` — run a shell command in the workspace root with a timeout.
-//! Process-group based kill so children don't outlive the timeout.
+//! Process-group based kill so children don't outlive the timeout — or a
+//! cancelled turn: the driving future being dropped arms the same group kill
+//! ([`crate::exec::GroupKillGuard`]).
 //!
 //! **Opt-in, never ambient.** This tool is registered only when the host
 //! enabled it ([`crate::registry::RegistryOptions::bash`], set from the
@@ -242,6 +244,12 @@ impl Tool for Bash {
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+        // Reap the direct child if the driving future is dropped (tokio keeps
+        // it running by default). A backstop only — it does NOT reach the
+        // grandchildren the shell spawned, which is what the unix
+        // `GroupKillGuard` below is for; this is what covers the non-unix
+        // build, where that guard does not exist.
+        cmd.kill_on_drop(true);
         // New process group so we can kill the whole tree on timeout.
         #[cfg(unix)]
         unsafe {
@@ -263,10 +271,22 @@ impl Tool for Bash {
         // Capture pid before wait_with_output takes ownership.
         #[cfg(unix)]
         let pid = child.id().unwrap_or(0) as i32;
+        // Cancellation backstop: a dropped future (Esc, the engine's tool
+        // timeout, a fleet stop) must not leave the setsid'd group running.
+        #[cfg(unix)]
+        let mut guard = crate::exec::GroupKillGuard { pid, armed: true };
 
         let timeout = Duration::from_secs(timeout_secs);
         let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-            Ok(Ok(output)) => output,
+            Ok(Ok(output)) => {
+                #[cfg(unix)]
+                {
+                    guard.armed = false;
+                }
+                output
+            }
+            // Wait failure leaves the child's state unknown — the still-armed
+            // guard kills the group on return rather than leak it.
             Ok(Err(e)) => {
                 return ToolOutput::Error {
                     message: format!("command failed: {e}"),
@@ -275,11 +295,14 @@ impl Tool for Bash {
             Err(_) => {
                 // Timeout — kill the process group.
                 #[cfg(unix)]
-                unsafe {
-                    // Guard on a real pid: kill(-0, …) would SIGKILL Stella's
-                    // OWN process group.
-                    if pid > 0 {
-                        libc::kill(-pid, libc::SIGKILL);
+                {
+                    guard.armed = false;
+                    unsafe {
+                        // Guard on a real pid: kill(-0, …) would SIGKILL
+                        // Stella's OWN process group.
+                        if pid > 0 {
+                            libc::kill(-pid, libc::SIGKILL);
+                        }
                     }
                 }
                 return ToolOutput::Error {
@@ -410,6 +433,52 @@ mod tests {
         if let ToolOutput::Error { message } = result {
             assert!(message.contains("timed out"))
         }
+    }
+
+    /// Dropping the future mid-wait (a cancelled turn) must kill the whole
+    /// process group — the [`crate::exec::GroupKillGuard`] backstop. Without
+    /// it, Esc during a long `bash` call left the command running and
+    /// mutating the tree, `setsid`'d beyond the reach of anything else.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dropped_bash_call_kills_the_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        // Record the *grandchild*'s pid: when the group dies, the orphaned
+        // sleep is reaped by init, so a surviving pid means a real leak.
+        // `kill_on_drop` alone would not reach it — only the group kill does.
+        let command = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
+        let root = dir.path().to_path_buf();
+        let handle = tokio::spawn(async move {
+            Bash.execute(
+                &serde_json::json!({"command": command, "timeout_secs": 60}),
+                &root,
+            )
+            .await
+        });
+        let mut pid = None;
+        for _ in 0..250 {
+            if let Some(p) = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+            {
+                pid = Some(p);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let pid = pid.expect("the child never started");
+        handle.abort();
+        let _ = handle.await;
+        let mut dead = false;
+        for _ in 0..250 {
+            if unsafe { libc::kill(pid, 0) } == -1 {
+                dead = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(dead, "cancelled bash call left subprocess {pid} running");
     }
 
     #[tokio::test]
