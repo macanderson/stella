@@ -300,6 +300,41 @@ fn test_command(
     })
 }
 
+/// Resolve `build_project`'s or `run_tests`'s command line for the
+/// registry's `command.started` policy chain, mirroring
+/// [`crate::scripts::resolve_command_for_gate`] — best-effort: `None` (no
+/// gating from here) when the index composes nothing, in which case the
+/// tool itself returns the named error. An explicit `command` override also
+/// resolves to `None`: the registry reads that straight off the input, so
+/// detecting the index for it would be wasted work.
+///
+/// Deliberately approximate for `run_tests` with `scope: "impacted"`: the
+/// graph-driven per-file selection is NOT re-run here — it shells out to
+/// git and walks the code graph, and a second run could diverge from the
+/// execute-time one anyway — so the gated line is the un-narrowed command
+/// for this call's `kind`/`filter`. The fence still fires on the real
+/// runner invocation; only the filter half may read wider than what ran.
+/// Resolving twice, best-effort, is `run_script`'s shipped posture.
+pub(crate) async fn resolve_command_for_gate(
+    tool: &str,
+    root: &std::path::Path,
+    input: &Value,
+) -> Option<String> {
+    if input.get("command").and_then(|v| v.as_str()).is_some() {
+        return None;
+    }
+    let index = ScriptIndex::detect(root).await;
+    match tool {
+        "build_project" => index.verb_entry("build").map(|entry| entry.command.clone()),
+        "run_tests" => {
+            let kind = input.get("kind").and_then(|v| v.as_str()).unwrap_or("all");
+            let filter = input.get("filter").and_then(|v| v.as_str()).unwrap_or("");
+            test_command(&index, index.primary_runner()?, kind, filter).ok()
+        }
+        _ => None,
+    }
+}
+
 /// Named "nothing configured" error for `run_lint` / `format_code`: says
 /// exactly what was looked for, so the model can fix the project or pick a
 /// different tool instead of retrying blind.
