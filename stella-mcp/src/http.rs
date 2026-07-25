@@ -280,6 +280,54 @@ pub(crate) fn truncate(s: &str, max_chars: usize) -> String {
     format!("{head}…")
 }
 
+/// Middle-out, char-boundary-safe truncation for a *model-visible* payload,
+/// lives next to its head-only sibling [`truncate`] so both share one set of
+/// multi-byte tests. Keeps a head and a (larger) tail with an explicit elision
+/// marker naming the dropped byte count.
+///
+/// Per lesson L-S3 the tail budget is ≥ the head budget: a tool result's
+/// signal is usually in its tail (the error, the summary, the last row), so a
+/// head-only cut is the one that throws away the answer. The marker text
+/// matches the native tools' (`stella-tools`' `bash`/custom-tool runners) so a
+/// model that has learned to read one reads both.
+///
+/// `max_bytes` is a budget for the *kept* text; the marker is added on top, so
+/// the result can exceed it by the marker's own (small, fixed-shape) length.
+pub(crate) fn truncate_middle_out(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let head_budget = max_bytes * 2 / 5; // 40% head …
+    let tail_budget = max_bytes - head_budget; // … 60% tail (≥ head, L-S3)
+    let head_end = floor_boundary(s, head_budget);
+    let tail_start = ceil_boundary(s, s.len().saturating_sub(tail_budget));
+    let elided = tail_start.saturating_sub(head_end);
+    format!(
+        "{}\n... [truncated {elided} bytes] ...\n{}",
+        &s[..head_end],
+        &s[tail_start..]
+    )
+}
+
+/// Largest char boundary `<= i`.
+fn floor_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest char boundary `>= i`.
+fn ceil_boundary(s: &str, mut i: usize) -> usize {
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +351,44 @@ mod tests {
     #[test]
     fn short_strings_are_untouched() {
         assert_eq!(truncate("hello", 500), "hello");
+    }
+
+    #[test]
+    fn middle_out_keeps_head_and_tail_and_names_the_elision() {
+        let s = format!("HEAD{}TAIL", "x".repeat(5_000));
+        let out = truncate_middle_out(&s, 400);
+        assert!(out.starts_with("HEAD"), "head survives: {}", &out[..20]);
+        assert!(out.ends_with("TAIL"), "tail survives (L-S3)");
+        assert!(
+            out.contains("... [truncated ") && out.contains(" bytes] ..."),
+            "the elision is explicit and counted: {out}"
+        );
+        // The kept text stays inside the budget; only the marker rides on top.
+        assert!(out.len() < 400 + 64, "kept text respects the budget");
+    }
+
+    #[test]
+    fn middle_out_is_char_boundary_safe() {
+        // Every cut point lands mid-codepoint for a 3-byte char unless the
+        // boundary helpers do their job; a naive slice would panic here.
+        for budget in 1..200usize {
+            let s = "漢".repeat(500);
+            let out = truncate_middle_out(&s, budget);
+            assert!(
+                out.chars().all(|c| c == '漢' || c.is_ascii()),
+                "no codepoint was sliced apart at budget {budget}"
+            );
+        }
+        // …and the same for a 2-byte char with an odd-length budget.
+        let s = "áéíóú".repeat(400);
+        let out = truncate_middle_out(&s, 101);
+        assert!(out.contains("... [truncated "));
+    }
+
+    #[test]
+    fn middle_out_leaves_an_under_budget_string_byte_identical() {
+        assert_eq!(truncate_middle_out("hello", 500), "hello");
+        let exact = "x".repeat(500);
+        assert_eq!(truncate_middle_out(&exact, 500), exact);
     }
 }

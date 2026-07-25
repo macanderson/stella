@@ -42,7 +42,7 @@ use tokio::sync::Mutex;
 
 use crate::config::{McpServerConfig, McpTransport};
 use crate::error::McpError;
-use crate::http::HttpTransport;
+use crate::http::{HttpTransport, truncate, truncate_middle_out};
 use crate::oauth::OAuthManager;
 use crate::protocol::{
     CallToolParams, CallToolResult, ContentBlock, Implementation, InitializeParams,
@@ -107,6 +107,52 @@ const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// a non-advancing cursor forever.
 const MAX_TOOL_PAGES: usize = 1000;
 
+// Context budgets (#551). An MCP server is *untrusted input*: nothing on the
+// wire stops it from answering a call with a gigabyte of text, advertising ten
+// thousand tools, or attaching a megabyte description to each one. Without a
+// bound here the tokens are already paid for by the time `stella-core`'s
+// compaction runs — on a LATER turn — so the cap has to live at ingest, in
+// this crate.
+//
+// The numbers below are deliberately conservative starting points, not
+// ratified product values: they are sized to be invisible to every
+// well-behaved server we know of while still bounding a hostile one. Wiring
+// them to configuration would change this crate's public entry points
+// (`McpToolSet::connect`, `McpClient::connect`), which is an owner API
+// decision — see #551's own "Not applied" note.
+
+/// Byte budget for one rendered `tools/call` result, applied middle-out
+/// (head and tail kept, with an explicit elision marker between them).
+/// Matches the ceiling `stella-tools` already imposes on native
+/// `bash`/custom-tool output, so an MCP tool cannot buy more of the model's
+/// context than a local one.
+pub(crate) const MAX_TOOL_RESULT_BYTES: usize = 100_000;
+
+/// How many tools this client will accept from ONE server. Past this the
+/// remaining tools are dropped and `tools/list` pagination stops; the count is
+/// recorded as a non-fatal diagnostic ([`McpClient::dropped_tool_count`]) —
+/// the server is connected and working, it just advertises more surface than
+/// the model's context can afford.
+pub(crate) const MAX_TOOLS_PER_SERVER: usize = 256;
+
+/// Character budget for one tool's advertised `description`, truncated
+/// head-only (a description's contract is stated up front).
+pub(crate) const MAX_TOOL_DESCRIPTION_CHARS: usize = 2_000;
+
+/// Byte budget for one tool's serialized `inputSchema`. A JSON Schema cannot
+/// be string-truncated and stay valid, so an over-budget schema is *replaced*
+/// with the permissive `{"type": "object"}` (see [`normalize_schema`]) rather
+/// than chopped into malformed JSON.
+pub(crate) const MAX_TOOL_SCHEMA_BYTES: usize = 16_384;
+
+/// Appended to a tool's description when its schema was over budget and
+/// replaced, so the model is told the shape it can no longer see. Added
+/// *after* the description is truncated, so the steer is never the part that
+/// gets cut.
+const SCHEMA_REPLACED_NOTE: &str = "\n\n[stella: this tool's advertised input schema exceeded the \
+     size budget and was replaced with a permissive `{\"type\": \"object\"}` schema — pass the \
+     arguments this description names.]";
+
 /// One tool advertised by a server, in the client's own shape (the raw,
 /// un-namespaced name plus its input schema).
 #[derive(Debug, Clone)]
@@ -143,6 +189,9 @@ pub struct McpClient {
     negotiated_version: String,
     server_info: Option<Implementation>,
     tools: Vec<McpToolInfo>,
+    /// How many advertised tools were refused past [`MAX_TOOLS_PER_SERVER`]
+    /// (#551). Non-fatal: the server is live and every kept tool routes.
+    dropped_tools: usize,
 }
 
 /// The mutable half of a client: the current transport (`None` once it has
@@ -249,6 +298,7 @@ impl McpClient {
             negotiated_version: String::new(),
             server_info: None,
             tools: Vec::new(),
+            dropped_tools: 0,
         }
     }
 
@@ -319,6 +369,7 @@ impl McpClient {
         self.negotiated_version = handshake.negotiated_version;
         self.server_info = handshake.server_info;
         self.tools = handshake.tools;
+        self.dropped_tools = handshake.dropped_tools;
         self.conn.get_mut().mark_healthy();
         Ok(())
     }
@@ -555,6 +606,19 @@ impl McpClient {
     pub fn tools(&self) -> &[McpToolInfo] {
         &self.tools
     }
+
+    /// How many advertised tools were refused because the server exceeded
+    /// this crate's per-server tool cap (#551). `0` for every well-behaved
+    /// server.
+    ///
+    /// This is a **floor**, not a total: discovery stops on the page where the
+    /// cap is reached, so anything the server would have listed on later pages
+    /// is never counted (or fetched). It is a non-fatal diagnostic — unlike
+    /// [`crate::McpToolSet::failed_servers`], the server is connected and its
+    /// kept tools route normally.
+    pub fn dropped_tool_count(&self) -> usize {
+        self.dropped_tools
+    }
 }
 
 #[cfg(test)]
@@ -578,6 +642,9 @@ struct Handshake {
     negotiated_version: String,
     server_info: Option<Implementation>,
     tools: Vec<McpToolInfo>,
+    /// Tools refused past [`MAX_TOOLS_PER_SERVER`] (#551) — see
+    /// [`McpClient::dropped_tool_count`].
+    dropped_tools: usize,
 }
 
 /// Build a fresh (pre-handshake) transport for `config`. Shared by the first
@@ -642,19 +709,26 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
     transport
         .notify("notifications/initialized", Value::Null)
         .await?;
-    let tools = fetch_all_tools(name, transport).await?;
+    let (tools, dropped_tools) = fetch_all_tools(name, transport).await?;
     Ok(Handshake {
         negotiated_version: version,
         server_info: result.server_info,
         tools,
+        dropped_tools,
     })
 }
 
-/// Drive `tools/list` to exhaustion over `transport`, following `nextCursor`.
+/// Drive `tools/list` to exhaustion over `transport`, following `nextCursor`,
+/// returning the accepted tools plus how many were refused past
+/// [`MAX_TOOLS_PER_SERVER`] (#551).
+///
+/// Every tool is bounded *at ingest* — description and schema included — so
+/// each consumer (routing, `schemas()`, telemetry) sees the same already-safe
+/// values instead of each having to remember to cap them.
 async fn fetch_all_tools(
     name: &str,
     transport: &dyn Transport,
-) -> Result<Vec<McpToolInfo>, McpError> {
+) -> Result<(Vec<McpToolInfo>, usize), McpError> {
     let mut tools = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..MAX_TOOL_PAGES {
@@ -664,17 +738,36 @@ async fn fetch_all_tools(
         let raw = transport.request("tools/list", to_value(&params)?).await?;
         let page: ListToolsResult = serde_json::from_value(raw)
             .map_err(|e| McpError::Protocol(format!("could not decode tools/list result: {e}")))?;
-        for tool in page.tools {
+        let advertised = page.tools.len();
+        // `tools.len()` never exceeds the cap (we return the moment it would),
+        // so this cannot underflow.
+        let accepted = advertised.min(MAX_TOOLS_PER_SERVER - tools.len());
+        for tool in page.tools.into_iter().take(accepted) {
+            let (input_schema, schema_replaced) = normalize_schema(tool.input_schema);
+            let mut description = truncate(
+                tool.description.as_deref().unwrap_or_default(),
+                MAX_TOOL_DESCRIPTION_CHARS,
+            );
+            if schema_replaced {
+                description.push_str(SCHEMA_REPLACED_NOTE);
+            }
             tools.push(McpToolInfo {
-                description: tool.description.unwrap_or_default(),
+                description,
                 name: tool.name,
-                input_schema: normalize_schema(tool.input_schema),
+                input_schema,
                 safe_to_retry: tool.annotations.read_only_hint || tool.annotations.idempotent_hint,
             });
         }
+        if accepted < advertised {
+            // The cap bit mid-page. Stop paginating too — a server that
+            // advertises more tools than the model's context can hold is not
+            // one we want to keep fetching from, so the returned count is the
+            // remainder of THIS page, a floor rather than a total.
+            return Ok((tools, advertised - accepted));
+        }
         match page.next_cursor {
             Some(next) if !next.is_empty() => cursor = Some(next),
-            _ => return Ok(tools),
+            _ => return Ok((tools, 0)),
         }
     }
     Err(McpError::Protocol(format!(
@@ -683,10 +776,22 @@ async fn fetch_all_tools(
 }
 
 /// Map a raw `tools/call` result value into the engine's [`ToolOutput`].
+///
+/// This is the seam where an untrusted result is bounded (#551): the rendered
+/// string is capped at [`MAX_TOOL_RESULT_BYTES`] middle-out, on both the `Ok`
+/// and the `Error` branch, so a server cannot evict the conversation with one
+/// enormous answer. [`render_content`] itself stays pure and zero-copy.
 fn decode_call_result(tool: &str, raw: Value) -> Result<ToolOutput, McpError> {
     let result: CallToolResult = serde_json::from_value(raw)
         .map_err(|e| McpError::Protocol(format!("could not decode tools/call result: {e}")))?;
     let rendered = render_content(&result.content);
+    // Under budget stays byte-identical (and un-copied) — only an oversized
+    // result pays for the middle-out rebuild.
+    let rendered = if rendered.len() > MAX_TOOL_RESULT_BYTES {
+        truncate_middle_out(&rendered, MAX_TOOL_RESULT_BYTES)
+    } else {
+        rendered
+    };
     if result.is_error {
         Ok(ToolOutput::Error {
             message: if rendered.is_empty() {
@@ -709,11 +814,28 @@ fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, McpError> {
 /// A tool with a null/missing input schema still needs *a* schema; default to
 /// the permissive empty-object schema so the model always sees valid JSON
 /// Schema.
-fn normalize_schema(schema: Value) -> Value {
+///
+/// An **over-budget** schema (past [`MAX_TOOL_SCHEMA_BYTES`] serialized) gets
+/// that same fallback, and the `true` in the returned pair tells the caller to
+/// say so in the tool's description. A schema is the one field that cannot be
+/// string-truncated: chopping it would hand the model malformed JSON Schema,
+/// which is strictly worse than a permissive one. Losing the shape costs an
+/// argument round-trip; losing the *validity* costs every call to that tool.
+fn normalize_schema(schema: Value) -> (Value, bool) {
+    let permissive = || serde_json::json!({ "type": "object" });
     if schema.is_null() {
-        serde_json::json!({ "type": "object" })
+        return (permissive(), false);
+    }
+    let over_budget = match serde_json::to_vec(&schema) {
+        Ok(bytes) => bytes.len() > MAX_TOOL_SCHEMA_BYTES,
+        // Unserializable is unusable either way, and the permissive fallback
+        // is still valid JSON Schema — fall back rather than pass it through.
+        Err(_) => true,
+    };
+    if over_budget {
+        (permissive(), true)
     } else {
-        schema
+        (schema, false)
     }
 }
 
