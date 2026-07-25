@@ -14,7 +14,6 @@ use crate::event_sender::EventSender;
 use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryPolicy, Sleeper, retry_with_backoff_observed};
 
-
 /// Where an auxiliary call sits in the receipt coordinate space, so the context
 /// it sent is reconstructable alongside the engine's own steps. `call_seq` must
 /// be unique within the execution (see `AgentEvent::StepManifest::call_seq`).
