@@ -17,8 +17,9 @@ the `stella graph` subcommand:
    `assemble_system_prompt` (`stella-cli/src/agent.rs:141`), computed once at
    session start, byte-stable within the session.
 2. **Tools** — `list_scripts` (read-only) and `run_script` in
-   `stella-tools`, registered in `ToolRegistry::with_backends` and added to
-   `custom::RESERVED_NAMES` (`stella-tools/src/custom.rs:93`).
+   `stella-tools`, registered in `ToolRegistry::with_backends` and declared in
+   the canonical `stella-tools/src/catalog.rs` (which `custom::RESERVED_NAMES`
+   now aliases).
 3. **CLI** — `stella scripts list` / `stella scripts run <id> [-- args]`,
    mirroring the `Graph` subcommand (`stella-cli/src/main.rs:238`), offline
    (short-circuits before provider resolution).

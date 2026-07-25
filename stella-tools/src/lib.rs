@@ -9,6 +9,7 @@
 pub mod agent_use;
 pub mod apply_edits;
 pub mod bash;
+pub mod catalog;
 pub mod ci;
 pub mod code_map;
 pub mod custom;
