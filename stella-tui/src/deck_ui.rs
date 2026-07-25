@@ -654,6 +654,26 @@ pub struct DeckUi {
     pub notifications: Vec<crate::envelope::NotificationInfo>,
     /// Selected row in the inbox overlay.
     pub inbox_sel: usize,
+    /// Whether the INSPECT overlay is open (`⌃g`, `/inspect`): the model calls
+    /// this execution recorded, and the reconstructed context of the one
+    /// selected. Two modes in one overlay — the list, and the detail once
+    /// [`DeckUi::inspect_view`] is filled.
+    pub inspect_open: bool,
+    /// The recorded-call index ([`Inbound::RecordedCalls`]), in wire order.
+    /// Empty after a refresh is a real answer, not a pending state — an
+    /// execution predating the receipts plane has no rows.
+    pub inspect_calls: Vec<crate::envelope::RecordedCallInfo>,
+    /// Selected row in the call list.
+    pub inspect_sel: usize,
+    /// The reconstructed call being shown ([`Inbound::InspectedCall`]).
+    /// `None` = the overlay is on the list; `Some` = on the detail.
+    pub inspect_view: Option<Box<crate::envelope::InspectView>>,
+    /// Vertical scroll offset (rows) for the detail; render clamps.
+    pub inspect_scroll: usize,
+    /// True between sending [`WorkspaceInput::InspectCall`] and its answer, so
+    /// the detail can say "reconstructing…" instead of rendering an empty
+    /// transcript that reads like "the model was sent nothing".
+    pub inspect_pending: bool,
     /// Driver requests queued by handlers/ingest beyond the one action a key
     /// can return (e.g. opening CONTEXT refreshes both skills and MCP; a
     /// finished OAuth login refreshes the MCP snapshot). The shell drains
@@ -715,6 +735,12 @@ impl Default for DeckUi {
             sessions_sel: 0,
             context_open: false,
             context_scroll: 0,
+            inspect_open: false,
+            inspect_calls: Vec::new(),
+            inspect_sel: 0,
+            inspect_view: None,
+            inspect_scroll: 0,
+            inspect_pending: false,
             inbox_open: false,
             notifications: Vec::new(),
             inbox_sel: 0,
@@ -999,6 +1025,21 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
     if let Inbound::Sessions(sessions) = inbound {
         ui.sessions = sessions.clone();
         ui.sessions_sel = ui.sessions_sel.min(sessions.len().saturating_sub(1));
+        return;
+    }
+    // The recorded-call index for the INSPECT overlay. Kept even while the
+    // overlay is shut so reopening renders instantly off the last snapshot.
+    if let Inbound::RecordedCalls(calls) = inbound {
+        ui.inspect_calls = calls.clone();
+        ui.inspect_sel = ui.inspect_sel.min(calls.len().saturating_sub(1));
+        return;
+    }
+    // One reconstructed call. Landing it clears the pending flag; the detail
+    // renders from here until Esc returns to the list.
+    if let Inbound::InspectedCall(view) = inbound {
+        ui.inspect_view = Some(view.clone());
+        ui.inspect_pending = false;
+        ui.inspect_scroll = 0;
         return;
     }
     // The persist-until-read notification snapshot: feeds the footer badge
@@ -1302,6 +1343,14 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         return DeckAction::Handled;
     }
 
+    // Ctrl-G opens the INSPECT overlay from anywhere. Deliberately NOT ctrl+i:
+    // that is byte-identical to Tab on terminals without the kitty keyboard
+    // protocol (which `term.rs` pushes only best-effort), and Tab is bound to
+    // tab-switching — the collision would be silent and terminal-dependent.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('g')) {
+        return open_inspect_overlay(ui);
+    }
+
     // Ctrl-T toggles the queue editor from anywhere.
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('t')) {
         ui.queue_open = !ui.queue_open;
@@ -1343,6 +1392,9 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     }
     if ui.context_open {
         return handle_context_key(key, ui);
+    }
+    if ui.inspect_open {
+        return handle_inspect_key(key, ui);
     }
 
     let composer_empty = ui.composer.buffer().is_empty();
@@ -1626,6 +1678,7 @@ fn handle_slash_key(key: KeyEvent, matches: &[String], ui: &mut DeckUi) -> Optio
             // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
             "/sessions" => open_sessions_overlay(ui),
             "/context" => open_context_overlay(ui),
+            "/inspect" => open_inspect_overlay(ui),
             "/inbox" => open_inbox_overlay(ui),
             // `/mcp-search` jumps straight into the MCP tab's registry
             // search — THE way to begin looking for a server from anywhere
@@ -1716,6 +1769,19 @@ pub(crate) fn open_context_overlay(ui: &mut DeckUi) -> DeckAction {
     ui.context_scroll = 0;
     ui.pending_inputs.push(WorkspaceInput::McpRefresh);
     DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
+}
+
+/// Open the INSPECT overlay (`⌃g`, `/inspect`) on its call list and ask the
+/// driver for a fresh index. Opens on the list, never straight into a detail:
+/// which call produced a given transcript line is not knowable from UI state
+/// yet (transcript entries carry no step coordinate), so a human picks.
+pub(crate) fn open_inspect_overlay(ui: &mut DeckUi) -> DeckAction {
+    ui.inspect_open = true;
+    ui.inspect_sel = 0;
+    ui.inspect_view = None;
+    ui.inspect_scroll = 0;
+    ui.inspect_pending = false;
+    DeckAction::Send(WorkspaceInput::InspectRefresh)
 }
 
 /// Open the INBOX overlay (`/inbox`). The driver's poller keeps the
@@ -1889,6 +1955,81 @@ fn handle_context_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             ui.context_scroll = ui.context_scroll.saturating_add(10);
             DeckAction::Handled
         }
+        _ => DeckAction::Handled,
+    }
+}
+
+/// The INSPECT overlay key map. Two modes: on the LIST, ↑/↓ move and Enter
+/// reconstructs the selected call; on the DETAIL, ↑/↓/PageUp/PageDown scroll
+/// and Esc/`←` returns to the list (rather than closing outright — stepping
+/// between calls is the common motion). Esc on the list closes. Modal.
+fn handle_inspect_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+    if ui.inspect_view.is_some() || ui.inspect_pending {
+        return match key.code {
+            KeyCode::Esc | KeyCode::Left => {
+                // Back to the list, not out of the overlay.
+                ui.inspect_view = None;
+                ui.inspect_pending = false;
+                ui.inspect_scroll = 0;
+                DeckAction::Handled
+            }
+            KeyCode::Char('q') => {
+                ui.inspect_open = false;
+                ui.inspect_view = None;
+                ui.inspect_pending = false;
+                DeckAction::Handled
+            }
+            KeyCode::Up => {
+                ui.inspect_scroll = ui.inspect_scroll.saturating_sub(1);
+                DeckAction::Handled
+            }
+            KeyCode::Down => {
+                // Render clamps to the content height it measures.
+                ui.inspect_scroll = ui.inspect_scroll.saturating_add(1);
+                DeckAction::Handled
+            }
+            KeyCode::PageUp => {
+                ui.inspect_scroll = ui.inspect_scroll.saturating_sub(10);
+                DeckAction::Handled
+            }
+            KeyCode::PageDown => {
+                ui.inspect_scroll = ui.inspect_scroll.saturating_add(10);
+                DeckAction::Handled
+            }
+            _ => DeckAction::Handled,
+        };
+    }
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            ui.inspect_open = false;
+            DeckAction::Handled
+        }
+        KeyCode::Up => {
+            ui.inspect_sel = ui.inspect_sel.saturating_sub(1);
+            DeckAction::Handled
+        }
+        KeyCode::Down => {
+            // Clamp here (unlike the scroll offsets): the selection indexes a
+            // vec the render must be able to trust.
+            let last = ui.inspect_calls.len().saturating_sub(1);
+            ui.inspect_sel = ui.inspect_sel.saturating_add(1).min(last);
+            DeckAction::Handled
+        }
+        KeyCode::Enter | KeyCode::Right => match ui.inspect_calls.get(ui.inspect_sel) {
+            Some(call) => {
+                let (turn_instance, step, call_seq) = call.coordinate();
+                ui.inspect_pending = true;
+                ui.inspect_scroll = 0;
+                DeckAction::Send(WorkspaceInput::InspectCall {
+                    turn_instance,
+                    step,
+                    call_seq,
+                })
+            }
+            // Enter on an empty list is a no-op, not a request for call 0.
+            None => DeckAction::Handled,
+        },
+        KeyCode::Char('r') => DeckAction::Send(WorkspaceInput::InspectRefresh),
         _ => DeckAction::Handled,
     }
 }
@@ -6605,5 +6746,135 @@ mod tests {
         // "any key closes" made the long content unreadable).
         handle_deck_key(ch('x'), &model, &mut ui);
         assert!(ui.help_open, "a random key does not close the overlay");
+    }
+
+    fn call(step: u64, call_seq: u64, role: &str) -> crate::envelope::RecordedCallInfo {
+        crate::envelope::RecordedCallInfo {
+            turn_instance: 0,
+            step,
+            call_seq,
+            call_role: role.into(),
+            provider: "anthropic".into(),
+            model: "opus".into(),
+            estimated_input_tokens: 100,
+        }
+    }
+
+    #[test]
+    fn ctrl_g_opens_inspect_and_asks_the_driver_for_the_call_index() {
+        let model = WorkspaceModel::new();
+        let mut ui = ready_ui();
+        assert!(!ui.inspect_open);
+        let action = handle_deck_key(ctrl('g'), &model, &mut ui);
+        assert!(ui.inspect_open, "⌃g opens the INSPECT overlay");
+        assert!(
+            matches!(action, DeckAction::Send(WorkspaceInput::InspectRefresh)),
+            "opening asks for a fresh index: {action:?}"
+        );
+    }
+
+    #[test]
+    fn enter_on_a_call_requests_that_calls_coordinate_not_the_first() {
+        let model = WorkspaceModel::new();
+        let mut ui = ready_ui();
+        handle_deck_key(ctrl('g'), &model, &mut ui);
+        ingest_inbound(
+            &Inbound::RecordedCalls(vec![
+                call(0, 0, "worker"),
+                call(3, 1, "summarization"),
+                call(3, 0, "worker"),
+            ]),
+            &mut WorkspaceModel::new(),
+            &mut ui,
+        );
+        handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        assert!(
+            matches!(
+                action,
+                DeckAction::Send(WorkspaceInput::InspectCall {
+                    turn_instance: 0,
+                    step: 3,
+                    call_seq: 1,
+                })
+            ),
+            "⏎ reconstructs the SELECTED call — the summarizer here: {action:?}"
+        );
+        assert!(ui.inspect_pending, "the detail shows a pending state");
+    }
+
+    #[test]
+    fn enter_on_an_empty_index_is_a_no_op_not_a_request_for_call_zero() {
+        let model = WorkspaceModel::new();
+        let mut ui = ready_ui();
+        handle_deck_key(ctrl('g'), &model, &mut ui);
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        assert!(
+            matches!(action, DeckAction::Handled),
+            "no calls recorded — ⏎ must not fabricate a coordinate: {action:?}"
+        );
+        assert!(!ui.inspect_pending);
+    }
+
+    #[test]
+    fn esc_steps_back_from_the_detail_to_the_list_before_closing() {
+        let model = WorkspaceModel::new();
+        let mut ui = ready_ui();
+        handle_deck_key(ctrl('g'), &model, &mut ui);
+        ingest_inbound(
+            &Inbound::InspectedCall(Box::new(crate::envelope::InspectView {
+                call: call(0, 0, "worker"),
+                messages: vec![crate::envelope::InspectMessage {
+                    role: "system".into(),
+                    content: "You are Stella.".into(),
+                }],
+                verified: true,
+                unresolved: 0,
+                digest_mismatches: 0,
+            })),
+            &mut WorkspaceModel::new(),
+            &mut ui,
+        );
+        assert!(ui.inspect_view.is_some());
+        assert!(!ui.inspect_pending, "the answer clears the pending flag");
+
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+        assert!(ui.inspect_view.is_none(), "esc returns to the call list");
+        assert!(ui.inspect_open, "…and does NOT close the overlay");
+
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+        assert!(!ui.inspect_open, "a second esc closes it");
+    }
+
+    #[test]
+    fn inspect_selection_cannot_run_past_the_last_call() {
+        let model = WorkspaceModel::new();
+        let mut ui = ready_ui();
+        handle_deck_key(ctrl('g'), &model, &mut ui);
+        ingest_inbound(
+            &Inbound::RecordedCalls(vec![call(0, 0, "worker"), call(1, 0, "worker")]),
+            &mut WorkspaceModel::new(),
+            &mut ui,
+        );
+        for _ in 0..10 {
+            handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+        }
+        assert_eq!(
+            ui.inspect_sel, 1,
+            "the selection indexes a real row — render must be able to trust it"
+        );
+    }
+
+    #[test]
+    fn inspect_is_modal_and_does_not_leak_keys_to_the_composer() {
+        let model = WorkspaceModel::new();
+        let mut ui = ready_ui();
+        handle_deck_key(ctrl('g'), &model, &mut ui);
+        handle_deck_key(ch('x'), &model, &mut ui);
+        assert!(
+            ui.composer.buffer().is_empty(),
+            "a letter typed over the overlay must not reach the composer"
+        );
+        assert!(ui.inspect_open, "…and must not close it either");
     }
 }
