@@ -75,7 +75,6 @@ tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
 tree-sitter-php = "0.24"
 
-ratatui-comfy-tabs = "0.5.12"
 tachyonfx = "0.25.1"
 sysinfo = "0.38.4"
 tui-big-text = "0.8.8"

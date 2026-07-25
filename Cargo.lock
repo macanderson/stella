@@ -2506,16 +2506,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ratatui-comfy-tabs"
-version = "0.5.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef66f0ffaf25cbc4c36fcb26cc9f9972e5dacf5bb7e826c3922751ddc69c181"
-dependencies = [
- "ratatui-core",
- "unicode-width",
-]
-
-[[package]]
 name = "ratatui-core"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3379,7 +3369,6 @@ dependencies = [
  "png",
  "proptest",
  "ratatui",
- "ratatui-comfy-tabs",
  "serde",
  "serde_json",
  "stella-protocol",
