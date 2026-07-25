@@ -338,3 +338,59 @@ pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT};
+
+    use std::collections::BTreeSet;
+
+    /// The issue-tool names both static prompts enumerate, parsed out of the
+    /// `issue tracking (a/b/c)` steering clause.
+    fn steered_issue_tools(prompt: &str) -> BTreeSet<&str> {
+        const OPEN: &str = "issue tracking (";
+        let start = prompt
+            .find(OPEN)
+            .expect("both prompts steer on issue tracking")
+            + OPEN.len();
+        let len = prompt[start..]
+            .find(')')
+            .expect("the steering clause closes its parenthesis");
+        prompt[start..start + len].split('/').collect()
+    }
+
+    /// Witness for #450: the steering line is duplicated verbatim across two
+    /// static prompts, so a new issue tool had to be hand-added in both — the
+    /// kind of duplicated name-list that merges cleanly while going stale.
+    /// Both are now pinned to the canonical catalog.
+    #[test]
+    fn both_prompts_steer_on_exactly_the_catalog_issue_tools() {
+        let expected: BTreeSet<&str> =
+            stella_tools::catalog::names_where(|a| a == stella_tools::catalog::Availability::Issue)
+                .into_iter()
+                .collect();
+
+        for (label, prompt) in [
+            ("SYSTEM_PROMPT", SYSTEM_PROMPT),
+            ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
+        ] {
+            assert_eq!(
+                steered_issue_tools(prompt),
+                expected,
+                "{label}'s issue-tracking steering line disagrees with \
+                 stella_tools::catalog"
+            );
+        }
+    }
+
+    /// The two prompts are separate string literals; the steering clause is
+    /// meant to be identical in both. Pin that directly so they cannot drift
+    /// apart independently of the catalog.
+    #[test]
+    fn the_two_prompts_agree_with_each_other() {
+        assert_eq!(
+            steered_issue_tools(SYSTEM_PROMPT),
+            steered_issue_tools(PIPELINE_SYSTEM_PROMPT)
+        );
+    }
+}

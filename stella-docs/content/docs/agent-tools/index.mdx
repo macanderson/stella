@@ -110,7 +110,9 @@ These 42 tools register in every session — no configuration, no prerequisites.
 | `task_assign` | Delegate a board task to a parallel sub-agent — the briefing is passed verbatim, so write it self-contained. | Mutating |
 
 <Callout type="info">
-`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `list_scripts`, `gather_context`, `explorations`, `ci_status`, `repo_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_search`, `web_fetch`, `web_extract_assets` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer. (`web_download` writes a file, so it is mutating.)
+`verify_done` and `screenshot` are **mutating** in the permission model (`read_only: false`) even though `verify_done` never edits your working tree and `screenshot` only writes into `.stella/`. `web_download` is mutating for the same reason — it writes a file.
+
+The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, `graph_query`, `project_overview`, `gather_context`, `explorations`, `diagnostics`, `list_scripts`, `repo_status`, `repo_diff`, `ci_status`, `task_list`, and (when present) `search_issues`, `get_issue`, `list_labels`, `list_members`, `web_fetch`, `web_extract_assets`, `web_search` — plus `search_skills`, `tool_search`, `skill_search`, and `mcp_search` at the session layer.
 </Callout>
 
 ### Conditionally registered

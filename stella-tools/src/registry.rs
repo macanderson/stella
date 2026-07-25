@@ -1555,102 +1555,78 @@ mod tests {
 
     #[test]
     fn every_registry_tool_is_reserved_against_custom_shadowing() {
-        // RESERVED_NAMES (custom.rs) hand-mirrors the registry so a custom
-        // manifest can never shadow a built-in. Its comment says "keep this
-        // in sync if either set changes" — this test IS that sync: a new
-        // built-in that isn't reserved would be silently shadowable.
+        // RESERVED_NAMES is now an alias for catalog::ALL_NAMES rather than a
+        // hand-mirrored copy (#450), so declaring a tool reserves it. What
+        // still needs proving is the *other* direction: a tool that registers
+        // but was never declared is shadowable by a custom manifest.
         let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
         for schema in reg.schemas() {
             assert!(
                 crate::custom::RESERVED_NAMES.contains(&schema.name.as_str()),
                 "built-in tool `{}` is missing from custom::RESERVED_NAMES — \
-                 a custom manifest could shadow it",
+                 declare it in stella-tools/src/catalog.rs, or a custom \
+                 manifest could shadow it",
                 schema.name
             );
         }
 
         // Conditionally-registered tools never show up in a bare registry's
-        // schemas (graph_query needs an index on disk, the media tools need a
-        // capable key), so the registry-driven loop above can't catch them
-        // drifting out of RESERVED_NAMES. Pin them explicitly — if you add a
-        // new conditionally-registered tool, add its name to this array.
-        const CONDITIONALLY_REGISTERED: &[&str] = &[
-            "bash",
-            "graph_query",
-            "generate_image",
-            "generate_video",
-            "poll_video",
-        ];
-        for name in CONDITIONALLY_REGISTERED {
+        // schemas (the media tools need a capable key, the web tools an
+        // opt-in), so the registry-driven loop above can't reach them. The
+        // catalog declares them, and the alias reserves them — assert the
+        // conditional half of the table is genuinely covered.
+        for name in crate::catalog::names_where(|a| {
+            a != crate::catalog::Availability::Always && a.is_native()
+        }) {
             assert!(
-                crate::custom::RESERVED_NAMES.contains(name),
-                "conditionally-registered tool `{name}` is missing from \
-                 custom::RESERVED_NAMES — a custom manifest could shadow it"
+                crate::custom::RESERVED_NAMES.contains(&name),
+                "conditionally-registered tool `{name}` is not reserved"
             );
+        }
+        // The CLI's session layer is reserved too — it is not in any registry.
+        for name in ["ask_user", "tool_search", "install_skill"] {
+            assert!(crate::custom::RESERVED_NAMES.contains(&name), "{name}");
         }
     }
 
+    /// Witness for #450: the advertised set is pinned as an exact **name set**
+    /// against the canonical catalog, not as a count. A magic-number pin
+    /// (`names.len() == 50`) merges to a plausible-but-wrong integer when two
+    /// parallel PRs each bump it off the same base — this fails by name
+    /// instead, naming exactly what was added or dropped.
     #[test]
-    fn registry_advertises_the_full_tool_set() {
+    fn registry_advertises_exactly_the_catalog_tool_set() {
         let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
-        let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        for expected in [
-            "read_file",
-            "read_symbol",
-            "write_file",
-            "edit_file",
-            "apply_edits",
-            "delete_file",
-            "grep",
-            "glob",
-            "gather_context",
-            "explorations",
-            "save_exploration",
-            "save_memory",
-            "cite_memory",
-            "verify_done",
-            "build_project",
-            "run_tests",
-            "diagnostics",
-            "run_lint",
-            "format_code",
-            "list_scripts",
-            "run_script",
-            "start_process",
-            "read_output",
-            "send_stdin",
-            "stop_process",
-            "repo_status",
-            "repo_diff",
-            "repo_commit",
-            "repo_push",
-            "repo_pull",
-            "repo_rollback",
-            "ci_status",
-            "screenshot",
-            "generate_svg",
-            "task_create",
-            "task_list",
-            "task_start",
-            "task_complete",
-            "task_cancel",
-            "task_assign",
-            "create_issue",
-            "update_issue",
-            "close_issue",
-            "search_issues",
-            "get_issue",
-            "list_labels",
-            "list_members",
-            "start_work_on_issue",
-            "project_overview",
-            "graph_query",
-        ] {
-            assert!(names.contains(&expected.to_string()), "missing {expected}");
-        }
+        let schemas = reg.schemas();
+        let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            crate::catalog::always_on_with_issues(),
+            "registry disagrees with catalog::CATALOG — register the tool, or \
+             add/remove its line in stella-tools/src/catalog.rs"
+        );
         // `bash` is NOT in the default surface — it is the settings opt-in.
-        assert!(!names.contains(&"bash".to_string()), "{names:?}");
-        assert_eq!(names.len(), 50, "unexpected tool count: {names:?}");
+        assert!(!names.contains(&"bash"), "{names:?}");
+    }
+
+    /// Witness for #450: a tool that registers but was never declared in the
+    /// catalog is caught by *name*. Simulated here by dropping a name from the
+    /// expectation — the same failure a real unregistered tool produces.
+    #[test]
+    fn an_undeclared_tool_fails_the_catalog_pin_by_name() {
+        let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
+        let schemas = reg.schemas();
+        let live: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
+        let mut catalog_missing_one = crate::catalog::always_on_with_issues();
+        let dropped = catalog_missing_one.pop().expect("catalog is non-empty");
+        assert_ne!(
+            live, catalog_missing_one,
+            "a catalog missing `{dropped}` must not compare equal to the live \
+             registry — otherwise the pin cannot catch an undeclared tool"
+        );
+        // And the difference is reported as a name, not an arity.
+        assert!(!catalog_missing_one.contains(&dropped));
+        assert!(live.contains(&dropped));
     }
 
     // bash opt-in (default OFF everywhere)
@@ -1774,22 +1750,17 @@ mod tests {
     #[test]
     fn issue_tools_absent_without_a_configured_backend() {
         let (_root, reg) = bare_registry(None);
-        let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        assert_eq!(names.len(), 42, "unexpected tool count: {names:?}");
-        for absent in [
-            "create_issue",
-            "update_issue",
-            "close_issue",
-            "search_issues",
-            "get_issue",
-            "list_labels",
-            "list_members",
-            "start_work_on_issue",
-        ] {
-            assert!(
-                !names.contains(&absent.to_string()),
-                "{absent} must be absent"
-            );
+        let schemas = reg.schemas();
+        let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
+        // The no-backend surface is a *filtered view* of the same canonical
+        // table, not a second count to keep in sync (#450).
+        assert_eq!(
+            names,
+            crate::catalog::always_on(),
+            "the no-backend registry must be exactly the always-on catalog"
+        );
+        for absent in crate::catalog::names_where(|a| a == crate::catalog::Availability::Issue) {
+            assert!(!names.contains(&absent), "{absent} must be absent");
         }
     }
 
@@ -1955,31 +1926,18 @@ mod tests {
         // The engine parallelizes on this flag — a mutating tool marked
         // read-only would race writes; a read-only tool marked mutating
         // just loses concurrency. Pin the partition explicitly.
+        // The expectation is the canonical catalog's flag, so the partition
+        // lives in one place rather than being restated here (#450).
         let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
         for schema in reg.schemas() {
-            let expected = matches!(
-                schema.name.as_str(),
-                "read_file"
-                    | "read_symbol"
-                    | "grep"
-                    | "glob"
-                    | "gather_context"
-                    | "explorations"
-                    | "diagnostics"
-                    | "list_scripts"
-                    | "ci_status"
-                    | "search_issues"
-                    | "task_list"
-                    | "project_overview"
-                    | "graph_query"
-                    | "get_issue"
-                    | "list_labels"
-                    | "list_members"
-                    | "repo_status"
-                    | "repo_diff"
-            );
+            let entry = crate::catalog::get(&schema.name).unwrap_or_else(|| {
+                panic!(
+                    "`{}` registers but is not declared in catalog::CATALOG",
+                    schema.name
+                )
+            });
             assert_eq!(
-                schema.read_only, expected,
+                schema.read_only, entry.read_only,
                 "read_only flag wrong for {}",
                 schema.name
             );

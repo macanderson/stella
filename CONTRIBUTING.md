@@ -31,7 +31,7 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 | 🐛 **A bug report with a repro** | [Bug report form](https://github.com/macanderson/stella/issues/new?template=bug_report.yml) | 10 minutes |
 | 🧭 **Docs & examples** — fix a lie in the README before it fools someone else | Any `*.md` file, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `stella-model/src/` — copy the shape of an existing adapter | Medium |
-| 🛠 **A new built-in tool** | `stella-tools/src/` — implement the tool trait, register it | Medium |
+| 🛠 **A new built-in tool** | `stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](stella-tools/src/catalog.rs) | Medium |
 | 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — its own repo, no Stella code required | Medium |
 | 🏗 **Core engine work** | `good first issue` / `help wanted` labels | Varies |
 

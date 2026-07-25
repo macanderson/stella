@@ -85,96 +85,18 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-/// Tool names that a custom manifest may not claim. Mirrors every built-in
-/// registered in [`crate::registry::ToolRegistry`] (including the conditional
-/// issue tools) plus `ask_user`/`search_skills`/`install_skill` from the CLI's
-/// `interactive` layer — a custom tool must never shadow one, or the decorator
-/// chain (native ← custom ← mcp ← ask_user) would route the wrong executor and
-/// a manifest named e.g. `verify_done` or `delete_file` could silently replace
-/// a flagship built-in. Keep this in sync if either set changes.
-pub const RESERVED_NAMES: &[&str] = &[
-    "project_overview",
-    // File CRUD
-    "read_file",
-    // Graph-resolved span read (reads through the same `read_file` instance)
-    "read_symbol",
-    "write_file",
-    "edit_file",
-    "apply_edits",
-    "delete_file",
-    // Search
-    "grep",
-    "glob",
-    // Manifest-verb execution (argv, no shell)
-    "run_lint",
-    "format_code",
-    // The long-running process group
-    "start_process",
-    "read_output",
-    "send_stdin",
-    "stop_process",
-    // Vendor-neutral repository tools
-    "repo_status",
-    "repo_diff",
-    "repo_commit",
-    "repo_push",
-    "repo_pull",
-    "repo_rollback",
-    // Codebase maps & memory
-    "explorations",
-    "save_exploration",
-    "gather_context",
-    "save_memory",
-    "cite_memory",
-    // The definition of done + build/test
-    "verify_done",
-    "build_project",
-    "run_tests",
-    "diagnostics",
-    // The project scripts index (docs/design/scripts-index.md)
-    "list_scripts",
-    "run_script",
-    // CI & evidence
-    "ci_status",
-    "screenshot",
-    // Media generation: generate_svg is client-side and always registered.
-    "generate_svg",
-    // The session task board
-    "task_create",
-    "task_list",
-    "task_start",
-    "task_complete",
-    "task_cancel",
-    "task_assign",
-    // Conditionally registered tools: bash only when the settings opt-in
-    // (`tools.bash: "on"`) enabled it, graph_query only when a code-graph
-    // index exists, generate_image (and the video pair, when the key family
-    // has a video adapter) only when a media key is configured. The
-    // registry-driven drift test can't see these (a bare registry never
-    // advertises them), so they must be listed here by hand.
-    "bash",
-    "graph_query",
-    "generate_image",
-    "generate_video",
-    "poll_video",
-    // Issue tracking (registered only when a backend is configured)
-    "create_issue",
-    "update_issue",
-    "close_issue",
-    "search_issues",
-    "get_issue",
-    "list_labels",
-    "list_members",
-    "start_work_on_issue",
-    // CLI interactive layer
-    "ask_user",
-    "search_skills",
-    "install_skill",
-    // CLI discovery layer (tool/skill/MCP-server search — stella-cli::discovery)
-    "tool_search",
-    "skill_search",
-    "mcp_search",
-];
+/// Tool names that a custom manifest may not claim — every name in the
+/// canonical [`crate::catalog`], which covers every built-in registered in
+/// [`crate::registry::ToolRegistry`] (including the conditionally-registered
+/// bash/web/media/issue tools) plus the six the CLI layers on top. A custom
+/// tool must never shadow one, or the decorator chain
+/// (native ← custom ← mcp ← ask_user) would route the wrong executor and a
+/// manifest named e.g. `verify_done` or `delete_file` could silently replace a
+/// flagship built-in.
+///
+/// This is an alias, not a copy: declaring a tool in the catalog reserves its
+/// name automatically, so the two can no longer drift apart.
+pub const RESERVED_NAMES: &[&str] = crate::catalog::ALL_NAMES;
 
 /// Timeout applied when a manifest omits `timeout_ms`. Public so
 /// [`crate::validate`] can explain the defaulting it mirrors.
