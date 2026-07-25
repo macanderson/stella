@@ -21,6 +21,21 @@
 //!
 //! Both are local, `egress: false` sources — the consent store passes them
 //! without a prompt; only an egress provider would gate.
+//!
+//! ## Context reuse (`docs/context-reuse.md`)
+//!
+//! Recall also honors the protocol's reuse guarantees, which is what makes a
+//! multi-turn session cheap rather than merely correct:
+//!
+//! - **§1 deterministic composition.** [`recall_via_host`] *selects* by score
+//!   and *renders* in canonical `FrameId` order, so a turn whose underlying
+//!   frames did not change emits byte-identical prompt text and rides the
+//!   provider's prompt cache instead of busting it every turn.
+//! - **§4 `context/verify`.** `workspace-memory` advertises and answers
+//!   verify by comparing digests against the live store, so a host can
+//!   revalidate held frames for bytes instead of re-querying them for tokens.
+//!   `code-graph` does not advertise it and is re-queried — the conformant
+//!   fallback (V3).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,7 +43,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use contextgraph_host::{ContextProvider, Host, HostError, ProviderResult};
 use contextgraph_types::{
-    Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, ProviderInfo,
+    Capabilities, ContextFrame, ContextQuery, ContextQueryResult, DataFlow, FrameId, ProviderInfo,
+    VerifyRequest, VerifyResponse, canonical_order,
 };
 use stella_context::{
     ContextError, ContextProvider as PlaneProvider, ContextStore, ProviderRegistry,
@@ -72,6 +88,12 @@ impl PlaneProvider for ScopedStore {
     }
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, ContextError> {
         Ok(self.store.recall_scoped(query, &self.domains).await?.into())
+    }
+    /// Domain scoping narrows *retrieval*, never *identity*: a frame this
+    /// wrapper served is the store's frame, so revalidation is the store's
+    /// answer, unmodified (`docs/context-reuse.md` §4).
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, ContextError> {
+        PlaneProvider::verify(self.store.as_ref(), request).await
     }
 }
 
@@ -134,6 +156,21 @@ impl ContextProvider for MemoryProvider {
             dropped_estimate: result.dropped_estimate,
             frames,
         })
+    }
+
+    /// Revalidate held identities through the same plane registry that served
+    /// them (`docs/context-reuse.md` §4). Every store-minted frame declares
+    /// `sha256:<content_hash>`, so the plane compares digests against the live
+    /// rows and the host reuses only what verifies `valid` — no frame body
+    /// travels in either direction.
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, HostError> {
+        self.plane
+            .verify_all(request)
+            .await
+            .map_err(|e| HostError::Transport {
+                id: "workspace-memory".to_string(),
+                message: e.to_string(),
+            })
     }
 }
 
@@ -210,27 +247,52 @@ pub fn session_host(
     host.register(Box::new(MemoryProvider {
         plane: memory_plane(store, domains),
         info: local_info("workspace-memory"),
-        caps: Capabilities {
-            query: contextgraph_types::capability::QueryCapability {
-                kinds: ["memory", "episode", "fact", "snippet", "symbol", "doc"]
-                    .map(String::from)
-                    .to_vec(),
-            },
-            ..Capabilities::default()
-        },
+        caps: memory_capabilities(),
     }));
     host.register(Box::new(GraphProvider {
         workspace_root,
         info: local_info("code-graph"),
-        caps: Capabilities {
-            graph: true,
-            query: contextgraph_types::capability::QueryCapability {
-                kinds: ["symbol", "snippet", "graph"].map(String::from).to_vec(),
-            },
-            ..Capabilities::default()
-        },
+        caps: graph_capabilities(),
     }));
     host
+}
+
+/// The `workspace-memory` capability declaration, shared by `session_host` and
+/// the conformance tests so the suite audits what actually ships.
+fn memory_capabilities() -> Capabilities {
+    Capabilities {
+        query: contextgraph_types::capability::QueryCapability {
+            kinds: ["memory", "episode", "fact", "snippet", "symbol", "doc"]
+                .map(String::from)
+                .to_vec(),
+        },
+        // `docs/context-reuse.md` §4: the plane compares each presented digest
+        // against the live node's `content_hash`, so held memory frames are
+        // revalidated instead of re-queried — and an unchanged set keeps
+        // rendering byte-identically (§1).
+        verify: true,
+        ..Capabilities::default()
+    }
+}
+
+/// The `code-graph` capability declaration.
+///
+/// Deliberately **without** `verify`. A graph frame's digest covers the
+/// *rendered* frame body (a quoted snippet, an import neighborhood), not a file
+/// the index already hashes, so answering `valid`/`stale` honestly would mean
+/// re-deriving the frame — which is the re-query the host performs anyway. Per
+/// §4 V3 a provider that does not advertise `verify` has its frames re-queried,
+/// which is the correct, conformant degradation. Advertising it without an
+/// honest answer would be worse than not advertising it at all: the suite's
+/// `verify-honesty` check fails a provider that can never vouch for anything.
+fn graph_capabilities() -> Capabilities {
+    Capabilities {
+        graph: true,
+        query: contextgraph_types::capability::QueryCapability {
+            kinds: ["symbol", "snippet", "graph"].map(String::from).to_vec(),
+        },
+        ..Capabilities::default()
+    }
 }
 
 /// A frame paired with the CGP provider leg that returned it. Provider
@@ -243,11 +305,35 @@ pub struct AttributedContextFrame {
     pub frame: ContextFrame,
 }
 
-/// Fan `query` out through the host and fuse the surviving frames: highest
-/// score first, deduped by frame id, re-capped to the query's own frame and
-/// token budget (each provider already respected it individually; the merge
-/// must too). Failed, timed-out, or budget-lying providers contribute
-/// nothing — their isolation is the point of routing through the host.
+/// The identity triple that names a frame's exact bytes
+/// (`docs/context-reuse.md` §1) — the sort key for canonical composition and
+/// the payload of a `context/verify` request.
+impl AttributedContextFrame {
+    /// This frame's stable `(provider id, frame id, content digest)` identity.
+    pub fn identity(&self) -> FrameId {
+        self.frame.identity(&self.provider)
+    }
+}
+
+/// Fan `query` out through the host, **select** by score, and **render** in
+/// canonical order.
+///
+/// The split is the whole point of `docs/context-reuse.md` §1. Selection is
+/// query-dependent: the highest-scoring frames win the frame and token budget,
+/// deduped by identity and re-capped across providers (each provider already
+/// respected the budget individually; the merge must too). Rendering is not:
+/// the surviving set is returned in the protocol's canonical `FrameId` order —
+/// `(provider id, frame id, content digest)` — so a turn whose *underlying
+/// frames did not change* emits byte-identical prompt text even when retrieval
+/// re-ranked them, and the provider's prompt-cache prefix survives (D2/D3).
+/// Score is what got a frame in; it must never decide where it renders.
+///
+/// Every downstream prompt builder consumes this order — the recall block, the
+/// planner prompt, the witness prompt — so ordering here is the single seam
+/// that makes them all cache-stable.
+///
+/// Failed, timed-out, or budget-lying providers contribute nothing — their
+/// isolation is the point of routing through the host.
 pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> Vec<AttributedContextFrame> {
     let fanout = host.query_all(query).await;
     let mut frames: Vec<AttributedContextFrame> = Vec::new();
@@ -287,6 +373,13 @@ pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> Vec<Attribute
         spent_tokens += frame.frame.token_cost;
         kept.push(frame);
     }
+    // Selection is finished; how the survivors *render* must now be free of
+    // score and cost (§1 D2/D3). `canonical_order` puts the identities in the
+    // protocol's total order, and the frames follow their identity — so an
+    // unchanged frame set emits identical bytes however this turn ranked it.
+    let mut ids: Vec<FrameId> = kept.iter().map(AttributedContextFrame::identity).collect();
+    canonical_order(&mut ids);
+    kept.sort_by_cached_key(|frame| ids.binary_search(&frame.identity()).unwrap_or(usize::MAX));
     kept
 }
 
@@ -376,7 +469,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merges_providers_by_score_and_dedupes_only_within_a_provider() {
+    async fn merges_providers_and_dedupes_only_within_a_provider() {
         let mut host = Host::new();
         host.register(scripted(
             "a",
@@ -387,9 +480,22 @@ mod tests {
             vec![frame("high", 0.9, 10), frame("shared", 0.5, 10)],
         ));
         let kept = recall_via_host(&host, &query(10, 1_000)).await;
-        let ids: Vec<&str> = kept.iter().map(|f| f.frame.id.as_str()).collect();
-        assert_eq!(ids.first(), Some(&"high"), "highest score remains first");
-        assert_eq!(ids.last(), Some(&"low"), "lowest score remains last");
+        // Canonical order (§1 D2): by provider id, then frame id — NOT by
+        // score, which is query-dependent and must not move rendered bytes.
+        let rendered: Vec<(&str, &str)> = kept
+            .iter()
+            .map(|f| (f.provider.as_str(), f.frame.id.as_str()))
+            .collect();
+        assert_eq!(
+            rendered,
+            vec![
+                ("a", "low"),
+                ("a", "shared"),
+                ("b", "high"),
+                ("b", "shared")
+            ],
+            "frames render in canonical identity order"
+        );
         let mut shared_providers: Vec<&str> = kept
             .iter()
             .filter(|f| f.frame.id == "shared")
@@ -401,13 +507,76 @@ mod tests {
             vec!["a", "b"],
             "provider-local ids must not collide across host legs"
         );
-        assert_eq!(kept[0].provider, "b", "host provider identity survives");
         assert_eq!(
             kept.iter()
-                .find(|f| f.frame.id == "low")
+                .find(|f| f.frame.id == "high")
                 .map(|f| f.provider.as_str()),
-            Some("a"),
+            Some("b"),
             "each frame keeps its own leg"
+        );
+    }
+
+    /// WITNESS (#451, §1 D2/D3): selection stays score-driven, rendering does
+    /// not. Two turns that surface the same frames with re-ranked scores — what
+    /// vector search does on every re-query — must produce byte-identical
+    /// prompt text, or the provider's cached prefix is forfeited every turn.
+    #[tokio::test]
+    async fn a_rerank_of_an_unchanged_frame_set_renders_byte_identically() {
+        let render = |kept: &[AttributedContextFrame]| -> String {
+            kept.iter()
+                .map(|f| {
+                    format!(
+                        "{}|{}|{}\n",
+                        f.provider,
+                        f.frame.id,
+                        f.frame.content.as_deref().unwrap_or("")
+                    )
+                })
+                .collect()
+        };
+
+        let mut first = Host::new();
+        first.register(scripted(
+            "mem",
+            vec![frame("alpha", 0.9, 10), frame("beta", 0.1, 10)],
+        ));
+        first.register(scripted("graph", vec![frame("gamma", 0.5, 10)]));
+        let turn_one = render(&recall_via_host(&first, &query(10, 1_000)).await);
+
+        // Same three frames, same content, completely inverted relevance —
+        // and the graph leg registered first this time, so arrival order
+        // differs too.
+        let mut second = Host::new();
+        second.register(scripted("graph", vec![frame("gamma", 0.95, 10)]));
+        second.register(scripted(
+            "mem",
+            vec![frame("beta", 0.99, 10), frame("alpha", 0.02, 10)],
+        ));
+        let turn_two = render(&recall_via_host(&second, &query(10, 1_000)).await);
+
+        assert_eq!(
+            turn_one, turn_two,
+            "an unchanged frame set must render byte-identically across turns (§1 D2/D3)"
+        );
+    }
+
+    /// WITNESS (#451, §1): selection is still by score — the highest-scoring
+    /// frames win a tight budget, even though they render canonically.
+    /// Guards the fix against the trivial "sort canonically before selecting"
+    /// mistake, which would silently make recall pick alphabetically.
+    #[tokio::test]
+    async fn selection_still_prefers_the_highest_scoring_frames() {
+        let mut host = Host::new();
+        // `zzz` scores highest but sorts LAST canonically; `aaa` sorts first
+        // but is the least relevant. One leg each, so both are individually
+        // budget-honest and only the merge has to choose.
+        host.register(scripted("a", vec![frame("aaa", 0.1, 600)]));
+        host.register(scripted("z", vec![frame("zzz", 0.9, 600)]));
+        let kept = recall_via_host(&host, &query(10, 1_000)).await;
+        assert_eq!(kept.len(), 1, "only one frame fits the budget");
+        assert_eq!(
+            kept[0].frame.id, "zzz",
+            "the budget must be spent on the most relevant frame, not the alphabetically first"
         );
     }
 
@@ -562,7 +731,8 @@ mod tests {
     // cleanly turns this suite red.
 
     use contextgraph_conformance::{
-        CHECK_FRAME_VALIDITY, CheckStatus, ConformanceReport, ProviderTarget, run_conformance,
+        CHECK_FRAME_VALIDITY, CHECK_VERIFY_HONESTY, CheckStatus, ConformanceReport, ProviderTarget,
+        run_conformance, sample_query,
     };
 
     /// Render a report's failures for a panic message, so a red run names the
@@ -575,24 +745,58 @@ mod tests {
             .join("; ")
     }
 
+    /// The status of one named check, for non-vacuity assertions.
+    fn check_status(report: &ConformanceReport, name: &str) -> CheckStatus {
+        report
+            .checks
+            .iter()
+            .find(|check| check.name == name)
+            .unwrap_or_else(|| panic!("report has no `{name}` check"))
+            .status
+    }
+
+    /// A store seeded so the **conformance suite's own probe query** retrieves
+    /// something.
+    ///
+    /// This is what turns the gate from decorative into real. The suite probes
+    /// with `sample_query()` ("conformance probe"), and zero frames is a
+    /// *permitted* answer — so a store seeded only with unrelated content made
+    /// `frame-validity` pass on an empty set and skipped `verify-honesty`
+    /// entirely. Every check that inspects a frame was inspecting nothing.
+    async fn probe_seeded_store(dir: &tempfile::TempDir) -> Arc<ContextStore> {
+        let store = seeded_store(dir).await;
+        let probe = sample_query();
+        let text = probe.query_text.clone().unwrap_or(probe.goal);
+        store
+            .upsert(
+                ContextDelta::new().with_node(
+                    NodeInput::new(NodeKind::Memory, "cgp conformance probe fixture")
+                        .with_uri("file:///repo/.stella/memories/cgp-probe.md")
+                        // Derived from the suite's own query text, so a pin
+                        // bump that reworded the probe cannot silently return
+                        // this gate to a vacuous pass.
+                        .with_content(format!(
+                            "{text}: this memory exists so the CGP conformance suite has a real \
+                             frame to validate and revalidate."
+                        )),
+                ),
+            )
+            .await
+            .expect("seed probe fixture");
+        store
+    }
+
     #[tokio::test]
     async fn workspace_memory_provider_is_cgp_conformant() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = seeded_store(&dir).await;
+        let store = probe_seeded_store(&dir).await;
         // Constructed exactly as `session_host` builds the shipped
         // `workspace-memory` provider: the store behind the plane registry,
-        // advertising the kinds it serves.
+        // advertising the kinds and the `verify` capability it ships with.
         let provider = MemoryProvider {
             plane: memory_plane(store, vec![]),
             info: local_info("workspace-memory"),
-            caps: Capabilities {
-                query: contextgraph_types::capability::QueryCapability {
-                    kinds: ["memory", "episode", "fact", "snippet", "symbol", "doc"]
-                        .map(String::from)
-                        .to_vec(),
-                },
-                ..Capabilities::default()
-            },
+            caps: memory_capabilities(),
         };
         let report = run_conformance(ProviderTarget::InProcess(Box::new(provider))).await;
         assert!(
@@ -600,6 +804,80 @@ mod tests {
             "workspace-memory is not CGP-conformant: {}",
             conformance_failures(&report)
         );
+
+        // WITNESS (#451): the gate has teeth. Before the probe-matching seed,
+        // the suite surfaced 0 frames and every frame-level check was a
+        // free pass — `frame-validity` on an empty set, `verify-honesty`
+        // skipped. Asserting the *evidence* is what pins that shut.
+        let validity = report
+            .checks
+            .iter()
+            .find(|check| check.name == CHECK_FRAME_VALIDITY)
+            .expect("frame-validity check present");
+        assert!(
+            !validity.evidence.contains("0 frames"),
+            "the conformance probe surfaced no frames — the gate is passing vacuously: {}",
+            validity.evidence
+        );
+        assert_eq!(
+            check_status(&report, CHECK_VERIFY_HONESTY),
+            CheckStatus::Pass,
+            "verify-honesty must actually run (not skip): the shipped provider advertises \
+             `verify` and its frames must carry digests it can vouch for"
+        );
+    }
+
+    /// WITNESS (#451, §4 V1/V2): `context/verify` is implemented, not just
+    /// advertised. A frame the plane just served verifies `valid`; the same
+    /// identity with a digest the store never minted must NOT be retained.
+    #[tokio::test]
+    async fn workspace_memory_verifies_its_own_frames_and_refuses_a_foreign_digest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = probe_seeded_store(&dir).await;
+        let host = session_host(store, vec![], dir.path().to_path_buf());
+
+        let mut q = query(5, 4_000);
+        q.query_text = Some("conformance probe".to_string());
+        let kept = recall_via_host(&host, &q).await;
+        let held: Vec<FrameId> = kept
+            .iter()
+            .filter(|f| f.provider == "workspace-memory")
+            .map(AttributedContextFrame::identity)
+            .collect();
+        assert!(
+            !held.is_empty(),
+            "the probe fixture must surface through the shipped recall path"
+        );
+        assert!(
+            held.iter().all(FrameId::is_verifiable),
+            "every store-minted frame must declare a content_digest (§1 D4)"
+        );
+
+        let unchanged = host.verify_frames(&held).await;
+        assert_eq!(
+            unchanged.retained.len(),
+            held.len(),
+            "unchanged frames must verify `valid`, not be re-queried: {:?}",
+            unchanged.dropped
+        );
+
+        // A digest the store never served: default-deny must evict it.
+        let forged: Vec<FrameId> = held
+            .iter()
+            .map(|id| {
+                FrameId::new(
+                    &id.provider_id,
+                    &id.frame_id,
+                    Some(format!("sha256:{}", "0".repeat(64))),
+                )
+            })
+            .collect();
+        let changed = host.verify_frames(&forged).await;
+        assert!(
+            changed.retained.is_empty(),
+            "a digest the provider never minted must never verify `valid` (§4 V1)"
+        );
+        assert_eq!(changed.dropped.len(), forged.len(), "every forgery evicted");
     }
 
     #[tokio::test]
