@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! `stella-tui` — the ratatui event-log REPL (
-//! ADR-023, §T).
+//! `stella-tui` — the ratatui event-log REPL (ADR-023).
 //!
 //! This crate renders **exclusively** from [`stella_protocol::AgentEvent`]s
 //! (L-T1). It never touches the engine directly: `AgentEvent`s flow in over a
@@ -22,7 +21,7 @@
 //!   loop, and the two channels. It carries no decision logic — key→action is
 //!   [`handle_key`], event→state is [`ingest`], both unit-tested.
 //!
-//! Binding TUI requirements §T are honored
+//! The binding TUI requirements are honored
 //! structurally: event-derived rendering (L-T1), mouse-off-by-default for
 //! native copy (L-T2, [`RunOptions::mouse_capture`]), paste chips (L-T3,
 //! [`Composer::paste`]), line-exact scroll (L-T4, [`ScrollState`]), diffs on

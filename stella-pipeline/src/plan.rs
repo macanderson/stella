@@ -1,5 +1,5 @@
-//! Planning: turn a goal into an ordered step plan (
-//! "plan"). The Role::Plan model call itself lives in [`crate::pipeline`];
+//! Planning: turn a goal into an ordered step plan (the "plan" stage).
+//! The Role::Plan model call itself lives in [`crate::pipeline`];
 //! this module owns the two pure pieces — assembling the planner's **split
 //! context** (L-E6) and parsing the plan out of the model's response.
 //!

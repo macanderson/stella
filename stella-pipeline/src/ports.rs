@@ -38,13 +38,13 @@ pub trait ProviderResolver: Send + Sync {
     fn provider_for(&self, model: &ModelRef) -> Option<&dyn Provider>;
 }
 
-/// One frame recalled from the context plane at turn start (
-/// §5 "context recall"). A deliberately minimal local shape: the real
+/// One frame recalled from the context plane at turn start (the "context
+/// recall" stage). A deliberately minimal local shape: the real
 /// `stella-context` crate is being built in parallel and owns the rich
 /// `ContextFrame`/retrieval types; the CLI glue adapts its frames down to
 /// this at the seam so `stella-pipeline` takes **no** dependency on
-/// `stella-context` (dependency direction discipline,
-/// §1). `citation_label` is mandatory and human-readable (L-C4); a
+/// `stella-context` (dependency direction discipline).
+/// `citation_label` is mandatory and human-readable (L-C4); a
 /// not-yet-materialized frame carries `id: None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecalledFrame {

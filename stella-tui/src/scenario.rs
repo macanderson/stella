@@ -102,6 +102,57 @@ fn tool_start(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
     }
 }
 
+/// One recalled context frame. The scenario only varies the citation label, the
+/// provider/source pair, the frame kind and the token cost — every demo frame
+/// is unmaterialized (`id: None`) and carries no receipt.
+fn frame(
+    citation_label: &str,
+    provider: &str,
+    source: &str,
+    kind: &str,
+    token_cost: u32,
+) -> ContextFrameRef {
+    ContextFrameRef {
+        id: None,
+        citation_label: citation_label.into(),
+        provider: provider.into(),
+        source: source.into(),
+        kind: kind.into(),
+        uri: None,
+        method: None,
+        token_cost,
+        block_id: None,
+        content_digest: None,
+    }
+}
+
+/// One provider's share of the frames that won fusion in a recall.
+fn share(provider: &str, frames: u32) -> ProviderShare {
+    ProviderShare {
+        provider: provider.into(),
+        frames,
+    }
+}
+
+/// The lead's edit to the automations page. Hoisted out of the event list so
+/// the script stays readable; `concat!` splits the literal across lines without
+/// changing a byte of the diff.
+const PAGE_DIFF: &str = concat!(
+    "@@ -10,3 +10,7 @@\n",
+    "-  const items = []\n",
+    "+  const items = useAutomations()\n",
+    "+  const [q, setQ] = useState(\"\")\n",
+    "+  const filtered = filter(items, q)\n",
+    "+  const onNew = () => open()\n",
+);
+
+/// The auth subagent's new triggers route, as a unified diff.
+const TRIGGERS_DIFF: &str = concat!(
+    "+export const triggers = router()\n",
+    "+  .post(\"/\", create)\n",
+    "+  .get(\"/\", list)\n",
+);
+
 /// The scripted event sequence, in play order. `self_pid` is stamped as every
 /// agent's pid so the resource monitor shows real CPU/MEM for a live demo.
 pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
@@ -124,57 +175,282 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
     vec![
         // ── the lead agent boots and plans ──────────────────────────────
         reg(lead, "web-app-2.0 · phase 3 automations", "lead"),
-        ev(lead, AgentEvent::Stage { name: StageKind::Triage }),
-        ev(lead, AgentEvent::ContextRecall {
-            frames: vec![
-                ContextFrameRef { id: None, citation_label: "engine step-driver (driver.rs)".into(), provider: "code-graph".into(), source: "code-graph".into(), kind: "symbol".into(), uri: None, method: None, token_cost: 120, block_id: None, content_digest: None },
-                ContextFrameRef { id: None, citation_label: "ADR-023 event-log REPL".into(), provider: "workspace-memory".into(), source: "stella-context".into(), kind: "memory".into(), uri: None, method: None, token_cost: 90, block_id: None, content_digest: None },
-            ],
-            provider_mix: vec![ProviderShare { provider: "code-graph".into(), frames: 1 }, ProviderShare { provider: "memory".into(), frames: 1 }],
-            tokens: 210,
-            usage: None,
-        }),
-        ev(lead, AgentEvent::Stage { name: StageKind::Plan }),
-        ev(lead, AgentEvent::Text { delta: "Planning the automations cluster: list, editor, triggers, workflows.".into() }),
-        ev(lead, AgentEvent::StepUsage { output_text: None, step: 1, role: ModelCallRole::Worker, provider: "zai".into(), model: "glm-5.2".into(), input_tokens: 12_400, output_tokens: 640, cached_input_tokens: 9_000, cache_write_tokens: 0, estimated_input_tokens: 12_000, cost_usd: 0.021, duration_ms: 1830, retries: 0, tool_calls: 0, complete: true }),
-        ev(lead, AgentEvent::BudgetTick { spent_usd: 0.021, limit_usd: Some(2.5), mode: stella_protocol::BudgetMode::Observed, session_spent_usd: None, session_limit_usd: None }),
-
+        ev(
+            lead,
+            AgentEvent::Stage {
+                name: StageKind::Triage,
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::ContextRecall {
+                frames: vec![
+                    frame(
+                        "engine step-driver (driver.rs)",
+                        "code-graph",
+                        "code-graph",
+                        "symbol",
+                        120,
+                    ),
+                    frame(
+                        "ADR-023 event-log REPL",
+                        "workspace-memory",
+                        "stella-context",
+                        "memory",
+                        90,
+                    ),
+                ],
+                provider_mix: vec![share("code-graph", 1), share("memory", 1)],
+                tokens: 210,
+                usage: None,
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::Stage {
+                name: StageKind::Plan,
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::Text {
+                delta: "Planning the automations cluster: list, editor, triggers, workflows."
+                    .into(),
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::StepUsage {
+                output_text: None,
+                step: 1,
+                role: ModelCallRole::Worker,
+                provider: "zai".into(),
+                model: "glm-5.2".into(),
+                input_tokens: 12_400,
+                output_tokens: 640,
+                cached_input_tokens: 9_000,
+                cache_write_tokens: 0,
+                estimated_input_tokens: 12_000,
+                cost_usd: 0.021,
+                duration_ms: 1830,
+                retries: 0,
+                tool_calls: 0,
+                complete: true,
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::BudgetTick {
+                spent_usd: 0.021,
+                limit_usd: Some(2.5),
+                mode: stella_protocol::BudgetMode::Observed,
+                session_spent_usd: None,
+                session_limit_usd: None,
+            },
+        ),
         // ── two subagents are dispatched ────────────────────────────────
         reg(auth, "wire automations triggers API", "subagent"),
         reg(ci, "watch CI + open PR", "subagent"),
-        Inbound::Status { agent: auth.into(), status: AgentStatus::Running },
-        Inbound::Status { agent: ci.into(), status: AgentStatus::Running },
-
+        Inbound::Status {
+            agent: auth.into(),
+            status: AgentStatus::Running,
+        },
+        Inbound::Status {
+            agent: ci.into(),
+            status: AgentStatus::Running,
+        },
         // ── lead executes: reads, edits, commits ────────────────────────
-        ev(lead, AgentEvent::Stage { name: StageKind::Execute }),
-        ev(lead, tool_start("c1", "read_file", json!({ "path": "apps/app/automations/page.tsx" }))),
-        ev(lead, AgentEvent::ToolResult { call_id: "c1".into(), output: ToolOutput::Ok { content: "312 lines".into() }, duration_ms: 42, speculated: false }),
-        ev(lead, AgentEvent::FileChange { path: "apps/app/automations/page.tsx".into(), kind: FileChangeKind::Modified, diff: Some("@@ -10,3 +10,7 @@\n-  const items = []\n+  const items = useAutomations()\n+  const [q, setQ] = useState(\"\")\n+  const filtered = filter(items, q)\n+  const onNew = () => open()\n".into()) }),
-        ev(lead, AgentEvent::StepUsage { output_text: None, step: 2, role: ModelCallRole::Worker, provider: "zai".into(), model: "glm-5.2".into(), input_tokens: 8_200, output_tokens: 900, cached_input_tokens: 6_000, cache_write_tokens: 0, estimated_input_tokens: 8_000, cost_usd: 0.018, duration_ms: 2100, retries: 0, tool_calls: 1, complete: true }),
-        ev(lead, AgentEvent::BudgetTick { spent_usd: 0.039, limit_usd: Some(2.5), mode: stella_protocol::BudgetMode::Observed, session_spent_usd: None, session_limit_usd: None }),
-
+        ev(
+            lead,
+            AgentEvent::Stage {
+                name: StageKind::Execute,
+            },
+        ),
+        ev(
+            lead,
+            tool_start(
+                "c1",
+                "read_file",
+                json!({ "path": "apps/app/automations/page.tsx" }),
+            ),
+        ),
+        ev(
+            lead,
+            AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::Ok {
+                    content: "312 lines".into(),
+                },
+                duration_ms: 42,
+                speculated: false,
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::FileChange {
+                path: "apps/app/automations/page.tsx".into(),
+                kind: FileChangeKind::Modified,
+                diff: Some(PAGE_DIFF.into()),
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::StepUsage {
+                output_text: None,
+                step: 2,
+                role: ModelCallRole::Worker,
+                provider: "zai".into(),
+                model: "glm-5.2".into(),
+                input_tokens: 8_200,
+                output_tokens: 900,
+                cached_input_tokens: 6_000,
+                cache_write_tokens: 0,
+                estimated_input_tokens: 8_000,
+                cost_usd: 0.018,
+                duration_ms: 2100,
+                retries: 0,
+                tool_calls: 1,
+                complete: true,
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::BudgetTick {
+                spent_usd: 0.039,
+                limit_usd: Some(2.5),
+                mode: stella_protocol::BudgetMode::Observed,
+                session_spent_usd: None,
+                session_limit_usd: None,
+            },
+        ),
         // ── auth subagent creates a file, then asks a question ──────────
-        ev(auth, AgentEvent::Stage { name: StageKind::Execute }),
-        ev(auth, tool_start("c2", "grep", json!({ "pattern": "trigger" }))),
-        ev(auth, AgentEvent::FileChange { path: "apps/api/routes/v1/automations.ts".into(), kind: FileChangeKind::Created, diff: Some("+export const triggers = router()\n+  .post(\"/\", create)\n+  .get(\"/\", list)\n".into()) }),
-        ev(auth, AgentEvent::StepUsage { output_text: None, step: 1, role: ModelCallRole::Worker, provider: "zai".into(), model: "glm-5.2".into(), input_tokens: 5_100, output_tokens: 420, cached_input_tokens: 3_000, cache_write_tokens: 0, estimated_input_tokens: 5_000, cost_usd: 0.011, duration_ms: 1400, retries: 0, tool_calls: 1, complete: true }),
-        ev(auth, AgentEvent::BudgetTick { spent_usd: 0.011, limit_usd: Some(1.0), mode: stella_protocol::BudgetMode::Observed, session_spent_usd: None, session_limit_usd: None }),
-        ev(auth, AgentEvent::AskUser { id: "q1".into(), question: "Which auth guard should the triggers route use?".into(), options: vec!["assertOrgMember".into(), "assertBillingManager".into()] }),
-
+        ev(
+            auth,
+            AgentEvent::Stage {
+                name: StageKind::Execute,
+            },
+        ),
+        ev(
+            auth,
+            tool_start("c2", "grep", json!({ "pattern": "trigger" })),
+        ),
+        ev(
+            auth,
+            AgentEvent::FileChange {
+                path: "apps/api/routes/v1/automations.ts".into(),
+                kind: FileChangeKind::Created,
+                diff: Some(TRIGGERS_DIFF.into()),
+            },
+        ),
+        ev(
+            auth,
+            AgentEvent::StepUsage {
+                output_text: None,
+                step: 1,
+                role: ModelCallRole::Worker,
+                provider: "zai".into(),
+                model: "glm-5.2".into(),
+                input_tokens: 5_100,
+                output_tokens: 420,
+                cached_input_tokens: 3_000,
+                cache_write_tokens: 0,
+                estimated_input_tokens: 5_000,
+                cost_usd: 0.011,
+                duration_ms: 1400,
+                retries: 0,
+                tool_calls: 1,
+                complete: true,
+            },
+        ),
+        ev(
+            auth,
+            AgentEvent::BudgetTick {
+                spent_usd: 0.011,
+                limit_usd: Some(1.0),
+                mode: stella_protocol::BudgetMode::Observed,
+                session_spent_usd: None,
+                session_limit_usd: None,
+            },
+        ),
+        ev(
+            auth,
+            AgentEvent::AskUser {
+                id: "q1".into(),
+                question: "Which auth guard should the triggers route use?".into(),
+                options: vec!["assertOrgMember".into(), "assertBillingManager".into()],
+            },
+        ),
         // ── ci subagent verifies + opens a PR ───────────────────────────
-        ev(ci, AgentEvent::Stage { name: StageKind::Verify }),
-        ev(ci, AgentEvent::JudgeVerdict { passed: true, evidence: JudgeEvidence { summary: "flip oracle: fail→pass on `pnpm --filter app test:unit`".into(), deterministic: true, evidence_refs: vec![] } }),
-        ev(ci, AgentEvent::Commit { sha: "a1b2c3d".into(), message: "feat(automations): triggers + workflows UI".into() }),
-        ev(ci, AgentEvent::Pr { url: "https://github.com/macanderson/stella/pull/981".into(), status: PrStatus::Open, number: Some(981), ci: Some(stella_protocol::CiStatus::Running) }),
-        ev(ci, AgentEvent::StepUsage { output_text: None, step: 1, role: ModelCallRole::Worker, provider: "zai".into(), model: "glm-5.2-air".into(), input_tokens: 3_000, output_tokens: 180, cached_input_tokens: 0, cache_write_tokens: 0, estimated_input_tokens: 2_900, cost_usd: 0.004, duration_ms: 900, retries: 0, tool_calls: 0, complete: true }),
-
+        ev(
+            ci,
+            AgentEvent::Stage {
+                name: StageKind::Verify,
+            },
+        ),
+        ev(
+            ci,
+            AgentEvent::JudgeVerdict {
+                passed: true,
+                evidence: JudgeEvidence {
+                    summary: "flip oracle: fail→pass on `pnpm --filter app test:unit`".into(),
+                    deterministic: true,
+                    evidence_refs: vec![],
+                },
+            },
+        ),
+        ev(
+            ci,
+            AgentEvent::Commit {
+                sha: "a1b2c3d".into(),
+                message: "feat(automations): triggers + workflows UI".into(),
+            },
+        ),
+        ev(
+            ci,
+            AgentEvent::Pr {
+                url: "https://github.com/macanderson/stella/pull/981".into(),
+                status: PrStatus::Open,
+                number: Some(981),
+                ci: Some(stella_protocol::CiStatus::Running),
+            },
+        ),
+        ev(
+            ci,
+            AgentEvent::StepUsage {
+                output_text: None,
+                step: 1,
+                role: ModelCallRole::Worker,
+                provider: "zai".into(),
+                model: "glm-5.2-air".into(),
+                input_tokens: 3_000,
+                output_tokens: 180,
+                cached_input_tokens: 0,
+                cache_write_tokens: 0,
+                estimated_input_tokens: 2_900,
+                cost_usd: 0.004,
+                duration_ms: 900,
+                retries: 0,
+                tool_calls: 0,
+                complete: true,
+            },
+        ),
         // ── lead proposes a larger scope change (gate) ──────────────────
-        ev(lead, AgentEvent::ScopeReview { proposal: ScopeProposal {
-            summary: "Refactor the automations store into a shared workspace package".into(),
-            steps: vec!["extract types".into(), "move hooks".into(), "update 9 imports".into()],
-            estimated_files: 11,
-            estimated_cost_usd: Some(0.42),
-        } }),
+        ev(
+            lead,
+            AgentEvent::ScopeReview {
+                proposal: ScopeProposal {
+                    summary: "Refactor the automations store into a shared workspace package"
+                        .into(),
+                    steps: vec![
+                        "extract types".into(),
+                        "move hooks".into(),
+                        "update 9 imports".into(),
+                    ],
+                    estimated_files: 11,
+                    estimated_cost_usd: Some(0.42),
+                },
+            },
+        ),
     ]
 }
 

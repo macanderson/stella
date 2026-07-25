@@ -128,7 +128,13 @@ fn spawn_shell_command(
             .arg("-c")
             .arg(&cmd)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // A `!` command must not outlive the deck. `kill_on_drop` reaps the
+            // child when this task's handle drops, which is what stops a
+            // long-running command surviving deck exit. It is not a hard kill:
+            // it only fires while the tokio runtime is still alive, and it
+            // signals the direct child, not its whole process group.
+            .kill_on_drop(true);
         // `!` commands execute user/repository-controlled shell text. Keep
         // normal task configuration but never inherit Stella/provider,
         // repository, cloud, or tracker credentials.
@@ -348,6 +354,13 @@ pub async fn run_deck(
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // `local_tx` outlives the loop, so the shell lane should never close — but
+    // if it ever did, `select!` would see `Ready(None)` on every poll and spin
+    // the deck's draw loop at 100% CPU. Enforce the invariant instead of
+    // asserting it in prose: disable the branch the moment it closes, exactly
+    // as `fleet_dashboard`'s `keys_open` guard does for its key reader.
+    let mut local_open = true;
+
     'run: loop {
         // Requests queued by handlers/ingest beyond their single return value
         // (a CONTEXT open refreshing two snapshots, a finished OAuth login
@@ -462,11 +475,13 @@ pub async fn run_deck(
                     None => break 'run,
                 }
             }
-            maybe_local = local_rx.recv() => {
-                // Shell-command lane (see `spawn_shell_command`). `local_tx`
-                // outlives the loop, so `None` cannot actually occur.
-                if let Some(ev) = maybe_local {
-                    ingest_inbound(&ev, &mut model, &mut ui);
+            maybe_local = local_rx.recv(), if local_open => {
+                // Shell-command lane (see `spawn_shell_command`).
+                match maybe_local {
+                    Some(ev) => ingest_inbound(&ev, &mut model, &mut ui),
+                    // Unreachable while `local_tx` is held above; stop
+                    // selecting on it rather than spinning if it ever isn't.
+                    None => local_open = false,
                 }
             }
             _ = tick.tick() => {

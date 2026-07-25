@@ -1,5 +1,5 @@
-//! Typed context-plane errors (
-//! §1.5: "fail loud, recover gracefully" — errors are `thiserror`, never
+//! Typed context-plane errors
+//! ("fail loud, recover gracefully" — errors are `thiserror`, never
 //! `panic!` in the hot path). The retrieval/write-back pipelines classify
 //! failures at the source so callers never re-derive a category downstream.
 

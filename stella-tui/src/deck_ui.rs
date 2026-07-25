@@ -4,8 +4,10 @@
 //! *not* derived from the event log (active tab, the one global composer,
 //! per-tab scroll/selection, the splash, the out-of-band graph snapshot), and
 //! [`handle_deck_key`] is a pure function of `(key, model, &mut ui)` returning a
-//! [`DeckAction`]. All deck interaction logic lives here, unit-tested, so
-//! [`crate::deck_shell`] stays a near-logic-free event loop.
+//! [`DeckAction`]. All deck interaction logic lives here, unit-tested — with one
+//! delegation: the Engine tab's key map lives in [`crate::views::engine`], which
+//! owns its own overlay state. Either way [`crate::deck_shell`] stays a
+//! near-logic-free event loop.
 //!
 //! ## Interaction model (the "never blocks input" contract)
 //!

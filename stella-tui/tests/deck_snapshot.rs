@@ -1,9 +1,11 @@
 //! Full-deck render snapshot: fold the scripted demo scenario into a
 //! `WorkspaceModel`, then render every tab through the real `render_deck`
 //! entrypoint into a `TestBackend` and assert the expected content appears.
-//! Also writes the rendered frames to `deck-snapshots.txt` at the repo root as
-//! a human-readable artifact (a text "screenshot" — the honest headless
-//! equivalent of a TTY capture).
+//! Also writes the rendered frames to `deck-snapshots.txt` under this target's
+//! `CARGO_TARGET_TMPDIR` as a human-readable artifact (a text "screenshot" —
+//! the honest headless equivalent of a TTY capture). The path is printed by the
+//! test; it deliberately stays out of the source tree so running the suite
+//! never dirties the working tree and concurrent runs never race on one path.
 
 use std::fmt::Write as _;
 
@@ -65,17 +67,20 @@ fn deck_renders_every_tab_with_real_content() {
         assert!(text.contains("SESSION"), "tab bar should render on {tab:?}");
     }
 
-    // Write all five tabs to a human-readable artifact at the repo root.
+    // Write all five tabs to a human-readable artifact under the target dir —
+    // never into the source tree, which `cargo test` must leave clean.
     let mut out = String::new();
     for tab in DeckTab::ALL {
         let _ = writeln!(out, "\n═══ {} tab ═══\n", tab.title());
         let _ = writeln!(out, "{}", render_tab(&model, tab, 150, 32));
     }
-    // Best-effort: never fail the test on an artifact write.
-    let _ = std::fs::write(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../deck-snapshots.txt"),
-        out,
-    );
+    let artifact = concat!(env!("CARGO_TARGET_TMPDIR"), "/deck-snapshots.txt");
+    // Best-effort: never fail the test on an artifact write, but do say where
+    // it landed so the "screenshot" stays discoverable under `--nocapture`.
+    match std::fs::write(artifact, out) {
+        Ok(()) => println!("deck snapshots written to {artifact}"),
+        Err(err) => println!("deck snapshots not written to {artifact}: {err}"),
+    }
 }
 
 #[test]

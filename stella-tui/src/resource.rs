@@ -10,12 +10,14 @@
 //! against) and later calls report real utilization. `sample()` self-throttles
 //! to [`SAMPLE_INTERVAL`]: the shell tick may call it at animation rate
 //! (~30 Hz), but real refreshes stay ~1 s apart — which is both the spacing
-//! sysinfo needs for an accurate CPU diff and what keeps a full process-table
-//! refresh (expensive, especially on Linux) off the per-frame budget.
+//! sysinfo needs for an accurate CPU diff and what keeps the OS query off the
+//! per-frame budget. The process refresh is also narrowed to the registered
+//! agent pids and to cpu+memory only, so the cost scales with the number of
+//! agents rather than with the size of the machine's process table.
 
 use std::time::{Duration, Instant};
 
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::deck::{ResourceSample, WorkspaceModel};
 
@@ -59,8 +61,28 @@ impl ResourceMonitor {
         }
         self.last_refresh = Some(Instant::now());
 
+        // The global gauge comes from the CPU list, not the process table, so
+        // it refreshes unconditionally — even when no agent has a pid yet.
         self.sys.refresh_cpu_all();
-        self.sys.refresh_processes(ProcessesToUpdate::All, true);
+
+        // Only the registered pids are ever read below, so refresh only those
+        // and only the two fields we display. `ProcessesToUpdate::All` would
+        // enumerate and stat every process on the machine once per second for
+        // the life of the session. Built before `&mut self.sys` is taken so the
+        // borrow of `model` ends first.
+        let pids: Vec<Pid> = model
+            .agents
+            .iter()
+            .filter_map(|a| a.meta.pid)
+            .map(Pid::from_u32)
+            .collect();
+        if !pids.is_empty() {
+            self.sys.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&pids),
+                true,
+                ProcessRefreshKind::nothing().with_cpu().with_memory(),
+            );
+        }
 
         model.global_cpu_pct = self.sys.global_cpu_usage();
 
