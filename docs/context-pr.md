@@ -10,7 +10,7 @@ This document is the single source of truth for what a Context PR is, what it
 changes, and how one moves through proposal, review, publication, and
 retirement. It consolidates and supersedes earlier Context-PR drafts. It is
 consistent with, and defers to, the record semantics defined in
-[`docs/design/stella-adaptive-context-lifecycle.md`](design/stella-adaptive-context-lifecycle.md)
+[`docs/design/adaptive-context/stella-adaptive-context-lifecycle.md`](design/adaptive-context/stella-adaptive-context-lifecycle.md)
 (sections 13–15) and the frame/sharing model in
 [`docs/design/context-frame-spec.md`](design/context-frame-spec.md). Per
 [`docs/design/context-graph-protocol-build-prompt.md`](design/context-graph-protocol-build-prompt.md),
