@@ -289,7 +289,10 @@ mod tests {
         );
         assert!(err.is_retryable(), "a disconnect must be retryable");
         let msg = err.to_string();
-        assert!(msg.contains("Vertex AI"), "names the adapter, not Gemini: {msg}");
+        assert!(
+            msg.contains("Vertex AI"),
+            "names the adapter, not Gemini: {msg}"
+        );
         assert!(
             msg.contains("finishReason"),
             "names the missing terminal event: {msg}"
