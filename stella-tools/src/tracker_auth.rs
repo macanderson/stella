@@ -585,8 +585,7 @@ pub async fn linear_oauth_login(
     let text = response.text().await.unwrap_or_default();
     if !status.is_success() {
         // OAuth error bodies carry codes, not credentials — safe to surface.
-        let mut preview = text;
-        preview.truncate(300);
+        let preview = crate::exec::truncate_preview(&text, 300);
         return Err(format!("token endpoint returned HTTP {status}: {preview}"));
     }
     let body: Value =

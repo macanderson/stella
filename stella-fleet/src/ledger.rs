@@ -109,7 +109,18 @@ impl Ledger {
     fn init(conn: Connection) -> Result<Self, LedgerError> {
         // execute_batch tolerates the row PRAGMA journal_mode returns (a
         // plain pragma_update errors on it).
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        //
+        // `busy_timeout` matters as much as WAL here: two `stella fleet` runs in
+        // one workspace open the SAME `fleet.db`, and SQLite's default busy
+        // handler returns SQLITE_BUSY *immediately*. Without the timeout a
+        // second writer's `finish_attempt` fails after its worker already spent
+        // real money — the attempt's commits and spend row would be lost from
+        // the audit trail. WAL is a file-level setting; `foreign_keys` and
+        // `busy_timeout` are per-connection and must be re-set on every open
+        // (the same idiom as `stella-graph`/`stella-context`).
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+        )?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
@@ -159,6 +170,12 @@ impl Ledger {
     /// its spend row — in a single transaction (all-or-nothing). This is the
     /// durable half of the dispatch seam (`crate::fleet::Fleet::dispatch`).
     pub fn finish_attempt(&self, finish: &AttemptFinish) -> Result<(), LedgerError> {
+        // `unchecked_transaction` (rather than `&mut self` + `transaction()`)
+        // keeps every ledger method on `&self`, so the fleet can hold the whole
+        // ledger behind one `Mutex`. It is sound precisely because of that
+        // mutex: the borrow rusqlite would otherwise enforce is enforced by the
+        // lock, and this is the only place that opens a transaction — so a
+        // nested/interleaved transaction on this connection cannot arise.
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "UPDATE attempts SET finished_at_ms = ?2, success = ?3, summary = ?4 WHERE id = ?1",

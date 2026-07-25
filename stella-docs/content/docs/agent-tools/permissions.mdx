@@ -48,3 +48,23 @@ For blocking by pattern without a hook script, Stella also has native workspace-
 ```
 
 For the full hook model — events, matchers, timeouts, and the JSON payload delivered on stdin — see [Hooks](/docs/agent-tools/hooks).
+
+## Sandboxing the shell tool
+
+Hooks and guard rules decide *whether* a command runs. An OS sandbox bounds what it can reach once it does — the difference that matters when instructions hidden in a file the agent read steer the model into running something you never asked for. `STELLA_BASH_SANDBOX` turns it on for the [`bash`](/docs/agent-tools#conditionally-registered) tool:
+
+| Setting | Effect |
+| --- | --- |
+| `STELLA_BASH_SANDBOX=off` (the default) | No sandbox. `bash` runs with your own privileges. |
+| `STELLA_BASH_SANDBOX=workspace-write` | File writes confined to the workspace root plus the standard tmp directories. Reads and network are unrestricted. |
+| `STELLA_BASH_SANDBOX=restricted` | Everything `workspace-write` does, plus a blanket network denial. |
+
+```bash
+STELLA_BASH_SANDBOX=workspace-write stella run "run the migration and fix what breaks"
+```
+
+The backend is `sandbox-exec` (Seatbelt) on macOS and `bwrap` (bubblewrap) on Linux. It **fails closed**: an unrecognized value, a missing `bwrap`, or an unsupported platform fails the tool call with an actionable error rather than quietly running unsandboxed.
+
+<Callout type="warn">
+The default is `off` because the sandbox costs capability as well as blast radius. It also blocks legitimate work that writes outside the workspace — `cargo` populating `~/.cargo`, `npm` and `pip` caches under `$HOME`, and `git push` under `restricted`. Turn it on for a session where you don't fully trust the repository you're pointing Stella at; expect to grant more room for ordinary builds.
+</Callout>

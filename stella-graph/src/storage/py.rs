@@ -159,7 +159,7 @@ fn decode_django_class(node: Node, src: &[u8], app: Option<&str>) -> Option<Rela
         if matches!(field_kind, "ForeignKey" | "OneToOneField") {
             field.references = args
                 .as_ref()
-                .and_then(|a| first_positional(*a, src))
+                .and_then(|a| first_positional(*a))
                 .and_then(|target| django_fk_target(target, src, app, &rel.name));
             if let Some(target) = &field.references {
                 field.constraints.push(format!("REFERENCES {target}"));
@@ -321,7 +321,7 @@ fn decode_core_table(node: Node, src: &[u8]) -> Option<RelationDef> {
         return None;
     }
     let args = args?;
-    let name = string_value(first_positional(args, src)?, src)?;
+    let name = string_value(first_positional(args)?, src)?;
 
     let mut rel = RelationDef {
         name,
@@ -350,8 +350,7 @@ fn decode_core_table(node: Node, src: &[u8]) -> Option<RelationDef> {
         let Some(column_args) = column_args else {
             continue;
         };
-        let Some(name) = first_positional(column_args, src).and_then(|n| string_value(n, src))
-        else {
+        let Some(name) = first_positional(column_args).and_then(|n| string_value(n, src)) else {
             continue;
         };
         let mut field = FieldDef {
@@ -391,7 +390,7 @@ fn decode_sqlalchemy_column(
                     let bare = func.rsplit('.').next().unwrap_or(&func);
                     if bare == "ForeignKey" {
                         if let Some(target) = fk_args
-                            .and_then(|a| first_positional(a, src))
+                            .and_then(first_positional)
                             .and_then(|n| string_value(n, src))
                         {
                             // "users.id" → users; "billing.users.id" → users.
@@ -577,7 +576,7 @@ fn call_parts<'a>(node: Node<'a>, src: &[u8]) -> Option<(String, Option<Node<'a>
     Some((func, node.child_by_field_name("arguments")))
 }
 
-fn first_positional<'a>(args: Node<'a>, _src: &[u8]) -> Option<Node<'a>> {
+fn first_positional<'a>(args: Node<'a>) -> Option<Node<'a>> {
     let mut cursor = args.walk();
     args.named_children(&mut cursor)
         .find(|a| a.kind() != "keyword_argument" && a.kind() != "comment")

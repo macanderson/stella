@@ -11,14 +11,14 @@
 //! Inside the `cargo test` harness `std::io::stdin().is_terminal()` reports
 //! `true` (libtest drives stdin through a pty/pipe that looks like a terminal),
 //! yet the stream is not really readable, so `prompt_password` fails with
-//! `ENXIO` ("Device not configured"). The current `resolve` propagates that as
-//! `PromptFailed`, breaking the documented "clean NotFound" guarantee. This test
-//! pins the intended behavior: it FAILS today (`PromptFailed`) and passes once
-//! `resolve` degrades a failed prompt to `NotFound`.
+//! `ENXIO` ("Device not configured"). `resolve` used to propagate that verbatim
+//! as `PromptFailed`, breaking the documented "clean NotFound" guarantee; it
+//! now swallows a failed prompt and falls through to `NotFound` (see the
+//! interactive arm of `ApiKey::resolve`). This test is the regression guard on
+//! that behavior — it fails again the moment the prompt error is propagated.
 //!
-//! Note: this is the resilience/compliance floor (P0 — never hang, never surface
-//! an opaque error at a trust boundary) called out by the quality pass. The fix
-//! is someone else's job; this test only witnesses the intended contract.
+//! This is the resilience/compliance floor: never hang, never surface an opaque
+//! error at a trust boundary.
 
 use stella_model::credential::{ApiKey, CredentialError};
 

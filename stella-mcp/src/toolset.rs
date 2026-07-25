@@ -195,6 +195,7 @@ impl McpToolSet {
 
     /// Compose over an inner native `ToolExecutor`. Any non-`mcp__` tool name
     /// falls through to it.
+    #[must_use]
     pub fn wrapping(mut self, native: Arc<dyn ToolExecutor>) -> Self {
         self.native = Some(native);
         self
@@ -205,6 +206,7 @@ impl McpToolSet {
     /// automatically; this is for [`McpToolSet::from_clients`] callers (tests,
     /// or any future non-config-driven construction) that need to set it
     /// explicitly.
+    #[must_use]
     pub fn with_candidate_safe_servers<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -217,6 +219,7 @@ impl McpToolSet {
     /// Record every successful MCP call into `ledger` (server, tool, reason,
     /// call time) for the `mcp_usage` telemetry table. Without this the set
     /// still works — telemetry is simply not collected.
+    #[must_use]
     pub fn with_usage_ledger(mut self, ledger: McpUsageLedger) -> Self {
         self.usage = Some(ledger);
         self
@@ -225,6 +228,7 @@ impl McpToolSet {
     /// Consult `disabled` (a shared, session-scoped set of server names) so a
     /// disabled server's tools are hidden and its calls error, live, without a
     /// reconnect. The set is shared with the CLI/TUI, which toggles it.
+    #[must_use]
     pub fn with_disabled_servers(mut self, disabled: DisabledServers) -> Self {
         self.disabled = Some(disabled);
         self
@@ -308,6 +312,7 @@ impl McpToolSet {
     /// Override the per-call timeout (default [`DEFAULT_CALL_TIMEOUT`]),
     /// propagating it to every connected server so the client owns the bound
     /// (and can treat a hang as a reconnect trigger).
+    #[must_use]
     pub fn with_call_timeout(mut self, timeout: Duration) -> Self {
         for client in &mut self.clients {
             client.set_call_timeout(timeout);

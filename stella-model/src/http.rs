@@ -32,6 +32,15 @@ pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// Falls back to the default client if the builder fails (only possible on
 /// a broken TLS backend, which is catastrophic and unrelated to any single
 /// request) — never panics on the construction path.
+///
+/// One caveat this bound does NOT fit: a **non-streaming** caller, where
+/// there is no first token to reset the clock. `bedrock.rs` uses the
+/// unary `Converse` (not `ConverseStream`), so the whole generation
+/// happens before any response byte arrives and a completion that takes
+/// longer than [`STREAM_IDLE_TIMEOUT`] to produce fails as a spurious
+/// retryable `Transport` — a real ceiling on long Bedrock turns until that
+/// adapter either moves to the event-stream transport or takes its own
+/// longer-read-timeout client.
 pub(crate) fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -86,6 +95,29 @@ fn parse_error_reason(body: &str) -> Option<String> {
     reason
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty())
+}
+
+/// Longest raw response body (in characters) echoed back in a classified
+/// HTTP error. A provider fronted by a CDN or a reverse proxy answers a 5xx
+/// with a multi-kilobyte HTML error page, and a gateway can dump an equally
+/// large JSON blob on a 400 — pasting either verbatim into the turn's error
+/// floods the transcript, the log, and the user's terminal for no diagnostic
+/// gain over the opening paragraph. Generous enough that every real
+/// structured error body (which is a sentence or two) survives untouched.
+const ERROR_BODY_SNIPPET_CHARS: usize = 800;
+
+/// `body` bounded to [`ERROR_BODY_SNIPPET_CHARS`], with an explicit marker
+/// naming how much was elided so nobody mistakes the cut for the provider's
+/// whole answer. Character-bounded, not byte-bounded: a body is
+/// environment-controlled text and a byte slice could land mid-character.
+fn body_snippet(body: &str) -> String {
+    let total = body.chars().count();
+    if total <= ERROR_BODY_SNIPPET_CHARS {
+        return body.to_string();
+    }
+    let head: String = body.chars().take(ERROR_BODY_SNIPPET_CHARS).collect();
+    let elided = total - ERROR_BODY_SNIPPET_CHARS;
+    format!("{head}… (+{elided} more chars)")
 }
 
 /// Bucket an HTTP 403's reason text into the right remediation hint. A 403
@@ -159,6 +191,10 @@ fn mentions_configured_model(body: &str, model: &str) -> bool {
 ///   ([`mentions_configured_model`]), a one-line recovery hint is appended:
 ///   change it on the SETTINGS tab, relaunch with `--model provider/slug`,
 ///   or edit settings.json.
+///
+/// Wherever the raw body is echoed (the 5xx and catch-all arms) it goes
+/// through [`body_snippet`] first, so a CDN error page can never flood the
+/// transcript; classification itself always reads the full body.
 pub(crate) fn classify_http_status(
     label: &str,
     status: reqwest::StatusCode,
@@ -194,10 +230,10 @@ pub(crate) fn classify_http_status(
             retry_after_ms,
         },
         s if s.is_server_error() => {
-            ProviderError::Transport(format!("{label} HTTP {status}: {body}"))
+            ProviderError::Transport(format!("{label} HTTP {status}: {}", body_snippet(body)))
         }
         _ => {
-            let mut message = format!("{label} HTTP {status}: {body}");
+            let mut message = format!("{label} HTTP {status}: {}", body_snippet(body));
             if mentions_configured_model(body, model) {
                 message.push_str(
                     " — change the model on the deck's SETTINGS tab, relaunch with \
@@ -469,6 +505,46 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("payment required"), "{msg}");
         assert!(msg.contains("out of credits"), "{msg}");
+    }
+
+    /// A provider fronted by a CDN answers a 5xx with a multi-kilobyte HTML
+    /// error page. The classified error must carry a bounded head plus an
+    /// explicit elision marker, never the whole page — the message reaches
+    /// the transcript, the log, and the user's terminal.
+    #[test]
+    fn classify_http_status_bounds_a_huge_body_instead_of_echoing_it_whole() {
+        let huge = "x".repeat(50_000);
+        let err = classify_http_status(
+            "OpenRouter",
+            reqwest::StatusCode::BAD_GATEWAY,
+            None,
+            &huge,
+            "openrouter/auto",
+        );
+        assert!(err.is_retryable(), "a 5xx stays retryable: {err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.len() < 2_000,
+            "the echoed body must be bounded, got {} bytes",
+            msg.len()
+        );
+        assert!(msg.contains("more chars"), "names the elision: {msg}");
+    }
+
+    /// The bound must not perturb a normal, short structured error body —
+    /// every real provider reason is a sentence or two and rides verbatim.
+    #[test]
+    fn classify_http_status_leaves_a_short_body_verbatim() {
+        let err = classify_http_status(
+            "OpenAI",
+            reqwest::StatusCode::BAD_GATEWAY,
+            None,
+            "upstream down",
+            "gpt-5.5",
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("upstream down"), "{msg}");
+        assert!(!msg.contains("more chars"), "{msg}");
     }
 
     /// 429/5xx stay retryable — pinned here so a future edit to the

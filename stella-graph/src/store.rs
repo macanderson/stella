@@ -1,24 +1,27 @@
 //! SQLite storage for the code graph.
 //!
-//! mandates **one** `context.db` file with one engine:
-//! `stella-context` owns the rest of that file's schema, so every table this
-//! crate creates is prefixed `code_graph_` to share the file without
-//! colliding. The store is opened against a caller-supplied path so the
-//! integration pass can point both crates at the same file.
+//! The graph lives in its own file (`.stella/private/codegraph.db` by
+//! convention) — it used to share `stella-context`'s `context.db`, which is
+//! why every table here is still prefixed `code_graph_` and why
+//! `stella-context` carries a migration that evicts those tables from a
+//! legacy `context.db`. The prefix stays: it costs nothing and keeps the two
+//! schemas non-colliding if they ever share a file again. The store is opened
+//! against a caller-supplied path, so nothing in this crate hard-codes the
+//! location.
 //!
-//! Durability contract ( L-L1, "a kill during indexing
-//! leaves a consistent store"): WAL journal mode, and **every index batch is
+//! Durability contract (L-L1, "a kill during indexing leaves a consistent
+//! store"): WAL journal mode, and **every index batch is
 //! a single transaction**. A process killed mid-batch has committed nothing;
 //! reopening sees the previous consistent state and a re-index completes. The
 //! crash-consistency test in this module proves it by dropping a transaction
 //! (rusqlite rolls back on drop) and asserting the store is unchanged.
 //!
-//! Byte-compat skip ( L-C2): a file whose content
+//! Byte-compat skip (L-C2): a file whose content
 //! sha256 matches the stored value is never re-parsed. [`IndexStats::files_parsed`]
 //! counts real parse invocations, which the skip test asserts drops to zero on
 //! an unchanged second pass.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,9 +39,9 @@ use crate::storage::{self, FieldEntry, RelationEntry};
 use crate::symbol::SymbolKind;
 use crate::walk::walk_indexable;
 
-/// DDL for the code graph's slice of `context.db`. `IF NOT EXISTS` throughout
-/// so opening an existing store (possibly already carrying `stella-context`'s
-/// tables) is a no-op.
+/// DDL for the code graph's tables. `IF NOT EXISTS` throughout so opening an
+/// existing store (possibly a legacy file that already carries another
+/// crate's tables) is a no-op.
 const MIGRATION: &str = r#"
 CREATE TABLE IF NOT EXISTS code_graph_files (
     id             INTEGER PRIMARY KEY,
@@ -311,25 +314,38 @@ fn index_one(
         params![file_id],
     )?;
 
-    for symbol in &parsed.symbols {
-        tx.execute(
+    // `prepare_cached`, not `execute`: the row loops below run once per symbol
+    // and once per edge, and `Connection::execute` re-prepares (and discards)
+    // its statement on every call. The cache lives on the connection, so the
+    // compile cost is paid once for the whole batch, not once per row.
+    {
+        let mut insert_symbol = tx.prepare_cached(
             "INSERT INTO code_graph_symbols(file_id, name, kind, start_line, end_line) \
              VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![
+        )?;
+        for symbol in &parsed.symbols {
+            insert_symbol.execute(params![
                 file_id,
                 symbol.name,
                 symbol.kind.tag(),
                 symbol.start_line,
                 symbol.end_line
-            ],
-        )?;
+            ])?;
+        }
     }
-    for edge in &edges {
-        tx.execute(
+    {
+        let mut insert_edge = tx.prepare_cached(
             "INSERT INTO code_graph_imports(from_file_id, specifier, to_path, kind) \
              VALUES(?1, ?2, ?3, ?4)",
-            params![file_id, edge.specifier, edge.to_path, edge.kind.tag()],
         )?;
+        for edge in &edges {
+            insert_edge.execute(params![
+                file_id,
+                edge.specifier,
+                edge.to_path,
+                edge.kind.tag()
+            ])?;
+        }
     }
     stats.symbols += parsed.symbols.len();
     stats.imports += edges.len();
@@ -462,6 +478,12 @@ fn insert_storage_field(
 /// merge time). Ordered by address for deterministic snapshots.
 pub(crate) fn storage_rows(conn: &Connection) -> Result<Vec<RelationEntry>, GraphError> {
     let mut relations: Vec<RelationEntry> = Vec::new();
+    // Address → index into `relations`. Both passes below used to locate a
+    // relation by scanning everything collected so far, which made snapshot
+    // assembly quadratic in the number of relations — and the pre-write gate
+    // assembles a snapshot on every call, so that cost sits in the agent's
+    // write path. The map keeps both passes linear.
+    let mut by_address: HashMap<String, usize> = HashMap::new();
     {
         let mut stmt = conn.prepare(
             "SELECT o.id, o.address, o.layer, o.namespace, o.kind, o.display_name, \
@@ -500,7 +522,8 @@ pub(crate) fn storage_rows(conn: &Connection) -> Result<Vec<RelationEntry>, Grap
             // The same address can be defined in several migration files;
             // the first (path-ordered) definition wins, its fields merge in
             // the field pass below regardless of which file defined them.
-            if !relations.iter().any(|r| r.address == entry.address) {
+            if !by_address.contains_key(&entry.address) {
+                by_address.insert(entry.address.clone(), relations.len());
                 relations.push(entry);
             }
         }
@@ -530,19 +553,23 @@ pub(crate) fn storage_rows(conn: &Connection) -> Result<Vec<RelationEntry>, Grap
             },
         ))
     })?;
+    // Field identity within a relation, so the duplicate check costs one hash
+    // instead of re-normalizing every field already attached to the relation.
+    let mut seen_fields: HashSet<(usize, String)> = HashSet::new();
     for row in fields {
         let (address, field) = row?;
         let Some(relation_address) = address.rsplit_once('/').map(|(rel, _)| rel.to_string())
         else {
             continue;
         };
-        let entry = match relations.iter_mut().find(|r| r.address == relation_address) {
-            Some(entry) => entry,
+        let at = match by_address.get(&relation_address).copied() {
+            Some(at) => at,
             None => {
                 // ALTER addition whose CREATE is not indexed: synthesize the
                 // relation so the field is still visible and gate-checkable.
                 let (layer, rest) = relation_address.split_once('/').unwrap_or(("sql", ""));
                 let (namespace, name) = rest.split_once('/').unwrap_or(("default", rest));
+                let at = relations.len();
                 relations.push(RelationEntry {
                     address: relation_address.clone(),
                     layer: layer.to_string(),
@@ -556,16 +583,12 @@ pub(crate) fn storage_rows(conn: &Connection) -> Result<Vec<RelationEntry>, Grap
                     redirects: Vec::new(),
                     source: None,
                 });
-                relations.last_mut().expect("just pushed")
+                by_address.insert(relation_address, at);
+                at
             }
         };
-        let key = storage::normalize_name(&field.name);
-        if !entry
-            .fields
-            .iter()
-            .any(|f| storage::normalize_name(&f.name) == key)
-        {
-            entry.fields.push(field);
+        if seen_fields.insert((at, storage::normalize_name(&field.name))) {
+            relations[at].fields.push(field);
         }
     }
     Ok(relations)

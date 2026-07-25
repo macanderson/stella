@@ -4,8 +4,9 @@
 //! tool boundary.
 //!
 //! All rule semantics — frontmatter parsing, precedence merging, Tier-1
-//! rendering, Tier-2 guard evaluation — live in `stella-core` (no I/O,
-//!); this module owns exactly the I/O half:
+//! rendering, Tier-2 guard evaluation — live in `stella-core` (no I/O, so
+//! they are unit-testable without a filesystem); this module owns exactly
+//! the I/O half:
 //! walking the rule directories, reading extension-authored rules out of
 //! `.stella/private/store.db` (`stella_store::Store::list_rules`), and registering
 //! the blocking policy handler that threads [`evaluate_guards`] into

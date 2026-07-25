@@ -119,8 +119,8 @@ pub struct Settings {
     /// Agent-engine configuration: per-role models, prompts, effort, and
     /// sampling parameters for the four engine agents (default / worker /
     /// judge / triage), plus the allowed-model vocabulary and the auto
-    /// modes. Scopes overlay per field like `providers`. Deliberately NOT
-    /// mostly outside the project trust boundary: model and sampling fields
+    /// modes. Scopes overlay per field like `providers`. Deliberately kept
+    /// mostly OUTSIDE the project trust boundary: model and sampling fields
     /// carry no credential routing (an agent's `provider` names an id whose
     /// endpoint and credential fields are gated above). Per-agent replacement
     /// prompts are privileged and restored from trusted scopes unless the
@@ -149,6 +149,10 @@ pub struct Settings {
     /// a project may enable a provider the user scope declared without
     /// restating its transport. Empty (the shipping default) registers
     /// nothing and leaves recall exactly as it is today.
+    ///
+    /// Inside the project trust boundary: an entry spawns a command or opens
+    /// an egress-consented connection, so an untrusted repo's entries are
+    /// dropped in favour of the trusted scopes' (see [`Settings::load`]).
     #[serde(default)]
     pub context_providers: ContextProviderSettings,
     /// Authority ceilings are honored only from the org-managed settings

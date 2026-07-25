@@ -233,7 +233,14 @@ impl MediaProvider for ZaiVideoProvider {
                 progress: None,
                 artifact: None,
             }),
-            // PROCESSING/RUNNING and any unknown-but-non-terminal status.
+            // PROCESSING/RUNNING, and anything unrecognized. Optimistic on
+            // purpose — a status we have not seen before is far more likely to
+            // be a new in-flight name than a new terminal one, and reporting
+            // Running keeps a live job pollable. The cost of being wrong is
+            // that a *terminal* status we do not recognize (a future
+            // "CANCELLED") never reports terminal, so the caller polls until
+            // it gives up; a submitted-at age bound belongs in that caller,
+            // since only it knows what a reasonable wait is.
             _ => Ok(MediaJobStatus {
                 state: MediaJobState::Running,
                 progress: None,

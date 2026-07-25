@@ -155,6 +155,40 @@ fn pretty_json(compact: &str) -> String {
 
 // ── Self-contained HTML dashboard ───────────────────────────────────────────
 
+/// One table's JSON array from the dump set, or an empty array when absent.
+fn table_json<'a>(dumps: &'a [TableDump], table: &str) -> &'a str {
+    dumps
+        .iter()
+        .find(|(name, _)| *name == table)
+        .map(|(_, json)| json.as_str())
+        .unwrap_or("[]")
+}
+
+/// Make a JSON document safe to embed inside an HTML `<script>` element.
+///
+/// The dumps are interpolated straight into `<script>…</script>`, and HTML —
+/// not JavaScript — tokenizes that content first: a literal `</script`
+/// anywhere inside, INCLUDING inside a JSON string, ends the element and
+/// everything after it is parsed as markup. The dumps carry prompts, tool
+/// names, and workspace file paths — all of them text an agent, an MCP
+/// server, or a repo can choose — so `</script><img src=x onerror=…>` in any
+/// one of them would execute in a dashboard this module's own doc invites you
+/// to email or attach to a PR. `serde_json` has no reason to escape `<`, so
+/// escape it here.
+///
+/// `\uXXXX` is the identical character to every JSON parser and is inert to
+/// the HTML tokenizer, so the document round-trips unchanged. U+2028/U+2029
+/// go too: they are JSON string content but were raw line terminators to
+/// pre-ES2019 JavaScript, and this JSON is an inline literal, not a
+/// `JSON.parse` argument.
+fn script_json(raw: &str) -> String {
+    raw.replace('&', "\\u0026")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
 /// Render the full HTML dashboard. All CSS and JS are inlined — no external
 /// dependencies. The data is embedded as a JSON blob so the JS can build
 /// interactive charts client-side.
@@ -186,36 +220,25 @@ fn render_dashboard(
     let total_output_fmt = comma(total_output);
     let total_cache_read_fmt = comma(total_cache_read);
 
+    // Every dump below is interpolated into the page's `<script>` element, so
+    // each one goes through `script_json` first — see its doc for why raw JSON
+    // is not safe there.
+
     // Telemetry rows for the timeline chart.
-    let telemetry_json = dumps
-        .iter()
-        .find(|(t, _)| *t == "telemetry")
-        .map(|(_, j)| j.as_str())
-        .unwrap_or("[]");
+    let telemetry_json = script_json(table_json(dumps, "telemetry"));
 
     // Tool-call frequency.
-    let tool_calls_json = dumps
-        .iter()
-        .find(|(t, _)| *t == "tool_calls")
-        .map(|(_, j)| j.as_str())
-        .unwrap_or("[]");
+    let tool_calls_json = script_json(table_json(dumps, "tool_calls"));
 
     // Executions (for the outcome breakdown).
-    let executions_json = dumps
-        .iter()
-        .find(|(t, _)| *t == "executions")
-        .map(|(_, j)| j.as_str())
-        .unwrap_or("[]");
+    let executions_json = script_json(table_json(dumps, "executions"));
 
     // Files touched.
-    let files_json = dumps
-        .iter()
-        .find(|(t, _)| *t == "files_touched")
-        .map(|(_, j)| j.as_str())
-        .unwrap_or("[]");
+    let files_json = script_json(table_json(dumps, "files_touched"));
 
     // Usage stats as JSON for the per-model table.
-    let stats_json = serde_json::to_string(usage_stats).unwrap_or_else(|_| "[]".into());
+    let stats_json =
+        script_json(&serde_json::to_string(usage_stats).unwrap_or_else(|_| "[]".into()));
 
     format!(
         r##"<!DOCTYPE html>
@@ -646,6 +669,35 @@ mod tests {
         );
         assert_eq!(sanitize_timestamp("1705312200000000"), "1705312200000000");
         assert_eq!(sanitize_timestamp("../etc/passwd"), "etc-passwd");
+    }
+
+    /// A workspace file path, a tool name, and a prompt all reach the
+    /// dashboard's `<script>` block verbatim, and all three are text an agent
+    /// or a cloned repo chooses. A literal `</script` in any of them would end
+    /// the element and turn the rest of the page into attacker markup — in an
+    /// artifact the module doc tells you to email or attach to a PR.
+    #[test]
+    fn script_json_cannot_close_the_script_element() {
+        let hostile = r#"[{"path":"</script><img src=x onerror=alert(1)>"}]"#;
+        let safe = script_json(hostile);
+        assert!(!safe.contains('<'), "{safe}");
+        assert!(!safe.contains('>'), "{safe}");
+        // …and it is still the same document to a JSON parser.
+        let parsed: serde_json::Value = serde_json::from_str(&safe).expect("valid JSON");
+        assert_eq!(parsed[0]["path"], "</script><img src=x onerror=alert(1)>");
+    }
+
+    #[test]
+    fn script_json_leaves_ordinary_payloads_alone() {
+        let plain = r#"[{"model":"glm-5.2","runs":3}]"#;
+        assert_eq!(script_json(plain), plain);
+    }
+
+    #[test]
+    fn table_json_falls_back_to_an_empty_array() {
+        let dumps: Vec<TableDump> = vec![("telemetry", "[1]".to_string())];
+        assert_eq!(table_json(&dumps, "telemetry"), "[1]");
+        assert_eq!(table_json(&dumps, "missing"), "[]");
     }
 
     #[test]

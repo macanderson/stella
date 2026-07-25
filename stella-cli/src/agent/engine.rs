@@ -672,10 +672,11 @@ fn build_provider_parts(
 }
 
 /// Cross-family grouping key for judge selection. Same-vendor providers must
-/// count as the SAME family so a routed judge is genuinely a different model
-/// : a Gemini judge assessing Gemini-via-Vertex work
-/// carries the same bias, as does an Anthropic Claude judge over Bedrock
-/// Claude. Anything without a known sibling is its own family (its id).
+/// count as the SAME family so a routed judge is genuinely a different model,
+/// not the same weights behind a second endpoint: a Gemini judge assessing
+/// Gemini-via-Vertex work carries the same bias, as does an Anthropic Claude
+/// judge over Bedrock Claude. Anything without a known sibling is its own
+/// family (its id).
 pub(crate) fn provider_family(provider_id: &str) -> String {
     match provider_id {
         "gemini" | "vertex" => "google".to_string(),

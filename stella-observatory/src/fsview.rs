@@ -126,7 +126,10 @@ fn scan_skills_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
                 }
             }
         } else if path.extension().is_some_and(|e| e == "md") {
-            out.push(skill_entry(&path, scope, false).unwrap_or_default());
+            // `extend`, not `push(…unwrap_or_default())`: an unreadable file is
+            // a skipped row, never a JSON `null` the dashboard would try to
+            // render as a skill.
+            out.extend(skill_entry(&path, scope, false));
         }
     }
 }
@@ -360,23 +363,37 @@ fn sensitive_key(key: &str) -> bool {
 }
 
 /// Recursively scrub credentials from parsed settings before serving them.
-/// Values under sensitive keys are replaced; `env` and `headers` maps have
-/// every value replaced (their values are credentials by position).
-fn redact(value: &mut Value, under_credential_map: bool) {
+/// A sensitive key — or an `env`/`headers` map, whose values are credentials
+/// by position — opens a *credential scope*, and every string at or below it
+/// is replaced.
+///
+/// The scope has to be inherited, not recomputed per level: settings are
+/// arbitrary user JSON, so a secret can sit one container deeper than the
+/// key that names it (`{"api_keys": ["sk-live-…"]}`,
+/// `{"env": {"TOKEN": {"value": "…"}}}`). Redacting only the direct string
+/// child leaked both. Fail closed — an over-redacted `<redacted>` on the
+/// config tab costs nothing; a leaked key costs everything.
+fn redact(value: &mut Value, in_credential_scope: bool) {
     match value {
         Value::Object(map) => {
             for (key, v) in map.iter_mut() {
-                let is_credential_map = matches!(key.as_str(), "env" | "headers");
-                if (under_credential_map || sensitive_key(key)) && v.is_string() {
+                let scoped = in_credential_scope
+                    || sensitive_key(key)
+                    || matches!(key.as_str(), "env" | "headers");
+                if scoped && v.is_string() {
                     *v = Value::String("<redacted>".into());
                 } else {
-                    redact(v, is_credential_map);
+                    redact(v, scoped);
                 }
             }
         }
         Value::Array(items) => {
             for item in items.iter_mut() {
-                redact(item, under_credential_map);
+                if in_credential_scope && item.is_string() {
+                    *item = Value::String("<redacted>".into());
+                } else {
+                    redact(item, in_credential_scope);
+                }
             }
         }
         _ => {}
@@ -474,5 +491,25 @@ mod tests {
         assert!(!s.contains("Bearer xyz"));
         assert!(s.contains("ZAI_KEY"), "env var *names* survive");
         assert!(s.contains("glm-5.2"), "non-sensitive values survive");
+    }
+
+    /// A secret one container below the key that names it used to survive:
+    /// only the *direct* string child of a sensitive key was replaced.
+    #[test]
+    fn redact_follows_credentials_into_arrays_and_nested_tables() {
+        let mut v = serde_json::json!({
+            "api_keys": ["sk-live-one", "sk-live-two"],
+            "env": { "TOKEN": { "value": "ghp_nested" } },
+            "models": ["glm-5.2"],
+        });
+        redact(&mut v, false);
+        let s = v.to_string();
+        assert!(!s.contains("sk-live-one"), "arrays under a sensitive key");
+        assert!(
+            !s.contains("sk-live-two"),
+            "every element, not just the first"
+        );
+        assert!(!s.contains("ghp_nested"), "nested tables under env");
+        assert!(s.contains("glm-5.2"), "ordinary lists are untouched");
     }
 }

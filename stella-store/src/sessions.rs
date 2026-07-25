@@ -276,8 +276,15 @@ impl SessionRegistry {
     }
 
     /// Sweep terminal records older than `max_age_ms` (registry hygiene —
-    /// called opportunistically by the deck driver at startup). Live records
-    /// are never pruned.
+    /// called opportunistically by the deck driver at startup).
+    ///
+    /// Terminal is judged on the *presented* status ([`Self::list`]), not the
+    /// stored one, so a record still stored `InProgress` whose owning process
+    /// died reads as crashed and is in scope — deliberately, since nothing
+    /// will ever move it to a terminal state otherwise. Note what that
+    /// implies: sweeping it also deletes its sidecar, so a crashed session
+    /// stops being resumable once it ages past the cutoff. Only records whose
+    /// owner is still alive are unconditionally spared.
     pub fn prune(&self, max_age_ms: u64) -> Result<usize> {
         let cutoff = now_ms().saturating_sub(max_age_ms);
         let mut removed = 0;

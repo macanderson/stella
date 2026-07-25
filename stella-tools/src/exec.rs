@@ -1,9 +1,13 @@
 //! Shared subprocess runner for tools that spawn commands: process-group
 //! spawn, hard timeout with a group kill, combined output, middle-out
 //! truncation. Two entry points: [`run`] shells out via `bash -c`
-//! (`verify_done`, `build_project`, `run_tests`, the opt-in `bash` tool);
+//! (`verify_done`, `build_project`, `run_tests`, `run_script`, `screenshot`);
 //! [`run_argv`] execs an argv vector directly with NO shell anywhere
-//! (`run_script`, `run_lint`, `format_code`, `diagnostics`).
+//! (`run_lint`, `format_code`, `diagnostics`, the `repo_*` tools).
+//!
+//! The opt-in `bash` tool does NOT come through here — it spawns its own
+//! child so the [`crate::sandbox`] wrapper can replace the program (see
+//! `crate::bash`).
 
 use std::time::Duration;
 
@@ -198,6 +202,11 @@ async fn drive(
         cmd.env_remove(var);
     }
     crate::subprocess_env::scrub_sensitive_env_except(&mut cmd, preserved_sensitive_env);
+    // No stdin: everything driven through here is non-interactive, and an
+    // inherited stdin is the TUI's terminal — a build or test that prompts
+    // would consume the user's keystrokes and then hang until the timeout
+    // instead of failing fast on EOF.
+    cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     #[cfg(unix)]
@@ -273,6 +282,25 @@ pub(crate) async fn run_and_report(
         },
         Err(e) => ToolOutput::Error { message: e },
     }
+}
+
+/// Cap a preview of REMOTE-supplied text at `max_bytes`, cutting on a char
+/// boundary.
+///
+/// `String::truncate` panics on a non-boundary index, and every caller of
+/// this helper previews an HTTP error body the endpoint chose: a UTF-8
+/// message (a localized GitHub/Linear/search-provider error) straddling the
+/// cut would abort the tool call instead of reporting the failure it was
+/// quoting.
+pub(crate) fn truncate_preview(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut cut = max_bytes;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text[..cut].to_string()
 }
 
 /// Keep head and tail when output exceeds the cap — build/test failures

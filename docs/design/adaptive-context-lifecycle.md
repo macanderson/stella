@@ -1,6 +1,13 @@
-# Stella Adaptive Context Lifecycle
+# Stella Adaptive Context Lifecycle (superseded draft)
 
-**Status:** Draft RFC  
+> **Superseded — do not build from this document.** The normative specification
+> is [`adaptive-context/stella-adaptive-context-lifecycle.md`](adaptive-context/stella-adaptive-context-lifecycle.md),
+> the longer successor every ADR under [`../adr/`](../adr/README.md) and
+> [`fleet.plan.toml`](fleet.plan.toml) actually cite. This earlier draft is kept
+> only for the reasoning it records; where the two disagree, the successor wins.
+> Retiring it outright is a maintainer call (#447).
+
+**Status:** Draft RFC — superseded  
 **Target repository:** macanderson/stella  
 **Related repository:** macanderson/context-graph-protocol  
 **Audience:** Stella maintainers, protocol maintainers, and extension authors

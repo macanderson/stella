@@ -67,9 +67,15 @@ pub trait ContextProvider: Send + Sync {
     }
 }
 
-/// Every frame kind the built-in store can serve.
+/// Every frame kind the built-in store can serve, sorted.
+///
+/// The sort is not cosmetic: several node kinds map onto the same `FrameKind`,
+/// so the list is deduplicated through a `HashSet` whose drain order varies
+/// run to run. Advertised capabilities end up in `context status` output and in
+/// a host's routing table, and an order that reshuffles every process makes
+/// them impossible to diff.
 fn store_kinds() -> Vec<String> {
-    [
+    let mut kinds: Vec<String> = [
         NodeKind::File,
         NodeKind::Symbol,
         NodeKind::Concept,
@@ -93,7 +99,11 @@ fn store_kinds() -> Vec<String> {
     })
     .collect::<HashSet<_>>()
     .into_iter()
-    .collect()
+    .collect();
+    // Unstable is enough: the `HashSet` already made every entry unique, so
+    // there are no equal elements whose relative order could matter.
+    kinds.sort_unstable();
+    kinds
 }
 
 #[async_trait]

@@ -85,9 +85,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 
-/// How turn output reaches the caller (
-/// : stream-json is a line-per-`AgentEvent`
-/// serialization of the exact protocol enum — a stable machine interface).
+/// How turn output reaches the caller. `stream-json` is a line-per-`AgentEvent`
+/// serialization of the exact protocol enum — a stable machine interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
     /// Human-oriented interactive rendering (default).

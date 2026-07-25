@@ -1,10 +1,11 @@
 # Architecture Decision Records — Phase 0 (Adaptive Context)
 
 These ADRs capture the baseline decisions for Phase 0 of the adaptive-context
-work in stella. Most RECORD decisions already made by the canonical planning
-pair (`adaptive-context-implementation-plan.md` and
-`stella-adaptive-context-lifecycle.md`). Each ADR grounds its claims in the
-source docs and, where relevant, the current stella code.
+work in Stella. Most of them *record* a decision the canonical planning pair
+already made — [`adaptive-context-implementation-plan.md`](../design/adaptive-context/adaptive-context-implementation-plan.md)
+and [`stella-adaptive-context-lifecycle.md`](../design/adaptive-context/stella-adaptive-context-lifecycle.md)
+— rather than making a new one. Each ADR grounds its claims in those source
+docs and, where relevant, in the current Stella code.
 
 ADRs 0002 and 0007 originally FLAGGED open questions for human sign-off; the
 repository owner **ratified both on 2026-07-23**, so all Phase 0 ADRs are now

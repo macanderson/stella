@@ -28,7 +28,9 @@ stella chat
 | `stella storage <tree\|show\|grep\|drift>` | Inspect the [storage map](/docs/commands/storage) — layers, relations, and fields with intent (offline, no API key). |
 | `stella scripts <list\|run>` | List and run the project's [package-manager scripts](/docs/commands/scripts) via canonical verbs (offline, no API key). |
 | `stella models` | List configured providers and available models. |
-| `stella stats` | Summarize cost, tokens, and resolve rate per provider/model from local telemetry. |
+| `stella stats` | Summarize cost, tokens, and resolve rate per provider/model from local telemetry — this workspace only. |
+| `stella usage <report\|sync\|prune>` | The same numbers across *every* project on this machine, via the local hub at `~/.stella/usage.db`. `sync` replicates from a cursor (safe to re-run), `prune` bounds the hub's growth. Local-only; nothing is uploaded. |
+| `stella cloud <status\|register>` | Show or set the org/workspace identity that scopes hub rows. A stub today: it persists ids locally, and the OAuth login lands later. |
 | `stella inspect` | Show the exact context a past model call was sent — the [reconstructed message array](/docs/commands/inspect), verified against the digests recorded at emission. |
 | `stella observe` | Serve the [Observatory dashboard](/docs/telemetry/dashboard) — your local telemetry in the browser, loopback-only. |
 | `stella memory` | Inspect memories through the citation loop, and promote one to a project rule. |
@@ -41,7 +43,10 @@ stella chat
 
 Each command page in this section documents its usage synopsis, behavior, relevant flags, and realistic examples.
 
-One more subcommand, `stella telemetry` (`status` / `flush` / `rollover-discard`), manages the managed enterprise operational spool. It is disabled by default and requires a signed org-managed enrollment — see the [Enterprise telemetry boundary](/docs/telemetry#oxagen-enterprise-managed-export).
+Two subcommands are deliberately absent from the table because they are not part of the day-to-day surface:
+
+- `stella telemetry` (`status` / `flush` / `rollover-discard`) manages the managed enterprise operational spool. It is disabled by default and requires a signed org-managed enrollment — see the [Enterprise telemetry boundary](/docs/telemetry#oxagen-enterprise-managed-export).
+- `stella arena` is the [arena-bench](https://github.com/macanderson/arena-bench) harness adapter. It runs a benchmark task from a `--task-dir` and records the trace journal the arena runner scores; it is for benchmarking Stella, not for using it.
 
 ## Global flags
 

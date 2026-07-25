@@ -11,9 +11,15 @@ pub enum ProviderError {
     #[error("provider transport error: {0}")]
     Transport(String),
 
-    #[error("provider rate limited (retry after {retry_after_ms:?}ms): {message}")]
+    // The hint is interpolated by hand, not with `{retry_after_ms:?}`: the
+    // Debug form leaks Rust syntax into a message the user reads on the TUI
+    // ("retry after Some(500)ms", or the nonsense "retry after Nonems" when
+    // the server sent no hint at all).
+    #[error("provider rate limited{}: {message}", .retry_after_ms.as_ref().map(|ms| format!(" (retry after {ms}ms)")).unwrap_or_default())]
     RateLimited {
         message: String,
+        /// The server's stated backoff, when it sent one. Honored verbatim by
+        /// `stella-core::retry` — a stated window always beats a guessed one.
         retry_after_ms: Option<u64>,
     },
 
@@ -40,6 +46,7 @@ impl ProviderError {
     /// Terminal on 4xx-class failures (auth, unknown model, malformed
     /// request); retryable on transport/rate-limit/5xx-class failures.
     /// Cancellation is never retried.
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,

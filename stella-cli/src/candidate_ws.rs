@@ -606,7 +606,14 @@ impl GitCandidateWorkspace {
             .map_err(fail)?
             .trim()
             .to_string();
-        *self.sealed.lock().unwrap() = Some(sealed);
+        // Recover from a poisoned lock rather than re-panicking. The guarded
+        // value is one `Option<String>` that no path can leave half-written,
+        // so there is no broken invariant to protect — and a panic elsewhere
+        // in the fan-out would otherwise convert this candidate's seal (and
+        // the `sealed_unchanged`/`adopt` reads below) from a named
+        // `WorkspaceError` into a second panic. Same convention as
+        // `main::test_env::lock` and the deck's session-id mutex.
+        *self.sealed.lock().unwrap_or_else(|p| p.into_inner()) = Some(sealed);
         Ok(())
     }
 
@@ -618,7 +625,7 @@ impl GitCandidateWorkspace {
         let sealed = self
             .sealed
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .clone()
             .ok_or_else(|| fail("candidate has no verified seal".to_string()))?;
         let head = git(&self.dir, &["rev-parse", "HEAD"]).await.map_err(fail)?;
@@ -644,7 +651,7 @@ impl GitCandidateWorkspace {
         let sealed = self
             .sealed
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .clone()
             .ok_or_else(|| fail("candidate has no verified seal".to_string(), Vec::new()))?;
         if !self

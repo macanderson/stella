@@ -6,9 +6,19 @@
 //! request/response envelopes.
 //!
 //! Zero logic, zero I/O. This is the stability contract of the whole
-//! workspace — any
-//! type here that crosses a process/protocol boundary must round-trip through
-//! `serde_json` byte-for-byte (see the `roundtrip` tests in each module).
+//! workspace — any type here that crosses a process/protocol boundary must
+//! round-trip through `serde_json` byte-for-byte (see the round-trip tests in
+//! each module).
+//!
+//! Wire compatibility is additive, but in exactly **one** direction. New
+//! *fields* ride `serde(default)`, so a newer binary parses every older
+//! stream. New [`AgentEvent`] *variants* do not travel backwards: the enum is
+//! internally tagged, so an older binary meets an unrecognized `"type"` with a
+//! hard deserialization error. An event that must survive being read by an
+//! older binary rides the versioned
+//! [`context_event::LifecycleEventEnvelope`] instead, whose payload stays raw.
+
+#![forbid(unsafe_code)]
 
 pub mod attachment;
 pub mod cache;

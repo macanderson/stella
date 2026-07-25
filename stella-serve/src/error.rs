@@ -17,9 +17,10 @@ pub enum ServeError {
     #[error("request `{0}` is not a {1} request")]
     RequestKindMismatch(String, &'static str),
 
-    /// The engine-driving thread ended before the turn produced an outcome —
-    /// it panicked, or its runtime failed to build.
-    #[error("engine session thread ended without an outcome: {0}")]
+    /// The engine-driving thread never produced an outcome — the OS refused to
+    /// create it, or it ended before emitting a terminal frame. Surfaced to the
+    /// host as an aborted turn rather than a dropped stream.
+    #[error("engine session thread failed: {0}")]
     SessionThreadFailed(String),
 
     /// Could not construct the per-session Tokio runtime.

@@ -312,8 +312,9 @@ pub static PROVIDERS: &[ProviderConfig] = &[
 ];
 
 /// The `local` pseudo-provider: any OpenAI-compatible endpoint the user
-/// points `--base-url` at (Ollama, vLLM, LM Studio, llama.cpp server —
-///). Not in [`PROVIDERS`]: it is never auto-detected
+/// points `--base-url` at (Ollama, vLLM, LM Studio, llama.cpp server, or
+/// anything else speaking Chat Completions). Not in [`PROVIDERS`]: it is
+/// never auto-detected
 /// (there is no ambient signal a local server exists), has no default model
 /// (the server's models are whatever the user pulled), and its API key is
 /// optional (`LOCAL_API_KEY`, defaulting to a placeholder — most local
@@ -329,13 +330,39 @@ pub static LOCAL_PROVIDER: ProviderConfig = ProviderConfig {
     seeded: false,
 };
 
-/// Leak a string into a `&'static str`. `ProviderConfig` is `&'static str`
-/// throughout (it is almost always one of the static [`PROVIDERS`] rows);
-/// settings-defined providers are synthesized ONCE at startup, so leaking
-/// their handful of strings trades a few bytes for keeping every downstream
-/// consumer of `ProviderConfig` untouched.
+/// Intern a string as a `&'static str`. `ProviderConfig` is `&'static str`
+/// throughout (it is almost always one of the static [`PROVIDERS`] rows), so
+/// synthesizing a settings-defined provider means leaking its handful of
+/// strings — a few bytes traded for keeping every downstream consumer of
+/// `ProviderConfig` untouched.
+///
+/// The doc originally claimed synthesis happens ONCE at startup. It does not:
+/// `discover_configured_providers` re-runs `effective_builtin`/
+/// `custom_provider` on every deck turn, every fleet worker, and every
+/// `/models` render, so a bare `Box::leak` grew the heap for the whole
+/// process lifetime in proportion to turns × configured providers. Interning
+/// makes the leak what the doc always promised: bounded by the number of
+/// DISTINCT strings, not by how often they are resynthesized.
 fn leak(s: &str) -> &'static str {
-    Box::leak(s.to_owned().into_boxed_str())
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+
+    static INTERNED: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    // Recover from a poisoned mutex: a panic mid-intern must not turn every
+    // later provider synthesis into an abort.
+    let mut interned = INTERNED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Copy the `&'static str` OUT of the set: the reference `get` hands back
+    // borrows the guard, and returning it would tie a 'static string to the
+    // lock's lifetime.
+    if let Some(&existing) = interned.get(s) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(s.to_owned().into_boxed_str());
+    interned.insert(leaked);
+    leaked
 }
 
 /// The env var a config-defined provider reads its credential from when the

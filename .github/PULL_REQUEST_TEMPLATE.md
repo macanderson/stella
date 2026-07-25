@@ -5,9 +5,16 @@
 
 ## What & why
 
-<!-- What does this PR do, and what problem does it solve? Link the issue if one exists. -->
+<!-- What does this PR do, and what problem does it solve? -->
 
-Closes #
+<!--
+  Replace the N below with the issue number, or delete the line if there is no
+  issue. A number in the PR *title* does NOT close anything — GitHub only reads
+  closing keywords from this description and from commit messages.
+  Use `Refs #N` instead if this PR advances the issue without finishing it.
+-->
+
+Closes #N
 
 ## The witness
 
@@ -25,7 +32,8 @@ Stella's definition of done is a test that **fails on the old code and passes on
 - [ ] `cargo test --workspace`
 - [ ] Docs updated where behavior/flags changed (README, `--help`, doc comments)
 - [ ] Commits signed off for DCO (`git commit -s`)
-- [ ] [CLA](../CLA.md) signed (first-time contributors — the bot will prompt you)
+- [ ] `Closes #N` appears **both** above and as a commit trailer — squash builds
+      the commit body from commit messages, so the description alone won't carry it
 
 ## Ground-rule check
 

@@ -1,6 +1,6 @@
 [package]
 name = "stella-tui"
-description = "ratatui event-log REPL per ADR-023 concepts: streaming render, diff view + files-touched panel, scope review card, HUD with live budget. Renders exclusively from AgentEvents."
+description = "ratatui terminal UI for stella: the single-session event-log REPL (streaming render, diff view + files-touched panel, scope-review card, live-budget HUD) and the multi-agent Command Deck it grew into (session · agents · traces · graph · files · skills · mcp · issues · settings). Per-session state is folded exclusively from AgentEvents; the deck's management tabs layer labeled out-of-band snapshots on top."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

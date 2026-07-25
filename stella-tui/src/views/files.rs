@@ -295,13 +295,10 @@ fn render_diff_pane(
     let body = bands[1];
     let inner_h = body.height as usize;
     let diff_text = record.and_then(|rec| find_diff(model, rec));
-    let (added, removed) = diff_text
-        .as_deref()
-        .map(diff::count_diff_lines)
-        .unwrap_or((0, 0));
+    let (added, removed) = diff_text.map(diff::count_diff_lines).unwrap_or((0, 0));
     match diff_text {
         Some(text) if !text.is_empty() => {
-            let lines = diff::body_lines(&text, record.map(|r| r.path.as_str()));
+            let lines = diff::body_lines(text, record.map(|r| r.path.as_str()));
             let total = lines.len();
             ui.metrics.files_diff_total = total;
             ui.metrics.files_diff_height = inner_h;
@@ -325,10 +322,12 @@ fn render_diff_pane(
 
 /// The diff TEXT for a ledger record: found via the owning agent's
 /// `SessionModel::files[].latest_diff` (`deck.rs` L-T5) — never re-derived.
-fn find_diff(model: &WorkspaceModel, rec: &FileRecord) -> Option<String> {
+/// Borrowed, not cloned: this runs on every ~30 fps frame the diff pane is
+/// open, and a single mutation's diff can be hundreds of KiB.
+fn find_diff<'a>(model: &'a WorkspaceModel, rec: &FileRecord) -> Option<&'a str> {
     let agent = model.agents.iter().find(|a| a.meta.id == rec.agent)?;
     let file = agent.model.files.iter().find(|f| f.path == rec.path)?;
-    file.latest_diff.clone()
+    file.latest_diff.as_deref()
 }
 
 #[cfg(test)]

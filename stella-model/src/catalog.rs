@@ -53,8 +53,10 @@ impl Pricing {
     }
 }
 
-/// Which tool-call dialect a model's provider speaks
-///
+/// Which tool-call dialect a model's provider speaks — the axis that decides
+/// which adapter can serve a row, since adapters are per *wire shape*, not
+/// per vendor (four vendors share `OpenaiJson`; two Google surfaces share
+/// `GeminiFunctions`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolDialect {
     AnthropicTools,
@@ -141,6 +143,7 @@ impl CatalogEntry {
 
     /// Set the reasoning capability (builder-style, so the many existing
     /// `new` call sites stay untouched).
+    #[must_use]
     pub fn with_reasoning(mut self, supports_reasoning: Option<bool>) -> Self {
         self.supports_reasoning = supports_reasoning;
         self
@@ -376,6 +379,11 @@ impl Catalog {
             })
     }
 
+    /// Every row, in install order (seed rows first when `stella-cli`
+    /// assembled the runtime catalog). For enumeration — the model picker,
+    /// `stella models list`, the seed's own invariant tests. Turning a
+    /// user-supplied slug into a usable model still goes through
+    /// [`Catalog::resolve`] / [`Catalog::resolve_for`], never a scan here.
     pub fn entries(&self) -> &[CatalogEntry] {
         &self.entries
     }

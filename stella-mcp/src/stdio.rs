@@ -14,18 +14,25 @@
 //! 2. **Concurrent in-flight requests.** Each request gets a monotonically
 //!    increasing id and a `oneshot` slot in a pending-map; a single reader
 //!    task demultiplexes responses back to the right waiter by id. Many
-//!    requests can be outstanding at once.
+//!    requests can be outstanding at once — though today
+//!    [`crate::client::McpClient`] holds its connection mutex for the whole
+//!    call, so calls to one server are serialized a layer above this one.
+//!    Dropping a `request` future (a caller-side timeout) leaves its slot in
+//!    the map until the matching response arrives or the connection is drained
+//!    by EOF/`close`; the sender is then discarded harmlessly.
 //!
 //! Server stderr is discarded (`Stdio::null`) so a server that logs to stderr
 //! cannot corrupt the JSON-RPC framing on stdout. Non-JSON lines that *do*
 //! appear on stdout (a misbehaving server logging to the wrong stream) are
 //! tolerated — skipped, never fatal.
 //!
-//! **No auto-reconnect.** A child that exits stays gone for the session: the
-//! reader drains every outstanding and future request with
-//! [`McpError::Closed`], and [`crate::McpToolSet`] turns that into a
-//! `ToolOutput::Error` naming the server. Reconnection is a caller decision,
-//! not a silent transport behavior.
+//! **The transport itself never reconnects.** A child that exits leaves this
+//! transport permanently dead: the reader drains every outstanding and future
+//! request with [`McpError::Closed`]. Recovery is a *caller* decision, not a
+//! silent transport behavior — [`crate::client::McpClient`] is the layer that
+//! respawns a fresh `StdioTransport` (same scrubbed environment) under bounded
+//! backoff, so the session self-heals without this file hiding a process
+//! restart behind a `request` call.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -191,6 +198,19 @@ impl Transport for StdioTransport {
         // Stop the reader task if it hasn't already exited on EOF.
         if let Some(handle) = self.reader.lock().await.take() {
             handle.abort();
+        }
+
+        // Fail whatever was still in flight. Aborting the reader means nothing
+        // will ever fulfill those oneshots, and the senders live in this map —
+        // so without this drain a concurrent `request` awaiting its response
+        // would hang until its own caller-side timeout (forever, for a caller
+        // that has none). Same shape as the reader's EOF drain.
+        let mut pending = self.pending.lock().await;
+        for (_id, tx) in pending.drain() {
+            let _ = tx.send(Err(McpError::Closed(format!(
+                "server `{}` connection was closed before the response arrived",
+                self.server_name
+            ))));
         }
         Ok(())
     }

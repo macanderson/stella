@@ -939,7 +939,7 @@ function renderSkills(rows) {
   $("skill-kpis").innerHTML =
     tile("skills", String(rows.length), "visible to this workspace") +
     tile("project scope", String(rows.filter(r => r.scope === "project").length), ".stella/skills") +
-    tile("user scope", String(rows.filter(r => r.scope === "user").length), "~/.config/stella/skills") +
+    tile("user scope", String(rows.filter(r => r.scope === "user").length), "~/.stella/skills") +
     tile("learned", String(learned.length), "auto-extracted by stella", true);
   if (!rows.length) {
     $("skills-table").innerHTML =
@@ -1626,9 +1626,14 @@ function switchTab(tab) {
 }
 document.querySelectorAll("nav.bar button.tab").forEach(b =>
   b.addEventListener("click", () => switchTab(b.dataset.tab)));
+// Matched against the sections rather than interpolated into a selector: a
+// crafted `#a"]` would make querySelector throw, and the throw at load time
+// (below) would take the whole dashboard down with it.
+const isTab = (tab) => !!tab &&
+  [...document.querySelectorAll("section[data-tab]")].some(s => s.dataset.tab === tab);
 addEventListener("hashchange", () => {
   const tab = location.hash.slice(1);
-  if (document.querySelector(`section[data-tab="${tab}"]`)) switchTab(tab);
+  if (isTab(tab)) switchTab(tab);
 });
 $("tf").querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
   state.tf = b.dataset.tf;
@@ -1660,8 +1665,7 @@ async function refresh() {
   }
 }
 bindGraphEvents();
-if (location.hash.length > 1 &&
-    document.querySelector(`section[data-tab="${location.hash.slice(1)}"]`)) {
+if (isTab(location.hash.slice(1))) {
   switchTab(location.hash.slice(1));
 }
 refresh();

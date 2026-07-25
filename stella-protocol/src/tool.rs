@@ -41,6 +41,9 @@ pub enum ToolOutput {
 }
 
 impl ToolOutput {
+    /// Whether this result is the `Error` arm — the one place a consumer
+    /// should branch on tool failure, instead of sniffing the content string.
+    #[must_use]
     pub fn is_error(&self) -> bool {
         matches!(self, ToolOutput::Error { .. })
     }

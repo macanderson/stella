@@ -352,7 +352,10 @@ fn render_freshness(
                 format!(
                     "\n⚠ saved at commit {} but the repo has moved — verify details \
                      against the current code before relying on them",
-                    &saved[..saved.len().min(8)]
+                    // Shorten by CHARACTERS: the record is JSON on disk that
+                    // travels with the tree, so a non-ASCII `git_head` would
+                    // panic a byte slice at offset 8.
+                    saved.chars().take(8).collect::<String>()
                 )
             } else {
                 String::new()

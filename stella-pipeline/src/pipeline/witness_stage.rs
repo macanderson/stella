@@ -1,4 +1,9 @@
-//! Candidate-local witness authoring for the isolated typed-execution boundary.
+//! Candidate-local witness authoring for the isolated typed-execution
+//! boundary: the `Pipeline::witness_stage` turn (author → one bounded repair
+//! → artifact/invocation/identity acceptance) plus the candidate-bound hook
+//! runner it shares with the execute engine. Split out of `pipeline.rs`
+//! because it is the one stage that runs against the *witness* tool executor
+//! rather than the worker's.
 
 use super::*;
 

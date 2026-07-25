@@ -47,6 +47,15 @@
 //! are dropped; insignificant whitespace in text is collapsed. A `viewBox` is
 //! backfilled on the root from `width`/`height` when absent (spec §4 "enforce
 //! a viewBox"), which keeps the artifact safely scalable when inlined.
+//!
+//! # Known limits (recorded, not fixed)
+//! Rule 6 keys on `//` and `javascript:`, so a `data:` URI in a non-`href`
+//! attribute value survives — including in a `style="…"` *attribute*, which
+//! (unlike the `<style>` element of rule 2) has no rule of its own. Neither
+//! is exploitable in the terminal preview ladder, which never renders SVG;
+//! both matter the moment a sanitized artifact is inlined into an HTML
+//! context, so tightening rule 6 to a scheme allow-list and adding `style` to
+//! the attribute deny-list is the recorded follow-up.
 
 use async_trait::async_trait;
 use roxmltree::{Document, Node};
@@ -81,48 +90,135 @@ pub enum SvgError {
     #[error("SVG repair exhausted after {attempts} attempt(s); last error: {last}")]
     RepairExhausted { attempts: u32, last: String },
     /// The element tree is nested deeper than [`MAX_NESTING_DEPTH`]. Rejected
-    /// before sanitization because the recursive serializer would otherwise
-    /// overflow the stack and abort the process on hostile model output.
+    /// before parsing and again before sanitization, because both the parser
+    /// and the serializer recurse per level and would otherwise overflow the
+    /// stack — aborting the process on hostile model output.
     #[error("SVG nested too deeply (> {MAX_NESTING_DEPTH} levels)")]
     TooDeeplyNested,
 }
 
 /// Maximum element nesting depth accepted. Real SVG art is a few dozen levels
-/// at most; anything past this is either broken or an attempt to overflow the
-/// recursive serializer. Kept well below the stack budget of a worker thread.
+/// at most; anything past this is either broken or an attempt to overflow one
+/// of the two recursive walks over the document (roxmltree's tokenizer and
+/// this module's serializer). Kept well below a worker thread's stack budget.
 pub const MAX_NESTING_DEPTH: usize = 256;
 
-/// A cheap, allocation-free upper bound on element nesting read straight from
-/// the raw text — used to reject a hostile document BEFORE it is parsed.
-/// Both the parser and the recursive serializer descend per nesting level, so
-/// a deep-enough tree overflows the stack; this textual scan runs first so
-/// neither is ever reached with an over-deep document.
+/// An upper bound on element nesting read straight from the raw text, used to
+/// reject a hostile document BEFORE it is parsed. roxmltree's tokenizer
+/// descends per nesting level (`parse_element` ↔ `parse_content` are mutually
+/// recursive), so an over-deep document overflows the stack *inside the
+/// parser* — there is no post-parse check that could run in time. Hence a
+/// textual scan, and hence its precision matters: an imprecise scan is a
+/// bypass, not a false alarm.
 ///
-/// It tracks depth on element open/close transitions: `<tag>` increments,
-/// `</tag>` and a self-closing `/>` decrement, and comment/CDATA/PI/decl
-/// openers (`<!`, `<?`) don't count. In well-formed XML a raw `<` only ever
-/// starts markup (`<` in text/attribute values must be escaped), so this is a
-/// sound bound; malformed input is rejected at parse anyway.
+/// It walks markup rather than counting bytes, because bytes lie:
+/// * `>` and `/` are legal unescaped inside an attribute value, so a naive
+///   "`/>` decrements" rule reads a document of `<g d="/>">` elements as
+///   depth-neutral while it nests without bound. Attribute values are
+///   therefore skipped by tracking the opening quote.
+/// * comments, CDATA, and processing instructions may contain anything at
+///   all, including `<`, so each is skipped whole to its terminator.
+///
+/// For well-formed input the result is the exact maximum depth, so no valid
+/// SVG is ever rejected for nesting it does not have. Malformed input is
+/// rejected at parse anyway.
 fn raw_element_depth_exceeds(text: &str, max: usize) -> bool {
     let b = text.as_bytes();
     let mut depth = 0usize;
     let mut i = 0;
     while i < b.len() {
-        match b[i] {
-            b'<' => match b.get(i + 1) {
-                Some(b'/') => depth = depth.saturating_sub(1),
-                Some(b'!') | Some(b'?') => {}
-                _ => {
-                    depth += 1;
-                    if depth > max {
-                        return true;
-                    }
-                }
-            },
-            b'/' if b.get(i + 1) == Some(&b'>') => depth = depth.saturating_sub(1),
+        // Character data cannot contain an unescaped `<`, so only a `<` can
+        // start something that changes depth.
+        if b[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        if b[i..].starts_with(b"<!--") {
+            i = skip_past(b, i + 4, b"-->");
+            continue;
+        }
+        if b[i..].starts_with(b"<![CDATA[") {
+            i = skip_past(b, i + 9, b"]]>");
+            continue;
+        }
+        match b.get(i + 1) {
+            // A processing instruction ends at `?>`; a declaration (`<!…`,
+            // e.g. a DTD, which the parser rejects outright) at the first `>`.
+            Some(b'?') => {
+                i = skip_past(b, i + 2, b"?>");
+                continue;
+            }
+            Some(b'!') => {
+                i = skip_past(b, i + 2, b">");
+                continue;
+            }
             _ => {}
         }
-        i += 1;
+
+        let is_close = b.get(i + 1) == Some(&b'/');
+        // Walk to the tag's real end, skipping quoted attribute values so a
+        // `>` or `/>` inside one cannot be mistaken for it.
+        let mut end = i + 1;
+        let mut quote: Option<u8> = None;
+        while end < b.len() {
+            let byte = b[end];
+            match quote {
+                Some(open) => {
+                    if byte == open {
+                        quote = None;
+                    }
+                }
+                None => {
+                    if byte == b'"' || byte == b'\'' {
+                        quote = Some(byte);
+                    } else if byte == b'>' {
+                        break;
+                    }
+                }
+            }
+            end += 1;
+        }
+        let is_self_closing = end > i + 1 && b[end - 1] == b'/';
+        if is_close {
+            depth = depth.saturating_sub(1);
+        } else if !is_self_closing {
+            depth += 1;
+            if depth > max {
+                return true;
+            }
+        }
+        i = end + 1;
+    }
+    false
+}
+
+/// The index just past the first `needle` at or after `from`, or the end of
+/// `b` when there is none (an unterminated comment/PI — malformed input the
+/// parser rejects, so consuming the rest is the safe reading).
+fn skip_past(b: &[u8], from: usize, needle: &[u8]) -> usize {
+    b[from..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map_or(b.len(), |offset| from + offset + needle.len())
+}
+
+/// Whether the parsed element tree nests deeper than `max` levels. The second
+/// half of the depth guard: [`raw_element_depth_exceeds`] keeps the *parser's*
+/// recursion bounded, this keeps the *serializer's* (and [`contains_xlink`]'s)
+/// bounded against the tree roxmltree actually built, whatever the text
+/// looked like. Iterative on purpose — a guard against recursion must not
+/// recurse.
+fn element_depth_exceeds(root: Node, max: usize) -> bool {
+    let mut stack = vec![(root, 1usize)];
+    while let Some((node, depth)) = stack.pop() {
+        if depth > max {
+            return true;
+        }
+        for child in node.children() {
+            if child.is_element() {
+                stack.push((child, depth + 1));
+            }
+        }
     }
     false
 }
@@ -152,9 +248,9 @@ impl SvgPipeline {
     /// deterministic; the core of L-V2. Never emits an artifact that did not
     /// parse.
     pub fn process(svg_text: &str) -> Result<ProcessedSvg, SvgError> {
-        // Reject a pathologically deep document BEFORE parsing: both roxmltree's
-        // parser and the recursive serializer descend per nesting level, so an
-        // over-deep tree would overflow the stack and abort the process.
+        // Reject a pathologically deep document BEFORE parsing: roxmltree's
+        // tokenizer recurses per nesting level, so an over-deep tree would
+        // overflow the stack and abort the process inside `Document::parse`.
         if raw_element_depth_exceeds(svg_text, MAX_NESTING_DEPTH) {
             return Err(SvgError::TooDeeplyNested);
         }
@@ -167,6 +263,12 @@ impl SvgPipeline {
             }
         })?;
         let root = doc.root_element();
+        // …and again against the tree that was actually built, so the
+        // recursive serializer below is bounded by what it will walk rather
+        // than by a reading of the text.
+        if element_depth_exceeds(root, MAX_NESTING_DEPTH) {
+            return Err(SvgError::TooDeeplyNested);
+        }
         if !root.tag_name().name().eq_ignore_ascii_case("svg") {
             return Err(SvgError::NoSvgRoot);
         }
@@ -202,12 +304,13 @@ impl SvgPipeline {
     }
 }
 
-// serialization (whitelist walk)
+// serialization (deny-list walk)
 
-/// Elements dropped entirely, subtree and all. Case-insensitive so a
-/// `<SCRIPT>` variant can't slip through. `<style>` is dropped because its CSS
-/// can pull off-host resources via `@import`/`url(…)` — the same exfil vector
-/// [`references_external`] blocks in attribute values.
+/// Elements dropped entirely, subtree and all: `<script>`, `<style>`,
+/// `<foreignObject>` (sanitization rules 1–3) and `<metadata>` (optimization).
+/// Case-insensitive so a `<SCRIPT>` variant can't slip through. `<style>` is
+/// dropped because its CSS can pull off-host resources via `@import`/`url(…)`
+/// — the same exfil vector [`references_external`] blocks in attribute values.
 fn is_dropped_element(local: &str) -> bool {
     local.eq_ignore_ascii_case("script")
         || local.eq_ignore_ascii_case("style")
@@ -216,16 +319,17 @@ fn is_dropped_element(local: &str) -> bool {
 }
 
 /// Decide whether an attribute (by lowercased emit-name and value) survives.
+/// The rule numbers are the sanitization rules in this module's docs.
 fn keep_attribute(name_low: &str, value: &str) -> bool {
-    // Rule 3: event handlers.
+    // Rule 4: event handlers.
     if name_low.starts_with("on") {
         return false;
     }
-    // Rule 4: only same-document fragment hrefs survive.
+    // Rule 5: only same-document fragment hrefs survive.
     if name_low == "href" || name_low == "xlink:href" {
         return value.trim_start().starts_with('#');
     }
-    // Rule 5: any external/script URL reference in a value.
+    // Rule 6: any external/script URL reference in a value.
     if references_external(value) {
         return false;
     }
@@ -634,9 +738,9 @@ mod tests {
 
     #[test]
     fn a_pathologically_deep_svg_is_rejected_not_a_stack_overflow() {
-        // roxmltree parses into a flat arena (no overflow parsing), but the
-        // recursive serializer would blow the stack — so `process` must reject
-        // an over-deep tree with a typed error instead of aborting the process.
+        // Both roxmltree's tokenizer and this module's serializer recurse per
+        // nesting level, so `process` must reject an over-deep tree with a
+        // typed error instead of aborting the process.
         let depth = MAX_NESTING_DEPTH + 500;
         let mut svg = String::from("<svg xmlns=\"http://www.w3.org/2000/svg\">");
         svg.push_str(&"<g>".repeat(depth));
@@ -653,5 +757,32 @@ mod tests {
         let ok =
             SvgPipeline::process("<svg xmlns=\"http://www.w3.org/2000/svg\"><g><rect/></g></svg>");
         assert!(ok.is_ok(), "a normal SVG must still process: {ok:?}");
+    }
+
+    #[test]
+    fn depth_guard_is_not_fooled_by_markup_inside_attribute_values() {
+        // `>` and `/` are legal unescaped inside an attribute value, so a
+        // depth scan that counts raw `/>` byte pairs reads every one of these
+        // elements as self-closing and stays at depth ~0 while the document
+        // nests without bound — a guard bypass straight to a stack overflow.
+        let depth = MAX_NESTING_DEPTH + 500;
+        let mut svg = String::from("<svg xmlns=\"http://www.w3.org/2000/svg\">");
+        svg.push_str(&"<g d=\"/>\">".repeat(depth));
+        svg.push_str(&"</g>".repeat(depth));
+        svg.push_str("</svg>");
+
+        let err = SvgPipeline::process(&svg).expect_err("the bypass must be rejected");
+        assert!(
+            matches!(err, SvgError::TooDeeplyNested),
+            "expected TooDeeplyNested, got {err:?}"
+        );
+
+        // The same shapes at a legal depth must still round-trip: a scan that
+        // over-counts would be just as broken, rejecting valid art. Markup
+        // inside an attribute value, a `>` in another value, and a comment
+        // full of open tags all have to leave the depth reading alone.
+        let legal = r#"<svg xmlns="http://www.w3.org/2000/svg"><g d="/>"><rect a="a>b"/></g><!-- <g><g> --></svg>"#;
+        let ok = SvgPipeline::process(legal).expect("legal nesting must still process");
+        assert!(ok.svg.contains("<rect"), "{}", ok.svg);
     }
 }

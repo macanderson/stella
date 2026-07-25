@@ -41,6 +41,9 @@ pub fn snapshot(workspace_root: &Path) -> Value {
     ) else {
         return empty;
     };
+    // The indexer writes this file while the agent works; wait out a checkpoint
+    // instead of silently rendering an empty graph (every query here fails soft).
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(5_000));
 
     // Files: id → (path, language), plus per-file symbol counts.
     let mut files: Vec<(i64, String, String)> = Vec::new();

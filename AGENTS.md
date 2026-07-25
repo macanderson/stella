@@ -74,13 +74,15 @@ script's output tells you which case you're in.
 
 **Run `make hooks` once per clone.** It installs a `pre-push` git hook
 (`core.hooksPath=.githooks`) that runs `make gate` automatically on every push
-and aborts the push if it fails. This is the gate's real enforcement point
-today: the org's GitHub Actions is **billing-locked**, so the required CI checks
-fast-fail in seconds without ever running, and with `enforce_admins` off,
-gate-failing code otherwise slips onto `main` through admin/auto merges. The
-hook catches it on the author's push instead. It is advisory (per-clone,
-bypassable with `SKIP_GATE=1 git push` or `git push --no-verify`) — not a
-server-side guarantee, which is impossible while the checks can't execute.
+and aborts the push if it fails. The point is *when* it fails: on your machine,
+in thirty seconds, instead of an hour into `ci.yml` and a review round-trip.
+It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
+`git push --no-verify`), so it complements the required server-side checks
+rather than replacing them — with `enforce_admins` off, an admin or auto-merge
+can still land gate-failing code, and the hook is what catches that on the
+author's push. When Actions is unavailable entirely (an org billing hold has
+happened before — see RELEASING.md's local-release path), it is the only gate
+running at all.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources licenses` + `cargo audit`). All four
@@ -206,7 +208,7 @@ loop, and the `/pipeline` deck toggle.
 
 ## Workspace layout — where a change goes
 
-Fourteen crates. The one-sentence rule of thumb:
+Fifteen crates. The one-sentence rule of thumb:
 
 | You want to… | Crate | Notes |
 |---|---|---|
@@ -224,6 +226,7 @@ Fourteen crates. The one-sentence rule of thumb:
 | Multimodal generation | `stella-media` | |
 | Multi-agent fan-out, worktree isolation | `stella-fleet` | |
 | The Observatory telemetry dashboard (`stella observe`) | `stella-observatory` | Loopback-only, read-only, embedded HTML. |
+| The headless engine server a host process drives over the wire | `stella-serve` | Its **own binary**, not linked into `stella-cli`. Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/design/serve-surface.md`](docs/design/serve-surface.md). |
 | Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it directly via git as `contextgraph-types`/`contextgraph-host` at a pinned rev. Stays dependency-light by contract. |
 
 **Status — what ships.** The live runtime path is
@@ -233,7 +236,9 @@ Fourteen crates. The one-sentence rule of thumb:
 `stella-tui` (the Command Deck, the default interactive shell on a TTY), and
 `stella-media` (image generation via the `generate_image` tool). The fuller
 `stella-graph` retrieval + context plane (`stella init` builds the code-graph
-index; recall fans out through the CGP host) is also wired.
+index; recall fans out through the CGP host) is also wired. `stella-serve` is
+the exception: it builds its own binary and nothing in `stella-cli` links it,
+so a change there never reaches a `stella` user.
 
 ---
 
@@ -321,6 +326,43 @@ ci(release): sign macOS binaries
 ```
 
 Commits must be **DCO-signed** (`git commit -s`). One logical change per PR.
+
+### Closing the issue on merge
+
+Referencing an issue as `(#367)` in the **PR title** does not close it. GitHub
+never parses the title for closing keywords — only the PR *description* and
+*commit messages*. This repo accumulated a backlog of already-shipped issues
+that stayed open for exactly that reason, so treat it as a hard rule:
+
+> Put `Closes #N` in the PR description **and** as a trailer on a commit.
+
+Both are required because the two merge paths read different text:
+
+- **Squash** (the default here) composes the commit body from
+  `COMMIT_MESSAGES`, *not* the PR body — so a `Closes #N` that exists only in
+  the description never reaches the commit.
+- **Rebase** (also enabled) replays your commits verbatim; the PR body is
+  likewise never turned into a commit message.
+
+The PR description's link closes the issue through GitHub's linked-issue
+mechanism, and the commit trailer closes it through commit-message parsing on
+the default branch. Belt and braces — either one alone is a silent single point
+of failure, and the failure mode is invisible until someone audits the backlog.
+
+```text
+fix(stella-core): stop the step loop spinning on a wedged tool
+
+The dispatch timeout never armed for tools that block before their first
+poll, so a headless run could hang forever.
+
+Closes #367
+Signed-off-by: Ada Lovelace <ada@example.com>
+```
+
+Use `Closes` for bugs and completed features, `Refs #N` when a PR advances an
+issue without finishing it — `Refs` deliberately does not close. One issue may
+be closed by exactly one PR; if a fix spans several, close on the last and
+`Refs` the rest.
 
 ---
 

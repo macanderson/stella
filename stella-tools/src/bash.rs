@@ -234,6 +234,12 @@ impl Tool for Bash {
         cmd.args(args);
         cmd.current_dir(root);
         crate::subprocess_env::scrub_sensitive_env(&mut cmd);
+        // No stdin. An inherited stdin is the TUI's terminal: a command that
+        // reads it (`cat`, an interactive prompt, a confirmation `read`)
+        // silently steals the user's keystrokes and then blocks until the
+        // timeout. `/dev/null` makes the read an immediate EOF, which is
+        // what every non-interactive runner already expects.
+        cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         // New process group so we can kill the whole tree on timeout.

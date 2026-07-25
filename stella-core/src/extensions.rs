@@ -52,7 +52,7 @@
 //! actions, and the `*_from_file` parsers operate on already-read content,
 //! unit-tested below without touching a filesystem.
 
-use crate::rules::parse_frontmatter;
+use crate::rules::{Frontmatter, parse_frontmatter};
 
 // Kinds
 
@@ -173,15 +173,19 @@ fn fallback_description(body: &str) -> String {
     format!("{}…", truncated.trim_end())
 }
 
-/// Parse one definition file into `(name, description, body)` — the shape
-/// both [`command_from_file`] and [`agent_from_file`] share. `nested_file`
-/// names the per-directory layout file (`COMMAND.md`/`AGENT.md`) accepted
-/// alongside flat `<slug>.md`.
+/// Parse one definition file into `(frontmatter, name, description, body)` —
+/// the shape both [`command_from_file`] and [`agent_from_file`] share.
+/// `nested_file` names the per-directory layout file (`COMMAND.md`/`AGENT.md`)
+/// accepted alongside flat `<slug>.md`.
+///
+/// The parsed [`Frontmatter`] rides along so a caller needing a kind-specific
+/// field (an agent's `tools:`) reads it out of this parse instead of parsing
+/// the same file a second time.
 fn definition_from_file(
     path: &str,
     raw: &str,
     nested_file: &str,
-) -> Result<(String, String, String), ExtensionDiagnostic> {
+) -> Result<(Frontmatter, String, String, String), ExtensionDiagnostic> {
     let fm = parse_frontmatter(raw);
     let diag = |problem| ExtensionDiagnostic {
         path: path.to_string(),
@@ -210,14 +214,14 @@ fn definition_from_file(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| fallback_description(&body));
 
-    Ok((name, description, body))
+    Ok((fm, name, description, body))
 }
 
 /// Parse one command file. Tolerant like the skills loader: `description:`
 /// is optional (many ecosystem command files carry only a body), falling
 /// back to the body's first line.
 pub fn command_from_file(path: &str, raw: &str) -> Result<CommandDef, ExtensionDiagnostic> {
-    let (name, description, body) = definition_from_file(path, raw, "COMMAND.md")?;
+    let (_fm, name, description, body) = definition_from_file(path, raw, "COMMAND.md")?;
     Ok(CommandDef {
         name,
         description,
@@ -260,8 +264,8 @@ pub fn parse_toolbelt(value: Option<&str>) -> Option<Vec<String>> {
 
 /// Parse one agent file.
 pub fn agent_from_file(path: &str, raw: &str) -> Result<AgentDef, ExtensionDiagnostic> {
-    let (name, description, body) = definition_from_file(path, raw, "AGENT.md")?;
-    let tools = parse_toolbelt(parse_frontmatter(raw).data.get("tools").map(String::as_str));
+    let (fm, name, description, body) = definition_from_file(path, raw, "AGENT.md")?;
+    let tools = parse_toolbelt(fm.data.get("tools").map(String::as_str));
     Ok(AgentDef {
         name,
         description,

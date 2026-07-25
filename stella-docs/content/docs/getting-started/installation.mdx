@@ -36,9 +36,13 @@ that directory to your `PATH`. Two env vars tune the script: `STELLA_INSTALL_DIR
 overrides the destination, `STELLA_VERSION` pins a specific release tag:
 
 ```bash
-STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.4.35 \
+STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.5.0 \
   sh -c "$(curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh)"
 ```
+
+Pick the tag from the
+[releases page](https://github.com/macanderson/stella/releases) — with or
+without the leading `v`, both forms work.
 
 ### Homebrew
 
@@ -71,8 +75,9 @@ cargo build --release
 
 <Callout type="info">
   The `curl | sh` and Homebrew paths fetch binaries published by the release workflow,
-  which runs on `v*` tags. Until the first tagged release is cut, use the cargo or
-  from-source path.
+  which runs on every `v*` tag. They cover macOS and glibc Linux on `x86_64`/`arm64`;
+  anything else (musl Linux included) falls back to `cargo install`, which needs the
+  Rust toolchain.
 </Callout>
 
 ## Verify

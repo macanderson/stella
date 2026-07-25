@@ -22,12 +22,17 @@ use sha2::{Digest, Sha256};
 
 /// Hex-encoded SHA-256 of raw bytes — the manifest entry format.
 pub fn hex_sha256(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     let digest = hasher.finalize();
     let mut out = String::with_capacity(64);
     for b in digest {
-        out.push_str(&format!("{b:02x}"));
+        // `write!` into the pre-sized buffer: this runs once per file on
+        // every freshness check and once per `read_file`, and the obvious
+        // `push_str(&format!(…))` allocates a String per BYTE of digest.
+        let _ = write!(out, "{b:02x}");
     }
     out
 }

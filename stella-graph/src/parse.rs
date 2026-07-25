@@ -1,10 +1,10 @@
 //! Tree-sitter parsing: turn a source file into [`Symbol`]s and raw
-//! [`ImportSpec`]s. Pure and synchronous (logic is
-//! sync, easy to test); the indexer ([`crate::store`]) is the only thing that
-//! touches I/O around it.
+//! [`ImportSpec`]s. Pure and synchronous (extraction logic stays sync, which
+//! keeps it easy to test); the indexer ([`crate::store`]) is the only thing
+//! that touches I/O around it.
 //!
-//! **Skip-with-record, never abort** (task quality bar,
-//! L-L1): [`parse_file`] returns `None` when a grammar cannot be armed or the
+//! **Skip-with-record, never abort** (L-L1): [`parse_file`] returns `None`
+//! when a grammar cannot be armed or the
 //! source cannot be parsed at all, and the indexer records that as a parse
 //! failure and moves on. Tree-sitter is error-tolerant, so a *syntactically
 //! broken* file still yields a tree with `ERROR` nodes from which whatever
@@ -25,7 +25,7 @@ use crate::symbol::{Symbol, SymbolKind};
 /// behind the [`crate::graph::CodeGraph`] handle and is reused by the
 /// background watcher). Compiling the queries here — not per file — keeps
 /// re-indexing cheap while still sourcing them from compile-time data
-/// ( L-L2).
+/// (L-L2).
 pub(crate) struct Grammars {
     rust: LangPack,
     python: LangPack,
@@ -385,8 +385,12 @@ fn py_module_name(node: Node, src: &[u8]) -> Option<String> {
 }
 
 /// Detect Diesel `table!` macro invocations and extract them as Table symbols.
-/// The macro looks like: `diesel::table! { users (id) { ... } }` or `table! { ... }`.
-/// We extract the first identifier inside the token_tree as the table name.
+/// The macro looks like: `diesel::table! { users (id) { ... } }` or
+/// `table! { ... }`. Every *direct* identifier child of the macro's token
+/// tree is a table name — one for the single-table form, several for the
+/// multi-table form Diesel also accepts. Identifiers nested deeper (the
+/// column list, the primary-key group) sit inside their own token trees and
+/// are therefore never mistaken for tables.
 fn extract_rust_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
     let mut out = Vec::new();
 

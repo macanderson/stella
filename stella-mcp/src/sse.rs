@@ -9,7 +9,11 @@
 //! `push`/`poll` shape, tested against the same chunk-boundary pathologies.
 
 // (The copy tracks stella-model's decoder shape, including its
-// `push_bytes` UTF-8 chunk-boundary handling — see that crate's sse.rs.)
+// `push_bytes` UTF-8 chunk-boundary handling — see that crate's sse.rs. It
+// deliberately adds one thing that copy does not need: a hard cap on the
+// unterminated-event buffer. stella-model streams from a model provider the
+// operator chose; this one streams from an arbitrary MCP server, so an
+// endless `data:` line has to be an error rather than an allocation.)
 
 /// One parsed SSE event: the newline-joined concatenation of its `data:`
 /// lines (per the SSE spec), plus the `event:` name if present.
@@ -19,20 +23,39 @@ pub struct SseEvent {
     pub data: String,
 }
 
-/// The stream contained bytes that are not merely an incomplete trailing
-/// UTF-8 sequence (which the decoder buffers) but an actually invalid one.
-/// Terminal — a genuinely malformed body will not become valid by waiting
-/// for more bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidUtf8;
+/// The largest amount of text the decoder will hold while waiting for an
+/// event terminator. An MCP server is untrusted input: one that streams
+/// `data:` bytes and never sends the blank line would otherwise grow `buf`
+/// until the process is killed, since the only other bound on the body is the
+/// per-call wall-clock timeout (which a fast sender laughs at). 8 MiB is far
+/// past any plausible single JSON-RPC message and still cheap to hold.
+const MAX_BUFFERED_BYTES: usize = 8 * 1024 * 1024;
 
-impl std::fmt::Display for InvalidUtf8 {
+/// A terminal decoding failure. Both variants are fatal for the stream: more
+/// bytes cannot repair either one, so the transport drops the connection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SseError {
+    /// The stream contained bytes that are not merely an incomplete trailing
+    /// UTF-8 sequence (which the decoder buffers) but an actually invalid one.
+    InvalidUtf8,
+    /// A single event exceeded [`MAX_BUFFERED_BYTES`] without terminating —
+    /// a runaway or hostile server, not a legitimate large response.
+    EventTooLarge,
+}
+
+impl std::fmt::Display for SseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SSE stream contained invalid UTF-8")
+        match self {
+            SseError::InvalidUtf8 => f.write_str("SSE stream contained invalid UTF-8"),
+            SseError::EventTooLarge => write!(
+                f,
+                "SSE event exceeded {MAX_BUFFERED_BYTES} bytes without a terminating blank line"
+            ),
+        }
     }
 }
 
-impl std::error::Error for InvalidUtf8 {}
+impl std::error::Error for SseError {}
 
 /// Incremental decoder: `push_bytes` raw bytes as they arrive, `poll`
 /// complete events. Partial lines, events split across chunk boundaries, and
@@ -63,31 +86,36 @@ impl SseDecoder {
     }
 
     /// Feed a chunk of raw bytes straight off the wire. An incomplete
-    /// trailing multi-byte sequence is buffered until the next chunk; only
-    /// genuinely invalid UTF-8 is an error.
-    pub fn push_bytes(&mut self, chunk: &[u8]) -> Result<(), InvalidUtf8> {
+    /// trailing multi-byte sequence is buffered until the next chunk;
+    /// genuinely invalid UTF-8 and a never-terminating event are errors.
+    pub fn push_bytes(&mut self, chunk: &[u8]) -> Result<(), SseError> {
         self.utf8_tail.extend_from_slice(chunk);
         match std::str::from_utf8(&self.utf8_tail) {
             Ok(valid) => {
                 self.buf.push_str(valid);
                 self.utf8_tail.clear();
-                Ok(())
             }
             Err(err) => {
                 // `error_len().is_some()` ⇒ an actually invalid sequence
                 // sits at `valid_up_to`; `None` ⇒ the buffer merely ends
                 // mid-character and the rest is still to come.
                 if err.error_len().is_some() {
-                    return Err(InvalidUtf8);
+                    return Err(SseError::InvalidUtf8);
                 }
                 let valid_up_to = err.valid_up_to();
                 let valid = std::str::from_utf8(&self.utf8_tail[..valid_up_to])
                     .expect("valid_up_to marks a validated UTF-8 boundary");
                 self.buf.push_str(valid);
                 self.utf8_tail.drain(..valid_up_to);
-                Ok(())
             }
         }
+        // Checked after the append rather than before, so a single oversized
+        // chunk is caught too. `poll` drains completed events, so this only
+        // trips on an event that never terminates.
+        if self.buf.len() > MAX_BUFFERED_BYTES {
+            return Err(SseError::EventTooLarge);
+        }
+        Ok(())
     }
 
     /// Drain every complete event currently buffered. An event terminates on
@@ -202,7 +230,23 @@ mod tests {
         // 0xFF is never valid anywhere in UTF-8 — a real error, not a
         // truncation the next chunk could complete.
         let mut decoder = SseDecoder::new();
-        assert_eq!(decoder.push_bytes(&[0xFF]), Err(InvalidUtf8));
+        assert_eq!(decoder.push_bytes(&[0xFF]), Err(SseError::InvalidUtf8));
+    }
+
+    #[test]
+    fn push_bytes_refuses_an_event_that_never_terminates() {
+        // An untrusted server that streams `data:` forever without the blank
+        // line must not be able to grow the buffer until the process dies:
+        // the decoder gives up at the cap instead.
+        let mut decoder = SseDecoder::new();
+        let chunk = vec![b'x'; 1024 * 1024];
+        let outcome = loop {
+            if let Err(err) = decoder.push_bytes(&chunk) {
+                break err;
+            }
+            assert!(decoder.poll().is_empty(), "no event has terminated");
+        };
+        assert_eq!(outcome, SseError::EventTooLarge);
     }
 
     #[test]

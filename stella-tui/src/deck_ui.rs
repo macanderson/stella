@@ -1166,6 +1166,14 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
         .and_then(|sel| (entries > 0).then(|| sel.min(entries - 1)));
 }
 
+/// Append a paste into a single-line input, dropping newlines so a multi-line
+/// clipboard blob cannot smuggle extra "lines" into a one-line field (a search
+/// query, a credential field, a secret value). Multi-line surfaces (the agent
+/// editor, a skill body) take the raw text instead.
+fn push_single_line(buf: &mut String, text: &str) {
+    buf.extend(text.chars().filter(|&c| c != '\n' && c != '\r'));
+}
+
 /// Map one key to a [`DeckAction`]. Pure over `(key, model)`, mutating `ui`.
 ///
 /// ## Esc precedence
@@ -1193,18 +1201,10 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
 ///     auto-dispatches the next queued prompt)
 /// 11. otherwise Esc is ignored
 ///
-/// The composer's content never gates rules 8–9: the cursor always lives in
+/// The composer's content never gates rules 9–10: the cursor always lives in
 /// the global composer, so a stop must leave a typed draft untouched. A
 /// pending ask-user gate never reaches them either — it folds the agent to
-/// [`AgentStatus::WaitingInput`], which fails rule 9's `Running` check.
-/// Append a paste into a single-line input, dropping newlines so a multi-line
-/// clipboard blob cannot smuggle extra "lines" into a one-line field (a search
-/// query, a credential field, a secret value). Multi-line surfaces (the agent
-/// editor, a skill body) take the raw text instead.
-fn push_single_line(buf: &mut String, text: &str) {
-    buf.extend(text.chars().filter(|&c| c != '\n' && c != '\r'));
-}
-
+/// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
@@ -1469,7 +1469,7 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
         return action;
     }
 
-    // …then the turn-interrupt Esc (rules 8–9 of the precedence list): it
+    // …then the turn-interrupt Esc (rules 9–10 of the precedence list): it
     // fires only once every other Esc context has declined the key. The
     // composer never claims Esc, so a typed draft survives both forms.
     if is_esc {
@@ -1507,7 +1507,6 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
 /// terminal, so a plain "any key closes" dismiss would make it unreadable.
 fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let (total, height) = (ui.metrics.help_total, ui.metrics.help_height);
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         // Close the overlay.
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
@@ -1540,9 +1539,9 @@ fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             DeckAction::Handled
         }
         // Ctrl-C is handled by the caller (quit precedes every modal context).
-        // Any other key is swallowed so the overlay stays open and stable —
-        // typing into the composer behind it would be invisible and confusing.
-        _ if ctrl => DeckAction::Handled,
+        // Any other key — modified or not — is swallowed so the overlay stays
+        // open and stable; typing into the composer behind it would be
+        // invisible and confusing.
         _ => DeckAction::Handled,
     }
 }
@@ -3742,32 +3741,10 @@ fn handle_composer_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
         }
         EnterAction::NotEnter => {}
     }
+    // Every `KeyCode::Enter` was classified above (`classify_enter` only
+    // answers `NotEnter` for a non-Enter code), so what remains here is
+    // typing: printable characters and Backspace.
     match key.code {
-        KeyCode::Enter => match ui.composer.take_submission().map(|s| s.text) {
-            // A `!`-prefixed line is a shell command: it executes IMMEDIATELY,
-            // bypassing the prompt queue and any busy agent entirely.
-            Some(text) if text.trim_start().starts_with('!') => {
-                // Strip only the single leading `!` dispatch marker — not
-                // every leading `!` — so a command whose own text starts
-                // with `!` (e.g. `!!foo`, meant as the shell command `!foo`)
-                // is not rewritten into something else.
-                let leading = text.trim_start();
-                let cmd = leading
-                    .strip_prefix('!')
-                    .unwrap_or(leading)
-                    .trim()
-                    .to_string();
-                if cmd.is_empty() {
-                    DeckAction::Ignored
-                } else {
-                    DeckAction::Shell(cmd)
-                }
-            }
-            // Any other prompt ALWAYS enqueues — never blocks on a busy
-            // agent. After a double-Esc hold it enqueues at the FRONT.
-            Some(text) => submit_prompt(ui, text),
-            None => DeckAction::Ignored,
-        },
         KeyCode::Backspace => {
             ui.composer.backspace();
             ui.slash_selected = 0;

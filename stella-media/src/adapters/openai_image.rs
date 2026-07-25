@@ -97,6 +97,9 @@ impl MediaProvider for OpenAiImageProvider {
             model: &self.model,
             prompt: &req.prompt,
             size: req.size.to_string(),
+            // Pinned to one candidate, not `req.n`: the cost below is priced
+            // for a single image, and the spend gate approved that number.
+            // Forwarding `n` without repricing would bill n× an approved 1×.
             n: 1,
         };
         let response = self

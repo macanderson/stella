@@ -1,7 +1,14 @@
 # Context Pull Requests — Feature Specification
 
-**Status:** Proposed
-**Owner:** Stella Platform
+> **Superseded — the canonical Context PR specification is
+> [`docs/context-pr.md`](../context-pr.md)**, which consolidates this draft and
+> wins wherever the two disagree. This document is kept because the ADRs under
+> [`../adr/`](../adr/README.md) cite it by line as the source of vocabulary they
+> ratified or rejected (0007 on enforcement levels, 0008 on the `.yaml` rule
+> surface, 0009 on the enum freeze) — do not implement from it.
+
+**Status:** Superseded draft — see `docs/context-pr.md`  
+**Owner:** Stella Platform  
 **Primary principle:** Git is the authoritative, human-governed policy ledger. The context graph is a derived runtime index.
 
 ## 1. Problem
