@@ -29,20 +29,20 @@ immediately and reaches no other crate at all.
 
 | Path | What it holds |
 |---|---|
-| [`src/main.rs`](src/main.rs), [`src/main_tests.rs`](src/main_tests.rs) | The whole clap surface (`Cli`, `GlobalArgs`, `Command` and its nested subcommand enums) and the two-phase `run()` dispatch — open it to add a command or a global flag — plus the argument-surface fence that guards it. |
-| [`src/agent.rs`](src/agent.rs) + [`src/agent/`](src/agent) | Agent wiring: `run_one_shot` / `run_interactive` / `run_init`, and the submodules for engine tuning (`engine.rs`), judged rounds (`goal.rs`), the session code-graph (`graph.rs`), pipeline-status projection (`outcome.rs`), headless output (`output.rs`), event persistence (`persistence.rs`), prompt assembly (`prompt.rs`), registry/port construction (`tools.rs`). |
-| [`src/config.rs`](src/config.rs), [`src/settings.rs`](src/settings.rs) + [`src/settings/`](src/settings), [`src/engine_config.rs`](src/engine_config.rs), [`src/settings_check.rs`](src/settings_check.rs) | Which provider/model/key this invocation runs on; the three-scope `settings.json` merge behind it (`merge.rs`, `managed.rs`, `authority.rs`, `private.rs`, `context.rs`, `context_providers.rs`); `agent_engine_config` → per-agent resolution; and the launch-time slug validation that turns a typo into a startup warning instead of a provider `400`. |
+| [`src/main.rs`](src/main.rs), [`src/main_tests.rs`](src/main_tests.rs) | The whole clap surface (`Cli`, `GlobalArgs`, `Command` and its nested subcommand enums) and the two-phase `run()` dispatch — open it to add a command or a global flag — plus the argument-surface fence guarding it. |
+| [`src/agent.rs`](src/agent.rs) + [`src/agent/`](src/agent) | Agent wiring: `run_one_shot` / `run_interactive` / `run_init`, and submodules for engine tuning (`engine.rs`), judged rounds (`goal.rs`), the session code-graph (`graph.rs`), pipeline-status projection (`outcome.rs`), headless output (`output.rs`), event persistence (`persistence.rs`), prompt assembly (`prompt.rs`), registry/port construction (`tools.rs`). |
+| [`src/config.rs`](src/config.rs), [`src/settings.rs`](src/settings.rs) + [`src/settings/`](src/settings), [`src/engine_config.rs`](src/engine_config.rs), [`src/settings_check.rs`](src/settings_check.rs) | Which provider/model/key this invocation runs on; the three-scope `settings.json` merge behind it; `agent_engine_config` → per-agent resolution; and the launch-time slug validation that turns a typo into a startup warning instead of a provider `400`. |
 | [`src/env_files.rs`](src/env_files.rs) | Project-scoped `.env` loading with shell-wins precedence and the execution-hijack refusal list. |
 | [`src/memory.rs`](src/memory.rs) + [`src/memory/`](src/memory), [`src/contextgraph.rs`](src/contextgraph.rs) | `SessionMemory` (per-turn recall, post-turn reflection, skill auto-promotion, CGP→pipeline projection) and the session's `contextgraph-host`, which serves the in-tree workspace-memory and code-graph sources as real CGP providers. |
-| [`src/rules.rs`](src/rules.rs), [`src/domains.rs`](src/domains.rs), [`src/discovery.rs`](src/discovery.rs) | Workspace-rule wiring (Tier-2 guards armed at the tool boundary), `stella init`'s domain inference, and the `tool_search`/`skill_search`/`mcp_search` discovery tools. |
+| [`src/rules.rs`](src/rules.rs), [`src/domains.rs`](src/domains.rs), [`src/discovery.rs`](src/discovery.rs) | Workspace-rule wiring (Tier-2 guards armed at the tool boundary), `stella init`'s domain inference, and the `tool_search`/`skill_search`/`mcp_search` tools. |
 | [`src/command_deck.rs`](src/command_deck.rs) + [`src/command_deck/`](src/command_deck), [`src/subsession.rs`](src/subsession.rs), [`src/session_persist.rs`](src/session_persist.rs), [`src/claims.rs`](src/claims.rs), [`src/cache_insight.rs`](src/cache_insight.rs) | The deck driver: bridges engine `AgentEvent`s into `stella-tui`'s `Inbound` fold, runs per-prompt sub-sessions, tees every fold-relevant envelope to the resume journal, and coordinates concurrent writers by claim-on-first-write. |
 | [`src/tui.rs`](src/tui.rs), [`src/interactive.rs`](src/interactive.rs), [`src/init_fx.rs`](src/init_fx.rs) | The non-deck surfaces: `render_event`'s plain streaming renderer, `ask_user`'s TTY implementation, and the `stella init` animation. |
 | [`src/auth_cmd.rs`](src/auth_cmd.rs), [`src/connect_cmd.rs`](src/connect_cmd.rs), [`src/mcp_cmd.rs`](src/mcp_cmd.rs), [`src/memory_cmd.rs`](src/memory_cmd.rs), [`src/usage_cmd.rs`](src/usage_cmd.rs), [`src/fleet_cmd.rs`](src/fleet_cmd.rs), [`src/inspect.rs`](src/inspect.rs), [`src/stats.rs`](src/stats.rs), [`src/export.rs`](src/export.rs) | One module per command family. Everything but `fleet_cmd` runs without a resolved provider. |
-| [`src/model_catalog.rs`](src/model_catalog.rs), [`src/credential_handoff.rs`](src/credential_handoff.rs), [`src/credential_status.rs`](src/credential_status.rs), [`src/enterprise_telemetry.rs`](src/enterprise_telemetry.rs) | The only place that knows both models.dev's provider ids and stella's (`bootstrap()` installs the catalog slug validation and pricing resolve against); launcher FD key handoff; the shared "where did this key come from" verdict for `models`/`config`/`auth list`; and the managed-only operational spool. |
+| [`src/model_catalog.rs`](src/model_catalog.rs), [`src/credential_handoff.rs`](src/credential_handoff.rs), [`src/credential_status.rs`](src/credential_status.rs), [`src/enterprise_telemetry.rs`](src/enterprise_telemetry.rs) | The only place that knows both models.dev's provider ids and stella's (`bootstrap()` installs the catalog slug validation and pricing resolve against); launcher FD key handoff; the shared "where did this key come from" verdict for `models`/`config`/`auth list`; the managed-only operational spool. |
 | [`src/arena.rs`](src/arena.rs), [`src/candidate_ws.rs`](src/candidate_ws.rs) | The arena-bench adapter (`--task-dir/--journal/--state-dir/--resume`) and best-of-N candidate isolation over detached git worktrees. |
 | [`src/skill_manager.rs`](src/skill_manager.rs), [`src/agents_installed.rs`](src/agents_installed.rs), [`src/extensions.rs`](src/extensions.rs) | Disk I/O for the deck's SKILLS and INSTALLED AGENTS panes, and the `.claude/`/`.agents/` adoption sync. |
-| [`src/attachments.rs`](src/attachments.rs), [`src/accounted_call.rs`](src/accounted_call.rs), [`src/runtime.rs`](src/runtime.rs), [`src/signals.rs`](src/signals.rs) | Prompt-text → multimodal attachments, cost accounting for paid calls outside a turn, the production time ports, and SIGINT/SIGTERM handling. |
-| [`build.rs`](build.rs), [`tests/inspect_cli.rs`](tests/inspect_cli.rs), [`tests/fixtures/`](tests/fixtures) | `STELLA_BUILD_VERSION` (package version, or `<version>-dev.<sha>` when `STELLA_BUILD_GIT_SHA` is set), and the only integration test — it spawns the real `stella` binary against a real store. Fixtures are also `include_str!`'d by `settings/context.rs` and `rules.rs`. |
+| [`src/attachments.rs`](src/attachments.rs), [`src/accounted_call.rs`](src/accounted_call.rs), [`src/runtime.rs`](src/runtime.rs), [`src/signals.rs`](src/signals.rs) | Prompt-text → multimodal attachments, cost accounting for paid calls outside a turn, the production time ports, SIGINT/SIGTERM handling. |
+| [`build.rs`](build.rs), [`tests/inspect_cli.rs`](tests/inspect_cli.rs), [`tests/fixtures/`](tests/fixtures) | `STELLA_BUILD_VERSION` (package version, or `<version>-dev.<sha>` when `STELLA_BUILD_GIT_SHA` is set) and the only integration test. Fixtures are also `include_str!`'d by `settings/context.rs` and `rules.rs`. |
 
 ## Key concepts
 
@@ -192,19 +192,17 @@ server; env-mutating tests must take `crate::test_env::lock()`.
 
 ## Extending it
 
-**Add a subcommand:**
+**A subcommand:** add the variant to `Command` in [`src/main.rs`](src/main.rs)
+(plus a nested `Subcommand` enum if it has sub-verbs — follow `McpCmd`/`AuthCmd`);
+put the implementation in its own `*_cmd.rs` module and `mod` it in `main.rs`;
+wire the arm into the **first** match in `run()` *and* the
+`unreachable!("handled before provider resolution")` list in the second if it
+needs no provider, or the second match alone if it does. Then
+`cargo test -p stella-cli` — `clap_command_is_internally_consistent` and the
+global-flag invariants run against the real `Command` tree — and document it
+under [`../website/content/docs/commands/`](../website/content/docs/commands).
 
-1. Add the variant to `Command` in [`src/main.rs`](src/main.rs) (plus a nested
-   `Subcommand` enum if it has sub-verbs — follow `McpCmd`/`AuthCmd`).
-2. Put the implementation in its own `*_cmd.rs` module and `mod` it in `main.rs`.
-3. Wire the arm: if it needs no provider, the **first** match in `run()` *and* the
-   `unreachable!("handled before provider resolution")` list in the second; if it
-   needs one, the second match only.
-4. `cargo test -p stella-cli` — `clap_command_is_internally_consistent` and the
-   global-flag invariants run against the real `Command` tree — then document it
-   under [`../website/content/docs/commands/`](../website/content/docs/commands).
-
-**Add a `settings.json` field:** add it to the type in
+**A `settings.json` field:** add it to the type in
 [`src/settings.rs`](src/settings.rs), then extend `overlay_scope` in
 [`src/settings/merge.rs`](src/settings/merge.rs) with its merge rule (per field,
 per entry, or whole-block — decide deliberately). If it can route credentials,
