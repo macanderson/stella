@@ -3988,6 +3988,7 @@ async fn run_lead_pipeline_turn(
             registry_options.clone(),
             active_rules.clone(),
             mcp,
+            Some(stella_core::EventSender::new(tx.clone())),
         )?;
         let no_recall = NoContextRecall;
         let recall: &dyn ContextRecallPort = match memory {

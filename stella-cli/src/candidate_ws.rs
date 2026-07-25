@@ -253,6 +253,11 @@ pub(crate) struct GitCandidateWorkspaces {
     /// phased tool surface" section). `None` when the session has no MCP
     /// servers connected, or hasn't opted any into `with_candidate_mcp`.
     candidate_mcp: Option<Arc<stella_mcp::McpToolSet>>,
+    /// The turn's event sink, used to bridge each candidate registry's
+    /// policy plane into the journal (#441). `None` leaves a candidate's
+    /// rule denials evaluating and blocking exactly as before — they simply
+    /// never land as typed `PolicyDecision` events.
+    events: Option<stella_core::EventSender>,
 }
 
 impl GitCandidateWorkspaces {
@@ -268,7 +273,18 @@ impl GitCandidateWorkspaces {
             custom_tools,
             active_rules,
             candidate_mcp: None,
+            events: None,
         }
+    }
+
+    /// Journal the policy decisions made inside every candidate this port
+    /// creates. Best-of-N candidates are the primary *actual* users of the
+    /// rule-guard bus, so without this the typed `PolicyDecision` record of
+    /// a denial exists for the session but not for the candidates where
+    /// most denials actually happen.
+    pub(crate) fn with_events(mut self, events: stella_core::EventSender) -> Self {
+        self.events = Some(events);
+        self
     }
 
     /// Share the session's connected MCP servers into every candidate this
@@ -327,6 +343,13 @@ impl GitCandidateWorkspaces {
                 // a plain `ToolRegistry`, before it moves into the `Arc`.
                 crate::agent::populate_schema_index(&registry, &ws_root).map_err(snap)?;
                 crate::rules::attach_rule_guards(&registry, &self.active_rules);
+                // `attach_rule_guards` is what gives this registry a live
+                // HookBus, so the bridge must follow it — and both must
+                // happen while `registry` is still a concrete `ToolRegistry`,
+                // before the `Arc<dyn ToolExecutor>` coercion below erases it.
+                if let Some(events) = &self.events {
+                    registry.bridge_policy_plane(events.clone());
+                }
                 // The candidate's tool surface: the snapshot-rooted registry
                 // plus the session's custom script tools, owned as one value
                 // (the workspace outlives every borrow). Custom tools re-root

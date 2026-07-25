@@ -70,6 +70,7 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use futures_util::StreamExt;
 use stella_protocol::{
@@ -130,6 +131,29 @@ pub struct EngineConfig {
     /// and suspenders, never the *primary* stuck-loop defense (that's
     /// `crate::loop_detect`).
     pub max_steps: usize,
+    /// Hard backstop on how long one tool dispatch may run, independent of
+    /// each tool's own bound — the same belt-and-suspenders philosophy as
+    /// [`Self::max_steps`], and never the *primary* mechanism.
+    ///
+    /// Per-tool bounds are the real defense (bash clamps its own timeout,
+    /// scripts cap out, MCP bounds each call), but each is that tool's own
+    /// responsibility. A tool that misses its bound — a future native tool,
+    /// an MCP server that overrides its timeout upward, a wedged blocking
+    /// read — would otherwise park the step forever: loop detection, budget
+    /// checks and soft-stop all fire at *step boundaries*, so a headless
+    /// `stella run` hangs indefinitely with no way out but a hard cancel.
+    ///
+    /// When the ceiling trips, the call resolves to a `ToolOutput::Error`
+    /// the model can react to, turning "hung forever" into one failed call
+    /// the loop routes around. Deliberately generous (15 minutes) so it
+    /// never pre-empts a legitimately slow tool. `None` disables the
+    /// backstop entirely, restoring the unbounded await.
+    ///
+    /// Note this is the one place the engine may interrupt a tool in
+    /// flight; the budget-abort invariant (clean aborts at step boundaries,
+    /// never mid-tool) is unaffected, because a trip is surfaced as a tool
+    /// *result*, not as a turn abort.
+    pub tool_timeout: Option<Duration>,
     /// Working directory reported to lifecycle hooks (`crate::hooks`) as the
     /// `cwd` of every [`HookPayload`]. Kept here — rather than sniffed via
     /// `std::env::current_dir()` inside the engine — so `stella-core`
@@ -166,6 +190,7 @@ impl Default for EngineConfig {
             summarize_overflow: true,
             summarize_keep_recent: 8,
             max_steps: 200,
+            tool_timeout: Some(Duration::from_secs(15 * 60)),
             cwd: ".".to_string(),
             turn_instance: 0,
         }
@@ -1600,7 +1625,43 @@ impl<'a> Engine<'a> {
     /// stream as one non-fatal `Error` per call. `None` on the speculative
     /// path: speculation emits no events until harvest, and a failed
     /// attempt's hook noise must not reach the wire with it.
+    ///
+    /// The whole dispatch — hooks included — runs under
+    /// [`EngineConfig::tool_timeout`], the engine-level backstop for a tool
+    /// that blows past its own bound. On a trip the in-flight future is
+    /// dropped (so a `PostToolUse` hook does not fire, exactly as for a
+    /// tool that never returned) and the model sees a `ToolOutput::Error`
+    /// instead of the step parking forever. Dropping cancels at the next
+    /// await point: a tool already blocked inside `spawn_blocking` keeps
+    /// its thread until the process exits — the engine is unwedged, the
+    /// thread is not.
     async fn execute_with_repair(
+        &self,
+        call: &ToolCall,
+        events: Option<&EventSender>,
+    ) -> ToolOutput {
+        let Some(limit) = self.config.tool_timeout else {
+            return self.dispatch_tool_call(call, events).await;
+        };
+        match tokio::time::timeout(limit, self.dispatch_tool_call(call, events)).await {
+            Ok(output) => output,
+            Err(_) => ToolOutput::Error {
+                message: format!(
+                    "tool `{}` exceeded the engine's {}s dispatch ceiling and was abandoned \
+                     before it returned — it produced no result, and any work it had already \
+                     done outside this process may or may not have landed. This backstop fires \
+                     only when a tool overruns its own timeout, so an identical retry will \
+                     likely hang the same way: narrow the input, or reach the goal another way.",
+                    call.name,
+                    limit.as_secs()
+                ),
+            },
+        }
+    }
+
+    /// One tool dispatch, unbounded — the body [`Self::execute_with_repair`]
+    /// wraps in the timeout backstop.
+    async fn dispatch_tool_call(
         &self,
         call: &ToolCall,
         events: Option<&EventSender>,

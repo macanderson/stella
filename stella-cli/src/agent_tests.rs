@@ -869,6 +869,7 @@ async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
         stella_tools::RegistryOptions::default(),
         parent_rules.clone(),
         None,
+        None,
     )
     .unwrap();
     let candidate = ws_ports.candidate_workspaces.create().await.unwrap();
@@ -893,6 +894,87 @@ async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
         "prohibited candidate edit was adoptable: {adopted:?}"
     );
     assert!(!landed, "prohibited candidate edit reached the parent tree");
+}
+
+/// Witness for #441: a rule denial *inside a best-of-N candidate* must
+/// reach the journal as a typed `PolicyDecision`, not just as a tool error.
+/// Candidate workspaces are the primary real users of the rule-guard bus,
+/// so before this the typed record existed for the session and was missing
+/// exactly where most denials happen.
+#[tokio::test]
+async fn a_candidate_rule_denial_reaches_the_journal_as_a_policy_decision() {
+    let root = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@t.t"]);
+    git(&["config", "user.name", "t"]);
+    std::fs::write(root.path().join("base.txt"), "base\n").unwrap();
+    git(&["add", "base.txt"]);
+    git(&["commit", "-q", "-m", "base"]);
+
+    let rule_path = root.path().join(".stella/rules/protect-session.md");
+    std::fs::create_dir_all(rule_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &rule_path,
+        "---\nguard-tool: Write\nguard-deny-path: protected/**\n---\nSession guard.",
+    )
+    .unwrap();
+    let mut cfg = cfg_for("zai");
+    cfg.workspace_root = root.path().to_path_buf();
+    cfg.authority.project_prompts_allowed = true;
+    let parent_rules = crate::rules::load_workspace_rules(root.path(), &cfg.authority);
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+    let ws_ports = workspace_ports(
+        root.path().to_path_buf(),
+        &cfg,
+        stella_tools::RegistryOptions::default(),
+        parent_rules.clone(),
+        None,
+        Some(stella_core::EventSender::new(tx)),
+    )
+    .unwrap();
+
+    let candidate = ws_ports.candidate_workspaces.create().await.unwrap();
+    let output = candidate
+        .tools()
+        .execute(
+            "write_file",
+            &serde_json::json!({"path": "protected/candidate.txt", "content": "no\n"}),
+        )
+        .await;
+    candidate.remove().await;
+    drop(ws_ports);
+
+    assert!(
+        output.is_error(),
+        "precondition: the guard must still deny inside the candidate"
+    );
+
+    let mut decisions = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let AgentEvent::PolicyDecision { kind, subject, .. } = event {
+            decisions.push((kind, subject));
+        }
+    }
+    assert!(
+        decisions
+            .iter()
+            .any(|(kind, _)| *kind == stella_protocol::PolicyKind::Blocked),
+        "the candidate's denial never reached the journal: {decisions:?}"
+    );
 }
 
 #[test]

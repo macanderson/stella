@@ -2626,6 +2626,125 @@ fn read_tally_footer_does_not_blind_loop_detection() {
     );
 }
 
+/// A `ToolExecutor` that never returns — the wedged tool of #367. It
+/// awaits a future that can never complete, so nothing but the engine's
+/// own ceiling can end the step.
+struct WedgedTools;
+#[async_trait]
+impl ToolExecutor for WedgedTools {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "bash".into(),
+            description: "run a command".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: false,
+        }]
+    }
+    async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+        std::future::pending().await
+    }
+}
+
+/// Witness for #367: a tool that overruns its own bound must not park the
+/// turn forever. `EngineConfig::tool_timeout` is the engine-level backstop
+/// — it turns "hung forever" into one failed call the loop routes around,
+/// so the turn still reaches a clean `Completed`.
+///
+/// The clock is paused, so both timers below are virtual and the test
+/// costs no wall-clock. The outer guard is deliberately far longer than
+/// the engine's ceiling: with the backstop present the *inner* timer fires
+/// first and the turn recovers; without it (the pre-fix engine) the outer
+/// one is the only timer, and the test fails cleanly instead of hanging
+/// the suite.
+#[tokio::test(start_paused = true)]
+async fn a_wedged_tool_trips_the_dispatch_ceiling_instead_of_hanging() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(tool_call_result("call_1", "bash")),
+            Ok(text_result("recovered")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        tool_timeout: Some(Duration::from_secs(900)),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &WedgedTools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(4 * 3600),
+        engine.run_turn(&mut messages, &mut budget, &tx),
+    )
+    .await
+    .expect("the engine must bound a wedged tool itself — the turn hung past its own ceiling");
+
+    assert_eq!(
+        outcome,
+        TurnOutcome::Completed {
+            text: "recovered".into(),
+            cost_usd: 0.0002
+        },
+        "the trip is a tool *result*, not a turn abort: the loop routes around it"
+    );
+    let result = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::Tool)
+        .flat_map(|m| &m.tool_results)
+        .find(|r| r.call_id == "call_1")
+        .expect("the abandoned call must still answer the model with a result");
+    let ToolOutput::Error { message } = &result.output else {
+        panic!("a tripped ceiling is an error the model can react to: {result:?}");
+    };
+    assert!(
+        message.contains("dispatch ceiling") && message.contains("900s"),
+        "the model must be told the call was abandoned and why, not left guessing: {message}"
+    );
+}
+
+/// The backstop is opt-out: `None` restores the unbounded await, so a
+/// deployment that trusts its per-tool bounds keeps the old behavior.
+#[tokio::test(start_paused = true)]
+async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![
+            Ok(tool_call_result("call_1", "bash")),
+            Ok(text_result("unreachable")),
+        ]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        tool_timeout: None,
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &WedgedTools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(4 * 3600),
+            engine.run_turn(&mut messages, &mut budget, &tx),
+        )
+        .await
+        .is_err(),
+        "with no ceiling configured the wedged tool must still park the turn"
+    );
+}
+
 mod audit_fixes;
 mod task4;
 mod usage_completeness;
