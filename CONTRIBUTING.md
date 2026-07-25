@@ -17,7 +17,7 @@ get it merged. It's long because it's honest — but the short version is:
 - [The ground rules](#the-ground-rules)
 - [The definition of done — witness tests](#the-definition-of-done--witness-tests)
 - [Style](#style)
-- [Commits, DCO, and PRs](#commits-dco-and-prs)
+- [Commits, the CLA, and PRs](#commits-the-cla-and-prs)
 - [Issues and labels](#issues-and-labels)
 - [Security](#security)
 - [License](#license)
@@ -211,7 +211,7 @@ rendering), explain how you verified the change instead.
 - **Match the neighborhood.** Every crate has an established idiom — copy the
   patterns around you before inventing new ones.
 
-## Commits, DCO, and PRs
+## Commits, the CLA, and PRs
 
 **Commit format** — [Conventional Commits](https://www.conventionalcommits.org),
 with the crate (or surface) as scope, matching the existing history:
@@ -230,9 +230,11 @@ are needed because squash merges build the commit body from commit messages
 rather than the PR body, while the description drives GitHub's linked-issue
 close. Use `Refs #N` when a PR advances an issue without finishing it.
 
-**DCO, not CLA.** Sign every commit (`git commit -s`) to certify the
-[Developer Certificate of Origin](https://developercertificate.org/). You keep
-your copyright; no assignment, ever.
+**Sign the CLA once.** On your first PR a bot will ask you to sign the
+[Contributor License Agreement](CLA.md); it takes one comment and covers every
+PR you open afterwards. **You keep your copyright** — the CLA is a license
+grant, not an assignment. See [License](#license) below for what it grants and
+why. There is no per-commit sign-off step.
 
 **PR checklist** (the template walks you through it):
 
@@ -241,7 +243,7 @@ your copyright; no assignment, ever.
 3. A witness test, or a stated reason there isn't one.
 4. Docs updated in the same PR if behavior or flags changed (`README.md`,
    `--help` text, doc comments).
-5. Commits signed off (`-s`).
+5. CLA signed — the bot prompts you on your first PR.
 
 Maintainers aim for a first response within a few days. "Needs work" is a
 normal part of the loop here, not a rejection.
@@ -271,7 +273,7 @@ By contributing you agree to the [Contributor License Agreement](CLA.md). In
 short: **you keep your copyright**, your contribution is published under the
 AGPL, and Oxagen may also include it in commercially licensed builds. Without
 that last part a merged contribution would be AGPL-only and could never ship
-commercially — which is why the CLA replaced the old DCO-only policy.
+commercially — which is why this project uses a CLA rather than a DCO sign-off.
 
 If some clause in the CLA is a blocker for you, say so in the PR or email
 <licensing@oxagen.sh>. Better to talk about it than to lose the contribution.

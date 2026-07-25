@@ -31,7 +31,7 @@ Stella's definition of done is a test that **fails on the old code and passes on
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
 - [ ] `cargo test --workspace`
 - [ ] Docs updated where behavior/flags changed (README, `--help`, doc comments)
-- [ ] Commits signed off for DCO (`git commit -s`)
+- [ ] CLA signed (the bot prompts on your first PR — nothing to do per commit)
 - [ ] `Closes #N` appears **both** above and as a commit trailer — squash builds
       the commit body from commit messages, so the description alone won't carry it
 
