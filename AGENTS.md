@@ -106,6 +106,15 @@ regardless of how good the feature is:
    paths, tool payloads/results, reasoning, errors, git state, memories, rules,
    and local identifiers are never exportable. Update checks and anonymous
    analytics remain prohibited.
+
+   This is **enforced, not assumed** — `stella-store/src/content_free.rs` holds
+   the reviewed allowlist of hub `telemetry` columns and a sentinel harness
+   every egress encoder registers with. Adding a hub column, or a key to an
+   encoder, fails `make gate` until the allowlist is edited in the same PR, so
+   a human has to answer "is this content?". A new encoder implements
+   `ContentFreeEncoder` and joins `registered_encoders()`; an unbuilt drain
+   format is a declared gap in `DRAIN_FORMATS`, not a silent omission. A leak
+   here is a privacy incident, not a bug.
 4. **Serde-first.** Every type crossing a crate boundary round-trips through
    `serde_json` byte-for-byte. Add a round-trip test when you add a type to
    `stella-protocol`.
