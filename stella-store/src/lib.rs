@@ -91,6 +91,9 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //   cache_trend per-session cache trend — telemetry already persists these
 //               facts; this groups them by session for `stella stats`
 //   catalog     `catalog.db` — user-tier model catalog (slugs, pricing)
+//   content_free the content-free egress guard (#466): the reviewed hub-column
+//               allowlist plus the sentinel harness every egress encoder
+//               registers with
 //   journal     append-only per-session sidecar journal (crash-safe resume)
 //   notify      persist-until-read cross-session notifications
 //   sessions    cross-process session registry (one JSON file per session)
@@ -113,6 +116,7 @@ mod usage_completeness_tests;
 pub mod cache_gaps;
 pub mod cache_trend;
 pub mod catalog;
+pub mod content_free;
 pub mod drain;
 pub mod enterprise_telemetry;
 pub mod home;

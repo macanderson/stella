@@ -1,0 +1,18 @@
+{"type":"stage","name":"triage"}
+{"type":"step_usage","step":0,"role":"triage","provider":"scripted","output_text":"lookup","model":"scripted","input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"cache_write_tokens":0,"estimated_input_tokens":0,"cost_usd":0.0001,"duration_ms":0,"retries":0,"tool_calls":0,"complete":true}
+{"type":"budget_tick","spent_usd":0.0001,"limit_usd":null,"mode":"off","session_spent_usd":0.0001,"session_limit_usd":null}
+{"type":"stage","name":"context_recall"}
+{"type":"stage","name":"execute"}
+{"type":"budget_tick","spent_usd":0.0002,"limit_usd":null,"mode":"off","session_spent_usd":0.0002,"session_limit_usd":null}
+{"type":"block_registered","block_id":"blk_2496dfcf7ecfbc59286039dc","kind":"system_prefix","origin":{"turn_instance":0,"step":0},"token_cost":1,"content_digest":"sha256:518b67e652531c5fe7e25d6b2c3b4ef6224e7d90da2091967dd47eb082b26a19","content":"sys"}
+{"type":"block_registered","block_id":"blk_ae1103d1e8911d1745407182","kind":"user_goal","origin":{"turn_instance":0,"step":0},"token_cost":7,"content_digest":"sha256:8ec4c21e156039b6bb5f56475fc8f6447a999e4254b7f9a28de1cca10034eafd","content":"Explain the retry policy"}
+{"type":"step_manifest","turn_instance":0,"step":0,"role":"worker","provider":"scripted","model":"scripted","blocks":[{"block_id":"blk_2496dfcf7ecfbc59286039dc","cache_zone":"stable_prefix","token_cost":1,"resident_since_step":0,"message_index":0},{"block_id":"blk_ae1103d1e8911d1745407182","cache_zone":"volatile","token_cost":7,"resident_since_step":0,"message_index":1}],"effective_budget_tokens":150000,"calibration_factor":1.0,"estimated_input_tokens":16}
+{"type":"step_usage","step":0,"role":"worker","provider":"scripted","model":"scripted","input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"cache_write_tokens":0,"estimated_input_tokens":16,"cost_usd":0.0001,"duration_ms":0,"retries":0,"tool_calls":0,"complete":true}
+{"type":"text","delta":"done"}
+{"type":"stage","name":"verify"}
+{"type":"stage","name":"judge"}
+{"type":"step_usage","step":0,"role":"judge","provider":"scripted","output_text":"PASS looks right","model":"scripted","input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"cache_write_tokens":0,"estimated_input_tokens":0,"cost_usd":0.0001,"duration_ms":0,"retries":0,"tool_calls":0,"complete":true}
+{"type":"budget_tick","spent_usd":0.00030000000000000003,"limit_usd":null,"mode":"off","session_spent_usd":0.00030000000000000003,"session_limit_usd":null}
+{"type":"judge_verdict","passed":true,"evidence":{"summary":"PASS looks right","deterministic":false}}
+{"type":"stage","name":"complete"}
+{"type":"complete","model":"scripted/worker","cost_usd":0.00030000000000000003}

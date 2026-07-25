@@ -4,13 +4,24 @@
 //! ignoring volatile fields like durations and exact costs) so a Rust-stack
 //! trajectory can be asserted equivalent to a reference one.
 //!
-//! # Reference trajectories are a documented follow-up
+//! # Golden trajectories, and what is still missing
 //!
-//! The fixtures under `tests/fixtures/` are **synthetic** streams that exercise
-//! the invariants and the differ. *Recording real TS-engine trajectories* on
-//! fixed tasks and checking the Rust stack against them is the next step — it is
-//! deliberately not faked here. This module is the machinery those recordings
-//! will be validated with once they exist.
+//! [`golden`] adds the fixture format those comparisons are made against: a
+//! recorded stream plus a manifest naming what produced it, gated on load so a
+//! malformed or truncated recording fails loudly instead of becoming a weaker
+//! yardstick. `tests/fixtures/golden/` holds recordings made from this
+//! workspace's own pipeline — a **drift baseline**, which detects a stage that
+//! stopped being emitted or a tool that changed name, but is not independent
+//! evidence, because both sides are the same code.
+//!
+//! A **reference trajectory** — recorded from an independent engine — remains
+//! outstanding, and the blocker is not access: it is that the reference engine
+//! emits a different wire format (untyped stage labels, no tool `call_id`, a
+//! `result` terminator instead of `complete`). Recording it requires an adapter
+//! onto this protocol first. `docs/replay-golden-trajectories.md` specifies
+//! that adapter contract, and `tests/reference_conformance.rs` pins it
+//! executably. The synthetic fixtures directly under `tests/fixtures/` remain
+//! what they always were: exercises for the invariants and the differ.
 //!
 //! # Torn tails (L-T1)
 //!
@@ -20,6 +31,8 @@
 //! additive-only, so parsing is forward-tolerant by construction (serde
 //! ignores unknown fields on the structs that opt in; unknown *variants* are
 //! the one thing that can't be tolerated and surface as an interior error).
+
+pub mod golden;
 
 use stella_protocol::{AgentEvent, StageKind};
 
