@@ -86,6 +86,23 @@ struct TurnCreated<'a> {
     turn_id: &'a str,
 }
 
+/// Ceiling on a host-supplied [`TurnRequest::max_steps`].
+///
+/// The step cap is the engine's belt-and-suspenders backstop against a turn
+/// that never terminates, and the host also supplies the budget mode (which may
+/// be `Off`), so an unclamped `max_steps` lets a caller remove the last bound on
+/// a turn that already holds an OS thread. `EngineConfig::default` uses 200;
+/// 10 000 is fifty times that — far above any turn a real agentic task runs,
+/// while still terminating in bounded time.
+const MAX_SERVED_STEPS: usize = 10_000;
+
+/// Validate a host-supplied step cap: `None` when it is unusable (`0` produces
+/// a zero-iteration turn that aborts with the misleading "reached the step cap
+/// (0)"), otherwise the value clamped down to [`MAX_SERVED_STEPS`].
+fn validate_max_steps(requested: usize) -> Option<usize> {
+    (requested > 0).then(|| requested.min(MAX_SERVED_STEPS))
+}
+
 /// One registered turn. `pending` answers reverse requests (shared, always
 /// available); `session` is taken exactly once by the SSE stream.
 struct Entry {
@@ -204,7 +221,15 @@ async fn handle_create(
 
     let mut config = EngineConfig::default();
     if let Some(max_steps) = turn.max_steps {
-        config.max_steps = max_steps;
+        let Some(effective) = validate_max_steps(max_steps) else {
+            return write_json(
+                stream,
+                "400 Bad Request",
+                &error_body("max_steps must be at least 1"),
+            )
+            .await;
+        };
+        config.max_steps = effective;
     }
     let spec = SessionSpec {
         provider_id: turn.provider_id,
@@ -357,4 +382,33 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         return false;
     }
     a.iter().zip(b).fold(0_u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_steps_is_refused_rather_than_silently_accepted() {
+        // `for step in 0..0` runs no iterations and aborts with "reached the
+        // step cap (0)" — a turn that never called the model reporting the
+        // backstop that never fired.
+        assert_eq!(validate_max_steps(0), None);
+    }
+
+    #[test]
+    fn step_cap_is_clamped_to_the_ceiling() {
+        assert_eq!(validate_max_steps(1), Some(1));
+        assert_eq!(validate_max_steps(200), Some(200));
+        assert_eq!(validate_max_steps(MAX_SERVED_STEPS), Some(MAX_SERVED_STEPS));
+        assert_eq!(
+            validate_max_steps(MAX_SERVED_STEPS + 1),
+            Some(MAX_SERVED_STEPS)
+        );
+        assert_eq!(
+            validate_max_steps(usize::MAX),
+            Some(MAX_SERVED_STEPS),
+            "an unbounded step loop must not be reachable from the wire"
+        );
+    }
 }

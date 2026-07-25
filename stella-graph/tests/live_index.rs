@@ -213,6 +213,50 @@ async fn burst_applies_as_one_batch() {
     fx.graph.shutdown();
 }
 
+/// A sustained event stream — one that never lets the debounce window elapse
+/// quietly — must still let a batch apply. The drain loop restarts its
+/// `timeout(debounce, …)` on every arrival, so without a maximum batch window
+/// this storm keeps the batch open forever: `apply_changes` never runs and
+/// `batches_applied()` stays 0 for as long as the storm lasts. With the
+/// window, the batch applies once `MAX_BATCH_WINDOW` (2s) elapses from the
+/// first event, mid-storm.
+///
+/// Deterministic under `start_paused`: every injection is followed by a sleep
+/// of half the debounce, so the clock only ever auto-advances to the next
+/// injection — and tokio inhibits auto-advance while the batch's
+/// `spawn_blocking` is in flight, so the applied batch is observable before
+/// the loop moves on.
+#[tokio::test(start_paused = true)]
+async fn sustained_event_storm_still_applies_a_batch() {
+    let fx = Live::build(&[("a.rs", "pub fn alpha() {}\n")]);
+    let storm = fx.write("storm.rs", "pub fn storm_sym() {}\n");
+
+    // Half the 200ms debounce: no injection ever lets the window elapse.
+    let step = Duration::from_millis(100);
+    // 100 steps = 10s of simulated time, well past the 2s max batch window.
+    // On the pre-fix code the loop simply runs out without a batch.
+    let mut applied = 0;
+    for _ in 0..100 {
+        assert!(fx.injector.inject(&storm));
+        tokio::time::sleep(step).await;
+        applied = fx.injector.batches_applied();
+        if applied > 0 {
+            break;
+        }
+    }
+
+    assert!(
+        applied > 0,
+        "a sustained event stream must not starve the indexer: no batch applied \
+         in 10s of storm"
+    );
+    // The batch really indexed — the tick is not a bare counter bump.
+    assert!(fx.has_def("storm_sym"));
+    assert_eq!(fx.graph.file_count().unwrap(), 2);
+
+    fx.graph.shutdown();
+}
+
 #[tokio::test(start_paused = true)]
 async fn irrelevant_paths_are_filtered_at_injection() {
     let fx = Live::build(&[("a.rs", "pub fn alpha() {}\n")]);

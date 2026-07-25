@@ -37,6 +37,16 @@ use crate::walk;
 /// re-index batch.
 pub(crate) const DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Ceiling on how long one batch may keep absorbing events before it applies
+/// anyway. Without it the drain loop restarts its [`DEBOUNCE`] timeout on every
+/// arrival, so any workload emitting events faster than the debounce (a
+/// `cargo build`, a large `git checkout`, a watch-mode bundler) keeps the
+/// window open for the whole burst: no re-index lands, `pending` grows
+/// unbounded, and consumers awaiting a batch tick never see progress. A few
+/// seconds keeps the coalescing benefit while guaranteeing the index applies
+/// during a sustained storm.
+const MAX_BATCH_WINDOW: Duration = Duration::from_secs(2);
+
 /// Failsafe bound on [`WatchInjector::applied_past`]. Assertions never depend
 /// on it — it only turns a wedged pipeline into a fast test failure instead
 /// of a hang (and under a paused tokio clock it is skipped instantly).
@@ -161,8 +171,9 @@ impl WatchInjector {
 }
 
 /// Collect a burst of changed paths, then apply them in one batch and publish
-/// a [`BatchTick`]. Exits when the channel closes (watcher or injector
-/// dropped) or shutdown is requested.
+/// a [`BatchTick`]. The burst is bounded by [`MAX_BATCH_WINDOW`], so a
+/// sustained event stream coalesces without starving the indexer. Exits when
+/// the channel closes (watcher or injector dropped) or shutdown is requested.
 async fn debounce_loop(
     inner: Arc<Inner>,
     mut rx: mpsc::UnboundedReceiver<PathBuf>,
@@ -177,14 +188,22 @@ async fn debounce_loop(
         let mut pending: HashSet<PathBuf> = HashSet::new();
         pending.insert(first);
 
-        // Drain everything that arrives within the debounce window.
+        // Drain everything that arrives within the debounce window, but never
+        // past `MAX_BATCH_WINDOW` from the first event: each arrival restarts
+        // the debounce timeout, so the deadline is the only thing that ends a
+        // batch under a sustained event stream.
+        let deadline = tokio::time::Instant::now() + MAX_BATCH_WINDOW;
         loop {
-            match tokio::time::timeout(debounce, rx.recv()).await {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break; // max batch window reached — apply what we have
+            }
+            match tokio::time::timeout(debounce.min(remaining), rx.recv()).await {
                 Ok(Some(path)) => {
                     pending.insert(path);
                 }
                 Ok(None) => break, // channel closed mid-burst
-                Err(_) => break,   // window elapsed
+                Err(_) => break,   // window elapsed (debounce or deadline)
             }
         }
 

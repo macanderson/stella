@@ -45,6 +45,12 @@
 //! swapping it in trivial. Wire types are built on `contextgraph-types`, never
 //! duplicated (principle #7 / `L-E1`).
 
+// Every public item here is API a host reads without the source in front of it,
+// and the field-level silence this closes was an audit finding (#558). Under
+// `make lint` (`-D warnings`) an undocumented public item is a build failure,
+// which is the point: the gap cannot reopen one field at a time.
+#![warn(missing_docs)]
+
 mod clock;
 mod embed;
 mod error;

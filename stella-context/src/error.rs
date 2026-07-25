@@ -26,14 +26,22 @@ pub enum ContextError {
     /// **constructor-level error, not a lint**: every frame that reaches a
     /// prompt must be citable by a human label, never a bare id.
     #[error("frame `{id}` has no citation label — every frame must be humanly citable (L-C4)")]
-    MissingCitation { id: String },
+    MissingCitation {
+        /// Public id of the node whose frame had no citation label.
+        id: String,
+    },
 
     /// Retrieval was asked to mix embeddings from two different embedders.
     /// `L-C2`: retrieval never mixes fingerprints
     /// — a stored vector under a stale fingerprint is invisible, never
     /// silently compared against a fresh query vector.
     #[error("embedder fingerprint mismatch: query is `{query}`, candidate is `{candidate}`")]
-    FingerprintMismatch { query: String, candidate: String },
+    FingerprintMismatch {
+        /// Fingerprint the query vector was produced under.
+        query: String,
+        /// Fingerprint the stored candidate vector carries.
+        candidate: String,
+    },
 
     /// The store failed its integrity check (`PRAGMA integrity_check`). A
     /// kill mid-index must never leave this state (`L-L1`); if it does, the
@@ -45,6 +53,14 @@ pub enum ContextError {
     /// timestamp that isn't RFC-3339, a zero-dimension embedding).
     #[error("invalid context input: {0}")]
     InvalidInput(String),
+
+    /// The store on disk was stamped by a newer stella
+    /// (`user_version > SCHEMA_VERSION`). Episodic memory and the bi-temporal
+    /// fact graph are not rebuildable, so an older binary refuses rather than
+    /// writing into a schema it does not know. Carries the full actionable
+    /// message (the fault is an out-of-date binary, not a broken workspace).
+    #[error("{0}")]
+    SchemaTooNew(String),
 }
 
 #[cfg(test)]

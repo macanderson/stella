@@ -358,6 +358,9 @@ impl Observatory {
 
     /// Tool leaderboard: calls, failures, latency, bytes returned. The p50
     /// is computed here (SQLite has no percentile function).
+    ///
+    /// Accumulates into [`ToolAgg`] rather than a bare tuple so the fold and
+    /// the row-building loop name the same four quantities.
     pub fn tools(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
@@ -379,31 +382,35 @@ impl Observatory {
                 r.get::<_, i64>(3)?,
             ))
         })?;
-        let mut by_name: std::collections::BTreeMap<String, (i64, i64, Vec<i64>, i64)> =
+        let mut by_name: std::collections::BTreeMap<String, ToolAgg> =
             std::collections::BTreeMap::new();
         for call in scanned {
             let (name, ok, duration_ms, bytes_out) = call?;
             let entry = by_name.entry(name).or_default();
-            entry.0 += 1;
+            entry.calls += 1;
             if !ok {
-                entry.1 += 1;
+                entry.errors += 1;
             }
-            entry.2.push(duration_ms);
-            entry.3 += bytes_out;
+            entry.durations.push(duration_ms);
+            entry.bytes_out += bytes_out;
         }
         let mut rows: Vec<Value> = by_name
             .into_iter()
-            .map(|(name, (calls, errors, mut durs, bytes))| {
-                durs.sort_unstable();
-                let p50 = durs.get(durs.len() / 2).copied().unwrap_or(0);
-                let max = durs.last().copied().unwrap_or(0);
+            .map(|(name, mut agg)| {
+                agg.durations.sort_unstable();
+                let p50 = agg
+                    .durations
+                    .get(agg.durations.len() / 2)
+                    .copied()
+                    .unwrap_or(0);
+                let max = agg.durations.last().copied().unwrap_or(0);
                 json!({
                     "name": name,
-                    "calls": calls,
-                    "errors": errors,
+                    "calls": agg.calls,
+                    "errors": agg.errors,
                     "p50_ms": p50,
                     "max_ms": max,
-                    "bytes_out": bytes,
+                    "bytes_out": agg.bytes_out,
                 })
             })
             .collect();
@@ -435,6 +442,16 @@ impl Observatory {
             },
         )?;
         Ok(Value::Array(rows))
+    }
+
+    /// Promoted rules alone — the `rules` slice of [`Self::memory`], split
+    /// out so `/api/rules` runs one query instead of running four and
+    /// discarding three. Same payload, same missing-table degradation.
+    pub(crate) fn rules(&self) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(json!([]));
+        };
+        Ok(Value::Array(rules_rows(&conn)?))
     }
 
     /// The self-improvement plane: memory citations, mined reflections,
@@ -476,19 +493,7 @@ impl Observatory {
                 }))
             },
         )?;
-        let rules = collect_rows(
-            &conn,
-            "SELECT rule_id, contents, source, created_at
-             FROM rules ORDER BY created_at DESC LIMIT 50",
-            |r| {
-                Ok(json!({
-                    "rule_id": r.get::<_, String>(0)?,
-                    "contents": truncate(r.get::<_, String>(1)?, 240),
-                    "source": r.get::<_, String>(2)?,
-                    "created_at": r.get::<_, String>(3)?,
-                }))
-            },
-        )?;
+        let rules = rules_rows(&conn)?;
         let skills = collect_rows(
             &conn,
             "SELECT skill, count(*) AS uses, max(version), max(ts)
@@ -675,6 +680,36 @@ impl Observatory {
         )?;
         Ok(Value::Array(rows))
     }
+}
+
+/// The promoted-rules query, shared by [`Observatory::rules`] and
+/// [`Observatory::memory`] so the two can never drift apart.
+fn rules_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
+    collect_rows(
+        conn,
+        "SELECT rule_id, contents, source, created_at
+         FROM rules ORDER BY created_at DESC LIMIT 50",
+        |r| {
+            Ok(json!({
+                "rule_id": r.get::<_, String>(0)?,
+                "contents": truncate(r.get::<_, String>(1)?, 240),
+                "source": r.get::<_, String>(2)?,
+                "created_at": r.get::<_, String>(3)?,
+            }))
+        },
+    )
+}
+
+/// Per-tool accumulator for [`Observatory::tools`]. Named fields rather than
+/// a `(i64, i64, Vec<i64>, i64)` tuple so the fold and the row builder can't
+/// disagree about which slot is which.
+#[derive(Default)]
+struct ToolAgg {
+    calls: i64,
+    errors: i64,
+    /// Every call's duration, sorted in place when the p50/max are taken.
+    durations: Vec<i64>,
+    bytes_out: i64,
 }
 
 /// Open a SQLite file strictly read-only; `None` when it doesn't exist.

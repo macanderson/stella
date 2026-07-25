@@ -181,7 +181,15 @@ impl SessionRegistry {
         let json = serde_json::to_string_pretty(&stamped)
             .map_err(|e| StoreError(format!("cannot serialize session record: {e}")))?;
         let path = self.path_for(&record.id);
-        crate::write_private_atomic(&path, json.as_bytes(), false)
+        // sync = true: an unfsynced rename can publish a directory entry whose
+        // bytes never left the page cache, so a power cut leaves a
+        // zero-length `<id>.json`. `list` skips the unparsable record, which
+        // makes the session invisible to `resumable`/`latest_resumable` AND
+        // strands its sidecar (journal + history.json) because `prune`
+        // iterates `list`. Upserts happen a handful of times per turn, not per
+        // event, so the fsync is cheap against what is lost — the same
+        // reasoning `journal::write_snapshot` already documents.
+        crate::write_private_atomic(&path, json.as_bytes(), true)
     }
 
     /// All records, newest-started first, with dead-process downgrade

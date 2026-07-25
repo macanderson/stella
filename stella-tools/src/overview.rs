@@ -60,8 +60,25 @@ impl Tool for ProjectOverview {
     }
 
     async fn execute(&self, _input: &Value, root: &Path) -> ToolOutput {
+        // `build_overview` is fully synchronous — manifest reads plus an
+        // `open_or_build` that runs a whole `index_all` pass — so it goes to
+        // the blocking pool, the form `ScriptIndex::detect` already uses in
+        // this crate (#549). This tool is advertised as "CALL THIS FIRST", so
+        // it is the one most likely to be occupying a worker on turn 1.
+        let overview = {
+            let root = root.to_path_buf();
+            tokio::task::spawn_blocking(move || build_overview(&root)).await
+        };
+        let overview = match overview {
+            Ok(overview) => overview,
+            Err(_) => {
+                return ToolOutput::Error {
+                    message: "the project overview was cancelled".into(),
+                };
+            }
+        };
         ToolOutput::Ok {
-            content: match serde_json::to_string_pretty(&build_overview(root)) {
+            content: match serde_json::to_string_pretty(&overview) {
                 Ok(text) => text,
                 Err(error) => {
                     return ToolOutput::Error {
@@ -155,6 +172,10 @@ pub fn render_orientation_block(root: &Path) -> Option<String> {
 /// Assemble the overview. Total by construction: every source degrades to
 /// its empty shape, because an orientation call that errors sends the agent
 /// straight back to the glob loop this exists to replace.
+///
+/// **Synchronous — an async caller must wrap it in `spawn_blocking`**: it
+/// reads manifests and opens the code graph, which runs a full `index_all`
+/// pass.
 pub fn build_overview(root: &Path) -> Value {
     let scripts = ScriptIndex::detect_blocking(root);
     let graph = open_graph(root);
@@ -521,5 +542,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(build_overview(dir.path())["domains"], serde_json::json!([]));
+    }
+
+    /// The #549 witness for the "CALL THIS FIRST" tool: `execute` must hand
+    /// the synchronous assembly (manifest reads + a full `index_all` pass) to
+    /// the blocking pool instead of running it inline on a runtime worker.
+    ///
+    /// On the default single-threaded `#[tokio::test]` runtime a spawned task
+    /// only runs while the test task is suspended at an await point. The old
+    /// body had no await at all, so it returned without ever yielding and the
+    /// flag stayed `false`; awaiting `spawn_blocking` lets the spawned task run.
+    #[tokio::test]
+    async fn the_overview_yields_the_runtime_while_the_index_pass_runs() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&ran);
+        tokio::spawn(async move { flag.store(true, Ordering::SeqCst) });
+
+        let out = ProjectOverview.execute(&json!({}), dir.path()).await;
+        assert!(matches!(out, ToolOutput::Ok { .. }), "{out:?}");
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "project_overview blocked the runtime worker: a concurrently spawned task never \
+             got to run while the overview was being assembled"
+        );
     }
 }

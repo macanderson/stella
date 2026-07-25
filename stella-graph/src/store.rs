@@ -20,6 +20,19 @@
 //! sha256 matches the stored value is never re-parsed. [`IndexStats::files_parsed`]
 //! counts real parse invocations, which the skip test asserts drops to zero on
 //! an unchanged second pass.
+//!
+//! Schema: `codegraph.db` carries **no version stamp**. Like `usage.db` (see
+//! `stella_store::usage`) and unlike `.stella/private/store.db`, it is
+//! versioned by *convergence*: every statement in [`MIGRATION`] is
+//! `CREATE … IF NOT EXISTS` and the whole batch replays on every writer
+//! [`open`], so an additive table or index reaches an existing store the next
+//! time it is opened. Adding a table or an index here is the migration. That is
+//! acceptable specifically because this file is a **cache**: it is fully
+//! rebuildable from the tree by `stella init`, so the worst outcome of a shape
+//! this crate cannot express is a stale index the user re-indexes. A table that
+//! ever needs a *reshape* (an altered or backfilled column, which the
+//! `IF NOT EXISTS` guard silently skips on an existing store) would need the
+//! versioned machinery introduced first.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -91,6 +104,11 @@ CREATE TABLE IF NOT EXISTS code_graph_storage_objects (
 );
 CREATE INDEX IF NOT EXISTS code_graph_storage_addr ON code_graph_storage_objects(address);
 CREATE INDEX IF NOT EXISTS code_graph_storage_file ON code_graph_storage_objects(file_id);
+-- Every read in `storage_rows` filters on `level` and orders by `address`, and
+-- the pre-write gate runs that pair on the agent's write path; `parent_id` is
+-- the self-referencing CASCADE parent, which SQLite scans on every delete.
+CREATE INDEX IF NOT EXISTS code_graph_storage_level  ON code_graph_storage_objects(level, address);
+CREATE INDEX IF NOT EXISTS code_graph_storage_parent ON code_graph_storage_objects(parent_id);
 "#;
 
 /// Outcome of one index pass. `files_parsed` is the honest parse-invocation
@@ -133,10 +151,14 @@ pub(crate) struct ImportRow {
     pub kind: ImportKind,
 }
 
-/// Open (creating if needed) the store at `db_path`, set the per-connection
-/// pragmas, and run migrations. Safe to call against a file that already
-/// holds another crate's tables.
-pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
+/// Open the store at `db_path` with the per-connection pragmas but **without**
+/// running [`MIGRATION`] — the read path. `stella-graph`'s DDL is idempotent
+/// convergence, so running it is harmless but never free: it is the whole
+/// `CREATE …` batch, and [`crate::load_storage_snapshot`] (the pre-write gate)
+/// opens the store on *every* write an agent proposes. Readers get the schema
+/// that is already there; a store no writer has migrated yet simply has no rows
+/// to read.
+pub(crate) fn open_read(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = Connection::open(db_path)?;
     // WAL persists in the file; foreign_keys / busy_timeout are per-connection
     // and must be re-set on every open. NORMAL sync is the standard WAL
@@ -147,6 +169,13 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
          PRAGMA busy_timeout=5000;\
          PRAGMA synchronous=NORMAL;",
     )?;
+    Ok(conn)
+}
+
+/// [`open_read`] plus [`MIGRATION`] — the writer's open. Safe to call against a
+/// file that already holds another crate's tables.
+pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
+    let conn = open_read(db_path)?;
     conn.execute_batch(MIGRATION)?;
     Ok(conn)
 }
@@ -842,6 +871,44 @@ mod tests {
 
     fn canon(ws: &tempfile::TempDir) -> PathBuf {
         ws.path().canonicalize().expect("canonicalize")
+    }
+
+    /// The read path must not run DDL. `load_storage_snapshot` — the
+    /// pre-write gate — opens the store on every write an agent proposes, and
+    /// `open` used to replay the whole `MIGRATION` batch there.
+    #[test]
+    fn open_read_runs_no_ddl() {
+        let dbdir = tempdir().unwrap();
+        let db = dbdir.path().join("codegraph.db");
+
+        let reader = open_read(&db).unwrap();
+        let tables: i64 = reader
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
+                 AND name LIKE 'code_graph_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 0, "open_read must not create the schema");
+        // Reads against the unmigrated file fail, and the caller's
+        // `unwrap_or_default` turns that into the same empty snapshot a missing
+        // store yields.
+        assert!(storage_rows(&reader).is_err());
+        drop(reader);
+
+        // The writer's open still migrates.
+        let writer = open(&db).unwrap();
+        let tables: i64 = writer
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
+                 AND name LIKE 'code_graph_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(tables > 0, "open must migrate");
+        assert!(storage_rows(&writer).unwrap().is_empty());
     }
 
     #[test]

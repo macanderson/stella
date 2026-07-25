@@ -45,29 +45,37 @@ struct Passes {
     sqlalchemy: bool,
 }
 
-fn walk(node: Node, src: &[u8], passes: &Passes, app: Option<&str>, out: &mut StorageExtract) {
-    match node.kind() {
-        "class_definition" => {
-            if passes.sqlalchemy
-                && let Some(rel) = decode_sqlalchemy_class(node, src)
-            {
-                out.relations.push(rel);
-            } else if passes.django
-                && let Some(rel) = decode_django_class(node, src, app)
-            {
-                out.relations.push(rel);
+/// Pre-order walk emitting one relation per ORM model, in source order. An
+/// explicit worklist, not recursion: a deeply-nested Python file must not
+/// overflow the thread stack (which aborts the process). Children are pushed in
+/// reverse so popping preserves source order.
+fn walk(root: Node, src: &[u8], passes: &Passes, app: Option<&str>, out: &mut StorageExtract) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "class_definition" => {
+                if passes.sqlalchemy
+                    && let Some(rel) = decode_sqlalchemy_class(node, src)
+                {
+                    out.relations.push(rel);
+                } else if passes.django
+                    && let Some(rel) = decode_django_class(node, src, app)
+                {
+                    out.relations.push(rel);
+                }
+            }
+            "call" if passes.sqlalchemy => {
+                if let Some(rel) = decode_core_table(node, src) {
+                    out.relations.push(rel);
+                }
+            }
+            _ => {}
+        }
+        for idx in (0..node.child_count() as u32).rev() {
+            if let Some(child) = node.child(idx) {
+                stack.push(child);
             }
         }
-        "call" if passes.sqlalchemy => {
-            if let Some(rel) = decode_core_table(node, src) {
-                out.relations.push(rel);
-            }
-        }
-        _ => {}
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk(child, src, passes, app, out);
     }
 }
 

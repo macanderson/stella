@@ -1762,9 +1762,9 @@ mod golden;
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
 mod mcp_prefetch;
-mod task4;
-mod task5;
+mod terminal_outcomes;
 mod usage;
+mod witness_isolation;
 
 /// The headless approval port is `AlwaysAbortGate`, so "bypass scope review"
 /// has to mean *proceed*. Running the review anyway would hand the plan to a

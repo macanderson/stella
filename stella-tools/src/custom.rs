@@ -60,6 +60,9 @@
 //!   stderr tail (also truncated).
 //! - **Timeout** → the process group is killed (SIGKILL to `-pid`, mirroring
 //!   [`crate::bash`]) and a named error is returned.
+//! - **Cancellation** (the driving future dropped mid-wait, e.g. Esc) → the
+//!   same group kill, armed as an RAII guard
+//!   ([`crate::exec::GroupKillGuard`]), so nothing survives the turn.
 //! - **Spawn failure** (e.g. missing script) → a named error naming the path
 //!   that was tried, so the developer can fix the manifest.
 //!
@@ -408,6 +411,11 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // Reap the direct child if the driving future is dropped (tokio keeps it
+    // running by default). A backstop only — it does NOT reach whatever the
+    // script itself spawned; the unix `GroupKillGuard` below covers those,
+    // and this is what covers the non-unix build, where it does not exist.
+    cmd.kill_on_drop(true);
 
     // Manifest env (workspace-trusted) first …
     for (k, v) in &tool.env {
@@ -451,6 +459,10 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
 
     #[cfg(unix)]
     let pid = child.id().unwrap_or(0) as i32;
+    // Cancellation backstop: a dropped future (Esc, the engine's tool
+    // timeout, a fleet stop) must not leave the setsid'd group running.
+    #[cfg(unix)]
+    let mut guard = crate::exec::GroupKillGuard { pid, armed: true };
 
     // Deliver the input as one JSON document on stdin, concurrently with
     // draining stdout/stderr, so a chatty child cannot deadlock the write.
@@ -465,7 +477,15 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
 
     let timeout = Duration::from_millis(tool.timeout_ms);
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
+        Ok(Ok(output)) => {
+            #[cfg(unix)]
+            {
+                guard.armed = false;
+            }
+            output
+        }
+        // Wait failure leaves the child's state unknown — the still-armed
+        // guard kills the group on return rather than leak it.
         Ok(Err(e)) => {
             return ToolOutput::Error {
                 message: format!("custom tool `{}` failed: {e}", tool.name),
@@ -473,11 +493,14 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         }
         Err(_) => {
             #[cfg(unix)]
-            unsafe {
-                // Guard on a real pid: kill(-0, …) would SIGKILL Stella's OWN
-                // process group.
-                if pid > 0 {
-                    libc::kill(-pid, libc::SIGKILL);
+            {
+                guard.armed = false;
+                unsafe {
+                    // Guard on a real pid: kill(-0, …) would SIGKILL Stella's
+                    // OWN process group.
+                    if pid > 0 {
+                        libc::kill(-pid, libc::SIGKILL);
+                    }
                 }
             }
             return ToolOutput::Error {
@@ -1043,6 +1066,55 @@ command = []"#;
             elapsed.as_secs() < 5,
             "should not wait for the full sleep: {elapsed:?}"
         );
+    }
+
+    /// Dropping the future mid-wait (a cancelled turn) must kill the whole
+    /// process group — the [`crate::exec::GroupKillGuard`] backstop, the same
+    /// leak the `bash` tool had. Without it, a cancelled turn left the
+    /// script's own children running, `setsid`'d beyond anyone's reach.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dropped_custom_tool_kills_the_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        // Record the *grandchild*'s pid: when the group dies, the orphaned
+        // sleep is reaped by init, so a surviving pid means a real leak.
+        // `kill_on_drop` alone would not reach it — only the group kill does.
+        let tool = script_tool(
+            dir.path(),
+            "bg.sh",
+            &format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > {}\nwait\n",
+                pidfile.display()
+            ),
+            60_000,
+        );
+        let root = dir.path().to_path_buf();
+        let handle =
+            tokio::spawn(async move { run_custom(&tool, &serde_json::json!({}), &root).await });
+        let mut pid = None;
+        for _ in 0..250 {
+            if let Some(p) = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+            {
+                pid = Some(p);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let pid = pid.expect("the child never started");
+        handle.abort();
+        let _ = handle.await;
+        let mut dead = false;
+        for _ in 0..250 {
+            if unsafe { libc::kill(pid, 0) } == -1 {
+                dead = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(dead, "cancelled custom tool left subprocess {pid} running");
     }
 
     #[tokio::test]

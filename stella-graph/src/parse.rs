@@ -394,7 +394,12 @@ fn py_module_name(node: Node, src: &[u8]) -> Option<String> {
 fn extract_rust_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
     let mut out = Vec::new();
 
-    fn walk(node: Node, src: &[u8], out: &mut Vec<Symbol>) {
+    // Explicit worklist rather than recursion (see `walk::walk_indexable`):
+    // source files are environment-controlled, and a deeply-nested tree would
+    // overflow the thread stack and abort the process. Children are pushed in
+    // reverse so popping preserves source order.
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
         if node.kind() == "macro_invocation"
             && let Some(macro_id) = node.child_by_field_name("macro")
             && let Ok(name) = macro_id.utf8_text(src)
@@ -423,13 +428,13 @@ fn extract_rust_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
             }
         }
 
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            walk(child, src, out);
+        for idx in (0..node.child_count() as u32).rev() {
+            if let Some(child) = node.child(idx) {
+                stack.push(child);
+            }
         }
     }
 
-    walk(root, src, &mut out);
     out
 }
 
@@ -439,7 +444,9 @@ fn extract_rust_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
 fn extract_python_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
     let mut out = Vec::new();
 
-    fn walk(node: Node, src: &[u8], out: &mut Vec<Symbol>) {
+    // Explicit worklist, same reasoning as `extract_rust_orm_tables`.
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
         if node.kind() == "class_definition" {
             let tablename = python_tablename_value(node, src);
             let is_model = tablename.is_some() || check_python_orm_superclass(node, src);
@@ -457,13 +464,13 @@ fn extract_python_orm_tables(root: Node, src: &[u8]) -> Vec<Symbol> {
             }
         }
 
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            walk(child, src, out);
+        for idx in (0..node.child_count() as u32).rev() {
+            if let Some(child) = node.child(idx) {
+                stack.push(child);
+            }
         }
     }
 
-    walk(root, src, &mut out);
     out
 }
 

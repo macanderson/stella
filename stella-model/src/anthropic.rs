@@ -32,8 +32,17 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: ApiKey, model: impl Into<String>) -> Self {
         let model = model.into();
+        // Scope the lookup to the `anthropic` provider: after `stella models
+        // refresh` merges the models.dev master list the same slug legitimately
+        // appears under several providers (`claude-sonnet-4.5` under both
+        // `anthropic` and `openrouter`), and an unscoped `resolve` takes
+        // whichever row happens to sit first — costing an Anthropic turn at a
+        // gateway's list price with no symptom (see `Catalog::resolve_for`).
         let catalog = Catalog::current();
-        let pricing = catalog.resolve(&model).ok().map(|e| e.pricing);
+        let pricing = catalog
+            .resolve_for("anthropic", &model)
+            .ok()
+            .map(|e| e.pricing);
         Self {
             client: http::client(),
             api_key,
@@ -501,13 +510,17 @@ struct AnthropicUsage {
 fn to_anthropic_messages(
     messages: &[CompletionMessage],
 ) -> (Option<String>, Vec<AnthropicMessage>) {
-    let mut system = None;
+    // Every system turn is hoisted, not just the last one: the Messages API
+    // has a single `system` slot, so overwriting it would silently drop a
+    // second system turn (a skill preamble, an injected policy block) with no
+    // error and no log line. Accumulate and join with a blank line, exactly as
+    // `openai.rs::to_openai_input` and `gemini.rs::to_gemini_request_parts` do,
+    // so the same conversation carries the same instructions on every dialect.
+    let mut system: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for message in messages {
         match message.role {
-            MessageRole::System => {
-                system = Some(message.content.clone());
-            }
+            MessageRole::System => system.push(message.content.clone()),
             // The Anthropic API rejects a text content block whose text is
             // empty or whitespace-only with a 400 — and because the whole
             // conversation is replayed on every turn, one such block bricks
@@ -586,6 +599,11 @@ fn to_anthropic_messages(
             }
         }
     }
+    let system = if system.is_empty() {
+        None
+    } else {
+        Some(system.join("\n\n"))
+    };
     (system, out)
 }
 

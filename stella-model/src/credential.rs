@@ -35,6 +35,10 @@ pub enum CredentialError {
     FileWrite { path: String, message: String },
     #[error("interactive prompt failed: {0}")]
     PromptFailed(String),
+    #[error("Vertex AI needs a project id — set VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT)")]
+    VertexProjectMissing,
+    #[error("Bedrock needs AWS_SECRET_ACCESS_KEY alongside AWS_ACCESS_KEY_ID")]
+    BedrockSecretMissing,
 }
 
 /// Which step in the resolution chain produced an [`ApiKey`]. Exists so
@@ -212,16 +216,34 @@ fn prompt_for_key(provider_id: &str, env_var: &str) -> Result<String, Credential
 ///
 /// Shape: `[credentials]` table, `provider_id = "key"` per row — flat and
 /// small on purpose; this is a handful of BYOK keys, not a config language.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+///
+/// Deliberately NOT `Debug`: the map holds plaintext provider keys, so a
+/// derived `Debug` would print every secret in the file. [`CredentialsFile`]
+/// formats itself with a hand-written redacting impl instead — the same
+/// posture as [`ApiKey`] above and every other secret-bearing type in the
+/// workspace.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct CredentialsFileData {
     #[serde(default)]
     credentials: BTreeMap<String, String>,
 }
 
-#[derive(Debug)]
 pub struct CredentialsFile {
     path: PathBuf,
     data: CredentialsFileData,
+}
+
+/// Names the file and how many keys it holds; never a key, and never a
+/// provider id's value. Redaction is the whole point — `{:?}` on a loaded
+/// credentials file used to dump every plaintext secret in it.
+impl fmt::Debug for CredentialsFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CredentialsFile")
+            .field("path", &self.path)
+            .field("providers", &self.provider_ids().count())
+            .field("credentials", &"<redacted>")
+            .finish()
+    }
 }
 
 impl CredentialsFile {
@@ -404,6 +426,93 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     std::fs::write(path, bytes).map_err(|e| write_err(path, e))
 }
 
+/// Read `name` from the process environment, treating an explicitly-empty
+/// value as absent (the same posture `resolve`'s env step takes for keys).
+fn env_non_empty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+/// Vertex AI's non-secret addressing: which GCP project and location the
+/// request is scoped to. Distinct from [`ApiKey`] — the bearer token still
+/// comes through [`ApiKey::resolve`] as `VERTEX_ACCESS_TOKEN`; this is the
+/// project/location pair `VertexProvider::new` needs alongside it.
+///
+/// Lives here rather than in the CLI so a second host of the engine can
+/// construct a `VertexProvider` without copying the variable names and the
+/// `global` default (see `vertex.rs`'s addressing note).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VertexAddressing {
+    /// GCP project id — `VERTEX_PROJECT_ID`, else `GOOGLE_CLOUD_PROJECT`.
+    pub project: String,
+    /// Vertex location — `VERTEX_LOCATION`, defaulting to `global`.
+    pub location: String,
+}
+
+impl VertexAddressing {
+    /// Resolve from the process environment.
+    pub fn resolve() -> Result<Self, CredentialError> {
+        Self::resolve_from(env_non_empty)
+    }
+
+    /// The resolution itself, over an injected lookup — pure, so the
+    /// fallback order and the `global` default are unit-testable without
+    /// mutating the process environment (which is `unsafe` under edition
+    /// 2024 and races across parallel test threads).
+    pub(crate) fn resolve_from(
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, CredentialError> {
+        let project = lookup("VERTEX_PROJECT_ID")
+            .or_else(|| lookup("GOOGLE_CLOUD_PROJECT"))
+            .ok_or(CredentialError::VertexProjectMissing)?;
+        let location = lookup("VERTEX_LOCATION").unwrap_or_else(|| "global".to_string());
+        Ok(Self { project, location })
+    }
+}
+
+/// Amazon Bedrock's secondary credentials and region. The access key id
+/// arrives through [`ApiKey::resolve`] as `AWS_ACCESS_KEY_ID`; SigV4 also
+/// needs the secret, optionally a session token, and the region the endpoint
+/// host is built from.
+///
+/// Lives here rather than in the CLI so a second host of the engine can
+/// construct a `BedrockProvider` without copying the variable names, the
+/// `AWS_REGION` → `AWS_DEFAULT_REGION` order, or the `us-east-1` default.
+#[derive(Debug, Clone)]
+pub struct BedrockCredentials {
+    /// `AWS_SECRET_ACCESS_KEY` — required; SigV4 cannot sign without it.
+    pub secret_access_key: ApiKey,
+    /// `AWS_SESSION_TOKEN` — present only for temporary credentials.
+    pub session_token: Option<ApiKey>,
+    /// `AWS_REGION`, else `AWS_DEFAULT_REGION`, else `us-east-1`.
+    pub region: String,
+}
+
+impl BedrockCredentials {
+    /// Resolve from the process environment.
+    pub fn resolve() -> Result<Self, CredentialError> {
+        Self::resolve_from(env_non_empty)
+    }
+
+    /// The resolution itself, over an injected lookup — see
+    /// [`VertexAddressing::resolve_from`] for why.
+    pub(crate) fn resolve_from(
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, CredentialError> {
+        let secret_access_key = lookup("AWS_SECRET_ACCESS_KEY")
+            .map(ApiKey::new)
+            .ok_or(CredentialError::BedrockSecretMissing)?;
+        let session_token = lookup("AWS_SESSION_TOKEN").map(ApiKey::new);
+        let region = lookup("AWS_REGION")
+            .or_else(|| lookup("AWS_DEFAULT_REGION"))
+            .unwrap_or_else(|| "us-east-1".to_string());
+        Ok(Self {
+            secret_access_key,
+            session_token,
+            region,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,6 +610,22 @@ mod tests {
         unsafe {
             std::env::remove_var("STELLA_TEST_EMPTY_CREDENTIAL_VAR");
         }
+    }
+
+    /// The twin of `debug_never_prints_the_secret_value` for [`ApiKey`]:
+    /// `CredentialsFile` holds every configured provider key in plaintext, so
+    /// a derived `Debug` would dump the whole file into any log line, trace
+    /// record, or panic message that formats it.
+    #[test]
+    fn debug_never_prints_a_stored_key() {
+        let mut file = CredentialsFile::empty();
+        file.set("zai", "sk-zai-super-secret-value");
+        file.set("anthropic", "sk-ant-super-secret-value");
+        let debug = format!("{file:?}");
+        assert!(!debug.contains("sk-zai-super-secret-value"), "{debug}");
+        assert!(!debug.contains("sk-ant-super-secret-value"), "{debug}");
+        assert!(debug.contains("redacted"), "{debug}");
+        assert!(debug.contains('2'), "reports the provider count: {debug}");
     }
 
     #[test]
@@ -740,5 +865,90 @@ mod tests {
         unsafe {
             std::env::remove_var("STELLA_TEST_R6_KEY");
         }
+    }
+}
+
+#[cfg(test)]
+mod secondary_credential_tests {
+    use super::*;
+
+    use std::collections::BTreeMap;
+
+    fn lookup_from(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let map: BTreeMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        move |name: &str| map.get(name).cloned()
+    }
+
+    /// The project falls back `VERTEX_PROJECT_ID` → `GOOGLE_CLOUD_PROJECT`,
+    /// and the location defaults to `global` — the exact behavior stella-cli
+    /// used to hand-roll, now owned by the crate that owns the adapter.
+    #[test]
+    fn vertex_addressing_prefers_vertex_project_id_and_defaults_to_global() {
+        let resolved = VertexAddressing::resolve_from(lookup_from(&[
+            ("VERTEX_PROJECT_ID", "primary"),
+            ("GOOGLE_CLOUD_PROJECT", "fallback"),
+        ]))
+        .unwrap();
+        assert_eq!(resolved.project, "primary");
+        assert_eq!(resolved.location, "global");
+
+        let resolved =
+            VertexAddressing::resolve_from(lookup_from(&[("GOOGLE_CLOUD_PROJECT", "fallback")]))
+                .unwrap();
+        assert_eq!(resolved.project, "fallback");
+
+        let resolved = VertexAddressing::resolve_from(lookup_from(&[
+            ("VERTEX_PROJECT_ID", "primary"),
+            ("VERTEX_LOCATION", "us-central1"),
+        ]))
+        .unwrap();
+        assert_eq!(resolved.location, "us-central1");
+    }
+
+    #[test]
+    fn vertex_addressing_without_a_project_names_both_variables() {
+        let err = VertexAddressing::resolve_from(lookup_from(&[])).unwrap_err();
+        assert_eq!(err, CredentialError::VertexProjectMissing);
+        let message = err.to_string();
+        assert!(message.contains("VERTEX_PROJECT_ID"), "{message}");
+        assert!(message.contains("GOOGLE_CLOUD_PROJECT"), "{message}");
+    }
+
+    #[test]
+    fn bedrock_region_falls_back_then_defaults_and_the_session_token_is_optional() {
+        let resolved =
+            BedrockCredentials::resolve_from(lookup_from(&[("AWS_SECRET_ACCESS_KEY", "secret")]))
+                .unwrap();
+        assert_eq!(resolved.secret_access_key.reveal(), "secret");
+        assert!(resolved.session_token.is_none());
+        assert_eq!(resolved.region, "us-east-1");
+
+        let resolved = BedrockCredentials::resolve_from(lookup_from(&[
+            ("AWS_SECRET_ACCESS_KEY", "secret"),
+            ("AWS_DEFAULT_REGION", "eu-west-1"),
+        ]))
+        .unwrap();
+        assert_eq!(resolved.region, "eu-west-1");
+
+        let resolved = BedrockCredentials::resolve_from(lookup_from(&[
+            ("AWS_SECRET_ACCESS_KEY", "secret"),
+            ("AWS_REGION", "ap-south-1"),
+            ("AWS_DEFAULT_REGION", "eu-west-1"),
+            ("AWS_SESSION_TOKEN", "token"),
+        ]))
+        .unwrap();
+        assert_eq!(resolved.region, "ap-south-1");
+        assert_eq!(resolved.session_token.unwrap().reveal(), "token");
+    }
+
+    #[test]
+    fn bedrock_without_a_secret_is_a_named_error_not_an_unsigned_request() {
+        let err = BedrockCredentials::resolve_from(lookup_from(&[("AWS_REGION", "us-east-1")]))
+            .unwrap_err();
+        assert_eq!(err, CredentialError::BedrockSecretMissing);
+        assert!(err.to_string().contains("AWS_SECRET_ACCESS_KEY"));
     }
 }

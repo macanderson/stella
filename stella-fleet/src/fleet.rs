@@ -20,10 +20,12 @@
 //! receives [`WorkerControls`] (a pause watch + a stop oneshot — the exact
 //! channel shapes the deck's sub-sessions use), and the fleet exposes the
 //! matching verbs, [`Fleet::pause_task`] / [`Fleet::resume_task`] /
-//! [`Fleet::stop_task`]. This closes the "fleet supervisor seam"
-//! `command_deck.rs` named as the follow-up:
-//! per-worker pause/stop now exists at the fleet layer, not just for deck
-//! sub-session lanes. Restart is deliberately not a fleet verb —
+//! [`Fleet::stop_task`]. That makes the "fleet supervisor seam"
+//! `command_deck.rs` named as the follow-up *available*: per-worker
+//! pause/stop exists and is tested at the fleet layer, not just for deck
+//! sub-session lanes. It is not yet *closed* — nothing in the product drives
+//! these verbs today, so wiring the deck's key handling to them is still the
+//! open follow-up. Restart is deliberately not a fleet verb —
 //! [`Fleet::dispatch`] is re-runnable, so a restart is the caller
 //! re-dispatching the same [`Task`]; the fleet keeps no respawn state.
 //!
@@ -93,6 +95,68 @@ pub struct WorkerControls {
 struct TaskControlHandle {
     pause: watch::Sender<bool>,
     stop: Option<oneshot::Sender<()>>,
+}
+
+/// Holds one attempt's claims (rows in the workspace store's DURABLE
+/// `file_locks` table) for exactly the scope it lives in, releasing them on
+/// `Drop`.
+///
+/// A straight-line release after the worker's `.await` is skipped by the two
+/// paths that matter most: a [`FleetWorker`] that panics (the port is
+/// caller-supplied code and nothing catches unwind), and a dropped dispatch
+/// future (cancellation — a `select!` losing the race, Ctrl-C tearing down
+/// the runtime, a stream being dropped). A leaked row survives process exit,
+/// so every later run in that workspace fails
+/// [`FleetError::ClaimConflict`] on that path, naming a run id that no longer
+/// exists. Tying release to a scope instead of to reaching a statement makes
+/// both paths release.
+///
+/// Release is best-effort and **never panics**: a failed delete leaves a row
+/// that NAMES this holder, so the next claimant's conflict error points
+/// straight back here.
+struct ClaimGuard<'a> {
+    /// `None` when there is nothing to release (a task with no claims), so
+    /// the guard is uniform at the call site.
+    store: Option<&'a Store>,
+    holder: String,
+    paths: &'a [String],
+}
+
+impl Drop for ClaimGuard<'_> {
+    fn drop(&mut self) {
+        let Some(store) = self.store else {
+            return;
+        };
+        for path in self.paths {
+            let _ = store.release_file_lock(path, &self.holder);
+        }
+    }
+}
+
+/// Keeps one live worker's [`TaskControlHandle`] registered for exactly the
+/// scope it lives in, deregistering it on `Drop`.
+///
+/// Same shape and same reason as [`ClaimGuard`]: an unguarded
+/// `remove(&task.id)` after the worker's `.await` is skipped by a panicking
+/// worker and by a dropped dispatch future, and the stale entry then makes
+/// [`Fleet::pause_task`]/[`Fleet::stop_task`] answer `true` for a task with no
+/// live worker (signalling into a dropped receiver is indistinguishable from
+/// success for `watch::Sender::send`), while the map grows without bound for a
+/// long-lived [`Fleet`].
+struct ControlGuard<'a> {
+    controls: &'a Mutex<HashMap<TaskId, TaskControlHandle>>,
+    id: TaskId,
+}
+
+impl Drop for ControlGuard<'_> {
+    fn drop(&mut self) {
+        // Recovering a poisoned lock (rather than unwrapping) keeps this
+        // infallible: a panicking worker is exactly when it runs.
+        self.controls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
+    }
 }
 
 /// What a [`FleetWorker`] reports back for one task attempt.
@@ -338,9 +402,15 @@ where
                 warmth_secs: lookup(&t.id),
             })
             .collect();
+        // Index once instead of a linear `find` per session (O(n^2) in wave
+        // width). `remove` rather than `get` differs from a `find` only when
+        // two ready tasks share an id — which `run_plan`, the sole caller,
+        // has already ruled out via `plan.validate()`.
+        let mut by_id: HashMap<&str, &'a Task> =
+            ready.iter().map(|t| (t.id.as_str(), *t)).collect();
         warmest_first(&sessions)
             .into_iter()
-            .filter_map(|s| ready.iter().find(|t| t.id == s.id).copied())
+            .filter_map(|s| by_id.remove(s.id.as_str()))
             .collect()
     }
 
@@ -391,21 +461,15 @@ where
         // 0b. Claim the declared paths before anything else exists for this
         //    attempt — a conflict is a plain dispatch failure with nothing
         //    (worktree, ledger rows) to clean up.
-        self.acquire_claims(task)?;
-        let result = self.dispatch_claimed(task).await;
-        // Claims are per-attempt: released even when the worker failed (its
-        // work sits committed on its branch; holding on would starve
-        // dependents and retries).
         //
-        // Release is a straight-line statement, NOT a `Drop` guard, so two
-        // paths skip it: a [`FleetWorker`] that panics, and a caller that
-        // drops this future mid-flight (cancellation). The claim rows are
-        // durable (`file_locks` in the workspace store), so either leaves a
-        // row that blocks the next claimant until it is cleared by hand —
-        // the conflict error at least names this run id. A `Drop`-guarded
-        // release is the fix; it is deliberately not smuggled in here.
-        self.release_claims(task);
-        result
+        //    Claims are per-attempt and released by the guard's `Drop` when
+        //    this scope ends: on success, on a worker failure (its work sits
+        //    committed on its branch; holding on would starve dependents and
+        //    retries), on a panicking worker, and on this future being
+        //    dropped mid-flight. The rows are DURABLE, so a missed release
+        //    would outlive the process — see [`ClaimGuard`].
+        let _claims = self.acquire_claims(task)?;
+        self.dispatch_claimed(task).await
     }
 
     /// [`dispatch`](Self::dispatch) after the task's claims are held.
@@ -452,24 +516,14 @@ where
         //    verbs address exactly the tasks with a live worker. (Task ids
         //    are unique within a plan; an ad-hoc re-dispatch of a still-live
         //    id would re-key the registration to the newer attempt.)
-        let (pause_tx, pause_rx) = watch::channel(false);
-        let (stop_tx, stop_rx) = oneshot::channel();
-        self.lock_controls().insert(
-            task.id.clone(),
-            TaskControlHandle {
-                pause: pause_tx,
-                stop: Some(stop_tx),
-            },
-        );
-        let controls = WorkerControls {
-            pause: pause_rx,
-            stop: stop_rx,
-        };
+        let (controls, control_guard) = self.register_controls(task);
         let outcome = self.worker.run(task, &workspace_root, controls).await;
         // The worker settled — drop its control handle so a later pause or
         // stop for this id reports "no live worker" instead of signalling
-        // into the void.
-        self.lock_controls().remove(&task.id);
+        // into the void. Dropping the guard explicitly keeps deregistration
+        // at exactly this point; its `Drop` is what also covers the worker
+        // panicking or this future being cancelled mid-run.
+        drop(control_guard);
 
         // 4. Stamp the outcome (attempt close + commits + spend) atomically,
         //    then meter the child's cost into the parent budget (L-E9).
@@ -513,9 +567,17 @@ where
     /// (or a store error) the paths already acquired roll back and the error
     /// names what blocked. Acquisition is re-entrant per holder, so a
     /// duplicate path within one task is harmless.
-    fn acquire_claims(&self, task: &Task) -> Result<(), FleetError> {
+    ///
+    /// Returns the [`ClaimGuard`] that owns the release: the caller holds it
+    /// for the attempt's duration, and the rows go away when it drops —
+    /// including on a panicking worker or a cancelled dispatch.
+    fn acquire_claims<'a>(&'a self, task: &'a Task) -> Result<ClaimGuard<'a>, FleetError> {
         if task.claims.is_empty() {
-            return Ok(());
+            return Ok(ClaimGuard {
+                store: None,
+                holder: String::new(),
+                paths: &task.claims,
+            });
         }
         let Some(store) = &self.claims else {
             return Err(FleetError::ClaimsWithoutStore {
@@ -544,21 +606,37 @@ where
             }
             return Err(failure);
         }
-        Ok(())
+        Ok(ClaimGuard {
+            store: Some(store),
+            holder,
+            paths: &task.claims,
+        })
     }
 
-    /// Release the task's claims. Best-effort by design: release only
-    /// deletes rows owned by this holder, and a failed delete leaves a row
-    /// that NAMES this run — the next claimant's conflict error points
-    /// straight back here, never a silent corruption.
-    fn release_claims(&self, task: &Task) {
-        let Some(store) = &self.claims else {
-            return;
-        };
-        let holder = self.claim_holder(task);
-        for path in &task.claims {
-            let _ = store.release_file_lock(path, &holder);
-        }
+    /// Open one task's control lines and register the fleet's sender halves,
+    /// returning the worker's [`WorkerControls`] and the [`ControlGuard`]
+    /// that owns deregistration — the registration lives exactly as long as
+    /// the guard, never as long as reaching a later statement.
+    fn register_controls(&self, task: &Task) -> (WorkerControls, ControlGuard<'_>) {
+        let (pause_tx, pause_rx) = watch::channel(false);
+        let (stop_tx, stop_rx) = oneshot::channel();
+        self.lock_controls().insert(
+            task.id.clone(),
+            TaskControlHandle {
+                pause: pause_tx,
+                stop: Some(stop_tx),
+            },
+        );
+        (
+            WorkerControls {
+                pause: pause_rx,
+                stop: stop_rx,
+            },
+            ControlGuard {
+                controls: &self.controls,
+                id: task.id.clone(),
+            },
+        )
     }
 
     /// Dispatch a wave of dependency-ready tasks concurrently, bounded by
@@ -1043,6 +1121,53 @@ mod tests {
         // The failed attempt released its claim — a retry can acquire it.
         let retry = Task::new("t2", "t2", "p").claims(["src/a.rs"]);
         f.dispatch(&retry).await.expect("claim released on failure");
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_dispatch_releases_its_claims_and_control_handle() {
+        // Cancellation — a dropped dispatch future — must release the DURABLE
+        // claim row and deregister the control handle, exactly like a normal
+        // return does. Without the RAII guards both leak: the claim row
+        // outlives the process and blocks every later run on that path, and
+        // `pause_task` keeps answering `true` for a worker that is gone.
+        use futures_util::FutureExt;
+
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let f = Fleet::new(
+            GatedWorker { gate: gate.clone() },
+            WorktreeManager::new(OkGit::new(), "/repo"),
+            Ledger::open_in_memory().unwrap(),
+            BudgetGuard::new(BudgetMode::Observed, None, None),
+            SeqClock::new(),
+            FleetConfig::new("run1", "HEAD"),
+        )
+        .unwrap()
+        .with_claim_store(Store::in_memory().unwrap());
+
+        let id = "t1".to_string();
+        let task = Task::new("t1", "t1", "p").claims(["src/a.rs"]);
+        {
+            let mut dispatch = Box::pin(f.dispatch(&task));
+            // One poll drives dispatch through the claim, the ledger rows and
+            // the control registration, and parks it in the gated worker.
+            assert!(
+                dispatch.as_mut().now_or_never().is_none(),
+                "the gated worker parks, so the dispatch is still in flight"
+            );
+            assert!(f.pause_task(&id), "the parked worker is registered");
+        } // the future is dropped here — cancellation mid-attempt
+
+        assert!(
+            !f.pause_task(&id),
+            "a cancelled attempt leaves no live control handle"
+        );
+        // The claim released, so a sibling can take the same path (the permit
+        // lets its worker settle).
+        gate.add_permits(1);
+        let sibling = Task::new("t2", "t2", "p").claims(["src/a.rs"]);
+        f.dispatch(&sibling)
+            .await
+            .expect("a cancelled attempt released its claim");
     }
 
     #[tokio::test]

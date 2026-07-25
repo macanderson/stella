@@ -1128,6 +1128,23 @@ fn distinct_provider_constructions_get_distinct_session_ids() {
     );
 }
 
+/// `new` resolves pricing SCOPED to `zai`, the identity it mints — the same
+/// discipline `with_identity` already applies when it switches identity. The
+/// unscoped `Catalog::resolve` documents "the first row wins", so a slug that
+/// belongs to another provider used to price a Z.ai turn at that provider's
+/// list rate with no symptom.
+#[test]
+fn new_resolves_pricing_scoped_to_the_zai_identity() {
+    let ours = ZaiProvider::new(ApiKey::new("sk-test"), "glm-5.2");
+    assert!(ours.pricing.is_some(), "own rows still resolve");
+
+    let foreign = ZaiProvider::new(ApiKey::new("sk-test"), "gpt-5.5");
+    assert!(
+        foreign.pricing.is_none(),
+        "an OpenAI row must never price a Z.ai turn"
+    );
+}
+
 /// Cache writes surfaced by OpenRouter usage accounting
 /// (`prompt_tokens_details.cache_write_tokens`) land on the normalized
 /// envelope's `cache_write_tokens` — dropping them hid the 1.25x-billed
@@ -1408,7 +1425,7 @@ async fn xai_identity_maps_effort_to_reasoning_effort() {
 /// seeded xai default) reasons but rejects `reasoning_effort`. Sending it on
 /// every auto-mode turn would break the default path, so the adapter gates it
 /// out for grok-4 while still sending it for the models that accept it —
-/// grok-4 keeps the pre-wiring behaviour (reasons at its own depth, effort
+/// grok-4 keeps the pre-wiring behavior (reasons at its own depth, effort
 /// dropped) instead of erroring. A dated snapshot (`grok-4-0709`) is exempt the
 /// same way; the point releases and fast variants are not.
 #[tokio::test]

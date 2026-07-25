@@ -86,8 +86,13 @@ fn new_session_id() -> String {
 impl ZaiProvider {
     pub fn new(api_key: ApiKey, model: impl Into<String>) -> Self {
         let model = model.into();
+        // Scoped to `zai`, the identity this constructor mints — the same slug
+        // legitimately exists under several providers once `stella models
+        // refresh` merges the master list, and an unscoped `resolve` takes
+        // whichever row sits first. `with_identity` re-resolves scoped to the
+        // identity it switches to, for exactly the same reason.
         let catalog = Catalog::current();
-        let pricing = catalog.resolve(&model).ok().map(|e| e.pricing);
+        let pricing = catalog.resolve_for("zai", &model).ok().map(|e| e.pricing);
         // Use the coding plan endpoint when ZAI_GLM_CODING_PLAN=1 is set
         let base_url = if std::env::var("ZAI_GLM_CODING_PLAN").as_deref() == Ok("1") {
             CODING_PLAN_BASE_URL
@@ -348,7 +353,7 @@ fn openrouter_reasoning(
 /// releases (`grok-4.1`/`.3`/`.5`), and the `grok-4-fast*` variants all accept
 /// it. Sending it to the original grok-4 (the currently-seeded xai default,
 /// deprecated and retiring 2026-08-15) would 400 every reasoning turn, so it is
-/// gated out here — grok-4 keeps the pre-wiring behaviour (reasons at its own
+/// gated out here — grok-4 keeps the pre-wiring behavior (reasons at its own
 /// fixed depth, effort dropped) instead of erroring. Fail-safe direction is to
 /// send: the fleet has trended toward universal support, and only the retiring
 /// original is denied.

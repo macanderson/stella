@@ -228,6 +228,11 @@ async fn main() -> std::io::Result<()> {
                         status: Some("the demo has no settings on disk".to_string()),
                     });
                 }
+                // The demo has no store, so INSPECT answers an empty index —
+                // exactly what the real driver does when receipts are absent.
+                WorkspaceInput::InspectRefresh | WorkspaceInput::InspectCall { .. } => {
+                    let _ = react_tx.send(Inbound::RecordedCalls(Vec::new()));
+                }
                 WorkspaceInput::Quit => break,
             }
         }

@@ -92,7 +92,7 @@ We identify seven such properties in Stella's design.
 | I | Ports, not concretions | The engine (`stella-core`) never imports a provider SDK, filesystem API, or terminal library | Crate-level dependency boundary; `Provider` trait (`stella-protocol`) and `ToolExecutor` trait (`stella-core::ports`) |
 | II | No I/O in the engine | All decision logic is synchronous functions over owned data | Architectural discipline; property-tested in `stella-core` |
 | III | Witness-test contract | A task is done only when a test fails on old code and passes on new | `verify_done` tool (`stella-tools::verify`) |
-| IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural invariant; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../stella-docs/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
+| IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural invariant; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../website/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
 | V | Prompt-cache-native memory | Lessons load into a byte-stable system prompt prefix at ~0.1x input price | `build_system_prompt` (`stella-cli::agent`); L-E8 cache discipline |
 | VI | Budget at safe boundaries | The budget guard consults only between model calls, never interrupts a tool | `run_turn` budget check (`stella-core::driver`); property-tested |
 | VII | Context Graph Protocol | Retrieval is a typed, budgeted, provenance-carrying, consent-gated, conformance-verified protocol | `contextgraph-types`, `contextgraph-host`, `contextgraph-conformance` |
@@ -282,7 +282,7 @@ Two architectural constraints, enforced together:
    is never a dependency of a turn: a session runs even when it can't be
    opened, and an individual event write that fails degrades the local record
    rather than the run. The sole telemetry-egress exception is an
-   [explicitly enrolled Oxagen Enterprise managed deployment](../../stella-docs/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export):
+   [explicitly enrolled Oxagen Enterprise managed deployment](../../website/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export):
    a current signed org policy may authorize one minimal content-free
    operational rollup to one exact allowlisted HTTPS sink.
 

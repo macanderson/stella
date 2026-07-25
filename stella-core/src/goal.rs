@@ -35,6 +35,8 @@
 //! judge spend with the same fidelity as worker spend, and the verdict
 //! stream reconstructs the goal loop's arc without any out-of-band state.
 
+use std::borrow::Cow;
+
 use serde::Deserialize;
 use stella_protocol::{AgentEvent, CompletionMessage, MessageRole, Provider, StageKind};
 use tokio::sync::mpsc::UnboundedSender;
@@ -333,19 +335,23 @@ fn render_transcript_tail(messages: &[CompletionMessage], max_chars: usize) -> S
         rendered.push(block);
     }
 
-    // Take whole blocks from the end until the budget is spent.
-    let mut kept: Vec<&str> = Vec::new();
+    // Take whole blocks from the end until the budget is spent. The newest
+    // block is always kept — the judge needs *some* evidence — but it is
+    // truncated when it alone exceeds the budget, so a single oversized
+    // assistant message can no longer push the judge prompt arbitrarily
+    // past `max_chars` and force the judge's own turn to compact it.
+    let mut kept: Vec<Cow<'_, str>> = Vec::new();
     let mut used = 0usize;
     for block in rendered.iter().rev() {
         let cost = block.chars().count() + 2;
-        if used + cost > max_chars && !kept.is_empty() {
+        if used + cost > max_chars {
+            if kept.is_empty() {
+                kept.push(Cow::Owned(truncate_chars(block, max_chars)));
+            }
             break;
         }
         used += cost;
-        kept.push(block);
-        if used > max_chars {
-            break;
-        }
+        kept.push(Cow::Borrowed(block.as_str()));
     }
     kept.reverse();
     kept.join("\n\n")
@@ -895,6 +901,18 @@ mod tests {
         let full = render_transcript_tail(&messages, 10_000);
         assert!(full.contains("first message"));
         assert!(!full.contains("sys"));
+    }
+
+    #[test]
+    fn transcript_tail_caps_a_single_oversized_message() {
+        // One assistant message far larger than the budget: it is the only
+        // block, so the tail must still carry it — truncated, not whole.
+        let messages = vec![CompletionMessage::assistant("x".repeat(5_000))];
+        let tail = render_transcript_tail(&messages, 40);
+        assert!(tail.starts_with("ASSISTANT: xxx"), "tail was: {tail}");
+        assert!(tail.ends_with('…'), "tail was: {tail}");
+        // `truncate_chars` appends one ellipsis char past the cap.
+        assert_eq!(tail.chars().count(), 41, "tail was: {tail}");
     }
 
     #[test]
