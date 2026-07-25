@@ -480,8 +480,12 @@ async fn gather(
 
     // ── Concurrent sub-queries ──────────────────────────────────────────
     // Globs and greps reuse the exact Tool impls the model would have
-    // called one by one; graph queries reuse the `graph_query` core. All of
-    // them are read-only and independent, so they run together.
+    // called one by one; graph queries reuse the `graph_query` core. All
+    // three arms are read-only and independent, so they run together — but
+    // only the glob and grep arms interleave as futures. The graph arm is
+    // synchronous SQLite work with no await point inside, so it runs as ONE
+    // `spawn_blocking` over one opened graph: every symbol shares a single
+    // index pass instead of paying its own full walk+hash of the workspace.
     let glob_results = futures_util::future::join_all(inputs.globs.iter().map(|pattern| {
         let input = serde_json::json!({ "pattern": pattern });
         async move {

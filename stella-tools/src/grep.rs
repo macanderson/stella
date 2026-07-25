@@ -1,5 +1,15 @@
 //! `grep` — search file contents with a regex. Shells to `rg` when present
 //! for speed; falls back to the system `grep -rn` otherwise.
+//!
+//! Three independent caps bound what reaches the model, because
+//! [`MAX_RESULTS`] alone does not: ripgrep's `--max-count` is per FILE, so a
+//! recursive search over N matching files can emit 200·N lines, and a single
+//! match inside a minified bundle or a base64 blob is one line of megabytes.
+//! So: [`MAX_COLUMNS`] clips each match line (rg's own
+//! `--max-columns-preview`, re-implemented in Rust for the `grep` fallback,
+//! which has no such flag), [`crate::exec::truncate_middle`] caps the whole
+//! buffered payload, and only then does the [`MAX_RESULTS`] line cap apply —
+//! that order is what keeps the "showing first 200 matches" note true.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -9,6 +19,34 @@ use tokio::process::Command;
 use crate::registry::Tool;
 
 const MAX_RESULTS: usize = 200;
+
+/// Per-line column cap for a match line. The issue proposed 300 and 400 in
+/// two different places; 400 is the choice — wide enough for a real source
+/// line with indentation, narrow enough that 200 of them cannot be more than
+/// ~80 KB before the payload cap even applies.
+const MAX_COLUMNS: usize = 400;
+
+/// The `grep` fallback's stand-in for rg's `--max-columns-preview`: clip
+/// every line to [`MAX_COLUMNS`] bytes with the crate's loud elision marker.
+/// Short lines pass through byte-identically, so ordinary results are
+/// untouched. Char-boundary-safe — byte slicing would panic mid-UTF-8.
+fn cap_columns(text: &str) -> String {
+    if !text.lines().any(|line| line.len() > MAX_COLUMNS) {
+        return text.to_string();
+    }
+    text.lines()
+        .map(|line| {
+            if line.len() <= MAX_COLUMNS {
+                line.to_string()
+            } else {
+                let head = crate::exec::truncate_preview(line, MAX_COLUMNS);
+                let elided = line.len() - head.len();
+                format!("{head}[… {elided} bytes elided …]")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// Does this rg/grep stderr describe a broken *pattern* (bad regex or a flag
 /// the pattern got mistaken for) rather than benign per-file walk warnings?
@@ -162,6 +200,13 @@ impl Tool for Grep {
             .arg("--color")
             .arg("never");
         rg.arg("--max-count").arg(MAX_RESULTS.to_string());
+        // `--max-count` is PER FILE, so it is not a bound on the result at
+        // all; the column cap is what keeps one minified line from becoming
+        // the whole tool result. `--max-columns-preview` keeps the head of
+        // the line instead of replacing it with rg's bare "omitted" notice.
+        rg.arg("--max-columns")
+            .arg(MAX_COLUMNS.to_string())
+            .arg("--max-columns-preview");
         if let Some(g) = glob_filter {
             rg.arg("--glob").arg(g);
         }
@@ -175,7 +220,13 @@ impl Tool for Grep {
 
         match rg.output().await {
             Ok(output) => {
-                let text = String::from_utf8_lossy(&output.stdout);
+                // Byte cap BEFORE the line cap: truncating after `take` would
+                // make the "showing first 200 matches" note below a lie, and
+                // rg's per-file `--max-count` means the buffer can hold far
+                // more than 200 lines.
+                let text = crate::exec::truncate_middle(
+                    String::from_utf8_lossy(&output.stdout).into_owned(),
+                );
                 if !text.is_empty() {
                     // Matches (possibly partial — rg still exits 2 if some
                     // path in a recursive walk was unreadable). Never drop
@@ -221,7 +272,12 @@ impl Tool for Grep {
 
                 match grep.output().await {
                     Ok(output) => {
-                        let text = String::from_utf8_lossy(&output.stdout);
+                        // `grep` has no `--max-columns`, so the column cap is
+                        // applied here; then the same byte-then-line order as
+                        // the rg arm.
+                        let text = crate::exec::truncate_middle(cap_columns(
+                            &String::from_utf8_lossy(&output.stdout),
+                        ));
                         if !text.is_empty() {
                             let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
                             let mut result = lines.join("\n");
@@ -330,6 +386,53 @@ mod tests {
             }
         }
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    /// Short lines must survive the column cap byte-for-byte — the caps are
+    /// invisible for every ordinary search.
+    #[test]
+    fn the_column_cap_leaves_ordinary_lines_untouched() {
+        let ordinary = "src/a.rs:1:fn main() {}\nsrc/b.rs:9:    let x = 1;";
+        assert_eq!(cap_columns(ordinary), ordinary);
+        assert_eq!(cap_columns(""), "");
+    }
+
+    #[test]
+    fn the_column_cap_clips_a_long_line_loudly_on_a_char_boundary() {
+        // Multi-byte chars straddling the cut: byte slicing would panic.
+        let long = format!("f.rs:1:{}", "é".repeat(1_000));
+        let capped = cap_columns(&long);
+        assert!(capped.len() < long.len(), "clipped");
+        assert!(capped.contains("bytes elided"), "loudly: {capped}");
+    }
+
+    /// One match inside a minified bundle used to be forwarded to the model
+    /// in full — a single "line" of megabytes. Whichever backend runs (rg's
+    /// `--max-columns-preview` or the fallback's own cap), the result must
+    /// be bounded.
+    #[tokio::test]
+    async fn a_match_in_a_minified_line_is_not_emitted_whole() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let blob = "x".repeat(200_000);
+        std::fs::write(
+            dir.path().join("bundle.min.js"),
+            format!("{blob}NEEDLE{blob}\n"),
+        )
+        .expect("write");
+
+        let result = Grep::default()
+            .execute(&serde_json::json!({"pattern": "NEEDLE"}), dir.path())
+            .await;
+        match result {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.len() < 32_000,
+                    "a 400 KB match line must not reach the model whole (got {} bytes)",
+                    content.len()
+                );
+            }
+            ToolOutput::Error { message } => panic!("expected matches, got: {message}"),
+        }
     }
 
     /// An invalid regex must surface as an error, not be swallowed as
