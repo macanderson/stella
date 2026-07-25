@@ -57,6 +57,7 @@ mod runtime;
 mod session_persist;
 mod settings;
 mod settings_check;
+mod signals;
 mod skill_manager;
 mod stats;
 mod subsession;
@@ -1238,7 +1239,13 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("{} {}", "stella:".red().bold(), e);
             emit_error_summary(output_format, &e);
-            ExitCode::FAILURE
+            // A turn cut short by SIGINT/SIGTERM exits 128 + the signal
+            // number, the shell convention, so a script wrapping `stella
+            // run` can tell "the user stopped this" from "this failed".
+            match signals::interrupted_exit_code() {
+                Some(code) => ExitCode::from(code),
+                None => ExitCode::FAILURE,
+            }
         }
     }
 }
@@ -1386,12 +1393,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // `init` works offline (heuristic fallback), so config resolution
     // failure downgrades rather than aborting.
     if let Some(Command::Init) = cli.command {
-        return rt()?.block_on(agent::run_init(
-            cli.globals.model.as_deref(),
-            cli.globals.api_key.as_deref(),
-            cli.globals.base_url.as_deref(),
-            cli.globals.no_anim,
-        ));
+        return signals::block_on_interruptible(
+            rt()?,
+            agent::run_init(
+                cli.globals.model.as_deref(),
+                cli.globals.api_key.as_deref(),
+                cli.globals.base_url.as_deref(),
+                cli.globals.no_anim,
+            ),
+        );
     }
 
     // Run/Chat/Config need a resolved config (which requires an API key).
@@ -1415,14 +1425,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             no_pipeline,
             test_command,
         } => {
-            rt()?.block_on(agent::run_one_shot(
-                &cfg,
-                &prompt,
-                cli.globals.budget,
-                cli.globals.output_format,
-                !no_pipeline,
-                test_command.as_deref(),
-            ))?;
+            signals::block_on_interruptible(
+                rt()?,
+                agent::run_one_shot(
+                    &cfg,
+                    &prompt,
+                    cli.globals.budget,
+                    cli.globals.output_format,
+                    !no_pipeline,
+                    test_command.as_deref(),
+                ),
+            )?;
         }
         Command::Arena {
             task_dir,
@@ -1432,25 +1445,26 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             no_pipeline,
             test_command,
         } => {
-            rt()?.block_on(arena::run_arena(
-                cfg,
-                arena::ArenaArgs {
-                    task_dir,
-                    journal,
-                    state_dir,
-                    resume,
-                    no_pipeline,
-                    test_command,
-                },
-            ))?;
+            signals::block_on_interruptible(
+                rt()?,
+                arena::run_arena(
+                    cfg,
+                    arena::ArenaArgs {
+                        task_dir,
+                        journal,
+                        state_dir,
+                        resume,
+                        no_pipeline,
+                        test_command,
+                    },
+                ),
+            )?;
         }
         Command::Goal { goal, no_pipeline } => {
-            rt()?.block_on(agent::run_goal_cmd(
-                &cfg,
-                &goal,
-                cli.globals.budget,
-                !no_pipeline,
-            ))?;
+            signals::block_on_interruptible(
+                rt()?,
+                agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, !no_pipeline),
+            )?;
         }
         Command::Fleet {
             tasks,
@@ -1460,17 +1474,20 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             watch,
             no_pipeline,
         } => {
-            rt()?.block_on(fleet_cmd::run_fleet(
-                &cfg,
-                &tasks,
-                plan.as_deref(),
-                base_ref.as_deref(),
-                max_concurrency,
-                cli.globals.budget,
-                watch,
-                !no_pipeline,
-                cli.globals.output_format,
-            ))?;
+            signals::block_on_interruptible(
+                rt()?,
+                fleet_cmd::run_fleet(
+                    &cfg,
+                    &tasks,
+                    plan.as_deref(),
+                    base_ref.as_deref(),
+                    max_concurrency,
+                    cli.globals.budget,
+                    watch,
+                    !no_pipeline,
+                    cli.globals.output_format,
+                ),
+            )?;
         }
         Command::Monitor { target } => {
             let target = target.unwrap_or_else(|| "main".to_string());
@@ -1482,21 +1499,30 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                  code, commit and push the fix, then re-check. The goal is met only when the \
                  latest CI run for `{target}` has completed with every check successful."
             );
-            rt()?.block_on(agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, true))?;
+            signals::block_on_interruptible(
+                rt()?,
+                agent::run_goal_cmd(&cfg, &goal, cli.globals.budget, true),
+            )?;
         }
         Command::Chat => {
             // The Command Deck (tabbed TUI) is the default chat surface on a
             // real terminal; `--plain` / STELLA_PLAIN=1 / a non-TTY stream
             // falls back to the line-based REPL.
             if use_deck(cli.globals.plain) {
-                rt()?.block_on(command_deck::run_deck_session(
-                    &cfg,
-                    cli.globals.budget,
-                    cli.globals.no_anim,
-                    None,
-                ))?;
+                signals::block_on_interruptible(
+                    rt()?,
+                    command_deck::run_deck_session(
+                        &cfg,
+                        cli.globals.budget,
+                        cli.globals.no_anim,
+                        None,
+                    ),
+                )?;
             } else {
-                rt()?.block_on(agent::run_interactive(&cfg, cli.globals.budget))?;
+                signals::block_on_interruptible(
+                    rt()?,
+                    agent::run_interactive(&cfg, cli.globals.budget),
+                )?;
             }
         }
         Command::Resume { id, list } => {
@@ -1516,12 +1542,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 Some(id) => session_persist::ResumeRequest::Id(id),
                 None => session_persist::ResumeRequest::Latest,
             };
-            rt()?.block_on(command_deck::run_deck_session(
-                &cfg,
-                cli.globals.budget,
-                cli.globals.no_anim,
-                Some(request),
-            ))?;
+            signals::block_on_interruptible(
+                rt()?,
+                command_deck::run_deck_session(
+                    &cfg,
+                    cli.globals.budget,
+                    cli.globals.no_anim,
+                    Some(request),
+                ),
+            )?;
         }
         // Models/Version (and Tools) short-circuit in the first match at the
         // top of `run` before a provider is resolved; Init is handled by the
