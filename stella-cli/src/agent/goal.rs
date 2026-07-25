@@ -590,6 +590,7 @@ async fn run_goal_pipeline_turn(
             registry_options,
             active_rules.clone(),
             mcp,
+            Some(stella_core::EventSender::new(tx.clone())),
         )?;
         let no_recall = NoContextRecall;
         let recall: &dyn ContextRecallPort = &no_recall;

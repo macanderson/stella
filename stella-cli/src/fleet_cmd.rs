@@ -703,6 +703,7 @@ async fn run_task(
                 registry_options,
                 active_rules.clone(),
                 None,
+                Some(stella_core::EventSender::new(tx.clone())),
             )?;
             let recall = NoContextRecall;
             let hook_runner = ShellHookRunner;

@@ -322,6 +322,7 @@ pub(crate) fn workspace_ports(
     registry_options: stella_tools::RegistryOptions,
     active_rules: crate::rules::ResolvedRules,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
+    events: Option<stella_core::EventSender>,
 ) -> Result<WorkspacePorts, String> {
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::WorkspacePorts,
@@ -347,6 +348,9 @@ pub(crate) fn workspace_ports(
     );
     if let Some(mcp) = &mcp {
         candidate_workspaces = candidate_workspaces.with_candidate_mcp(Arc::clone(mcp));
+    }
+    if let Some(events) = events {
+        candidate_workspaces = candidate_workspaces.with_events(events);
     }
     Ok(WorkspacePorts {
         repo_structure: GitRepoStructure { root: root.clone() },
