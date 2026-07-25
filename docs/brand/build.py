@@ -22,6 +22,7 @@ The typeface is fetched once and cached under docs/brand/.cache/.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import math
 import shutil
 import subprocess
@@ -212,7 +213,17 @@ def rasterize(source: Path, dest: Path, size: int) -> None:
 
 def main() -> None:
     if not shutil.which("rsvg-convert"):
-        sys.exit("rsvg-convert not found -- brew install librsvg")
+        sys.exit("rsvg-convert not found — brew install librsvg")
+    missing = [
+        package
+        for module, package in (("fontTools", "fonttools"), ("uharfbuzz", "uharfbuzz"))
+        if importlib.util.find_spec(module) is None
+    ]
+    if missing:
+        sys.exit(
+            f"missing Python packages: {', '.join(missing)}\n"
+            f"  pip install {' '.join(missing)}"
+        )
 
     print("wordmark")
     path_data, (x0, y0, x1, y1) = outline_word(WORD)
