@@ -16,3 +16,6 @@ async-trait.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+# Test-only: pins the golden RFC 8785 (JCS) bytes of the lifecycle event bodies.
+# Same crate + version stella-core hashes with, so the preimages agree.
+serde_json_canonicalizer.workspace = true

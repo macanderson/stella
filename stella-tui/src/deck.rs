@@ -478,6 +478,8 @@ impl WorkspaceModel {
             | Inbound::IssuesList { .. }
             | Inbound::IssueActDone { .. }
             | Inbound::EntityHits { .. }
+            | Inbound::RecordedCalls(_)
+            | Inbound::InspectedCall(_)
             | Inbound::ShowHelp
             | Inbound::Splash(_) => {}
         }

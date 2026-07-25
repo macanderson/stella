@@ -246,7 +246,7 @@ Stella's own workspace (`Cargo.toml` + `package.json`/pnpm + `Makefile`):
     { "id": "cargo:build", "runner": "cargo", "name": "build", "command": "cargo build --workspace", "dir": ".", "source": "synthesized", "verb": "build" },
     { "id": "cargo:test", "runner": "cargo", "name": "test", "command": "cargo test --workspace", "dir": ".", "source": "synthesized", "verb": "test" },
     { "id": "make:deck-snapshots", "runner": "make", "name": "deck-snapshots", "command": "make deck-snapshots", "dir": ".", "source": "Makefile" },
-    { "id": "pnpm:docs:dev", "runner": "pnpm", "name": "docs:dev", "command": "pnpm run docs:dev", "dir": ".", "source": "package.json", "raw": "pnpm --dir stella-docs dev" }
+    { "id": "pnpm:docs:dev", "runner": "pnpm", "name": "docs:dev", "command": "pnpm run docs:dev", "dir": ".", "source": "package.json", "raw": "pnpm --dir website dev" }
   ]
 }
 ```
@@ -288,4 +288,4 @@ merge applies):
    `assemble_system_prompt` with a byte-stability test (two builds, same
    fixture ⇒ identical bytes). ✅ shipped
 4. Follow-ups: the optional `scripts` settings section; a docs page under
-   `stella-docs`.
+   `website/`.
