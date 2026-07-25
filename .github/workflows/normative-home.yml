@@ -1,23 +1,37 @@
 name: normative-home
 
-# Boundary drift guard for context-graph-protocol#27: the adaptive-context docs
-# reference CGP as the normative home for frame/wire semantics instead of
-# restating them. This check keeps the pinned CGP revision in those docs in sync
-# with the contextgraph-* rev stella actually builds against (stella-cli/Cargo.toml).
+# Guards that keep doc references honest. Two checks, same failure mode:
+# a pointer that looks authoritative and is not.
+#
+#  1. Boundary drift guard for context-graph-protocol#27: the adaptive-context
+#     docs reference CGP as the normative home for frame/wire semantics instead
+#     of restating them. This keeps the pinned CGP revision in those docs in
+#     sync with the contextgraph-* rev stella actually builds against
+#     (stella-cli/Cargo.toml).
+#  2. Citation guard (#652): every `docs/**.md` path named in a Rust comment
+#     must exist, and every cited `§N` must be a section that document has.
+#     `docs/context-reuse.md` was cited 23 times while absent from the repo.
+#
+# Rust sources are in the path filter because check-doc-citations.sh reads
+# them — a comment added in a .rs file is exactly how a citation goes stale.
 # Isolated from ci.yml / docs.yml so it can never block the core build.
 on:
   pull_request:
     paths:
       - "docs/**"
+      - "**/*.rs"
       - "stella-cli/Cargo.toml"
       - "scripts/check-normative-home.sh"
+      - "scripts/check-doc-citations.sh"
       - ".github/workflows/normative-home.yml"
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "**/*.rs"
       - "stella-cli/Cargo.toml"
       - "scripts/check-normative-home.sh"
+      - "scripts/check-doc-citations.sh"
       - ".github/workflows/normative-home.yml"
   workflow_dispatch:
 
@@ -34,3 +48,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Check NORMATIVE-HOME pins match the CGP rev stella builds against
         run: bash scripts/check-normative-home.sh
+
+      - name: Check every docs/*.md cited from Rust source resolves
+        run: bash scripts/check-doc-citations.sh
