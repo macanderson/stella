@@ -891,7 +891,13 @@ pub(crate) mod sigv4 {
     }
 
     pub(crate) fn sign(input: &SigningInput<'_>) -> SigningOutput {
-        let date = &input.amz_date[..8];
+        // `amz_date` is `YYYYMMDDTHHMMSSZ` and its first 8 bytes are the
+        // credential-scope date. `get` rather than a `[..8]` slice: the field
+        // is caller-supplied on a `pub(crate)` struct, so a short or
+        // non-char-boundary value would panic mid-turn instead of producing a
+        // signature the service simply rejects. Well-formed dates are
+        // byte-identical either way (pinned by the botocore golden vectors).
+        let date = input.amz_date.get(..8).unwrap_or(input.amz_date);
         let payload_hash = sha256_hex(input.payload);
         let canonical_uri = canonical_uri_from_wire_path(input.wire_path);
 
@@ -1053,6 +1059,34 @@ pub(crate) mod sigv4 {
                  SignedHeaders=content-type;host;x-amz-date;x-amz-security-token, \
                  Signature=97c2b7044a3c4687c95e5e23e82d9d895c638ad815ab2d13743d6ad1e1d7b4ac"
             );
+        }
+
+        /// `amz_date` is a caller-supplied field on a `pub(crate)` struct, so
+        /// the credential-scope date must be taken defensively: a value
+        /// shorter than 8 bytes, or one whose 8th byte lands inside a
+        /// multi-byte character, used to panic the signer mid-turn. The
+        /// signature it produces for such a date is meaningless — the service
+        /// rejects it — but a typed rejection beats an aborted process.
+        #[test]
+        fn sign_does_not_panic_on_a_malformed_amz_date() {
+            // "", too short, and one whose byte 8 falls inside a 3-byte char.
+            for amz_date in ["", "2026", "202607\u{20ac}1"] {
+                let output = sign(&SigningInput {
+                    method: "POST",
+                    wire_path: "/model/m/converse",
+                    canonical_query: "",
+                    host: "bedrock-runtime.us-east-1.amazonaws.com",
+                    content_type: "application/json",
+                    payload: b"{}",
+                    region: "us-east-1",
+                    service: "bedrock",
+                    access_key: "AKIDEXAMPLE",
+                    secret_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+                    session_token: None,
+                    amz_date,
+                });
+                assert!(output.authorization.starts_with("AWS4-HMAC-SHA256 "));
+            }
         }
     }
 }
