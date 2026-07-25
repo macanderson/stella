@@ -13,6 +13,13 @@
 # stella-cli/Cargo.toml). If someone bumps the dependency without repinning the
 # docs — or repins the docs without bumping the code — this fails loudly.
 #
+# Discovery matches the HTML-comment form `<!-- NORMATIVE-HOME:`, NOT a bare
+# mention of the marker. Prose that *describes* the convention — docs/README.md
+# explains it, in backticks — carries no `@ <sha>` and is not meant to: it is
+# documentation of the mechanism, not a pinned doc. Matching the bare string
+# made the README a checked file that could never pass, so the guard failed on
+# every PR touching docs/**. Keep the `<!--` anchor.
+#
 # Uses portable POSIX grep/sed so it runs on a bare CI runner.
 set -euo pipefail
 
@@ -44,7 +51,7 @@ while IFS= read -r file; do
        status=1 ;;
   esac
 done <<EOF
-$(grep -rlE 'NORMATIVE-HOME:' docs 2>/dev/null || true)
+$(grep -rlE '<!--[[:space:]]*NORMATIVE-HOME:' docs 2>/dev/null || true)
 EOF
 
 if [ "$count" -eq 0 ]; then
