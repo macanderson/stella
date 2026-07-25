@@ -783,10 +783,16 @@ async fn fetch_all_tools(
 
 /// Map a raw `tools/call` result value into the engine's [`ToolOutput`].
 ///
-/// This is the seam where an untrusted result is bounded (#551): the rendered
-/// string is capped at [`MAX_TOOL_RESULT_BYTES`] middle-out, on both the `Ok`
-/// and the `Error` branch, so a server cannot evict the conversation with one
-/// enormous answer. [`render_content`] itself stays pure and zero-copy.
+/// This is the seam where an untrusted *result* is bounded (#551): the
+/// rendered string is capped at [`MAX_TOOL_RESULT_BYTES`] middle-out, on both
+/// the `Ok` and the `isError: true` branch, so a server cannot evict the
+/// conversation with one enormous answer. [`render_content`] itself stays pure
+/// and zero-copy.
+///
+/// It bounds **only** the two branches below. A server that answers
+/// `tools/call` with a JSON-RPC *error object* fails the request before it
+/// gets here (`RequestOutcome::Protocol` → `Err`), and that route is bounded
+/// by [`McpError::user_message`] at the same budget.
 fn decode_call_result(tool: &str, raw: Value) -> Result<ToolOutput, McpError> {
     let result: CallToolResult = serde_json::from_value(raw)
         .map_err(|e| McpError::Protocol(format!("could not decode tools/call result: {e}")))?;
