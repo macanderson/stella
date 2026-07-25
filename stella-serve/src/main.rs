@@ -14,11 +14,23 @@
 //! so a container HEALTHCHECK needs no extra tooling in the runtime image.
 
 use std::process::ExitCode;
+use std::time::Duration;
 
 use stella_serve::{ServeConfig, serve};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const DEFAULT_BIND: &str = "127.0.0.1:8080";
+
+/// Deadline covering the healthcheck's whole connect + write + read. Kept
+/// strictly under the container `HEALTHCHECK --timeout=5s`
+/// (`packaging/docker/Dockerfile.serve`) so a wedged peer is reported by us,
+/// as a clean non-zero exit, instead of being killed mid-probe by Docker.
+const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Cap on bytes read back. Only the status line is inspected, so anything
+/// beyond a kilobyte is noise — and without a cap, a foreign listener on the
+/// port could make the probe buffer without limit.
+const HEALTH_PROBE_MAX_BYTES: u64 = 1024;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -96,12 +108,29 @@ async fn healthcheck() -> ExitCode {
 }
 
 async fn probe_health(port: u16) -> std::io::Result<bool> {
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
-    stream
-        .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .await?;
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await?;
+    let response = tokio::time::timeout(HEALTH_PROBE_TIMEOUT, async {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+        stream
+            .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await?;
+        let mut buf = Vec::with_capacity(HEALTH_PROBE_MAX_BYTES as usize);
+        stream
+            .take(HEALTH_PROBE_MAX_BYTES)
+            .read_to_end(&mut buf)
+            .await?;
+        Ok::<_, std::io::Error>(buf)
+    })
+    .await
+    .map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("no /healthz response within {HEALTH_PROBE_TIMEOUT:?}"),
+        )
+    })??;
+    // Decoded leniently: a foreign listener's bytes are not ours to trust, and
+    // a capped read can land mid-character. Either way the status line simply
+    // fails to match, which is a clean `false` rather than an error.
+    let response = String::from_utf8_lossy(&response);
     // Match the status line exactly rather than searching the whole line for
     // "200": a container orchestrator restarts the process on our verdict, so
     // it must not be swayed by a `200` appearing anywhere else in the head.
