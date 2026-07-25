@@ -70,12 +70,24 @@ impl ResourceMonitor {
         // enumerate and stat every process on the machine once per second for
         // the life of the session. Built before `&mut self.sys` is taken so the
         // borrow of `model` ends first.
-        let pids: Vec<Pid> = model
+        let mut pids: Vec<Pid> = model
             .agents
             .iter()
             .filter_map(|a| a.meta.pid)
             .map(Pid::from_u32)
             .collect();
+        // MUST be deduplicated. Agents in one workspace routinely share a pid
+        // — the lead and every subagent register `std::process::id()` — and
+        // sysinfo's `Some(..)` arm walks the caller's slice verbatim, flipping
+        // each process's one-shot `updated` flag. The second visit to a
+        // repeated pid sees the flag already consumed, reads it as "did not
+        // refresh", and (with `remove_dead_processes = true`) evicts a LIVE
+        // process from the table — so `process()` below returns `None` and
+        // every agent renders 0% / 0 B. The old `ProcessesToUpdate::All` path
+        // used `retain()`, which visits each process exactly once and was
+        // structurally immune. Witness: `duplicate_pids_still_report_memory`.
+        pids.sort_unstable();
+        pids.dedup();
         if !pids.is_empty() {
             self.sys.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&pids),
@@ -138,5 +150,44 @@ mod tests {
         monitor.sample(&mut model);
 
         assert!(model.agents[0].res.mem_bytes > 0);
+    }
+
+    /// Witness for the duplicate-pid regression: a lead plus subagents all
+    /// register the SAME `std::process::id()`, so the refresh list arrives as
+    /// `[P, P, P]`. sysinfo's `ProcessesToUpdate::Some` arm walks that slice
+    /// verbatim and consumes each process's one-shot `updated` flag, so the
+    /// second visit to `P` reads as "stale" and — with `remove_dead_processes`
+    /// on — deletes the live process from the table. Every agent then resolves
+    /// to `None` and the AGENTS tab renders 0% / 0 B for the whole deck.
+    ///
+    /// The single-pid test above cannot catch this: n = 1 is the only arity
+    /// that behaves correctly. Deduplicating before the refresh is what keeps
+    /// this green.
+    #[test]
+    fn duplicate_pids_still_report_memory() {
+        let mut monitor = ResourceMonitor::new();
+        let mut model = WorkspaceModel::new();
+
+        // Three agents, one shared pid — exactly what `command_deck.rs` and
+        // `subsession.rs` produce for a lead with two subagents.
+        let self_pid = std::process::id();
+        for (i, id) in ["lead", "sub-a", "sub-b"].iter().enumerate() {
+            let mut meta = AgentMeta::new(*id, format!("agent {i}"), 0);
+            meta.pid = Some(self_pid);
+            model.apply_inbound(&Inbound::Register(meta));
+        }
+        assert_eq!(model.agents.len(), 3, "all three agents registered");
+
+        monitor.sample(&mut model);
+
+        for agent in &model.agents {
+            assert!(
+                agent.res.mem_bytes > 0,
+                "agent {} zeroed: duplicate pids evicted the live process from \
+                 the sysinfo table (sample = {:?})",
+                agent.meta.id,
+                agent.res,
+            );
+        }
     }
 }
