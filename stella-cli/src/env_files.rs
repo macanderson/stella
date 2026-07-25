@@ -26,8 +26,10 @@
 //! - **Never applied, whatever the file says**: names whose value is executed
 //!   by something Stella later spawns — the dynamic loader (`LD_*`, `DYLD_*`),
 //!   command lookup (`PATH`, `SHELL`), interpreter startup hooks
-//!   (`NODE_OPTIONS`, `PYTHONSTARTUP`, `BASH_ENV`, …) and the git/pager escapes
-//!   (`GIT_SSH_COMMAND`, `LESSOPEN`, …). A dotenv file is attacker controlled
+//!   (`NODE_OPTIONS`, `PYTHONSTARTUP`, `BASH_ENV`, …), the git/pager escapes
+//!   (`GIT_SSH_COMMAND`, `LESSOPEN`, …) and the config-file redirections that
+//!   reach the same escapes indirectly (`GIT_CONFIG_*`, `RIPGREP_CONFIG_PATH`,
+//!   `CARGO_TARGET_<TRIPLE>_RUNNER`). A dotenv file is attacker controlled
 //!   the moment you clone an unfamiliar repository, and applying these would
 //!   make `git clone && stella` arbitrary code execution on the first
 //!   subprocess (#553). Refused names are reported, never applied; if you
@@ -253,18 +255,29 @@ const DENIED_EXACT: &[&str] = &[
     "VISUAL",
     "PAGER",
     "MANPAGER",
+    // `bash` reads SHELLOPTS at startup to turn shell options on for every
+    // shell Stella (or a tool it spawns) starts.
+    "SHELLOPTS",
     // `less` runs LESSOPEN as a command; `git` shells out through these.
+    // (`GIT_SSH*` is covered by the prefix list below.)
     "LESSOPEN",
     "LESSCLOSE",
-    "GIT_SSH",
-    "GIT_SSH_COMMAND",
     "GIT_EXTERNAL_DIFF",
     "GIT_PAGER",
     "GIT_EDITOR",
     "GIT_ASKPASS",
     "GIT_PROXY_COMMAND",
+    // A template directory is copied into a new repository's `.git`, hooks
+    // included — and hooks run on the first commit. `GIT_ATTR_NOSYSTEM`
+    // switches off the system gitattributes file a host may be relying on.
+    "GIT_TEMPLATE_DIR",
+    "GIT_ATTR_NOSYSTEM",
+    // Helper programs ssh and anything opening a URL will exec.
     "SSH_ASKPASS",
     "BROWSER",
+    // Stella shells out to `rg` (stella-tools/src/grep.rs), and a ripgrep
+    // config file may carry `--pre=<command>`, which rg then executes per file.
+    "RIPGREP_CONFIG_PATH",
     // Interpreters that execute a path or flag string at startup.
     "NODE_OPTIONS",
     "NODE_REPL_EXTERNAL_MODULE",
@@ -286,10 +299,30 @@ const DENIED_EXACT: &[&str] = &[
     "CARGO_BUILD_RUSTC_WRAPPER",
 ];
 
-/// Prefixes denied wholesale. Every `LD_*` and `DYLD_*` name is a dynamic-loader
-/// control, so an allow-list of the dangerous ones would rot as libc adds more —
-/// refuse the namespace instead.
-const DENIED_PREFIXES: &[&str] = &["LD_", "DYLD_"];
+/// Prefixes denied wholesale, because naming the individual members would rot
+/// as the upstream tool grows new ones:
+///
+/// - `LD_*` / `DYLD_*` — every name in these namespaces is a dynamic-loader
+///   control, so an allow-list of the dangerous ones would go stale as libc
+///   adds more.
+/// - `GIT_SSH*` — `GIT_SSH` and `GIT_SSH_COMMAND` name the program git execs,
+///   and `GIT_SSH_VARIANT` steers how its arguments are built.
+/// - `GIT_CONFIG*` — the root of the vector [`DENIED_EXACT`]'s `GIT_PAGER` /
+///   `GIT_ASKPASS` entries close. `GIT_CONFIG_COUNT` + `GIT_CONFIG_KEY_0` +
+///   `GIT_CONFIG_VALUE_0` injects *any* config key into every git Stella runs
+///   (`core.pager`, `core.sshCommand`, an alias with a `!` shell body), and
+///   `GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` point git at a file the cloned
+///   repository controls. Blocking the leaves while leaving the root open is
+///   no block at all.
+const DENIED_PREFIXES: &[&str] = &["LD_", "DYLD_", "GIT_SSH", "GIT_CONFIG"];
+
+/// Denied `<prefix>…<suffix>` shapes, for names whose middle is a wildcard.
+/// `CARGO_TARGET_<TRIPLE>_RUNNER` (e.g.
+/// `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER`) names the program cargo
+/// executes to *run* a built binary — the same class of hijack as the
+/// `RUSTC_WRAPPER` family already in [`DENIED_EXACT`], but the triple in the
+/// middle means it cannot be spelled as an exact name or a prefix.
+const DENIED_PREFIX_SUFFIX: &[(&str, &str)] = &[("CARGO_", "_RUNNER")];
 
 /// Whether a dotenv file must not be allowed to set `name`.
 ///
@@ -298,7 +331,15 @@ const DENIED_PREFIXES: &[&str] = &["LD_", "DYLD_"];
 /// refusing it too costs nothing and removes a class of near-miss reasoning.
 fn is_execution_hijack(name: &str) -> bool {
     let upper = name.trim().to_ascii_uppercase();
-    DENIED_EXACT.contains(&upper.as_str()) || DENIED_PREFIXES.iter().any(|p| upper.starts_with(p))
+    DENIED_EXACT.contains(&upper.as_str())
+        || DENIED_PREFIXES.iter().any(|p| upper.starts_with(p))
+        || DENIED_PREFIX_SUFFIX.iter().any(|(prefix, suffix)| {
+            // The length guard keeps prefix and suffix from overlapping, so
+            // `CARGO_RUNNER` is not read as having an empty triple.
+            upper.len() >= prefix.len() + suffix.len()
+                && upper.starts_with(prefix)
+                && upper.ends_with(suffix)
+        })
 }
 
 /// Resolve the files to the ordered assignments to apply. A name is taken from
@@ -594,6 +635,69 @@ mod tests {
         assert_eq!(planned.get("OPENROUTER_API_KEY"), Some(&"sk-legit"));
     }
 
+    /// The witness for the second wave: a dotenv file must not reach the same
+    /// execution vectors *indirectly*, by pointing a tool at a config file (or
+    /// a config key) that names the command. Denying `GIT_PAGER` while leaving
+    /// `GIT_CONFIG_*` open blocks the leaf and not the root — the same pager
+    /// can be set with `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager`.
+    #[test]
+    fn dotenv_cannot_redirect_a_spawned_tool_via_its_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        write(
+            d,
+            ".env",
+            // git config injected straight from the environment…
+            "GIT_CONFIG_COUNT=1\n\
+             GIT_CONFIG_KEY_0=core.pager\n\
+             GIT_CONFIG_VALUE_0=/tmp/evil.sh\n\
+             # …or by pointing git at a file the repo ships.\n\
+             GIT_CONFIG_GLOBAL=/tmp/evil.gitconfig\n\
+             GIT_SSH_VARIANT=/tmp/evil\n\
+             GIT_TEMPLATE_DIR=/tmp/evil-hooks\n\
+             SHELLOPTS=xtrace\n\
+             RIPGREP_CONFIG_PATH=/tmp/evil.rgrc\n\
+             CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=/tmp/evil\n\
+             git_config_count=1\n\
+             CARGO_TARGET_DIR=/tmp/target\n\
+             OPENROUTER_API_KEY=sk-legit\n",
+        );
+
+        let files = collect_files(d);
+        let (plan, refused) = plan_assignments(&files, |_| false);
+        let planned: std::collections::HashMap<_, _> = plan
+            .iter()
+            .map(|(k, v, _)| (k.as_str(), v.as_str()))
+            .collect();
+
+        for hijack in [
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_0",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_SSH_VARIANT",
+            "GIT_TEMPLATE_DIR",
+            "SHELLOPTS",
+            "RIPGREP_CONFIG_PATH",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER",
+            "git_config_count",
+        ] {
+            assert!(
+                !planned.contains_key(hijack),
+                "{hijack} must never be applied from a project dotenv file"
+            );
+            assert!(
+                refused.iter().any(|r| r == hijack),
+                "{hijack} should be reported as refused"
+            );
+        }
+
+        // Neighbours that only *configure* cargo still load — the deny-list
+        // must not swallow the namespace it borders on.
+        assert_eq!(planned.get("CARGO_TARGET_DIR"), Some(&"/tmp/target"));
+        assert_eq!(planned.get("OPENROUTER_API_KEY"), Some(&"sk-legit"));
+    }
+
     #[test]
     fn deny_list_matches_namespaces_and_case_but_spares_ordinary_names() {
         // Loader namespaces are refused wholesale, in any case.
@@ -603,6 +707,24 @@ mod tests {
         assert!(is_execution_hijack("dyld_insert_libraries"));
         assert!(is_execution_hijack("  PATH  ")); // whitespace is not an escape
 
+        // git's ssh and config namespaces, root and leaves alike.
+        assert!(is_execution_hijack("GIT_SSH"));
+        assert!(is_execution_hijack("GIT_SSH_COMMAND"));
+        assert!(is_execution_hijack("GIT_SSH_VARIANT"));
+        assert!(is_execution_hijack("GIT_CONFIG"));
+        assert!(is_execution_hijack("GIT_CONFIG_GLOBAL"));
+        assert!(is_execution_hijack("GIT_CONFIG_KEY_17"));
+        assert!(is_execution_hijack("git_config_value_17"));
+
+        // The `<prefix>…<suffix>` shape, for every target triple.
+        assert!(is_execution_hijack(
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER"
+        ));
+        assert!(is_execution_hijack("CARGO_TARGET_WASM32_WASIP1_RUNNER"));
+        assert!(is_execution_hijack(
+            "cargo_target_aarch64_apple_darwin_runner"
+        ));
+
         // Names a project legitimately sets must still load — an over-broad
         // deny-list would quietly break the feature this module exists for.
         assert!(!is_execution_hijack("OPENROUTER_API_KEY"));
@@ -611,6 +733,12 @@ mod tests {
         assert!(!is_execution_hijack("GIT_AUTHOR_NAME"));
         assert!(!is_execution_hijack("PATHOLOGY_API")); // prefix-of-PATH, not PATH
         assert!(!is_execution_hijack("NODE_ENV"));
+        // Bordering names in the same namespaces are configuration, not
+        // execution: cargo's output directory and job count, git's committer.
+        // Only the `_RUNNER` suffix and the `GIT_CONFIG`/`GIT_SSH` roots bite.
+        assert!(!is_execution_hijack("CARGO_TARGET_DIR"));
+        assert!(!is_execution_hijack("CARGO_BUILD_JOBS"));
+        assert!(!is_execution_hijack("GIT_COMMITTER_EMAIL"));
     }
 
     #[test]
