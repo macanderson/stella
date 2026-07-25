@@ -222,7 +222,7 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
         "{SUMMARY_MARKER_PREFIX} to fit context — full detail was compacted away; \
          re-read files or re-run tools for specifics]\n\nSUMMARY"
     ));
-    let records = recent_call_records(&history(summary));
+    let records = recent_call_records(&history(summary), &Default::default());
     assert_eq!(
         records
             .iter()
@@ -244,7 +244,7 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
     let steer = CompletionMessage::user(format!(
         "{LOOP_STEER_PREFIX}] you appear to be looping: change strategy."
     ));
-    let records = recent_call_records(&history(steer));
+    let records = recent_call_records(&history(steer), &Default::default());
     assert_eq!(
         records.len(),
         2,
@@ -252,7 +252,10 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
     );
 
     // A REAL user message (a steer, a REPL turn) still resets the window.
-    let records = recent_call_records(&history(CompletionMessage::user("also check the tests")));
+    let records = recent_call_records(
+        &history(CompletionMessage::user("also check the tests")),
+        &Default::default(),
+    );
     assert_eq!(
         records
             .iter()
@@ -808,5 +811,142 @@ async fn enforced_session_breach_at_step_boundary_names_the_axis() {
         provider_calls.load(Ordering::SeqCst),
         0,
         "the abort must precede any model call"
+    );
+}
+
+/// Witness for #554: compaction rewrites older tool results IN PLACE
+/// (dedup/supersession stubs, middle-out aging, the eviction stub) and
+/// `run_turn` runs it immediately BEFORE loop detection in the same step.
+/// A repeat streak therefore reached the detector as `[stub, …, real]`,
+/// `same_record`'s byte-identical-output requirement could never be met,
+/// and the PRIMARY stuck-turn defense was silently disabled — in exactly
+/// the scenario that triggers compaction in the first place (a red loop of
+/// large repeated results, `compaction::tests::red_loop_of_large_errors_is_reclaimable`).
+///
+/// Fails before the fix: both loop histories below come back `NoLoop`.
+#[test]
+fn compaction_does_not_destroy_loop_detection_evidence() {
+    let read_call = |id: &str| CompletionMessage {
+        role: MessageRole::Assistant,
+        content: String::new(),
+        tool_calls: vec![ToolCall {
+            call_id: id.into(),
+            name: "read_file".into(),
+            input: serde_json::json!({ "path": "big.rs" }),
+        }],
+        tool_results: Vec::new(),
+        attachments: Vec::new(),
+    };
+    let read_result = |id: &str, content: String| CompletionMessage {
+        role: MessageRole::Tool,
+        content: String::new(),
+        tool_calls: Vec::new(),
+        tool_results: vec![ToolResult {
+            call_id: id.into(),
+            output: ToolOutput::Ok { content },
+        }],
+        attachments: Vec::new(),
+    };
+    // Four reads of one file, each result far over the aging threshold —
+    // the shape that blows the compaction budget in the first place.
+    let history = |id: &dyn Fn(usize) -> String, body: &dyn Fn(usize) -> String| {
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("go"),
+        ];
+        for n in 1..=4usize {
+            messages.push(read_call(&id(n)));
+            messages.push(read_result(&id(n), body(n)));
+        }
+        messages
+    };
+    let fresh_ids = |n: usize| format!("c{n}");
+    // Snapshot identities exactly where `run_turn` does — before the pass —
+    // then compact hard enough to force every pass, and assert the older
+    // results really were rewritten (or the test would pass vacuously).
+    let compact_as_run_turn_does = |messages: &mut Vec<CompletionMessage>| {
+        let mut identities = HashMap::new();
+        snapshot_result_identities(messages, &mut identities);
+        assert!(
+            compact(messages, 16).is_some(),
+            "fixture sanity: the budget must force a real compaction pass"
+        );
+        let rewritten = messages
+            .iter()
+            .flat_map(|m| m.tool_results.iter())
+            .filter(|r| crate::compaction::is_compacted_output(&r.output))
+            .count();
+        assert!(
+            rewritten >= 2,
+            "fixture sanity: compaction must have stubbed the older results, got {rewritten}"
+        );
+        identities
+    };
+    let payload = "x".repeat(3_000);
+
+    // 1. Byte-identical large outputs — pass 1 (dedup) stubs the middle
+    //    copies, passes 3/4 age then evict the earliest one.
+    let mut identical = history(&fresh_ids, &|_| payload.clone());
+    let identities = compact_as_run_turn_does(&mut identical);
+    match detect_loop(
+        &recent_call_records(&identical, &identities),
+        LoopDetectionConfig::default(),
+    ) {
+        LoopVerdict::ExactRepeat { count, .. } => assert_eq!(count, 4),
+        other => panic!("compaction must not hide an identical-output repeat: {other:?}"),
+    }
+
+    // 2. `read_file`'s volatile session-tally footer makes the outputs
+    //    non-identical, so pass 2 (supersession) is what stubs them. The
+    //    preserved identity must be computed over the SAME normalization
+    //    the detector compares (`comparable_output`), or every reread is a
+    //    distinct identity and this regresses to blind again.
+    let mut tallied = history(&fresh_ids, &|n| {
+        format!("{payload}\n\n(1/1 lines shown \u{b7} read {n}\u{d7} this session)")
+    });
+    let identities = compact_as_run_turn_does(&mut tallied);
+    assert!(
+        detect_loop(
+            &recent_call_records(&tallied, &identities),
+            LoopDetectionConfig::default(),
+        )
+        .is_loop(),
+        "compaction must not hide a repeat whose outputs differ only by the tally footer"
+    );
+
+    // 3. The other half of the contract: results that genuinely changed
+    //    must stay `NoLoop` after compaction collapsed them onto one
+    //    another's stubs. A preserved identity must never manufacture a
+    //    repeat that the real outputs do not support.
+    let mut changing = history(&fresh_ids, &|n| format!("{payload}{n}"));
+    let identities = compact_as_run_turn_does(&mut changing);
+    assert_eq!(
+        detect_loop(
+            &recent_call_records(&changing, &identities),
+            LoopDetectionConfig::default(),
+        ),
+        LoopVerdict::NoLoop,
+        "genuinely changing outputs must not become a loop once compaction stubs them"
+    );
+
+    // 4. A backend that reuses ONE call_id for every step (the scripted
+    //    providers in this file do exactly that) makes the snapshot
+    //    ambiguous — the last real output would otherwise be attributed to
+    //    all four calls and abort a healthy polling turn. Such an id is
+    //    poisoned, and comparison falls back to the live outputs.
+    let mut reused = history(&|_| "c1".to_string(), &|n| format!("{payload}{n}"));
+    let identities = compact_as_run_turn_does(&mut reused);
+    assert_eq!(
+        identities.get("c1"),
+        Some(&None),
+        "a call_id seen with two different outputs must be poisoned, not guessed"
+    );
+    assert_eq!(
+        detect_loop(
+            &recent_call_records(&reused, &identities),
+            LoopDetectionConfig::default(),
+        ),
+        LoopVerdict::NoLoop,
+        "a reused call_id must never manufacture a repeat"
     );
 }

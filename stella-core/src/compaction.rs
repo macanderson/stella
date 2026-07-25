@@ -75,6 +75,36 @@ fn supersession_stub() -> String {
         .to_string()
 }
 
+/// The marker [`age_content`] splices between the head and tail it keeps.
+/// Named so [`is_compacted_output`] can recognize an aged payload without
+/// duplicating the string.
+const AGE_ELISION_MARKER: &str =
+    "[… middle elided during compaction — re-run the tool for the full output …]";
+
+/// Whether this output is something a compaction pass wrote over a real
+/// tool result, rather than the result itself. The driver uses it to keep
+/// a *pre-compaction* identity for every tool result (#554): compaction
+/// rewrites results in place, so a snapshot taken after a pass would
+/// record the stub's identity and permanently lose the evidence that loop
+/// detection compares. Keeping the predicate here keeps the stub strings
+/// in the one module that writes them.
+///
+/// Deliberately conservative in the one direction that can be wrong: real
+/// tool output that happens to contain [`AGE_ELISION_MARKER`] (reading
+/// this file, say) is treated as compacted, which only means the driver
+/// declines to snapshot an identity for it and falls back to comparing
+/// outputs — the behavior before #554, never a false loop.
+pub(crate) fn is_compacted_output(output: &ToolOutput) -> bool {
+    let payload = match output {
+        ToolOutput::Ok { content } => content,
+        ToolOutput::Error { message } => message,
+    };
+    payload == EVICTION_STUB
+        || *payload == dedup_stub()
+        || *payload == supersession_stub()
+        || payload.contains(AGE_ELISION_MARKER)
+}
+
 /// Middle-out truncate `content` on char boundaries, keeping
 /// [`AGE_KEEP_CHARS`] from each end. Caller guarantees
 /// `content.len() > AGE_THRESHOLD_CHARS`, which the keep windows never
@@ -89,7 +119,7 @@ fn age_content(content: &str) -> String {
         tail_start += 1;
     }
     format!(
-        "{}\n[… middle elided during compaction — re-run the tool for the full output …]\n{}",
+        "{}\n{AGE_ELISION_MARKER}\n{}",
         &content[..head_end],
         &content[tail_start..]
     )
