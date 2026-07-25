@@ -67,7 +67,7 @@
 //! §4.2: "malformed-call repair tuned to the failure shapes GLM actually
 //! produces") is a documented follow-up, not faked here.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -447,6 +447,10 @@ impl<'a> Engine<'a> {
         // Per-turn overflow-summarizer latch: stops a persistently failing
         // cheap summarizer re-firing every step for the rest of the turn.
         let mut summarizer_health = SummarizerHealth::default();
+        // Per-turn pre-compaction tool-result identities
+        // ([`snapshot_result_identities`]). Stack-local like the two above —
+        // the engine holds no state of its own.
+        let mut result_identities = ResultIdentities::new();
 
         for step in 0..self.config.max_steps {
             // Pause parks HERE — after the previous step fully settled and
@@ -481,6 +485,10 @@ impl<'a> Engine<'a> {
             {
                 return aborted;
             }
+            // BEFORE compaction, never after: the pass rewrites tool results
+            // in place, and loop detection runs on the rewritten history in
+            // this very step (#554).
+            snapshot_result_identities(messages, &mut result_identities);
             total_cost_usd += self
                 .run_compaction_pass(
                     messages,
@@ -496,9 +504,13 @@ impl<'a> Engine<'a> {
                 self.effective_compaction_budget(calibration_model.as_deref());
             receipts.set_effective_budget(effective_budget, calibration_factor);
 
-            if let Some(aborted) =
-                self.check_loop_detection(messages, &mut loop_steered, total_cost_usd, events)
-            {
+            if let Some(aborted) = self.check_loop_detection(
+                messages,
+                &result_identities,
+                &mut loop_steered,
+                total_cost_usd,
+                events,
+            ) {
                 return aborted;
             }
             if let Some(aborted) =
@@ -889,6 +901,10 @@ impl<'a> Engine<'a> {
     /// it produced ([`recent_call_records`]), so only repeats and cycles
     /// with byte-identical outputs count — legitimate polling (identical
     /// input, changing output) never trips it (`crate::loop_detect`).
+    /// `result_identities` is the turn's pre-compaction snapshot
+    /// ([`snapshot_result_identities`]) — compaction runs immediately
+    /// before this check and rewrites older results in place, so without it
+    /// a repeat streak reads as `[stub, stub, real]` and never counts.
     ///
     /// Steer first, abort second: the FIRST detection of a turn injects a
     /// warning through the same seam as user steering — a user-role
@@ -899,11 +915,12 @@ impl<'a> Engine<'a> {
     fn check_loop_detection(
         &self,
         messages: &mut Vec<CompletionMessage>,
+        result_identities: &ResultIdentities,
         loop_steered: &mut bool,
         total_cost_usd: f64,
         events: &EventSender,
     ) -> Option<TurnOutcome> {
-        let records = recent_call_records(messages);
+        let records = recent_call_records(messages, result_identities);
         let verdict = detect_loop(&records, self.config.loop_detection);
         if !verdict.is_loop() {
             return None;
@@ -1941,7 +1958,16 @@ const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
 /// scripted or misbehaving backend may reuse them across steps. A call
 /// whose result is missing keeps `output: None`, which the detector treats
 /// as unprovable progress, never loop evidence.
-fn recent_call_records(messages: &[CompletionMessage]) -> Vec<CallRecord> {
+///
+/// `identities` is the turn's snapshot from [`snapshot_result_identities`],
+/// attached to each resolved record so the detector can compare what a call
+/// really produced rather than what compaction left of it (#554). A
+/// `call_id` that is absent — or poisoned by reuse — leaves
+/// `identity: None` and the detector falls back to the output bytes.
+fn recent_call_records(
+    messages: &[CompletionMessage],
+    identities: &ResultIdentities,
+) -> Vec<CallRecord> {
     let turn_start = messages
         .iter()
         .rposition(|m| {
@@ -1958,6 +1984,7 @@ fn recent_call_records(messages: &[CompletionMessage]) -> Vec<CallRecord> {
                 records.extend(message.tool_calls.iter().map(|call| CallRecord {
                     call: call.clone(),
                     output: None,
+                    identity: None,
                 }));
             }
             MessageRole::Tool => {
@@ -1968,6 +1995,7 @@ fn recent_call_records(messages: &[CompletionMessage]) -> Vec<CallRecord> {
                         .find(|r| r.output.is_none() && r.call.call_id == result.call_id)
                     {
                         record.output = Some(comparable_output(&result.output));
+                        record.identity = identities.get(&result.call_id).cloned().flatten();
                     }
                 }
             }
@@ -1975,6 +2003,64 @@ fn recent_call_records(messages: &[CompletionMessage]) -> Vec<CallRecord> {
         }
     }
     records
+}
+
+/// A turn's snapshot of what each tool call really produced, keyed by
+/// `call_id` ([`snapshot_result_identities`]). `None` marks a POISONED id:
+/// the same `call_id` was observed carrying two different uncompacted
+/// outputs, so nothing about it can be trusted.
+type ResultIdentities = HashMap<String, Option<String>>;
+
+/// Record every tool result's identity into `identities`, keyed by
+/// `call_id` — the driver's answer to #554.
+///
+/// Compaction rewrites tool results IN PLACE (dedup/supersession stubs,
+/// middle-out aging, the eviction stub) and runs immediately before loop
+/// detection in the same step, so a three-call identical streak reaches the
+/// detector as `[stub, stub, real]` and the byte-identical-output
+/// requirement can never be met. Snapshotting each result's identity while
+/// its real content is still present preserves exactly the evidence the
+/// detector needs, without teaching either pure module about the other.
+/// Called once per step BEFORE the compaction pass; the map accumulates
+/// across the turn, because a result's real content is only on hand for the
+/// one step between producing it and the pass that stubs it.
+///
+/// Two rules make accumulation safe:
+///
+/// - **A compacted output is never recorded.** Its identity is the stub's,
+///   not the call's; recording it would overwrite the real one and lose the
+///   evidence permanently, and every evicted result shares one stub.
+/// - **A `call_id` seen with two different real outputs is poisoned**
+///   (`None`), never overwritten. Providers only guarantee ids unique
+///   within one step and a scripted backend may reuse them across steps —
+///   which [`recent_call_records`] already tolerates. Keeping either
+///   identity would attach one call's evidence to a different call, and a
+///   WRONG identity is far worse than none: it can make two genuinely
+///   different outputs compare equal and abort a healthy turn. Poisoned
+///   ids fall back to comparing the live outputs, i.e. the behavior before
+///   this fix.
+///
+/// The identity is computed over [`comparable_output`], the same
+/// normalization the detector compares, so `read_file`'s volatile
+/// session-tally footer does not make every reread a distinct identity.
+fn snapshot_result_identities(messages: &[CompletionMessage], identities: &mut ResultIdentities) {
+    for message in messages.iter().filter(|m| m.role == MessageRole::Tool) {
+        for result in &message.tool_results {
+            if crate::compaction::is_compacted_output(&result.output) {
+                continue;
+            }
+            let identity =
+                crate::receipts::tool_result_block_id(&comparable_output(&result.output));
+            let conflicts = matches!(
+                identities.get(&result.call_id),
+                Some(seen) if seen.as_deref() != Some(identity.as_str())
+            );
+            identities.insert(
+                result.call_id.clone(),
+                if conflicts { None } else { Some(identity) },
+            );
+        }
+    }
 }
 
 /// Normalize one tool output for loop comparison: strip `read_file`'s

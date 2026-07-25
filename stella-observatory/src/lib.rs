@@ -306,7 +306,13 @@ fn host_is_local(head: &str) -> bool {
     } else {
         h.rsplit_once(':').map(|(hn, _)| hn).unwrap_or(h)
     };
-    hostname == "localhost" || hostname == "::1" || hostname.starts_with("127.")
+    // Parse, never prefix-match: `127.0.0.1.attacker.example` is a registrable
+    // name that satisfies a `starts_with("127.")` test. `localhost` stays an
+    // explicit arm because it is a name, not an address.
+    hostname
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+        || hostname == "localhost"
 }
 
 /// Read one request head, answer it, close. GET only, 8 KiB head cap.
@@ -390,6 +396,9 @@ mod tests {
             "GET / HTTP/1.1\r\nHost: attacker.example:7787\r\n\r\n",
             "GET / HTTP/1.1\r\nHost: evil.com\r\n\r\n",
             "GET / HTTP/1.1\r\nHost: 127evil.com\r\n\r\n",
+            // A registrable name that a prefix test on "127." waves through.
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1.attacker.example\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1.attacker.example:7787\r\n\r\n",
         ];
         for h in remote {
             assert!(!host_is_local(h), "should refuse: {h:?}");

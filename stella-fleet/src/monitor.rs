@@ -136,6 +136,15 @@ pub enum MonitorError {
 
     #[error("could not parse gh output: {detail}")]
     Parse { detail: String },
+
+    /// A caller-supplied PR reference that `gh` would read as a flag rather
+    /// than as a positional. There is no shell involved, so this is argument
+    /// injection, not command injection — but `-R owner/repo` would silently
+    /// retarget the query at another repository and `--jq`/`--template` would
+    /// change the output shape out from under the JSON parse. Rejected before
+    /// the `gh` call rather than spliced in.
+    #[error("PR reference `{reference}` starts with `-`: gh would parse it as a flag")]
+    InvalidPrReference { reference: String },
 }
 
 fn ensure_ok(output: GhOutput, command: &str) -> Result<GhOutput, MonitorError> {
@@ -343,13 +352,26 @@ pub enum WatchDecision {
 }
 
 /// Tuning for [`Monitor::watch_ci`]. Defaults: poll every 30s, cumulative cap
-/// 2h (L-E4), stall after 20m of no progress, give CI 10m to start.
+/// 2h (L-E4), stall after 20m of no progress, give CI 10m to start, tolerate 3
+/// consecutive poll failures, and read at most 50 runs per poll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WatchConfig {
     pub poll_interval_ms: u64,
     pub max_total_ms: u64,
     pub stall_timeout_ms: u64,
     pub startup_grace_ms: u64,
+    /// How many consecutive failed polls the watch rides out before giving up
+    /// and returning the last error — a transient `gh` failure (a 403
+    /// secondary rate limit, a DNS blip) must not throw away a wait the caps
+    /// are designed to hold for two hours. The count resets on any successful
+    /// poll, and the cumulative cap still bounds the error path. `0` restores
+    /// the old behavior: the first error ends the watch.
+    pub max_consecutive_poll_errors: u32,
+    /// `gh run list --limit` for one poll — the truncation point, config
+    /// rather than a magic number in the argv. A branch with more runs than
+    /// this can report [`WatchPhase::AllCompleted`] while older runs go
+    /// unobserved, so it is a tuning knob a caller must be able to see.
+    pub run_list_limit: u32,
 }
 
 impl Default for WatchConfig {
@@ -359,6 +381,8 @@ impl Default for WatchConfig {
             max_total_ms: 2 * 60 * 60 * 1_000, // 2h cumulative cap (L-E4)
             stall_timeout_ms: 20 * 60 * 1_000, // 20m without progress
             startup_grace_ms: 10 * 60 * 1_000, // 10m for CI to appear
+            max_consecutive_poll_errors: 3,
+            run_list_limit: 50,
         }
     }
 }
@@ -475,7 +499,17 @@ impl<H: GhCli> Monitor<H> {
     /// which is how a run's PR is found without knowing its number). Always
     /// reconciled against `gh` — never a cached value (L-V3). Maps gh's
     /// `state`/`isDraft` onto [`PrStatus`].
+    ///
+    /// A reference starting with `-` is rejected with
+    /// [`MonitorError::InvalidPrReference`] instead of being spliced into the
+    /// argv, where gh would parse it as a flag. No production behavior
+    /// changes: the fleet's own caller passes a `fleet/`-prefixed branch.
     pub async fn pr_status(&self, pr: &str) -> Result<PrStatus, MonitorError> {
+        if pr.starts_with('-') {
+            return Err(MonitorError::InvalidPrReference {
+                reference: pr.to_string(),
+            });
+        }
         let out = self
             .gh
             .run(&["pr", "view", pr, "--json", "state,isDraft"])
@@ -505,8 +539,9 @@ impl<H: GhCli> Monitor<H> {
     }
 
     /// One poll of CI runs for a git ref (`gh run list --branch <ref>`),
-    /// reconciled live.
+    /// reconciled live. Reads at most [`WatchConfig::run_list_limit`] runs.
     pub async fn poll_ci(&self, git_ref: &str) -> Result<CiSnapshot, MonitorError> {
+        let limit = self.config.run_list_limit.to_string();
         let out = self
             .gh
             .run(&[
@@ -517,7 +552,7 @@ impl<H: GhCli> Monitor<H> {
                 "--json",
                 "status,conclusion,name",
                 "--limit",
-                "50",
+                &limit,
             ])
             .await?;
         let out = ensure_ok(out, "run list --json status,conclusion,name")?;
@@ -530,18 +565,38 @@ impl<H: GhCli> Monitor<H> {
     /// the cumulative cap, the stall window, and the startup grace. Never
     /// raises a global timeout — this wait owns its own caps.
     ///
-    /// A poll that *errors* (gh rate-limited, offline, not authenticated) ends
-    /// the watch immediately with that `Err` — the wait is not retried across a
-    /// transient failure. Callers that watch a long CI run over a flaky link
-    /// should re-invoke; the caps are recomputed from the new call's start, so
-    /// a retry loop of its own needs its own bound.
+    /// A poll that *errors* (gh rate-limited, offline, not authenticated) is
+    /// ridden out: the watch sleeps one interval and polls again, up to
+    /// [`WatchConfig::max_consecutive_poll_errors`] failures in a row, and
+    /// returns the last error once that is exceeded. The counter resets on any
+    /// successful poll, and the cumulative cap still bounds the error path, so
+    /// a permanently unreachable `gh` cannot spin past `max_total_ms`. An
+    /// error is never treated as progress — an unreachable gh is not evidence
+    /// that CI moved — so the stall window keeps running underneath it.
     pub async fn watch_ci(&self, git_ref: &str) -> Result<CiWatchOutcome, MonitorError> {
         let start = self.clock.now_ms();
         let mut last_progress = start;
         let mut last_fingerprint: Option<String> = None;
+        let mut consecutive_errors: u32 = 0;
 
         loop {
-            let snapshot = self.poll_ci(git_ref).await?;
+            let snapshot = match self.poll_ci(git_ref).await {
+                Ok(snapshot) => {
+                    consecutive_errors = 0;
+                    snapshot
+                }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    let elapsed_total = self.clock.now_ms().saturating_sub(start);
+                    if consecutive_errors > self.config.max_consecutive_poll_errors
+                        || elapsed_total >= self.config.max_total_ms
+                    {
+                        return Err(e);
+                    }
+                    self.sleeper.sleep(self.config.poll_interval_ms).await;
+                    continue;
+                }
+            };
             // Recomputed fresh each poll — the timeout/summary text always
             // reflects the latest observation, never a stale carry-over.
             let last_observed = snapshot.summary();
@@ -797,6 +852,30 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn pr_status_rejects_a_reference_gh_would_read_as_a_flag() {
+        // `-R owner/repo` spliced into `gh pr view <pr>` retargets the query
+        // at another repository; `--jq` breaks the JSON parse. The reference
+        // is rejected before gh is invoked at all.
+        let gh = ScriptedGh::new(vec![GhOutput::ok(r#"{"state":"OPEN","isDraft":false}"#)]);
+        let calls = gh.calls.clone();
+        let mon = Monitor::new(gh, Box::new(ManualClock::new()));
+        for hostile in ["-R other/repo", "--jq", "-"] {
+            match mon.pr_status(hostile).await {
+                Err(MonitorError::InvalidPrReference { reference }) => {
+                    assert_eq!(reference, hostile);
+                }
+                other => panic!("expected a rejected reference for {hostile}, got {other:?}"),
+            }
+        }
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "a hostile reference never reaches gh"
+        );
+        // A normal reference (what the fleet actually passes) still works.
+        assert_eq!(mon.pr_status("fleet/t1-abc").await.unwrap(), PrStatus::Open);
+    }
+
     // snapshot classification
 
     #[test]
@@ -956,6 +1035,7 @@ mod tests {
             max_total_ms: 100_000,
             stall_timeout_ms: 50_000,
             startup_grace_ms: 50_000,
+            ..WatchConfig::default()
         };
         let mon = monitor(gh, ManualClock::new(), cfg);
         let outcome = mon.watch_ci("feat/x").await.unwrap();
@@ -980,6 +1060,7 @@ mod tests {
             max_total_ms: 100_000,
             stall_timeout_ms: 50_000,
             startup_grace_ms: 50_000,
+            ..WatchConfig::default()
         };
         let mon = monitor(gh, ManualClock::new(), cfg);
         assert!(matches!(
@@ -1001,6 +1082,7 @@ mod tests {
             max_total_ms: 5_000,
             stall_timeout_ms: 1_000_000,
             startup_grace_ms: 1_000_000,
+            ..WatchConfig::default()
         };
         let mon = monitor(gh, ManualClock::new(), cfg);
         let outcome = mon.watch_ci("feat/x").await.unwrap();
@@ -1024,6 +1106,7 @@ mod tests {
             max_total_ms: 1_000_000,
             stall_timeout_ms: 5_000,
             startup_grace_ms: 1_000_000,
+            ..WatchConfig::default()
         };
         let mon = monitor(gh, ManualClock::new(), cfg);
         match mon.watch_ci("feat/x").await.unwrap() {
@@ -1044,6 +1127,7 @@ mod tests {
             max_total_ms: 1_000_000,
             stall_timeout_ms: 1_000_000,
             startup_grace_ms: 5_000,
+            ..WatchConfig::default()
         };
         let mon = monitor(gh, ManualClock::new(), cfg);
         assert!(matches!(
@@ -1053,6 +1137,101 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn watch_ci_rides_out_a_transient_poll_failure() {
+        // A 403 secondary rate limit (a non-zero gh exit) on the first poll
+        // must not throw away a wait the caps hold for hours — the watch
+        // sleeps one interval and polls again.
+        let gh = ScriptedGh::new(vec![
+            GhOutput::failed(1, "HTTP 403: API rate limit exceeded"),
+            GhOutput::ok(run_json(&[("completed", "success", "CI")])),
+        ]);
+        let cfg = WatchConfig {
+            poll_interval_ms: 1_000,
+            max_total_ms: 100_000,
+            stall_timeout_ms: 50_000,
+            startup_grace_ms: 50_000,
+            ..WatchConfig::default()
+        };
+        let mon = monitor(gh, ManualClock::new(), cfg);
+        assert!(matches!(
+            mon.watch_ci("feat/x").await.unwrap(),
+            CiWatchOutcome::Completed {
+                conclusion: CiConclusion::Success,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn watch_ci_gives_up_after_too_many_consecutive_poll_failures() {
+        // Tolerance is bounded: a permanently broken gh still ends the watch
+        // with the error rather than polling forever.
+        let gh = ScriptedGh::new(vec![GhOutput::failed(1, "gh: not authenticated")]);
+        let cfg = WatchConfig {
+            poll_interval_ms: 1_000,
+            max_total_ms: 1_000_000,
+            stall_timeout_ms: 1_000_000,
+            startup_grace_ms: 1_000_000,
+            max_consecutive_poll_errors: 2,
+            ..WatchConfig::default()
+        };
+        let calls = gh.calls.clone();
+        let mon = monitor(gh, ManualClock::new(), cfg);
+        assert!(matches!(
+            mon.watch_ci("feat/x").await.unwrap_err(),
+            MonitorError::Command { .. }
+        ));
+        // Two tolerated failures, then the third ends it.
+        assert_eq!(calls.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn watch_ci_error_tolerance_still_respects_the_cumulative_cap() {
+        // An unreachable gh must not let the error path outlive the wall cap:
+        // each failed poll sleeps one interval, and the cap ends the watch
+        // well before the error budget is spent.
+        let gh = ScriptedGh::new(vec![GhOutput::failed(1, "network is unreachable")]);
+        let cfg = WatchConfig {
+            poll_interval_ms: 1_000,
+            max_total_ms: 2_000,
+            stall_timeout_ms: 1_000_000,
+            startup_grace_ms: 1_000_000,
+            max_consecutive_poll_errors: 1_000,
+            ..WatchConfig::default()
+        };
+        let calls = gh.calls.clone();
+        let mon = monitor(gh, ManualClock::new(), cfg);
+        assert!(mon.watch_ci("feat/x").await.is_err());
+        assert!(
+            calls.lock().unwrap().len() <= 3,
+            "the cap, not the error budget, ended the watch"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_ci_asks_gh_for_the_configured_run_limit() {
+        // The truncation point is config, not a magic number in the argv.
+        let gh = ScriptedGh::new(vec![GhOutput::ok(run_json(&[(
+            "completed",
+            "success",
+            "CI",
+        )]))]);
+        let calls = gh.calls.clone();
+        let mon = Monitor::new(gh, Box::new(ManualClock::new())).with_config(WatchConfig {
+            run_list_limit: 7,
+            ..WatchConfig::default()
+        });
+        mon.poll_ci("feat/x").await.unwrap();
+        let calls = calls.lock().unwrap();
+        let argv = &calls[0];
+        let limit = argv
+            .iter()
+            .position(|a| a == "--limit")
+            .map(|i| argv[i + 1].as_str());
+        assert_eq!(limit, Some("7"));
     }
 
     // emit-shape helpers

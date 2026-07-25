@@ -1325,6 +1325,7 @@ mod tests {
             max_total_ms: 60_000,
             stall_timeout_ms: 60_000,
             startup_grace_ms: 0,
+            ..WatchConfig::default()
         });
 
         let watched = watch_branch(&monitor, "t1", "fleet/t1-abc").await;

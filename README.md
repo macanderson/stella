@@ -108,6 +108,16 @@ cargo build --release
 ./target/release/stella --version
 ```
 
+### Not on crates.io
+
+The `stella-*` crates are **not published to crates.io** — `publish = false` is
+set once at `[workspace.package]` in the root `Cargo.toml` and inherited by every
+member. The blocker is structural: `stella-context` and `stella-graph` depend on
+the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+crates by git rev, and crates.io forbids git dependencies in a published crate.
+The `cargo install --git …` command above is therefore the only supported cargo
+path — dropping `--git` does **not** install this project.
+
 ## Set your API key
 
 Stella is BYOK and auto-detects the provider from whichever keys you have set.
