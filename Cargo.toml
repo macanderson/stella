@@ -51,7 +51,7 @@ toml = "1.1"
 # never overrides the live shell. See stella-cli/src/env_files.rs.
 dotenvy = "0.15"
 rpassword = "7"
-base64 = "0.22"
+base64 = "0.23"
 arboard = { version = "3", default-features = false, features = ["image-data"] }
 png = "0.18"
 crossterm = "0.29"
