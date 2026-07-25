@@ -463,7 +463,7 @@ mod tests {
     // and an explicit OXAGEN_MEDIA_LIVE=1 opt-in; otherwise it no-ops.
     #[tokio::test]
     async fn live_smoke_submit_and_poll_once() {
-        if std::env::var("OXAGEN_MEDIA_LIVE").is_err() {
+        if !crate::adapters::live_smoke_enabled() {
             return;
         }
         let key = match ApiKey::from_env("ZAI_API_KEY") {
