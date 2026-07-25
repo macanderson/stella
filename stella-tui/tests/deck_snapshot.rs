@@ -173,3 +173,103 @@ fn help_overlay_shows_only_the_active_tabs_shortcuts() {
     assert!(skills.contains("search skills"), "{skills}");
     assert!(!skills.contains("cycle the per-agent filter"), "{skills}");
 }
+
+/// The INSPECT overlay in both of its modes, through the real `render_deck`
+/// entrypoint. This is the closest headless equivalent of opening it in a TTY:
+/// if the prompt bytes are not on the screen, the feature does not work.
+#[test]
+fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
+    use stella_tui::{InspectMessage, InspectView, RecordedCallInfo};
+
+    let model = folded_model();
+    let call = |step: u64, call_seq: u64, role: &str| RecordedCallInfo {
+        turn_instance: 0,
+        step,
+        call_seq,
+        call_role: role.into(),
+        provider: "anthropic".into(),
+        model: "claude-opus".into(),
+        estimated_input_tokens: 1234,
+    };
+
+    let render = |ui: &mut DeckUi| {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|f| render_deck(&model, ui, f)).unwrap();
+        let buf = terminal.backend().buffer();
+        let area = *buf.area();
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    // Mode 1: the call list. Both calls of step 3 must be distinguishable —
+    // that is the whole point of keying receipts on call_seq.
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.inspect_open = true;
+    ui.inspect_calls = vec![
+        call(0, 0, "worker"),
+        call(3, 1, "summarization"),
+        call(3, 0, "worker"),
+    ];
+    ui.inspect_sel = 1;
+    let list = render(&mut ui);
+    assert!(list.contains("recorded calls"), "titled:\n{list}");
+    assert!(
+        list.contains("summarization"),
+        "the auxiliary call is listed:\n{list}"
+    );
+    assert!(list.contains("worker"), "{list}");
+    assert!(
+        list.contains("show the context it was sent"),
+        "the footer says what ⏎ does:\n{list}"
+    );
+
+    // Mode 2: the reconstructed context. The system prompt must be readable.
+    ui.inspect_view = Some(Box::new(InspectView {
+        call: call(3, 1, "summarization"),
+        messages: vec![
+            InspectMessage {
+                role: "system".into(),
+                content: "Condense this span faithfully.".into(),
+            },
+            InspectMessage {
+                role: "user".into(),
+                content: "t0 t1 t2".into(),
+            },
+        ],
+        verified: true,
+        unresolved: 0,
+        digest_mismatches: 0,
+    }));
+    let detail = render(&mut ui);
+    assert!(detail.contains("context sent"), "titled:\n{detail}");
+    assert!(
+        detail.contains("Condense this span faithfully."),
+        "the system prompt is on screen — the feature:\n{detail}"
+    );
+    assert!(
+        detail.contains("turn 0 · step 3 · call-seq 1"),
+        "the coordinate is shown:\n{detail}"
+    );
+    assert!(
+        detail.contains("verified"),
+        "the verdict is shown:\n{detail}"
+    );
+
+    // A torn journal must read differently from a coverage gap.
+    if let Some(view) = ui.inspect_view.as_mut() {
+        view.verified = false;
+        view.digest_mismatches = 2;
+    }
+    let torn = render(&mut ui);
+    assert!(
+        torn.contains("did not re-hash"),
+        "a digest mismatch is called out, not folded into 'unverified':\n{torn}"
+    );
+}

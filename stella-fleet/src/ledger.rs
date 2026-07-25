@@ -63,6 +63,8 @@ pub struct RunRecord {
 /// a crash mid-attempt still leaves a row naming what was in flight.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptStart {
+    /// The fan-out this attempt belongs to — never a `stella-store`
+    /// `execution_id` or a session id (see the glossary in `AGENTS.md`).
     pub run_id: String,
     pub task_id: TaskId,
     pub worktree_path: String,
@@ -134,14 +136,20 @@ impl Ledger {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
         )?;
-        conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self { conn })
     }
 
-    /// Record a run (idempotent on its id via `INSERT OR REPLACE`).
+    /// Record a run (idempotent on its id).
+    ///
+    /// `created_at_ms` is **write-once**: the conflict branch updates only
+    /// `root_task_count`, so the run's recorded creation time stays the one
+    /// `Fleet::new` stamped rather than being rewritten by the later
+    /// `run_plan` call that fills the task count in.
     pub fn record_run(&self, run: &RunRecord) -> Result<(), LedgerError> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO runs (id, root_task_count, created_at_ms) VALUES (?1, ?2, ?3)",
+            "INSERT INTO runs (id, root_task_count, created_at_ms) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(id) DO UPDATE SET root_task_count = excluded.root_task_count",
             params![run.id, run.root_task_count, run.created_at_ms as i64],
         )?;
         Ok(())
@@ -233,6 +241,14 @@ impl Ledger {
     /// Record a parent-run → child-task lineage edge (L-E9: the dispatch seam
     /// stamps lineage so a subagent's work is always traceable to its
     /// parent).
+    ///
+    /// Idempotent per edge (`UNIQUE (parent_run_id, child_task_id)` +
+    /// `INSERT OR IGNORE`): an edge is a fact about the graph, not about the
+    /// attempt count, so re-dispatching the same task — the documented
+    /// restart mechanism — must not append a second edge and make
+    /// [`lineage_children`](Self::lineage_children) return that child twice.
+    /// Retries are already counted by the `attempts` table. The kept row's
+    /// `recorded_at_ms` is therefore the FIRST dispatch's.
     pub fn record_lineage(
         &self,
         parent_run_id: &str,
@@ -240,7 +256,8 @@ impl Ledger {
         recorded_at_ms: u64,
     ) -> Result<(), LedgerError> {
         self.conn.execute(
-            "INSERT INTO lineage (parent_run_id, child_task_id, recorded_at_ms) VALUES (?1, ?2, ?3)",
+            "INSERT OR IGNORE INTO lineage (parent_run_id, child_task_id, recorded_at_ms) \
+             VALUES (?1, ?2, ?3)",
             params![parent_run_id, child_task_id, recorded_at_ms as i64],
         )?;
         Ok(())
@@ -331,7 +348,48 @@ impl Ledger {
     }
 }
 
-const SCHEMA: &str = "\
+/// The schema version `migrate` brings a `fleet.db` up to. Bump it in the
+/// same commit that adds a `MIGRATION_V<n>` step and its `version < n` arm.
+const SCHEMA_VERSION: i64 = 2;
+
+/// Apply pending migration steps inside ONE transaction that stamps
+/// `user_version` atomically with the DDL — the same shape `stella-store`'s
+/// `migrations.rs` and `stella-context`'s store use.
+///
+/// Before this existed the schema was a bare `CREATE TABLE IF NOT EXISTS`
+/// batch, so a `fleet.db` already on a user's disk froze at whatever shape it
+/// was created with: a later release adding a column or a constraint was a
+/// silent no-op on that file and its INSERTs failed at runtime. `MIGRATION_V1`
+/// is that original batch verbatim, which is exactly why retrofitting works —
+/// re-running it against an unversioned (`user_version = 0`) file is a no-op,
+/// so an existing file is stamped v1 and then takes v2 like any other.
+///
+/// **Downgrades are not guarded**, matching `stella-context`'s documented
+/// behavior: a file stamped by a newer binary takes the early return and is
+/// opened as-is. Rejecting it is arguably right, but it turns `open` into an
+/// error for anyone who downgrades and belongs in a deliberate change with a
+/// migration story, not here.
+fn migrate(conn: &Connection) -> Result<(), LedgerError> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    if version < 1 {
+        tx.execute_batch(MIGRATION_V1)?;
+    }
+    if version < 2 {
+        tx.execute_batch(MIGRATION_V2)?;
+    }
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// v1 — the schema as it originally shipped (unversioned). Every statement is
+/// `IF NOT EXISTS`, so this doubles as the retrofit step for files created
+/// before `user_version` was stamped.
+const MIGRATION_V1: &str = "\
 CREATE TABLE IF NOT EXISTS runs (
     id              TEXT PRIMARY KEY,
     root_task_count INTEGER NOT NULL,
@@ -383,6 +441,32 @@ CREATE TABLE IF NOT EXISTS spend (
     recorded_at_ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS spend_by_run ON spend (run_id);
+";
+
+/// v2 — one lineage edge per (parent run, child task).
+///
+/// `lineage` shipped without a uniqueness constraint, so every re-dispatch of
+/// a task appended a duplicate edge and `lineage_children` returned that child
+/// once per attempt. Adding a constraint to an existing table is a rebuild;
+/// the `GROUP BY` collapses duplicates already on disk, keeping each edge's
+/// earliest `recorded_at_ms`. Nothing references `lineage` by foreign key, so
+/// the drop/rename is safe with `foreign_keys=ON`. Dropping the old table also
+/// drops its index, hence the recreate at the end.
+const MIGRATION_V2: &str = "\
+CREATE TABLE lineage_v2 (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_run_id  TEXT NOT NULL,
+    child_task_id  TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL,
+    UNIQUE (parent_run_id, child_task_id)
+);
+INSERT INTO lineage_v2 (parent_run_id, child_task_id, recorded_at_ms)
+    SELECT parent_run_id, child_task_id, MIN(recorded_at_ms)
+    FROM lineage
+    GROUP BY parent_run_id, child_task_id;
+DROP TABLE lineage;
+ALTER TABLE lineage_v2 RENAME TO lineage;
+CREATE INDEX IF NOT EXISTS lineage_by_parent ON lineage (parent_run_id);
 ";
 
 #[cfg(test)]
@@ -525,6 +609,139 @@ mod tests {
             vec!["t-child-a".to_string(), "t-child-b".to_string()]
         );
         assert!(ledger.lineage_children("other-run").unwrap().is_empty());
+    }
+
+    #[test]
+    fn re_dispatching_a_task_does_not_duplicate_its_lineage_edge() {
+        // Restart is "the caller re-dispatching the same Task", and dispatch
+        // stamps lineage once per attempt — but an edge is a fact about the
+        // graph, not an attempt count (`attempts` already records retries).
+        let ledger = Ledger::open_in_memory().unwrap();
+        seed_run(&ledger, "run1");
+        ledger.record_lineage("run1", "t1", 10).unwrap();
+        ledger.record_lineage("run1", "t1", 40).unwrap();
+
+        assert_eq!(
+            ledger.lineage_children("run1").unwrap(),
+            vec!["t1".to_string()],
+            "a re-dispatch does not return the child twice"
+        );
+        let recorded: i64 = ledger
+            .conn
+            .query_row("SELECT recorded_at_ms FROM lineage", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(recorded, 10, "the first dispatch's timestamp is kept");
+    }
+
+    #[test]
+    fn record_run_refreshes_the_task_count_but_never_the_creation_time() {
+        // `Fleet::new` stamps the creation time with a 0 task count; the
+        // later `run_plan` fills the count in. That second write must not
+        // rewrite the run's recorded creation time.
+        let ledger = Ledger::open_in_memory().unwrap();
+        for (root_task_count, created_at_ms) in [(0, 100), (3, 900)] {
+            ledger
+                .record_run(&RunRecord {
+                    id: "run1".into(),
+                    root_task_count,
+                    created_at_ms,
+                })
+                .unwrap();
+        }
+        let (count, created): (u32, i64) = ledger
+            .conn
+            .query_row(
+                "SELECT root_task_count, created_at_ms FROM runs WHERE id = ?1",
+                params!["run1"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 3, "the root task count is refreshed");
+        assert_eq!(created, 100, "creation time is write-once");
+    }
+
+    // schema versioning
+
+    fn user_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_fresh_ledger_is_stamped_at_the_current_schema_version() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        assert_eq!(user_version(&ledger.conn), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn an_unversioned_ledger_migrates_in_place_without_losing_data() {
+        // A `fleet.db` written before `user_version` was stamped: the schema
+        // as it originally shipped, real rows, and the duplicate lineage edge
+        // a re-dispatch left behind.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-fleet.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATION_V1).unwrap();
+            assert_eq!(user_version(&conn), 0, "the legacy file is unversioned");
+            conn.execute(
+                "INSERT INTO runs (id, root_task_count, created_at_ms) VALUES ('run1', 2, 7)",
+                [],
+            )
+            .unwrap();
+            for at in [10_i64, 40] {
+                conn.execute(
+                    "INSERT INTO lineage (parent_run_id, child_task_id, recorded_at_ms) \
+                     VALUES ('run1', 't1', ?1)",
+                    params![at],
+                )
+                .unwrap();
+            }
+        }
+
+        let ledger = Ledger::open(&path).unwrap();
+        assert_eq!(user_version(&ledger.conn), SCHEMA_VERSION);
+        // Pre-existing rows survived, and the duplicate edge collapsed onto
+        // the earliest timestamp.
+        let created: i64 = ledger
+            .conn
+            .query_row(
+                "SELECT created_at_ms FROM runs WHERE id = 'run1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(created, 7);
+        assert_eq!(
+            ledger.lineage_children("run1").unwrap(),
+            vec!["t1".to_string()]
+        );
+        let recorded: i64 = ledger
+            .conn
+            .query_row("SELECT recorded_at_ms FROM lineage", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(recorded, 10);
+
+        // And the migrated file still takes writes on the new schema.
+        ledger.record_lineage("run1", "t1", 90).unwrap();
+        assert_eq!(ledger.lineage_children("run1").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_migrated_ledger_is_not_re_migrated_on_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fleet.db");
+        {
+            let ledger = Ledger::open(&path).unwrap();
+            seed_run(&ledger, "run1");
+            ledger.record_lineage("run1", "t1", 5).unwrap();
+        }
+        let reopened = Ledger::open(&path).unwrap();
+        assert_eq!(user_version(&reopened.conn), SCHEMA_VERSION);
+        assert_eq!(
+            reopened.lineage_children("run1").unwrap(),
+            vec!["t1".to_string()]
+        );
     }
 
     #[test]

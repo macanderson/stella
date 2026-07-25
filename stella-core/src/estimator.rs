@@ -24,13 +24,47 @@ pub(crate) const CHARS_PER_TOKEN: f64 = 3.5;
 /// Fixed per-message framing overhead (role tags, separators) in tokens.
 const PER_MESSAGE_OVERHEAD: u64 = 4;
 
+/// A [`std::io::Write`] sink that counts the bytes written and discards them.
+/// Exists so a JSON value's serialized length can be measured without
+/// materializing it.
+#[derive(Default)]
+struct CountingWriter(usize);
+
+impl std::io::Write for CountingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Serialized byte length of a JSON value — what `value.to_string().len()`
+/// returns, without the throwaway String.
+///
+/// Byte-identical by construction: `serde_json::to_writer` and `Value`'s
+/// `Display` both drive the same compact serializer, so every estimate,
+/// calibration ratio, and receipt number this feeds is unchanged. It matters
+/// because `estimate_conversation_tokens` runs several times per step over the
+/// whole transcript, and a transcript with hundreds of recorded tool calls
+/// re-serialized hundreds of KB of JSON into the allocator on every pass.
+fn json_len(value: &serde_json::Value) -> usize {
+    let mut counter = CountingWriter::default();
+    // Infallible in practice: a `Value` always serializes, and this sink never
+    // returns an error. A partial count is still the right answer if it did.
+    let _ = serde_json::to_writer(&mut counter, value);
+    counter.0
+}
+
 /// Estimate the token cost of one message, including any tool calls, tool
 /// results, and multimodal attachments it carries.
 pub fn estimate_message_tokens(message: &CompletionMessage) -> u64 {
     let mut chars = message.content.len();
     for call in &message.tool_calls {
         chars += call.name.len();
-        chars += call.input.to_string().len();
+        chars += json_len(&call.input);
     }
     for result in &message.tool_results {
         chars += result.call_id.len();
@@ -312,6 +346,32 @@ mod tests {
             attachments: Vec::new(),
         };
         assert!(estimate_message_tokens(&loaded) > estimate_message_tokens(&bare) + 1900);
+    }
+
+    #[test]
+    fn counting_sink_matches_the_string_it_replaces() {
+        // The counting sink must be byte-identical to `to_string().len()` or
+        // every stored estimate, calibration ratio, and receipt number moves.
+        let values = [
+            serde_json::json!(null),
+            serde_json::json!(0.1 + 0.2),
+            serde_json::json!(-1.5e-7),
+            serde_json::json!("quote \" backslash \\ newline \n tab \t"),
+            serde_json::json!("héllo — 日本語 🎉"),
+            serde_json::json!({
+                "nested": { "deep": [1, 2.5, true, null, "ünïcödé"] },
+                "empty_obj": {},
+                "empty_arr": [],
+                "esc\"aped key": "\u{1}",
+            }),
+        ];
+        for value in values {
+            assert_eq!(
+                json_len(&value),
+                value.to_string().len(),
+                "counting sink diverged on {value}"
+            );
+        }
     }
 
     #[test]

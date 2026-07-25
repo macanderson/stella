@@ -142,24 +142,27 @@ pub(crate) fn already_captured<S: AsRef<str>>(
 
 /// Greedy single-pass clustering: each observation joins the first cluster
 /// whose *first* observation's term set overlaps enough with it, else
-/// starts a new one. `O(n × clusters)` — fine at CLI-local data volumes
-/// (TS: the clustering loop inside `mineCandidates`).
+/// starts a new one. `O(n × clusters)` set comparisons — fine at CLI-local
+/// data volumes (TS: the clustering loop inside `mineCandidates`).
+///
+/// Each cluster head's term set is computed once, when the cluster is
+/// created, and carried alongside it: the head never changes, so
+/// re-tokenizing it for every incoming observation was pure waste.
 pub(crate) fn cluster_observations<T>(
     observations: Vec<T>,
     min_similarity: f64,
     text: impl Fn(&T) -> &str,
 ) -> Vec<Vec<T>> {
-    let mut clusters: Vec<Vec<T>> = Vec::new();
+    let mut clusters: Vec<(HashSet<String>, Vec<T>)> = Vec::new();
     for obs in observations {
         let obs_terms: HashSet<String> = terms(text(&obs)).into_iter().collect();
-        let home = clusters.iter().position(|c| {
-            let head_terms: HashSet<String> = terms(text(&c[0])).into_iter().collect();
-            jaccard(&obs_terms, &head_terms) >= min_similarity
-        });
+        let home = clusters
+            .iter()
+            .position(|(head_terms, _)| jaccard(&obs_terms, head_terms) >= min_similarity);
         match home {
-            Some(idx) => clusters[idx].push(obs),
-            None => clusters.push(vec![obs]),
+            Some(idx) => clusters[idx].1.push(obs),
+            None => clusters.push((obs_terms, vec![obs])),
         }
     }
-    clusters
+    clusters.into_iter().map(|(_, members)| members).collect()
 }

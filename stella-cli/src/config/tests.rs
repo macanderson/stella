@@ -684,3 +684,47 @@ fn the_benchmark_engine_posture_survives_the_trusted_launcher_seam() {
         "the flag must survive the round trip, not just be tolerated"
     );
 }
+
+/// Witness for the first-run error rewrite: it used to join all thirteen
+/// `PROVIDERS` rows into ~400 characters that hard-wrap into an unreadable
+/// block, and pointed the user at hand-editing `~/.stella/credentials.toml`
+/// while never naming `stella auth set` (which writes that file safely) or
+/// `stella models` (which tabulates key status per provider).
+#[test]
+fn the_first_run_no_key_error_is_short_and_names_the_remediation_commands() {
+    let msg = no_api_key_error();
+    assert!(
+        msg.contains("stella auth set"),
+        "must name the command that writes the credentials file: {msg}"
+    );
+    assert!(
+        msg.contains("stella models"),
+        "must name the command that lists providers and key status: {msg}"
+    );
+    assert!(
+        msg.len() < 300,
+        "the most-hit error must stay readable on an 80-column terminal, got {} chars:\n{msg}",
+        msg.len()
+    );
+    for line in msg.lines() {
+        assert!(
+            line.chars().count() <= 80,
+            "line wraps on an 80-column terminal ({} chars): {line}",
+            line.chars().count()
+        );
+    }
+}
+
+/// The short list in the error must stay a real subset of `PROVIDERS`, so it
+/// cannot drift into naming an environment variable no provider reads.
+#[test]
+fn every_common_key_env_var_belongs_to_a_real_provider() {
+    for name in COMMON_KEY_ENV_VARS {
+        assert!(
+            PROVIDERS
+                .iter()
+                .any(|p| p.env_var == *name || p.env_var_aliases.contains(name)),
+            "`{name}` is not any provider's key variable"
+        );
+    }
+}

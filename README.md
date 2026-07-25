@@ -108,6 +108,16 @@ cargo build --release
 ./target/release/stella --version
 ```
 
+### Not on crates.io
+
+The `stella-*` crates are **not published to crates.io** — `publish = false` is
+set once at `[workspace.package]` in the root `Cargo.toml` and inherited by every
+member. The blocker is structural: `stella-context` and `stella-graph` depend on
+the [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
+crates by git rev, and crates.io forbids git dependencies in a published crate.
+The `cargo install --git …` command above is therefore the only supported cargo
+path — dropping `--git` does **not** install this project.
+
 ## Set your API key
 
 Stella is BYOK and auto-detects the provider from whichever keys you have set.
@@ -575,7 +585,7 @@ repository and is pulled in as a pinned git dependency, not as workspace members
 | Context Graph Protocol | Its own project now: [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — wire types, host runtime, and the public conformance suite. Stella is its reference host and depends on it via git. |
 
 The repo is a **monorepo**: alongside the Rust workspace, the documentation
-site ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `stella-docs/`
+site ([stella.oxagen.sh](https://stella.oxagen.sh)) lives at `website/`
 (Next.js + Fumadocs), orchestrated by a pnpm workspace at the root. Rust
 crates are deliberately *not* pnpm packages — cargo remains their build
 system; the root `package.json` only bridges convenience scripts.
@@ -597,7 +607,7 @@ pnpm dev         # serve the docs at http://localhost:3400
 pnpm build       # production build (what docs.yml CI runs)
 ```
 
-Docs content is MDX under `stella-docs/content/docs/`. On a pull request a
+Docs content is MDX under `website/content/docs/`. On a pull request a
 docs-only change runs the fast `docs` workflow instead of the Rust gate; the
 merge queue does not honor `paths-ignore`, so it still pays the full gate once
 queued — deliberately, since the required check has to report on the merged

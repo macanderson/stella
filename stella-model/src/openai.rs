@@ -8,13 +8,14 @@
 //! an accumulating `tool_calls` delta array — see the wire types below.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
-    CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, MessageRole,
-    ProviderError, ReasoningEffort, ServiceTier, ToolCall, Verbosity,
+    CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
+    MessageRole, ProviderError, ReasoningEffort, ServiceTier, ToolCall, Verbosity,
 };
 
 use crate::catalog::{Catalog, Pricing};
@@ -43,24 +44,56 @@ pub struct OpenAiProvider {
     prompt_cache_key: String,
 }
 
+/// Process-wide monotonic suffix guaranteeing two [`OpenAiProvider`]
+/// constructions in the same process — fleet siblings built back-to-back —
+/// get distinct cache-routing keys even when the nanosecond clock reads
+/// identically for both. Without it, a tight builder loop could mint colliding
+/// keys and serialize the whole fleet onto one cache shard, the opposite of
+/// the point. Same construction (and same reason) as `zai.rs`'s `SESSION_SEQ`.
+static CACHE_KEY_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A fresh cache-routing key, `stella-<pid>-<nanos>-<seq>`. The pid+nanos pair
+/// scopes it to this run; the atomic seq makes same-nanos siblings provably
+/// distinct.
+fn new_prompt_cache_key() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    prompt_cache_key_at(nanos)
+}
+
+/// The formatting half, split from the clock read so a test can mint two keys
+/// from the SAME instant — the collision the atomic exists to prevent, and the
+/// one a real clock will not reproduce on demand.
+fn prompt_cache_key_at(nanos: u128) -> String {
+    let seq = CACHE_KEY_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("stella-{}-{nanos:x}-{seq:x}", std::process::id())
+}
+
 impl OpenAiProvider {
     /// Build an adapter for `model` (a catalog-resolved slug, e.g.
     /// `gpt-5.5` — never a literal chosen at the call site).
     pub fn new(api_key: ApiKey, model: impl Into<String>) -> Self {
         let model = model.into();
+        // Scope the lookup to the `openai` provider: after `stella models
+        // refresh` merges the models.dev master list the same slug can appear
+        // under several providers (gateways re-serve OpenAI models), and an
+        // unscoped `resolve` takes whichever row happens to sit first — costing
+        // an OpenAI turn at a gateway's list price with no symptom (see
+        // `Catalog::resolve_for`).
         let catalog = Catalog::current();
-        let pricing = catalog.resolve(&model).ok().map(|e| e.pricing);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+        let pricing = catalog
+            .resolve_for("openai", &model)
+            .ok()
+            .map(|e| e.pricing);
         Self {
             client: http::client(),
             api_key,
             base_url: DEFAULT_BASE_URL.to_string(),
             model,
             pricing,
-            prompt_cache_key: format!("stella-{}-{nanos:x}", std::process::id()),
+            prompt_cache_key: new_prompt_cache_key(),
         }
     }
 
@@ -560,13 +593,23 @@ impl Provider for OpenAiProvider {
 
         let (text, tool_calls, usage) = aggregate_openai_stream(response).await?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
+        // Map onto the neutral vocabulary like every sibling adapter, so the
+        // engine can tell a tool-calling stop from a natural one. `Length` is
+        // unreachable here: `response.incomplete` (including
+        // `max_output_tokens`) already aborts the turn with a typed error
+        // rather than returning a truncated `Ok`.
+        let finish_reason = if tool_calls.is_empty() {
+            FinishReason::Stop
+        } else {
+            FinishReason::ToolCalls
+        };
         Ok(CompletionResult {
             text,
             tool_calls,
             usage,
             model: self.model.clone(),
             cost_usd,
-            finish_reason: None,
+            finish_reason: Some(finish_reason),
         })
     }
 }
@@ -1520,5 +1563,109 @@ mod tests {
         for key in ["top_p", "service_tier", "verbosity", "\"reasoning\""] {
             assert!(!body.contains(key), "unexpected `{key}` in: {body}");
         }
+    }
+
+    /// The engine branches on `finish_reason` (the driver's truncation
+    /// diagnostics, and anything downstream distinguishing "the model wants a
+    /// tool" from "the model is done"). OpenAI used to hard-code `None`, so it
+    /// was the one provider where that distinction was unavailable — both
+    /// mappings are pinned here.
+    #[tokio::test]
+    async fn complete_maps_finish_reason_to_stop_and_tool_calls() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        let plain = provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+        assert_eq!(plain.finish_reason, Some(FinishReason::Stop));
+
+        let tool_server = MockServer::start().await;
+        let sse_body = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{}\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&tool_server)
+            .await;
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(tool_server.uri());
+        let called = provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("read it")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![ToolSchema {
+                    name: "read_file".into(),
+                    description: "Read a file".into(),
+                    input_schema: serde_json::json!({"type":"object"}),
+                    read_only: true,
+                }],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+        assert_eq!(called.finish_reason, Some(FinishReason::ToolCalls));
+    }
+
+    /// `prompt_cache_key` exists to keep one session's turns on one cache
+    /// shard AND to keep fleet siblings on *different* ones. A pid+nanos key
+    /// alone cannot promise the second: two providers built back-to-back can
+    /// read the same nanosecond, and identical keys serialize the whole fleet
+    /// onto one shard — the opposite of the point. Driven through
+    /// `prompt_cache_key_at` because a real clock will not hand the same
+    /// instant to two calls on demand.
+    #[test]
+    fn siblings_minted_in_the_same_nanosecond_get_distinct_prompt_cache_keys() {
+        const SAME_INSTANT: u128 = 1_700_000_000_000_000_000;
+        let a = prompt_cache_key_at(SAME_INSTANT);
+        let b = prompt_cache_key_at(SAME_INSTANT);
+        assert_ne!(a, b, "same-nanos siblings must not share a cache shard");
+    }
+
+    /// The end-to-end pin: every construction actually routes through the
+    /// sequenced helper. Mirrors zai.rs's
+    /// `distinct_provider_constructions_get_distinct_session_ids`.
+    #[test]
+    fn distinct_provider_constructions_get_distinct_prompt_cache_keys() {
+        let keys: std::collections::BTreeSet<String> = (0..3)
+            .map(|_| OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").prompt_cache_key)
+            .collect();
+        assert_eq!(keys.len(), 3, "every construction mints a distinct key");
+    }
+
+    /// Pricing is resolved SCOPED to `openai`. The unscoped `Catalog::resolve`
+    /// documents "the first row wins", and after `stella models refresh`
+    /// merges the models.dev master list the same slug legitimately appears
+    /// under several providers — so an unscoped lookup could cost an OpenAI
+    /// turn at a gateway's list price with no symptom.
+    #[test]
+    fn pricing_is_scoped_to_openai_and_never_adopts_another_providers_row() {
+        let ours = OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5");
+        assert!(ours.pricing.is_some(), "own rows still resolve");
+
+        let foreign = OpenAiProvider::new(ApiKey::new("sk-test"), "glm-5.2");
+        assert!(
+            foreign.pricing.is_none(),
+            "a Z.ai row must never price an OpenAI turn"
+        );
     }
 }

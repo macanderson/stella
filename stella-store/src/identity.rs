@@ -134,6 +134,15 @@ pub fn workspace_id(workspace_root: &Path) -> Option<String> {
 /// `<root>/.stella/workspace.json`. Idempotent — an already-registered
 /// workspace keeps its id (one workspace must never fork into two
 /// identities); pass through the existing id in that case.
+///
+/// The write is fsynced (file then parent directory) before returning, and
+/// the failure path names the file. Both matter for the same reason: the file
+/// is CREATED before it is written, so a crash in that window leaves a
+/// workspace.json that exists but does not parse — after which `create_new`
+/// keeps failing, [`workspace_id`] keeps returning `None`, and the workspace
+/// is wedged with no repair path. Syncing closes the window; naming the path
+/// makes the leftover case a one-command fix instead of a guess. The sibling
+/// minting path (`create_installation_uuid`) syncs for the same reason.
 pub fn register_workspace(workspace_root: &Path, id: Option<&str>) -> Result<String> {
     if let Some(existing) = workspace_id(workspace_root) {
         return Ok(existing);
@@ -144,21 +153,36 @@ pub fn register_workspace(workspace_root: &Path, id: Option<&str>) -> Result<Str
     };
     let dot = workspace_root.join(".stella");
     std::fs::create_dir_all(&dot).map_err(|e| StoreError(format!("cannot create .stella: {e}")))?;
+    let path = dot.join("workspace.json");
     let body = serde_json::json!({ "workspace_id": minted }).to_string() + "\n";
     // create_new: if a sibling process registered first, its id wins.
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(dot.join("workspace.json"))
+        .open(&path)
     {
         Ok(mut file) => {
             use std::io::Write as _;
             file.write_all(body.as_bytes())
                 .map_err(|e| StoreError(format!("cannot write workspace identity: {e}")))?;
+            file.sync_data()
+                .map_err(|e| StoreError(format!("cannot sync workspace identity: {e}")))?;
+            drop(file);
+            crate::private::sync_directory(&dot)?;
             Ok(minted)
         }
-        Err(_) => workspace_id(workspace_root)
-            .ok_or_else(|| StoreError("workspace identity is unreadable".into())),
+        // The file already exists: either a sibling process won the race (its
+        // id is readable and wins) or the file is there but unparseable. This
+        // deliberately does NOT overwrite — a workspace_id is durable identity
+        // and a file we cannot read may still hold one — so it names the exact
+        // path and the remedy instead.
+        Err(_) => workspace_id(workspace_root).ok_or_else(|| {
+            StoreError(format!(
+                "{} exists but carries no readable workspace_id. Inspect it, then \
+                 delete it and re-run `stella cloud register` to mint a fresh one.",
+                path.display()
+            ))
+        }),
     }
 }
 
@@ -298,6 +322,32 @@ mod tests {
         let explicit = tempfile::tempdir().unwrap();
         let given = register_workspace(explicit.path(), Some("ws-from-cloud")).unwrap();
         assert_eq!(given, "ws-from-cloud", "a cloud-assigned id is honored");
+    }
+
+    /// The wedged case: a workspace.json that exists but does not parse (the
+    /// residue of a crash between create and durable write) can only be fixed
+    /// by hand, so the error has to say which file by name.
+    #[test]
+    fn register_workspace_names_the_file_it_cannot_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".stella")).unwrap();
+        std::fs::write(tmp.path().join(".stella/workspace.json"), "").unwrap();
+        let error = register_workspace(tmp.path(), None)
+            .expect_err("an unparseable identity file is not silently replaced")
+            .to_string();
+        assert!(
+            error.contains(
+                &tmp.path()
+                    .join(".stella/workspace.json")
+                    .display()
+                    .to_string()
+            ),
+            "the error must name the exact path to remove: {error}"
+        );
+        assert!(
+            error.contains("stella cloud register"),
+            "the error must name the remedy: {error}"
+        );
     }
 
     #[test]

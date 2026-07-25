@@ -934,6 +934,67 @@ impl ContextUsage {
         }
         total
     }
+
+    /// Whether `as_of` carries the RFC 3339 `date-time` shape its doc
+    /// promises. The field is a bare `String`, so nothing on the wire stops a
+    /// host from stamping a receipt with a value no downstream tool can sort
+    /// by; this is the check a metering pipeline runs beside
+    /// [`Self::is_consistent`] before trusting the accounting clock.
+    ///
+    /// Grammar only, never calendar arithmetic — `2026-02-31T00:00:00Z`
+    /// passes here and is rejected by whatever eventually parses it. The
+    /// crate carries no date dependency and this predicate adds none.
+    #[must_use]
+    pub fn as_of_is_wellformed(&self) -> bool {
+        is_rfc3339_shaped(&self.as_of)
+    }
+}
+
+/// `full-date "T" full-time` per RFC 3339 §5.6: `YYYY-MM-DDThh:mm:ss`, an
+/// optional `.`-led fraction, then `Z` or a `±hh:mm` offset.
+///
+/// Deliberately accepting of everything the grammar allows — a lowercase
+/// `t`/`z`, fractional seconds, and a numeric offset are all legal, and a
+/// predicate that flagged them would be a false-alarm generator on valid
+/// receipts rather than a check anyone would keep running.
+fn is_rfc3339_shaped(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    // `full-date "T" partial-time` is exactly 19 bytes; the offset adds one
+    // more at minimum (a bare `Z`).
+    if bytes.len() < 20 {
+        return false;
+    }
+    let all_digits = |slice: &[u8]| slice.iter().all(u8::is_ascii_digit);
+
+    let date_shaped = all_digits(&bytes[0..4])
+        && bytes[4] == b'-'
+        && all_digits(&bytes[5..7])
+        && bytes[7] == b'-'
+        && all_digits(&bytes[8..10]);
+    let time_shaped = all_digits(&bytes[11..13])
+        && bytes[13] == b':'
+        && all_digits(&bytes[14..16])
+        && bytes[16] == b':'
+        && all_digits(&bytes[17..19]);
+    if !date_shaped || !matches!(bytes[10], b'T' | b't') || !time_shaped {
+        return false;
+    }
+
+    let mut rest = &bytes[19..];
+    if rest[0] == b'.' {
+        let fraction = rest[1..].iter().take_while(|b| b.is_ascii_digit()).count();
+        if fraction == 0 {
+            return false;
+        }
+        rest = &rest[1 + fraction..];
+    }
+    match rest {
+        [b'Z' | b'z'] => true,
+        [b'+' | b'-', h1, h2, b':', m1, m2] => {
+            h1.is_ascii_digit() && h2.is_ascii_digit() && m1.is_ascii_digit() && m2.is_ascii_digit()
+        }
+        _ => false,
+    }
 }
 
 /// Evidence backing a `JudgeVerdict`. `deterministic` distinguishes the
@@ -1442,6 +1503,46 @@ mod tests {
             }],
         };
         assert!(!usage.is_consistent());
+    }
+
+    /// The accounting clock is a bare `String` (#568), so a receipt whose
+    /// `as_of` is junk sorts wrong in whatever tool eventually reads it. The
+    /// shape is checkable here, at the type, rather than three crates away.
+    #[test]
+    fn as_of_wellformedness_is_checkable_on_the_receipt() {
+        let usage_at = |as_of: &str| ContextUsage {
+            budget_requested: 1200,
+            budget_consumed: 0,
+            as_of: as_of.into(),
+            providers: vec![],
+        };
+
+        // The shape every host in this workspace stamps, plus the variants
+        // RFC 3339 also permits — rejecting these would make the predicate a
+        // false-alarm generator on valid receipts.
+        for good in [
+            "2026-07-24T00:00:00Z",
+            "2026-07-24t00:00:00z",
+            "2026-07-24T00:00:00.123456Z",
+            "2026-07-24T00:00:00+00:00",
+            "2026-07-24T12:30:59.5-05:00",
+        ] {
+            assert!(usage_at(good).as_of_is_wellformed(), "{good}");
+        }
+
+        // Missing the offset, wrong separators, a truncated prefix, junk, and
+        // the empty string a `Default`-ish construction would leave behind.
+        for bad in [
+            "2026-07-24T00:00:00",
+            "2026-07-24 00:00:00Z",
+            "2026/07/24T00:00:00Z",
+            "2026-07-24T00:00:00.Z",
+            "2026-07-24T00:00:00+0000",
+            "24 July 2026",
+            "",
+        ] {
+            assert!(!usage_at(bad).as_of_is_wellformed(), "{bad}");
+        }
     }
 
     /// A recall event recorded before the usage report existed must still

@@ -29,7 +29,7 @@ Every one of these is genuinely valued — pick the one that fits your energy:
 | Contribution | Where to start | Effort |
 |---|---|---|
 | 🐛 **A bug report with a repro** | [Bug report form](https://github.com/macanderson/stella/issues/new?template=bug_report.yml) | 10 minutes |
-| 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `stella-docs/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
+| 🧭 **Docs & examples** — fix a lie in the docs before it fools someone else | `website/content/docs/**.mdx` for anything a *user* reads, `docs/**` for contributor-facing specs, plus `README.md`, `--help` text, doc comments | Small |
 | 🔌 **A new provider adapter** — Stella is BYOK; every model provider we speak makes it more useful | `stella-model/src/` — copy the shape of an existing adapter | Medium |
 | 🛠 **A new built-in tool** | `stella-tools/src/` — implement the tool trait, register it in `ToolRegistry`, then declare one line in [`catalog.rs`](stella-tools/src/catalog.rs) | Medium |
 | 🌐 **A Context Graph Protocol (CGP) provider** — implement it in your language and prove it green | [macanderson/context-graph-protocol](https://github.com/macanderson/context-graph-protocol) — its own repo, no Stella code required | Medium |
@@ -90,7 +90,7 @@ rule that is catching real content.
 ### Changing the docs
 
 The user-facing documentation is not in this repo's markdown — it is the MDX
-under `stella-docs/content/docs/`, published at
+under `website/content/docs/`, published at
 [stella.oxagen.sh](https://stella.oxagen.sh). It needs Node ≥ 20 and pnpm, and
 nothing else; you never have to build Rust to fix a docs page:
 

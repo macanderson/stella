@@ -361,6 +361,56 @@ fn to_anthropic_messages_hoists_system_and_maps_roles() {
     assert_eq!(mapped[0].role, "user");
 }
 
+/// The Messages API has ONE `system` slot, so a conversation carrying a
+/// second system turn (a skill preamble, an injected policy block) used to
+/// lose every earlier one — silently, on Anthropic alone. Every system turn
+/// must survive, joined by a blank line, matching `to_openai_input` and
+/// `to_gemini_request_parts`.
+#[test]
+fn every_system_turn_survives_the_hoist_joined_by_a_blank_line() {
+    let messages = vec![
+        CompletionMessage::system("You are a coding agent."),
+        CompletionMessage::system("Never touch the release workflow."),
+        CompletionMessage::user("Fix the bug."),
+    ];
+    let (system, mapped) = to_anthropic_messages(&messages);
+    assert_eq!(
+        system,
+        Some("You are a coding agent.\n\nNever touch the release workflow.".to_string()),
+        "the earlier system turn must not be discarded"
+    );
+    assert_eq!(mapped.len(), 1, "system turns never become messages");
+}
+
+/// A conversation with no system turn leaves the field off the wire — the
+/// accumulator must not turn "no system prompt" into an empty string block.
+#[test]
+fn no_system_turn_yields_no_system_prompt() {
+    let messages = vec![CompletionMessage::user("Fix the bug.")];
+    let (system, _) = to_anthropic_messages(&messages);
+    assert_eq!(system, None);
+}
+
+/// Pricing is resolved SCOPED to `anthropic`. The unscoped `Catalog::resolve`
+/// documents "the first row wins", and after `stella models refresh` merges
+/// the models.dev master list the same slug legitimately appears under
+/// several providers — so an unscoped lookup could cost an Anthropic turn at
+/// a gateway's list price with no symptom. A slug that belongs to another
+/// provider must resolve to no pricing here rather than to that provider's
+/// row. (`glm-5.2` is seeded under `zai` alone; `claude-fable-5` under
+/// `anthropic`, so the scoped lookup still finds the real row.)
+#[test]
+fn pricing_is_scoped_to_anthropic_and_never_adopts_another_providers_row() {
+    let ours = AnthropicProvider::new(ApiKey::new("sk-test"), "claude-fable-5");
+    assert!(ours.pricing.is_some(), "own rows still resolve");
+
+    let foreign = AnthropicProvider::new(ApiKey::new("sk-test"), "glm-5.2");
+    assert!(
+        foreign.pricing.is_none(),
+        "a Z.ai row must never price an Anthropic turn"
+    );
+}
+
 /// The Anthropic API rejects empty / whitespace-only text blocks with a
 /// 400, and since history is replayed every turn, one such block bricks
 /// the session forever. `to_anthropic_messages` must never emit one, and

@@ -1,3 +1,9 @@
+//! Terminal-outcome witnesses: a red final verdict reports
+//! `VerificationFailed` rather than `Completed`, an enforced budget breach in
+//! triage settles its spend and starts no further paid stage, and an
+//! unresolvable independent witness author degrades the run instead of
+//! aborting it.
+
 use super::*;
 
 /// Every role resolves except the judge — "no independent witness author is
