@@ -71,7 +71,10 @@ impl BedrockProvider {
             .ok()
             .map(|e| e.pricing);
         Self {
-            client: http::client(),
+            // Unary `Converse`, not `ConverseStream`: the whole generation
+            // precedes the first response byte, so the shared streaming
+            // client's per-read bound would cap the generation itself (#547).
+            client: http::unary_client(),
             access_key,
             secret_key,
             session_token,
