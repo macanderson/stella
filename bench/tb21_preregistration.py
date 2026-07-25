@@ -302,7 +302,9 @@ def do_emit(host_inputs: Path, out_dir: Path) -> int:
             "sequence": seq,
             "kind": kind,
             "commit": commit,
-            "study_manifest_sha256": hi["study_manifest_sha256"],
+            "study_manifest_sha256": (
+                hi["study_manifest_sha256"] if kind == "confirmatory_freeze" else None
+            ),
             "declared_at": hi["per_stage"][stage]["declared_at"],
         }
         prereg_entries.append(entry)
