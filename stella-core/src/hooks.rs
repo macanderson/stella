@@ -252,6 +252,21 @@ pub trait HookRunner: Send + Sync {
     ) -> Result<HookExecResult, HookExecError>;
 }
 
+/// Whether one matcher applies for `event` + the tool under consideration.
+/// The single home of the rule, so [`select_matchers`] ("which run") and
+/// [`any_matcher_matches`] ("does any run") can never disagree.
+/// `SessionStart` ignores the matcher entirely — every registered action
+/// runs.
+fn matcher_applies(event: HookEvent, matcher: &HookMatcher, tool_name: Option<&str>) -> bool {
+    if event == HookEvent::SessionStart {
+        return true;
+    }
+    let Some(name) = tool_name else {
+        return false;
+    };
+    crate::glob::match_glob(matcher.matcher.as_deref().unwrap_or("*"), name)
+}
+
 /// Which matchers apply for `event` + the tool under consideration.
 /// `SessionStart` ignores the matcher entirely — every registered action
 /// runs (TS: `selectMatchers`).
@@ -260,16 +275,24 @@ pub fn select_matchers<'a>(
     matchers: &'a [HookMatcher],
     tool_name: Option<&str>,
 ) -> Vec<&'a HookMatcher> {
-    if event == HookEvent::SessionStart {
-        return matchers.iter().collect();
-    }
-    let Some(name) = tool_name else {
-        return Vec::new();
-    };
     matchers
         .iter()
-        .filter(|m| crate::glob::match_glob(m.matcher.as_deref().unwrap_or("*"), name))
+        .filter(|m| matcher_applies(event, m, tool_name))
         .collect()
+}
+
+/// [`select_matchers`]'s question without its allocation, for callers that
+/// only need to know *whether* a hook would fire. The driver asks this once
+/// per read-only tool per step before speculating, so the throwaway `Vec`
+/// was pure per-step garbage.
+pub(crate) fn any_matcher_matches(
+    event: HookEvent,
+    matchers: &[HookMatcher],
+    tool_name: Option<&str>,
+) -> bool {
+    matchers
+        .iter()
+        .any(|m| matcher_applies(event, m, tool_name))
 }
 
 /// What running a set of hooks for one event produced (TS:
@@ -503,6 +526,38 @@ mod tests {
             hooks: vec![HookAction::new("true")],
         }];
         assert!(select_matchers(HookEvent::PreToolUse, &matchers, None).is_empty());
+    }
+
+    /// The allocating and non-allocating forms must answer identically for
+    /// every event/tool shape — they share a predicate precisely so the
+    /// driver's speculation gate can never disagree with the hook runner.
+    #[test]
+    fn any_matcher_matches_agrees_with_select_matchers() {
+        let matchers = vec![
+            HookMatcher {
+                matcher: Some("write_*".to_string()),
+                hooks: vec![HookAction::new("true")],
+            },
+            HookMatcher {
+                matcher: None,
+                hooks: vec![HookAction::new("true")],
+            },
+        ];
+        let cases = [
+            (HookEvent::PreToolUse, Some("write_file")),
+            (HookEvent::PreToolUse, Some("read_file")),
+            (HookEvent::PostToolUse, Some("bash")),
+            (HookEvent::PreToolUse, None),
+            (HookEvent::SessionStart, None),
+        ];
+        for (event, tool) in cases {
+            assert_eq!(
+                any_matcher_matches(event, &matchers, tool),
+                !select_matchers(event, &matchers, tool).is_empty(),
+                "disagreed for {event:?} / {tool:?}"
+            );
+        }
+        assert!(!any_matcher_matches(HookEvent::PreToolUse, &[], Some("x")));
     }
 
     // ---- run_hooks ----

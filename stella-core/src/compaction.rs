@@ -167,6 +167,13 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
     // the prompt prefix — and the provider prompt cache built over it —
     // untouched (#372). Walk forward, recording first occurrences.
     {
+        // Keyed on the content-addressed block id `original_ids` already
+        // computed above, not on a clone of the content: the id IS the
+        // content identity (receipts.rs hashes the serialized output), so
+        // byte-identical outputs still collide exactly, while the map stops
+        // paying a full heap copy of every >200-byte output plus a second
+        // full hash pass over it on lookup. Pass 2 already compares
+        // identities the same way.
         let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         // First record positions of the earliest occurrence.
         for (idx, message) in messages.iter().enumerate() {
@@ -177,25 +184,35 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                 if let ToolOutput::Ok { content } = &result.output
                     && content.len() > 200
                 {
-                    seen.entry(content.clone()).or_insert(idx);
+                    // `id_of` yields "" for a call_id absent from the map;
+                    // an unidentifiable result is skipped rather than made
+                    // to collide with every other unidentifiable one.
+                    let id = id_of(&result.call_id);
+                    if !id.is_empty() {
+                        seen.entry(id).or_insert(idx);
+                    }
                 }
             }
         }
-        // Then stub every later duplicate.
+        // Then stub every later duplicate. The `> 200` guard stays on the
+        // content, matching the recording pass: the id is finer-grained
+        // (it also covers the Ok/Error tag), never a stand-in for length.
         for (idx, message) in messages.iter_mut().enumerate() {
             if Some(idx) == last_tool_idx || message.role != MessageRole::Tool {
                 continue;
             }
             for result in &mut message.tool_results {
                 if let ToolOutput::Ok { content } = &result.output
-                    && let Some(&kept_at) = seen.get(content)
-                    && kept_at < idx
+                    && content.len() > 200
                 {
-                    deduped_blocks.push(id_of(&result.call_id));
-                    result.output = ToolOutput::Ok {
-                        content: dedup_stub(),
-                    };
-                    deduped += 1;
+                    let id = id_of(&result.call_id);
+                    if !id.is_empty() && seen.get(&id).is_some_and(|&kept_at| kept_at < idx) {
+                        deduped_blocks.push(id);
+                        result.output = ToolOutput::Ok {
+                            content: dedup_stub(),
+                        };
+                        deduped += 1;
+                    }
                 }
             }
         }

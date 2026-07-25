@@ -50,6 +50,20 @@ const MARK_SVG: &str = include_str!("assets/mark.svg");
 /// The Stella wordmark, served for the header lockup.
 const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
 
+/// Sent on every response, making the dashboard's zero-external-reference
+/// guarantee enforceable by the browser rather than only by a test: nothing
+/// may be fetched from, or connected to, any origin but this one.
+///
+/// `'unsafe-inline'` is unavoidable on both script and style — the embedded
+/// page is a single document with one inline `<script>`, one inline
+/// `<style>`, and ~54 inline `style="…"` attributes. Dropping it from
+/// `style-src` would silently strip the layout. `frame-ancestors 'none'`
+/// complements the existing Host check: a rebound page cannot frame the
+/// dashboard either.
+const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; \
+     base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 /// Errors starting or running the observatory server.
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
@@ -167,9 +181,9 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/config" => Ok(fsview::config(root)),
         "/api/memories" => Ok(fsview::memories(root)),
         "/api/explorations" => Ok(fsview::explorations(root)),
-        "/api/rules" => obs.memory().map(|m| {
+        "/api/rules" => obs.rules().map(|db| {
             serde_json::json!({
-                "db": m["rules"].clone(),
+                "db": db,
                 "files": fsview::rules_files(root),
             })
         }),
@@ -187,14 +201,62 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
     }
 }
 
-/// Pull one `key=value` pair out of a query string.
+/// Pull one `key=value` pair out of a query string, percent-decoded.
+///
+/// The page builds these with `encodeURIComponent`, so a scope value holding
+/// a space, `&`, or `/` arrives escaped and has to be decoded before it is
+/// compared against the stored value — otherwise `?repo=my%20repo` drills
+/// into an empty scope. A value that is empty before *or* after decoding is
+/// absent, matching what an unset filter sends.
 fn query_param(query: Option<&str>, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     query?
         .split('&')
         .find_map(|pair| pair.strip_prefix(prefix.as_str()))
         .filter(|v| !v.is_empty())
-        .map(str::to_string)
+        .map(percent_decode)
+        .filter(|v| !v.is_empty())
+}
+
+/// Decode one query-component value: `%XX` escapes, and `+` as a space (the
+/// form-encoding convention, valid only in the query component).
+///
+/// A malformed escape (`%`, `%A`, `%ZZ`) is left literal rather than dropped
+/// or panicked on — this parses attacker-reachable bytes, so it must have no
+/// failure mode. Decoding runs over bytes and is only then re-validated as
+/// UTF-8, so a multi-byte character split across several escapes reassembles;
+/// genuinely invalid bytes become U+FFFD instead of an error.
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                let hi = (bytes[i + 1] as char).to_digit(16);
+                let lo = (bytes[i + 2] as char).to_digit(16);
+                match (hi, lo) {
+                    (Some(hi), Some(lo)) => {
+                        out.push((hi * 16 + lo) as u8);
+                        i += 3;
+                    }
+                    _ => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            byte => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Bind the observatory on `127.0.0.1:port` and serve until the process
@@ -301,7 +363,7 @@ async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result
     };
     // Named apart from the request `head` above — same word, opposite direction.
     let response_head = format!(
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: {CSP}\r\nConnection: close\r\n\r\n",
         response.status,
         response.content_type,
         response.body.len(),
@@ -986,6 +1048,39 @@ mod tests {
         assert!(String::from_utf8(wordmark.body).unwrap().contains("<svg"));
     }
 
+    /// The dashboard sends `encodeURIComponent` output, so a scope value with
+    /// a space, `&` or `/` arrives escaped. Comparing the still-encoded bytes
+    /// against the stored value silently drilled into an empty scope.
+    #[test]
+    fn query_param_percent_decodes_the_value() {
+        let q = Some("org=acme%20corp&repo=owner%2Fname&workspace=a+b&empty=");
+        assert_eq!(query_param(q, "org").as_deref(), Some("acme corp"));
+        assert_eq!(query_param(q, "repo").as_deref(), Some("owner/name"));
+        assert_eq!(query_param(q, "workspace").as_deref(), Some("a b"));
+        assert_eq!(query_param(q, "empty"), None);
+        assert_eq!(query_param(q, "absent"), None);
+        assert_eq!(query_param(None, "org"), None);
+        // `%20`/`+` decode to a real space: whitespace is a value, not an
+        // absent filter.
+        assert_eq!(query_param(Some("org=%20"), "org").as_deref(), Some(" "));
+        assert_eq!(query_param(Some("org=+"), "org").as_deref(), Some(" "));
+    }
+
+    /// This parses attacker-reachable bytes, so a malformed escape must be
+    /// inert — never a panic, never a dropped byte. Multi-byte UTF-8 split
+    /// across escapes must reassemble; invalid bytes become U+FFFD.
+    #[test]
+    fn percent_decode_tolerates_malformed_escapes() {
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%A"), "%A");
+        assert_eq!(percent_decode("%ZZ"), "%ZZ");
+        assert_eq!(percent_decode("a%%20b"), "a% b");
+        // é is two bytes, escaped separately by encodeURIComponent.
+        assert_eq!(percent_decode("caf%C3%A9"), "café");
+        assert_eq!(percent_decode("%ff"), "\u{fffd}");
+        assert_eq!(percent_decode("plain"), "plain");
+    }
+
     /// The page must be fully self-contained: any http(s) URL in the HTML
     /// would be an outbound fetch from the user's browser — a phone-home.
     #[test]
@@ -1022,7 +1117,38 @@ mod tests {
         stream.read_to_string(&mut body).await.unwrap();
         assert!(body.starts_with("HTTP/1.1 200 OK"));
         assert!(body.contains("\"runs\":2"));
+        // The no-phone-home guarantee, enforced by the browser rather than
+        // only by `dashboard_html_has_no_external_references`.
+        assert!(
+            body.contains("\r\nX-Content-Type-Options: nosniff\r\n"),
+            "head was: {body}"
+        );
+        assert!(
+            body.contains(&format!("\r\nContent-Security-Policy: {CSP}\r\n")),
+            "head was: {body}"
+        );
         server.abort();
+    }
+
+    /// The CSP must keep the embedded page working: it is one document with
+    /// inline script, an inline `<style>`, and inline `style="…"` attributes,
+    /// so dropping `'unsafe-inline'` from either directive would silently
+    /// break it. Same-origin `/assets/*.svg` needs `img-src 'self'`.
+    #[test]
+    fn csp_admits_everything_the_embedded_dashboard_actually_uses() {
+        for directive in [
+            "script-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self'",
+            "connect-src 'self'",
+            "frame-ancestors 'none'",
+        ] {
+            assert!(CSP.contains(directive), "CSP is missing {directive}");
+        }
+        // A header value may not carry a newline — it would split the head.
+        assert!(!CSP.contains('\r') && !CSP.contains('\n'));
+        assert!(INDEX_HTML.contains("<style>") && INDEX_HTML.contains("<script>"));
+        assert!(INDEX_HTML.contains("src=\"/assets/mark.svg\""));
     }
 
     /// Padding the request line to the 8 KiB head cap used to be served: the

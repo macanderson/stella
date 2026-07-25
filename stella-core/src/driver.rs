@@ -82,7 +82,7 @@ use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
 use crate::compaction::compact;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
-use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, run_hooks, select_matchers};
+use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matches, run_hooks};
 use crate::loop_detect::{CallRecord, LoopDetectionConfig, LoopVerdict, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::receipts::ReceiptLedger;
@@ -979,18 +979,18 @@ impl<'a> Engine<'a> {
     /// once, on the committed dispatch path (`PreToolUse` gates *before*
     /// execution) — a speculative attempt that later fails would otherwise
     /// fire phantom hook side effects for a call that never reached the
-    /// transcript (#370). Matching is the same `select_matchers` glob the
-    /// hook runner itself uses, so the two can never disagree. `false`
-    /// whenever hooks are off, keeping hook-free turns byte-identical.
+    /// transcript (#370). Matching goes through `hooks::any_matcher_matches`,
+    /// which shares its predicate with the `select_matchers` the hook runner
+    /// itself uses, so the two can never disagree — and answers without
+    /// allocating the matcher `Vec` this only measured for emptiness (#560).
+    /// `false` whenever hooks are off, keeping hook-free turns byte-identical.
     fn tool_has_matching_hook(&self, name: &str) -> bool {
         let Some(handle) = self.hooks else {
             return false;
         };
         [HookEvent::PreToolUse, HookEvent::PostToolUse]
             .into_iter()
-            .any(|event| {
-                !select_matchers(event, handle.hooks.matchers_for(event), Some(name)).is_empty()
-            })
+            .any(|event| any_matcher_matches(event, handle.hooks.matchers_for(event), Some(name)))
     }
 
     /// One model call with retry+backoff (`crate::retry`). On commit,
@@ -1077,6 +1077,13 @@ impl<'a> Engine<'a> {
                     // stream ends once in-flight executions drain.
                 });
                 let result = tokio::select! {
+                    // `biased` makes the invariant below structural rather
+                    // than incidental: `complete` owns the gate (and with
+                    // it the channel's send half), so the pump can only
+                    // finish after `complete` has. Polling `complete`
+                    // first means the `unreachable!` cannot be reached by
+                    // an unlucky randomized poll order (#560).
+                    biased;
                     result = &mut complete => result,
                     _ = &mut pump => unreachable!("the gate keeps the speculation channel open"),
                 };
