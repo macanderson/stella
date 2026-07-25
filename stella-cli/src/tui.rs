@@ -466,13 +466,15 @@ fn compose_wordmark(text: &str) -> Vec<String> {
         .collect()
 }
 
-// Stellar gradient — violet → magenta → pink → cyan, swept left-to-right
-// across the wordmark (the night-sky counterpart of the TS banner's sunset).
-const STELLAR_STOPS: [(u8, u8, u8); 4] = [
-    (0x8B, 0x5C, 0xF6), // violet
-    (0xD9, 0x46, 0xEF), // magenta
-    (0xEC, 0x48, 0x99), // pink
-    (0x22, 0xD3, 0xEE), // cyan
+// Stellar gradient — a single restrained aurora sweep, cyan → azure, left to
+// right across the wordmark. This is `stella-tui`'s brand accent
+// (theme::AURORA_CYAN → AURORA_AZURE), duplicated rather than imported because
+// that crate speaks in ratatui `Color`s and this banner writes raw truecolor.
+// The previous four-stop violet/magenta/pink rainbow read as busy and used two
+// hues the TUI palette explicitly disowns.
+const STELLAR_STOPS: [(u8, u8, u8); 2] = [
+    (0x3F, 0xE0, 0xFF), // aurora cyan
+    (0x4D, 0x9F, 0xFF), // aurora azure
 ];
 
 /// Color at horizontal position `t` ∈ [0,1] along the stellar gradient.
@@ -577,9 +579,15 @@ mod tests {
     #[test]
     fn stellar_gradient_hits_its_endpoint_stops_exactly() {
         assert_eq!(stellar_color_at(0.0), STELLAR_STOPS[0]);
-        assert_eq!(stellar_color_at(1.0), STELLAR_STOPS[3]);
+        assert_eq!(
+            stellar_color_at(1.0),
+            STELLAR_STOPS[STELLAR_STOPS.len() - 1]
+        );
         // Out-of-range positions clamp instead of extrapolating.
         assert_eq!(stellar_color_at(-1.0), STELLAR_STOPS[0]);
-        assert_eq!(stellar_color_at(2.0), STELLAR_STOPS[3]);
+        assert_eq!(
+            stellar_color_at(2.0),
+            STELLAR_STOPS[STELLAR_STOPS.len() - 1]
+        );
     }
 }

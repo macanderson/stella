@@ -12,16 +12,7 @@ import {
   Gauge,
 } from "lucide-react";
 import { CommandDeck, HeroTerminal } from "@/components/command-deck";
-
-/** The Stella star mark, inline so it inherits `currentColor` and flips with
- *  the theme (ink on paper, snow on black) — no per-mode asset needed. */
-function StarMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="310 22 38 38" fill="currentColor" className={className} aria-hidden>
-      <path d="M324.741 23.0512L327.351 38.0848L315.664 28.4041L311.238 35.0097L325.763 40.7043L311.579 46.0571L315.664 52.8906L327.465 43.096L324.741 58.3573L333.138 58.3573L330.415 43.096L342.102 52.8906L346.187 46.0571L332.117 40.7043L346.641 35.0097L342.216 28.4041L330.528 38.0848L333.138 23.0512L324.741 23.0512Z" />
-    </svg>
-  );
-}
+import { Mark } from "@/components/brand";
 
 const FEATURES = [
   {
@@ -77,14 +68,14 @@ export default function HomePage() {
         <div className="lp-hero-grid pointer-events-none absolute inset-0" aria-hidden />
         <div className="lp-hero-glow pointer-events-none absolute inset-0" aria-hidden />
         <div className="relative mx-auto flex max-w-5xl flex-col items-center px-4 py-20 text-center sm:py-32">
-          <StarMark className="mb-8 h-12 w-auto text-fd-foreground sm:h-14" />
+          <Mark className="mb-8 h-12 w-auto text-fd-foreground sm:h-14" />
           <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-card px-3 py-1 text-xs font-medium text-fd-muted-foreground">
             <Terminal className="size-3.5" aria-hidden />
             A terminal coding agent that proves its work
           </span>
           <h1 className="max-w-3xl text-balance text-3xl font-semibold tracking-tight sm:text-6xl">
             Ship code from your terminal with{" "}
-            <span className="lp-brand-text font-mono">stella</span>
+            <span className="lp-brand-text">stella</span>
           </h1>
           <p className="mt-6 max-w-2xl text-balance text-base text-fd-muted-foreground sm:text-lg">
             A fast, bring-your-own-key, model-agnostic coding agent. Point it at any
@@ -231,8 +222,8 @@ export default function HomePage() {
       <footer className="border-t border-fd-border">
         <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-fd-muted-foreground sm:flex-row">
           <span className="inline-flex items-center gap-2">
-            <StarMark className="h-4 w-auto text-fd-muted-foreground" />
-            <span className="font-mono">stella</span>
+            <Mark className="h-4 w-auto text-fd-muted-foreground" />
+            <span className="lp-brand-face">stella</span>
           </span>
           <div className="flex items-center gap-5">
             <Link href="/docs" className="hover:text-fd-foreground">

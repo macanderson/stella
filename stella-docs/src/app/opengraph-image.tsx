@@ -1,9 +1,14 @@
 import { ImageResponse } from "next/og";
+import { WORDMARK_PATH, WORDMARK_VIEW_BOX } from "@/components/brand";
 
 /**
  * Neutral, Vercel-style social card, generated at build time (next/og) so it
  * stays in sync with the brand and carries no static binary. Pure monochrome:
  * snow on black, one hairline border — the same paper-&-ink system as the site.
+ *
+ * The wordmark is drawn from its outlines rather than set as text, so the card
+ * shows the real logo instead of whatever face the renderer happens to fall
+ * back to.
  */
 export const alt =
   "Stella — a fast, BYOK, model-agnostic terminal coding agent that proves its work";
@@ -44,22 +49,21 @@ export default function OpengraphImage() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div
-            style={{
-              display: "flex",
-              fontSize: "168px",
-              fontWeight: 800,
-              letterSpacing: "-6px",
-              lineHeight: 1,
-            }}
-          >
-            stella
+          <div style={{ display: "flex" }}>
+            <svg
+              viewBox={WORDMARK_VIEW_BOX}
+              width={508}
+              height={150}
+              fill="#ededed"
+            >
+              <path d={WORDMARK_PATH} />
+            </svg>
           </div>
           <div
             style={{
               display: "flex",
               marginTop: "30px",
-              fontSize: "46px",
+              fontSize: "42px",
               color: "#a1a1a1",
               maxWidth: "940px",
               lineHeight: 1.25,
