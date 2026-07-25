@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  stella-docs:
+  website:
     dependencies:
       fumadocs-core:
         specifier: 16.9.3
