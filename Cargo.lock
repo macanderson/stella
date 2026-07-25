@@ -3303,6 +3303,7 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "thiserror 2.0.19",
 ]
 
