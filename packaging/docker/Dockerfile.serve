@@ -23,6 +23,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /src/target/release/stella-serve /usr/local/bin/stella-serve
 
+# Drop root. An image whose stated job is running an agent engine for untrusted
+# tenant workloads is exactly where UID 0 is not worth keeping: 8080 is
+# unprivileged and STELLA_SERVE_TOOLS=remote writes nothing to the filesystem,
+# so nothing below this line needs privilege — including the HEALTHCHECK, which
+# execs the world-executable binary copied above.
+RUN useradd --system --uid 10001 --no-create-home stella
+USER 10001
+
 # Bind all interfaces inside the container; the bearer token is the auth gate and
 # the container runs inside the host's private network / tenant sandbox.
 ENV STELLA_SERVE_BIND=0.0.0.0:8080 \

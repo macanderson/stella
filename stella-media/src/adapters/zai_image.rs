@@ -327,7 +327,7 @@ mod tests {
     // present, so CI never spends. Otherwise it no-ops (runtime-skip).
     #[tokio::test]
     async fn live_smoke_generate_image() {
-        if !crate::adapters::live_smokes_armed() {
+        if !crate::adapters::live_smoke_enabled() {
             return; // opt-in only
         }
         let key = match ApiKey::from_env("ZAI_API_KEY") {

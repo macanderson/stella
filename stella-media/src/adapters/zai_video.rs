@@ -463,7 +463,7 @@ mod tests {
     // and an explicit STELLA_MEDIA_LIVE=1 opt-in; otherwise it no-ops.
     #[tokio::test]
     async fn live_smoke_submit_and_poll_once() {
-        if !crate::adapters::live_smokes_armed() {
+        if !crate::adapters::live_smoke_enabled() {
             return;
         }
         let key = match ApiKey::from_env("ZAI_API_KEY") {

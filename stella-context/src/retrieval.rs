@@ -67,9 +67,16 @@ pub enum DropReason {
 /// so assembly is never a silent truncation (`L-C5`).
 #[derive(Debug, Clone)]
 pub struct DroppedFrame {
+    /// The frame id it would have carried (the node's `nod_…` public id), so a
+    /// caller can ask for it explicitly on a follow-up query.
     pub id: String,
+    /// Its citation label, so the drop report reads as names rather than ids
+    /// (`L-C4`).
     pub title: String,
+    /// What it would have cost, so a caller can size the budget a re-query
+    /// needs instead of guessing.
     pub token_cost: u32,
+    /// Which limit dropped it.
     pub reason: DropReason,
 }
 
