@@ -7,7 +7,7 @@ Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumad
 (`fumadocs-core` / `fumadocs-ui` / `fumadocs-mdx`) + Tailwind CSS v4. Branded with the
 Stella identity — the aurora chevron+cells mark on a navy-black/Ice palette (see
 `src/app/global.css` for the tokens, `public/brand/` for the logo lockups, and
-`../docs/brand/BRAND_GUIDELINES.md` for the brand system).
+`../docs/brand/` for the source assets).
 
 ## Develop
 
