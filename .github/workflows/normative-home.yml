@@ -21,6 +21,10 @@ on:
       - ".github/workflows/normative-home.yml"
   workflow_dispatch:
 
+# Checkout + one read-only shell check.
+permissions:
+  contents: read
+
 jobs:
   check:
     name: normative-home pin check

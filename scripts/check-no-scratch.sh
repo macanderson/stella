@@ -52,7 +52,7 @@ Either:
 
 A too-broad rule is the more dangerous case: it also means a NEW file added
 under that path can never be committed without -f. That is how
-stella-docs/public/icons/ ended up ignored (a bare "Icon?" pattern matched
+website/public/icons/ ended up ignored (a bare "Icon?" pattern matched
 "icons" on a case-insensitive filesystem).
 EOF
 exit 1
