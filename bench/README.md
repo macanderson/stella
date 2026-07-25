@@ -11,7 +11,7 @@ Three entry points:
 |---|---|---|
 | [`harbor_adapter/`](harbor_adapter/) | A Harbor *installed-agent* adapter — run Stella on Terminal-Bench 2.x / SWE-bench in the same container + verifier as Claude Code, Codex CLI, Terminus, etc. | Docker, `harbor`, a provider key |
 | [`run_swebench.py`](run_swebench.py) | A standalone SWE-bench *prediction* harness — clone each instance, run Stella, emit the official predictions JSONL. No Harbor. | `git`, a provider key (Docker only for the official scoring step) |
-| [`loop-bench/`](loop-bench/) | A cheap **turn-loop + context-query correctness** harness: runs N tasks on a flash-tier model, budget-capped, and reports loop health (silent-death / zero-work / stuck-loop) and `project_overview`/`graph_query` adoption — the signals the pass-rate number hides. | `cargo`, Docker, `harbor`, a key |
+| [`loop-bench/`](loop-bench/) | A cheap **turn-loop + context-query correctness** harness: runs N tasks on a flash-tier model, budget-capped, and reports loop health (silent-death / zero-work) and `project_overview`/`graph_query` adoption — the signals the pass-rate number hides. | `cargo`, Docker, `harbor`, a key |
 | [`smoke/smoke_test.py`](smoke/smoke_test.py) | An **offline, zero-cost** self-test of the adapter wiring for CI. | just the built `stella` binary |
 
 For development and the offline smoke test, build the native binary:
@@ -132,6 +132,6 @@ python -m swebench.harness.run_evaluation \
 
 Every Stella run also writes to the workspace's local `.stella/private/store.db` — the
 same executions, tokens, and `$`/resolved-task receipts you can read with
-`stella stats` or browse in the [Observatory](../README.md#observatory)
+`stella stats` or browse in the [Observatory](../README.md#workspace-layout)
 dashboard (`stella observe`). A benchmark run and Stella's own metering agree by
 construction: both read the JSON envelope this harness parses.

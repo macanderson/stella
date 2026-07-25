@@ -301,6 +301,11 @@ pub async fn run_deck_session(
     let mut budget = agent::build_budget_guard(budget_limit);
     let store = agent::open_store(&cfg.workspace_root);
     let calibration = agent::seed_calibration(&store, cfg);
+    // The most recent execution this session opened — the INSPECT overlay's
+    // subject. `execution` itself is per-turn and out of scope at the idle
+    // service site, and the overlay is most useful precisely when no turn is
+    // running, so the id is retained here across the whole session loop.
+    let mut last_execution_id: Option<i64> = None;
 
     let system_prompt = agent::with_session_hook_context(
         agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules),
@@ -1068,6 +1073,7 @@ pub async fn run_deck_session(
                                 &workspace_path,
                                 &in_tx,
                             )
+                            && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
                             && !handle_agents_input(&other, cfg, &in_tx)
                             && !handle_issues_input(&other, cfg, &issue_backend_cache, &in_tx)
                         {
@@ -1207,6 +1213,9 @@ pub async fn run_deck_session(
             cfg,
             Some(&session_record.id),
         );
+        if let Some((_, id)) = &execution {
+            last_execution_id = Some(*id);
+        }
         let files_before = registry.files_touched().len();
         let started_unix = crate::memory::unix_now_secs();
 
@@ -1542,6 +1551,15 @@ pub async fn run_deck_session(
                                 &workspace_path,
                                 &in_tx,
                             );
+                        }
+                        // INSPECT is answered mid-turn too: the receipts of
+                        // earlier steps are already durable, and watching the
+                        // context grow while a turn runs is the point.
+                        Some(
+                            input @ (WorkspaceInput::InspectRefresh
+                            | WorkspaceInput::InspectCall { .. }),
+                        ) => {
+                            service_inspect_action(&input, &store, last_execution_id, &in_tx);
                         }
                         // Navigation waits for the road to clear: switching
                         // sessions mid-turn would tear down live work, so the
@@ -2176,6 +2194,149 @@ fn service_registry_action(
         _ => return false,
     }
     true
+}
+
+/// The INSPECT overlay's driver half: answer the recorded-call index and the
+/// reconstruction of one call. Returns `false` for anything else so the caller
+/// can keep trying the other service handlers.
+///
+/// Both arms are blocking SQLite reads — `reconstruct_call` replays the block
+/// registry and the event journal — so they run on `spawn_blocking` and answer
+/// out of band, the same shape as [`WorkspaceInput::FocusGraphFile`]. Stalling
+/// the event pump to rebuild a prompt would stutter a live turn.
+fn service_inspect_action(
+    input: &WorkspaceInput,
+    store: &Option<Arc<Store>>,
+    execution_id: Option<i64>,
+    in_tx: &mpsc::UnboundedSender<Inbound>,
+) -> bool {
+    if !matches!(
+        input,
+        WorkspaceInput::InspectRefresh | WorkspaceInput::InspectCall { .. }
+    ) {
+        return false;
+    }
+    // No store (claim mode, or it failed to open) or no turn yet: answer with
+    // an empty index rather than silence, so the overlay renders its "nothing
+    // recorded yet" line instead of looking hung.
+    let (Some(store), Some(execution_id)) = (store.clone(), execution_id) else {
+        let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
+        return true;
+    };
+    let in_tx = in_tx.clone();
+    match input {
+        WorkspaceInput::InspectRefresh => {
+            tokio::task::spawn_blocking(move || {
+                let calls = store.recorded_calls(execution_id).unwrap_or_default();
+                let _ = in_tx.send(Inbound::RecordedCalls(
+                    calls.iter().map(recorded_call_info).collect(),
+                ));
+            });
+        }
+        WorkspaceInput::InspectCall {
+            turn_instance,
+            step,
+            call_seq,
+        } => {
+            let (turn_instance, step, call_seq) = (*turn_instance, *step, *call_seq);
+            tokio::task::spawn_blocking(move || {
+                let Ok(recon) = store.reconstruct_call(execution_id, turn_instance, step, call_seq)
+                else {
+                    let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
+                    return;
+                };
+                // Re-read the header so the detail can name the model/role that
+                // served this call; the reconstruction itself carries only the
+                // messages.
+                let call = store
+                    .recorded_calls(execution_id)
+                    .unwrap_or_default()
+                    .iter()
+                    .find(|c| {
+                        (c.turn_instance, c.step, c.call_seq) == (turn_instance, step, call_seq)
+                    })
+                    .map(recorded_call_info)
+                    .unwrap_or_else(|| stella_tui::RecordedCallInfo {
+                        turn_instance,
+                        step,
+                        call_seq,
+                        call_role: "unknown".into(),
+                        provider: "unknown".into(),
+                        model: "unknown".into(),
+                        estimated_input_tokens: 0,
+                    });
+                let _ = in_tx.send(Inbound::InspectedCall(Box::new(stella_tui::InspectView {
+                    call,
+                    messages: recon
+                        .messages
+                        .iter()
+                        .map(|m| stella_tui::InspectMessage {
+                            role: message_role_tag(m.role).to_string(),
+                            content: inspect_message_body(m),
+                        })
+                        .collect(),
+                    verified: recon.is_verified(),
+                    unresolved: recon.unresolved.len(),
+                    digest_mismatches: recon.digest_mismatches.len(),
+                })));
+            });
+        }
+        _ => unreachable!("guarded by the matches! above"),
+    }
+    true
+}
+
+fn recorded_call_info(call: &stella_store::RecordedCall) -> stella_tui::RecordedCallInfo {
+    stella_tui::RecordedCallInfo {
+        turn_instance: call.turn_instance,
+        step: call.step,
+        call_seq: call.call_seq,
+        call_role: call.call_role.clone(),
+        provider: call.provider.clone(),
+        model: call.model.clone(),
+        estimated_input_tokens: call.estimated_input_tokens,
+    }
+}
+
+fn message_role_tag(role: stella_protocol::MessageRole) -> &'static str {
+    match role {
+        stella_protocol::MessageRole::System => "system",
+        stella_protocol::MessageRole::User => "user",
+        stella_protocol::MessageRole::Assistant => "assistant",
+        stella_protocol::MessageRole::Tool => "tool",
+    }
+}
+
+/// Flatten one reconstructed message for display: text plus a compact rendering
+/// of the tool calls/results it carried. They are separate blocks in the
+/// receipt but belong to one message on the wire, and the overlay shows wire
+/// shape. Mirrors `crate::inspect::message_body` — the CLI and the deck must
+/// not disagree about what a message looked like.
+fn inspect_message_body(message: &CompletionMessage) -> String {
+    let mut out = String::new();
+    if !message.content.is_empty() {
+        out.push_str(&message.content);
+    }
+    for call in &message.tool_calls {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "→ tool_call {} {} {}",
+            call.call_id, call.name, call.input
+        ));
+    }
+    for result in &message.tool_results {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "← tool_result {} {}",
+            result.call_id,
+            serde_json::to_string(&result.output).unwrap_or_default()
+        ));
+    }
+    out
 }
 
 /// The SESSIONS overlay snapshot: every registry record mapped to the deck's
@@ -3278,6 +3439,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
         "/context",
         "this session's active skills + MCP servers (also: → on an empty prompt)",
     ),
+    (
+        "/inspect",
+        "the context sent to the model on any recorded call (also: ⌃g)",
+    ),
     ("/inbox", "notifications — messages persist until read"),
     ("/mcp-search", "search the MCP registry & install servers"),
     // The engine-config editor (per-agent models included) lives on the
@@ -3717,7 +3882,7 @@ async fn run_deck_command(
         // but a queued one reaches here — accept it as handled (a no-op)
         // rather than calling it "unknown".
         "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search"
-        | "/settings" | "/sessions" | "/context" | "/inbox" => {}
+        | "/settings" | "/sessions" | "/context" | "/inspect" | "/inbox" => {}
         _ => {
             // The `/models` argument forms first (see [`ModelsCommand`]):
             // handled model-free — a catalog refresh is part of digging out
