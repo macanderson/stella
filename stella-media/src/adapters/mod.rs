@@ -11,7 +11,7 @@
 //! Coverage is recorded-fixture-first (wiremock transcripts, including the
 //! failure shapes: auth 401, rate-limit 429, content-policy refusal, and a
 //! 404-gone video job), with one runtime-skipped **live smoke** per family
-//! that only fires when the provider key *and* `OXAGEN_MEDIA_LIVE=1` are
+//! that only fires when the provider key *and* `STELLA_MEDIA_LIVE=1` are
 //! present — so CI never calls a paid API, yet a keyed release run exercises
 //! the real wire (L-V4).
 
@@ -26,9 +26,18 @@ pub use zai_video::ZaiVideoProvider;
 /// Whether the paid live smokes in this module tree are armed, read from the
 /// process environment. The single gate every adapter's `live_smoke_*` test
 /// consults, so the three families can never drift apart.
+///
+/// `STELLA_MEDIA_LIVE` is the spelling that matches every other `STELLA_*`
+/// toggle and the one this module's own docs advertise; the pre-rename
+/// `OXAGEN_MEDIA_LIVE` stays readable as a deprecated alias for one release.
 #[cfg(test)]
 pub(crate) fn live_smoke_enabled() -> bool {
-    live_smoke_armed_by(std::env::var("OXAGEN_MEDIA_LIVE").ok().as_deref())
+    live_smoke_armed_by(
+        std::env::var("STELLA_MEDIA_LIVE")
+            .or_else(|_| std::env::var("OXAGEN_MEDIA_LIVE"))
+            .ok()
+            .as_deref(),
+    )
 }
 
 /// The pure half of [`live_smoke_enabled`]: does this reading of

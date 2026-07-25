@@ -73,6 +73,14 @@ is the complete map; each row links to its detail page.
 | Per-tool permission gates | `hooks` `PreToolUse` matchers + the `tools` switches | [Permissions](/docs/agent-tools/permissions) |
 | Force the plain REPL (no TUI) | `--plain` flag · `STELLA_PLAIN=1` | `stella --plain chat` |
 | Freeze TUI animation (CI/recordings) | `--no-anim` flag · `STELLA_NO_ANIM` · `NO_COLOR` | `stella --no-anim chat` |
+| Write the Command Deck's structured debug log | `STELLA_DEBUG=1` → `~/.local/state/stella/logs/deck-&lt;pid&gt;.jsonl` (owner-only) | `STELLA_DEBUG=1 stella chat` |
+| Arm the paid media live smokes (contributors) | `STELLA_MEDIA_LIVE=1` + the provider key | `STELLA_MEDIA_LIVE=1 cargo test -p stella-media` |
+
+<Callout type="warn">
+  `STELLA_DEBUG` and `STELLA_MEDIA_LIVE` were previously spelled `OXAGEN_DEBUG` and
+  `OXAGEN_MEDIA_LIVE`. The old names still work as deprecated aliases for one release;
+  the `STELLA_`-prefixed spelling wins when both are set.
+</Callout>
 
 <Callout type="info">
   Stella **auto-detects** the provider from whichever API keys are present in your

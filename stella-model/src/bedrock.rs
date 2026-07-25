@@ -11,9 +11,11 @@
 //!   identical `CompletionResult`; the event-stream decoder lands when the
 //!   TUI actually streams partial output.
 //! - **Explicit credentials, not the full AWS chain.** The adapter takes
-//!   access key / secret / optional session token directly; `stella-cli`
-//!   resolves them from the standard `AWS_ACCESS_KEY_ID` /
-//!   `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` env vars. Profile files,
+//!   access key / secret / optional session token directly;
+//!   [`crate::credential::BedrockCredentials`] resolves the secret, session
+//!   token, and region from the standard `AWS_SECRET_ACCESS_KEY` /
+//!   `AWS_SESSION_TOKEN` / `AWS_REGION` env vars, alongside
+//!   [`crate::credential::ApiKey`] for `AWS_ACCESS_KEY_ID`. Profile files,
 //!   SSO, and IMDS are the "provider-native config" step the credential
 //!   chain doc (`credential.rs`) already records as deferred alongside this
 //!   adapter.

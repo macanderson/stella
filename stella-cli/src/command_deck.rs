@@ -140,12 +140,17 @@ fn chrome_note(text: String) -> Inbound {
     }
 }
 
-/// `OXAGEN_DEBUG=1` → the structured deck log path (L-T8), mirroring the
+/// `STELLA_DEBUG=1` → the structured deck log path (L-T8), mirroring the
 /// location `stella_tui::shell::RunOptions` documents. `None` otherwise, and
 /// on any failure to create the directory — a lost debug log never gates the
 /// session.
+///
+/// `OXAGEN_DEBUG` is accepted as a deprecated alias for one release: the
+/// user-facing env surface is `STELLA_*` everywhere else (88 names), and this
+/// was the only runtime toggle stranded in the pre-rename namespace.
 fn debug_log_path() -> Option<PathBuf> {
-    if std::env::var_os("OXAGEN_DEBUG").is_none_or(|v| v.is_empty() || v == "0") {
+    let requested = std::env::var_os("STELLA_DEBUG").or_else(|| std::env::var_os("OXAGEN_DEBUG"));
+    if requested.is_none_or(|v| v.is_empty() || v == "0") {
         return None;
     }
     #[cfg(not(unix))]
@@ -3833,8 +3838,17 @@ async fn run_deck_command(
         "/export" => {
             // Export all session telemetry to a timestamped ZIP archive
             // containing raw JSON dumps + a self-contained HTML dashboard.
-            match crate::export::export_session(&cfg.workspace_root) {
-                Ok(path) => {
+            //
+            // Off the runtime worker: the export opens SQLite, dumps and
+            // pretty-prints every telemetry table, renders the dashboard, and
+            // builds the whole ZIP without yielding — awaiting it inline
+            // stalls the deck's event pump, so keystrokes go unprocessed and
+            // the TUI looks hung on the crate's most I/O-heavy command.
+            let root = cfg.workspace_root.clone();
+            let exported =
+                tokio::task::spawn_blocking(move || crate::export::export_session(&root)).await;
+            match exported.map_err(|e| format!("export task failed: {e}")) {
+                Ok(Ok(path)) => {
                     let display = path.display();
                     say(format!(
                         "Export Session Telemetry — archive written to {display}\n\
@@ -3843,7 +3857,7 @@ async fn run_deck_command(
                          matches the last log entry's timestamp."
                     ));
                 }
-                Err(e) => say(format!("export failed: {e}")),
+                Ok(Err(e)) | Err(e) => say(format!("export failed: {e}")),
             }
         }
         "/donate" => {
