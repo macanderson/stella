@@ -57,7 +57,7 @@ pub struct DeckOptions {
     /// event loop discards them — so turning this on currently only costs
     /// selection; it exists as the seam for click/scroll/reorder to land.
     pub mouse_capture: bool,
-    /// Structured debug log path (`OXAGEN_DEBUG=1`), or `None` for a no-op sink.
+    /// Structured debug log path (`STELLA_DEBUG=1`), or `None` for a no-op sink.
     pub debug_log_path: Option<PathBuf>,
     /// An initial code-graph snapshot to seed the Graph tab (the caller, which
     /// owns a `CodeGraph`, queries it and hands it in — the TUI stays decoupled).

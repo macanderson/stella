@@ -323,11 +323,11 @@ mod tests {
         assert!(caps.image_usd_each.is_some());
     }
 
-    // Live smoke (L-V4): runs only when a real key AND OXAGEN_MEDIA_LIVE=1 are
+    // Live smoke (L-V4): runs only when a real key AND STELLA_MEDIA_LIVE=1 are
     // present, so CI never spends. Otherwise it no-ops (runtime-skip).
     #[tokio::test]
     async fn live_smoke_generate_image() {
-        if std::env::var("OXAGEN_MEDIA_LIVE").is_err() {
+        if !crate::adapters::live_smokes_armed() {
             return; // opt-in only
         }
         let key = match ApiKey::from_env("ZAI_API_KEY") {

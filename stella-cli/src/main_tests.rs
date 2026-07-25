@@ -9,7 +9,7 @@ use clap::{CommandFactory, Parser};
 
 use super::{
     AuthCmd, BUILD_VERSION_IDENTITY, Cli, Command, ConnectCmd, OutputFormat, TelemetryCmd,
-    version_static, version_string,
+    error_summary_json, version_static, version_string,
 };
 
 /// The build script owns version stamping so both CLI surfaces consume the
@@ -340,4 +340,37 @@ fn auth_remove_and_list_parse() {
         cli.command,
         Some(Command::Auth { cmd: AuthCmd::List })
     ));
+}
+
+/// Witness for the `--output-format json|stream-json` pre-flight contract: a
+/// failure returned by `run()` before the agent exists (no API key, unknown
+/// provider, unknown model, a malformed settings file) used to leave stdout
+/// completely empty, so a headless script got nothing to parse for the single
+/// most likely failure it hits.
+#[test]
+fn pre_flight_failures_emit_a_machine_readable_error_envelope() {
+    let msg = "no API key found for provider `zai`";
+
+    let pretty = error_summary_json(OutputFormat::Json, msg).expect("json must emit an envelope");
+    let parsed: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+    assert_eq!(parsed["status"], "error");
+    assert!(parsed["text"].is_null());
+    assert_eq!(parsed["reason"], msg);
+
+    // stream-json is line-delimited: the envelope must be exactly one line.
+    let line =
+        error_summary_json(OutputFormat::StreamJson, msg).expect("stream-json must emit one");
+    assert!(
+        !line.contains('\n'),
+        "stream-json envelope must be one line"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(parsed["reason"], msg);
+}
+
+/// The human path keeps stdout clean — its diagnostic is the `stella: …`
+/// stderr line, and a JSON object printed there would corrupt piped output.
+#[test]
+fn text_output_never_gets_an_error_envelope_on_stdout() {
+    assert!(error_summary_json(OutputFormat::Text, "boom").is_none());
 }
