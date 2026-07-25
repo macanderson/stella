@@ -24,12 +24,68 @@
  * Warning is orange (#FF7A1A), not yellow: yellow is conventionally "warning"
  * in a terminal, so promoting it to brand would collide. Status must always
  * pair colour with an icon, never rely on hue alone.
+ *
+ * ── Typography ───────────────────────────────────────────────────────────────
+ *
+ *   brand   Space Grotesk 500 — the face the wordmark is drawn from. Brand name,
+ *           display headings, branded UI chrome. Use the `brand-wordmark`
+ *           utility, which also applies the wordmark's -0.02em tracking.
+ *   sans    Inter — body and UI text. Deliberately neutral so it does not
+ *           compete with the brand face at paragraph sizes.
+ *   mono    JetBrains Mono — code, telemetry, terminal output. Not Space Mono,
+ *           despite it being Space Grotesk's parent: it is too wide and too
+ *           quirky to read for sustained code.
+ *
+ * All three are OFL. Wire them up one of two ways — the stacks below degrade to
+ * system fonts if you do neither, and every var() carries an inline fallback so
+ * an unwired variable can never invalidate the whole declaration.
+ *
+ *   next/font (preferred in Next.js) — the variable names below match:
+ *
+ *     import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
+ *     const brand = Space_Grotesk({ subsets: ["latin"], weight: ["500"],
+ *                                   variable: "--font-space-grotesk" });
+ *     const sans  = Inter({ subsets: ["latin"], variable: "--font-inter" });
+ *     const mono  = JetBrains_Mono({ subsets: ["latin"],
+ *                                    variable: "--font-jetbrains-mono" });
+ *     // <html className={`${brand.variable} ${sans.variable} ${mono.variable}`}>
+ *
+ *   Self-hosted — drop woff2 files in /public/fonts and uncomment the @font-face
+ *   block below. Prefer this if a strict CSP blocks Google's font host.
  */
 
 @import "tailwindcss";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+
+/* ─── Self-hosted fonts (optional; unnecessary with next/font) ───────────────
+ *
+ * Uncomment and ship the woff2 files to serve the families yourself. The names
+ * here match the fallbacks in @theme, so no other change is needed.
+ *
+ * @font-face {
+ *   font-family: "Space Grotesk";
+ *   src: url("/fonts/space-grotesk-500.woff2") format("woff2");
+ *   font-weight: 500;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ * @font-face {
+ *   font-family: "Inter";
+ *   src: url("/fonts/inter-variable.woff2") format("woff2-variations");
+ *   font-weight: 100 900;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ * @font-face {
+ *   font-family: "JetBrains Mono";
+ *   src: url("/fonts/jetbrains-mono-variable.woff2") format("woff2-variations");
+ *   font-weight: 100 800;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ */
 
 /* ─── Light: paper & ink ─────────────────────────────────────────────────── */
 
@@ -186,10 +242,38 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* The brand face. The wordmark is Space Grotesk Medium drawn as outlines, so
-     loading the family lets brand-name text match the logo. Wire it up with
-     next/font (variable: "--font-brand") or an @font-face of your own. */
-  --font-brand: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  /* Typography. Each var() carries an inline fallback: an undefined custom
+     property with no fallback invalidates the entire font-family declaration at
+     computed-value time, which would silently drop the stack to `inherit`. */
+  --font-brand: var(--font-space-grotesk, "Space Grotesk"), ui-sans-serif,
+    system-ui, sans-serif;
+  --font-sans: var(--font-inter, "Inter"), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace,
+    SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ─── Brand typography utilities ─────────────────────────────────────────────
+ *
+ * The wordmark is Space Grotesk Medium tracked -0.02em. `brand-wordmark`
+ * reproduces that setting for the brand name in running text, so the word
+ * matches the logo instead of approximating it.
+ *
+ * Do NOT use this to rebuild the logo from live text — the logo is the outlined
+ * SVG in docs/brand/. This is for prose, headings, and UI chrome.
+ */
+
+@utility brand-wordmark {
+  font-family: var(--font-brand);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+/* Display headings in the brand face, tracked slightly tighter as size grows. */
+@utility brand-display {
+  font-family: var(--font-brand);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
 }
 
 @layer base {
@@ -198,6 +282,15 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    @apply font-mono;
   }
 }
