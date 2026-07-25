@@ -360,6 +360,17 @@ const TOOL_CALLS = {tool_calls_json};
 const EXECUTIONS = {executions_json};
 const FILES = {files_json};
 
+// ── HTML escape for the innerHTML sinks below ───────────────────────────
+// Every renderer in this script assigns to `innerHTML`, and the strings it
+// interpolates — workspace file paths, MCP/tool names, provider and model
+// ids, execution outcomes — are all text an agent, an MCP server, or a
+// cloned repo chooses. `script_json` escapes `<`/`>`/`&` only for the HTML
+// tokenizer, so the element cannot be closed early; the JS parser decodes
+// them straight back, and the live string reaches `innerHTML`. Escape at
+// the sink, which is the only place that knows the value is about to
+// become markup.
+const esc = s => String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+
 // ── KPI insights — surface the patterns that change quality ─────────────
 (function insights() {{
   const el = document.getElementById('insights');
@@ -401,7 +412,7 @@ const FILES = {files_json};
   const retries = TELEMETRY.reduce((s,t)=>s+(t.retries||0),0);
   if (retries > 5) tips.push({{label:'Retry Pressure',text:`${{retries}} API retries this session — may indicate rate limiting or transient errors.`}});
 
-  el.innerHTML = tips.map(t=>`<div class="insight"><div class="insight-label">${{t.label}}</div>${{t.text}}</div>`).join('');
+  el.innerHTML = tips.map(t=>`<div class="insight"><div class="insight-label">${{esc(t.label)}}</div>${{esc(t.text)}}</div>`).join('');
 }})();
 
 // ── Stats table ─────────────────────────────────────────────────────────
@@ -412,7 +423,7 @@ const FILES = {files_json};
   for (const r of USAGE) {{
     const rate = r.runs > 0 ? (r.resolved/r.runs*100).toFixed(1)+'%' : '-';
     const perResolved = r.cost_per_resolved_usd != null ? '$'+r.cost_per_resolved_usd.toFixed(4) : '-';
-    html += `<tr><td>${{r.provider}}</td><td>${{r.model}}</td><td class="num">${{r.runs}}</td><td class="num">${{r.resolved}}</td><td class="num">${{rate}}</td><td class="num">$${{r.total_cost_usd.toFixed(4)}}</td><td class="num">${{perResolved}}</td><td class="num">${{r.input_tokens.toLocaleString()}}</td><td class="num">${{r.output_tokens.toLocaleString()}}</td><td class="num">${{Math.round(r.avg_duration_ms)}}</td></tr>`;
+    html += `<tr><td>${{esc(r.provider)}}</td><td>${{esc(r.model)}}</td><td class="num">${{r.runs}}</td><td class="num">${{r.resolved}}</td><td class="num">${{rate}}</td><td class="num">$${{r.total_cost_usd.toFixed(4)}}</td><td class="num">${{perResolved}}</td><td class="num">${{r.input_tokens.toLocaleString()}}</td><td class="num">${{r.output_tokens.toLocaleString()}}</td><td class="num">${{Math.round(r.avg_duration_ms)}}</td></tr>`;
   }}
   // Totals.
   const runs = USAGE.reduce((s,r)=>s+r.runs,0);
@@ -434,7 +445,7 @@ function barChart(containerId, data, colorVar) {{
   const max = Math.max(...data.map(d=>d.value), 1);
   el.innerHTML = data.map(d => {{
     const pct = (d.value/max*100).toFixed(1);
-    return `<div class="bar-row"><div class="bar-label" title="${{d.label}}">${{d.label}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{colorVar}})"></div></div><div class="bar-value">${{d.display}}</div></div>`;
+    return `<div class="bar-row"><div class="bar-label" title="${{esc(d.label)}}">${{esc(d.label)}}</div><div class="bar-track"><div class="bar-fill" style="width:${{pct}}%;background:var(${{colorVar}})"></div></div><div class="bar-value">${{esc(d.display)}}</div></div>`;
   }}).join('');
 }}
 
@@ -685,6 +696,57 @@ mod tests {
         // …and it is still the same document to a JSON parser.
         let parsed: serde_json::Value = serde_json::from_str(&safe).expect("valid JSON");
         assert_eq!(parsed[0]["path"], "</script><img src=x onerror=alert(1)>");
+    }
+
+    /// A file path an agent created lands in `FILES`, flows into `barChart`
+    /// as `d.label`, and is assigned to `innerHTML`. `script_json` only stops
+    /// the payload from closing the `<script>` element — the JS parser decodes
+    /// `<` straight back and the live string reaches the sink — so every
+    /// `innerHTML` interpolation of agent-, MCP-, or repo-chosen text has to
+    /// escape at the sink.
+    ///
+    /// The assertion is structural (over the emitted JS) rather than over the
+    /// rendered DOM on purpose: the escaping happens in the browser, so no
+    /// Rust-side output ever contains the escaped `&lt;img` form.
+    #[test]
+    fn dashboard_escapes_untrusted_text_at_every_innerhtml_sink() {
+        let hostile =
+            r#"[{"path":"<img src=x onerror=alert(1)>","lines_added":1,"lines_removed":0}]"#;
+        let html = render_dashboard(&[], &[("files_touched", hostile.to_string())], "now");
+
+        // The payload does reach the page — escaping at the sink, not
+        // dropping the datum, is what makes it inert.
+        assert!(
+            html.contains("onerror=alert(1)"),
+            "the hostile path is embedded in the dashboard data"
+        );
+        assert!(
+            html.contains("const esc ="),
+            "the dashboard defines an HTML escape helper"
+        );
+
+        // Every interpolation that reaches `innerHTML` goes through it…
+        for wrapped in [
+            "${esc(t.label)}",
+            "${esc(t.text)}",
+            "${esc(r.provider)}",
+            "${esc(r.model)}",
+            "${esc(d.label)}",
+            "${esc(d.display)}",
+        ] {
+            assert!(html.contains(wrapped), "escaped at the sink: {wrapped}");
+        }
+        // …and none of them is left raw.
+        for raw in [
+            "${t.label}",
+            "${t.text}",
+            "${r.provider}",
+            "${r.model}",
+            "${d.label}",
+            "${d.display}",
+        ] {
+            assert!(!html.contains(raw), "no unescaped sink remains: {raw}");
+        }
     }
 
     #[test]

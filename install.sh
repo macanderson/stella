@@ -138,20 +138,14 @@ cargo_fallback() {
     die "cargo not found; install Rust from https://rustup.rs then re-run"
   fi
 
-  # Pin the source build to STELLA_VERSION when set, so the fallback path honors
-  # the requested version instead of silently building whatever `main` happens
-  # to be (which may not even match the version the user asked for).
-  ref_args=""
-  if [ -n "${STELLA_VERSION:-}" ]; then
-    case "$STELLA_VERSION" in
-      v*) tag="$STELLA_VERSION" ;;
-      *) tag="v${STELLA_VERSION}" ;;
-    esac
-    ref_args="--tag ${tag}"
-    info "building stella ${tag} from source with cargo (this may take a while)..."
-  else
-    info "building stella from source with cargo (latest main; this may take a while)..."
-  fi
+  # Always pin the source build to a released tag. Left unpinned, `cargo install
+  # --git` builds whatever `main` happens to be — an arbitrary, unreleased,
+  # unchecksummed commit — which is exactly the guarantee the download path
+  # exists to provide. `resolve_tag` runs before every caller and has already
+  # normalized STELLA_VERSION (or the latest release) into TAG, so this is the
+  # single source of truth for which ref gets built.
+  ref_args="--tag ${TAG}"
+  info "building stella ${TAG} from source with cargo (this may take a while)..."
 
   # Honor STELLA_INSTALL_DIR when it looks like a .../bin directory (the default
   # is ~/.local/bin): cargo installs the binary into <root>/bin.
@@ -193,6 +187,13 @@ main() {
   need_cmd awk
 
   detect_target
+  # Resolve the tag BEFORE the fallback branches: both of them build from source
+  # with cargo, and that build must be pinned to a release. Resolution is a
+  # single HEAD request on the fast path, and it `die`s without a network — so
+  # an offline musl user now fails here instead of inside `cargo install --git`,
+  # which needs the network anyway.
+  resolve_tag
+
   if [ -z "$TARGET" ] || ! is_supported_target "$TARGET"; then
     cargo_fallback "no prebuilt binary for this platform ($(uname -s) $(uname -m)); falling back to cargo."
   fi
@@ -200,7 +201,6 @@ main() {
     cargo_fallback "musl libc detected; prebuilt binaries are glibc-only — building from source."
   fi
 
-  resolve_tag
   version="${TAG#v}"
 
   asset="stella-${version}-${TARGET}.tar.gz"

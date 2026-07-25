@@ -32,7 +32,12 @@ pub enum EmbedError {
 
     /// A vector arrived with the wrong dimensionality for its fingerprint.
     #[error("embedding dimension mismatch: expected {expected}, got {got}")]
-    DimensionMismatch { expected: usize, got: usize },
+    DimensionMismatch {
+        /// The dimensionality the active fingerprint declares.
+        expected: usize,
+        /// The dimensionality the vector actually carried.
+        got: usize,
+    },
 
     /// A concrete backend (ONNX runtime, hosted API) failed. Unused by the
     /// hashing default; present so API/ONNX embedders slot in without
@@ -73,7 +78,13 @@ impl EmbedderFingerprint {
 /// A single embedding vector tagged with the fingerprint that produced it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Embedding {
+    /// The [`EmbedderFingerprint::id`] of the embedder that produced `vector`.
+    /// Retrieval only ever compares vectors sharing the active fingerprint
+    /// (`L-C2`), so this is what makes a stale vector invisible rather than
+    /// silently comparable.
     pub fingerprint: String,
+    /// The vector itself: `dims` long and normalized as the fingerprint
+    /// declares, so for `l2` a cosine similarity is a plain dot product.
     pub vector: Vec<f32>,
 }
 

@@ -19,7 +19,12 @@
 /// lines (per the SSE spec), plus the `event:` name if present.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SseEvent {
+    /// The `event:` name the server labelled this event with, if any. MCP
+    /// carries its JSON-RPC in `message` events, but the transport parses
+    /// every event's data regardless, so this is informational.
     pub event: Option<String>,
+    /// The event's payload: its `data:` lines joined with `\n`. For MCP this
+    /// is one JSON-RPC message, which the transport decodes and demultiplexes.
     pub data: String,
 }
 

@@ -201,7 +201,7 @@ The staged pipeline enforces the same contract at runtime: when no
 (the judge's resolution, never the worker) author the failing witness test up
 front, tracks its fail→pass flip in the flip oracle, and refuses to credit the
 flip if the worker modified the witness files (tamper exclusion). See
-`stella-docs/content/docs/inference-pipeline.mdx` for the full stage flow, the distress-triggered guidance
+`website/content/docs/inference-pipeline.mdx` for the full stage flow, the distress-triggered guidance
 loop, and the `/pipeline` deck toggle.
 
 ---

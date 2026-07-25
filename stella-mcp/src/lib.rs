@@ -44,6 +44,15 @@
 //! - **Security.** stdio servers are spawned with a
 //!   *scrubbed* environment: no ambient credential is ever inherited by a
 //!   child ([`stdio`]).
+//! - **Bounded context.** A server is untrusted input, so everything it can
+//!   push at the model is capped *at ingest* ([`client`]): a rendered
+//!   `tools/call` result is middle-out truncated with an explicit elision
+//!   marker, the number of tools accepted from one server is capped (the
+//!   overflow surfacing via [`McpToolSet::over_advertising_servers`], a
+//!   non-fatal diagnostic — the server still works), and each tool's
+//!   description and input schema are bounded. Without this a single verbose
+//!   or hostile server could evict the real conversation, since the engine's
+//!   compaction only trims on a *later* turn.
 //! - **Resilience.** Per-call timeouts; a dead/hung server yields a
 //!   server-named `ToolOutput::Error` and never poisons its siblings or the
 //!   native tools. A dropped connection **auto-reconnects with bounded
