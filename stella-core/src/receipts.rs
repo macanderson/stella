@@ -25,6 +25,21 @@ use stella_protocol::{
 use crate::estimator::{CHARS_PER_TOKEN, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 
+/// `StepManifest::call_seq` of the engine's own worker call — the step loop's
+/// model call, the one that already had a receipt.
+pub const RECEIPT_SEQ_WORKER: u64 = 0;
+
+/// `StepManifest::call_seq` of the overflow summarizer. A constant rather than
+/// a counter because compaction runs at most once per step, so the summarizer
+/// can collide with nothing else at its `(turn_instance, step)`.
+pub const RECEIPT_SEQ_SUMMARIZER: u64 = 1;
+
+/// First `call_seq` available to callers that must allocate their own — the
+/// pipeline's management roles, which have no step loop to key against and so
+/// draw a monotonic sequence per execution. Starts above the reserved worker
+/// and summarizer seats.
+pub const RECEIPT_SEQ_ALLOCATED_BASE: u64 = 2;
+
 /// `sha256` hex of a string. Byte-wise hex (the sha2 0.11 output type does not
 /// implement `LowerHex` directly), matching the context store's `to_hex`.
 fn sha256_hex(s: &str) -> String {
@@ -224,15 +239,26 @@ fn decompose(messages: &[CompletionMessage]) -> Vec<BlockDraft> {
 /// emission directly against a message vector without standing up a full turn.
 pub struct ReceiptLedger {
     turn_instance: u32,
+    call_seq: u64,
     first_seen_step: HashMap<String, usize>,
     effective_budget_tokens: u64,
     calibration_factor: f64,
 }
 
 impl ReceiptLedger {
+    /// A ledger for the engine's own step loop — the worker call, `call_seq` 0.
     pub fn new(turn_instance: u32) -> Self {
+        ReceiptLedger::with_call_seq(turn_instance, 0)
+    }
+
+    /// A ledger for one auxiliary call riding an engine step (the overflow
+    /// summarizer, or a pipeline management role). `call_seq` must be non-zero
+    /// and unique within the execution, or the receipt overwrites another
+    /// call's row — see `AgentEvent::StepManifest::call_seq`.
+    pub fn with_call_seq(turn_instance: u32, call_seq: u64) -> Self {
         ReceiptLedger {
             turn_instance,
+            call_seq,
             first_seen_step: HashMap::new(),
             effective_budget_tokens: 0,
             calibration_factor: 1.0,
@@ -302,6 +328,7 @@ impl ReceiptLedger {
         let _ = events.send(AgentEvent::StepManifest {
             turn_instance: self.turn_instance,
             step,
+            call_seq: self.call_seq,
             role,
             provider: provider.to_string(),
             model: model.to_string(),

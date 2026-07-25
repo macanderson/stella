@@ -1,9 +1,12 @@
 //! Complete per-call accounting for pipeline roles that call providers directly.
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use stella_core::retry::RetryPolicy;
-use stella_core::{AccountedCall, AccountedCallError, BudgetGuard, run_accounted_call};
+use stella_core::{
+    AccountedCall, AccountedCallError, BudgetGuard, ReceiptContext, run_accounted_call,
+};
 use stella_protocol::{CompletionMessage, CompletionRequest, CompletionResult, ModelCallRole};
 
 use super::stage_budget::{PipelineBudgetAbort, budget_abort};
@@ -74,6 +77,15 @@ impl<'a> Pipeline<'a> {
                 retry_policy: policy,
                 timeout,
                 estimated_input_tokens: 0,
+                // Management roles assemble their own prompts — the role's task
+                // prompt, an optional settings-supplied system override, and a
+                // rendered transcript that exists nowhere else. This receipt is
+                // the only record of what any of them actually sent.
+                receipt: Some(ReceiptContext {
+                    turn_instance: 0,
+                    step: 0,
+                    call_seq: self.raw_call_seq.fetch_add(1, Ordering::Relaxed),
+                }),
             },
             budget,
             &self.events,

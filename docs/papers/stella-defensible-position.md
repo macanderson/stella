@@ -605,7 +605,9 @@ A rigorous analysis must consider what could erode Stella's position:
 2. **CGP non-adoption.** If the ecosystem does not build CGP providers, the
    protocol's network effects don't materialize, and CGP becomes an internal
    architecture rather than a standard. *Mitigation:* the zero-dependency wire
-   types, the public conformance suite, and the MIT license lower the barrier
+   types, the public conformance suite, and CGP's permissive Apache-2.0 license
+   (deliberately kept permissive while Stella itself is AGPL-3.0-only, so that
+   implementing the protocol carries no reciprocal obligation) lower the barrier
    to adoption. But adoption is not guaranteed.
 
 3. **Feature parity from competitors.** A well-resourced competitor could

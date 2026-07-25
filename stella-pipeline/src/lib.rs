@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-pipeline` — the orchestration plane that sits *above*
 //! `stella-core::Engine`. It drives one prompt
 //! through the staged turn flow — **evaluate → enhance → route → witness →

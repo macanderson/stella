@@ -223,14 +223,14 @@ fn escort_impact(area: Rect) -> f32 {
 /// One expanding burst at `(cx, cy)`, `local` in `0.0..1.0`.
 fn explosion(buf: &mut Buffer, area: Rect, cx: i32, cy: i32, local: f32) {
     if local < 0.2 {
-        put(buf, area, cx, cy, '✶', theme::AURORA_CYAN);
+        put(buf, area, cx, cy, '✶', theme::ACCENT);
     } else if local < 0.45 {
-        put(buf, area, cx, cy, '✹', theme::AURORA_AZURE);
+        put(buf, area, cx, cy, '✹', theme::ACCENT_DEEP);
         for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
             put(buf, area, cx + dx, cy + dy, '∙', theme::WARNING_BRIGHT);
         }
     } else if local < 0.7 {
-        put(buf, area, cx, cy, '✺', theme::AURORA_AZURE);
+        put(buf, area, cx, cy, '✺', theme::ACCENT_DEEP);
         for ((dx, dy), ch) in [
             ((-2, 0), '·'),
             ((2, 0), '·'),
@@ -241,7 +241,7 @@ fn explosion(buf: &mut Buffer, area: Rect, cx: i32, cy: i32, local: f32) {
             ((-1, 1), '▖'),
             ((1, 1), '▗'),
         ] {
-            put(buf, area, cx + dx, cy + dy, ch, theme::AURORA_MAGENTA);
+            put(buf, area, cx + dx, cy + dy, ch, theme::DANGER);
         }
     } else {
         for (dx, dy) in [(-2, -1), (2, -1), (-1, 1), (1, -2), (2, 1)] {
@@ -301,7 +301,7 @@ pub fn render(t_abs: f32, area: Rect, buf: &mut Buffer) {
     // The fleet, minus anyone already shot down this loop, legs alternating
     // every 0.4s. Rows shade bottom-to-top so depth reads at a glance.
     let frame = &INVADER_FRAMES[((t / 0.4) as usize) % 2];
-    let row_colors = [theme::WARNING_BRIGHT, theme::AGENT_ICE, theme::AURORA_AZURE];
+    let row_colors = [theme::WARNING_BRIGHT, theme::AGENT_ICE, theme::ACCENT_DEEP];
     for row in 0..rows {
         for col in 0..cols {
             let dead = shots
@@ -321,9 +321,9 @@ pub fn render(t_abs: f32, area: Rect, buf: &mut Buffer) {
     let bomb_x = ((i32::from(area.width) - 6) as f32 * BOMB_GROUND_COLF) as i32 + 3;
     if (BOMB_GROUND_T..ground_impact).contains(&t) {
         let y = fleet_bottom as f32 + (t - BOMB_GROUND_T) * BOMB_SPEED;
-        put(buf, area, bomb_x, y as i32, '╻', theme::AURORA_AZURE);
+        put(buf, area, bomb_x, y as i32, '╻', theme::ACCENT_DEEP);
     } else if (ground_impact..ground_impact + 0.3).contains(&t) {
-        put(buf, area, bomb_x, ground_y - 1, '✶', theme::AURORA_MAGENTA);
+        put(buf, area, bomb_x, ground_y - 1, '✶', theme::DANGER);
     }
 
     // …the other leads the escort ship and downs it.
@@ -331,7 +331,7 @@ pub fn render(t_abs: f32, area: Rect, buf: &mut Buffer) {
     let (ex, ey) = escort_pos(area, hit);
     if (BOMB_ESCORT_T..hit).contains(&t) {
         let y = fleet_bottom as f32 + (t - BOMB_ESCORT_T) * BOMB_SPEED;
-        put(buf, area, ex + 1, y as i32, '╻', theme::AURORA_AZURE);
+        put(buf, area, ex + 1, y as i32, '╻', theme::ACCENT_DEEP);
     }
     if t < hit {
         let (x, y) = escort_pos(area, t);
@@ -343,16 +343,16 @@ pub fn render(t_abs: f32, area: Rect, buf: &mut Buffer) {
     // The cannon, its bolts, and the kills.
     let cy = cannon_y(area);
     let cx = cannon_x(area, &shots, t);
-    sprite(buf, area, cx, cy, &CANNON, theme::AURORA_CYAN);
+    sprite(buf, area, cx, cy, &CANNON, theme::ACCENT);
     for shot in &shots {
         let (ix, iy) = invader_pos(area, shot.col, shot.row, shot.impact);
         let bolt_x = ix + INVADER_W / 2;
         if (shot.fire..shot.impact).contains(&t) {
             let y = cy as f32 - (t - shot.fire) * BOLT_SPEED;
-            put(buf, area, bolt_x, y as i32, '┃', theme::AURORA_CYAN);
+            put(buf, area, bolt_x, y as i32, '┃', theme::ACCENT);
             // Muzzle flash right as the trigger pulls.
             if t - shot.fire < 0.08 {
-                put(buf, area, cx + 2, cy - 1, '✶', theme::AURORA_CYAN);
+                put(buf, area, cx + 2, cy - 1, '✶', theme::ACCENT);
             }
         } else if (shot.impact..shot.impact + EXPLOSION_SECS).contains(&t) {
             explosion(

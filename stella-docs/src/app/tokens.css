@@ -1,0 +1,44 @@
+/**
+ * Generated from docs/brand/tokens.json by docs/brand/build.py (edit those, not this file).
+ *
+ * Raw palette values, imported by global.css. Nothing here is mode-aware:
+ * global.css maps these onto the light/dark semantic layer, the same way
+ * stella-tui's theme.rs maps palette.rs.
+ *
+ * The identity is gold on deep navy: a star against night sky.
+ */
+
+:root {
+  /* Ground (dark) — The night sky the whole identity sits on. */
+  --stella-night: #050912;
+  --stella-ground: #080d1a;
+  --stella-surface: #0f1729;
+  --stella-raised: #172137;
+  --stella-hairline: #22304c;
+
+  /* Brand — Gold. */
+  --stella-gold: #ffdd00;
+  --stella-gold-deep: #e0b800;
+  --stella-gold-ink: #7a5e00;
+
+  /* Text (dark ground) — Cool neutrals for the dark canvas. */
+  --stella-text-primary: #edf1f8;
+  --stella-text-secondary: #94a3bc;
+  --stella-text-tertiary: #6b7c99;
+
+  /* Status — Always paired with a glyph. */
+  --stella-success: #34d399;
+  --stella-warning: #ff7a1a;
+  --stella-danger: #ff5c7a;
+
+  /* Status (light ground) — The same three meanings, darkened along their own hue until they clear AA on paper. */
+  --stella-success-ink: #16744f;
+  --stella-warning-ink: #b04a00;
+  --stella-danger-ink: #c8102e;
+
+  /* Ground (light) — The paper mode. */
+  --stella-paper: #ffffff;
+  --stella-snow: #f4f4f5;
+  --stella-ink: #0a0a0a;
+  --stella-muted: #5b6270;
+}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-store` — the session's local SQLite database at
 //! `.stella/private/store.db`: durable state, full execution records, and
 //! analytics-grade telemetry, all on the user's disk (no server, no
@@ -155,7 +158,9 @@ pub(crate) use private::{
     ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,
     open_private_file, open_private_sqlite, read_private_to_string, write_private_atomic,
 };
-pub use receipts::{ContextBlockRow, ManifestBlockRow, StepManifestRow};
+pub use receipts::{
+    ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,
+};
 pub use reconstruct::Reconstruction;
 pub use sessions::{SessionRecord, SessionRegistry, SessionStatus};
 pub use telemetry::{SourceTelemetryRow, TelemetryRow};

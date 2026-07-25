@@ -1,27 +1,81 @@
 # cargo-deny configuration — https://embarkstudios.github.io/cargo-deny/
 #
-# CI runs `cargo deny check advisories bans sources` as a REAL gate (no
-# `|| true`). We intentionally do NOT gate on `licenses` here: the workspace is
-# MIT OR Apache-2.0 and every dependency is a permissive OSS crate, but pinning
-# an exhaustive license allow-list is churn we track separately — advisories,
-# bans, and source provenance are the checks that catch supply-chain problems.
+# CI runs `cargo deny check advisories bans sources licenses` as a REAL gate
+# (no `|| true`).
+#
+# `licenses` became a hard gate when the workspace moved to AGPL-3.0-only.
+# Under the old MIT/Apache posture a stray oddly-licensed dependency was a
+# tidiness problem; under the AGPL it is a correctness problem in two
+# directions. A dependency carrying ANY further restriction (a non-commercial
+# clause, a field-of-use limit, no license at all) cannot legally be
+# redistributed as part of an AGPL combined work, AND it blocks the commercial
+# license track in LICENSING.md — we cannot sell what we do not have the right
+# to sublicense. This is not hypothetical: `ratatui-comfy-tabs` was a
+# source-available, non-commercial-only crate that sat in the tree undetected
+# precisely because nothing gated on licenses.
 #
 # Only version-stable lint-level keys are set here so the config parses across
 # cargo-deny releases; `cargo audit` (a separate CI step) is the primary
 # advisory gate, and defaults already fail the build on a known vulnerability.
 
+[licenses]
+# Every license here is compatible with distributing the combined work under
+# AGPL-3.0-only, and none of them restricts sublicensing under commercial terms.
+#
+# On the two non-obvious entries:
+# - MPL-2.0 is file-scoped copyleft and its §3.3 explicitly authorises
+#   distributing a larger work under a "Secondary License" (GPL/LGPL/AGPL), so
+#   it composes cleanly here. MPL'd files themselves stay MPL.
+# - BSL-1.0 (Boost) is permissive and GPL-compatible, despite the confusing
+#   name — it is NOT the Business Source License (BUSL-1.1), which would be
+#   disqualifying.
+#
+# ADDING TO THIS LIST IS A LICENSING DECISION, NOT A BUILD FIX. If cargo-deny
+# rejects a new dependency, the default answer is to drop the dependency. Any
+# license with a non-commercial clause, a field-of-use restriction, or an
+# "all rights reserved" fallback must never be added — see LICENSING.md.
+allow = [
+  "AGPL-3.0-only",       # the workspace's own crates
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "BSL-1.0",             # Boost, permissive — not BUSL
+  "MPL-2.0",             # see §3.3 note above
+  "Unlicense",
+  "CC0-1.0",
+  "0BSD",
+  "WTFPL",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CDLA-Permissive-2.0",
+]
+# A crate whose license cannot be determined from metadata is a hard failure,
+# not a warning: no license means all rights reserved.
+unused-allowed-license = "allow"
+confidence-threshold = 0.9
+
+[licenses.private]
+# Workspace members are `publish = false` and carry the workspace AGPL license;
+# they do not need to satisfy the allow-list against themselves.
+ignore = true
+
 [advisories]
 # A yanked dependency is a warning, not a hard failure.
 yanked = "warn"
 # Benign advisories to tolerate (real vulnerabilities still fail the gate):
-# - RUSTSEC-2024-0436: `paste` is archived/unmaintained but has no known
-#   vulnerability — a compile-time macro helper pulled in transitively
-#   (ratatui et al.). Not a security issue, so it must not block CI.
 # - RUSTSEC-2025-0057: `fxhash` is unmaintained (no known vulnerability) —
 #   a transitive hash-function dep of `scraper`→`selectors` (the web-tools
 #   HTML parser). Informational, not a security issue; unavoidable without
 #   dropping `scraper`.
-ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2025-0057"]
+#
+# (RUSTSEC-2024-0436 / `paste` was dropped from this list when the
+# `ratatui-comfy-tabs` dependency was removed — it was the only thing pulling
+# `paste` into the tree. cargo-deny warns on ignores that match nothing.)
+ignore = ["RUSTSEC-2025-0057"]
 
 [bans]
 # Multiple versions of the same crate is a warning, not a failure — the bundled

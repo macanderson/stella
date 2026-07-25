@@ -150,3 +150,9 @@ Icon[^a-zA-Z0-9]
 # Local verification / audit artifacts — never tracked
 verifications/
 
+
+# Brand generator scratch: the pinned typeface download + the pinned-weight
+# instance it derives. `make brand` refetches on demand (hash-checked), and the
+# generated SVG/PNG assets it writes ARE tracked.
+docs/brand/.cache/
+docs/brand/__pycache__/

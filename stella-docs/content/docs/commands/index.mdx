@@ -31,6 +31,7 @@ stella chat
 | `stella stats` | Summarize cost, tokens, and resolve rate per provider/model from local telemetry — this workspace only. |
 | `stella usage <report\|sync\|prune>` | The same numbers across *every* project on this machine, via the local hub at `~/.stella/usage.db`. `sync` replicates from a cursor (safe to re-run), `prune` bounds the hub's growth. Local-only; nothing is uploaded. |
 | `stella cloud <status\|register>` | Show or set the org/workspace identity that scopes hub rows. A stub today: it persists ids locally, and the OAuth login lands later. |
+| `stella inspect` | Show the exact context a past model call was sent — the [reconstructed message array](/docs/commands/inspect), verified against the digests recorded at emission. |
 | `stella observe` | Serve the [Observatory dashboard](/docs/telemetry/dashboard) — your local telemetry in the browser, loopback-only. |
 | `stella memory` | Inspect memories through the citation loop, and promote one to a project rule. |
 | `stella mcp` | Manage MCP servers — search a registry, install, list, OAuth login, and show usage telemetry. |

@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="brand/stella-logo-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="brand/stella-logo-light.svg">
-    <img src="brand/stella-logo-light.svg" alt="Stella" width="340">
+    <source media="(prefers-color-scheme: dark)" srcset="brand/wordmark-paper.svg">
+    <source media="(prefers-color-scheme: light)" srcset="brand/wordmark-ink.svg">
+    <img src="brand/wordmark-ink.svg" alt="Stella" width="240">
   </picture>
 </p>
 
@@ -92,4 +92,4 @@ export ANTHROPIC_API_KEY=…        # or OPENAI_API_KEY, GEMINI_API_KEY, a local
 stella run "fix the failing test in src/auth.rs"
 ```
 
-<sub>Dual-licensed MIT OR Apache-2.0 · Rust 1.90+ · <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a></sub>
+<sub>AGPL-3.0-only, commercial licenses available · Rust 1.90+ · <a href="https://github.com/macanderson/stella">github.com/macanderson/stella</a></sub>

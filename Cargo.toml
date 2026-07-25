@@ -20,10 +20,10 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.16"
+version = "0.5.18"
 edition = "2024"
 rust-version = "1.90"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 repository = "https://github.com/macanderson/stella"
 homepage = "https://stella.oxagen.sh"
 publish = false
@@ -75,7 +75,6 @@ tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
 tree-sitter-php = "0.24"
 
-ratatui-comfy-tabs = "0.5.12"
 tachyonfx = "0.25.1"
 sysinfo = "0.38.4"
 tui-big-text = "0.8.8"

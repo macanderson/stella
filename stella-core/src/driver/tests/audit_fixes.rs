@@ -397,7 +397,15 @@ async fn overflow_summarizer_retries_a_transient_error() {
     let events = EventSender::new(tx);
 
     let cost = engine
-        .summarize_overflow_span(&mut messages, &mut budget, 500, 1.0, &mut health, &events)
+        .summarize_overflow_span(
+            &mut messages,
+            &mut budget,
+            500,
+            1.0,
+            &mut health,
+            0,
+            &events,
+        )
         .await;
 
     assert_eq!(
@@ -444,7 +452,15 @@ async fn budget_aborted_summary_is_applied_not_discarded() {
     let events = EventSender::new(tx);
 
     let cost = engine
-        .summarize_overflow_span(&mut messages, &mut budget, 500, 1.0, &mut health, &events)
+        .summarize_overflow_span(
+            &mut messages,
+            &mut budget,
+            500,
+            1.0,
+            &mut health,
+            0,
+            &events,
+        )
         .await;
 
     assert!(
@@ -533,7 +549,15 @@ async fn overflow_summary_names_the_folded_tool_result_blocks() {
     let events = EventSender::new(tx);
 
     let _ = engine
-        .summarize_overflow_span(&mut messages, &mut budget, 500, 1.0, &mut health, &events)
+        .summarize_overflow_span(
+            &mut messages,
+            &mut budget,
+            500,
+            1.0,
+            &mut health,
+            0,
+            &events,
+        )
         .await;
 
     assert_eq!(summary_markers(&messages), 1, "the summary was spliced in");
@@ -587,7 +611,15 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
     for _ in 0..SUMMARIZER_FAILURE_LATCH {
         let mut messages = overflow_messages();
         let cost = engine
-            .summarize_overflow_span(&mut messages, &mut budget, 500, 1.0, &mut health, &events)
+            .summarize_overflow_span(
+                &mut messages,
+                &mut budget,
+                500,
+                1.0,
+                &mut health,
+                0,
+                &events,
+            )
             .await;
         assert_eq!(cost, 0.0, "a failed summarizer is free and changes nothing");
         assert_eq!(summary_markers(&messages), 0, "nothing spliced on failure");
@@ -622,7 +654,15 @@ async fn repeated_summarizer_failures_emit_events_and_latch() {
     // the summarizer.
     let mut messages = overflow_messages();
     let cost = engine
-        .summarize_overflow_span(&mut messages, &mut budget, 500, 1.0, &mut health, &events)
+        .summarize_overflow_span(
+            &mut messages,
+            &mut budget,
+            500,
+            1.0,
+            &mut health,
+            0,
+            &events,
+        )
         .await;
     assert_eq!(cost, 0.0, "the latched pass spends nothing");
     assert_eq!(

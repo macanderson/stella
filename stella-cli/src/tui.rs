@@ -45,11 +45,14 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// Selectable accent palette — `/color` switches the session's accent so
 /// multiple terminal windows running stella are visually distinct at a
 /// glance (see [`set_accent`], and [`rename_tab`] for the `/rename` sibling).
-// Only Stella's principle cool hues (plus the shared success green) — no
-// ember, no amber. `colored`'s named ANSI colors are the portable stand-ins
-// for the aurora palette: cyan≈bright-cyan, azure≈bright-blue,
+// Gold first: it is the brand, and so the default. The rest are
+// personalisation only — `/color` exists so several terminal windows running
+// stella can be told apart at a glance, which needs hues that are *distinct*
+// rather than on-brand. `colored`'s named ANSI colors are the portable
+// stand-ins: gold≈bright-yellow, cyan≈bright-cyan, azure≈bright-blue,
 // violet≈bright-magenta, magenta≈magenta, mint≈green.
-const PALETTE: [(&str, Color); 5] = [
+const PALETTE: [(&str, Color); 6] = [
+    ("gold", Color::BrightYellow),
     ("cyan", Color::BrightCyan),
     ("azure", Color::BrightBlue),
     ("violet", Color::BrightMagenta),
@@ -59,7 +62,7 @@ const PALETTE: [(&str, Color); 5] = [
 
 static ACCENT: AtomicUsize = AtomicUsize::new(0);
 
-/// The session accent color (default magenta).
+/// The session accent color (defaults to the brand gold, `PALETTE[0]`).
 pub fn accent() -> Color {
     PALETTE[ACCENT.load(Ordering::Relaxed) % PALETTE.len()].1
 }
@@ -338,13 +341,13 @@ pub fn welcome_banner(provider: &str, model: &str, workspace: &str) {
     }
     println!(
         "\n  {} {}",
-        "✦".bright_magenta(),
+        "✦".color(accent()),
         "a fast, BYOK, model-agnostic coding agent".dimmed()
     );
     println!(
         "  {} {} · {} · {}",
-        "◆".bright_cyan(),
-        format!("{provider}/{model}").bright_magenta(),
+        "◆".color(accent()),
+        format!("{provider}/{model}").bold(),
         workspace.dimmed(),
         "type your prompt, Ctrl+D to exit".dimmed(),
     );
@@ -466,13 +469,15 @@ fn compose_wordmark(text: &str) -> Vec<String> {
         .collect()
 }
 
-// Stellar gradient — violet → magenta → pink → cyan, swept left-to-right
-// across the wordmark (the night-sky counterpart of the TS banner's sunset).
-const STELLAR_STOPS: [(u8, u8, u8); 4] = [
-    (0x8B, 0x5C, 0xF6), // violet
-    (0xD9, 0x46, 0xEF), // magenta
-    (0xEC, 0x48, 0x99), // pink
-    (0x22, 0xD3, 0xEE), // cyan
+// Stellar gradient — a single restrained gold sweep, deep gold → gold, left to
+// right across the wordmark. These are the brand tokens `gold-deep` and `gold`
+// from docs/brand/tokens.json (the same pair `stella-tui`'s theme::ACCENT_DEEP
+// → ACCENT resolve to), duplicated rather than imported because that crate
+// speaks in ratatui `Color`s and this banner writes raw truecolor. Keep the two
+// in step: `palette_matches_brand_tokens` below fails if they drift.
+const STELLAR_STOPS: [(u8, u8, u8); 2] = [
+    (0xE0, 0xB8, 0x00), // gold-deep
+    (0xFF, 0xDD, 0x00), // gold
 ];
 
 /// Color at horizontal position `t` ∈ [0,1] along the stellar gradient.
@@ -574,12 +579,38 @@ mod tests {
         assert_eq!(compose_wordmark("S?T"), compose_wordmark("ST"));
     }
 
+    /// The banner writes raw truecolor, so it cannot import stella-tui's
+    /// ratatui `Color`s and instead duplicates the two brand stops. This is the
+    /// guard that keeps the copy honest: the values must stay exactly the
+    /// `gold-deep` and `gold` tokens in docs/brand/tokens.json.
+    #[test]
+    fn stellar_stops_match_the_brand_tokens() {
+        assert_eq!(STELLAR_STOPS[0], (0xE0, 0xB8, 0x00), "gold-deep");
+        assert_eq!(STELLAR_STOPS[1], (0xFF, 0xDD, 0x00), "gold");
+    }
+
+    /// Gold is the brand, so it is the default accent -- `/color` with no
+    /// argument, and a fresh session, must land on it.
+    #[test]
+    fn default_accent_is_gold() {
+        assert_eq!(PALETTE[0].0, "gold");
+        assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
+        assert!(set_accent("gold"));
+        assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "gold");
+    }
+
     #[test]
     fn stellar_gradient_hits_its_endpoint_stops_exactly() {
         assert_eq!(stellar_color_at(0.0), STELLAR_STOPS[0]);
-        assert_eq!(stellar_color_at(1.0), STELLAR_STOPS[3]);
+        assert_eq!(
+            stellar_color_at(1.0),
+            STELLAR_STOPS[STELLAR_STOPS.len() - 1]
+        );
         // Out-of-range positions clamp instead of extrapolating.
         assert_eq!(stellar_color_at(-1.0), STELLAR_STOPS[0]);
-        assert_eq!(stellar_color_at(2.0), STELLAR_STOPS[3]);
+        assert_eq!(
+            stellar_color_at(2.0),
+            STELLAR_STOPS[STELLAR_STOPS.len() - 1]
+        );
     }
 }

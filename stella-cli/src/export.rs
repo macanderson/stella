@@ -249,19 +249,23 @@ fn render_dashboard(
 <title>Stella Session Telemetry — {watermark}</title>
 <style>
   :root {{
-    --bg: #0b0d16;
-    --surface: #15131f;
-    --raised: #1e1a2e;
-    --text: #f5f4f2;
-    --text2: #b6afc9;
-    --text3: #7e7791;
-    --gold: #f9d423;
-    --flame: #ff7e5f;
-    --crimson: #c2185b;
+    /* Brand palette — docs/brand/tokens.json. This export is a standalone
+       file a user mails around, so the tokens are inlined rather than
+       imported; keep them in step with tokens.json. */
+    --bg: #080d1a;
+    --surface: #0f1729;
+    --raised: #172137;
+    --text: #edf1f8;
+    --text2: #94a3bc;
+    --text3: #6b7c99;
+    --gold: #ffdd00;
+    --gold-deep: #e0b800;
     --violet: #a78bfa;
-    --success: #3fd69b;
-    --warn: #f4b24a;
-    --rule: #241b33;
+    --azure: #4d9fff;
+    --success: #34d399;
+    --warn: #ff7a1a;
+    --danger: #ff5c7a;
+    --rule: #22304c;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
@@ -281,16 +285,16 @@ fn render_dashboard(
   .kpi .sub {{ font-size: 0.75rem; color: var(--text2); margin-top: 2px; }}
   .kpi.good .value {{ color: var(--success); }}
   .kpi.warn .value {{ color: var(--warn); }}
-  .kpi.cost .value {{ color: var(--flame); }}
+  .kpi.cost .value {{ color: var(--warn); }}
   table {{ width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }}
   th, td {{ padding: 8px 12px; text-align: left; font-size: 0.85rem; border-bottom: 1px solid var(--rule); }}
   th {{ background: var(--raised); color: var(--text2); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }}
   tr:last-child td {{ border-bottom: none; }}
   td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: monospace; }}
   .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }}
-  .badge.completed {{ background: rgba(63,214,155,0.15); color: var(--success); }}
-  .badge.failed {{ background: rgba(229,83,123,0.15); color: var(--crimson); }}
-  .badge.other {{ background: rgba(184,175,201,0.15); color: var(--text2); }}
+  .badge.completed {{ background: rgba(52,211,153,0.15); color: var(--success); }}
+  .badge.failed {{ background: rgba(255,92,122,0.15); color: var(--danger); }}
+  .badge.other {{ background: rgba(148,163,188,0.15); color: var(--text2); }}
   .chart-container {{ background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; overflow-x: auto; }}
   .bar-chart {{ display: flex; flex-direction: column; gap: 4px; }}
   .bar-row {{ display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }}
@@ -445,7 +449,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(([name,n])=>({{label:name, value:n, display:String(n)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('tool-chart', data, '--gold');
+  barChart('tool-chart', data, '--violet');
 }})();
 
 // ── Files touched chart ─────────────────────────────────────────────────
@@ -454,7 +458,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(f=>({{label:f.path, value:(f.lines_added||0)+(f.lines_removed||0), display:'+'+(f.lines_added||0)+'/-'+(f.lines_removed||0)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('file-chart', data, '--flame');
+  barChart('file-chart', data, '--azure');
 }})();
 
 // ── Execution outcomes ──────────────────────────────────────────────────

@@ -487,6 +487,7 @@ impl<'a> Engine<'a> {
                     calibration_model.as_deref(),
                     budget,
                     &mut summarizer_health,
+                    step,
                     events,
                 )
                 .await;
@@ -615,6 +616,7 @@ impl<'a> Engine<'a> {
         calibration_model: Option<&str>,
         budget: &mut BudgetGuard,
         health: &mut SummarizerHealth,
+        step: usize,
         events: &EventSender,
     ) -> f64 {
         let (compaction_budget, factor) = self.effective_compaction_budget(calibration_model);
@@ -654,6 +656,7 @@ impl<'a> Engine<'a> {
                     compaction_budget,
                     factor,
                     health,
+                    step,
                     events,
                 )
                 .await;
@@ -663,6 +666,10 @@ impl<'a> Engine<'a> {
 
     /// Replace the oldest viable span with a model-written summary. Failures
     /// leave the conversation untouched. Returns the summarizer call's spend.
+    /// `step` is carried only to key this call's receipt against the step it
+    /// rides, the same way [`Self::apply_overflow_summary`] carries the budget
+    /// pair it reports.
+    #[allow(clippy::too_many_arguments)]
     async fn summarize_overflow_span(
         &self,
         messages: &mut Vec<CompletionMessage>,
@@ -670,6 +677,7 @@ impl<'a> Engine<'a> {
         compaction_budget: u64,
         factor: f64,
         health: &mut SummarizerHealth,
+        step: usize,
         events: &EventSender,
     ) -> f64 {
         let before_tokens = crate::estimator::estimate_conversation_tokens(messages);
@@ -735,6 +743,16 @@ impl<'a> Engine<'a> {
                 retry_policy: RetryPolicy::standard(),
                 timeout: None,
                 estimated_input_tokens,
+                // The summarizer rewrites the conversation it is called on, so
+                // its own input is the only record of what it was given to
+                // compress — and the span it replaces is gone from the history
+                // afterwards. Reserved seat 1 at this step; compaction runs at
+                // most once per step, so it collides with nothing.
+                receipt: Some(crate::ReceiptContext {
+                    turn_instance: self.config.turn_instance,
+                    step,
+                    call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
+                }),
             },
             budget,
             events,

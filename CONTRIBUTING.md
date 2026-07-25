@@ -263,9 +263,18 @@ reporting.
 
 ## License
 
-Stella is dual-licensed **MIT OR Apache-2.0**. By contributing, you agree your
-contributions are licensed under the same terms, as certified by your DCO
-sign-off. No CLA, no copyright assignment.
+Stella is dual-licensed: **[AGPL-3.0-only](LICENSE)** for everyone, plus
+commercial licenses for users who cannot accept the AGPL's reciprocal terms.
+[`LICENSING.md`](LICENSING.md) explains both tracks.
+
+By contributing you agree to the [Contributor License Agreement](CLA.md). In
+short: **you keep your copyright**, your contribution is published under the
+AGPL, and Oxagen may also include it in commercially licensed builds. Without
+that last part a merged contribution would be AGPL-only and could never ship
+commercially — which is why the CLA replaced the old DCO-only policy.
+
+If some clause in the CLA is a blocker for you, say so in the PR or email
+<licensing@oxagen.sh>. Better to talk about it than to lose the contribution.
 
 ```text
    ·  .  ✦   ·        see you in the diff.        ·   ✦  .  ·

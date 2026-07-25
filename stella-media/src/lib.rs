@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! # stella-media — multimodal generation
 //!
 //! Image, SVG, and video generation for the Oxagen CLI, all client-side and

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella-core` — the step-driver. One model call
 //! per step, message accumulation, retry+backoff, context compaction,
 //! tool-output budget + eviction, loop detection, USD budget metering.
@@ -38,7 +41,7 @@ pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the
 // crate root already exports `hooks::HookEvent` (the shell-hook lifecycle
 // enum) and the two must never be confused at a glance.
-pub use accounted_call::{AccountedCall, AccountedCallError, run_accounted_call};
+pub use accounted_call::{AccountedCall, AccountedCallError, ReceiptContext, run_accounted_call};
 pub use bus::{
     ExtensionFailure, HookBus, HookDecision, HookEventDraft, HookSubscription, PolicyOutcome,
 };

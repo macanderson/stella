@@ -1,7 +1,9 @@
-//! `stella-protocol` — the serde vocabulary every crate in the `stella-cli`
-//! workspace shares: agent events, tool schemas, multimodal attachments,
-//! model roles, prompt-cache diagnoses, adaptive-context lifecycle events,
-//! provider request/response envelopes, and the [`Provider`] port itself.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! `stella-protocol` — serde types shared by every crate in the `stella-cli`
+//! workspace: agent events, tool schemas, trace records, and provider
+//! request/response envelopes.
 //!
 //! Zero logic, zero I/O. This is the stability contract of the whole
 //! workspace — any type here that crosses a process/protocol boundary must

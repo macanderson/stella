@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! `stella` — a fast, BYOK, model-agnostic terminal coding agent.
 //!
 //! Built on the `stella-*` crate stack: `stella-model` for provider
@@ -43,6 +46,7 @@ mod export;
 mod extensions;
 mod fleet_cmd;
 mod init_fx;
+mod inspect;
 mod interactive;
 mod mcp_cmd;
 mod memory;
@@ -364,6 +368,37 @@ enum Command {
     Models {
         #[command(subcommand)]
         cmd: Option<ModelsCmd>,
+    },
+
+    /// Show the exact context a past model call was sent — the reconstructed
+    /// message array, rebuilt from the recorded receipts and verified against
+    /// the digests taken at emission. With no arguments, lists executions that
+    /// have receipts; with an execution id, lists its model calls. Reads
+    /// .stella/private/store.db only; needs no API key and never writes.
+    Inspect {
+        /// Execution to inspect (omit to list recent executions)
+        execution_id: Option<i64>,
+
+        /// Turn instance within the execution
+        #[arg(long, default_value_t = 0)]
+        turn: u32,
+
+        /// Step to reconstruct (omit to list the execution's calls)
+        #[arg(long)]
+        step: Option<u64>,
+
+        /// Which model call at that step: 0 the worker, 1 the overflow
+        /// summarizer, 2+ a pipeline management role
+        #[arg(long = "call-seq", default_value_t = 0)]
+        call_seq: u64,
+
+        /// Output format
+        #[arg(long, value_enum, default_value = "text")]
+        format: inspect::InspectFormat,
+
+        /// Print message bodies in full instead of eliding long ones
+        #[arg(long)]
+        full: bool,
     },
 
     /// Summarize cost, tokens, and resolve rate per provider/model from
@@ -1200,6 +1235,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads the local index + manifest only — zero API keys.
             return run_storage(cmd);
         }
+        Some(Command::Inspect {
+            execution_id,
+            turn,
+            step,
+            call_seq,
+            format,
+            full,
+        }) => {
+            // Reads the local receipt tables only — no provider, no API key.
+            return inspect::run_inspect(*execution_id, *turn, *step, *call_seq, *format, *full);
+        }
         Some(Command::Stats { format, provider }) => {
             // Reads local telemetry only — works with zero API keys.
             // `*format`: this match borrows `&cli.command` (the Tools arm
@@ -1434,6 +1480,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Graph { .. }
         | Command::Scripts { .. }
         | Command::Storage { .. }
+        | Command::Inspect { .. }
         | Command::Stats { .. }
         | Command::Usage { .. }
         | Command::Cloud { .. }

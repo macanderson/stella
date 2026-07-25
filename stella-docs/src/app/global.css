@@ -1,34 +1,38 @@
 /**
  * Stella CLI docs — styles.
  *
- * Brand system: "paper & ink — pure neutral, no accent color." A calm,
- * high-contrast monochrome base modeled on Vercel: true white / true black
- * grounds, a single near-black ink and near-white snow for foreground, and
- * pure-gray chrome (borders, muted, cards) with NO color cast anywhere. There
- * is deliberately no brand hue — emphasis comes from contrast, weight, and
- * whitespace, not color. Primary actions invert (ink fill + paper label in
- * light, snow fill + ink label in dark), exactly the Vercel primary button.
+ * Brand system: "gold on deep navy — a star against night sky." This site used
+ * to be deliberately hueless ("paper & ink, no accent colour"), which was the
+ * right call while the repo carried three rival palettes and a neutral site
+ * refused to arbitrate. That is settled now: docs/brand/tokens.json is the one
+ * normative palette, and this file consumes it.
  *
- * Palette:
- *   Ink #0a0a0a  ·  Paper #ffffff  ·  Night #000000  ·  Snow #ededed
- *   Grays: #646464 / #a1a1a1 (muted text) · #eaeaea / #242424 (hairlines)
+ * Values live in ./tokens.css, generated from docs/brand/tokens.json by
+ * docs/brand/build.py. Do not add a hex literal here — add a token there. This
+ * file is the *semantic* layer: it decides which token is foreground in which
+ * mode, exactly as stella-tui's theme.rs sits over its generated palette.rs.
  *
- * Contrast rule: interactive text and marks are monochrome and mode-aware —
- * ink on paper (light), snow on black (dark). Because every accent resolves to
- * the foreground, contrast is a non-issue in both modes: links clear AA, marks
- * read on either ground, and the theme toggle (Fumadocs' `.dark` class) flips
- * everything through one token (`--stella-accent`).
+ * Gold is asymmetric between the modes, and that is deliberate rather than an
+ * oversight. Gold is 1.35:1 on white — a third of what body text needs — so on
+ * the light ground it is never text: it appears only as a FILL under an ink
+ * label (14.70:1), and light-mode accent text is ink. On the navy ground gold
+ * is 14.40:1 and carries brand, active/running, and progress. `--stella-gold-ink`
+ * (6.12:1 on paper) is the only warm *text* tone light mode may use.
+ *
+ * Gold is also reserved: brand, active, progress. Not a general-purpose
+ * highlight — if everything is gold, nothing is.
  *
  * Semantic reservation: info/warn/error/success callouts keep Fumadocs' default
  * blue/amber/red/green (from the imported neutral/preset css). Those are
  * FUNCTIONAL status colors, not brand accents — a warning must not read as
- * decoration — so they stay as-is. Everything the site owns is neutral.
+ * decoration — so they stay as-is.
  *
  * The landing-page layer is namespaced `lp-*` so it never leaks into /docs.
  */
 @import "tailwindcss";
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
+@import "./tokens.css";
 
 /* Let Tailwind see Fumadocs' compiled utility classes. */
 @source "../../node_modules/fumadocs-ui/dist/**/*.js";
@@ -38,78 +42,78 @@
  * ─────────────────────────────────────────────────────────────────────────── */
 
 :root {
-  --stella-ink: #0a0a0a; /* near-black foreground on paper */
-  --stella-paper: #ffffff; /* true paper */
-  --stella-snow: #ededed; /* near-white foreground on night */
-
-  /* Mode-aware neutral "accent" that COMPONENTS reference (icons, diagram
-   * strokes, prompt, brand headline word, marks). Ink on the light ground; the
-   * `.dark` block lifts it to snow. There is no color — this exists only so a
-   * single token flips every mark/stroke with the theme. */
+  /* Mode-aware "accent" that COMPONENTS reference (icons, diagram strokes,
+   * prompt, brand headline word, marks). RULE 1: on paper this is ink, never
+   * gold — gold is 1.35:1 on white. The `.dark` block lifts it to the brand
+   * gold, where it is 14.40:1. One token flips every mark with the theme. */
   --stella-accent: var(--stella-ink);
   --stella-accent-fill: var(--stella-ink); /* solid fill (CTA) — inverted label */
-  --stella-accent-muted: #646464; /* quieter mark/icon tone on paper */
+  --stella-accent-muted: var(--stella-muted); /* quieter mark tone, 6.13:1 */
 
-  /* Legacy aliases — page.tsx / diagrams.tsx / the lp-* layer still reference
-   * the old aurora names. Point them all at the neutral mode-aware accent so
-   * this stays a tokens-only change and nothing carries a hue. */
+  /* Legacy aurora aliases. Only --stella-azure is still consumed (diagrams.tsx);
+   * it is repointed at the mode-aware accent so diagrams keep inverting with
+   * the theme. The others (--stella-amber/-cyan/-violet/-azure-deep/-ice) named
+   * a palette that no longer exists and had no consumers left, so they are
+   * retired rather than repointed — a dead alias pointing somewhere plausible is
+   * how the last palette drifted. */
   --stella-azure: var(--stella-accent);
-  --stella-amber: var(--stella-accent);
-  --stella-cyan: var(--stella-accent);
-  --stella-violet: var(--stella-accent);
-  --stella-azure-deep: var(--stella-accent);
-  --stella-ice: var(--stella-paper);
 
-  /* CTA (inverted primary) surfaces — Vercel's black button on paper. */
+  /* CTA (inverted primary) surfaces — an ink button on paper. */
   --stella-cta-bg: var(--stella-ink);
   --stella-cta-fg: var(--stella-paper);
   --stella-cta-bg-hover: #383838;
 
-  /* Light mode — pure paper, neutral grays, monochrome interactive text. */
-  --color-fd-background: #ffffff;
-  --color-fd-foreground: #0a0a0a;
+  /* Light mode — paper ground, ink type. Accent text is ink; gold appears here
+   * only as a fill with an ink label on it. */
+  --color-fd-background: var(--stella-paper);
+  --color-fd-foreground: var(--stella-ink);
   --color-fd-muted: #fafafa;
-  --color-fd-muted-foreground: #646464; /* neutral gray, 5.9:1 on paper */
-  --color-fd-card: #ffffff;
-  --color-fd-card-foreground: #0a0a0a;
-  --color-fd-popover: #ffffff;
-  --color-fd-popover-foreground: #0a0a0a;
-  --color-fd-border: #eaeaea; /* Vercel-neutral hairline */
-  --color-fd-accent: #f4f4f5; /* hover/selected surface */
-  --color-fd-accent-foreground: #0a0a0a;
-  --color-fd-primary: #0a0a0a; /* links/active = ink — clean, legible on paper */
-  --color-fd-primary-foreground: #ffffff; /* text on an ink fill */
-  --color-fd-secondary: #f4f4f5;
-  --color-fd-secondary-foreground: #0a0a0a;
-  --color-fd-ring: #0a0a0a; /* focus ring — neutral ink, clears contrast on paper */
+  --color-fd-muted-foreground: var(--stella-muted); /* 6.13:1 on paper */
+  --color-fd-card: var(--stella-paper);
+  --color-fd-card-foreground: var(--stella-ink);
+  --color-fd-popover: var(--stella-paper);
+  --color-fd-popover-foreground: var(--stella-ink);
+  --color-fd-border: #eaeaea; /* neutral hairline */
+  --color-fd-accent: var(--stella-snow); /* hover/selected surface */
+  --color-fd-accent-foreground: var(--stella-ink);
+  --color-fd-primary: var(--stella-ink); /* links/active = ink, 19.80:1 on paper */
+  --color-fd-primary-foreground: var(--stella-paper); /* text on an ink fill */
+  --color-fd-secondary: var(--stella-snow);
+  --color-fd-secondary-foreground: var(--stella-ink);
+  --color-fd-ring: var(--stella-ink); /* focus ring — 19.80:1 on paper */
 }
 
 .dark {
-  /* Dark mode — true black ground, snow foreground. Accent lifts to snow. */
-  --stella-accent: var(--stella-snow);
-  --stella-accent-fill: var(--stella-snow);
-  --stella-accent-muted: #a1a1a1;
+  /* Dark mode — deep navy ground (not black), gold accent. This is where the
+   * brand hue lives: gold is 14.40:1 on the ground and carries brand, active,
+   * and progress. Links stay text-primary (17.12:1) rather than gold, because
+   * a page of gold links would make gold a general-purpose highlight. */
+  --stella-accent: var(--stella-gold);
+  --stella-accent-fill: var(--stella-gold);
+  --stella-accent-muted: var(--stella-text-secondary); /* 7.60:1 on ground */
 
-  --stella-cta-bg: var(--stella-snow);
+  /* The CTA is the one place gold fills on the dark side too — an ink label on
+   * a gold fill reads 14.70:1 in both modes. */
+  --stella-cta-bg: var(--stella-gold);
   --stella-cta-fg: var(--stella-ink);
-  --stella-cta-bg-hover: #c9c9c9;
+  --stella-cta-bg-hover: var(--stella-gold-deep);
 
-  --color-fd-background: #000000;
-  --color-fd-foreground: #ededed;
-  --color-fd-muted: #0a0a0a;
-  --color-fd-muted-foreground: #a1a1a1; /* neutral gray, 8:1 on black */
-  --color-fd-card: #0a0a0a;
-  --color-fd-card-foreground: #ededed;
-  --color-fd-popover: #0a0a0a;
-  --color-fd-popover-foreground: #ededed;
-  --color-fd-border: #242424; /* quiet neutral hairline on black */
-  --color-fd-accent: #171717; /* hover/selected — lifted above card */
-  --color-fd-accent-foreground: #ededed;
-  --color-fd-primary: #ededed; /* links/active = snow on black */
-  --color-fd-primary-foreground: #000000; /* text on a snow fill */
-  --color-fd-secondary: #171717;
-  --color-fd-secondary-foreground: #ededed;
-  --color-fd-ring: #ededed;
+  --color-fd-background: var(--stella-ground);
+  --color-fd-foreground: var(--stella-text-primary);
+  --color-fd-muted: var(--stella-surface);
+  --color-fd-muted-foreground: var(--stella-text-secondary); /* 7.60:1 */
+  --color-fd-card: var(--stella-surface);
+  --color-fd-card-foreground: var(--stella-text-primary);
+  --color-fd-popover: var(--stella-surface);
+  --color-fd-popover-foreground: var(--stella-text-primary);
+  --color-fd-border: var(--stella-hairline); /* decorative only — never the sole cue */
+  --color-fd-accent: var(--stella-raised); /* hover/selected — lifted above card */
+  --color-fd-accent-foreground: var(--stella-text-primary);
+  --color-fd-primary: var(--stella-text-primary); /* links/active, 17.12:1 */
+  --color-fd-primary-foreground: var(--stella-ground); /* text on a light fill */
+  --color-fd-secondary: var(--stella-raised);
+  --color-fd-secondary-foreground: var(--stella-text-primary);
+  --color-fd-ring: var(--stella-gold); /* focus ring — gold, 14.40:1 */
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
@@ -143,8 +147,20 @@
   );
 }
 
-/* The "stella" wordmark in the headline — solid foreground, mode-aware. */
+/* The brand name set in running text. Space Grotesk Medium is the face the
+   wordmark itself is drawn from, so the name matches the logo rather than
+   approximating it with a generic mono. `-face` sets only the typeface and
+   inherits colour; `-text` adds the full-contrast accent for the headline. */
+.lp-brand-face {
+  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
 .lp-brand-text {
+  font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.02em;
   color: var(--stella-accent);
 }
 
@@ -195,6 +211,13 @@
   }
 }
 
+/* The mark carries the brand hue (rule 4): gold on the navy ground, ink on
+ * paper. It rides --stella-accent rather than the foreground so it inverts with
+ * the theme — gold is 1.35:1 on white and can never be the light-mode mark. */
+.lp-mark {
+  color: var(--stella-accent);
+}
+
 /* ───────────────────────────────────────────────────────────────────────────
  * Command Deck — the interactive, live fleet demo on the landing page.
  *
@@ -211,18 +234,19 @@
  * ─────────────────────────────────────────────────────────────────────────── */
 
 :root {
-  --deck-ok: #0f9d63; /* done — green, 3.7:1 on paper; the real TUI's success */
-  --deck-warn: #b0740a; /* needs input — amber, readable on paper */
-  --deck-bad: #d61f52; /* failed — red, readable on paper */
-  --deck-run: var(--stella-accent); /* running — neutral foreground, no hue */
-  --deck-queued: #a1a1a1; /* queued — muted gray */
+  --deck-ok: var(--stella-success-ink); /* done — 5.76:1 on paper */
+  --deck-warn: var(--stella-warning-ink); /* needs input — 5.49:1 on paper */
+  --deck-bad: var(--stella-danger-ink); /* failed — 5.88:1 on paper */
+  --deck-run: var(--stella-accent); /* running — ink on paper; RULE 1, never gold */
+  --deck-queued: var(--stella-muted); /* queued — 6.13:1 on paper */
 }
 
 .dark {
-  --deck-ok: #3fd69b; /* SUCCESS_BRIGHT — the exact CLI green, glows on black */
-  --deck-warn: #f4b24a; /* WARNING_BRIGHT */
-  --deck-bad: #ff5c8a; /* DANGER_BRIGHT */
-  --deck-queued: #6b7280;
+  /* The exact tokens the real TUI paints — see stella-tui/src/palette.rs. */
+  --deck-ok: var(--stella-success); /* 10.09:1 on ground */
+  --deck-warn: var(--stella-warning); /* 7.44:1 on ground */
+  --deck-bad: var(--stella-danger); /* 6.52:1 on ground */
+  --deck-queued: var(--stella-text-tertiary);
 }
 
 .deck-mono {

@@ -1044,7 +1044,7 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
                 span.content
             );
             // Belt and suspenders: no ember heat anywhere on the entry.
-            for banned in [theme::AURORA_CYAN, theme::AURORA_MAGENTA, theme::WARN] {
+            for banned in [theme::ACCENT, theme::DANGER, theme::WARN] {
                 assert_ne!(
                     span.style.fg,
                     Some(banned),
@@ -1075,7 +1075,7 @@ fn transcript_prefix_colors_stay_in_the_ember_family() {
             message: "boom".into(),
             retryable: false,
         }),
-        Some(theme::AURORA_MAGENTA),
+        Some(theme::DANGER),
         "error prefix is crimson",
     );
     assert_eq!(
@@ -1089,7 +1089,7 @@ fn transcript_prefix_colors_stay_in_the_ember_family() {
             speculated: false,
             diff: None,
         }),
-        Some(theme::AURORA_CYAN),
+        Some(theme::ACCENT),
         "successful tool-result prefix is gold",
     );
     assert_eq!(
@@ -1103,13 +1103,13 @@ fn transcript_prefix_colors_stay_in_the_ember_family() {
             speculated: false,
             diff: None,
         }),
-        Some(theme::AURORA_MAGENTA),
+        Some(theme::DANGER),
         "failed tool-result prefix is crimson",
     );
     // The stage marker moved off raw cyan onto ember flame.
     assert_eq!(
         prefix_fg(&TranscriptEntry::Stage(StageKind::Execute)),
-        Some(theme::AURORA_AZURE),
+        Some(theme::ACCENT_DEEP),
         "stage prefix is ember flame",
     );
 }

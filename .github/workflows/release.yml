@@ -4,8 +4,9 @@ name: release
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # This builds the `stella` binary for every target in the matrix, packages a
-# `stella-<version>-<target>.tar.gz` (binary + licenses + README), and — on a
-# tag push — publishes a GitHub Release with all tarballs and a SHA256SUMS.
+# `stella-<version>-<target>.tar.gz` (binary + LICENSE/NOTICE/LICENSING +
+# README), and — on a tag push — publishes a GitHub Release with all tarballs
+# and a SHA256SUMS.
 #
 # This is a hand-rolled matrix workflow: it does NOT require cargo-dist to be
 # installed on the runner. A future maintainer can migrate to cargo-dist using
@@ -129,7 +130,8 @@ jobs:
 
           mkdir -p "dist/${stem}"
           cp "${bin}" "dist/${stem}/stella"
-          cp LICENSE-MIT LICENSE-APACHE README.md "dist/${stem}/"
+          # AGPL §4/§5: the license text ships with every distributed copy.
+          cp LICENSE NOTICE LICENSING.md README.md "dist/${stem}/"
           tar -C dist -czf "${stem}.tar.gz" "${stem}"
 
           echo "asset=${stem}.tar.gz" >> "$GITHUB_OUTPUT"

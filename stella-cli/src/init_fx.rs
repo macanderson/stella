@@ -15,10 +15,12 @@
 //!   `NO_COLOR` → no animation, no cursor control; log lines print plainly,
 //!   exactly as before.
 //!
-//! Colors are the init cinematic's own retained palette (gold / amber /
-//! violet), enforced by this module's tests. Note this predates the
-//! aurora-on-navy brand restyle (#185): the deck itself now uses cool
-//! cyan/azure accents, so don't cite it as the reason for these hues.
+//! Colors come from the brand palette (docs/brand/tokens.json) and are
+//! enforced by this module's tests: the two star/flame inks are the `gold-deep`
+//! and `gold` brand tokens, and the shell takes the deck's categorical violet.
+//! This module used to carry its own retained gold/amber palette that predated
+//! the aurora-on-navy restyle; the palette is now gold everywhere, so the
+//! cinematic and the deck finally agree instead of merely coinciding.
 
 use std::io::{IsTerminal, Write};
 
@@ -161,13 +163,13 @@ fn truncate_width(row: &mut String, width: usize) {
 /// palette-law test must check the *choice*, not the escape bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ink {
-    /// Amber — jetpack flames and the skateboard deck.
+    /// Deep gold — jetpack flames and the skateboard deck.
     Flame,
-    /// Muted paper — the dimmer twinkle of a star.
+    /// Muted — the dimmer twinkle of a star.
     Star,
-    /// Bright gold — the brighter twinkle of a star.
+    /// Brand gold — the brighter twinkle of a star.
     StarBright,
-    /// Violet — the turtle's shell linework.
+    /// Violet — the turtle's shell linework. Categorical, not brand.
     Shell,
     /// Dimmed — the turtle's head/wheels and the caption.
     Dim,
@@ -179,10 +181,12 @@ impl Ink {
     /// The truecolor RGB this ink renders as, or `None` for dim/plain.
     fn rgb(self) -> Option<(u8, u8, u8)> {
         match self {
-            Ink::Flame => Some((0xF5, 0xB3, 0x3C)),
-            Ink::Star => Some((0x8D, 0x84, 0x74)),
-            Ink::StarBright => Some((0xFF, 0xD9, 0x7A)),
-            Ink::Shell => Some((0x8F, 0x70, 0xE8)),
+            // gold-deep, text-tertiary, gold, and the deck's categorical
+            // violet — see docs/brand/tokens.json.
+            Ink::Flame => Some((0xE0, 0xB8, 0x00)),
+            Ink::Star => Some((0x6B, 0x7C, 0x99)),
+            Ink::StarBright => Some((0xFF, 0xDD, 0x00)),
+            Ink::Shell => Some((0xA7, 0x8B, 0xFA)),
             Ink::Dim | Ink::Plain => None,
         }
     }
@@ -441,12 +445,24 @@ mod tests {
                 }
             }
         }
-        // And no brand ink is cyan (low red, high green AND blue). Violet
+        // No ink is cyan (low red, high green AND blue). Violet
         // (blue-dominant but red ≈ green) is explicitly allowed.
         for ink in [Ink::Flame, Ink::Star, Ink::StarBright, Ink::Shell] {
             let (r, g, b) = ink.rgb().expect("colored inks carry rgb");
             let is_cyan = r < 0x60 && g > 0xA0 && b > 0xA0;
             assert!(!is_cyan, "{ink:?} ({r:#04x},{g:#04x},{b:#04x}) is cyan");
+        }
+        // The cinematic's two brand inks are the brand tokens themselves, not
+        // a look-alike gold that drifted. These are `gold` and `gold-deep` from
+        // docs/brand/tokens.json; if that file changes, this fails and points
+        // at the copy that needs regenerating.
+        assert_eq!(Ink::StarBright.rgb(), Some((0xFF, 0xDD, 0x00)), "gold");
+        assert_eq!(Ink::Flame.rgb(), Some((0xE0, 0xB8, 0x00)), "gold-deep");
+        // And the star/flame pair stays warm — red-dominant, blue-poor — so the
+        // cinematic can never drift back to a cool accent while still passing.
+        for ink in [Ink::Flame, Ink::StarBright] {
+            let (r, g, b) = ink.rgb().expect("colored inks carry rgb");
+            assert!(r > b && g > b, "{ink:?} must read warm, not cool");
         }
     }
 
