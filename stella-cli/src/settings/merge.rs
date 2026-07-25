@@ -83,6 +83,15 @@ impl Settings {
         if let Some(context) = &scope.context {
             self.context = Some(context.clone());
         }
+        // External CGP providers merge per-ENTRY (like `providers`), so a
+        // project scope can enable an entry the user scope declared without
+        // restating its transport — but a higher scope's entry replaces the
+        // lower one's wholesale. Field-level merging here would let a project
+        // file inherit a user's `egress_consent` while swapping the `url`,
+        // silently reusing consent granted for a different endpoint.
+        for (id, entry) in &scope.context_providers {
+            self.context_providers.insert(id.clone(), entry.clone());
+        }
     }
 
     fn merge_snapshots(scopes: &[&Settings]) -> Self {

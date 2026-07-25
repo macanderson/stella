@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use stella_core::Router;
 use stella_core::hooks::{HookRunner, Hooks};
 use stella_core::retry::Sleeper;
-use stella_protocol::{FileChangeKind, ModelRef, Provider, ScopeProposal};
+use stella_protocol::{ContextUsage, FileChangeKind, ModelRef, Provider, ScopeProposal};
 
 /// Maps a router-resolved [`ModelRef`] to the concrete provider adapter that
 /// serves it. This is the one seam that connects `stella-core`'s
@@ -79,11 +79,45 @@ pub struct RecalledFrame {
 /// [`NoContextRecall`].
 #[async_trait]
 pub trait ContextRecallPort: Send + Sync {
-    /// Recall material relevant to `goal`. Returns an empty vec when nothing
-    /// is relevant or no plane is configured — never an error the pipeline
-    /// has to special-case (weak/absent context degrades to "no frames",
-    /// L-C6).
-    async fn recall(&self, goal: &str) -> Vec<RecalledFrame>;
+    /// Recall material relevant to `goal`. Returns an empty frame list when
+    /// nothing is relevant or no plane is configured — never an error the
+    /// pipeline has to special-case (weak/absent context degrades to "no
+    /// frames", L-C6).
+    async fn recall(&self, goal: &str) -> Recall;
+}
+
+/// The outcome of one context recall: the frames that reached the prompt, and
+/// what producing them cost.
+///
+/// The two travel together because they are answers to different questions
+/// about the same request — "what will the model see?" and "what did this turn
+/// spend on context, and which providers drove it?" — and separating them
+/// would mean either re-running recall to bill it or losing the cost entirely,
+/// which is how context cost stayed unmeterable.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Recall {
+    /// The frames selected for this turn, in the host's canonical render
+    /// order.
+    pub frames: Vec<RecalledFrame>,
+    /// The CGP usage report for the request (`docs/context-reuse.md` §2).
+    /// `None` when the port has no CGP host behind it to report one.
+    pub usage: Option<ContextUsage>,
+}
+
+impl Recall {
+    /// A recall of `frames` with no usage report — the shape a port without a
+    /// CGP host behind it produces.
+    pub fn frames(frames: Vec<RecalledFrame>) -> Self {
+        Self {
+            frames,
+            usage: None,
+        }
+    }
+
+    /// Whether nothing was recalled.
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
 }
 
 /// A repository-structure summary for the planner's **split context** (L-E6):
@@ -367,8 +401,8 @@ pub struct NoContextRecall;
 
 #[async_trait]
 impl ContextRecallPort for NoContextRecall {
-    async fn recall(&self, _goal: &str) -> Vec<RecalledFrame> {
-        Vec::new()
+    async fn recall(&self, _goal: &str) -> Recall {
+        Recall::default()
     }
 }
 
@@ -538,6 +572,10 @@ mod tests {
     #[tokio::test]
     async fn no_op_ports_are_inert() {
         assert!(NoContextRecall.recall("anything").await.is_empty());
+        assert!(
+            NoContextRecall.recall("anything").await.usage.is_none(),
+            "a port with no CGP host behind it reports no usage"
+        );
         assert!(NoRepoStructure.structure_summary().await.is_empty());
         let proposal = ScopeProposal {
             summary: "x".into(),

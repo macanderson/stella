@@ -4,17 +4,26 @@
 //! the primary backend and a first-class provider), and the shipping CLI's
 //! session recall flows through this registry (`stella-cli/src/contextgraph.rs` wraps
 //! it as the `workspace-memory` CGP provider, registering the store domain-
-//! scoped). Wiring further sources through this seam — a `stella-graph`
-//! code-graph provider at this layer, a git-history provider, and external CGP
-//! providers adapted from `contextgraph-host` — is designed here but not yet built;
-//! this crate does not depend on `contextgraph-host`.
+//! scoped).
+//!
+//! **External providers register on the CGP host, not here.** Third-party
+//! stdio/HTTP sources are admitted by `stella-cli/src/contextgraph.rs`
+//! (`register_external_providers`, #453) straight onto the
+//! `contextgraph_host::Host`, gated on the protocol's conformance suite and on
+//! egress consent. This registry stays the seam for *in-plane* sources that
+//! share the workspace store's lifetime — a git-history provider, a future
+//! reflection source — which is why this crate still takes no dependency on
+//! `contextgraph-host`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use contextgraph_types::capability::QueryCapability;
-use contextgraph_types::{Capabilities, ContextQuery, ContextQueryResult, DataFlow, ProviderInfo};
+use contextgraph_types::{
+    Capabilities, ContextQuery, ContextQueryResult, DataFlow, FrameVerdict, ProviderInfo, Verdict,
+    VerifyRequest, VerifyResponse,
+};
 
 use crate::error::ContextError;
 use crate::store::{ContextStore, NodeKind};
@@ -36,6 +45,26 @@ pub trait ContextProvider: Send + Sync {
     /// frame list would erase the truncation report). Budgeting/fusion across
     /// providers is the host's job.
     async fn query(&self, q: &ContextQuery) -> Result<ContextQueryResult, ContextError>;
+
+    /// Revalidate frame identities a host already holds, without any frame
+    /// body travelling in either direction (`docs/context-reuse.md` §4,
+    /// `context/verify`).
+    ///
+    /// The digest is the ground truth: a provider compares the digest the host
+    /// presents against the digest its source carries *now* — equal is
+    /// [`Verdict::Valid`], different is [`Verdict::Stale`], a vanished source
+    /// is [`Verdict::Gone`], and anything it cannot judge is
+    /// [`Verdict::Unknown`].
+    ///
+    /// Defaults to `Unknown` for every identity, mirroring
+    /// `contextgraph_host::ContextProvider::verify`: a plane provider that
+    /// implements nothing can never accidentally bless a stale frame, and the
+    /// host degrades to re-querying (V3). A provider that overrides this
+    /// **MUST** also advertise [`Capabilities::verify`], since the host only
+    /// asks providers that declare support.
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, ContextError> {
+        Ok(VerifyResponse::uniform(request, Verdict::Unknown))
+    }
 }
 
 /// Every frame kind the built-in store can serve.
@@ -96,6 +125,10 @@ impl ContextProvider for ContextStore {
             },
             graph: true,
             embeddings_fingerprint: Some(self.fingerprint().id()),
+            // The store can answer `context/verify` honestly: every frame it
+            // mints declares `sha256:<node.content_hash>`, and the same hash is
+            // re-read from the live row (`docs/context-reuse.md` §4).
+            verify: true,
             ..Default::default()
         }
     }
@@ -103,6 +136,37 @@ impl ContextProvider for ContextStore {
     async fn query(&self, q: &ContextQuery) -> Result<ContextQueryResult, ContextError> {
         // The CGP-shaped adapter over the rich `recall` pipeline.
         Ok(self.recall(q).await?.into())
+    }
+
+    /// Compare each presented digest against the live node's `content_hash`
+    /// (`docs/context-reuse.md` §4, requirement V1).
+    ///
+    /// The store mints `content_digest` as `sha256:<content_hash>` over exactly
+    /// the bytes it serves as `content`, so re-reading the row is a faithful
+    /// "what am I serving now?" — no frame body is read, sent, or compared.
+    /// A superseded or deleted node is `Gone`; an identity presented without a
+    /// digest is `Unknown` (nothing to compare), never `Valid`.
+    async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, ContextError> {
+        let mut verdicts = Vec::with_capacity(request.frames.len());
+        for frame in &request.frames {
+            let verdict = match self.node_by_public_id(&frame.frame_id)? {
+                None => Verdict::Gone,
+                Some(node) => {
+                    let current = format!("sha256:{}", node.content_hash);
+                    match frame.content_digest.as_deref() {
+                        Some(presented) if presented == current => Verdict::Valid,
+                        Some(_) => Verdict::Stale {
+                            replacement_digest: Some(current),
+                        },
+                        // Silence is not validity: an identity with no digest
+                        // is unverifiable, so the host re-queries it (§1 D4).
+                        None => Verdict::Unknown,
+                    }
+                }
+            };
+            verdicts.push(FrameVerdict::new(frame.clone(), verdict));
+        }
+        Ok(VerifyResponse::new(verdicts))
     }
 }
 
@@ -189,6 +253,58 @@ impl ProviderRegistry {
             truncated,
             dropped_estimate,
         })
+    }
+
+    /// Fan a `context/verify` request out to the plane providers that advertise
+    /// the capability and merge their verdicts (`docs/context-reuse.md` §4).
+    ///
+    /// Plane provider ids are not part of a `FrameId` — the whole plane is one
+    /// CGP provider (`workspace-memory`) to the host — so an identity is
+    /// offered to every verify-capable provider and the **first definite**
+    /// answer wins. `Unknown` is not definite: a provider that cannot judge an
+    /// identity must not shadow one that can. An identity no provider can
+    /// judge stays `Unknown`, which the host treats as "do not reuse" (V2).
+    pub async fn verify_all(
+        &self,
+        request: &VerifyRequest,
+    ) -> Result<VerifyResponse, ContextError> {
+        let mut resolved: Vec<Option<Verdict>> = vec![None; request.frames.len()];
+        for provider in &self.providers {
+            if !provider.capabilities().verify {
+                continue;
+            }
+            // Only ask about identities still unresolved, so a provider never
+            // re-judges a frame another already vouched for.
+            let pending: Vec<_> = request
+                .frames
+                .iter()
+                .zip(resolved.iter())
+                .filter(|(_, verdict)| verdict.is_none())
+                .map(|(frame, _)| frame.clone())
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            let response = provider.verify(&VerifyRequest::new(pending)).await?;
+            for (frame, slot) in request.frames.iter().zip(resolved.iter_mut()) {
+                if slot.is_some() {
+                    continue;
+                }
+                match response.verdict_for(frame) {
+                    Some(Verdict::Unknown) | None => {}
+                    Some(verdict) => *slot = Some(verdict.clone()),
+                }
+            }
+        }
+        let verdicts = request
+            .frames
+            .iter()
+            .zip(resolved)
+            .map(|(frame, verdict)| {
+                FrameVerdict::new(frame.clone(), verdict.unwrap_or(Verdict::Unknown))
+            })
+            .collect();
+        Ok(VerifyResponse::new(verdicts))
     }
 }
 
@@ -358,5 +474,166 @@ mod tests {
             Some(5),
             "estimates sum over the providers that reported one (L-C5)"
         );
+    }
+
+    /// WITNESS (#451, `docs/context-reuse.md` §1): every store-minted frame
+    /// declares a `content_digest` naming exactly the bytes it serves. A frame
+    /// without one is unverifiable and a host must re-query rather than reuse
+    /// it (D4), which is precisely the cache-busting this issue removes.
+    #[tokio::test]
+    async fn store_frames_declare_a_content_digest_over_their_own_content() {
+        let (_dir, store) = seeded_store().await;
+        let result = store
+            .query(&query("open the sqlite connection"))
+            .await
+            .unwrap();
+        assert!(!result.frames.is_empty(), "seeded node must surface");
+        for frame in &result.frames {
+            let digest = frame
+                .content_digest
+                .as_deref()
+                .unwrap_or_else(|| panic!("frame `{}` declares no content_digest", frame.id));
+            let expected = format!(
+                "sha256:{}",
+                crate::store::sha256_hex(frame.content.as_deref().unwrap_or_default())
+            );
+            assert_eq!(
+                digest, expected,
+                "the declared digest must name the bytes actually served (§1 D1)"
+            );
+        }
+    }
+
+    /// WITNESS (#451, §4 V1): the store answers `context/verify` by comparing
+    /// digests — `valid` for what it still serves, `stale` for a digest that
+    /// differs, `gone` for a node that no longer exists. A provider that
+    /// rubber-stamped everything `valid` would let a host cite stale evidence.
+    #[tokio::test]
+    async fn store_verifies_by_digest_and_never_rubber_stamps() {
+        use contextgraph_types::FrameId;
+
+        let (_dir, store) = seeded_store().await;
+        assert!(
+            store.capabilities().verify,
+            "the store must advertise `verify`, or the host will never ask (V3)"
+        );
+
+        let served = store
+            .query(&query("open the sqlite connection"))
+            .await
+            .unwrap();
+        let frame = served.frames.first().expect("a served frame");
+        let real = FrameId::new("workspace-memory", &frame.id, frame.content_digest.clone());
+        let mutated = FrameId::new(
+            "workspace-memory",
+            &frame.id,
+            Some(format!("sha256:{}", "0".repeat(64))),
+        );
+        let absent = FrameId::new(
+            "workspace-memory",
+            "nod_does_not_exist",
+            Some("sha256:whatever".to_string()),
+        );
+        let undigested = FrameId::new("workspace-memory", &frame.id, None);
+
+        let response = store
+            .verify(&VerifyRequest::new(vec![
+                real.clone(),
+                mutated.clone(),
+                absent.clone(),
+                undigested.clone(),
+            ]))
+            .await
+            .unwrap();
+
+        assert_eq!(response.verdict_for(&real), Some(&Verdict::Valid));
+        assert!(
+            matches!(
+                response.verdict_for(&mutated),
+                Some(Verdict::Stale { replacement_digest: Some(d) })
+                    if Some(d.as_str()) == frame.content_digest.as_deref()
+            ),
+            "a differing digest must be `stale`, carrying the current digest and no body (V4)"
+        );
+        assert_eq!(response.verdict_for(&absent), Some(&Verdict::Gone));
+        assert_eq!(
+            response.verdict_for(&undigested),
+            Some(&Verdict::Unknown),
+            "an identity with no digest is unverifiable, never `valid` (§1 D4)"
+        );
+    }
+
+    /// A plane provider that cannot judge must not shadow one that can: the
+    /// registry fan-out takes the first *definite* verdict, and leaves an
+    /// identity nobody can judge as `Unknown` (default-deny, V2).
+    #[tokio::test]
+    async fn verify_fan_out_prefers_a_definite_verdict_over_unknown() {
+        use contextgraph_types::FrameId;
+
+        let (_dir, store) = seeded_store().await;
+        let mut registry = ProviderRegistry::new();
+        // The abstaining provider is registered FIRST, so a naive
+        // first-response-wins merge would report `Unknown` for everything.
+        registry.register(Arc::new(Abstaining));
+        registry.register(store.clone());
+
+        let served = store
+            .query(&query("open the sqlite connection"))
+            .await
+            .unwrap();
+        let frame = served.frames.first().expect("a served frame");
+        let real = FrameId::new("workspace-memory", &frame.id, frame.content_digest.clone());
+
+        let response = registry
+            .verify_all(&VerifyRequest::new(vec![real.clone()]))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.verdict_for(&real),
+            Some(&Verdict::Valid),
+            "the abstaining provider must not shadow the one that can vouch"
+        );
+
+        // And with nobody able to judge, the answer stays `Unknown` — which
+        // the host treats as "do not reuse" (V2), never as silent assent.
+        let mut abstainers = ProviderRegistry::new();
+        abstainers.register(Arc::new(Abstaining));
+        let response = abstainers
+            .verify_all(&VerifyRequest::new(vec![real.clone()]))
+            .await
+            .unwrap();
+        assert_eq!(response.verdict_for(&real), Some(&Verdict::Unknown));
+    }
+
+    /// A verify-capable provider that abstains on everything.
+    struct Abstaining;
+
+    #[async_trait]
+    impl ContextProvider for Abstaining {
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                name: "abstaining".to_string(),
+                version: "0".to_string(),
+                data_flow: DataFlow {
+                    reads: true,
+                    writes: false,
+                    egress: false,
+                    egress_scopes: vec![],
+                },
+            }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                verify: true,
+                ..Capabilities::default()
+            }
+        }
+        async fn query(&self, _q: &ContextQuery) -> Result<ContextQueryResult, ContextError> {
+            Ok(ContextQueryResult {
+                frames: vec![],
+                truncated: false,
+                dropped_estimate: None,
+            })
+        }
     }
 }

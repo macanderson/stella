@@ -212,6 +212,13 @@ async fn run_pipeline_one_shot(
         format == OutputFormat::Text,
         &cfg.authority,
     );
+    if let Some(m) = &mut memory {
+        // External CGP providers join the host before the first recall, so a
+        // configured source either passed conformance and serves this turn or
+        // is refused with a reason (#453).
+        m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
+            .await;
+    }
     if let Some(m) = &memory {
         inject_recall_block(&mut messages, m.recall_block(prompt).await);
     }
@@ -594,6 +601,12 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     .await;
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
+    if let Some(m) = &mut memory {
+        // Conformance-gated external CGP providers join before the first
+        // recall, or are refused with a reason (#453).
+        m.register_external_providers(|message| println!("  {} {message}", "!".yellow()))
+            .await;
+    }
     // Custom extensions: â¡ commands/skills invocable as `/name args`, custom
     // agents behind `/agents`. Reloaded after `/init`, which may adopt new
     // ones from `.claude/`/`.agents/`. Load problems print up front so a

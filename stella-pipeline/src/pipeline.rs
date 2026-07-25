@@ -51,8 +51,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, ContextFrameRef, JudgeEvidence, ModelCallRole, ModelRef,
-    Provider, ProviderShare, Role, StageKind,
+    AgentEvent, CompletionMessage, ContextFrameRef, ContextUsage, JudgeEvidence, ModelCallRole,
+    ModelRef, Provider, ProviderShare, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -527,9 +527,10 @@ impl<'a> Pipeline<'a> {
             });
             self.recall.recall(goal).await
         };
-        let (assessment, frames) =
+        let (assessment, recalled) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);
-        self.emit_context_recall(&frames);
+        self.emit_context_recall(&recalled.frames, recalled.usage.clone());
+        let frames = recalled.frames;
         let assessment = match assessment {
             Ok(assessment) => assessment,
             Err(abort) => {
@@ -2120,7 +2121,7 @@ impl<'a> Pipeline<'a> {
         (lines, text)
     }
 
-    fn emit_context_recall(&self, frames: &[RecalledFrame]) {
+    fn emit_context_recall(&self, frames: &[RecalledFrame], usage: Option<ContextUsage>) {
         if frames.is_empty() {
             return;
         }
@@ -2158,6 +2159,7 @@ impl<'a> Pipeline<'a> {
             frames: frame_refs,
             provider_mix: mix,
             tokens,
+            usage,
         });
     }
 

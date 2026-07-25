@@ -37,6 +37,7 @@ use crate::config::Dialect;
 
 mod authority;
 mod context;
+pub(crate) mod context_providers;
 mod managed;
 mod merge;
 mod private;
@@ -48,6 +49,7 @@ pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 // field). The nested types (`LearningMode`, `GovernanceMode`, …) live in
 // `settings::context`; a later phase re-exports them here as it wires them in.
 pub use context::ContextSettings;
+pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in
@@ -142,6 +144,13 @@ pub struct Settings {
     /// [`ContextSettings`].
     #[serde(default)]
     pub context: Option<ContextSettings>,
+    /// `context_providers.<id>` — third-party CGP context sources reached over
+    /// stdio/HTTP (#453). Merged per-entry across scopes like `providers`, so
+    /// a project may enable a provider the user scope declared without
+    /// restating its transport. Empty (the shipping default) registers
+    /// nothing and leaves recall exactly as it is today.
+    #[serde(default)]
+    pub context_providers: ContextProviderSettings,
     /// Authority ceilings are honored only from the org-managed settings
     /// file. The serde name is intentionally short because the containing
     /// file is already the policy source.

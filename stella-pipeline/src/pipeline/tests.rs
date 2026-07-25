@@ -23,10 +23,11 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
 use crate::ports::{
-    AdoptedChange, ArtifactIdentity, ArtifactKind, AutoApproveGate, CmdOutcome,
-    DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoRepoStatus, NoRepoStructure,
+    AdoptedChange, ArtifactIdentity, ArtifactKind, AutoApproveGate, CmdOutcome, ContextRecallPort,
+    DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoRepoStatus, NoRepoStructure, Recall,
     TestInvocation, TestRunner,
 };
+use stella_protocol::{ContextProviderUsage, ContextUsage};
 
 // test doubles
 
@@ -1803,4 +1804,128 @@ async fn headless_scope_bypass_proceeds_instead_of_asking_a_gate_that_always_abo
         s.contains(&StageKind::Execute),
         "the run reaches execute rather than ending at the gate: {s:?}"
     );
+}
+
+/// A recall port whose plane reports what the fan-out spent — the shape
+/// `stella-cli`'s `SessionMemory` produces from a real CGP host.
+struct MeteredRecall;
+
+#[async_trait::async_trait]
+impl ContextRecallPort for MeteredRecall {
+    async fn recall(&self, _goal: &str) -> Recall {
+        Recall {
+            frames: vec![RecalledFrame {
+                citation_label: "driver.rs".into(),
+                provider: "code-graph".into(),
+                source: "code-graph".into(),
+                kind: "symbol".into(),
+                uri: None,
+                method: None,
+                content: "run_turn".into(),
+                token_cost: 120,
+                id: None,
+            }],
+            usage: Some(ContextUsage {
+                budget_requested: 1200,
+                budget_consumed: 210,
+                as_of: "2026-07-24T00:00:00Z".into(),
+                providers: vec![
+                    ContextProviderUsage {
+                        provider_id: "code-graph".into(),
+                        frames_served: 1,
+                        frames_rejected: 0,
+                        token_cost: 120,
+                    },
+                    // Served frames that lost fusion — invisible in the frame
+                    // mix, and the whole reason the report is taken pre-fusion.
+                    ContextProviderUsage {
+                        provider_id: "workspace-memory".into(),
+                        frames_served: 2,
+                        frames_rejected: 1,
+                        token_cost: 90,
+                    },
+                ],
+            }),
+        }
+    }
+}
+
+/// WITNESS (#452): the CGP usage report reaches telemetry. Before this, the
+/// `ContextRecall` event carried only the *selected* frames' token sum and a
+/// per-provider frame count — so a provider that served expensive frames which
+/// lost fusion, or whose frames the host rejected outright, cost real tokens
+/// that no event ever recorded. Context cost was visible, not meterable.
+#[tokio::test]
+async fn the_context_recall_event_carries_the_cgp_usage_report() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: single\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+    ]);
+    let resolver = OneProvider(&provider);
+    let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
+    let repo_status = SeqRepoStatus::new(vec![vec![]]);
+    let tools = EmptyTools;
+    let recall = MeteredRecall;
+    let repo = NoRepoStructure;
+    let approvals = AutoApproveGate;
+    let sleeper = NoopSleeper;
+    let router = router();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let pipeline = Pipeline::new(
+        PipelinePorts {
+            router: &router,
+            providers: &resolver,
+            tools: &tools,
+            recall: &recall,
+            repo: &repo,
+            repo_status: &repo_status,
+            diagnostics: &runner,
+            tests: &runner,
+            approvals: &approvals,
+            sleeper: &sleeper,
+            hooks: None,
+            candidate_workspaces: None,
+            mcp_prefetch: None,
+            steering: None,
+        },
+        tx,
+        PipelineConfig::default(),
+    );
+    let mut messages = vec![CompletionMessage::system("sys")];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let _ = pipeline
+        .run("Fix the retry bug", &mut messages, &mut budget)
+        .await;
+
+    let events = drain(&mut rx);
+    let usage = events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::ContextRecall { usage, .. } => usage.clone(),
+            _ => None,
+        })
+        .expect("the ContextRecall event must carry the CGP usage report");
+
+    assert!(
+        usage.is_consistent(),
+        "a metering pipeline must be able to re-sum the total: {usage:?}"
+    );
+    assert_eq!(usage.budget_requested, 1200);
+    assert_eq!(usage.budget_consumed, 210);
+    assert_eq!(usage.total_frames_served(), 3);
+
+    let memory = usage
+        .providers
+        .iter()
+        .find(|p| p.provider_id == "workspace-memory")
+        .expect("every provider the query reached is itemized");
+    assert_eq!(
+        memory.frames_served, 2,
+        "frames served must be counted even when they lose fusion and never reach the prompt"
+    );
+    assert_eq!(
+        memory.frames_rejected, 1,
+        "a host-rejected frame is accounted, not silently forgotten"
+    );
+    assert_eq!(memory.token_cost, 90);
 }

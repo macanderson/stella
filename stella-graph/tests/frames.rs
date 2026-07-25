@@ -157,3 +157,73 @@ fn file_neighborhood_round_trips_through_serde() {
     let back: stella_graph::FileNeighborhood = serde_json::from_str(&json).unwrap();
     assert_eq!(hood, back);
 }
+
+/// WITNESS (#451, `docs/context-reuse.md` §1): every graph frame declares a
+/// `content_digest` over exactly the bytes it carries inline. Without one the
+/// frame is *not verifiable* and a host must re-query it rather than reuse it
+/// (D4) — forfeiting the byte-stable prefix canonical composition buys.
+#[test]
+fn frames_declare_a_content_digest_over_their_inline_content() {
+    let (_ws, _db, graph) = fixture();
+    let frames = graph.query(&query("run_turn", 10, 4_000)).unwrap();
+    assert!(!frames.is_empty(), "fixture must produce frames");
+    for frame in &frames {
+        let digest = frame
+            .content_digest
+            .as_deref()
+            .unwrap_or_else(|| panic!("frame `{}` declares no content_digest", frame.id));
+        let hex = digest
+            .strip_prefix("sha256:")
+            .unwrap_or_else(|| panic!("digest `{digest}` is not `sha256:<hex>`"));
+        assert_eq!(hex.len(), 64, "digest `{digest}` is not 64 hex chars");
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+            "digest `{digest}` must be lowercase hex"
+        );
+        // The digest must name the bytes actually served: recompute it.
+        let content = frame.content.as_deref().unwrap_or_default();
+        let expected = sha256_hex(content.as_bytes());
+        assert_eq!(
+            hex, expected,
+            "frame `{}` digest does not match its own content — identity would be a lie (§1 D1)",
+            frame.id
+        );
+    }
+}
+
+/// Editing the source must change the digest, or §4's staleness detection
+/// cannot work (§1 D1).
+#[test]
+fn changing_a_file_changes_its_frames_content_digest() {
+    let (ws, _db, graph) = fixture();
+    let before = graph.definitions("run_turn").unwrap()[0]
+        .content_digest
+        .clone()
+        .expect("digest");
+    fs::write(
+        ws.path().join("driver.rs"),
+        "pub fn run_turn() {\n    // drive one turn, differently\n}\npub struct Engine;\n",
+    )
+    .unwrap();
+    graph.index_all().unwrap();
+    let after = graph.definitions("run_turn").unwrap()[0]
+        .content_digest
+        .clone()
+        .expect("digest");
+    assert_ne!(
+        before, after,
+        "changed content MUST change content_digest (§1 D1)"
+    );
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}

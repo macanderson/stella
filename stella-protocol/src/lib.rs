@@ -29,9 +29,9 @@ pub use completion::{
 pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
-    ContextFrameRef, FileChangeKind, JudgeEvidence, ManifestEntry, MediaArtifactRef, MediaJobState,
-    MediaKind, ModelCallRole, PolicyKind, PrStatus, ProviderShare, ScopeProposal, StageKind,
-    TaskItem, TaskStatus, UsageIncompleteReason,
+    ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, JudgeEvidence,
+    ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole, PolicyKind, PrStatus,
+    ProviderShare, ScopeProposal, StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
 };
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};

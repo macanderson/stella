@@ -366,7 +366,13 @@ pub(crate) fn frame_from_node(
         // no tolerance — the title is NOT part of the inline content, so it is
         // not counted here. `pack_to_budget` packs against this same value.
         token_cost: contextgraph_types::budget_tokens(&node.content),
-        content_digest: None,
+        // `docs/context-reuse.md` §1: the frame's identity triple is
+        // `(provider id, frame id, content digest)`, and a frame that declares
+        // no digest is *not verifiable* — a host must re-query it rather than
+        // reuse it (D4). `node.content_hash` is already the sha256 of exactly
+        // the bytes that become `content`, so declaring it here costs nothing
+        // and makes every store-minted frame revalidatable by `context/verify`.
+        content_digest: Some(format!("sha256:{}", node.content_hash)),
         representation: Representation::Full,
         content_fidelity: None,
         canonical_content_hash: None,
