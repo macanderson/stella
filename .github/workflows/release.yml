@@ -149,6 +149,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
+      # Provenance attestation (#649). `id-token: write` mints the short-lived
+      # OIDC token Sigstore signs against; `attestations: write` stores the
+      # resulting bundle on the repo. No signing key is involved, so there is
+      # no key to rotate or leak — which is what made this landable.
+      id-token: write
+      attestations: write
     steps:
       # Full history + tags so the notes step can diff against the prior tag.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -171,6 +177,22 @@ jobs:
           sha256sum stella-*.tar.gz > SHA256SUMS
           echo "----- SHA256SUMS -----"
           cat SHA256SUMS
+
+      # Attest the tarballs *and* SHA256SUMS. Attesting the sums file is the
+      # point: install.sh trusts it to vouch for the tarball, but it was
+      # fetched over the same channel from the same release, so anything able
+      # to replace one could replace the other. A provenance bundle is bound to
+      # this workflow at this commit and cannot be reissued by whoever holds
+      # the release.
+      #
+      # Pinned by SHA because that is the invariant #648 established; adding a
+      # floating ref here would be the first thing to break its CI guard.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            artifacts/stella-*.tar.gz
+            artifacts/SHA256SUMS
 
       # Draft the release notes from the diff since the previous tag using the
       # AI Gateway. Falls back to a plain commit list if the key is unset or the
