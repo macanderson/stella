@@ -55,6 +55,12 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Both jobs only check out, build, and test — nothing here writes to the repo.
+# Without the key, GITHUB_TOKEN falls back to the repository default, which on
+# repos created before the 2023 default change is read/write on every scope.
+permissions:
+  contents: read
+
 jobs:
   check:
     name: fmt + clippy + test

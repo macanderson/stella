@@ -26,6 +26,10 @@ concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Typecheck + build only — there is no Pages deploy here, so read is enough.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: typecheck + build
