@@ -2,13 +2,13 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! `stella-context` — **the context plane**: the single door between the
-//! engine and everything the agent knows that isn't already in the prompt
-//! One SQLite file, one
-//! engine ([`ContextStore`]) holds a bi-temporal property graph, a fingerprinted
-//! embedding index, and episodic memory; on top of it sits a hybrid, budgeted,
-//! cited retrieval pipeline ([`ContextStore::recall`]) and a bi-temporal
-//! write-back path ([`ContextStore::upsert`]). Built-in and external sources
-//! register through one seam ([`ContextProvider`] / [`ProviderRegistry`]).
+//! engine and everything the agent knows that isn't already in the prompt. One
+//! SQLite file, one engine ([`ContextStore`]) holds a bi-temporal property
+//! graph, a fingerprinted embedding index, and episodic memory; on top of it
+//! sits a hybrid, budgeted, cited retrieval pipeline ([`ContextStore::recall`])
+//! and a bi-temporal write-back path ([`ContextStore::upsert`]). Built-in and
+//! external sources register through one seam ([`ContextProvider`] /
+//! [`ProviderRegistry`]).
 //!
 //! # The four jobs this plane does that its providers don't (arch §7)
 //!

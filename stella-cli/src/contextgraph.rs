@@ -517,7 +517,7 @@ fn memory_capabilities() -> Capabilities {
 /// *rendered* frame body (a quoted snippet, an import neighborhood), not a file
 /// the index already hashes, so answering `valid`/`stale` honestly would mean
 /// re-deriving the frame — which is the re-query the host performs anyway. Per
-/// §4 V3 a provider that does not advertise `verify` has its frames re-queried,
+/// V3 a provider that does not advertise `verify` has its frames re-queried,
 /// which is the correct, conformant degradation. Advertising it without an
 /// honest answer would be worse than not advertising it at all: the suite's
 /// `verify-honesty` check fails a provider that can never vouch for anything.

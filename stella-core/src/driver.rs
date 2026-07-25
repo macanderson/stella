@@ -63,8 +63,8 @@
 //! tool that expects an object, it short-circuits to a named
 //! `ToolOutput::Error` telling the model its own JSON was malformed, so the
 //! model can retry with corrected syntax on the next step. This is a real,
-//! if first-cut, repair — dialect-specific tuning (
-//! §4.2: "malformed-call repair tuned to the failure shapes GLM actually
+//! if first-cut, repair — dialect-specific tuning
+//! ("malformed-call repair tuned to the failure shapes GLM actually
 //! produces") is a documented follow-up, not faked here.
 
 use std::collections::{HashMap, HashSet};

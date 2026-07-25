@@ -1,5 +1,5 @@
-//! The provider registry seam (
-//! §2). One interface — [`ContextProvider`] — behind which context sources
+//! The provider registry seam.
+//! One interface — [`ContextProvider`] — behind which context sources
 //! register: the built-in [`ContextStore`] implements it (so the store is both
 //! the primary backend and a first-class provider), and the shipping CLI's
 //! session recall flows through this registry (`stella-cli/src/contextgraph.rs` wraps

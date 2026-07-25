@@ -372,8 +372,8 @@ impl ContextDelta {
     }
 }
 
-/// What a write-back did — a typed, inspectable receipt (
-/// §1: typed outputs). `embeddings_reused` is the byte-compat skip count that
+/// What a write-back did — a typed, inspectable receipt.
+/// `embeddings_reused` is the byte-compat skip count that
 /// makes re-indexing cheap (`L-C2`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpsertReceipt {
