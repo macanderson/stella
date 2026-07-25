@@ -176,12 +176,18 @@ pub(crate) fn assemble_system_prompt(
 }
 
 /// The workspace-maps half of [`assemble_system_prompt`]: the exploration
-/// store's index — every saved map with its per-file freshness verdict, plus
-/// in-progress drafts with producer liveness — so orientation is pushed at
-/// turn 1 instead of waiting for the model to think of pulling it. Computed
-/// ONCE per session (freshness verdicts included) for the same prompt-cache
-/// byte-stability reason as memories; maps saved mid-session by other
-/// sessions surface through the registry's coverage hints instead.
+/// store's index — every COMPLETED map with its per-file freshness verdict —
+/// so orientation is pushed at turn 1 instead of waiting for the model to
+/// think of pulling it. Computed ONCE per session (freshness verdicts
+/// included) for the same prompt-cache byte-stability reason as memories;
+/// maps saved mid-session by other sessions surface through the registry's
+/// coverage hints instead.
+///
+/// In-progress drafts are deliberately NOT here. Their line names the
+/// producing pid and whether it is still alive, which differs per process
+/// and flips mid-session — inside the cached prefix that is a guaranteed
+/// miss on every call (#639). They ride the volatile recall block instead,
+/// via `stella_tools::exploration::render_draft_claims`.
 fn append_exploration_index(prompt: &mut String, workspace_root: &std::path::Path) {
     let summaries = stella_tools::exploration::summaries_sync(workspace_root);
     if let Some(index) =
