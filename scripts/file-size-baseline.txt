@@ -8,16 +8,16 @@
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
 1715 stella-cli/src/agent_tests.rs
-2180 stella-cli/src/agent.rs
+2191 stella-cli/src/agent.rs
 1599 stella-cli/src/candidate_ws.rs
-4454 stella-cli/src/command_deck.rs
+4465 stella-cli/src/command_deck.rs
 1503 stella-cli/src/contextgraph.rs
-1741 stella-cli/src/main.rs
-1635 stella-cli/src/memory.rs
-2201 stella-context/src/store.rs
-2046 stella-core/src/bus.rs
-2147 stella-core/src/driver.rs
-2750 stella-core/src/driver/tests.rs
+1789 stella-cli/src/main.rs
+1641 stella-cli/src/memory.rs
+2224 stella-context/src/store.rs
+2095 stella-core/src/bus.rs
+2252 stella-core/src/driver.rs
+2818 stella-core/src/driver/tests.rs
 1666 stella-core/src/rules.rs
 1502 stella-core/src/skills.rs
 1759 stella-fleet/src/fleet.rs
@@ -25,14 +25,14 @@
 1638 stella-model/src/bedrock.rs
 1919 stella-model/src/openai.rs
 1622 stella-model/src/zai/tests.rs
-2447 stella-pipeline/src/pipeline.rs
+2504 stella-pipeline/src/pipeline.rs
 2019 stella-pipeline/src/pipeline/tests.rs
-2424 stella-protocol/src/event.rs
-2234 stella-store/src/lib.rs
+2636 stella-protocol/src/event.rs
+2270 stella-store/src/lib.rs
 2168 stella-store/src/tests.rs
-1828 stella-store/src/usage.rs
+1884 stella-store/src/usage.rs
 1558 stella-tools/src/media.rs
-2990 stella-tools/src/registry.rs
+3052 stella-tools/src/registry.rs
 1797 stella-tools/src/scripts.rs
 1670 stella-tui/src/deck_render.rs
 3940 stella-tui/src/deck_ui.rs

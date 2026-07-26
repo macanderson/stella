@@ -12,8 +12,9 @@
 //!    stella-store/src/ddl.rs` finds nothing), so `PRAGMA foreign_keys=ON` in
 //!    [`Store::init`](crate::Store) enforces exactly zero constraints here.
 //!    Deleting an `executions` row therefore cascades **explicitly**, through
-//!    [`DEPENDENT_TABLES`]. [`dependent_tables_cover_every_execution_keyed_table`]
-//!    keeps that list honest against the schema.
+//!    [`DEPENDENT_TABLES`]. The `dependent_tables_cover_every_execution_keyed_table`
+//!    test below keeps that list honest against the schema. (Named, not
+//!    linked: it is `#[cfg(test)]`, so rustdoc cannot resolve it.)
 //! 2. **The unit of retention is the execution, not the row.** Every
 //!    dependent table keys off `executions.id`, so an execution is the
 //!    smallest thing that can be dropped without orphaning rows.

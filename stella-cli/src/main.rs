@@ -61,7 +61,6 @@ mod settings_check;
 mod signals;
 mod skill_manager;
 mod stats;
-mod storage_prune;
 mod subsession;
 mod tui;
 mod usage_cmd;
@@ -956,10 +955,6 @@ enum StorageCmd {
     /// Drift report: near-duplicate relations, orphaned manifest meanings,
     /// and intent coverage. Report-only — nothing is changed.
     Drift,
-    /// Bound `store.db`'s growth: drop whole executions (and every row that
-    /// hangs off them) by age and/or a ceiling. In-flight turns and
-    /// `forgotten` tombstones are never removed. Start with `--dry-run`.
-    Prune(crate::storage_prune::PruneArgs),
 }
 
 /// `stella observe` — serve the Observatory dashboard for this workspace on
@@ -1115,12 +1110,6 @@ fn load_storage_snapshot_checked(
 
 fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
     use stella_graph::storage::{dedup_key, display_address, embed_card, normalize_name};
-    // Retention operates on store.db itself, not on the storage *map*, so it
-    // runs ahead of the snapshot load below — a workspace with no
-    // stella.storage.toml still has a store.db worth bounding.
-    if let StorageCmd::Prune(args) = cmd {
-        return crate::storage_prune::run(args);
-    }
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let snapshot = load_storage_snapshot_checked(&root)?;
@@ -1302,8 +1291,6 @@ fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
                 println!("{}", "no drift signals".dimmed());
             }
         }
-        // Handled above, before the storage-map snapshot is loaded.
-        StorageCmd::Prune(_) => unreachable!("`storage prune` returns before the map loads"),
     }
     Ok(())
 }
