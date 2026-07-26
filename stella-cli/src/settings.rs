@@ -138,10 +138,11 @@ pub struct Settings {
     /// changed, beside the file and cost panels. No model call. Default off.
     #[serde(default)]
     pub enable_recap: Option<Toggle>,
-    /// Adaptive-context lifecycle configuration (the `context` block). INERT
-    /// in Phase 0: deserialized, round-tripped, and merged, but read by no
-    /// code yet — `context.lifecycle.enabled` defaults `false`, which is what
-    /// preserves current behavior. `None` = the block was absent. Whole-block
+    /// Adaptive-context lifecycle configuration (the `context` block).
+    /// `context.lifecycle.enabled` defaults **`true`** — the lifecycle ships
+    /// on, and setting it `false` restores every pre-adaptive behavior.
+    /// `None` = the block was absent, which means the defaults apply, not that
+    /// the lifecycle is off. Whole-block
     /// last-wins across scopes (see [`Settings::overlay_scope`]). See
     /// [`ContextSettings`].
     #[serde(default)]

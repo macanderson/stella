@@ -31,10 +31,17 @@ pub(super) fn session_retrieval_settings(workspace_root: &std::path::Path) -> Re
 /// the file into silently enabling a lifecycle nobody asked for, and the safe
 /// answer to "I could not tell" is "keep doing what already works".
 pub fn session_lifecycle_enabled(workspace_root: &std::path::Path) -> bool {
-    crate::settings::Settings::load(workspace_root)
-        .ok()
-        .and_then(|s| s.context)
-        .is_some_and(|c| c.lifecycle.enabled)
+    let Ok(settings) = crate::settings::Settings::load(workspace_root) else {
+        // Unreadable or malformed. This is the one case that does NOT take the
+        // default: a file we could not parse may be the file in which someone
+        // turned the lifecycle off, and silently overriding an opt-out we
+        // failed to read is worse than leaving a default unapplied.
+        return false;
+    };
+    // An absent `context` block means "the defaults", not "off" — a workspace
+    // with no settings.json at all is the common case, and it must land on the
+    // shipped default like every other one.
+    settings.context.unwrap_or_default().lifecycle.enabled
 }
 
 /// Phase 3 (#714): the promotion thresholds gating when observations may become
@@ -52,4 +59,60 @@ pub(super) fn inferred_directive_promotion(
         .and_then(|s| s.context)
         .map(|c| c.promotion.inferred_directive)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_lifecycle_enabled;
+
+    /// The case that decides whether the flip actually shipped: a workspace
+    /// with no `settings.json` at all. The reader used to ask
+    /// `is_some_and(..)` on an `Option<ContextSettings>`, so an absent block
+    /// answered `false` no matter what the struct's default was — flipping
+    /// `LifecycleSettings::default()` alone would have left every real user off.
+    #[test]
+    fn a_workspace_with_no_settings_file_gets_the_lifecycle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(
+            session_lifecycle_enabled(dir.path()),
+            "a fresh workspace must land on the shipped default"
+        );
+    }
+
+    /// An empty `context` block means "the defaults", not "off".
+    #[test]
+    fn an_empty_context_block_gets_the_lifecycle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stella = dir.path().join(".stella");
+        std::fs::create_dir_all(&stella).expect("stella dir");
+        std::fs::write(stella.join("settings.json"), r#"{"context":{}}"#).expect("write");
+        assert!(session_lifecycle_enabled(dir.path()));
+    }
+
+    /// An explicit opt-out is honored — the whole point of keeping the switch.
+    #[test]
+    fn an_explicit_false_turns_the_lifecycle_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stella = dir.path().join(".stella");
+        std::fs::create_dir_all(&stella).expect("stella dir");
+        std::fs::write(
+            stella.join("settings.json"),
+            r#"{"context":{"lifecycle":{"enabled":false}}}"#,
+        )
+        .expect("write");
+        assert!(!session_lifecycle_enabled(dir.path()));
+    }
+
+    /// A file we cannot parse is the one case that does not take the default:
+    /// it may be the file in which someone turned the lifecycle off, and
+    /// overriding an opt-out we failed to read is worse than leaving a default
+    /// unapplied.
+    #[test]
+    fn an_unparseable_settings_file_stays_off() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stella = dir.path().join(".stella");
+        std::fs::create_dir_all(&stella).expect("stella dir");
+        std::fs::write(stella.join("settings.json"), "{ not json").expect("write");
+        assert!(!session_lifecycle_enabled(dir.path()));
+    }
 }

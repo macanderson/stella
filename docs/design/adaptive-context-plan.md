@@ -24,9 +24,14 @@ the layer that is supposed to make them accountable.
 ### Working rules
 
 - One phase, one branch, one PR. Never cross phases on a branch.
-- Behavior-changing work ships behind `context.lifecycle.enabled` (default off)
-  **except Phase 1**, which is defect repair and ships on — a bug fix behind a
-  flag is a bug that is still shipping.
+- Behavior-changing work ships behind `context.lifecycle.enabled`. Phase 1 was
+  defect repair and shipped on unconditionally — a bug fix behind a flag is a
+  bug that is still shipping. **The flag itself now defaults to on** (changed
+  after Phases 2 and 3 landed): a lifecycle nobody runs cannot be evaluated,
+  and the behavior-compatibility suite asserts every spec §8 guarantee on both
+  the typed and the opted-out path, so "on" is a claim with tests behind it
+  rather than a hope. Setting it `false` restores the previous behavior
+  wholesale.
 - `make gate` green before a phase is claimed done. Do not claim a gate passed
   without running it and reading the output.
 - No coordinates in any document this plan produces (spec §1).

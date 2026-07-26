@@ -20,7 +20,7 @@
 //! content-addressed id and a byte-stable hash over what entered the prompt,
 //! excluding the accounting around it. ADR 0006 as amended: the compiled frame
 //! is this manifest extended, not a parallel aggregate. Gated on
-//! `context.lifecycle.enabled`, off by default.
+//! `context.lifecycle.enabled`, which ships on.
 
 use std::borrow::Cow;
 use std::collections::HashMap;

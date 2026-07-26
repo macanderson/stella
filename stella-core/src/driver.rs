@@ -195,9 +195,10 @@ pub struct EngineConfig {
     /// (the receipt is still valid — `(execution_id, step)` disambiguates
     /// within an execution).
     pub turn_instance: u32,
-    /// `context.lifecycle.enabled` — Phase 2 (#713). `false` (its own default)
-    /// preserves every pre-adaptive behavior; it gates only the compiled-frame
-    /// identity on this turn's step manifests.
+    /// `context.lifecycle.enabled` — Phase 2 (#713). Gates the compiled-frame
+    /// identity on this turn's step manifests. The setting ships on; this
+    /// field still defaults `false` so a programmatically-built config opts in
+    /// deliberately rather than inheriting a product default it never read.
     pub lifecycle_enabled: bool,
 }
 
