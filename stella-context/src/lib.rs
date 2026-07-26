@@ -65,7 +65,7 @@ pub use embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedd
 pub use error::ContextError;
 pub use provider::{ContextProvider, ProviderRegistry};
 pub use retrieval::{DropReason, DroppedFrame, RecallResult, is_lexical_fallback};
-pub use store::{ContextStore, NodeInput, NodeKind, NodeRow};
+pub use store::{ContextStore, MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow};
 pub use writeback::{
     ContextDelta, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion, FactView, MemoryInput,
     MemoryKind, UpsertReceipt,

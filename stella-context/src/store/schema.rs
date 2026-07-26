@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 3;
+pub(crate) const SCHEMA_VERSION: i64 = 4;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -147,6 +147,37 @@ DROP TABLE IF EXISTS code_graph_imports;
 DROP TABLE IF EXISTS code_graph_files;
 ";
 
+/// V4 — **memory identity moves to lineage** (#712 deliverable 5).
+///
+/// A memory's identity was the hash of its kind and its content, so changing a
+/// word made a *different memory*. The old row stayed live, with its old text,
+/// its own vector, and full participation in every future recall — and because
+/// the mirror node's uri was derived from that same hash, the node duplicated
+/// too. Two rows, one lesson, both cited.
+///
+/// `lineage_id` is the durable identity a revision belongs to; `public_id`
+/// stays the identity of *this revision*. `superseded_at` closes the previous
+/// revision when a new one lands, so a lineage has exactly one live row and the
+/// history survives (`L-C3` — nothing is deleted).
+///
+/// **Lossless and idempotent.** Every existing row is its own lineage's first
+/// revision, so the backfill is `lineage_id = public_id`: no content is read,
+/// nothing is merged, and no id changes. A new memory still seeds its lineage
+/// from its content hash, so the ids minted before this migration are the ids
+/// minted after it and every stored tombstone still resolves.
+///
+/// Duplicate lineages that past edits already created are **not** repaired
+/// here. They are indistinguishable from two genuinely different memories
+/// without a similarity judgment, and a migration is the wrong place to make
+/// one: it runs unattended, on the only copy a user has. `stella memory
+/// validate` reports them instead (#711, decision 4).
+pub(crate) const MIGRATION_V4: &str = "\
+ALTER TABLE memory ADD COLUMN lineage_id TEXT;
+ALTER TABLE memory ADD COLUMN superseded_at TEXT;
+UPDATE memory SET lineage_id = public_id WHERE lineage_id IS NULL;
+CREATE INDEX idx_memory_lineage ON memory(lineage_id);
+";
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -246,6 +277,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     }
     if version < 3 {
         tx.execute_batch(MIGRATION_V3)?;
+    }
+    if version < 4 {
+        tx.execute_batch(MIGRATION_V4)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;

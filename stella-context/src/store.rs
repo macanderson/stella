@@ -54,8 +54,26 @@ pub use node::{NodeInput, NodeKind, NodeRow};
 pub(crate) use node::{
     node_by_id, node_exists_any_state, node_ids_for_uris, restore_node, supersede_node, upsert_node,
 };
-pub(crate) use record::{insert_episode, insert_memory};
+pub use record::MemoryRevision;
+pub(crate) use record::{insert_episode, insert_memory, memory_kind, memory_revisions};
 pub(crate) use schema::open_connection;
+
+/// A count of what the memory lineage layer holds (#712 deliverable 5).
+///
+/// `lineages == live` on a healthy store: every lineage has exactly one current
+/// revision. `revisions - live` is history — the text memories used to carry,
+/// kept because supersession never deletes (`L-C3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryLineageStats {
+    /// Distinct memory lineages — the number of *memories*, as a user counts.
+    pub lineages: usize,
+    /// Rows across every lineage, current and historical.
+    pub revisions: usize,
+    /// Revisions that are current. One per lineage.
+    pub live: usize,
+    /// Revisions an edit closed. Readable, never recalled.
+    pub superseded: usize,
+}
 
 /// The context plane's storage handle. Not `Clone` — the background warm
 /// handle is owned by exactly one store so [`ContextStore::await_warm`] has a
@@ -357,6 +375,69 @@ impl ContextStore {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    /// What the lineage layer currently holds — the report behind "what did the
+    /// migration do", and the check that an edit did what it said.
+    ///
+    /// Derived on every call from the immutable rows, never stored state, so it
+    /// cannot drift from the data it describes. It says how many lineages exist
+    /// and how many revisions are live or superseded; it deliberately does not
+    /// claim to know which rows a *particular* migration touched, because that
+    /// is not recoverable from the result and inventing it would be worse than
+    /// leaving it out.
+    pub fn memory_lineage_stats(&self) -> Result<MemoryLineageStats, ContextError> {
+        let conn = self.conn();
+        let (lineages, revisions, live) = conn.query_row(
+            "SELECT COUNT(DISTINCT lineage_id), COUNT(*),
+                    COUNT(*) FILTER (WHERE superseded_at IS NULL)
+             FROM memory",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        Ok(MemoryLineageStats {
+            lineages: lineages as usize,
+            revisions: revisions as usize,
+            live: live as usize,
+            superseded: (revisions - live) as usize,
+        })
+    }
+
+    /// The lineage a memory node belongs to — the durable identity an edit
+    /// revises, resolved from the `nod_…` id a recalled frame carries.
+    ///
+    /// A memory's mirror node is keyed `memory://<lineage>`, so this is a
+    /// parse rather than a join. `None` for a node that is not a memory, or
+    /// whose uri predates the scheme.
+    pub fn memory_lineage(&self, public_id: &str) -> Result<Option<String>, ContextError> {
+        let Some(node) = self.node_by_public_id(public_id)? else {
+            return Ok(None);
+        };
+        Ok(node
+            .uri
+            .as_deref()
+            .and_then(|uri| uri.strip_prefix("memory://"))
+            .map(str::to_string))
+    }
+
+    /// The kind of a lineage's current revision — what an edit carries forward.
+    pub fn memory_kind(&self, lineage_id: &str) -> Result<Option<String>, ContextError> {
+        memory_kind(&self.conn(), lineage_id)
+    }
+
+    /// Every revision of a memory lineage, newest first.
+    ///
+    /// Exactly one revision is current; the rest are what the memory used to
+    /// say. That history exists because an edit supersedes rather than
+    /// overwrites (`L-C3`).
+    pub fn memory_revisions(&self, lineage_id: &str) -> Result<Vec<MemoryRevision>, ContextError> {
+        memory_revisions(&self.conn(), lineage_id)
     }
 
     /// Suppress a node in the plane that owns it: mark it superseded so every

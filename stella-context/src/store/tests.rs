@@ -669,6 +669,9 @@ fn open_legacy(path: &std::path::Path, version: i64) -> Connection {
     if version >= 2 {
         conn.execute_batch(MIGRATION_V2).unwrap();
     }
+    if version >= 3 {
+        conn.execute_batch(MIGRATION_V3).unwrap();
+    }
     conn.pragma_update(None, "user_version", version).unwrap();
     conn
 }
@@ -684,8 +687,7 @@ fn rejects_a_context_db_written_by_a_newer_stella() {
     {
         // The full current schema, stamped one version past this build —
         // exactly what a newer stella leaves behind.
-        let conn = open_legacy(&path, SCHEMA_VERSION + 1);
-        conn.execute_batch(MIGRATION_V3).unwrap();
+        open_legacy(&path, SCHEMA_VERSION + 1);
     }
 
     let Err(err) = ContextStore::open(&path) else {
@@ -772,13 +774,15 @@ fn migrates_v2_context_db_preserving_memories() {
         let conn = open_legacy(&path, 2);
         // Production writes a memory as a canonical `memory` row plus a
         // retrievable mirror `node` in one transaction; reproduce both.
-        insert_memory(
-            &conn,
-            mem_public,
-            "reflection",
-            "prefer rg over grep",
-            0.5,
-            T1,
+        //
+        // Raw SQL rather than `insert_memory`, deliberately: a fixture for
+        // schema version N must write version N's shape. Calling today's writer
+        // would put a v4 `lineage_id` into a v2 table and test a database that
+        // never existed.
+        conn.execute(
+            "INSERT INTO memory (public_id, kind, content, salience, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![mem_public, "reflection", "prefer rg over grep", 0.5, T1],
         )
         .unwrap();
         upsert_node(
@@ -812,10 +816,202 @@ fn migrates_v2_context_db_preserving_memories() {
             )
             .unwrap();
         assert_eq!(content, "prefer rg over grep");
+        // #712 deliverable 5: the lineage backfill is lossless — every
+        // pre-existing memory becomes its own lineage's first revision, so no
+        // id changes and every stored tombstone still resolves.
+        let lineage: String = conn
+            .query_row(
+                "SELECT lineage_id FROM memory WHERE public_id = ?1",
+                params![mem_public],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            lineage, mem_public,
+            "a migrated memory is its own lineage, seeded from the id it already had"
+        );
+        let live: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memory WHERE superseded_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live, 1, "the migration supersedes nothing");
     }
     // And it is still retrievable through the mirror node (the recall
     // surface behind `stella memory`).
     let mem_nodes = store.memory_nodes().unwrap();
     assert_eq!(mem_nodes.len(), 1);
     assert_eq!(mem_nodes[0].content, "prefer rg over grep");
+}
+
+/// The same fixture at v3 — one per schema version, because the lineage
+/// backfill is the only Phase-1 change that rewrites existing rows and each
+/// version reaches it by a different path.
+#[test]
+fn migrates_v3_context_db_preserving_memories() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let mem_public = "mem_v3fixturememory000001";
+    {
+        let conn = open_legacy(&path, 3);
+        conn.execute(
+            "INSERT INTO memory (public_id, kind, content, salience, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                mem_public,
+                "note",
+                "the deploy needs the migration first",
+                0.0,
+                T1
+            ],
+        )
+        .unwrap();
+        upsert_node(
+            &conn,
+            &NodeInput::new(NodeKind::Memory, "the deploy needs the migration first")
+                .with_content("the deploy needs the migration first")
+                .with_uri(format!("memory://{mem_public}")),
+            T1,
+        )
+        .unwrap();
+    }
+
+    let store = ContextStore::open(&path).unwrap();
+    store.integrity_check().unwrap();
+    let stats = store.memory_lineage_stats().unwrap();
+    assert_eq!(stats.lineages, 1);
+    assert_eq!(stats.live, 1);
+    assert_eq!(stats.superseded, 0);
+    assert_eq!(
+        store.memory_revisions(mem_public).unwrap().len(),
+        1,
+        "a migrated memory is a lineage with exactly one revision"
+    );
+}
+
+/// The migration must be safe to run twice — reopening a store is the normal
+/// case, and a backfill that is not idempotent corrupts on the second open.
+#[test]
+fn the_lineage_migration_is_idempotent_across_reopens() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let mem_public = "mem_idempotencefixture001";
+    {
+        let conn = open_legacy(&path, 2);
+        conn.execute(
+            "INSERT INTO memory (public_id, kind, content, salience, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![mem_public, "note", "a lesson", 0.0, T1],
+        )
+        .unwrap();
+    }
+    let first = {
+        let store = ContextStore::open(&path).unwrap();
+        store.memory_lineage_stats().unwrap()
+    };
+    let second = {
+        let store = ContextStore::open(&path).unwrap();
+        store.memory_lineage_stats().unwrap()
+    };
+    assert_eq!(first, second, "reopening must not change anything");
+    assert_eq!(first.lineages, 1);
+    assert_eq!(first.live, 1);
+}
+
+/// Witness for #712 deliverable 5: editing a memory yields one live record,
+/// not two.
+///
+/// Identity was the hash of kind plus content, so changing a word minted a
+/// second memory *and* a second mirror node, and the old text kept its own
+/// vector and full participation in every future recall. Two rows, one lesson,
+/// both citable, and no command could tell you which was current.
+#[tokio::test]
+async fn editing_a_memory_yields_one_live_record() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let store = ContextStore::open_with(
+        &path,
+        std::sync::Arc::new(crate::embed::HashEmbedder::default()),
+        crate::clock::FixedClock::shared(1_000),
+    )
+    .unwrap();
+
+    store
+        .upsert(crate::writeback::ContextDelta::new().with_memory(
+            crate::writeback::MemoryInput::reflection("prefer rg over grep", Vec::<String>::new()),
+        ))
+        .await
+        .unwrap();
+    let before = store.memory_nodes().unwrap();
+    assert_eq!(before.len(), 1);
+    let node_id = before[0].public_id.clone();
+    let lineage = store.memory_lineage(&node_id).unwrap().expect("lineage");
+
+    // The edit: same lineage, new words.
+    store
+        .upsert(
+            crate::writeback::ContextDelta::new().with_memory(
+                crate::writeback::MemoryInput::reflection(
+                    "prefer rg over grep, and fd over find",
+                    Vec::<String>::new(),
+                )
+                .revises(&lineage),
+            ),
+        )
+        .await
+        .unwrap();
+
+    let after = store.memory_nodes().unwrap();
+    assert_eq!(
+        after.len(),
+        1,
+        "an edit revises the memory; it does not mint a second one: {:?}",
+        after.iter().map(|n| &n.content).collect::<Vec<_>>()
+    );
+    assert_eq!(after[0].content, "prefer rg over grep, and fd over find");
+    assert_eq!(
+        after[0].public_id, node_id,
+        "and the id a caller already holds still resolves to it"
+    );
+
+    // The old text is history, not a competitor: still readable, never live.
+    let stats = store.memory_lineage_stats().unwrap();
+    assert_eq!(stats.lineages, 1);
+    assert_eq!(stats.live, 1);
+    assert_eq!(stats.superseded, 1);
+    let revisions = store.memory_revisions(&lineage).unwrap();
+    assert_eq!(revisions.len(), 2, "the history survives (L-C3)");
+    assert_eq!(
+        revisions.iter().filter(|r| r.is_current()).count(),
+        1,
+        "exactly one revision of a lineage is live"
+    );
+
+    // And recall serves the new text only.
+    let q = contextgraph_types::ContextQuery {
+        goal: "shell tools".into(),
+        query_text: Some("prefer rg over grep".into()),
+        embedding: None,
+        kinds: vec![],
+        anchors: vec![],
+        max_frames: 10,
+        max_tokens: 4000,
+        as_of: None,
+        representation_preferences: vec![],
+    };
+    let recalled = store.recall(&q).await.unwrap();
+    assert_eq!(
+        recalled.frames.len(),
+        1,
+        "one lesson, one frame — not the old text competing with the new"
+    );
+    assert!(
+        recalled.frames[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("fd")
+    );
 }
