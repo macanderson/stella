@@ -74,8 +74,14 @@ pub(crate) fn definitions(
 }
 
 /// Best-effort textual references: whole-word occurrences of `name` across
-/// indexed files. Linear in the indexed corpus and capped at
-/// [`MAX_REFERENCES`] — best-effort retrieval, not an index.
+/// indexed files — best-effort retrieval, not an index.
+///
+/// [`MAX_REFERENCES`] bounds the frames *emitted*, not the work done: a name
+/// with fewer hits than that (a miss, most of all) reads every indexed file
+/// off disk before returning. That is linear in the corpus with a file read
+/// per step, and it runs synchronously on a caller's thread — the reason the
+/// `graph_query` tool's `references` mode is the crate's slowest answer on a
+/// large tree. A scanned-bytes ceiling belongs here.
 pub(crate) fn references(
     conn: &Connection,
     root: &Path,
@@ -486,9 +492,9 @@ fn candidate_identifiers(text: &str) -> Vec<String> {
 /// An anchor under `root` (directly, or after canonicalization) yields its
 /// relative path; anything else is passed through as if it were already
 /// workspace-relative — which is why this is total rather than fallible.
-/// Every use of the result is a store lookup keyed by path, so an anchor that
-/// names nothing indexed simply yields no frames — it never reaches the
-/// filesystem.
+/// The only filesystem touch is the read-only `canonicalize` below; the
+/// *result* is only ever a store lookup key, so an anchor naming nothing
+/// indexed simply yields no frames rather than reading an arbitrary path.
 fn anchor_to_rel(anchor: &str, root: &Path) -> String {
     let raw = anchor.strip_prefix("file://").unwrap_or(anchor);
     let path = Path::new(raw);

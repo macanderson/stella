@@ -17,6 +17,13 @@
 //! store, or files the graph doesn't know all mean "no footer", never an
 //! error and never a changed search result. Open → query → shutdown per
 //! call, the same no-held-handles discipline as `graph_query`.
+//!
+//! Unlike `graph_query`, [`for_files`] is synchronous and is called inline
+//! from `grep`/`glob`'s `execute`, so its SQLite open and per-file queries
+//! run on a runtime worker. It deliberately does NOT run `index_all` — it is
+//! reads against whatever the index already holds, bounded by `MAX_FILES` —
+//! but the #549 discipline (hand the synchronous region to the blocking pool)
+//! has not been extended to this caller.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -210,7 +217,10 @@ fn render_file(hood: &stella_graph::FileNeighborhood) -> Option<String> {
         parts.push(format!("imports {}", hood.imports.len()));
     }
     if !hood.importers.is_empty() {
-        let mut listed: Vec<&str> = hood
+        // `take` already bounds the list; the extra count is what the tail
+        // collapses to. (A redundant `truncate` used to sit in the `extra`
+        // branch, after the join it could no longer affect — removed.)
+        let listed: Vec<&str> = hood
             .importers
             .iter()
             .take(MAX_IMPORTERS)
@@ -219,7 +229,6 @@ fn render_file(hood: &stella_graph::FileNeighborhood) -> Option<String> {
         let extra = hood.importers.len().saturating_sub(MAX_IMPORTERS);
         let mut s = format!("imported by {}", listed.join(", "));
         if extra > 0 {
-            listed.truncate(MAX_IMPORTERS);
             s.push_str(&format!(" (+{extra} more)"));
         }
         parts.push(s);

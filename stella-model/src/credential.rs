@@ -44,8 +44,15 @@ pub enum CredentialError {
 
 /// Which step in the resolution chain produced an [`ApiKey`]. Exists so
 /// callers (and tests) can assert precedence without inspecting the secret
-/// itself, and so a successful interactive prompt can be told to persist —
-/// only `Interactive` results get written back to the credentials file.
+/// itself, and so a successful interactive prompt can be *identified* for
+/// write-back — only `Interactive` results are worth persisting, since every
+/// other source already has a durable home.
+///
+/// [`ApiKey::resolve`] never writes anything itself: it borrows the
+/// credentials file (`&CredentialsFile`), so it structurally cannot. The
+/// write-back is the caller's, keyed off this discriminant —
+/// `stella-cli`'s `Config::resolve` sets the row and saves, and treats a
+/// failed save as a warning rather than failing the command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialSource {
     /// An explicit `--api-key`-style flag on the invocation — highest
@@ -65,8 +72,9 @@ pub enum CredentialSource {
     /// "this file" (`ConfigFile`) apart from "this declarative config"
     /// (`SettingsJson`) instead of both reporting as the same source.
     SettingsJson,
-    /// Typed at the masked prompt on first use. The one source `resolve`
-    /// persists — see the write-back note on [`CredentialSource`] itself.
+    /// Typed at the masked prompt on first use. The one source worth
+    /// persisting — see the write-back note on [`CredentialSource`] itself
+    /// for why the write is the caller's, not `resolve`'s.
     Interactive,
 }
 
@@ -317,6 +325,14 @@ impl CredentialsFile {
     /// if the platform has no resolvable home directory (never panics —
     /// callers treat "no credentials file available" as just another
     /// resolution step that falls through).
+    ///
+    /// "Resolvable" here means the `HOME` environment variable specifically,
+    /// not a platform home-directory API. On Windows, where `HOME` is usually
+    /// unset (`USERPROFILE` is the equivalent), this is always `None`: the
+    /// file step of the chain silently drops out and those users are on env
+    /// vars or `--api-key`. That is a known gap, not the intent — the
+    /// non-Unix half of `write_secret_file` exists for the day a home
+    /// lookup covers Windows too.
     pub fn default_path() -> Option<PathBuf> {
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
         Some(home.join(".stella").join("credentials.toml"))
@@ -427,6 +443,15 @@ impl CredentialsFile {
     /// guarantees no reader ever sees a half-written credentials file.
     /// (Best-effort on non-Unix — Windows ACLs are a different mechanism,
     /// out of scope here.)
+    ///
+    /// The *directory* is not hardened the same way: `create_dir_all` takes
+    /// the process umask, so `~/.stella` is typically `0755` — world-listable,
+    /// though the secret file inside it stays `0600`, so no other user can
+    /// read a key. Two follow-ups worth taking together if this file's threat
+    /// model ever includes a hostile local user with write access to the
+    /// directory: create it `0700`, and open the temp file `create_new` so a
+    /// pre-planted symlink at the predictable `.tmp.<pid>` name cannot
+    /// redirect the write.
     pub fn save(&self) -> Result<(), CredentialError> {
         if self.path.as_os_str().is_empty() {
             return Err(CredentialError::FileWrite {
@@ -448,8 +473,13 @@ impl CredentialsFile {
 
         // Temp file in the SAME directory so the final `rename` is atomic
         // (a cross-filesystem rename would fall back to copy+delete and lose
-        // atomicity). Unique per-process suffix avoids clobbering a temp file
-        // a parallel writer is using.
+        // atomicity). The pid suffix keeps two *processes* — a `stella auth`
+        // invocation and a running deck — off each other's temp file; it does
+        // NOT separate two concurrent `save` calls inside one process, which
+        // would share the name. Every caller today saves from a single
+        // command path, so that case is unreached; a second in-process writer
+        // needs a per-save counter here (the shape `zai.rs`'s `SESSION_SEQ`
+        // uses), not just the pid.
         let tmp_path = self
             .path
             .with_extension(format!("tmp.{}", std::process::id()));
@@ -501,6 +531,10 @@ fn permission_advisories(_path: &Path) -> Vec<CredentialAdvisory> {
     Vec::new()
 }
 
+/// One IO failure on the secret-file write path as a named
+/// [`CredentialError::FileWrite`]. Shared by every step of
+/// [`write_secret_file`] so open, chmod, write, and fsync failures all name
+/// the same path rather than each spelling the conversion itself.
 fn write_err(path: &Path, e: std::io::Error) -> CredentialError {
     CredentialError::FileWrite {
         path: path.display().to_string(),
@@ -545,6 +579,13 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     Ok(())
 }
 
+/// The non-Unix fallback, and honest about what it does not do: no birth-mode
+/// permissions (Windows ACLs are a different mechanism, out of scope) and no
+/// `fsync`, so the caller's `rename` can publish a name whose bytes are still
+/// only in the page cache. The atomicity claim on [`CredentialsFile::save`] is
+/// therefore a Unix claim. Unreached today — [`CredentialsFile::default_path`]
+/// resolves nothing off `HOME`-less platforms — so this is a placeholder for
+/// the port, not a shipped path.
 #[cfg(not(unix))]
 fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     std::fs::write(path, bytes).map_err(|e| write_err(path, e))

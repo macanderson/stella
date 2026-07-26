@@ -118,23 +118,35 @@ pub struct RuleMetadata {
 }
 
 /// A validation problem found in optional context-as-code metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Carries a `Display` message (like every other error type in this crate) so a
+/// caller can surface a rule's [`crate::rules::Rule::metadata_errors`] verbatim
+/// instead of having to re-derive prose from a `match`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RuleMetadataError {
     /// A metadata key was specified more than once in one frontmatter block.
+    #[error("metadata key `{0}` is specified more than once")]
     DuplicateKey(String),
     /// A metadata-bearing rule omitted a required field.
+    #[error("required metadata field `{0}` is missing or empty")]
     MissingField(&'static str),
     /// The metadata schema is not supported by this reader.
+    #[error("unsupported metadata schema_version `{0}` (this reader understands `1.0-draft`)")]
     InvalidSchemaVersion(String),
     /// An enum field contains a value outside its published vocabulary.
+    #[error("metadata field `{field}` has value `{value}`, which is outside its vocabulary")]
     InvalidEnum { field: &'static str, value: String },
     /// Confidence must be an integer from 0 through 100.
+    #[error("confidence `{0}` is not an integer from 0 through 100")]
     InvalidConfidence(String),
     /// A timestamp is not a canonical UTC RFC 3339 instant.
+    #[error("metadata field `{field}` value `{value}` is not a canonical UTC instant")]
     InvalidTimestamp { field: &'static str, value: String },
     /// The exclusive end of applicability is not after its start.
+    #[error("valid_until must be strictly later than valid_from")]
     InvalidValidityRange,
     /// A list expected to contain stable identifiers or paths was empty.
+    #[error("metadata field `{field}` must list at least one entry")]
     EmptyList { field: &'static str },
 }
 

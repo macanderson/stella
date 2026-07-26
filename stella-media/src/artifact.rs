@@ -21,6 +21,15 @@
 //! serialized across processes by `mutation_lock` (crate-private, so this
 //! names it rather than linking it); atomicity of the replacement alone would
 //! not stop two racers from both reading the same pre-image.
+//!
+//! The artifact file itself is written *outside* that lock (`create_new` +
+//! `fsync`, then the manifest upsert), so two processes racing on one
+//! deterministic video id can still interleave — the loser may read the
+//! winner's not-yet-written file and report a spurious digest mismatch.
+//! Recorded rather than fixed: one CLI process per workspace is the shipped
+//! shape, and widening the lock to cover the file write needs a lock handle
+//! threaded through `save_with_id` (a second `File::lock` on the same path
+//! from one process would block on itself).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

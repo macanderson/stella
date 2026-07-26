@@ -1,6 +1,5 @@
 use stella_core::BudgetOutcome;
 use stella_protocol::AgentEvent;
-use tokio::sync::mpsc::UnboundedSender;
 
 use super::{PipelineOutcome, PipelineStatus};
 use crate::triage::TaskClass;
@@ -28,17 +27,20 @@ pub(super) fn budget_abort(outcome: BudgetOutcome) -> Option<PipelineBudgetAbort
     })
 }
 
+/// The terminal `Error` event and the `Aborted` outcome for a run that stopped
+/// before execution ever started. Returned as a pair instead of taking a sink,
+/// so this stays a pure function over owned data and the caller keeps its one
+/// emission point (L-E1/L-T5).
 pub(super) fn aborted_before_execute(
-    events: &UnboundedSender<AgentEvent>,
     task_class: TaskClass,
     total_cost: f64,
     reason: &str,
-) -> PipelineOutcome {
-    let _ = events.send(AgentEvent::Error {
+) -> (AgentEvent, PipelineOutcome) {
+    let event = AgentEvent::Error {
         message: reason.to_string(),
         retryable: false,
-    });
-    PipelineOutcome {
+    };
+    let outcome = PipelineOutcome {
         status: PipelineStatus::Aborted {
             reason: reason.to_string(),
         },
@@ -48,5 +50,6 @@ pub(super) fn aborted_before_execute(
         verdict: None,
         revisions: 0,
         candidates_run: 0,
-    }
+    };
+    (event, outcome)
 }

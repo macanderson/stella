@@ -470,6 +470,14 @@ impl DiagnosticRunner for GitDiagnosticRunner {
 async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // Cancellation drops this future without unwinding into the timeout arm
+    // below, and a `setsid` child cannot be reached by the terminal's own
+    // signals — so a cancelled turn used to leave a full-length test/diagnostic
+    // command (up to the 300s bound) running unattended. Reaping the direct
+    // child on drop is the same discipline `candidate_ws::git_stdout_to_file`
+    // already applies. Grandchildren still outlive it; only the timeout arm
+    // signals the whole process group.
+    cmd.kill_on_drop(true);
     #[cfg(unix)]
     unsafe {
         cmd.pre_exec(|| {
@@ -547,24 +555,6 @@ fn truncate_tail(s: &str, max_bytes: usize) -> String {
     s[idx..].to_string()
 }
 
-/// Build the provider adapter from config. Consults the catalog first
-/// (provider-scoped, since the same slug legitimately exists on several
-/// providers — `gemini-3-pro` on both `gemini` and `vertex`) so an
-/// unrecognized model slug is a hard, immediate, named error — never a
-/// silent construction of a provider that will simply fail its first live
-/// call (L-M1/L-M2). The one exemption is `local`:
-/// a local server's models are whatever the user pulled into it — there is
-/// no curated catalog to check against, and the anti-phantom-slug rule
-/// exists to catch drift in OUR seed data, not to veto the user's own
-/// endpoint.
-///
-/// Each wire dialect gets its own arm: OpenAI (Responses API), Anthropic
-/// (Messages), Gemini direct + Vertex (generateContent), Bedrock (Converse,
-/// SigV4). Everything else — Z.ai, xAI, DeepSeek, OpenRouter, local — is
-/// genuinely the same Chat Completions shape behind different base URLs,
-/// served by the shared adapter re-identified per provider so its
-/// `Provider::id()` and error messages name the surface actually being
-/// called (an xAI 401 must never read "Z.ai rejected the API key").
 /// The registry feature switches for this session's config — the ONE
 /// translation point from settings (`tools.bash`, default off) to
 /// [`stella_tools::RegistryOptions`]. Every session driver (one-shot, goal,

@@ -109,6 +109,16 @@ impl OpenAiProvider {
 
 // ── Wire types (OpenAI Responses API) ────────────────────────────────────
 
+/// The Responses API request body.
+///
+/// One field is conspicuously absent: `store`. The Responses API defaults it
+/// to `true`, so every request — the whole replayed conversation, which for
+/// this agent means the user's source files, tool output, and system prompt —
+/// is retained server-side and listed in the org's dashboard. Nothing here
+/// opts out, so an OpenAI-routed session inherits that default. Sending
+/// `store: false` is the fix; it is a wire change, and a deliberate one,
+/// because it also disables the encrypted-reasoning-item round-trip that a
+/// later multi-turn reasoning optimization would want.
 #[derive(Serialize)]
 struct OpenAiRequest<'a> {
     model: &'a str,

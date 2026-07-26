@@ -56,24 +56,27 @@ const EVICTION_STUB: &str =
     "[tool output evicted to fit context — re-run the tool if you need it again]";
 
 /// Aging only touches outputs big enough that head+tail plus the marker is
-/// a real saving; below this it would churn bytes for nothing.
+/// a real saving; below this it would churn bytes for nothing. Counted in
+/// UTF-8 bytes (`str::len`), like every other size floor in this module —
+/// [`age_content`] then walks the cut back to a char boundary.
 const AGE_THRESHOLD_CHARS: usize = 2_000;
-/// What aging keeps from each end. Head carries the tool's framing (the
-/// PASSED/FAILED line, file headers); tail carries the errors.
+/// What aging keeps from each end, in UTF-8 bytes. Head carries the tool's
+/// framing (the PASSED/FAILED line, file headers); tail carries the errors.
 const AGE_KEEP_CHARS: usize = 800;
 
-fn dedup_stub() -> String {
-    // Models can't see message indices — point at the surviving copy in
-    // terms they can act on.
-    "[identical output repeated — the full content already appears in an earlier tool result]"
-        .to_string()
-}
+/// What pass 1 writes over a later byte-identical copy. Models can't see
+/// message indices — point at the surviving copy in terms they can act on.
+/// A `const` rather than a constructor because [`is_compacted_output`] compares
+/// against it once per tool result per step, and the driver re-scans the whole
+/// transcript every step (#554) — building the String to throw it away was
+/// per-step garbage proportional to the history.
+const DEDUP_STUB: &str =
+    "[identical output repeated — the full content already appears in an earlier tool result]";
 
-fn supersession_stub() -> String {
-    "[stale result of a repeated call — the same tool ran again with identical input; the \
-     current output appears in a more recent tool result]"
-        .to_string()
-}
+/// What pass 2 writes over a stale result of a re-run call. `const` for the
+/// same reason as [`DEDUP_STUB`].
+const SUPERSESSION_STUB: &str = "[stale result of a repeated call — the same tool ran again with identical input; the \
+     current output appears in a more recent tool result]";
 
 /// The marker [`age_content`] splices between the head and tail it keeps.
 /// Named so [`is_compacted_output`] can recognize an aged payload without
@@ -100,8 +103,8 @@ pub(crate) fn is_compacted_output(output: &ToolOutput) -> bool {
         ToolOutput::Error { message } => message,
     };
     payload == EVICTION_STUB
-        || *payload == dedup_stub()
-        || *payload == supersession_stub()
+        || payload == DEDUP_STUB
+        || payload == SUPERSESSION_STUB
         || payload.contains(AGE_ELISION_MARKER)
 }
 
@@ -230,7 +233,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
                     if !id.is_empty() && seen.get(&id).is_some_and(|&kept_at| kept_at < idx) {
                         deduped_blocks.push(id);
                         result.output = ToolOutput::Ok {
-                            content: dedup_stub(),
+                            content: DEDUP_STUB.to_string(),
                         };
                         deduped += 1;
                     }
@@ -333,7 +336,7 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
             if let Some(result) = messages[idx].tool_results.get_mut(ridx) {
                 superseded_blocks.push(id_at(idx, ridx));
                 result.output = ToolOutput::Ok {
-                    content: supersession_stub(),
+                    content: SUPERSESSION_STUB.to_string(),
                 };
                 superseded += 1;
             }

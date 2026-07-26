@@ -402,8 +402,10 @@ stella inspect   # the exact context a past model call was sent, rebuilt from
 ### Global flags
 
 `--model provider/id` · `--api-key` · `--base-url` · `--budget <usd>` ·
-`--output-format text|json|stream-json` (also as `STELLA_MODEL`,
-`STELLA_BASE_URL`, `STELLA_BUDGET`, `STELLA_OUTPUT_FORMAT`). The `json` /
+`--output-format text|json|stream-json` · `--plain` · `--no-anim` (also as
+`STELLA_MODEL`, `STELLA_BASE_URL`, `STELLA_BUDGET`, `STELLA_OUTPUT_FORMAT`,
+`STELLA_PLAIN`, `STELLA_NO_ANIM`). All of them are registered with every
+subcommand, so they parse before *or* after the subcommand token. The `json` /
 `stream-json` formats are for headless one-shot `stella run`; interactive
 `chat` / `goal` / `monitor` modes render human-readable output. `stella run`
 uses the staged pipeline by default; `--no-pipeline` falls back to the raw
@@ -450,11 +452,24 @@ All file tools are workspace-root-pinned, and every read/write/edit/delete is
 recorded in the Files-Touched ledger (shown per turn as `[C·R·U·D] path`, also
 via `/files`).
 
-**Bash is opt-in.** The default tool surface has no shell: the model works
-through enumerable-argv tools (build/test/lint/format, `run_script`'s
-project-declared verbs, the process group, the `repo_*` tools). Enable `bash`
-per user, org, or project by adding `"tools": {"bash": "on"}` to the
-corresponding `settings.json` scope (normal per-field merge — project wins).
+**Bash is opt-in.** The default tool surface has no *free-form shell tool*: the
+model works through enumerable-argv tools (build/test/lint/format,
+`run_script`'s project-declared verbs, the process group, the `repo_*` tools).
+Enable `bash` per user, org, or project by adding `"tools": {"bash": "on"}` to
+the corresponding `settings.json` scope (normal per-field merge — project wins).
+
+Stated precisely, because a security claim that overreaches is worse than none:
+turning `bash` off removes the tool, not every route to a shell.
+`start_process` stays registered by default and takes an argv vector whose
+`argv[0]` may itself be an interpreter (`["bash", "-c", …]`). That is why every
+model-authored command line — `bash`, `start_process`'s joined argv,
+`build_project`/`run_tests`/`verify_done`/`run_script`'s resolved commands —
+rides the same blocking `command.started` policy chain, so a hook on that event
+sees the exact line *before* anything spawns
+(`stella-tools/src/registry.rs::command_line_for`). Note the scope: the
+`guard-deny-command` workspace rule globs the `bash` tool's own `command`
+string, not `start_process`'s argv. If you need a boundary rather than a gate,
+use the OS sandbox below.
 
 **Opt-in bash sandbox:** `STELLA_BASH_SANDBOX=workspace-write` confines `bash`
 file writes to the workspace root plus the standard tmp dirs (network still

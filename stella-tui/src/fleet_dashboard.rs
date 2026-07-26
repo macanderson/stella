@@ -391,11 +391,10 @@ impl FleetBoard {
                 row.started = Some(now);
             }
         }
-        if row.status.is_terminal() {
-            // Late events after the verdict only refresh the detail preview,
-            // never the frozen clocks/status.
-        }
-
+        // Late events after the verdict only refresh the detail preview: the
+        // arms below all guard `is_terminal()` before touching status, and
+        // `elapsed`/`tool_ago` read from the frozen `ended` anchor, so a
+        // straggler can never walk a finished row back to running.
         match event {
             AgentEvent::ToolStart { call } => {
                 row.tool_calls += 1;
@@ -973,7 +972,8 @@ fn render_counts(board: &FleetBoard, view: &FleetView, area: Rect, buf: &mut Buf
         "failed",
         FleetStatus::Failed.color(),
     ));
-    // Right-aligned sort hint.
+    // The sort hint trails the counts on the same line (the counts are
+    // variable-width, so there is nothing stable to right-align against).
     spans.push(Span::styled(
         format!("sort: {}", view.sort.label()),
         theme::muted(),

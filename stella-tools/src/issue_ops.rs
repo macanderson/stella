@@ -393,6 +393,24 @@ fn contains_ci(haystack: &str, needle: &str) -> bool {
     haystack.to_lowercase().contains(&needle.to_lowercase())
 }
 
+/// The issue number in `key`, for interpolation into a GitHub REST path.
+///
+/// `crate::issues::require_issue_ref` only stops FLAG-shaped refs, which is
+/// what the `gh` backend needs; the REST backend splices the ref straight
+/// into `/repos/{slug}/issues/{number}`, where `/` and `..` are path syntax.
+/// `1/../../../repos/other/repo/issues/1` normalizes to a different
+/// repository's issue and would be read — or PATCHed — with the user's
+/// `repo`-scoped token. Digits only, so there is nothing left to reshape.
+fn github_issue_number(key: &str) -> Result<&str, String> {
+    let number = key.trim().trim_start_matches('#');
+    if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(number);
+    }
+    Err(format!(
+        "`{key}` is not a GitHub issue number — pass `123` or `#123`"
+    ))
+}
+
 // ── GitHub JSON shaping (shared by CLI + REST backends) ─────────────────────
 
 fn github_issue_summary(node: &Value) -> IssueSummary {
@@ -624,7 +642,7 @@ pub async fn get_issue(
         IssueBackend::GitHubApi { token, api_base } => {
             let client = GitHubRest::with_base(token, api_base);
             let slug = repo_slug(root).await?;
-            let number = key.trim_start_matches('#');
+            let number = github_issue_number(key)?;
             let node = client
                 .request(
                     reqwest::Method::GET,
@@ -831,7 +849,7 @@ pub async fn set_status(
             };
             let client = GitHubRest::with_base(token, api_base);
             let slug = repo_slug(root).await?;
-            let number = key.trim_start_matches('#');
+            let number = github_issue_number(key)?;
             client
                 .request(
                     reqwest::Method::PATCH,
@@ -875,7 +893,7 @@ pub async fn add_comment(
         IssueBackend::GitHubApi { token, api_base } => {
             let client = GitHubRest::with_base(token, api_base);
             let slug = repo_slug(root).await?;
-            let number = key.trim_start_matches('#');
+            let number = github_issue_number(key)?;
             client
                 .request(
                     reqwest::Method::POST,
@@ -938,7 +956,7 @@ pub async fn update_issue(
         IssueBackend::GitHubApi { token, api_base } => {
             let client = GitHubRest::with_base(token, api_base);
             let slug = repo_slug(root).await?;
-            let number = key.trim_start_matches('#');
+            let number = github_issue_number(key)?;
             let mut patch = serde_json::Map::new();
             if let Some(title) = title {
                 patch.insert("title".into(), json!(title));
@@ -1368,6 +1386,29 @@ mod tests {
         assert_eq!(strip_ansi(mixed), "{\"a\":\"\\u001b[1m\"}");
         // Plain JSON passes through byte-identical.
         assert_eq!(strip_ansi("[{\"n\":1}]"), "[{\"n\":1}]");
+    }
+
+    /// The REST backend interpolates the issue ref into a URL PATH, so a ref
+    /// carrying path syntax would retarget the request — `..` normalizes to
+    /// another repository, reached with the user's `repo`-scoped token.
+    #[test]
+    fn github_issue_numbers_reject_path_syntax() {
+        assert_eq!(github_issue_number("123").unwrap(), "123");
+        assert_eq!(github_issue_number("#123").unwrap(), "123");
+        assert_eq!(github_issue_number(" 42 ").unwrap(), "42");
+        for hostile in [
+            "1/../../../repos/other/repo/issues/1",
+            "1/comments",
+            "1?state=closed",
+            "https://github.com/o/r/issues/1",
+            "#",
+            "",
+        ] {
+            assert!(
+                github_issue_number(hostile).is_err(),
+                "`{hostile}` must not reach a REST path"
+            );
+        }
     }
 
     #[test]

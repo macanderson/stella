@@ -5,9 +5,13 @@
 //! This is the runtime retrieval surface of `stella-graph`: instead of
 //! grepping for a symbol, the agent asks the graph — where is `run_turn`
 //! defined, who imports `src/auth.rs`, what is this file's neighborhood
-//! (Field Manual Part 4: "code is a graph, not text"). Registered only when
-//! the index exists, mirroring the issue tools' conditional registration —
-//! no index, no dead schema burning tokens.
+//! (Field Manual Part 4: "code is a graph, not text").
+//!
+//! Registered UNCONDITIONALLY, unlike the issue/media tools: gating on the
+//! index already existing would hide exactly the tool meant to create it
+//! (`open_or_build` bootstraps one on first use) and leave the agent to
+//! grep instead. The schema's token cost is paid once per session; a
+//! chicken-and-egg gate cost every session on a fresh workspace.
 //!
 //! Read-only by construction: the tool opens the store, answers, and shuts
 //! down per call (the same open/shutdown discipline as the schema gate),

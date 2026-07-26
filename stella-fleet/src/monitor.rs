@@ -48,6 +48,8 @@ pub struct GhOutput {
 }
 
 impl GhOutput {
+    /// A successful invocation with the given stdout — test ergonomics.
+    #[must_use]
     pub fn ok(stdout: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -57,6 +59,8 @@ impl GhOutput {
         }
     }
 
+    /// A failed invocation with an exit code and stderr — test ergonomics.
+    #[must_use]
     pub fn failed(code: i32, stderr: impl Into<String>) -> Self {
         Self {
             success: false,
@@ -74,7 +78,16 @@ pub enum GhError {
     Spawn { command: String, reason: String },
 }
 
-/// The production [`GhCli`]: spawns the real `gh` binary.
+/// The production [`GhCli`]: spawns the real `gh` binary, with the process
+/// environment scrubbed down to the GitHub auth variables `gh` genuinely
+/// needs, and `kill_on_drop` so a cancelled watch does not strand the child.
+///
+/// One gap worth knowing before trusting [`WatchConfig`]'s caps: there is no
+/// per-invocation timeout here. Every cap in [`Monitor::watch_ci`] is measured
+/// *between* polls, so a `gh` that connects and then never answers (a proxy
+/// black-holing the request) parks the whole watch inside a single `output()`
+/// await and no cap can fire. Bounding one invocation belongs here rather than
+/// in the loop, and needs a number chosen against real `gh` latency.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemGhCli;
 
@@ -227,6 +240,7 @@ impl CiConclusion {
     /// verdict. Success/Skipped/Neutral pass; everything else (including an
     /// unknown conclusion) is treated as a failure — we never dress an
     /// unrecognized terminal state up as green.
+    #[must_use]
     pub fn is_failure(&self) -> bool {
         !matches!(
             self,
@@ -261,6 +275,7 @@ pub enum WatchPhase {
 }
 
 impl CiSnapshot {
+    #[must_use]
     pub fn phase(&self) -> WatchPhase {
         if self.runs.is_empty() {
             WatchPhase::Pending
@@ -273,12 +288,14 @@ impl CiSnapshot {
 
     /// Whether any run is actively executing — one form of "fresh evidence"
     /// that the wait should extend (L-E4).
+    #[must_use]
     pub fn any_in_progress(&self) -> bool {
         self.runs.iter().any(|r| r.status.is_in_progress())
     }
 
     /// The overall verdict, meaningful when [`phase`](Self::phase) is
     /// [`WatchPhase::AllCompleted`]: failure if any run failed, else success.
+    #[must_use]
     pub fn overall_conclusion(&self) -> CiConclusion {
         let any_failed = self.runs.iter().any(|r| {
             r.conclusion
@@ -295,6 +312,7 @@ impl CiSnapshot {
 
     /// A stable one-line description of what was last observed — used both as
     /// the timeout's `last_observed` and the completion summary.
+    #[must_use]
     pub fn summary(&self) -> String {
         if self.runs.is_empty() {
             return "no CI runs observed".to_string();
@@ -357,9 +375,23 @@ pub enum WatchDecision {
 /// consecutive poll failures, and read at most 50 runs per poll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WatchConfig {
+    /// How long [`Monitor::watch_ci`] sleeps between polls. Not validated:
+    /// `0` polls `gh` as fast as the process can spawn it until a cap fires,
+    /// and under a clock that only advances via the [`Sleeper`] (the test
+    /// shape) no cap ever fires at all. Keep it at seconds, not milliseconds.
     pub poll_interval_ms: u64,
+    /// The hard ceiling on one watch: once this much has elapsed since the
+    /// first poll, the wait ends as [`TimeoutReason::CumulativeCap`] however
+    /// much fresh evidence CI is producing (L-E4). It bounds the error path
+    /// too — it is checked on a failed poll as well as a successful one.
     pub max_total_ms: u64,
+    /// How long a *started* run-set may sit without producing fresh evidence
+    /// (a changed fingerprint, or a job in progress) before the wait ends as
+    /// [`TimeoutReason::Stalled`].
     pub stall_timeout_ms: u64,
+    /// How long to wait for CI to appear at all before ending as
+    /// [`TimeoutReason::NoRunsStarted`]. Measured from the first poll, not
+    /// from the last one, because a snapshot with no runs is not evidence.
     pub startup_grace_ms: u64,
     /// How many consecutive failed polls the watch rides out before giving up
     /// and returning the last error — a transient `gh` failure (a 403
@@ -416,6 +448,12 @@ fn decide(
         };
     }
     match phase {
+        // The startup grace is measured from the FIRST poll, so a run set that
+        // was observed and then vanished (a force-push retiring the runs, or a
+        // `run_list_limit` cut that drops the last one) re-reads as `Pending`
+        // and ends the watch as `NoRunsStarted` on the next poll rather than as
+        // a stall. The wait still terminates under a cap either way; only the
+        // reported reason is coarser than what happened.
         WatchPhase::Pending => {
             if elapsed_total_ms >= config.startup_grace_ms {
                 WatchDecision::TimedOut {
@@ -471,6 +509,7 @@ pub struct Monitor<H: GhCli> {
 impl<H: GhCli> Monitor<H> {
     /// A monitor with the production [`TokioSleeper`] and default
     /// [`WatchConfig`].
+    #[must_use]
     pub fn new(gh: H, clock: Box<dyn Clock>) -> Self {
         Self {
             gh,
@@ -541,6 +580,13 @@ impl<H: GhCli> Monitor<H> {
 
     /// One poll of CI runs for a git ref (`gh run list --branch <ref>`),
     /// reconciled live. Reads at most [`WatchConfig::run_list_limit`] runs.
+    ///
+    /// Unlike [`pr_status`](Self::pr_status), `git_ref` is **not** screened for
+    /// a leading `-` before it is spliced in after `--branch`, so a ref named
+    /// like a flag is handed to `gh` to parse. The fleet's own caller passes a
+    /// `fleet/`-prefixed branch it minted itself, so nothing in the product
+    /// reaches that; a caller forwarding an untrusted ref should screen it, or
+    /// this should grow the same guard `pr_status` has.
     pub async fn poll_ci(&self, git_ref: &str) -> Result<CiSnapshot, MonitorError> {
         let limit = self.config.run_list_limit.to_string();
         let out = self

@@ -172,6 +172,13 @@ fn uses_adaptive_thinking(model: &str) -> bool {
     // Version markers unique to the ≤ 4.5 / 3.x / 2.x generations. `-4-5`
     // cleanly separates 4.5 (opus/sonnet/haiku) from 4.6+/…-8; `-4-2025`
     // catches dated 4.0 snapshots (`claude-*-4-20250514`), which `-4-0` misses.
+    //
+    // These are substring matches, not segment matches, so a two-digit point
+    // release inside the same major (`-4-10`, `-4-11`) would alias onto the
+    // `-4-1` marker and be misread as legacy — the failure direction that
+    // 400s (`budget_tokens` sent to a model that requires adaptive). Anthropic
+    // has never shipped one, so the cheap form stands; a segment-aware match
+    // is the fix if they ever do.
     const LEGACY_MARKERS: &[&str] = &["-4-5", "-4-1", "-4-0", "-4-2025", "claude-3", "claude-2"];
     !LEGACY_MARKERS.iter().any(|marker| m.contains(marker))
 }

@@ -45,10 +45,10 @@ the boundary, and only the scheduling *heuristic* lives here
 **The ledger hierarchy: run → task → attempt → commits/spend.** One
 `.stella/private/fleet.db` per workspace holds `runs`, `tasks`, `attempts`,
 `commits`, `spend` and `lineage`. An attempt row is opened *before* the worker
-runs ([`ledger.rs:174`](src/ledger.rs)) so a crash mid-attempt still leaves a
+runs ([`ledger.rs:178`](src/ledger.rs)) so a crash mid-attempt still leaves a
 row naming what was in flight; the closing half — outcome, commits and the
 spend row — is written all-or-nothing in one transaction
-([`Ledger::finish_attempt`, ledger.rs:193](src/ledger.rs)). Retries are extra
+([`Ledger::finish_attempt`, ledger.rs:197](src/ledger.rs)). Retries are extra
 `attempts` rows, never extra lineage edges: `record_lineage` is idempotent per
 `(parent_run_id, child_task_id)`. This is not a rebuildable cache like
 `codegraph.db` — it is the authoritative record of a subagent's commits and of
@@ -67,12 +67,14 @@ same thing. Note `task` is doubly loaded too: a fleet `TaskId` is a unit of
 work in a run, while a `tasks` row in `stella-store` is the agent's own
 task-board snapshot.
 
-**What `dispatch` does, in order** ([`fleet.rs:438`](src/fleet.rs)): check the
+**What `dispatch` does, in order** ([`fleet.rs:463`](src/fleet.rs)): check the
 aggregate parent budget; claim the task's declared paths; allocate the
 workspace (a worktree only for `Isolation::Isolated`, otherwise the repo root);
 record task + lineage + attempt-open; register the worker's control lines and
-run it; stamp the outcome atomically; meter the child's cost into the parent
-`BudgetGuard`. The claim rows and the control registration are held by
+run it; meter the child's cost into the parent `BudgetGuard`; stamp the outcome
+atomically. Metering precedes the stamp so that a ledger write which fails
+cannot *also* drop a spend the worker has already made from the in-memory
+gate — over-counting a lost row is the safe direction. The claim rows and the control registration are held by
 `Drop`-scoped guards (`ClaimGuard`, [`fleet.rs:117`](src/fleet.rs);
 `ControlGuard`, [`fleet.rs:146`](src/fleet.rs)) rather than released at a
 statement, because a panicking worker or a dropped dispatch future skips the
@@ -87,23 +89,23 @@ genuinely divergent work (best-of-N, checkout-state mutation) and costs a cold
 build cache plus conflicts deferred to integration time.
 
 **Long waits are capped, not global.** `Monitor::watch_ci`
-([`monitor.rs:576`](src/monitor.rs)) polls CI and extends the wait *only* on
+([`monitor.rs:606`](src/monitor.rs)) polls CI and extends the wait *only* on
 fresh evidence (a changed run-set fingerprint, or a job actively in progress).
-The arithmetic is a pure function, `decide` ([`monitor.rs:398`](src/monitor.rs)),
+The arithmetic is a pure function, `decide` ([`monitor.rs:428`](src/monitor.rs)),
 so the 2h cumulative cap, the 20m stall window and the 10m startup grace are
 table-tested with an injected `Clock` instead of a real wait (L-E4).
 
 ## Gotchas
 
 - **Fleet commits always name explicit pathspecs.** `WorktreeManager::commit_paths`
-  ([`git.rs:382`](src/git.rs)) runs `git add -- <paths>` then
+  ([`git.rs:413`](src/git.rs)) runs `git add -- <paths>` then
   `git commit -m <msg> -- <paths>`, never `-A`/`.`/`-a` and never a
   pathspec-less commit — a blanket add in a shared tree sweeps another worker's
   staged files, which is how work was lost in the TS monorepo. An empty
   pathspec is `WorktreeError::EmptyPathspec`; a pathspec-less commit is not
   expressible through this API.
 - **`SystemGitCli` strips `GIT_DIR` and friends on every invocation**
-  ([`git.rs:86`](src/git.rs)). Inside a git hook (the pre-push gate running
+  ([`git.rs:87`](src/git.rs)). Inside a git hook (the pre-push gate running
   `cargo test`) those exported variables silently override `-C` — it once
   rewrote the host repo's identity and committed test fixtures onto a real
   branch.
@@ -120,7 +122,7 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   than an early return that would discard settled siblings' handles.
 - **Two `stella fleet` runs in one workspace open the same `fleet.db`.** WAL
   plus `busy_timeout=5000` are set on every open
-  ([`ledger.rs:136`](src/ledger.rs)) — without the timeout a second writer's
+  ([`ledger.rs:140`](src/ledger.rs)) — without the timeout a second writer's
   `finish_attempt` fails after its worker already spent real money.
 - **`Ledger` is not `Sync`.** The fleet holds it behind a `Mutex` and
   `finish_attempt` uses `unchecked_transaction`, which is sound *only* because
@@ -132,7 +134,7 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   backfilling a column does not — the `IF NOT EXISTS` guard silently skips it
   on an existing file, which is exactly how a schema change becomes a runtime
   `INSERT` failure. That change must land as a numbered `MIGRATION_V<n>` with a
-  matching `version < n` arm; `migrate` ([`ledger.rs:372`](src/ledger.rs))
+  matching `version < n` arm; `migrate` ([`ledger.rs:376`](src/ledger.rs))
   stamps `PRAGMA user_version` in the same transaction as the DDL it applies,
   the way `MIGRATION_V2` rebuilt `lineage` to add its uniqueness constraint.
 - **Nothing removes worktrees or branches.** `WorktreeManager::remove` exists
@@ -140,6 +142,12 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   `.stella/worktrees/<slug>` and their `fleet/<slug>-<hash>` branches are left
   for review. The slug hashes the run scope *and* the task id, so re-running a
   plan with the same task ids does not collide with what the last run kept.
+- **Some of this crate's surface has no product caller yet.**
+  `WorktreeManager::remove`/`list`/`commit_paths` and the whole warmest-first
+  path (`Fleet::with_cache_warmth`, `cache_schedule`) are exercised only by
+  this crate's own tests — `fleet_cmd` never calls them. They are API and
+  tests, not shipped behavior; treat their coverage as a contract for the
+  wiring still to come, not as evidence the feature is live.
 - **`WatchConfig::run_list_limit` (default 50) is a truncation point.** A
   branch with more CI runs than the limit can report `AllCompleted` while older
   runs go unobserved.
@@ -178,6 +186,12 @@ Adding a ledger column, table or constraint — the case with a real footgun:
    in place without losing rows — `an_unversioned_ledger_migrates_in_place_without_losing_data`
    is the template. Downgrades are unguarded by design: a file stamped by a
    newer binary is opened as-is.
+4. Keep the step **replay-safe** (`IF NOT EXISTS`, or a rebuild like
+   `MIGRATION_V2`). `migrate` reads `PRAGMA user_version` *before* it opens its
+   transaction, so two processes first-opening the same `fleet.db` can both
+   decide to apply the same step. A step that would fail on a second
+   application — `ALTER TABLE … ADD COLUMN` is the obvious one — needs that
+   read moved inside an IMMEDIATE transaction first.
 
 A new `git`/`gh` interaction goes on `WorktreeManager`/`Monitor` and through
 the existing `GitCli`/`GhCli::run`, never as a fresh `Command` — that is what

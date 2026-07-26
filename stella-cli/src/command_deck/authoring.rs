@@ -49,7 +49,7 @@ pub(super) async fn record_and_reflect_turn(
         &messages[reflect_start..],
     )
     .await;
-    if !outcome.is_ok() || !turn_warrants_reflection(&messages[reflect_start..]) {
+    if outcome.is_err() || !turn_warrants_reflection(&messages[reflect_start..]) {
         return;
     }
     let Some(memory) = memory else { return };

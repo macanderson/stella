@@ -33,6 +33,25 @@
 //! model into running arbitrary shell commands, and the sandbox bounds the
 //! blast radius of that command to the workspace.
 //!
+//! **Scope, stated honestly:** only the `bash` tool spawns through here.
+//! Every other path to a subprocess — `build_project`/`run_tests`'s
+//! `command` override, `verify_done`'s `test_cmd` (which additionally runs
+//! in a shadow worktree under the temp dir, outside the workspace), the
+//! `run_script` index-composed line, `start_process` with a shell `argv[0]`,
+//! the `repo_*`/`ci_status`/issue-tool `git` and `gh` invocations,
+//! [`crate::custom`]'s manifest tools, and [`crate::hook_runner`]'s hook
+//! actions — goes through [`crate::exec`] or its own spawn and runs
+//! UNSANDBOXED even when this is set. Confining the whole class means
+//! routing those through [`host_argv`] too; until then
+//! `STELLA_BASH_SANDBOX` is a bound on one tool, not on the session.
+//!
+//! The macOS profile is likewise a *filesystem* bound, not a capability
+//! bound: it is `(allow default)` with writes carved back, so a confined
+//! command keeps `process-exec` and Mach lookup and can still reach services
+//! that act on its behalf outside the sandbox. Treat it as blast-radius
+//! reduction for accidental and prompt-injected writes, not as a boundary
+//! that holds against a command written to break it.
+//!
 //! Argv and profile construction here are pure functions (mode + workspace
 //! root + platform in, argv/SBPL out) so they are unit-testable without
 //! spawning anything; the actual spawn stays in `bash.rs`.

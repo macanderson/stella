@@ -102,13 +102,18 @@ copyright** and the code stays open under the AGPL for everyone.
 ## Relationship to the Context Graph Protocol
 
 The [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
-is a separate project under **Apache-2.0**, and stays that way.
+is a separate project under **`MIT OR Apache-2.0`** — the Rust ecosystem's
+standard dual grant, taken at the recipient's option — and stays that way.
 
 That split is intentional. A protocol is only worth something if anyone can
-implement it, so CGP carries a permissive license with an explicit patent grant
-and no reciprocal obligations — adopt it in anything, including closed-source
-software, with no involvement from us. Stella is the reference *implementation*,
-and that is where the reciprocity applies.
+implement it, so CGP carries a permissive license (with an explicit patent
+grant on the Apache side) and no reciprocal obligations — adopt it in anything,
+including closed-source software, with no involvement from us. Stella is the
+reference *implementation*, and that is where the reciprocity applies.
+
+That permissive grant travels with the CGP material vendored into this
+repository, notably [`docs/context-reuse.md`](docs/context-reuse.md): it is
+CGP's document under CGP's terms, not this workspace's AGPL.
 
 Depending on CGP does **not** put your project under the AGPL.
 

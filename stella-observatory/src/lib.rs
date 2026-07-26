@@ -353,8 +353,14 @@ async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result
         if n == 0 {
             break;
         }
+        // Scan only what this read added, plus the three bytes before it that
+        // a terminator could straddle. Re-scanning `buf[..read]` every time
+        // made a byte-at-a-time client cost O(cap²) comparisons — 67M for one
+        // connection that never terminates its head, which is free CPU for
+        // anything local that can open a socket.
+        let scan_from = read.saturating_sub(3);
         read += n;
-        if buf[..read].windows(4).any(|w| w == b"\r\n\r\n") {
+        if buf[scan_from..read].windows(4).any(|w| w == b"\r\n\r\n") {
             head_complete = true;
             break;
         }
@@ -433,6 +439,16 @@ mod tests {
 
     /// Build a workspace with a seeded `.stella/private/store.db` shaped like the
     /// real schema (the subset the observatory reads).
+    ///
+    /// A hand-written *subset*, not a copy, and already a divergent one:
+    /// `stella-store`'s shipped DDL also carries `executions.session_id`,
+    /// `usage_complete` and `usage_status`, and `telemetry.call_role` and
+    /// `usage_complete` — columns no query in this crate selects. Nothing
+    /// checks the two schemas against each other, so a column this crate *does*
+    /// read, renamed in `stella-store`, keeps this suite green and 500s the
+    /// dashboard at runtime. Every INSERT below therefore names its columns:
+    /// the fixture must survive the store growing another one, not silently
+    /// depend on the column order of the day.
     fn seeded_workspace() -> TempDir {
         let dir = TempDir::new().unwrap();
         let dot = dir.path().join(".stella");
@@ -480,7 +496,12 @@ mod tests {
              VALUES
                ('run', 'add a function', 'zai', 'glm-5.2', 'completed', 0.03),
                ('goal', 'make tests pass', 'local', 'llama', 'goal_unmet', 0.0);
-             INSERT INTO telemetry VALUES
+             INSERT INTO telemetry
+               (execution_id, step, ts, provider, model, input_tokens,
+                estimated_input_tokens, output_tokens, cache_read_tokens,
+                cache_miss_tokens, cache_write_tokens, cost_usd, duration_ms,
+                retries, tool_calls)
+             VALUES
                (1, 1, CURRENT_TIMESTAMP, 'zai', 'glm-5.2',
                 1000, 0, 200, 400, 600, 50, 0.03, 1500, 0, 2),
                (2, 1, CURRENT_TIMESTAMP, 'local', 'llama',
@@ -658,6 +679,7 @@ mod tests {
     fn empty_workspace_degrades_to_empty_payloads_not_errors() {
         let ws = TempDir::new().unwrap();
         for route in [
+            "/api/meta",
             "/api/overview",
             "/api/executions",
             "/api/models",
@@ -674,6 +696,7 @@ mod tests {
             "/api/mcp-servers",
             "/api/config",
             "/api/memories",
+            "/api/explorations",
             "/api/rules",
             "/api/reflections",
         ] {
@@ -702,8 +725,21 @@ mod tests {
             "route table not recognised, only found {routes:?}"
         );
         for route in routes {
+            // A bare `contains` lets a shorter route ride on a longer one that
+            // starts with it: `/api/mcp` would pass on the strength of
+            // `/api/mcp-servers` alone, and `/api/memory` on `/api/memories`,
+            // `/api/execution` on `/api/executions`. Require an occurrence
+            // whose next character actually ends the path — the page writes
+            // `"/api/x"`, `` `/api/x` `` or `/api/x?…`.
+            let needle = format!("/api/{route}");
+            let fetched = INDEX_HTML.match_indices(needle.as_str()).any(|(at, _)| {
+                INDEX_HTML[at + needle.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '-')
+            });
             assert!(
-                INDEX_HTML.contains(&format!("/api/{route}")),
+                fetched,
                 "/api/{route} is served but nothing in the dashboard fetches it: \
                  give it a consumer or delete the route"
             );
@@ -736,8 +772,12 @@ mod tests {
             "INSERT INTO executions
                (kind, prompt, provider, model, started_at, outcome, cost_usd)
              VALUES ('run', 'clock skew', 'zai', 'glm-5.2', 'sometime', 'completed', 0.5);
-             INSERT INTO telemetry VALUES
-               (3, 1, 'sometime', 'zai', 'glm-5.2', 7, 0, 9, 0, 0, 0, 0.5, 11, 0, 1);
+             INSERT INTO telemetry
+               (execution_id, step, ts, provider, model, input_tokens,
+                estimated_input_tokens, output_tokens, cache_read_tokens,
+                cache_miss_tokens, cache_write_tokens, cost_usd, duration_ms,
+                retries, tool_calls)
+             VALUES (3, 1, 'sometime', 'zai', 'glm-5.2', 7, 0, 9, 0, 0, 0, 0.5, 11, 0, 1);
              INSERT INTO tool_calls
                (execution_id, seq, name, ok, error, bytes_out, duration_ms, ts)
              VALUES (3, 1, 'bash', 0, 'boom', 0, 4, 'sometime');",

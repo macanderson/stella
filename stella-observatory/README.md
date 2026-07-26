@@ -23,7 +23,7 @@ observes is not an observer. The price is two acknowledged copies —
 exploration manifests itself.
 
 Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
-([`../stella-cli/src/main.rs:847`](../stella-cli/src/main.rs)) preflights the
+([`../stella-cli/src/main.rs:950`](../stella-cli/src/main.rs)) preflights the
 private store paths and calls `serve` (`--port`, default `7787`; `0` picks a
 free one). This crate builds no binary —
 [`examples/serve.rs`](examples/serve.rs) is the dev harness. It reads two tiers:
@@ -54,7 +54,7 @@ Three things close that. `host_is_local` (`src/lib.rs:291`) refuses any `Host`
 that does not *parse* as a loopback IP — never a prefix test, because
 `127.0.0.1.attacker.example` is a registrable name `starts_with("127.")` waves
 through. `handle` refuses an unterminated request head with `431` *before*
-routing (`src/lib.rs:342`): padding the request line past the 8 KiB cap used to
+routing (`src/lib.rs:348`): padding the request line past the 8 KiB cap used to
 push `Host` out of the buffer entirely, and the no-`Host` allowance then waved
 the rebound request through to a route that still parsed out of the truncated
 path. And `frame-ancestors 'none'` in the CSP stops that page framing it
@@ -62,13 +62,13 @@ instead. The no-`Host` allowance itself is deliberate — a browser `fetch`
 always sends one, so its absence means raw curl or a test, not the attack.
 
 **Read-only** is `OpenFlags::SQLITE_OPEN_READ_ONLY` at all three open sites —
-`db::open_read_only` (`src/db.rs:736`), `global::open_usage`
-(`src/global.rs:59`), `codegraph::snapshot` (`src/codegraph.rs:38`) — each with
+`db::open_read_only` (`src/db.rs:739`), `global::open_usage`
+(`src/global.rs:59`), `codegraph::snapshot` (`src/codegraph.rs:45`) — each with
 a 5 s `busy_timeout`, so a checkpoint or a migration's exclusive lock makes a
 poll wait rather than 500. `Observatory::new` opens nothing, and each open
 returns `None` for a missing file rather than creating it. Outside
 `#[cfg(test)]` nothing here writes to the filesystem, and non-`GET` requests get
-`405` (`src/lib.rs:362`), so there is no mutation verb to reach.
+`405` (`src/lib.rs:368`), so there is no mutation verb to reach.
 
 **Embedded** is three `include_str!`s (`src/lib.rs:47`–`51`).
 `dashboard_html_has_no_external_references` fails the suite if `index.html` ever
@@ -99,7 +99,7 @@ keep the original root.
 — one row in `executions`, the foreign key `telemetry`, `tool_calls`,
 `files_touched` and `execution_reflection` hang off; every join in
 `Observatory::executions`, `execution`, `models` and `activity` is on it.
-`run_id` appears only in `Observatory::fleet` (`src/db.rs:678`), against a
+`run_id` appears only in `Observatory::fleet` (`src/db.rs:681`), against a
 different file (`fleet.db`) and a different hierarchy: a fleet run fans out to
 tasks, then attempts, then commits. It is not an execution and not a session,
 and no query may join the two. AGENTS.md's glossary is the authority.
@@ -108,7 +108,7 @@ and no query may join the two. AGENTS.md's glossary is the authority.
 
 A workspace that has never run `stella` renders an empty dashboard, not a 500.
 An absent file yields `None` and an empty payload at the call site; an absent
-*table* is caught by `is_missing_table` (`src/db.rs:799`), degrading
+*table* is caught by `is_missing_table` (`src/db.rs:802`), degrading
 `collect_rows`/`or_empty` to `[]`/`{}`. `global.rs` goes further — `query_rows`
 treats any `prepare` failure as empty, because a `usage.db` predating the hub
 replica has no `telemetry` table at all.
@@ -116,7 +116,7 @@ replica has no `telemetry` table at all.
 ### Secrets never reach the browser
 
 `settings.json` and `mcp.toml` carry credentials, and both are served. `redact`
-(`src/fsview.rs:376`) replaces every string at or below a *credential scope* —
+(`src/fsview.rs:418`) replaces every string at or below a *credential scope* —
 a key `sensitive_key` matches, or an `env`/`headers` map whose values are
 credentials by position. The scope is **inherited, not recomputed per level**:
 settings are arbitrary user JSON, so a secret can sit a container below the key
@@ -124,15 +124,44 @@ naming it (`{"api_keys": ["sk-live-…"]}`), and redacting only the direct strin
 child leaked that. Keys ending `_env` are exempt — they name a variable, not
 its value. `mcp_servers` never reads env or header *values* at all.
 
+The one hole left in that claim is `mcp_servers`' `target`: it is `cmd` plus
+`args` for a stdio server and `url` for an HTTP one, both served verbatim and
+neither routed through `redact`. A token passed on the command line
+(`--token=…`) or in a query string (`https://mcp.example/sse?key=…`) is a
+credential sitting in a field the scrubber does not look at. Anything new that
+reaches the browser must be audited the same way before it lands.
+
+### The one input this crate does not own: exploration manifests
+
+Everything else here is read out of a store stella wrote. An exploration record
+is different — it travels with the tree and can be *ingested* from another
+machine ([`../docs/design/exploration-sharing.md`](../docs/design/exploration-sharing.md)
+§3), so its `path → sha256` manifest is untrusted text.
+`fsview::is_workspace_relative` refuses any key that is absolute or contains
+`..` before `/api/explorations` opens it, mirroring the `resolve_within_root`
+guard the producer (`stella_tools::staleness`) already applies: without it, a
+manifest keyed `"../../.ssh/id_rsa"` turns a freshness poll into an out-of-root
+read whose verdict reports whether that file exists and whether its bytes hash
+to a chosen value. The check is lexical, so a
+symlink *inside* the workspace pointing out of it is still followed — a narrower
+guarantee than the producer's canonicalising one, and the reason to keep the
+manifest a list of paths rather than anything more expressive.
+
 ## Gotchas
 
 - **The page is embedded at compile time.** Editing
   [`src/assets/index.html`](src/assets/index.html) does nothing until you
   rebuild — `--example serve` included.
-- **The test schema is a hand-written copy.** `seeded_workspace` in `src/lib.rs`
-  spells out its own DDL for the subset of tables the observatory reads, and
-  nothing checks it against `../stella-store/src/ddl.rs`. A column renamed in
-  the store keeps this suite green and breaks the dashboard at runtime.
+- **The test schema is a hand-written copy, and it has already drifted.**
+  `seeded_workspace` in `src/lib.rs` spells out its own DDL for the subset of
+  tables the observatory reads, and nothing checks it against
+  `../stella-store/src/ddl.rs` — nor does any open here read the
+  `PRAGMA user_version` those migrations stamp. The store's shipped
+  `executions` carries `session_id`, `usage_complete` and `usage_status`, and
+  its `telemetry` carries `call_role` and `usage_complete`; the fixture has
+  none of them. That divergence is harmless only because no query selects
+  those columns. A column this crate *does* read, renamed in the store, keeps
+  this suite green and breaks the dashboard at runtime.
 - **Store paths are hardcoded**, `<root>/.stella/private/<name>` — this crate
   can't use `stella-store`'s path resolver (see *Where it sits*), so a
   workspace still in the pre-`private/` legacy layout renders empty.
@@ -142,6 +171,10 @@ its value. `mcp_servers` never reads env or header *values* at all.
   client-side constant. `/api/overview`, `/api/executions`, `/api/activity` and
   `/api/tools` carry no `LIMIT`, and `Observatory::tools` sorts every
   `tool_calls` row ever recorded for an exact p50 (leaderboards cap at 50–100).
+  Nothing prunes those tables — `stella-store` runs no retention sweep over
+  `executions`/`telemetry`/`tool_calls` — so the payload, the per-request
+  allocation and the page's re-render all grow with the workspace's entire
+  history, and the tab re-fetches all of it every 5 s.
 - **`percent_decode` (`src/lib.rs:229`) parses attacker-reachable bytes.** A
   malformed escape (`%`, `%A`, `%ZZ`) must stay literal — never a panic, never
   a dropped byte — and decoding runs over bytes before UTF-8 validation so a
@@ -149,7 +182,7 @@ its value. `mcp_servers` never reads env or header *values* at all.
 - **`STELLA_DATA_DIR` is process-wide.** The two tests that set it serialize on
   `DATA_DIR_LOCK`, poison-tolerantly; a third that mutates it without the lock
   will flake the other two.
-- **The code graph is capped at 600 nodes** (`MAX_NODES`, `src/codegraph.rs:22`):
+- **The code graph is capped at 600 nodes** (`MAX_NODES`, `src/codegraph.rs:29`):
   the highest-degree files are kept and the rest reported as `truncated`, so a
   large workspace's graph is a sample, not the whole index.
 

@@ -92,6 +92,19 @@ fn cloud_registration_at(path: &Path) -> CloudRegistration {
         .unwrap_or_default()
 }
 
+#[cfg(unix)]
+fn read_cloud_json(path: &Path) -> Option<String> {
+    crate::read_sensitive_file_to_string(path).ok()
+}
+
+/// The non-Unix branch keeps the plain read: the sensitive helpers are
+/// hard-wired to `Err` off Unix, so routing this through them would make every
+/// Windows install permanently unregistered.
+#[cfg(not(unix))]
+fn read_cloud_json(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok()
+}
+
 /// Persist the registration through [`crate::write_sensitive_file_atomic`]:
 /// no-follow, 0600, in an owner-controlled directory, temp + fsync + rename +
 /// fsync of the parent.

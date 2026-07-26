@@ -272,7 +272,11 @@ fn canonical_tool(name: &str) -> &str {
         "bash" => "Bash",
         "read_file" => "Read",
         "write_file" => "Write",
-        "edit_file" => "Edit",
+        // `apply_edits` is the transactional multi-file form of `edit_file`
+        // (#433) and the system prompt actively steers the model to prefer it,
+        // so it must answer to the same `guard-tool: Edit` rules — otherwise
+        // the recommended path is the unguarded one.
+        "edit_file" | "apply_edits" => "Edit",
         "delete_file" => "Delete",
         other => other,
     }
@@ -292,19 +296,45 @@ pub(crate) fn attach_rule_guards(registry: &ToolRegistry, rules: &ResolvedRules)
     let rules = Arc::clone(&rules.0);
     let bus = HookBus::new(format!("rules-{}", std::process::id()));
     bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |event| {
-        let action = ProposedAction {
-            tool: canonical_tool(event.payload["tool"].as_str().unwrap_or_default()),
-            path: event.payload["input"].get("path").and_then(|v| v.as_str()),
-            command: event.payload["input"]
-                .get("command")
-                .and_then(|v| v.as_str()),
-        };
-        match evaluate_guards(&rules, &action).primary() {
-            Some(violation) => HookDecision::Deny {
-                reason: violation.reason.clone(),
-            },
-            None => HookDecision::Allow,
+        let tool = canonical_tool(event.payload["tool"].as_str().unwrap_or_default());
+        let input = &event.payload["input"];
+        let command = input.get("command").and_then(|v| v.as_str());
+        // A batch tool carries its paths inside its batch, not at `input.path`
+        // — `apply_edits` (#433) is `{"edits": [{"path": …}, …]}`. Reading only
+        // the single-path shape let one `apply_edits` call walk straight past
+        // every `guard-deny-path` rule, which is exactly the tool the system
+        // prompt tells the model to reach for. EVERY path in the call is
+        // checked; one violation denies the whole (transactional) call.
+        let mut paths: Vec<Option<&str>> = input
+            .get("edits")
+            .and_then(|v| v.as_array())
+            .map(|edits| {
+                edits
+                    .iter()
+                    .filter_map(|edit| edit.get("path").and_then(|v| v.as_str()))
+                    .map(Some)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if paths.is_empty() {
+            // The single-path shape (and path-less tools, which still have to
+            // reach command/`*` guards with `path: None`).
+            paths.push(input.get("path").and_then(|v| v.as_str()));
         }
+        for path in paths {
+            let action = ProposedAction {
+                tool,
+                path,
+                command,
+            };
+            let check = evaluate_guards(&rules, &action);
+            if let Some(violation) = check.primary() {
+                return HookDecision::Deny {
+                    reason: violation.reason.clone(),
+                };
+            }
+        }
+        HookDecision::Allow
     })
     .detach();
     registry.attach_bus(bus);

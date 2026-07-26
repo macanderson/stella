@@ -195,6 +195,24 @@ fn pack_path(root: &Path, slug: &str) -> std::path::PathBuf {
     root.join(PACKS_DIR).join(format!("{slug}.json"))
 }
 
+/// Write a pack through the workspace's one atomic contract
+/// ([`stella_store::durable::write_atomic`], #617) rather than the in-place
+/// [`crate::durable_write`] path: a pack is Stella's own state, not a user
+/// source file, so replacing the inode costs nothing and rules out the
+/// half-written file that `load_pack`'s tolerant reader would silently skip —
+/// making a pack two racing agents both wrote simply disappear.
+///
+/// `spawn_blocking` because the shared helper is synchronous: it fsyncs a file
+/// and a directory, which has no async equivalent.
+async fn write_pack_atomically(path: std::path::PathBuf, bytes: Vec<u8>) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        stella_store::durable::write_atomic(&path, &bytes, stella_store::durable::MODE_SHARED)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("pack write task failed: {e}"))?
+}
+
 async fn load_pack(root: &Path, slug: &str) -> Option<ContextPack> {
     let raw = tokio::fs::read_to_string(pack_path(root, slug))
         .await
@@ -203,11 +221,18 @@ async fn load_pack(root: &Path, slug: &str) -> Option<ContextPack> {
 }
 
 /// Re-hash every manifest entry; returns the workspace-relative paths whose
-/// content changed or vanished since the pack was gathered.
+/// content changed or vanished since the pack was gathered. A pack is a JSON
+/// file shared through the tree, so its keys are confined like any other
+/// model- or repository-supplied path: one naming a location outside the
+/// workspace is never read, and counts as stale.
 async fn stale_paths(root: &Path, manifest: &BTreeMap<String, String>) -> Vec<String> {
     let mut stale = Vec::new();
     for (path, saved_hash) in manifest {
-        match tokio::fs::read(root.join(path)).await {
+        let Some(resolved) = crate::resolve_within_root(root, path) else {
+            stale.push(path.clone());
+            continue;
+        };
+        match tokio::fs::read(&resolved).await {
             Ok(bytes) if &hex_sha256(&bytes) == saved_hash => {}
             _ => stale.push(path.clone()),
         }
@@ -676,8 +701,12 @@ async fn gather(
             });
             break;
         }
+        // Confined like the excerpt loop above: these keys are derived from a
+        // sub-tool's rendered output, so they go through the same gate rather
+        // than a bare join.
         if !manifest.contains_key(path)
-            && let Ok(bytes) = tokio::fs::read(root.join(path)).await
+            && let Some(resolved) = crate::resolve_within_root(root, path)
+            && let Ok(bytes) = tokio::fs::read(&resolved).await
         {
             manifest.insert(path.clone(), hex_sha256(&bytes));
         }
@@ -704,14 +733,22 @@ async fn gather(
         ),
         Ok(()) => match serde_json::to_string_pretty(&pack) {
             Err(e) => format!("NOT saved (serialize: {e}) — findings below are this call only"),
-            Ok(json) => match tokio::fs::write(pack_path(root, &slug), json).await {
-                Err(e) => {
-                    format!("NOT saved (write: {e}) — findings below are this call only")
+            // Published by a synced temp-sibling rename, never truncated in
+            // place: packs are cross-session shared state and the readers
+            // skip a corrupt record silently, so a half-written file makes a
+            // pack disappear. Two agents racing the same slug is the exact
+            // scenario this store exists for, and a plain `write` lets their
+            // bytes interleave.
+            Ok(json) => {
+                match write_pack_atomically(pack_path(root, &slug), json.into_bytes()).await {
+                    Err(e) => {
+                        format!("NOT saved (write: {e}) — findings below are this call only")
+                    }
+                    Ok(()) => format!(
+                        "saved — any agent can reuse it via gather_context {{\"pack\": \"{slug}\"}}"
+                    ),
                 }
-                Ok(()) => format!(
-                    "saved — any agent can reuse it via gather_context {{\"pack\": \"{slug}\"}}"
-                ),
-            },
+            }
         },
     };
     // The index-pass warning belongs to THIS run, not to the pack on disk, so

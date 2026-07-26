@@ -164,6 +164,14 @@ pub fn parse_catalog(body: &str) -> Result<BTreeMap<String, ProviderEntry>, Stri
 /// pass a mock server). `etag` is the previously persisted validator —
 /// when the document is unchanged the server answers `304` and this
 /// returns [`FetchOutcome::NotModified`] without transferring the body.
+///
+/// The 200 path buffers the whole document with no size cap and no total
+/// deadline (`http::client`'s bound is per-read, and `parse_catalog` then
+/// builds a second full `serde_json::Value` tree over it). models.dev is a
+/// THIRD party — the one endpoint here that is not the user's own provider —
+/// so a compromised or merely broken origin can grow this process until it
+/// is OOM-killed. Worth a `Content-Length` pre-check and a byte cap before
+/// this is ever moved off an explicit, user-initiated refresh.
 pub async fn fetch_catalog(url: &str, etag: Option<&str>) -> Result<FetchOutcome, String> {
     let client = http::client();
     let mut request = client.get(url).header("Accept", "application/json");

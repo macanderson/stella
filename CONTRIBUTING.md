@@ -64,16 +64,24 @@ cargo clippy -p stella-tools --all-targets -- -D warnings
 
 ### The gate — run before every push
 
-CI runs exactly this, and a red gate is an automatic "not yet":
+A red gate is an automatic "not yet":
 
 ```bash
 ./scripts/check-no-scratch.sh
+./scripts/check-doc-citations.sh
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the four of them in order.
+Or just `make gate`, which is the five of them in order.
+
+CI runs all five and two more that need no local toolchain:
+`scripts/check-action-pins.sh` (in `ci.yml`, asserting every workflow `uses:`
+is pinned to a commit SHA) and `scripts/check-normative-home.sh` (in
+`normative-home.yml`, asserting the pinned CGP revision in `docs/**` still
+matches the `contextgraph-*` git rev in `stella-cli/Cargo.toml`). Run those two
+by hand if you touched `.github/workflows/` or a `NORMATIVE-HOME:` document.
 
 **Run `make hooks` once per clone.** It points `core.hooksPath` at `.githooks`,
 whose `pre-push` hook runs `make gate` and aborts the push if it fails — so a
@@ -81,7 +89,7 @@ red gate costs you thirty seconds locally instead of a review round-trip. It is
 advisory and per-clone (`SKIP_GATE=1 git push` bypasses it), not a substitute
 for the server-side checks.
 
-The first one asserts that no tracked file matches a `.gitignore` rule —
+`check-no-scratch.sh` asserts that no tracked file matches a `.gitignore` rule —
 agent-session scratch (repro trees, plans, memory files) must never reach the
 remote (#448). If it fails, either untrack the path with
 `git rm -r --cached <path>` (the files stay on your disk) or narrow the ignore
