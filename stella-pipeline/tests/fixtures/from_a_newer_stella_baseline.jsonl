@@ -1,0 +1,8 @@
+{"type":"stage","name":"triage"}
+{"type":"budget_tick","spent_usd":0.0002,"limit_usd":null,"mode":"observed"}
+{"type":"stage","name":"execute"}
+{"type":"tool_start","call":{"call_id":"call_9","name":"edit_file","input":{"path":"src/lib.rs"}}}
+{"type":"tool_result","call_id":"call_9","output":{"ok":{"content":"edited"}},"duration_ms":31}
+{"type":"text","delta":"Made the change."}
+{"type":"stage","name":"complete"}
+{"type":"complete","model":"other-model","cost_usd":0.004}

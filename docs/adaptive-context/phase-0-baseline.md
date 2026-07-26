@@ -223,6 +223,24 @@ unknown-event envelope / reader tolerance, or the change breaks replay of mixed
 streams. The plan already flags "characterize the existing decoder" — this is
 the answer: it rejects unknown tags.
 
+> **Resolved — the decoder is now forward-tolerant.** `AgentEvent` carries an
+> `Unknown { event_type, payload }` variant: an unrecognized `"type"` is
+> preserved whole instead of failing the line, so old code no longer hard-fails
+> on new data and `parse_jsonl` replays mixed streams intact. The tolerance is
+> scoped to the *tag* — a recognized tag with a body that does not fit its
+> variant is still a fatal `MalformedLine`, because that is corruption rather
+> than version skew.
+>
+> The characterization above stands as the record of why
+> `LifecycleEventEnvelope` was introduced. That envelope is still the right
+> home for internal lifecycle events, but now for its `schema_version` and to
+> keep stella-internal vocabulary off the public cross-language event
+> contract — not because the main stream would break.
+>
+> See `stella-protocol/src/event.rs` (`KNOWN_TYPE_TAGS`, the hand-written
+> codec) and the conformance fixture
+> `stella-pipeline/tests/fixtures/from_a_newer_stella.jsonl`.
+
 ## 6. Characterized: frame representations
 
 `Representation` (`contextgraph-types … frame.rs:47`) is `{ Full (default),

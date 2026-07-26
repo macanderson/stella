@@ -5,19 +5,30 @@
 //! (as strings), never the `stella-core` record structs: `stella-core` depends on
 //! `stella-protocol`, so importing core types here would be a dependency cycle.
 //!
-//! ## Forward compatibility (the whole point)
+//! ## Forward compatibility
 //!
-//! The main [`crate::event::AgentEvent`] stream is an internally-tagged enum that
-//! **rejects unknown variants**, and the JSONL replay reader treats an
-//! unparseable interior line as fatal. So a NEW event must never be a new
-//! `AgentEvent` variant — an older binary replaying a mixed stream would break.
+//! These events ride a **versioned envelope**: [`LifecycleEventEnvelope`] keeps
+//! the type-specific fields in a raw `payload`, so it always deserializes, even
+//! for an `event_type` the reader has never seen.
+//! [`LifecycleEventEnvelope::decode`] then maps a recognized `event_type` to a
+//! typed [`LifecycleEvent`], or preserves an unrecognized one as
+//! [`LifecycleEvent::Unknown`] with its payload intact.
 //!
-//! Instead these events ride a **versioned envelope**: [`LifecycleEventEnvelope`]
-//! keeps the type-specific fields in a raw `payload`, so it always deserializes,
-//! even for an `event_type` the reader has never seen. [`LifecycleEventEnvelope::decode`]
-//! then maps a recognized `event_type` to a typed [`LifecycleEvent`], or preserves
-//! an unrecognized one as [`LifecycleEvent::Unknown`] with its payload intact —
-//! the exact tolerance the fatal `parse_jsonl` path lacks.
+//! This envelope predates the same tolerance existing on the main event
+//! stream. [`crate::event::AgentEvent`] now carries its own
+//! [`crate::event::AgentEvent::Unknown`] fallback, so "an older binary would
+//! break on a new variant" is no longer the reason to stay off that enum.
+//!
+//! Two reasons remain, and they are the ones that matter now:
+//!
+//!   1. **Explicit versioning.** The envelope carries a `schema_version`
+//!      field. `AgentEvent` has no per-event version, only the additive
+//!      vocabulary rule — so an event whose *shape* is still moving belongs
+//!      here, where readers can branch on the version.
+//!   2. **Vocabulary hygiene.** `AgentEvent` is the public, cross-language
+//!      contract that `--output-format stream-json` and the serve SSE surface
+//!      both publish. Internal adaptive-context lifecycle records are not part
+//!      of that contract and should not enlarge it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

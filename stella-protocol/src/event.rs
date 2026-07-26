@@ -6,17 +6,34 @@
 //! The vocabulary is additive-only: later variants are appended as the
 //! context/media/fleet crates land, never a breaking rename.
 //!
-//! "Additive" is directional, and the asymmetry matters. New *fields* ride
-//! `serde(default)`, so a newer reader parses every older stream. New
-//! *variants* do not survive the other direction: this enum is internally
-//! tagged (`tag = "type"`), so an older binary meets an unrecognized `"type"`
-//! with a hard deserialization error, and the JSONL replay reader treats an
-//! unparseable interior line as fatal. An event that must be readable by an
-//! older binary therefore belongs on the versioned
-//! [`crate::context_event::LifecycleEventEnvelope`], whose payload stays a raw
-//! `Value` — never on this enum.
+//! "Additive" is directional, but both directions are now survivable. New
+//! *fields* ride `serde(default)`, so a newer reader parses every older
+//! stream. New *variants* travel backwards through
+//! [`AgentEvent::Unknown`]: an unrecognized `"type"` deserializes into that
+//! variant with the original JSON object preserved whole in `payload`, and
+//! re-serializes without losing a key or a value. An older binary therefore
+//! *skips* an event from the future instead of failing the whole stream.
+//!
+//! Round-tripping an unknown event preserves its *content*, not its exact
+//! bytes: [`serde_json::Value`] holds object keys in a `BTreeMap`, so they
+//! come back sorted rather than in their original order. JSON object key
+//! order carries no meaning (RFC 8259 §4), so nothing downstream may depend
+//! on it — but a consumer diffing raw lines should compare parsed values.
+//!
+//! The tolerance is deliberately narrow, and the line matters: the fallback
+//! fires **only for an unrecognized tag**. A *recognized* tag whose body does
+//! not match its variant is still a hard error, because that is a real
+//! encoder bug or a corrupt record — silently degrading it to `Unknown` would
+//! turn data corruption into a shrug. See [`KNOWN_TYPE_TAGS`].
+//!
+//! Note this makes `AgentEvent`'s `Deserialize` impl specific to
+//! self-describing formats (it buffers through [`serde_json::Value`] to read
+//! the tag before dispatching). That is the format this type has always been
+//! defined against — `--output-format stream-json` *is* `serde_json` — so the
+//! constraint costs nothing in practice.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
 use crate::tool::{ToolCall, ToolOutput};
 
@@ -182,8 +199,14 @@ pub enum CacheZone {
 /// One event in the turn's stream. Every stage boundary emits an event;
 /// nothing user-visible is derived from internal state that isn't also in
 /// this stream.
+///
+/// `remote = "Self"` keeps the derived codec as a pair of *inherent*
+/// associated functions instead of the trait impls, so the hand-written
+/// [`Serialize`]/[`Deserialize`] impls below can delegate to it after routing
+/// [`AgentEvent::Unknown`] around it. Without that indirection the forward-
+/// compat fallback would mean hand-writing a visitor for all 34 variants.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", remote = "Self")]
 pub enum AgentEvent {
     /// The turn entered a new pipeline stage. Every stage boundary emits one,
     /// in the order the pipeline walks them.
@@ -671,80 +694,195 @@ pub enum AgentEvent {
         model: String,
         cost_usd: f64,
     },
+    /// An event whose `"type"` this binary does not recognize — almost always
+    /// one emitted by a NEWER stella than the one reading. The whole original
+    /// JSON object is preserved in `payload` (tag included), so a proxy,
+    /// recorder, or replay tool can pass a future event through without
+    /// understanding it. Object keys may come back sorted; no value is lost.
+    ///
+    /// This is the variant that makes the vocabulary safe to extend. Consumers
+    /// should treat it as inert: count it, log it, pass it on — never fail on
+    /// it, and never try to guess its semantics from `event_type`.
+    ///
+    /// `serde(skip)` keeps it out of the derived codec entirely; the
+    /// hand-written impls below construct and flatten it. It therefore has no
+    /// wire tag of its own and can never be produced by a literal
+    /// `{"type":"unknown"}` — that input is an unknown tag like any other and
+    /// round-trips as `event_type: "unknown"`.
+    #[serde(skip)]
+    Unknown {
+        /// The unrecognized `"type"` value, lifted out for cheap matching.
+        event_type: String,
+        /// The complete original object, including its `"type"` field.
+        payload: Value,
+    },
 }
 
+/// The single source of truth for the variant ↔ wire-tag mapping.
+///
+/// [`AgentEvent::type_tag`] and [`KNOWN_TYPE_TAGS`] both expand from this one
+/// list, so the two can never disagree. That matters more than it looks: the
+/// deserializer decides "is this tag from the future?" by consulting
+/// `KNOWN_TYPE_TAGS`, so a real tag missing from it would quietly demote every
+/// one of its events to [`AgentEvent::Unknown`] — data loss with no error.
+/// Generating both from one list makes that class of bug unrepresentable.
+///
+/// The `E0004` tripwire survives the move: the generated match is still
+/// exhaustive, so adding a variant without adding it here fails
+/// `cargo build -p stella-protocol` at the invocation below.
+macro_rules! agent_event_tags {
+    ($($variant:ident => $tag:literal,)*) => {
+        impl AgentEvent {
+            /// The stable discriminant tag for this event — identical to the
+            /// string `serde` writes as the `"type"` field on the stream-json
+            /// wire. Allocation-free, so logs, metrics, and tests can name an
+            /// event without serializing it.
+            ///
+            /// For [`AgentEvent::Unknown`] this returns the *preserved
+            /// original* tag, not a placeholder — an unrecognized event still
+            /// reports truthfully what it was on the wire.
+            #[must_use]
+            pub fn type_tag(&self) -> &str {
+                match self {
+                    $(AgentEvent::$variant { .. } => $tag,)*
+                    AgentEvent::Unknown { event_type, .. } => event_type.as_str(),
+                }
+            }
+        }
+
+        /// Every `"type"` tag this build decodes into a typed variant.
+        ///
+        /// The deserializer's forward-compat fallback keys off exactly this
+        /// list: a tag present here must parse into its variant or fail loudly;
+        /// a tag absent from it becomes [`AgentEvent::Unknown`]. Consumers can
+        /// also use it to detect that a stream came from a newer stella.
+        pub const KNOWN_TYPE_TAGS: &[&str] = &[$($tag,)*];
+    };
+}
+
+agent_event_tags! {
+    Stage => "stage",
+    Text => "text",
+    TextDelta => "text_delta",
+    Reasoning => "reasoning",
+    ToolStart => "tool_start",
+    ToolResult => "tool_result",
+    SpeculationDiscarded => "speculation_discarded",
+    Retry => "retry",
+    Steered => "steered",
+    LoopDetected => "loop_detected",
+    BudgetDenied => "budget_denied",
+    RetriesExhausted => "retries_exhausted",
+    PolicyDecision => "policy_decision",
+    Compaction => "compaction",
+    BudgetTick => "budget_tick",
+    StepUsage => "step_usage",
+    UsageIncomplete => "usage_incomplete",
+    GoalVerdict => "goal_verdict",
+    ProviderFallback => "provider_fallback",
+    FileChange => "file_change",
+    ContextRecall => "context_recall",
+    ContextWrite => "context_write",
+    BlockRegistered => "block_registered",
+    StepManifest => "step_manifest",
+    JudgeVerdict => "judge_verdict",
+    ScopeReview => "scope_review",
+    AskUser => "ask_user",
+    MediaProgress => "media_progress",
+    MediaComplete => "media_complete",
+    Commit => "commit",
+    Pr => "pr",
+    TaskUpdate => "task_update",
+    Error => "error",
+    Complete => "complete",
+}
+
+// Adding a variant? The `E0004` at `agent_event_tags!` above is the first
+// tripwire. Add the tag there, then propagate the variant to every downstream
+// matcher — the tag table alone is not enough:
+//
+// **Compile-enforced** — also exhaustive, so they will not build until you add
+// an arm; but each break surfaces one crate at a time (CI stops at the first
+// failing crate), which is exactly how #415's variant reached `main` before
+// breaking `stella-pipeline` (#421) then `stella-tui` (#422):
+//   - `stella-pipeline` `replay::event_signature`
+//   - `stella-tui` `model::Model::apply`
+//   - `stella-tui` `textline::event_line`
+//   - `stella-tui` `deck::trace_of`
+//
+// **Silent** — wildcard / `matches!` arms the compiler CANNOT catch, so a new
+// variant falls through to a default and is wrong only at runtime. These are
+// the real trap; audit them by hand:
+//   - `stella-pipeline` `replay::structural_diff` volatile keep-set: add the
+//     variant if it is a run-to-run artifact absent from older golden streams,
+//     or it will shift every aligned position of the diff.
+//   - `stella-tui` `deck::event_intensity` and `deck::status_from_event`: give
+//     the variant an intensity / agent status if it should register on the
+//     fleet deck.
+//
+// The same duty applies to the other exhaustively-matched cross-crate enums
+// this pattern warns about (`ToolOutput`, `BudgetOutcome`).
+//
+// Note that none of this is about *wire* safety any more — an older reader
+// survives your new variant via `AgentEvent::Unknown`. It is about this
+// workspace's own renderers staying complete.
+
 impl AgentEvent {
-    /// The stable discriminant tag for this event — identical to the string
-    /// `serde` writes as the `"type"` field on the stream-json wire (this enum
-    /// is `#[serde(tag = "type", rename_all = "snake_case")]`). Allocation-free,
-    /// so logs, metrics, and tests can name an event without serializing it.
-    ///
-    /// This match is deliberately **exhaustive, with no wildcard arm**: it is
-    /// the cheap compile-time guard for the additive-only `AgentEvent`
-    /// vocabulary. Adding a variant fails `cargo build -p stella-protocol` (and
-    /// `-p stella-core`, which compiles this crate) with `E0004` right here — a
-    /// scoped per-crate build, not only a full `--workspace` build discovered
-    /// post-merge (#455). When that fires, add the arm AND propagate the new
-    /// variant to every downstream matcher:
-    ///
-    /// **Compile-enforced** — also exhaustive, so they will not build until you
-    /// add an arm; but each break surfaces one crate at a time (CI stops at the
-    /// first failing crate), which is exactly how #415's variant reached `main`
-    /// before breaking `stella-pipeline` (#421) then `stella-tui` (#422):
-    ///   - `stella-pipeline` `replay::event_signature`
-    ///   - `stella-tui` `model::Model::apply`
-    ///   - `stella-tui` `textline::event_line`
-    ///   - `stella-tui` `deck::trace_of`
-    ///
-    /// **Silent** — wildcard / `matches!` arms the compiler CANNOT catch, so a
-    /// new variant falls through to a default and is wrong only at runtime.
-    /// These are the real trap; audit them by hand:
-    ///   - `stella-pipeline` `replay::structural_diff` volatile keep-set: add
-    ///     the variant if it is a run-to-run artifact absent from older golden
-    ///     streams, or it will shift every aligned position of the diff.
-    ///   - `stella-tui` `deck::event_intensity` and `deck::status_from_event`:
-    ///     give the variant an intensity / agent status if it should register
-    ///     on the fleet deck.
-    ///
-    /// The same duty applies to the other exhaustively-matched cross-crate
-    /// enums this pattern warns about (`ToolOutput`, `BudgetOutcome`).
+    /// Whether this event arrived with a `"type"` this build does not know —
+    /// i.e. it was emitted by a newer stella. Consumers that want to surface
+    /// "there is something here I cannot render" ask this rather than matching
+    /// the variant directly.
     #[must_use]
-    pub fn type_tag(&self) -> &'static str {
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, AgentEvent::Unknown { .. })
+    }
+}
+
+impl Serialize for AgentEvent {
+    /// Every known variant delegates to the derived codec, so the wire format
+    /// is unchanged. [`AgentEvent::Unknown`] bypasses it and re-emits the
+    /// object it was parsed from — a future event therefore survives a
+    /// decode/encode round-trip with every key and value intact (though
+    /// possibly reordered), which is what lets a recorder, a proxy, or
+    /// `replay::to_jsonl` handle a stream it only partly understands without
+    /// corrupting the part it does not.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         match self {
-            AgentEvent::Stage { .. } => "stage",
-            AgentEvent::Text { .. } => "text",
-            AgentEvent::TextDelta { .. } => "text_delta",
-            AgentEvent::Reasoning { .. } => "reasoning",
-            AgentEvent::ToolStart { .. } => "tool_start",
-            AgentEvent::ToolResult { .. } => "tool_result",
-            AgentEvent::SpeculationDiscarded { .. } => "speculation_discarded",
-            AgentEvent::Retry { .. } => "retry",
-            AgentEvent::Steered { .. } => "steered",
-            AgentEvent::LoopDetected { .. } => "loop_detected",
-            AgentEvent::BudgetDenied { .. } => "budget_denied",
-            AgentEvent::RetriesExhausted { .. } => "retries_exhausted",
-            AgentEvent::PolicyDecision { .. } => "policy_decision",
-            AgentEvent::Compaction { .. } => "compaction",
-            AgentEvent::BudgetTick { .. } => "budget_tick",
-            AgentEvent::StepUsage { .. } => "step_usage",
-            AgentEvent::UsageIncomplete { .. } => "usage_incomplete",
-            AgentEvent::GoalVerdict { .. } => "goal_verdict",
-            AgentEvent::ProviderFallback { .. } => "provider_fallback",
-            AgentEvent::FileChange { .. } => "file_change",
-            AgentEvent::ContextRecall { .. } => "context_recall",
-            AgentEvent::ContextWrite { .. } => "context_write",
-            AgentEvent::BlockRegistered { .. } => "block_registered",
-            AgentEvent::StepManifest { .. } => "step_manifest",
-            AgentEvent::JudgeVerdict { .. } => "judge_verdict",
-            AgentEvent::ScopeReview { .. } => "scope_review",
-            AgentEvent::AskUser { .. } => "ask_user",
-            AgentEvent::MediaProgress { .. } => "media_progress",
-            AgentEvent::MediaComplete { .. } => "media_complete",
-            AgentEvent::Commit { .. } => "commit",
-            AgentEvent::Pr { .. } => "pr",
-            AgentEvent::TaskUpdate { .. } => "task_update",
-            AgentEvent::Error { .. } => "error",
-            AgentEvent::Complete { .. } => "complete",
+            AgentEvent::Unknown { payload, .. } => payload.serialize(serializer),
+            known => AgentEvent::serialize(known, serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentEvent {
+    /// Reads the `"type"` tag, then dispatches.
+    ///
+    /// An unrecognized tag becomes [`AgentEvent::Unknown`] with the whole
+    /// original object preserved. Everything else — including an object with
+    /// no `"type"` at all, or a non-string one — goes to the derived codec and
+    /// keeps its original error behaviour.
+    ///
+    /// The asymmetry is the point. A tag we have never seen is a newer stella
+    /// talking to an older reader, which is normal and must not break the
+    /// stream. A tag we *do* know carrying a body that does not fit is an
+    /// encoder bug or a corrupt record, and laundering that into `Unknown`
+    /// would convert a loud failure into silent data loss.
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+
+        let value = Value::deserialize(deserializer)?;
+        match value.get("type").and_then(Value::as_str) {
+            Some(tag) if !KNOWN_TYPE_TAGS.contains(&tag) => Ok(AgentEvent::Unknown {
+                event_type: tag.to_owned(),
+                payload: value,
+            }),
+            _ => AgentEvent::deserialize(value).map_err(D::Error::custom),
         }
     }
 }
@@ -2127,5 +2265,141 @@ mod tests {
             .type_tag(),
             "speculation_discarded"
         );
+    }
+
+    // ---- forward compatibility: events from a newer stella ----------------
+
+    #[test]
+    fn an_unrecognized_type_tag_degrades_to_unknown_rather_than_failing() {
+        // The whole point of the change. A reader built before this variant
+        // existed must not fail the line — it must keep going.
+        let line = r#"{"type":"quantum_entangled","turn":7,"nested":{"a":[1,2]}}"#;
+        let event: AgentEvent = serde_json::from_str(line).expect("future event must parse");
+        let AgentEvent::Unknown {
+            event_type,
+            payload,
+        } = &event
+        else {
+            panic!("expected Unknown, got {event:?}");
+        };
+        assert_eq!(event_type, "quantum_entangled");
+        assert_eq!(payload["turn"], 7);
+        assert_eq!(payload["nested"]["a"][1], 2);
+        assert!(event.is_unknown());
+    }
+
+    #[test]
+    fn an_unknown_event_round_trips_without_losing_data() {
+        // A recorder or proxy must be able to pass a future event through
+        // without corrupting it. Compare parsed values, not raw bytes: object
+        // key order is not preserved (and is not meaningful).
+        let line = r#"{"type":"from_the_future","alpha":1,"beta":["x",null,true]}"#;
+        let event: AgentEvent = serde_json::from_str(line).unwrap();
+        let reserialized = serde_json::to_string(&event).unwrap();
+
+        let before: Value = serde_json::from_str(line).unwrap();
+        let after: Value = serde_json::from_str(&reserialized).unwrap();
+        assert_eq!(before, after, "round-trip changed the event's content");
+        // The tag must survive: it lives only inside `payload`.
+        assert_eq!(after["type"], "from_the_future");
+    }
+
+    #[test]
+    fn a_known_tag_with_a_malformed_body_is_still_a_hard_error() {
+        // The load-bearing negative test. Forward compatibility is scoped to
+        // *unrecognized tags only*; a recognized tag whose body does not fit
+        // is an encoder bug or a corrupt record, and must stay loud. If this
+        // ever degrades to Unknown, corruption becomes indistinguishable from
+        // a version skew and the store's `skipped` counter starts lying.
+        let err = serde_json::from_str::<AgentEvent>(r#"{"type":"text"}"#)
+            .expect_err("`text` without `delta` must not parse");
+        assert!(
+            !format!("{err}").is_empty(),
+            "a known tag with a bad body must produce a real error"
+        );
+
+        // Same for a wrong field type under a known tag.
+        assert!(
+            serde_json::from_str::<AgentEvent>(r#"{"type":"retry","attempt":"one","reason":"x"}"#)
+                .is_err(),
+            "`retry.attempt` is a u32; a string must not be laundered into Unknown"
+        );
+
+        // And an object with no tag at all keeps the derived error path.
+        assert!(serde_json::from_str::<AgentEvent>(r#"{"delta":"hi"}"#).is_err());
+    }
+
+    #[test]
+    fn every_known_type_tag_resolves_to_a_typed_variant() {
+        // Proves the variant→tag list in `agent_event_tags!` has no typo.
+        //
+        // Combined with two structural facts this is airtight: the generated
+        // match is exhaustive (so every variant is listed) and duplicate arms
+        // would be unreachable (so each is listed once) — meaning
+        // `KNOWN_TYPE_TAGS.len()` equals the variant count. If every listed tag
+        // is additionally a *real* serde name, as asserted here, the mapping is
+        // a bijection and no real tag can be missing from the list. A missing
+        // one would silently demote all of its events to `Unknown`.
+        for tag in KNOWN_TYPE_TAGS {
+            let probe = serde_json::json!({ "type": tag });
+            // Most variants have required fields, so this usually errors —
+            // that is fine and expected. What must never happen is the tag
+            // being treated as unrecognized.
+            if let Ok(event) = serde_json::from_value::<AgentEvent>(probe) {
+                assert!(
+                    !event.is_unknown(),
+                    "`{tag}` is in KNOWN_TYPE_TAGS but deserialized as Unknown — \
+                     the tag string does not match any serde variant name"
+                );
+            }
+        }
+
+        let mut sorted = KNOWN_TYPE_TAGS.to_vec();
+        sorted.sort_unstable();
+        let before = sorted.len();
+        sorted.dedup();
+        assert_eq!(before, sorted.len(), "duplicate tag in KNOWN_TYPE_TAGS");
+    }
+
+    #[test]
+    fn type_tag_of_an_unknown_event_is_the_preserved_wire_tag() {
+        // `type_tag()` tells the truth even for an event it cannot decode, so
+        // logs and metrics can name a future event correctly.
+        let event: AgentEvent = serde_json::from_str(r#"{"type":"newer_thing"}"#).unwrap();
+        assert_eq!(event.type_tag(), "newer_thing");
+        assert!(!KNOWN_TYPE_TAGS.contains(&event.type_tag()));
+    }
+
+    #[test]
+    fn a_literal_unknown_tag_is_not_privileged() {
+        // `Unknown` is `serde(skip)`, so it has no wire tag of its own. An
+        // event literally tagged `"unknown"` is just another unrecognized tag
+        // and must round-trip as one rather than being mistaken for the
+        // fallback variant's own encoding.
+        let line = r#"{"type":"unknown","event_type":"spoof","payload":{}}"#;
+        let event: AgentEvent = serde_json::from_str(line).unwrap();
+        assert_eq!(event.type_tag(), "unknown");
+
+        // It round-trips as the opaque object it is — the decoy `event_type`
+        // and `payload` keys stay ordinary payload data, not the variant's
+        // own fields.
+        let after: Value = serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
+        assert_eq!(after, serde_json::from_str::<Value>(line).unwrap());
+        assert_eq!(after["event_type"], "spoof");
+    }
+
+    #[test]
+    fn a_known_event_wire_format_is_unchanged_by_the_fallback() {
+        // The hand-written codec must be a pass-through for known variants —
+        // no tag rename, no extra wrapper, no reordering.
+        let event = AgentEvent::Text {
+            delta: "hello".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"type":"text","delta":"hello"}"#
+        );
+        let back: AgentEvent = serde_json::from_str(r#"{"type":"text","delta":"hello"}"#).unwrap();
+        assert!(matches!(back, AgentEvent::Text { delta } if delta == "hello"));
     }
 }

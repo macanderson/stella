@@ -318,6 +318,13 @@ impl SessionModel {
     /// replaying the same log yields an identical model (L-T1).
     pub fn apply(&mut self, event: &AgentEvent) {
         match event {
+            // An event from a newer stella. The fold stays a pure function of
+            // events it understands: guessing at state from an undecodable
+            // payload would make the model disagree with the transcript that
+            // rendered it. The transcript still shows the event (see
+            // `textline::unknown_event`), so nothing is hidden — the model
+            // just declines to invent state for it.
+            AgentEvent::Unknown { .. } => {}
             AgentEvent::Stage { name } => {
                 // A stage after a Complete means a new turn has started —
                 // clear the completion flag so the progress bar and HUD read

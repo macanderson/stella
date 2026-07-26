@@ -894,6 +894,12 @@ fn event_intensity(ev: &AgentEvent) -> u8 {
         AgentEvent::Commit { .. } | AgentEvent::Pr { .. } => 230,
         AgentEvent::BudgetTick { .. } | AgentEvent::StepUsage { .. } => 60,
         AgentEvent::Error { .. } => 255,
+        // Explicit rather than falling through the wildcard: an undecodable
+        // event is real activity, so it should register on the sparkline, but
+        // this build cannot know whether it was hot (an edit) or cool (a
+        // metering tick). Cool-but-present is the honest reading, and it keeps
+        // a burst of future events from impersonating heavy edit activity.
+        AgentEvent::Unknown { .. } => 60,
         _ => 110,
     }
 }
@@ -927,6 +933,10 @@ fn status_from_event(ev: &AgentEvent) -> Option<AgentStatus> {
 fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
     use stella_protocol::ToolOutput;
     match ev {
+        // An event from a newer stella: name it, claim nothing about it.
+        AgentEvent::Unknown { event_type, .. } => {
+            (TraceKind::Other, format!("unrecognized `{event_type}`"))
+        }
         AgentEvent::Stage { name } => (TraceKind::Stage, format!("{name:?}").to_lowercase()),
         AgentEvent::Text { delta } => (TraceKind::Text, snip(delta)),
         // Mapped for completeness; `apply_event` never traces deltas (one

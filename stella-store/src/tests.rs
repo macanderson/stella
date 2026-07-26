@@ -734,7 +734,7 @@ fn pull_request_upsert_is_keyed_by_url() {
 }
 
 #[test]
-fn session_events_reassembles_the_journal_and_skips_corrupt_payloads() {
+fn session_events_keeps_unknown_variants_and_skips_only_corrupt_payloads() {
     let store = Store::in_memory().unwrap();
     let turn_one = store
         .begin_execution("run", "one", "zai", "glm-5.2")
@@ -765,8 +765,10 @@ fn session_events_reassembles_the_journal_and_skips_corrupt_payloads() {
     store
         .record_event(elsewhere, 0, &AgentEvent::Text { delta: "z".into() })
         .unwrap();
-    // A payload whose variant this build no longer knows — inserted raw,
-    // exactly as an older stream would have left it on disk.
+    // A payload whose variant this build does not know — inserted raw,
+    // exactly as a NEWER stella would have left it on disk. This is a version
+    // skew, not damage, so it must survive as `AgentEvent::Unknown` and stay
+    // in the journal rather than being counted as a loss.
     {
         let conn = store.lock();
         conn.execute(
@@ -776,11 +778,21 @@ fn session_events_reassembles_the_journal_and_skips_corrupt_payloads() {
         )
         .unwrap();
     }
+    // Genuine damage: not JSON at all. This is what `skipped` exists to count.
+    {
+        let conn = store.lock();
+        conn.execute(
+            "INSERT INTO events (execution_id, seq, event_type, payload) \
+             VALUES (?, 1, 'text', '{ this is not json')",
+            params![turn_two],
+        )
+        .unwrap();
+    }
 
     let journal = store.session_events("ses-j").unwrap();
     assert_eq!(
         journal.skipped, 1,
-        "an unparseable row is counted, never fatal"
+        "only the corrupt row is counted — an unknown variant is not a loss"
     );
     assert_eq!(
         journal
@@ -788,12 +800,25 @@ fn session_events_reassembles_the_journal_and_skips_corrupt_payloads() {
             .iter()
             .map(|r| (r.execution_id, r.seq))
             .collect::<Vec<_>>(),
-        vec![(turn_one, 0), (turn_one, 1), (turn_two, 0)],
-        "ordered by (execution_id, seq) across the session's turns"
+        vec![(turn_one, 0), (turn_one, 1), (turn_one, 2), (turn_two, 0)],
+        "ordered by (execution_id, seq); the unknown-variant row is kept"
     );
     match &journal.events[0].event {
         AgentEvent::Reasoning { delta } => assert_eq!(delta, "think"),
         other => panic!("unexpected first event: {other:?}"),
+    }
+    // The row from the future round-trips with its payload intact, so a
+    // journal written by a newer stella can still be read, rendered, and
+    // re-exported by this one without dropping events on the floor.
+    match &journal.events[2].event {
+        AgentEvent::Unknown {
+            event_type,
+            payload,
+        } => {
+            assert_eq!(event_type, "ghost");
+            assert_eq!(payload["volume"], 11);
+        }
+        other => panic!("expected the ghost row to survive as Unknown: {other:?}"),
     }
     let empty = store.session_events("ses-unknown").unwrap();
     assert!(empty.events.is_empty());

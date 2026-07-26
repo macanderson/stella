@@ -1,0 +1,10 @@
+{"type":"stage","name":"triage"}
+{"type":"budget_tick","spent_usd":0.0001,"limit_usd":null,"mode":"observed"}
+{"type":"stage","name":"execute"}
+{"type":"quantum_reticulation","call_id":"q_1","splines":["alpha","beta"],"nested":{"depth":3}}
+{"type":"tool_start","call":{"call_id":"call_1","name":"edit_file","input":{"path":"src/lib.rs"}}}
+{"type":"tool_result","call_id":"call_1","output":{"ok":{"content":"edited"}},"duration_ms":8}
+{"type":"holographic_verdict","confidence":0.91}
+{"type":"text","delta":"Made the change."}
+{"type":"stage","name":"complete"}
+{"type":"complete","model":"m","cost_usd":0.002}

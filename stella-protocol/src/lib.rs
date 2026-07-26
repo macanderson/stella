@@ -10,13 +10,22 @@
 //! round-trip through `serde_json` byte-for-byte (see the round-trip tests in
 //! each module).
 //!
-//! Wire compatibility is additive, but in exactly **one** direction. New
-//! *fields* ride `serde(default)`, so a newer binary parses every older
-//! stream. New [`AgentEvent`] *variants* do not travel backwards: the enum is
-//! internally tagged, so an older binary meets an unrecognized `"type"` with a
-//! hard deserialization error. An event that must survive being read by an
-//! older binary rides the versioned
-//! [`context_event::LifecycleEventEnvelope`] instead, whose payload stays raw.
+//! Wire compatibility is additive, and it now holds in **both** directions.
+//! New *fields* ride `serde(default)`, so a newer binary parses every older
+//! stream. New [`AgentEvent`] *variants* travel backwards via
+//! [`AgentEvent::Unknown`]: an older binary meets an unrecognized `"type"` by
+//! preserving the event whole and moving on, instead of failing the stream.
+//!
+//! The tolerance is scoped to the tag alone. A `"type"` this build *does*
+//! know, carrying a body that does not fit its variant, is still a hard
+//! error — that is corruption or an encoder bug, not a version skew, and it
+//! must not be laundered into [`AgentEvent::Unknown`]. [`KNOWN_TYPE_TAGS`] is
+//! the exact boundary between the two cases.
+//!
+//! [`context_event::LifecycleEventEnvelope`] remains the right home for
+//! internal lifecycle events: it adds an explicit `schema_version` and keeps
+//! stella-internal vocabulary off the public event stream. It is no longer
+//! the *only* way to stay readable by an older binary.
 
 #![forbid(unsafe_code)]
 
@@ -44,8 +53,9 @@ pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, JudgeEvidence,
-    ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole, PolicyKind, PrStatus,
-    ProviderShare, ScopeProposal, StageKind, TaskItem, TaskStatus, UsageIncompleteReason,
+    KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
+    PolicyKind, PrStatus, ProviderShare, ScopeProposal, StageKind, TaskItem, TaskStatus,
+    UsageIncompleteReason,
 };
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};

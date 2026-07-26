@@ -128,6 +128,24 @@ pub fn compaction(
 /// The spend line. Visibility policy stays surface-side (the plain surface
 /// suppresses ticks in `BudgetMode::Off`; the deck shows every tick and may
 /// append the mode as detail).
+/// An event this build cannot decode, emitted by a newer stella.
+///
+/// Rendered rather than dropped: the realistic way the TUI meets one of these
+/// is replaying a session journal written by a newer binary (`stella resume`),
+/// and silently omitting events would leave unexplained holes in a transcript
+/// the user is reading as a record. Muted, one line, tag only — enough to show
+/// that something happened and that this build is the reason it is not
+/// legible, without pretending to know what it was.
+pub fn unknown_event(event_type: &str) -> EventLine {
+    EventLine {
+        glyph: "?",
+        tone: Tone::Muted,
+        strong: false,
+        body: format!("unrecognized event `{event_type}`"),
+        detail: Some("emitted by a newer stella".to_string()),
+    }
+}
+
 pub fn budget_tick(spent_usd: f64, limit_usd: Option<f64>) -> EventLine {
     EventLine {
         glyph: "$",
@@ -430,6 +448,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         | AgentEvent::BudgetDenied { .. }
         | AgentEvent::RetriesExhausted { .. }
         | AgentEvent::PolicyDecision { .. } => None,
+        AgentEvent::Unknown { event_type, .. } => Some(unknown_event(event_type)),
         AgentEvent::Retry { attempt, reason } => Some(retry(*attempt, reason)),
         AgentEvent::Steered { text } => Some(steered(text)),
         AgentEvent::Compaction {
