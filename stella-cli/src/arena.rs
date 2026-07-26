@@ -574,6 +574,7 @@ mod tests {
                 token_cost: 120,
                 resident_since_step: 0,
                 message_index: 0,
+                call_id: None,
             }],
             effective_budget_tokens: 4096,
             calibration_factor: 1.0,

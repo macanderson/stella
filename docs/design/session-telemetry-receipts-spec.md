@@ -215,6 +215,17 @@ content-addressed, a tool output that reappears verbatim (supersession) resolves
 to the same block, so "this exact content was carried for N steps" is directly
 countable.
 
+**`BlockOrigin.call_id` is birth provenance, not a call set.** Content-addressing
+cuts both ways: a block is registered exactly once, so when two *distinct* calls
+produce byte-identical output (two `git status` runs), `origin.call_id` names only
+the first. Reading eviction identities through it would silently under-report —
+the second call's contribution to context would be invisible, and an eviction
+would be attributed wholly to the first. Per-occurrence attribution therefore
+lives on [`ManifestEntry.call_id`](#5-per-step-request-manifest--the-receipt-364-item-2),
+which is recorded per manifest row rather than per block. #364 item 1 asks "which
+`call_id`s each pass evicted"; that question is answered by joining the compaction
+event's block ids against the manifests that carried them, *not* by the registry.
+
 ---
 
 ## 5. Per-step request manifest — the receipt (#364 item 2)
@@ -250,6 +261,11 @@ struct ManifestEntry {
     token_cost: u32,               // estimated tokens of this block on this step
     /// Steps this block has been resident so far (drives cost-of-carry, §8).
     resident_since_step: usize,
+    /// The tool call THIS occurrence belongs to. Per entry, not per block:
+    /// `BlockOrigin.call_id` (§4) records only the first call to mint a
+    /// content-addressed id, so duplicates would otherwise be unattributable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    call_id: Option<String>,
 }
 
 enum CacheZone {
@@ -745,6 +761,7 @@ CREATE TABLE IF NOT EXISTS step_manifest (
   block_id      TEXT    NOT NULL,
   cache_zone    TEXT    NOT NULL,      -- StablePrefix | Cacheable | Volatile
   resident_since_step INTEGER NOT NULL,
+  call_id       TEXT,                  -- per-occurrence tool attribution (§4)
   PRIMARY KEY (execution_id, turn_instance, step, ordinal)
 );
 CREATE INDEX IF NOT EXISTS step_manifest_by_block ON step_manifest(execution_id, block_id);

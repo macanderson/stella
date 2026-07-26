@@ -37,6 +37,7 @@ fn entry(block_id: &str, message_index: u64) -> ManifestBlockRow {
         token_cost: 10,
         resident_since_step: 0,
         message_index,
+        call_id: None,
     }
 }
 

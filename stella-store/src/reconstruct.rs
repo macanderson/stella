@@ -314,6 +314,7 @@ mod tests {
             token_cost: 10,
             resident_since_step: 0,
             message_index: mi,
+            call_id: None,
         }
     }
 
