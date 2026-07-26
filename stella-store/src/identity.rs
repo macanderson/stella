@@ -80,19 +80,17 @@ pub fn cloud_registration() -> CloudRegistration {
         .unwrap_or_default()
 }
 
-/// Persist the registration: write a sibling temp file, then rename over the
-/// target.
+/// Persist the registration through [`crate::write_sensitive_file_atomic`]:
+/// no-follow, 0600, in an owner-controlled directory, temp + fsync + rename +
+/// fsync of the parent.
 ///
-/// NOTE — this is weaker than the rest of the crate's private-state writes and
-/// deliberately documented as such rather than quietly implied: the bytes go
-/// out through plain `std::fs`, so the file lands at the process umask (not
-/// 0600), the terminal path is followed if it is a symlink, and nothing is
-/// fsynced. Confidentiality currently rests entirely on the 0700 parent that
-/// `ensure_private_dir` enforces just above. That is thin cover for a file
-/// whose [`CloudRegistration::oauth_token`] slot is reserved for a real
-/// credential: this should move to [`crate::write_sensitive_file_atomic`] —
-/// the no-follow, 0600, fsync+rename primitive the credentials discipline
-/// already uses — before a token is ever written here.
+/// It used to be a `std::fs::write` to a **fixed** `cloud.json.tmp` followed
+/// by a rename — the file landed at the process umask rather than 0600, a
+/// symlink at the terminal path was followed, nothing was fsynced, and two
+/// registrations could interleave on the one temp name. Confidentiality
+/// rested entirely on the 0700 parent. For a file whose
+/// [`CloudRegistration::oauth_token`] slot is reserved for a real credential
+/// that was thin cover, and #617's contract made the fix a one-liner.
 pub fn save_cloud_registration(reg: &CloudRegistration) -> Result<()> {
     let path = cloud_json_path();
     if let Some(parent) = path.parent() {
@@ -101,10 +99,7 @@ pub fn save_cloud_registration(reg: &CloudRegistration) -> Result<()> {
     let body = serde_json::to_string_pretty(reg)
         .map_err(|e| StoreError(format!("cannot render cloud registration: {e}")))?
         + "\n";
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body)
-        .and_then(|()| std::fs::rename(&tmp, &path))
-        .map_err(|e| StoreError(format!("cannot write cloud registration: {e}")))
+    crate::write_sensitive_file_atomic(&path, body.as_bytes())
 }
 
 /// The org this installation reports into, `None` until registered.

@@ -176,6 +176,12 @@ impl ArtifactStore {
                 file.sync_all().map_err(|e| {
                     MediaError::Artifact(format!("cannot fsync {}: {e}", dest.display()))
                 })?;
+                // And about the file existing at all: a fresh file's directory
+                // entry has to reach the disk too, or a power loss can leave a
+                // manifest row pointing at nothing (#617).
+                stella_store::durable::sync_directory(&self.root).map_err(|e| {
+                    MediaError::Artifact(format!("cannot fsync {}: {e}", self.root.display()))
+                })?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 let existing = std::fs::read(&dest).map_err(|e| {
