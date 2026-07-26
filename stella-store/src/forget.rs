@@ -50,7 +50,7 @@
 //! candidate lesson to compare against tombstones) buys nothing here and
 //! puts a model call in the way of finishing a turn.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Token-set overlap above which a candidate counts as a restatement of
 /// something already forgotten. See the module docs for the measurements
@@ -204,6 +204,93 @@ pub fn is_suppressed<'a>(candidate: &str, forgotten: impl IntoIterator<Item = &'
     forgotten
         .into_iter()
         .any(|f| jaccard(&candidate, &tokens(f)) >= SIMILARITY_THRESHOLD)
+}
+
+/// One surface's suppression state, read once and reusable — the filter every
+/// surface applies, with that surface's own policy already resolved.
+///
+/// Suppression has always been two predicates: an exact id match against the
+/// tombstoned ids, and a restatement match against the tombstoned *texts*. They
+/// were applied at different places by different callers, each spelling out the
+/// half it happened to need, and one surface — the workspace memory files baked
+/// into the system prompt — applied neither, so forgetting one did not stop it
+/// shipping (#712 deliverable 6).
+///
+/// Bundling them here is what makes "the same filter" a true statement rather
+/// than an aspiration. The restatement half is governed by
+/// [`ContextSurface::suppresses_restatements`], so an authored surface keeps
+/// its id-only policy by construction: re-writing a rule by hand is a
+/// deliberate act, and swallowing it because it resembles something forgotten
+/// months ago would be its own bug.
+#[derive(Debug, Clone)]
+pub struct SurfaceSuppression {
+    ids: HashSet<String>,
+    texts: Vec<String>,
+    match_restatements: bool,
+}
+
+impl SurfaceSuppression {
+    /// Build from a surface's tombstoned ids and texts.
+    #[must_use]
+    pub fn new(surface: ContextSurface, ids: HashSet<String>, texts: Vec<String>) -> Self {
+        Self {
+            ids,
+            texts,
+            match_restatements: surface.suppresses_restatements(),
+        }
+    }
+
+    /// A filter that suppresses nothing — the honest shape for "this surface
+    /// has no tombstones", distinct from "the state could not be read", which
+    /// callers must fail closed on instead of substituting this.
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            ids: HashSet::new(),
+            texts: Vec::new(),
+            match_restatements: false,
+        }
+    }
+
+    /// Whether anything is suppressed at all — lets a caller skip the work
+    /// entirely on the overwhelmingly common empty case.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty() && self.texts.is_empty()
+    }
+
+    /// Is this item suppressed, by id or (where the surface allows it) by
+    /// restatement?
+    #[must_use]
+    pub fn suppresses(&self, id: &str, text: &str) -> bool {
+        if self.ids.contains(id) {
+            return true;
+        }
+        self.match_restatements && is_suppressed(text, self.texts.iter().map(String::as_str))
+    }
+}
+
+impl crate::Store {
+    /// This surface's suppression state, both halves read together.
+    ///
+    /// The pair has to come from one call: reading ids and texts separately
+    /// leaves a window where a concurrent forget lands between them, and a
+    /// caller that reads only the half it remembers is how the workspace-memory
+    /// surface ended up with no filter at all (#712 deliverable 6).
+    ///
+    /// A read failure is an error, never an empty set. Callers must fail
+    /// closed — surfacing everything because the suppression state was
+    /// unreadable is the one outcome that is definitely wrong.
+    pub fn suppression_for(
+        &self,
+        surface: crate::ContextSurface,
+    ) -> crate::Result<SurfaceSuppression> {
+        Ok(SurfaceSuppression::new(
+            surface,
+            self.forgotten_ids(surface)?,
+            self.forgotten_texts(surface)?,
+        ))
+    }
 }
 
 #[cfg(test)]

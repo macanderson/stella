@@ -172,7 +172,7 @@ pub use drain::{
     MAX_SUPPORTED_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, OTEL_SCHEMA_VERSION_ATTR,
     RejectionClass, drain_org, schema_version_supported,
 };
-pub use forget::{ContextSurface, is_restatement, is_suppressed};
+pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
 // The sidecar journal's writer is deliberately NOT re-exported at the top
 // level: `SessionJournal` here names the DB read-model reassembled by

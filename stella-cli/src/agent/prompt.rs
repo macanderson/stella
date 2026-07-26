@@ -205,9 +205,46 @@ fn append_project_orientation(prompt: &mut String, workspace_root: &std::path::P
     }
 }
 
+/// This workspace's workspace-memory tombstones, or why they could not be read.
+///
+/// A workspace with no store has nothing forgotten — that is an empty filter,
+/// not a failure. A store that exists but cannot be read *is* a failure, and
+/// the caller fails closed on it.
+fn workspace_suppression(
+    workspace_root: &std::path::Path,
+) -> Result<stella_store::SurfaceSuppression, String> {
+    match stella_store::existing_workspace_private_sqlite_path(workspace_root, "store.db") {
+        Ok(None) => return Ok(stella_store::SurfaceSuppression::none()),
+        Ok(Some(_)) => {}
+        Err(e) => return Err(format!("suppression state unavailable: {e}")),
+    }
+    stella_store::Store::open(workspace_root)
+        .and_then(|store| store.suppression_for(stella_store::ContextSurface::WorkspaceMemory))
+        .map_err(|e| format!("suppression state unavailable: {e}"))
+}
+
 /// The memories half of [`assemble_system_prompt`]: append the workspace's
-/// saved memories (filename order, budget-capped) to `prompt`, or leave it
-/// untouched when there are none.
+/// saved memories (filename order, budget-capped, **tombstone-filtered**) to
+/// `prompt`, or leave it untouched when there are none.
+///
+/// # Forgetting one has to stop it shipping
+///
+/// These files are pasted into the system prompt, and until #712 they were the
+/// one context surface with no suppression filter of any kind in front of them.
+/// `stella memory forget --surface workspace-memory <name>` wrote a tombstone
+/// that nothing here read, so the memory kept arriving in every prompt — a hole
+/// in a guarantee the product had already made.
+///
+/// The filter is [`stella_store::SurfaceSuppression`], the same one every other
+/// surface uses, with this surface's own policy resolved inside it: id match
+/// always, restatement match only where the surface allows it, which for
+/// authored files is never (a person re-writing a memory by hand means it).
+///
+/// **Fail-closed.** If the suppression state cannot be read, no workspace
+/// memories are appended and the omission is stated in the prompt rather than
+/// left for the model to not notice. Shipping a memory someone forgot is worse
+/// than shipping none: the forget is the explicit instruction, and the file is
+/// still on disk for a later turn.
 fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Path) {
     let dir = workspace_root.join(".stella/memories");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
@@ -223,6 +260,18 @@ fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Pa
     }
     files.sort();
 
+    let suppression = match workspace_suppression(workspace_root) {
+        Ok(suppression) => suppression,
+        Err(error) => {
+            prompt.push_str(&format!(
+                "
+
+Workspace memories were omitted from this prompt: {error}. They are still on disk in .stella/memories/ and will return once the suppression state is readable."
+            ));
+            return;
+        }
+    };
+
     let mut memories = String::new();
     let mut used = 0usize;
     let mut dropped = 0usize;
@@ -234,6 +283,16 @@ fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Pa
             .file_stem()
             .and_then(|n| n.to_str())
             .unwrap_or("memory");
+        // The tombstone is keyed by filename stem, which is what
+        // `ContextSurface::WorkspaceMemory` records.
+        // No count of these is reported. A budget omission is worth telling
+        // the model about, because it can be fixed by consolidating files; a
+        // forget is an instruction that this memory is gone, and announcing
+        // "three memories are being withheld" invites exactly the asking-about
+        // -it that forgetting exists to end.
+        if suppression.suppresses(name, &body) {
+            continue;
+        }
         let entry = format!(
             "
 ### {name}
@@ -340,7 +399,7 @@ pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT};
+    use super::{PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT, append_workspace_memories};
 
     /// Every static prompt, labelled.
     const PROMPTS: &[(&str, &str)] = &[
@@ -435,5 +494,102 @@ mod tests {
                 "{label} does not embed the shared steering block verbatim"
             );
         }
+    }
+
+    /// Witness for #712 deliverable 6: forgetting a workspace memory stops it
+    /// shipping in the system prompt.
+    ///
+    /// These files are pasted into the prefix, and until this change they were
+    /// the one surface with no suppression filter in front of them — so
+    /// `stella memory forget` recorded a tombstone that nothing read and the
+    /// memory arrived in every prompt regardless. The guarantee had already
+    /// been made; only this surface did not keep it.
+    #[test]
+    fn a_forgotten_workspace_memory_does_not_reach_the_system_prompt() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let root = workspace.path();
+        let memories = root.join(".stella/memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        std::fs::write(memories.join("kept.md"), "KEEP_THIS_LESSON").unwrap();
+        std::fs::write(memories.join("dropped.md"), "FORGET_THIS_LESSON").unwrap();
+
+        let mut before = String::new();
+        append_workspace_memories(&mut before, root);
+        assert!(
+            before.contains("KEEP_THIS_LESSON") && before.contains("FORGET_THIS_LESSON"),
+            "both ship before anything is forgotten: {before}"
+        );
+
+        let store = stella_store::Store::open(root).expect("open store");
+        store
+            .forget(
+                stella_store::ContextSurface::WorkspaceMemory,
+                "dropped",
+                "FORGET_THIS_LESSON",
+                "no longer true",
+            )
+            .expect("forget");
+
+        let mut after = String::new();
+        append_workspace_memories(&mut after, root);
+        assert!(
+            after.contains("KEEP_THIS_LESSON"),
+            "forgetting one memory must not withhold the others: {after}"
+        );
+        assert!(
+            !after.contains("FORGET_THIS_LESSON"),
+            "a forgotten workspace memory must not appear in the system prompt: {after}"
+        );
+        // Reversible and singular (spec §5.7).
+        assert!(
+            store
+                .restore(stella_store::ContextSurface::WorkspaceMemory, "dropped")
+                .expect("restore")
+        );
+        let mut restored = String::new();
+        append_workspace_memories(&mut restored, root);
+        assert!(
+            restored.contains("FORGET_THIS_LESSON"),
+            "restore brings it back: {restored}"
+        );
+    }
+
+    /// An authored surface is suppressed by id, never by resemblance.
+    ///
+    /// `ContextSurface::suppresses_restatements` is false for workspace
+    /// memories, and this pins that the shared filter honors that policy rather
+    /// than applying the restatement half everywhere. A person re-writing a
+    /// memory by hand means it; swallowing it because it resembles something
+    /// forgotten months ago would be its own bug.
+    #[test]
+    fn forgetting_one_authored_memory_does_not_suppress_a_similar_one() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let root = workspace.path();
+        let memories = root.join(".stella/memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        let lesson = "always run the migration before the deploy step";
+        std::fs::write(memories.join("old.md"), lesson).unwrap();
+        std::fs::write(memories.join("rewritten.md"), lesson).unwrap();
+
+        let store = stella_store::Store::open(root).expect("open store");
+        store
+            .forget(
+                stella_store::ContextSurface::WorkspaceMemory,
+                "old",
+                lesson,
+                "superseded",
+            )
+            .expect("forget");
+
+        let mut prompt = String::new();
+        append_workspace_memories(&mut prompt, root);
+        assert!(
+            prompt.contains("### rewritten"),
+            "an identical authored memory under a different name still ships: {prompt}"
+        );
+        assert!(
+            !prompt.contains("### old"),
+            "the forgotten one does not: {prompt}"
+        );
     }
 }

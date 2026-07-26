@@ -47,6 +47,7 @@ mod projection;
 mod quarantine_tests;
 #[path = "memory/skills.rs"]
 mod skill_files;
+mod suppression;
 use private_state::resolve_context_db_path;
 use projection::{is_suppressed_local_frame, project_recalled_frame};
 #[cfg(test)]
@@ -147,6 +148,7 @@ impl SessionMemory {
                     store.clone(),
                     domains.names(),
                     workspace_root.to_path_buf(),
+                    suppression::suppression_reader(workspace_root),
                 );
                 Some(Self {
                     store,

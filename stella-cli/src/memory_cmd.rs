@@ -351,6 +351,20 @@ pub fn run_memory_forget(id: &str, reason: &str) -> Result<(), String> {
         .forget(ContextSurface::Memory, id, &content, reason)
         .map_err(|e| format!("cannot record tombstone: {e}"))?;
 
+    // Project the tombstone into the plane that owns the memory, so recall
+    // stops offering it at the SQL boundary instead of at the CLI after a
+    // budget has already been spent on it (#712 deliverable 4). The tombstone
+    // in `store.db` stays canonical — it is surface-aware, carries the reason,
+    // and outlives the row — so this is a projection, not a second source of
+    // truth, and it is written second: a failure here leaves the tombstone
+    // recorded and the memory merely still visible, which is recoverable, where
+    // the opposite order could hide a memory with no record of why.
+    if let Some(context) = open_context(&workspace_root)? {
+        context
+            .supersede_node(id)
+            .map_err(|e| format!("cannot suppress `{id}` in the context plane: {e}"))?;
+    }
+
     println!("  {} forgot {id}", "✓".green());
     if !content.is_empty() {
         println!("    {}", clip(content.trim(), 72).dimmed());
@@ -374,6 +388,15 @@ pub fn run_memory_restore(id: &str) -> Result<(), String> {
     let lifted = store
         .restore(ContextSurface::Memory, id)
         .map_err(|e| format!("cannot lift tombstone: {e}"))?;
+    // The exact inverse of what `forget` projected. Run unconditionally rather
+    // than only when `lifted`: the two writes can disagree if a forget failed
+    // halfway, and a restore that refuses to fix that is a memory no command
+    // can bring back.
+    if let Some(context) = open_context(&workspace_root)? {
+        context
+            .restore_node(id)
+            .map_err(|e| format!("cannot lift `{id}` in the context plane: {e}"))?;
+    }
     if lifted {
         println!("  {} restored {id}", "✓".green());
     } else {
@@ -436,16 +459,26 @@ fn clip(text: &str, max: usize) -> String {
     clipped
 }
 
-/// The text of a memory by public id, or `None` when no such memory is live.
-fn memory_text(workspace_root: &std::path::Path, id: &str) -> Result<Option<String>, String> {
+/// The context plane for this workspace, or `None` when the workspace has none
+/// yet. Read-only politeness: an absent `context.db` is "nothing indexed here",
+/// never a database this command creates as a side effect.
+fn open_context(workspace_root: &std::path::Path) -> Result<Option<ContextStore>, String> {
     let Some(context_db) =
         stella_store::existing_workspace_private_sqlite_path(workspace_root, "context.db")
             .map_err(|e| format!("cannot resolve context store: {e}"))?
     else {
         return Ok(None);
     };
-    let context =
-        ContextStore::open(&context_db).map_err(|e| format!("cannot open context store: {e}"))?;
+    ContextStore::open(&context_db)
+        .map(Some)
+        .map_err(|e| format!("cannot open context store: {e}"))
+}
+
+/// The text of a memory by public id, or `None` when no such memory is live.
+fn memory_text(workspace_root: &std::path::Path, id: &str) -> Result<Option<String>, String> {
+    let Some(context) = open_context(workspace_root)? else {
+        return Ok(None);
+    };
     let node = context
         .node_by_public_id(id)
         .map_err(|e| format!("cannot read memory `{id}`: {e}"))?;
