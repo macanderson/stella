@@ -200,7 +200,10 @@ The staged pipeline enforces the same contract at runtime: when no
 `--test-command` is configured, its **witness stage** has an independent model
 (the judge's resolution, never the worker) author the failing witness test up
 front, tracks its fail→pass flip in the flip oracle, and refuses to credit the
-flip if the worker modified the witness files (tamper exclusion). See
+flip if the worker modified the witness files (tamper exclusion). The witness
+is **scaffolding for that one run**: it lives in the candidate workspace and is
+discarded with it, so an already-satisfied test is never left behind in the
+project's test tree. `stella run --keep-witness` promotes it instead. See
 `website/content/docs/inference-pipeline.mdx` for the full stage flow, the distress-triggered guidance
 loop, and the `/pipeline` deck toggle.
 

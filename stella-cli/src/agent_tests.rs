@@ -881,7 +881,7 @@ async fn candidate_rules_reuse_the_parent_snapshot_after_source_removal() {
         )
         .await;
     candidate.seal().await.unwrap();
-    let adopted = candidate.adopt().await.unwrap();
+    let adopted = candidate.adopt(&[]).await.unwrap();
     let landed = root.path().join("protected/candidate.txt").exists();
     candidate.remove().await;
 

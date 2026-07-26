@@ -98,7 +98,9 @@ fn skill_registry_for_run(workspace_root: std::path::PathBuf) -> Option<SkillReg
 /// default) vs the raw step-loop (`--no-pipeline`). `test_command`, when
 /// given, arms the pipeline's deterministic verification ladder (the
 /// fail→pass flip oracle); without it, verification falls back to the model
-/// judge on every iteration.
+/// judge on every iteration. `keep_witness` promotes an authored witness into
+/// the working tree instead of letting it die with the candidate workspace.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_one_shot(
     cfg: &Config,
     prompt: &str,
@@ -106,13 +108,22 @@ pub async fn run_one_shot(
     format: OutputFormat,
     use_pipeline: bool,
     test_command: Option<&str>,
+    keep_witness: bool,
 ) -> Result<(), String> {
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
     crate::enterprise_telemetry::authorize_one_shot(use_pipeline)?;
     if use_pipeline {
-        run_pipeline_one_shot(cfg, prompt, budget_limit, format, test_command).await
+        run_pipeline_one_shot(
+            cfg,
+            prompt,
+            budget_limit,
+            format,
+            test_command,
+            keep_witness,
+        )
+        .await
     } else {
         run_raw_one_shot(cfg, prompt, budget_limit, format).await
     }
@@ -164,6 +175,7 @@ async fn run_pipeline_one_shot(
     budget_limit: Option<f64>,
     format: OutputFormat,
     test_command: Option<&str>,
+    keep_witness: bool,
 ) -> Result<(), String> {
     let provider = build_provider(cfg)?;
     let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
@@ -311,6 +323,10 @@ async fn run_pipeline_one_shot(
             &wiring.worker_model,
         );
         pipeline_config.role_overrides = wiring.role_overrides.clone();
+        // Set here rather than in `pipeline_config_for_approval_capability`:
+        // that helper is shared with the deck, fleet, and goal loops, and
+        // witness promotion is a one-shot `--keep-witness` concern only.
+        pipeline_config.keep_witness = keep_witness;
 
         let stdio_gate = StdioApprovalGate;
         let no_recall = NoContextRecall;
