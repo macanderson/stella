@@ -42,11 +42,21 @@ pub(super) fn project_recalled_frame(
     })
 }
 
-pub(super) fn is_quarantined_local_memory(
+/// Whether a recalled frame has been suppressed — quarantined by repeated
+/// untruthful citations, or explicitly forgotten by the user.
+///
+/// Covers both recallable kinds. `episode` used to be excluded, which made an
+/// entire class of frame unsuppressable: an episode is a verbatim copy of a
+/// past user prompt, it is recalled and injected exactly like a memory, and
+/// `stella memory forget` silently had no effect on one. A prior instruction
+/// could therefore keep surfacing in unrelated runs with no way to stop it —
+/// the shape that let "can you remove the witness tests please" reach the
+/// witness author on a task about a TUI keybinding.
+pub(super) fn is_suppressed_local_frame(
     frame: &RecalledFrame,
-    quarantined: &HashSet<String>,
+    suppressed: &HashSet<String>,
 ) -> bool {
     frame.provider == "workspace-memory"
-        && frame.kind == "memory"
-        && frame.id.as_ref().is_some_and(|id| quarantined.contains(id))
+        && matches!(frame.kind.as_str(), "memory" | "episode")
+        && frame.id.as_ref().is_some_and(|id| suppressed.contains(id))
 }

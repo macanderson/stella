@@ -8,68 +8,45 @@
 
 use super::*;
 
-// The tool catalogue is shared verbatim by both static prompts, in two
-// literal blocks that bracket the lines they genuinely differ on
-// (`SYSTEM_PROMPT` describes `graph_query`'s session-start index;
-// `PIPELINE_SYSTEM_PROMPT` describes a per-call refresh and additionally
-// advertises `project_overview`). It lives in macros rather than a
-// `const &str` because `concat!` takes only literals — and staying a
-// compile-time concatenation is what preserves the byte-stable-prefix
-// property (L-E8) that a runtime `format!` would give up. Copy-pasting the
-// block a third time is the bug this replaces: two lines had already drifted
-// into comma splices where the base copy used an em dash.
+// Both static prompts used to open with a hand-maintained catalogue: one
+// bulleted line per tool, ~1,240 tokens, restating what the generated tool
+// schemas already carry. That was pure duplication with a recurring price.
+// The schema list is serialized at position 0 of the same cached prefix these
+// prompts sit in (`ToolRegistry::schemas`, sorted for exactly that reason), so
+// a default session (~46 tools) was paying for every description twice on
+// every single call (#639).
+//
+// What replaces it is the residue: the steering the schemas structurally
+// cannot express. A schema describes one tool in isolation, so it can say what
+// `apply_edits` does but not that it beats a chain of `edit_file` calls, and it
+// can only ever describe a tool that IS registered — never why a capability is
+// absent or how to turn it on. Anything a tool's own description already says
+// belongs there, not here: the schemas are the reference, this block is policy.
+//
+// It stays a macro rather than a `const &str` because `concat!` takes only
+// literals, and staying a compile-time concatenation is what preserves the
+// byte-stable-prefix property (L-E8) a runtime `format!` would give up. One
+// shared literal, embedded verbatim by both prompts, is also what keeps the two
+// copies from drifting the way the catalogue's did (#450).
 
-/// `read_file` through `repo_*` — every tool whose description is identical
-/// in both prompts and sorts before `graph_query`. Ends with a newline so the
-/// prompt-specific `graph_query` line follows directly.
-macro_rules! tool_catalogue_head {
+/// The cross-tool steering shared by both static prompts — what the generated
+/// schemas cannot say. No trailing newline: each prompt continues with its own
+/// blank line and section header.
+macro_rules! tool_steering {
     () => {
-        r#"- read_file: Read a file with line numbers (supports offset/limit for ranges)
-- write_file: Create or overwrite a file (creates parent dirs)
-- edit_file: Replace an exact substring in a file (use replace_all for multiple)
-- apply_edits: Apply a batch of exact-substring edits — across multiple files — in ONE transactional call: every edit validates first, and if any fails nothing is written (dry_run previews). Use it for coordinated multi-file changes (a rename touching several files) instead of a chain of edit_file calls.
-- delete_file: Delete a file within the workspace
-- run_lint / format_code: Run the project's own linter/formatter (cargo clippy/fmt, or the package.json lint/format scripts)
-- run_script: Run a script the project itself declares, by canonical verb (install/build/check/start/test/lint/format), qualified id (pnpm:build, make:lint), or declared name; args are passed argv-style and an unknown name lists the declared vocabulary
-- list_scripts: The full project scripts index — every detected script and its canonical verb binding; read-only, nothing executes
-- start_process / read_output / send_stdin / stop_process: Manage long-running processes (dev servers, REPLs, watchers) from an argv vector; one-shot commands belong in build_project/run_tests/run_script
-- repo_status / repo_diff / repo_commit / repo_push / repo_pull / repo_rollback: Version-control status, hunk-level diffs of your pending changes (review what you ACTUALLY changed before committing), pathspec-explicit commits, guarded pushes (never the default branch, never forced), fast-forward-only pulls, and restoring named files to their last committed state
-"#
-    };
-}
+        r#"Your tool schemas are the reference for what each tool does and what it takes. What they cannot tell you, because each describes one tool in isolation:
 
-/// `read_symbol` through `install_skill`, plus the prerequisites paragraph —
-/// the rest of the shared catalogue. No trailing newline: each prompt
-/// continues with its own blank line and section header.
-macro_rules! tool_catalogue_tail {
-    () => {
-        r#"- read_symbol: Read a named symbol's exact definition span (function/struct/type body), resolved through the code graph and read through the same path as read_file (same line numbering, same per-file read tally) — when a name has multiple definitions the sites are listed and `path` picks one; cheaper and more precise than guessing read_file offsets after a graph_query. Reach for it when you know the function or type you want by name.
-- grep: Search file contents with regex (shells to ripgrep)
-- glob: Find files matching a glob pattern
-- build_project: Build with the workspace's own toolchain (cargo/npm/go/make)
-- diagnostics: Fast typecheck — runs the toolchain's native machine-readable check (cargo check / tsc / eslint / ruff) and returns structured file:line:col records with severity and rule code, grouped by file; much cheaper than build_project when you only need to know what broke
-- run_tests: Run the workspace's test suite
-- verify_done: The definition of done — replays a new test against the previous code in a shadow worktree; it must fail there and pass on your change (WITNESS CONFIRMED). Use it to prove a change actually works, not just that the suite is green.
-- ask_user: Ask the user a multiple-choice question when a decision is genuinely theirs to make (2-6 options; the UI always adds a free-text option automatically — never add an "Other" option yourself)
-- tool_search: Search every tool available this session (built-ins, MCP server tools, custom tools) ranked by fit — use it when you need a capability you don't see advertised, before concluding it doesn't exist
-- skill_search: Search the skills installed in this workspace ranked by fit; pass include_body: true to get the best match's full instructions when you intend to apply it
-- mcp_search: Find MCP servers and their tools — the workspace's configured servers (default) or the public MCP registry (scope: "registry") for servers worth installing
-- search_skills: Search the public skills registry for reusable skills you don't have locally (skill_search first — it covers what IS installed)
-- install_skill: Install a registry skill into the project (always requires the user's confirmation)
-
-Some tools have prerequisites: issue tracking (create_issue/update_issue/close_issue/search_issues/get_issue/list_labels/list_members/start_work_on_issue) appears only when a tracker is configured (`stella connect github|linear`, LINEAR_API_KEY, or gh auth) — search labels/members with list_labels/list_members before guessing names; ci_status requires the gh CLI. Use them when present. The `bash` shell tool exists only when the workspace settings enable it ("tools": {"bash": "on"}); by default there is no shell — use the structured tools above."#
+- Read a definition by name with read_symbol; guessing read_file offsets after a graph_query is the round-trip it exists to remove.
+- A change touching several files is ONE apply_edits call, not a chain of edit_file calls.
+- A tool you cannot see is not available in this session rather than nonexistent. There is no shell unless the workspace enables it ("tools": {"bash": "on"}); issue tracking, web, and media tools register only once their backend is configured (`stella connect github|linear`, an API key, or `gh auth`; ci_status needs the gh CLI). Reach for tool_search before concluding a capability is missing."#
     };
 }
 
 pub(crate) const SYSTEM_PROMPT: &str = concat!(
     r#"You are Stella, a fast terminal coding agent. You help the user with software engineering tasks by reading files, writing code, running commands, and searching the codebase.
 
-You have these tools available:
 "#,
-    tool_catalogue_head!(),
-    r#"- graph_query: Query the workspace's indexed code graph — where a symbol is defined or referenced, what a file imports, which files import it, or a file's neighborhood. The index is built automatically at session start and refreshes live as files change.
-"#,
-    tool_catalogue_tail!(),
+    tool_steering!(),
     r#"
 
 Rules:
@@ -88,13 +65,8 @@ Rules:
 pub(crate) const PIPELINE_SYSTEM_PROMPT: &str = concat!(
     r#"You are Stella, a software engineering agent that fixes bugs and builds features with surgical precision.
 
-You have these tools available:
 "#,
-    tool_catalogue_head!(),
-    r#"- project_overview: CALL THIS FIRST on an unfamiliar repository. One call, no arguments: returns the language, the build/test/lint commands, the entry-point files, the storage schema, and the domain map in a single JSON object. It replaces the usual opening burst of glob/grep/read_file — you cannot reproduce a failure until you know how this project builds and tests, and this is how you learn that in one step instead of ten.
-- graph_query: Query the workspace's indexed code graph — where a symbol is defined or referenced, what a file imports, which files import it, or a file's neighborhood. Each call brings the index up to date with the working tree first, so it also sees files you just wrote. For symbol and dependency questions it is precise and cheaper than grep.
-"#,
-    tool_catalogue_tail!(),
+    tool_steering!(),
     r#"
 
 Methodology (always follow in order):
@@ -370,107 +342,98 @@ pub(crate) fn render_file_tree(files: &str, max_lines: usize) -> String {
 mod tests {
     use super::{PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT};
 
-    use std::collections::{BTreeMap, BTreeSet};
+    /// Every static prompt, labelled.
+    const PROMPTS: &[(&str, &str)] = &[
+        ("SYSTEM_PROMPT", SYSTEM_PROMPT),
+        ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
+    ];
 
-    /// The issue-tool names both static prompts enumerate, parsed out of the
-    /// `issue tracking (a/b/c)` steering clause.
-    fn steered_issue_tools(prompt: &str) -> BTreeSet<&str> {
-        const OPEN: &str = "issue tracking (";
-        let start = prompt
-            .find(OPEN)
-            .expect("both prompts steer on issue tracking")
-            + OPEN.len();
-        let len = prompt[start..]
-            .find(')')
-            .expect("the steering clause closes its parenthesis");
-        prompt[start..start + len].split('/').collect()
-    }
-
-    /// Witness for #450: the steering line is duplicated verbatim across two
-    /// static prompts, so a new issue tool had to be hand-added in both — the
-    /// kind of duplicated name-list that merges cleanly while going stale.
-    /// Both are now pinned to the canonical catalog.
-    #[test]
-    fn both_prompts_steer_on_exactly_the_catalog_issue_tools() {
-        let expected: BTreeSet<&str> =
-            stella_tools::catalog::names_where(|a| a == stella_tools::catalog::Availability::Issue)
-                .into_iter()
-                .collect();
-
-        for (label, prompt) in [
-            ("SYSTEM_PROMPT", SYSTEM_PROMPT),
-            ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
-        ] {
-            assert_eq!(
-                steered_issue_tools(prompt),
-                expected,
-                "{label}'s issue-tracking steering line disagrees with \
-                 stella_tools::catalog"
-            );
-        }
-    }
-
-    /// The two prompts are separate string literals; the steering clause is
-    /// meant to be identical in both. Pin that directly so they cannot drift
-    /// apart independently of the catalog.
-    #[test]
-    fn the_two_prompts_agree_with_each_other() {
-        assert_eq!(
-            steered_issue_tools(SYSTEM_PROMPT),
-            steered_issue_tools(PIPELINE_SYSTEM_PROMPT)
-        );
-    }
-
-    /// The catalogue lines of `prompt`, keyed by the tool name(s) each line
-    /// leads with.
-    fn catalogue_lines(prompt: &str) -> BTreeMap<&str, &str> {
-        const OPEN: &str = "You have these tools available:\n";
-        const CLOSE: &str = "\n\nSome tools have prerequisites:";
-        let start = prompt.find(OPEN).expect("both prompts open a catalogue") + OPEN.len();
-        let end = start
-            + prompt[start..]
-                .find(CLOSE)
-                .expect("the catalogue closes with the prerequisites paragraph");
-        prompt[start..end]
+    /// The catalogue-shaped lines of `prompt`: `- <tool_name>: …`, where the
+    /// lead-in is a bare canonical tool name or a `/`-joined run of them.
+    /// This is the exact shape the hand-maintained catalogue took.
+    fn schema_restating_lines(prompt: &str) -> Vec<&str> {
+        prompt
             .lines()
-            .filter_map(|line| {
-                let rest = line.strip_prefix("- ")?;
-                Some((rest.split(':').next().unwrap_or(rest), line))
+            .filter(|line| {
+                let Some(rest) = line.strip_prefix("- ") else {
+                    return false;
+                };
+                let Some((lead, _)) = rest.split_once(':') else {
+                    return false;
+                };
+                lead.split('/')
+                    .map(str::trim)
+                    .all(|name| stella_tools::catalog::get(name).is_some())
             })
             .collect()
     }
 
-    /// The one tool the two prompts describe DIFFERENTLY on purpose: the
-    /// step-loop builds its graph index once at session start, the pipeline
-    /// refreshes it per call, so each prompt states its own contract. Every
-    /// other shared tool must come from the one shared literal.
-    const DELIBERATELY_DIVERGENT: &[&str] = &["graph_query"];
-
-    /// Witness: the catalogue was copy-pasted into both prompts and had
-    /// already rotted — `verify_done` and `ask_user` took comma splices in
-    /// the pipeline copy where the base copy took an em dash. Every tool
-    /// described by both prompts must now come from one shared literal, so
-    /// the descriptions are byte-identical and a new tool is one edit.
+    /// The #639 regression guard, and the acceptance criterion for it.
+    ///
+    /// Both prompts opened with a per-tool catalogue that restated the
+    /// generated schemas. Those schemas are serialized at position 0 of the
+    /// SAME cached prefix the system prompt sits in, so a default session
+    /// (~46 tools) bought every description twice on every call — ~1,240
+    /// tokens of pure duplication, billed for the life of the session.
+    ///
+    /// A tool's own `description` is the one place its behaviour is written
+    /// down. If a new line here would restate one, it belongs in the schema.
     #[test]
-    fn every_tool_described_by_both_prompts_shares_one_literal() {
-        let base = catalogue_lines(SYSTEM_PROMPT);
-        let pipeline = catalogue_lines(PIPELINE_SYSTEM_PROMPT);
-        let mut shared = 0usize;
-        for (name, line) in &base {
-            if DELIBERATELY_DIVERGENT.contains(name) {
-                continue;
-            }
-            if let Some(other) = pipeline.get(name) {
-                assert_eq!(
-                    line, other,
-                    "`{name}` drifted between SYSTEM_PROMPT and PIPELINE_SYSTEM_PROMPT"
+    fn neither_prompt_re_enumerates_the_generated_tool_schemas() {
+        for (label, prompt) in PROMPTS {
+            let restated = schema_restating_lines(prompt);
+            assert!(
+                restated.is_empty(),
+                "{label} restates what the tool schemas already carry — put it \
+                 in the tool's own description instead (#639):\n{}",
+                restated.join("\n")
+            );
+            assert!(
+                !prompt.contains("You have these tools available"),
+                "{label} reopens a hand-maintained tool catalogue (#639)"
+            );
+        }
+    }
+
+    /// What survived the cut is cross-tool steering: composition rules and the
+    /// availability model, neither of which a single tool's schema can express.
+    /// Pin the three claims so a later trim cannot quietly take them too.
+    #[test]
+    fn both_prompts_keep_the_steering_the_schemas_cannot_carry() {
+        for (label, prompt) in PROMPTS {
+            for claim in [
+                // Composition, not description: read_symbol beats the
+                // graph_query → guessed-offset round-trip (#330, #388).
+                "guessing read_file offsets after a graph_query",
+                // Composition: one transactional call, not a chain (#333).
+                "ONE apply_edits call",
+                // A schema can only describe a tool that IS registered — it
+                // can never explain an absence or how to lift it.
+                "not available in this session",
+                "tools\": {\"bash\": \"on\"}",
+                "tool_search",
+            ] {
+                assert!(
+                    prompt.contains(claim),
+                    "{label} dropped steering that no tool schema carries: {claim:?}"
                 );
-                shared += 1;
             }
         }
-        assert!(
-            shared >= 20,
-            "expected the bulk of the catalogue to be shared, matched only {shared} entries"
-        );
+    }
+
+    /// The catalogue was copy-pasted into both prompts and had already rotted
+    /// — `verify_done` and `ask_user` took comma splices in the pipeline copy
+    /// where the base copy took an em dash (#450). The replacement is one
+    /// shared literal, so pin that both prompts embed it byte-identically
+    /// rather than growing a second copy to drift from.
+    #[test]
+    fn both_prompts_embed_the_one_shared_steering_literal() {
+        let shared = tool_steering!();
+        for (label, prompt) in PROMPTS {
+            assert!(
+                prompt.contains(shared),
+                "{label} does not embed the shared steering block verbatim"
+            );
+        }
     }
 }
