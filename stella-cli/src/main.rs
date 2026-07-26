@@ -1549,6 +1549,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         eprintln!("⚠ settings: {}", issue.line());
     }
 
+    // Same posture, one file over: `~/.stella/credentials.toml` is read even
+    // when its mode lets others at it (refusing would lock a user out of their
+    // own keys) and is never silently `chmod`ed (its mode is not ours to
+    // change) — so the only honest response left is to say so, out loud, once.
+    // A check whose finding nothing prints would be worse than no check.
+    for advisory in &cfg.credential_advisories {
+        eprintln!("⚠ credentials: {}", advisory.line());
+    }
+
     match cli.command.unwrap_or(Command::Chat) {
         Command::Run {
             prompt,

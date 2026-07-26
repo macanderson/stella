@@ -618,8 +618,49 @@ fn open_connection(path: &Path) -> Result<Connection, ContextError> {
          PRAGMA foreign_keys=ON;\
          PRAGMA busy_timeout=5000;",
     )?;
+    // After the WAL pragma, so the `-wal`/`-shm` siblings SQLite creates for
+    // this connection exist and get narrowed in the same pass.
+    restrict_to_owner(path);
     Ok(conn)
 }
+
+/// Narrow `context.db` and its WAL/SHM siblings to `0600`.
+///
+/// SQLite creates all three at the process umask, which on a default `0022`
+/// system means `0644` — world-readable. This file is not incidental state:
+/// it holds recalled memories, episodes (verbatim copies of past user
+/// prompts), and facts mined from workspace content, so whatever secrets the
+/// workspace contains can end up inside it. These are files *we* create, and
+/// the posture for those is owner-only from as early as we can manage.
+///
+/// Best-effort on purpose. A `chmod` failure does not fail the open: the
+/// alternative is a workspace that cannot be opened at all because of a
+/// filesystem that does not carry Unix modes (a `vfat`/`exfat` mount, some
+/// network shares), which would be a hard regression in exchange for a
+/// permission the filesystem was never enforcing anyway. Missing siblings are
+/// likewise skipped — `-wal` only exists once something is written.
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    for suffix in ["", "-wal", "-shm"] {
+        // SQLite names the siblings by appending to the WHOLE database
+        // filename (`context.db-wal`), not by replacing an extension.
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        let target = PathBuf::from(name);
+        if target.exists() {
+            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+}
+
+/// Non-Unix targets have no mode word to set; Windows expresses this through
+/// ACLs, which are a different mechanism entirely. A no-op, never an error —
+/// failing here would make the context plane unopenable on those platforms in
+/// exchange for nothing.
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) {}
 
 /// Apply pending migrations inside a single transaction, bumping
 /// `user_version` atomically with the DDL.
@@ -1380,6 +1421,44 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    /// `context.db` carries recalled memories and verbatim past prompts, so
+    /// it must not land at the process umask (`0644` on a default system).
+    /// The WAL/SHM siblings hold the same bytes and are checked too — a
+    /// tightened database with a world-readable `-wal` beside it would be the
+    /// exact false assurance this change exists to remove.
+    #[cfg(unix)]
+    #[test]
+    fn opening_narrows_the_database_and_its_wal_siblings_to_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let store = ContextStore::open(&path).unwrap();
+        // Force a WAL write so `-wal` definitely exists alongside `-shm`.
+        upsert_node(
+            &store.conn(),
+            &NodeInput::new(NodeKind::Concept, "secret-bearing content"),
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(suffix);
+            let target = PathBuf::from(name);
+            if !target.exists() {
+                continue;
+            }
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode,
+                0o600,
+                "{} must be owner-only, found {mode:04o}",
+                target.display()
+            );
+        }
     }
 
     #[test]

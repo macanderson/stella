@@ -53,7 +53,7 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/accept.rs`](src/accept.rs) | The written `accept()` classification policy — transient vs fatal, the backoff, and the give-up streak. Byte-identical to [`stella-observatory/src/accept.rs`](../stella-observatory/src/accept.rs) (the observatory takes no `stella-*` dependency, so there is no shared crate to hold it); a drift-guard test in both crates fails if the two copies differ. Change one, change the other. |
 | [`src/http.rs`](src/http.rs) | A hand-rolled HTTP/1.1 + SSE layer following [`stella-observatory`](../stella-observatory)'s no-framework idiom, extended with request bodies, bearer auth, and long-lived responses. |
 | [`src/error.rs`](src/error.rs) | `ServeError` — the named failures at the boundary. |
-| [`src/main.rs`](src/main.rs) | The binary: env config (`STELLA_SERVE_BIND` / `_TOKEN` / `_TOOLS`) and the `healthcheck` subcommand. |
+| [`src/main.rs`](src/main.rs) | The binary: env config (`STELLA_SERVE_BIND` / `_TOKEN_FILE` / `_TOKEN` / `_TOOLS`; the file supply wins, and a token under 32 chars warns rather than refusing to start) and the `healthcheck` subcommand. |
 
 ## Key concepts
 
@@ -126,7 +126,11 @@ the engine's backoff.
   [`src/server.rs`](src/server.rs) exists because `==` on `&str` stops at the first
   differing byte and leaks the shared secret to a caller timing its own 401s. A
   missing `Authorization` header is a hard `false`, so an empty configured token
-  cannot authorize an anonymous request.
+  cannot authorize an anonymous request. **401s are also rate-limited** by a
+  per-process token bucket (burst 8, refill 2/s, 500 ms penalty once empty) —
+  the response body and status never change, only the latency, so the throttle
+  leaks nothing about its own state and a correctly-configured host never
+  reaches it.
 - **`ToolExecutor::execute` never returns an error.** A tool failure is
   model-visible data, so a host disconnect mid-tool becomes `ToolOutput::Error`,
   not an engine error. The provider port is the opposite: a disconnect there is a

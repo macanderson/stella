@@ -30,9 +30,21 @@ pub enum CredentialError {
 
 /// A secret API key. No `Display`; a redacted `Debug`; the value is only
 /// reachable through [`ApiKey::reveal`]. A stray `println!`/log line can
-/// therefore never leak it.
+/// therefore never leak it, and the plaintext is wiped on drop.
+///
+/// The wipe is here for the same reason the type is: this is a deliberate
+/// copy of `stella-model`'s `ApiKey`, and a copy whose security contract
+/// silently diverges is worse than no copy at all — an audit that reads
+/// "keys are zeroized" in one crate must not find a twin that isn't.
 #[derive(Clone)]
 pub struct ApiKey(String);
+
+impl Drop for ApiKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.0.zeroize();
+    }
+}
 
 impl ApiKey {
     /// Wrap a key value handed in by the caller (CLI glue, tests).
