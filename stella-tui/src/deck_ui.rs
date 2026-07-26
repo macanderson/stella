@@ -614,6 +614,19 @@ pub struct DeckUi {
     /// `ctrl+o` (still with no selection) or Esc on the Session tab turns it
     /// off — every way in has a way out.
     pub transcript_expand_all: bool,
+    /// The transcript search bar. Modal while `open`: every keystroke goes to
+    /// it, so nothing leaks into the composer behind it.
+    pub search: TranscriptSearch,
+    /// Per-agent set of *turn start* entry indices whose turn is folded to a
+    /// one-line digest. Keyed on the opening prompt's index so eviction
+    /// handling is identical to `expanded` — both drop together.
+    pub folded_turns: std::collections::HashMap<String, std::collections::HashSet<usize>>,
+    /// The no-selection `ctrl+z` overlay: every *finished* turn folds, without
+    /// touching the per-turn `folded_turns` sets. The mirror of
+    /// [`Self::transcript_expand_all`], and it exits the same two ways.
+    pub fold_all_turns: bool,
+    /// Bumped on every fold toggle so the session fold cache invalidates.
+    pub fold_rev: u64,
     /// When a turn-stopping Esc armed the double-Esc escalation. A second
     /// Esc inside [`ESC_DOUBLE_WINDOW`] with no other key in between sends
     /// [`WorkspaceInput::StopAndHold`]; any other key — or an Esc claimed by
@@ -729,6 +742,10 @@ impl Default for DeckUi {
             expanded_rev: 0,
             evicted_seen: std::collections::HashMap::new(),
             transcript_expand_all: false,
+            search: TranscriptSearch::default(),
+            folded_turns: std::collections::HashMap::new(),
+            fold_all_turns: false,
+            fold_rev: 0,
             esc_armed_at: None,
             dispatch_held: false,
             session_fold: crate::views::session::SessionFold::default(),
@@ -1205,6 +1222,12 @@ fn clamp(model: &WorkspaceModel, ui: &mut DeckUi) {
             if ui.expanded.remove(&agent.meta.id).is_some() {
                 ui.expanded_rev += 1;
             }
+            // Fold sets are keyed on turn-start indices, which shift by
+            // exactly the same amount — they go stale together, so they drop
+            // together.
+            if ui.folded_turns.remove(&agent.meta.id).is_some() {
+                ui.fold_rev += 1;
+            }
         }
     }
     // The ↑/↓ highlight must stay inside the retained window — eviction can
@@ -1264,6 +1287,11 @@ fn push_single_line(buf: &mut String, text: &str) {
 /// the global composer, so a stop must leave a typed draft untouched. A
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
+mod nav;
+pub use nav::TranscriptSearch;
+pub(crate) use nav::is_folded;
+use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
+
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     if key.kind == KeyEventKind::Release {
         return DeckAction::Ignored;
@@ -1271,6 +1299,19 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
 
     let is_ctrl_o =
         key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('o'));
+
+    // Transcript navigation chords. Ctrl-chords rather than bare letters:
+    // the deck's letter hotkeys only apply to an empty composer, which means
+    // a prompt beginning with that letter loses its first keystroke — fine
+    // for `?`, unacceptable for a key a reader reaches for mid-session.
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let is_ctrl_f = ctrl && matches!(key.code, KeyCode::Char('f'));
+    let is_ctrl_z = ctrl && matches!(key.code, KeyCode::Char('z'));
+    let seek_dir = match key.code {
+        KeyCode::Char('n') if ctrl => Some(true),
+        KeyCode::Char('p') if ctrl => Some(false),
+        _ => None,
+    };
 
     // The double-Esc pair: EVERY key consumes the armed state up front; only
     // the unclaimed turn-stopping Esc at the tail re-arms, and only an
@@ -1329,6 +1370,39 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     // again. The SKILLS tab reuses ctrl+o for its own markdown preview
     // overlay, so it must NOT be claimed here on that tab — the
     // keyboard-owning skills handler below owns it.
+    // Transcript search is modal while its bar is up, and is claimed BEFORE
+    // the navigation chords below: `ctrl+n`/`ctrl+p` mean "next/previous
+    // match" to a reader who is looking at a search bar, and "next/previous
+    // failure" only to one who is not. Ordering these the other way round
+    // silently gives the bar's own keys to the transcript behind it.
+    if ui.search.open {
+        return handle_search_key(key, model, ui);
+    }
+
+    // Transcript navigation, Session tab only — no other tab draws a
+    // transcript, so claiming these chords elsewhere would take them from
+    // nothing. They sit beside ctrl+o because they are the same kind of verb:
+    // a view control over the transcript, not a message to the agent.
+    if ui.tab == DeckTab::Session {
+        if is_ctrl_f {
+            ui.search.open = true;
+            if let Some(agent) = model.agents.get(ui.focused) {
+                // Re-opening keeps the previous query: "find that again" is a
+                // far more common second press than "find something else", and
+                // the first character of a new query is one Backspace away.
+                ui.search.refresh(&agent.model.transcript);
+            }
+            reveal_current_match(model, ui);
+            return DeckAction::Handled;
+        }
+        if let Some(forward) = seek_dir {
+            return seek_failure(model, ui, forward);
+        }
+        if is_ctrl_z {
+            return toggle_fold(model, ui);
+        }
+    }
+
     if is_ctrl_o && ui.tab != DeckTab::Skills {
         if let Some(sel) = ui.session_selected {
             // Only a genuinely expandable entry toggles — a no-op press must
@@ -3828,6 +3902,16 @@ fn handle_session_key(
         // cancel a running turn.
         KeyCode::Esc if ui.transcript_expand_all => {
             ui.transcript_expand_all = false;
+            Some(DeckAction::Handled)
+        }
+        // The fold-ALL overlay's Esc way out, claimed on the same rule and for
+        // the same reason as the expand-all one above: every way in has a way
+        // out, and closing an overlay must never fall through to cancelling a
+        // running turn. The per-turn exception list is left alone — Esc undoes
+        // the overlay, not the reader's individual choices underneath it.
+        KeyCode::Esc if ui.fold_all_turns => {
+            ui.fold_all_turns = false;
+            ui.fold_rev += 1;
             Some(DeckAction::Handled)
         }
         KeyCode::Up => {
