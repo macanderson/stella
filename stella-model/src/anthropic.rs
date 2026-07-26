@@ -332,7 +332,18 @@ const ANTHROPIC_CAPS: crate::attachment::DialectCaps = crate::attachment::Dialec
 /// Map a user message's attachments to Anthropic content blocks. Media
 /// blocks precede text (the documented preferred ordering for vision).
 fn attachment_blocks(message: &CompletionMessage) -> Vec<AnthropicContentBlock> {
-    crate::attachment::wire_parts(&message.attachments, ANTHROPIC_CAPS)
+    attachment_blocks_with_caps(message, ANTHROPIC_CAPS)
+}
+
+/// The mapping itself, with caps as a parameter: the degrade arm for parts
+/// this dialect has no shape for is unreachable under the shipped
+/// [`ANTHROPIC_CAPS`], so parameterising is what keeps it testable — and
+/// keeps a future caps edit from turning an attachment into a panic.
+fn attachment_blocks_with_caps(
+    message: &CompletionMessage,
+    caps: crate::attachment::DialectCaps,
+) -> Vec<AnthropicContentBlock> {
+    crate::attachment::wire_parts(&message.attachments, caps)
         .into_iter()
         .map(|part| match part {
             crate::attachment::WirePart::Image { media_type, base64 } => {
@@ -348,11 +359,14 @@ fn attachment_blocks(message: &CompletionMessage) -> Vec<AnthropicContentBlock> 
                 cache_control: None,
             },
             // Audio/video are switched off in ANTHROPIC_CAPS, so wire_parts
-            // has already degraded them to Text notes.
-            crate::attachment::WirePart::Audio { .. }
-            | crate::attachment::WirePart::Video { .. } => {
-                unreachable!("caps exclude audio/video")
-            }
+            // normally degrades them to Text notes before they get here. If a
+            // caps flag is ever switched on ahead of a wire shape for it, say
+            // so in text rather than aborting the turn.
+            part @ (crate::attachment::WirePart::Audio { .. }
+            | crate::attachment::WirePart::Video { .. }) => AnthropicContentBlock::Text {
+                text: crate::attachment::unencodable_part_note(&part, "the Anthropic Messages API"),
+                cache_control: None,
+            },
         })
         .collect()
 }

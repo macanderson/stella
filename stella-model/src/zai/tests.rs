@@ -88,6 +88,46 @@ fn user_attachments_widen_content_to_parts_with_data_uri_images() {
     assert_eq!(parts[2]["text"], "look");
 }
 
+/// Switching a caps flag on must never abort the turn. The PDF/audio/video
+/// arms of the mapping are unreachable only because of the shipped `ZAI_CAPS`;
+/// editing a caps const is a routine change, so the arms degrade to a
+/// descriptive text part — the attachment module's contract is that an
+/// attachment NEVER fails the request.
+#[test]
+fn caps_a_dialect_cannot_encode_degrade_to_text_never_panic() {
+    use stella_protocol::{Attachment, AttachmentSource};
+    let everything = crate::attachment::DialectCaps {
+        images: true,
+        pdfs: true,
+        audio: true,
+        video: true,
+    };
+    let att = |name: &str, mime: &str, b64: &str| Attachment {
+        name: name.into(),
+        media_type: mime.into(),
+        byte_len: 3,
+        source: AttachmentSource::Data { base64: b64.into() },
+    };
+    let message = CompletionMessage::user_with_attachments(
+        "read this",
+        vec![
+            att("spec.pdf", "application/pdf", "cGRm"),
+            att("song.mp3", "audio/mpeg", "YXVk"),
+            att("clip.mp4", "video/mp4", "dmlk"),
+        ],
+    );
+    let json = serde_json::to_value(user_content_with_caps(&message, everything)).unwrap();
+    let parts = json.as_array().unwrap();
+    assert_eq!(parts.len(), 4, "{json}");
+    for (part, needle) in parts.iter().zip(["spec.pdf", "audio/mpeg", "video/mp4"]) {
+        assert_eq!(part["type"], "text", "{json}");
+        let note = part["text"].as_str().unwrap();
+        assert!(note.contains(needle), "{note}");
+        assert!(note.contains("GLM"), "{note}");
+    }
+    assert_eq!(parts[3]["text"], "read this");
+}
+
 #[test]
 fn to_zai_messages_marks_error_results_loudly() {
     use stella_protocol::{ToolOutput, ToolResult};

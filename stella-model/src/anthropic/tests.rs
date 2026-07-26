@@ -78,6 +78,44 @@ fn attachment_only_user_message_survives_without_text() {
     assert_eq!(blocks[0]["type"], "image");
 }
 
+/// Switching a caps flag on must never abort the turn. The audio/video arms
+/// of the mapping are unreachable only because of the shipped
+/// `ANTHROPIC_CAPS`; editing a caps const is a routine change, so the arms
+/// degrade to a descriptive text block — the attachment module's contract is
+/// that an attachment NEVER fails the request.
+#[test]
+fn caps_a_dialect_cannot_encode_degrade_to_text_never_panic() {
+    use stella_protocol::{Attachment, AttachmentSource};
+    let everything = crate::attachment::DialectCaps {
+        images: true,
+        pdfs: true,
+        audio: true,
+        video: true,
+    };
+    let att = |name: &str, mime: &str, b64: &str| Attachment {
+        name: name.into(),
+        media_type: mime.into(),
+        byte_len: 3,
+        source: AttachmentSource::Data { base64: b64.into() },
+    };
+    let message = CompletionMessage::user_with_attachments(
+        "listen",
+        vec![
+            att("song.mp3", "audio/mpeg", "YXVk"),
+            att("clip.mp4", "video/mp4", "dmlk"),
+        ],
+    );
+    let json = serde_json::to_value(attachment_blocks_with_caps(&message, everything)).unwrap();
+    let blocks = json.as_array().unwrap();
+    assert_eq!(blocks.len(), 2, "{json}");
+    for (block, media_type) in blocks.iter().zip(["audio/mpeg", "video/mp4"]) {
+        assert_eq!(block["type"], "text", "{json}");
+        let note = block["text"].as_str().unwrap();
+        assert!(note.contains(media_type), "{note}");
+        assert!(note.contains("Anthropic Messages API"), "{note}");
+    }
+}
+
 /// The reported failure's happy path: a multi-kilobyte `write_file` tool
 /// call whose argument JSON is split across HUNDREDS of `input_json_delta`
 /// fragments (and thus many SSE events / network chunks) must reassemble

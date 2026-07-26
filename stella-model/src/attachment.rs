@@ -15,6 +15,12 @@
 //! the conversation replays every turn, so a hard error here would brick the
 //! session permanently.
 //!
+//! The contract holds on *both* sides of the adapter boundary. A dialect's
+//! `*_CAPS` const decides which [`WirePart`]s it can be handed, but an adapter
+//! must still answer for a part it has no wire shape for — switching a caps
+//! flag on is a routine edit and must never be able to panic a live turn. That
+//! second-line degrade is [`unencodable_part_note`].
+//!
 //! ## Size
 //!
 //! Stella imposes no size cap of its own. Payloads are hydrated from disk at
@@ -157,12 +163,35 @@ fn degrade_note(attachment: &Attachment, kind: AttachmentKind) -> String {
         AttachmentKind::Video => "video",
         AttachmentKind::Pdf => "PDF documents",
         AttachmentKind::Binary => "this file format",
-        AttachmentKind::Text => unreachable!("text always inlines"),
+        // Text always inlines above, so this arm is structurally dead — but it
+        // degrades rather than panics so a future edit to `resolve_one` cannot
+        // turn a reordered match into an aborted turn.
+        AttachmentKind::Text => "this file format",
     };
     format!(
         "[the user attached {}, but the current provider cannot ingest {noun} natively; \
          acknowledge the attachment and suggest a provider or format that can be read]",
         attachment.label()
+    )
+}
+
+/// The note an adapter emits for a [`WirePart`] it has no wire shape for —
+/// i.e. a `*_CAPS` flag was switched on for a kind that adapter never learned
+/// to encode. Names what arrived so the model can tell the user, keeping the
+/// module's "never fail the request" contract on the adapter side of the
+/// boundary too. Each adapter supplies its own `dialect` phrasing.
+pub(crate) fn unencodable_part_note(part: &WirePart, dialect: &str) -> String {
+    let what = match part {
+        WirePart::Image { media_type, .. } => format!("an image ({media_type})"),
+        WirePart::Pdf { name, .. } => format!("a PDF document ({name})"),
+        WirePart::Audio { media_type, .. } => format!("an audio file ({media_type})"),
+        WirePart::Video { media_type, .. } => format!("a video ({media_type})"),
+        // Every adapter maps text; here purely so this stays total.
+        WirePart::Text { .. } => "a text attachment".to_string(),
+    };
+    format!(
+        "[the user attached {what}, but {dialect} cannot carry it; acknowledge the attachment \
+         and suggest a provider or format that can read it]"
     )
 }
 

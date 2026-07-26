@@ -263,7 +263,18 @@ fn sanitize_document_name(name: &str) -> String {
 /// A media type outside Converse's format allowlists degrades to a note
 /// instead of a hard API rejection.
 fn attachment_blocks(message: &CompletionMessage) -> Vec<BedrockContentBlock> {
-    crate::attachment::wire_parts(&message.attachments, BEDROCK_CAPS)
+    attachment_blocks_with_caps(message, BEDROCK_CAPS)
+}
+
+/// The mapping itself, with caps as a parameter: the degrade arm for parts
+/// this dialect has no shape for is unreachable under the shipped
+/// [`BEDROCK_CAPS`], so parameterising is what keeps it testable — and keeps a
+/// future caps edit from turning an attachment into a panic.
+fn attachment_blocks_with_caps(
+    message: &CompletionMessage,
+    caps: crate::attachment::DialectCaps,
+) -> Vec<BedrockContentBlock> {
+    crate::attachment::wire_parts(&message.attachments, caps)
         .into_iter()
         .map(|part| match part {
             crate::attachment::WirePart::Text { text } => BedrockContentBlock {
@@ -302,9 +313,17 @@ fn attachment_blocks(message: &CompletionMessage) -> Vec<BedrockContentBlock> {
                 }),
                 ..Default::default()
             },
-            crate::attachment::WirePart::Audio { .. } => {
-                unreachable!("caps exclude audio")
-            }
+            // Audio is switched off in BEDROCK_CAPS, so wire_parts normally
+            // degrades it to a text block before it gets here. If the caps flag
+            // is ever switched on ahead of a Converse shape for audio, say so
+            // in text rather than aborting the turn.
+            part @ crate::attachment::WirePart::Audio { .. } => BedrockContentBlock {
+                text: Some(crate::attachment::unencodable_part_note(
+                    &part,
+                    "Bedrock's Converse API",
+                )),
+                ..Default::default()
+            },
         })
         .collect()
 }
@@ -1138,6 +1157,39 @@ mod tests {
             "{json}"
         );
         assert_eq!(content[4]["text"], "look");
+    }
+
+    /// Switching a caps flag on must never abort the turn. The audio arm of
+    /// the mapping is unreachable only because of the shipped `BEDROCK_CAPS`;
+    /// editing a caps const is a routine change, so the arm degrades to a
+    /// descriptive text block — the attachment module's contract is that an
+    /// attachment NEVER fails the request.
+    #[test]
+    fn caps_a_dialect_cannot_encode_degrade_to_text_never_panic() {
+        use stella_protocol::{Attachment, AttachmentSource};
+        let everything = crate::attachment::DialectCaps {
+            images: true,
+            pdfs: true,
+            audio: true,
+            video: true,
+        };
+        let message = CompletionMessage::user_with_attachments(
+            "listen",
+            vec![Attachment {
+                name: "song.mp3".into(),
+                media_type: "audio/mpeg".into(),
+                byte_len: 3,
+                source: AttachmentSource::Data {
+                    base64: "YXVk".into(),
+                },
+            }],
+        );
+        let json = serde_json::to_value(attachment_blocks_with_caps(&message, everything)).unwrap();
+        let blocks = json.as_array().unwrap();
+        assert_eq!(blocks.len(), 1, "{json}");
+        let note = blocks[0]["text"].as_str().unwrap();
+        assert!(note.contains("audio/mpeg"), "{note}");
+        assert!(note.contains("Converse API"), "{note}");
     }
 
     #[test]
