@@ -260,7 +260,13 @@ fn sync_one(hub: &UsageStore, root: &Path) -> Result<u64, String> {
 /// Parse a retention window (`90d`, `12w`, `720h`, `3mo`, `1y`; a bare number is
 /// days) into a SQLite datetime modifier like `"-90 days"`. SQLite has no
 /// `weeks` modifier, so weeks fold into days.
-fn parse_age_window(s: &str) -> Result<String, String> {
+/// Parse an `N<unit>` retention window into a SQLite datetime modifier.
+///
+/// Shared with `stella storage prune` (see `crate::storage_prune`) so both
+/// retention verbs accept exactly the same grammar — a user who learns
+/// `--older-than 90d` for the hub should not discover a different spelling for
+/// the store.
+pub(crate) fn parse_age_window(s: &str) -> Result<String, String> {
     let s = s.trim();
     let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     let (num, unit) = s.split_at(split);
