@@ -1,11 +1,23 @@
 # Architecture Decision Records — Phase 0 (Adaptive Context)
 
-These ADRs capture the baseline decisions for Phase 0 of the adaptive-context
-work in Stella. Most of them *record* a decision the canonical planning pair
-already made — [`adaptive-context-implementation-plan.md`](../design/adaptive-context/adaptive-context-implementation-plan.md)
-and [`stella-adaptive-context-lifecycle.md`](../design/adaptive-context/stella-adaptive-context-lifecycle.md)
-— rather than making a new one. Each ADR grounds its claims in those source
-docs and, where relevant, in the current Stella code.
+These ADRs capture the baseline decisions for the adaptive-context work in
+Stella. ADRs 0001–0009 mostly *record* a decision the 2026-07 planning bundle
+already made, rather than making a new one; each grounds its claims in those
+source docs and, where relevant, in the current Stella code.
+
+**That bundle has been superseded** and removed from the tree (it remains in
+git history). The current specification is
+[`../design/adaptive-context.md`](../design/adaptive-context.md), with phases in
+[`../design/adaptive-context-plan.md`](../design/adaptive-context-plan.md).
+References to the old plan/lifecycle pair in ADRs 0001–0009 are left as written:
+they are accurate records of what was decided and why, and rewriting them to
+cite a document that did not exist at the time would falsify the record.
+
+The current spec annotates two ADRs whose conclusions did not survive contact
+with the shipped code — 0003 (the point-in-time cutoff reaches adjacency only,
+one layer below `recall`) and 0006 (the compiled frame is now reached by
+extending the step manifest, not by building a parallel aggregate). Read those
+notes alongside the ADRs.
 
 ADRs 0002 and 0007 originally FLAGGED open questions for human sign-off; the
 repository owner **ratified both on 2026-07-23**, so all Phase 0 ADRs are now
@@ -30,3 +42,4 @@ spec/ADRs, three ratified by the owner on 2026-07-24 (including the
 | [0007](0007-immutable-promotion-history.md) | Immutable Promotion History | Accepted — ratified 2026-07-23 (enforcement 4→2); amended 2026-07-24 (`informational`→advisory) |
 | [0008](0008-markdown-canonical-rules.md) | Markdown Repository Rules Remain Canonical | Accepted (Phase 0) |
 | [0009](0009-enum-freeze-resolutions.md) | Enum-Freeze Resolutions (issue #483) | Accepted — ratified 2026-07-24 |
+| [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | **Proposed** — needs ratification |
