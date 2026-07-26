@@ -6,9 +6,7 @@ settings:
 
 importers:
 
-  .: {}
-
-  website:
+  .:
     dependencies:
       fumadocs-core:
         specifier: 16.9.3
