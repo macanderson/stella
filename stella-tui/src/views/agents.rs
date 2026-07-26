@@ -25,8 +25,8 @@ use crate::deck::{ACTIVITY_WINDOW, AgentEntry, WorkspaceModel};
 use crate::deck_ui::{AgentsPane, DeckUi};
 use crate::theme;
 
-/// Column headers, in display order — matches the `widths` array in
-/// [`render`] index-for-index. `Cache`/`Warmth` (#267/#269) sit at the end,
+/// Column headers, in display order — matches the `full_widths` array in
+/// [`render_executions`] index-for-index. `Cache`/`Warmth` (#267/#269) sit at the end,
 /// next to `Activity` — density signal like `$/hr`/`CPU%`/`MEM`, not row
 /// identity, so appending them keeps every earlier column's index stable.
 const HEADERS: [&str; 13] = [
@@ -80,7 +80,7 @@ fn render_pane_nav(pane: AgentsPane, area: Rect, buf: &mut Buffer) {
     Paragraph::new(line).render(area, buf);
 }
 
-/// Below this pane width the 11-column table starves the Goal column (the
+/// Below this pane width the full 13-column table starves the Goal column (the
 /// only Fill), so the dashboard drops to the compact column set — the
 /// normal case for the left 60% of the grid on an ordinary terminal.
 const COMPACT_TABLE_WIDTH: u16 = 140;

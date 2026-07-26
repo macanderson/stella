@@ -18,7 +18,9 @@
 //! * [`svg`] — the [`SvgPipeline`]: validate → sanitize → optimize with a
 //!   bounded model-repair loop, treating LLM SVG as untrusted code (L-V2).
 //! * [`preview`] — the terminal preview ladder (kitty / iTerm2 / plain), pure
-//!   string builders, no TTY writes.
+//!   string builders, no TTY writes. A port with no caller yet: the media
+//!   tools report a saved artifact by path, so nothing in the workspace builds
+//!   a preview (see the module docs).
 //! * [`cost_gate`] — host-owned approval for image and video spend,
 //!   deny-by-default when no host gate is injected.
 //! * [`jobs`] — persisted video-job state + live reconciliation so a
@@ -26,6 +28,8 @@
 //!   cache (L-V3).
 //! * [`emit`] — helpers turning job transitions into `stella_protocol` event
 //!   *values* (`MediaProgress` / `MediaComplete`), no channel dependency.
+//!   Like [`preview`], a port with no caller yet: `stella-tui` renders both
+//!   events, but nothing in the workspace produces one, here or elsewhere.
 //! * [`operation_journal`] — the host-owned durable idempotency journal
 //!   ([`MediaOperationJournal`]), so a retried submission cannot pay twice.
 //!   Its SQLite implementation is Unix-only and blocking; see the module docs.

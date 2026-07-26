@@ -1,10 +1,20 @@
 //! Owner-only local-state filesystem primitives.
+//!
+//! Every durable replacement here goes through [`crate::durable::write_atomic`]
+//! — the one temp + fsync + rename + fsync-parent implementation (#617). What
+//! this module adds on top is *identity*: the no-follow, owner-and-single-link,
+//! regular-file validation that says the thing being replaced is the caller's
+//! own state and not something planted at that path. That validation is
+//! unix-only; the durability is not.
 
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
+use crate::durable::{MODE_PRIVATE, MODE_SHARED, write_atomic};
 use crate::{Result, StoreError};
+
+pub(crate) use crate::durable::sync_directory;
 
 pub const WORKSPACE_PRIVATE_DIR: &str = "private";
 pub(crate) const WORKSPACE_GENERATED_IGNORE: &[u8] =
@@ -42,68 +52,29 @@ fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
     Ok((bytes, mode))
 }
 
-#[cfg(unix)]
-fn write_committable_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
-    use std::io::Write as _;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-
-    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-    let tmp = path.with_extension(format!("tmp.{}.{}", std::process::id(), sequence));
-    let mut options = std::fs::OpenOptions::new();
-    options
-        .write(true)
-        .create_new(true)
-        .mode(mode)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    let mut file = options
-        .open(&tmp)
-        .map_err(|e| StoreError(format!("cannot create {}: {e}", tmp.display())))?;
-    let result = (|| {
-        let metadata = file
-            .metadata()
-            .map_err(|e| StoreError(format!("cannot inspect {}: {e}", tmp.display())))?;
-        if !metadata.is_file() {
-            return Err(StoreError(format!(
-                "temporary committable path {} is not a regular file",
-                tmp.display()
-            )));
-        }
-        file.set_permissions(std::fs::Permissions::from_mode(mode))
-            .map_err(|e| StoreError(format!("cannot preserve mode on {}: {e}", tmp.display())))?;
-        file.write_all(bytes)
-            .map_err(|e| StoreError(format!("cannot write {}: {e}", tmp.display())))?;
-        file.sync_all()
-            .map_err(|e| StoreError(format!("cannot fsync {}: {e}", tmp.display())))?;
-        drop(file);
-        std::fs::rename(&tmp, path)
-            .map_err(|e| StoreError(format!("cannot replace {}: {e}", path.display())))?;
-        if let Some(parent) = path.parent() {
-            sync_directory(parent)?;
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
-}
-
+/// Read a workspace file that is *meant* to be committed (the generated
+/// `.stella/.gitignore`) where there is no ownership model to check.
+///
+/// It cannot make the owner-and-single-link assertion the unix arm makes, so
+/// it does not pretend to: it rejects a symlink and a non-regular file, reads
+/// the bytes, and reports the mode the writer will use. Failing closed here
+/// instead — which is what this arm used to do — failed
+/// [`ensure_workspace_generated_ignore`], and with it every
+/// `workspace_private_*` path resolution, so a non-unix build could not open
+/// its own store at all (#617).
 #[cfg(not(unix))]
 fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
-    Err(StoreError(format!(
-        "secure committable-file persistence is unsupported on this platform: {}",
-        path.display()
-    )))
-}
-
-#[cfg(not(unix))]
-fn write_committable_atomic(path: &Path, _bytes: &[u8], _mode: u32) -> Result<()> {
-    Err(StoreError(format!(
-        "secure committable-file persistence is unsupported on this platform: {}",
-        path.display()
-    )))
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", path.display())))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(StoreError(format!(
+            "committable file {} must be a regular file",
+            path.display()
+        )));
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|e| StoreError(format!("cannot read {}: {e}", path.display())))?;
+    Ok((bytes, MODE_SHARED))
 }
 
 pub(crate) fn ensure_workspace_generated_ignore(dot: &Path) -> Result<()> {
@@ -111,7 +82,7 @@ pub(crate) fn ensure_workspace_generated_ignore(dot: &Path) -> Result<()> {
     let (mut bytes, mode) = match std::fs::symlink_metadata(&path) {
         Ok(_) => read_committable_file(&path)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return write_committable_atomic(&path, WORKSPACE_GENERATED_IGNORE, 0o644);
+            return write_atomic(&path, WORKSPACE_GENERATED_IGNORE, MODE_SHARED);
         }
         Err(error) => {
             return Err(StoreError(format!(
@@ -130,7 +101,7 @@ pub(crate) fn ensure_workspace_generated_ignore(dot: &Path) -> Result<()> {
         bytes.push(b'\n');
     }
     bytes.extend_from_slice(b"private/\n");
-    write_committable_atomic(&path, &bytes, mode)
+    write_atomic(&path, &bytes, mode)
 }
 
 pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathBuf, bool)> {
@@ -482,17 +453,37 @@ pub(crate) fn open_private_file(
     Ok(file)
 }
 
-/// Platforms without the Unix no-follow/mode-at-create primitives fail closed
-/// until an equivalent owner-only implementation exists.
+/// Open a private regular file where the Unix no-follow/mode-at-create
+/// primitives do not exist.
+///
+/// The regular-file check still runs — that one needs no ownership model —
+/// but there is no `O_NOFOLLOW`, no uid comparison, no link count, and no
+/// 0600 to enforce; the file inherits the parent directory's ACL. Failing
+/// closed here (this arm's previous behaviour) meant a non-unix build could
+/// not create `.stella/private/`, its SQLite stores, the session registry or
+/// the reflections log — it could not run (#617). The hardening is a unix
+/// bonus, not the price of admission.
 #[cfg(not(unix))]
 pub(crate) fn open_private_file(
     path: &Path,
-    _options: std::fs::OpenOptions,
+    options: std::fs::OpenOptions,
 ) -> Result<std::fs::File> {
-    Err(StoreError(format!(
-        "secure private file creation is unsupported on this platform: {}",
-        path.display()
-    )))
+    let file = options
+        .open(path)
+        .map_err(|e| StoreError(format!("cannot open private file {}: {e}", path.display())))?;
+    let metadata = file.metadata().map_err(|e| {
+        StoreError(format!(
+            "cannot inspect private file {}: {e}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(StoreError(format!(
+            "private state path {} is not a regular file",
+            path.display()
+        )));
+    }
+    Ok(file)
 }
 
 pub(crate) fn read_private_to_string(path: &Path) -> Result<String> {
@@ -528,19 +519,38 @@ fn validate_owner_controlled_parent(path: &Path) -> Result<&Path> {
     Ok(parent)
 }
 
+/// Without POSIX ownership and mode bits there is no owner-controlled
+/// assertion to make, so this checks the one thing that is checkable — the
+/// parent is a real directory, not a symlink pointing somewhere else — and
+/// lets the write proceed. The platform's own ACLs, inherited from the parent
+/// the user chose, are the access control here.
+///
+/// The alternative, which this arm used to do, was to refuse every sensitive
+/// write on non-unix: no credentials file, no MCP OAuth tokens, no user
+/// settings. Refusing to store state is not a stronger security posture than
+/// storing it under the OS's own permissions — it just moves the secret
+/// somewhere Stella cannot protect at all (#617).
 #[cfg(not(unix))]
 fn validate_owner_controlled_parent(path: &Path) -> Result<&Path> {
-    Err(StoreError(format!(
-        "secure sensitive-file persistence is unsupported on this platform: {}",
-        path.display()
-    )))
+    let parent = path
+        .parent()
+        .ok_or_else(|| StoreError(format!("private file {} has no parent", path.display())))?;
+    let metadata = std::fs::symlink_metadata(parent)
+        .map_err(|e| StoreError(format!("cannot inspect {}: {e}", parent.display())))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(StoreError(format!(
+            "sensitive file parent {} must be a real directory",
+            parent.display()
+        )));
+    }
+    Ok(parent)
 }
 
 /// Atomically replace a sensitive file in an existing owner-controlled
 /// directory without following its terminal path.
 pub fn write_sensitive_file_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     validate_owner_controlled_parent(path)?;
-    write_private_atomic(path, bytes, true)
+    write_private_atomic(path, bytes)
 }
 
 /// Read a sensitive regular file without following its terminal path.
@@ -550,11 +560,14 @@ pub fn read_sensitive_file_to_string(path: &Path) -> Result<String> {
 }
 
 /// Atomically write an owner-only session registry or snapshot file.
-pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8], sync: bool) -> Result<()> {
-    use std::io::Write as _;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-
+///
+/// The target's own type is checked here rather than in
+/// [`crate::durable::write_atomic`]: replacing a symlink or a directory that
+/// turned up where private state belongs is a *security* refusal with its own
+/// wording, not a durability failure. There is no longer a "skip the fsync"
+/// variant — every caller passed `sync = true`, and the contract (#617) is
+/// that a durable write is fsynced.
+pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Ok(metadata) = std::fs::symlink_metadata(path)
         && (metadata.file_type().is_symlink() || !metadata.is_file())
     {
@@ -563,30 +576,7 @@ pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8], sync: bool) -> Res
             path.display()
         )));
     }
-    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-    let tmp = path.with_extension(format!("tmp.{}.{}", std::process::id(), sequence));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    let mut file = open_private_file(&tmp, options)?;
-    let result = (|| {
-        file.write_all(bytes)
-            .map_err(|e| StoreError(format!("cannot write {}: {e}", tmp.display())))?;
-        if sync {
-            file.sync_data()
-                .map_err(|e| StoreError(format!("cannot fsync {}: {e}", tmp.display())))?;
-        }
-        drop(file);
-        std::fs::rename(&tmp, path)
-            .map_err(|e| StoreError(format!("cannot replace {}: {e}", path.display())))?;
-        if let Some(parent) = path.parent() {
-            sync_directory(parent)?;
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    write_atomic(path, bytes, MODE_PRIVATE)
 }
 
 /// Pre-create or repair a SQLite main database as an owner-only regular file
@@ -605,25 +595,6 @@ pub(crate) fn prepare_private_sqlite_path(path: &Path) -> Result<PathBuf> {
     options.read(true).write(true).create(true);
     drop(open_private_file(&path, options)?);
     Ok(path)
-}
-
-pub(crate) fn sync_directory(dir: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        let file = std::fs::File::open(dir).map_err(|e| {
-            StoreError(format!(
-                "cannot open directory {} for fsync: {e}",
-                dir.display()
-            ))
-        })?;
-        file.sync_all()
-            .map_err(|e| StoreError(format!("cannot fsync directory {}: {e}", dir.display())))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = dir;
-    }
-    Ok(())
 }
 
 pub(crate) fn open_private_sqlite(path: &Path) -> Result<Connection> {

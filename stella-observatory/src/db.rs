@@ -30,6 +30,7 @@ pub enum DbError {
 }
 
 /// A read-only handle on the workspace's telemetry stores.
+#[derive(Debug)]
 pub struct Observatory {
     store_db: PathBuf,
     fleet_db: PathBuf,
@@ -39,6 +40,7 @@ pub struct Observatory {
 impl Observatory {
     /// Point the observatory at a workspace root (the directory that holds
     /// `.stella/`). Nothing is opened or created here.
+    #[must_use]
     pub fn new(workspace_root: &Path) -> Self {
         let dot = workspace_root.join(".stella");
         Self {
@@ -59,6 +61,7 @@ impl Observatory {
     }
 
     /// Workspace identity + which stores exist — the dashboard header.
+    #[must_use]
     pub fn meta(&self) -> Value {
         json!({
             "workspace": self.workspace_root.display().to_string(),
@@ -370,9 +373,9 @@ impl Observatory {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
         };
-        // Folded row by row rather than through `collect_rows`: this is the one
-        // query with no `LIMIT` (every tool call ever, for an exact p50), so
-        // materializing it as JSON first would allocate an object per call.
+        // Folded row by row rather than through `collect_rows`: this is the
+        // highest-cardinality unbounded scan (every tool call ever, for an
+        // exact p50), so materializing it as JSON first allocates per call.
         let sql = "SELECT name, ok, duration_ms, bytes_out FROM tool_calls";
         let mut stmt = match conn.prepare(sql) {
             Ok(stmt) => stmt,

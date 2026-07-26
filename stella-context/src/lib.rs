@@ -57,6 +57,7 @@ mod error;
 mod provider;
 mod retrieval;
 mod store;
+mod warm;
 mod writeback;
 
 pub use clock::{Clock, FixedClock, SystemClock, format_rfc3339};

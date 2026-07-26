@@ -10,14 +10,15 @@
 //! ([`append_meaning`]) instead of re-serializing, so human comments and
 //! formatting in the file are never destroyed by an agent write.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use stella_store::durable::{MODE_SHARED, write_atomic_preserving_mode};
 
 use crate::storage::{
-    DEFAULT_NAMESPACE, DEFAULT_SQL_LAYER, LayerEntry, RedirectEntry, RelationEntry,
-    StorageSnapshot, normalize_name, relation_address,
+    DEFAULT_NAMESPACE, LayerEntry, RedirectEntry, RelationEntry, StorageSnapshot, normalize_name,
+    relation_address,
 };
 
 /// File name at the workspace root.
@@ -118,12 +119,6 @@ impl StorageManifest {
             .map(|(key, _)| key.clone())
     }
 
-    /// [`Self::layer_claim`], falling back to the implicit SQL layer.
-    pub fn layer_for(&self, rel_path: &str) -> String {
-        self.layer_claim(rel_path)
-            .unwrap_or_else(|| DEFAULT_SQL_LAYER.to_string())
-    }
-
     fn meaning_for<'a>(
         table: &'a BTreeMap<String, MeaningDecl>,
         address: &str,
@@ -140,20 +135,6 @@ impl StorageManifest {
 
     pub fn field_meaning(&self, address: &str) -> Option<&MeaningDecl> {
         Self::meaning_for(&self.fields, address)
-    }
-
-    pub fn namespace_meaning(&self, layer: &str, namespace: &str) -> Option<&MeaningDecl> {
-        let layer_key = normalize_name(layer);
-        let ns_key = normalize_name(namespace);
-        self.namespaces
-            .iter()
-            .find(|(key, _)| normalize_name(key) == layer_key)
-            .and_then(|(_, table)| {
-                table
-                    .iter()
-                    .find(|(ns, _)| normalize_name(ns) == ns_key)
-                    .map(|(_, decl)| decl)
-            })
     }
 
     /// Declared layers as snapshot entries (engine/class default to
@@ -238,7 +219,7 @@ pub fn merge_snapshot(
                     .collect();
             }
             for field in &mut rel.fields {
-                let address = format!("{}/{}", rel.address, normalize_name(&field.name));
+                let address = crate::storage::field_address(&rel.address, &field.name);
                 if let Some(meaning) = manifest.field_meaning(&address)
                     && meaning.intent.is_some()
                 {
@@ -246,21 +227,28 @@ pub fn merge_snapshot(
                 }
             }
         }
-        let stub_addresses: Vec<String> = relations.iter().map(|r| r.address.clone()).collect();
+        // Membership by hash, not by scan. The pre-write gate assembles a
+        // snapshot on *every* write an agent proposes, and both checks below
+        // used to walk the whole relation list — the orphan check re-building a
+        // `format!` address for every field of every relation, once per manifest
+        // key, which is quadratic (and allocating) in the size of the storage
+        // map. Building each address set once keeps both passes linear.
+        let stub_addresses: HashSet<String> = relations.iter().map(|r| r.address.clone()).collect();
         for stub in manifest.stub_relations() {
             if !stub_addresses.contains(&stub.address) {
                 relations.push(stub);
             }
         }
+        let mut known: HashSet<String> = HashSet::with_capacity(relations.len());
+        for rel in &relations {
+            known.insert(rel.address.clone());
+            for field in &rel.fields {
+                known.insert(format!("{}/{}", rel.address, normalize_name(&field.name)));
+            }
+        }
         for key in manifest.relations.keys().chain(manifest.fields.keys()) {
             let address = normalize_address(key);
-            let known = relations.iter().any(|r| {
-                r.address == address
-                    || r.fields
-                        .iter()
-                        .any(|f| format!("{}/{}", r.address, normalize_name(&f.name)) == address)
-            });
-            if !known {
+            if !known.contains(&address) {
                 orphaned.push(address);
             }
         }
@@ -341,41 +329,23 @@ pub fn append_meaning(
         toml_escape(intent.trim()),
         toml_escape(origin),
     ));
-    // Write-then-rename rather than truncate-in-place: a crash (or a full
-    // disk) partway through a direct write would leave a committed file
-    // truncated mid-entry, i.e. invalid TOML that no longer parses — and
-    // with it every intent sentence a human ever wrote. The temp file is a
-    // sibling of the manifest, so the rename is atomic on the same
-    // filesystem. The `sync_all` before the rename is what makes that
-    // atomicity mean something after a power loss: without it the rename can
-    // land while the temp file's bytes are still only in the page cache,
-    // publishing an empty or half-written manifest under the real name.
+    // Durable replace rather than truncate-in-place: a crash (or a full disk)
+    // partway through a direct write would leave a committed file truncated
+    // mid-entry, i.e. invalid TOML that no longer parses — and with it every
+    // intent sentence a human ever wrote. This is the workspace's one write
+    // contract (#617): a pid-tagged sibling temp (the fixed `.toml.tmp` this
+    // used to use let two concurrent appends interleave into one file and
+    // publish a spliced manifest), fsynced before the rename so the rename
+    // cannot publish page-cache bytes, and the directory fsynced after it so
+    // the rename itself survives a power loss.
     //
-    // The temp name carries pid + counter and is created `O_EXCL`: a fixed
-    // `.toml.tmp` meant two writers racing this path opened and interleaved
-    // their writes into the SAME temp file, then renamed the resulting garbage
-    // over a manifest that had been valid. The lock above makes that race rare;
-    // the unique name is what makes it unrepresentable.
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-    let tmp = path.with_extension(format!("toml.tmp.{}.{sequence}", std::process::id()));
-    let result = (|| {
-        use std::io::Write as _;
-        {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&tmp)?;
-            file.write_all(text.as_bytes())?;
-            file.sync_all()?;
-        }
-        std::fs::rename(&tmp, &path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    // Serialized across writers by the lock held at the top of this function.
+    // #617 ruled on atomicity and left the locking protocol explicitly open;
+    // this is that protocol. Without it two concurrent appends both read the
+    // same pre-image and the later rename wins, silently dropping the earlier
+    // entry — and nothing here is rebuildable from source, so what is lost is
+    // a sentence a human wrote.
+    write_atomic_preserving_mode(&path, text.as_bytes(), MODE_SHARED).map_err(std::io::Error::other)
 }
 
 /// How long an append waits for a competing writer before giving up.
@@ -458,11 +428,27 @@ impl Drop for ManifestLock {
     }
 }
 
+/// Escape a sentence for a TOML basic string. Backslash and quote escape,
+/// newlines fold to a space, and every *other* control character becomes a
+/// `\uXXXX` escape: TOML rejects raw control characters, so a single stray one
+/// in an agent-supplied intent sentence would make the whole manifest
+/// unparseable — taking every hand-written meaning in the file with it, which
+/// is exactly the loss §5b exists to prevent.
 fn toml_escape(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', " ")
-        .replace('\r', "")
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push(' '),
+            '\r' => {}
+            // A raw tab is legal inside a basic string; leave it alone.
+            '\t' => out.push('\t'),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Minimal glob: `**` spans any number of path segments, `*` spans within a
@@ -618,14 +604,18 @@ intent = "Gross amount charged."
             m.field_meaning("primary_pg/billing/payments/amount")
                 .is_some()
         );
-        assert!(m.namespace_meaning("primary-pg", "billing").is_some());
     }
 
     #[test]
     fn layer_matching_uses_paths_globs() {
         let m = manifest();
-        assert_eq!(m.layer_for("migrations/001_init.sql"), "primary-pg");
-        assert_eq!(m.layer_for("src/schema.sql"), DEFAULT_SQL_LAYER);
+        assert_eq!(
+            m.layer_claim("migrations/001_init.sql").as_deref(),
+            Some("primary-pg")
+        );
+        // No layer claims a bare `src/*.sql`; callers fall back to the
+        // implicit SQL layer themselves.
+        assert_eq!(m.layer_claim("src/schema.sql"), None);
     }
 
     #[test]

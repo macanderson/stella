@@ -48,11 +48,18 @@ struct PendingTouch {
 /// persisted as the session's file-touch telemetry.
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
-    /// Tools enabled AFTER construction — currently just `graph_query`, once a
-    /// mid-session `stella init` / `/init` builds the index. Kept in a
-    /// separate interior-mutable overlay so the primary `tools` map stays
-    /// immutable and lock-free; the overlay is consulted as a fallback in the
-    /// three read paths (`schemas`, dispatch, name listing).
+    /// Tools enabled AFTER construction. Kept in a separate interior-mutable
+    /// overlay so the primary `tools` map stays immutable and lock-free; the
+    /// overlay is consulted as a fallback in the three read paths (`schemas`,
+    /// dispatch, name listing).
+    ///
+    /// Currently always EMPTY in practice: its one client,
+    /// [`ToolRegistry::enable_code_graph_if_available`], installs
+    /// `graph_query` — which the constructor now registers unconditionally
+    /// (a graph tool builds its own index on first use), so that call always
+    /// takes the already-registered early return. The overlay is kept because
+    /// it is the seam a genuinely late-enabled tool would use, and removing
+    /// it would be a cross-crate public-API change; it is not live code today.
     late_tools: std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>,
     root: PathBuf,
     touched: std::sync::Mutex<FileTouchLedger>,
@@ -432,6 +439,12 @@ impl ToolRegistry {
 
     /// Enable `graph_query` after a background build or mid-session `/init`;
     /// the shared overlay avoids rebuilding the registry and its MCP wrapper.
+    ///
+    /// A no-op since `graph_query` became unconditionally registered (see the
+    /// `late_tools` field): the `contains_key` early return always fires.
+    /// Kept as the host-facing seam — callers outside this crate still invoke
+    /// it after an index build, and it must stay correct if registration ever
+    /// becomes conditional again.
     pub fn enable_code_graph_if_available(&self, root: &std::path::Path) -> Result<(), String> {
         if !crate::graph::graph_available(root)? {
             return Ok(());
@@ -1058,11 +1071,22 @@ impl ToolRegistry {
     /// resolution failed — the tool returns the named error itself,
     /// ungated).
     ///
-    /// Every tool that reaches `bash -c` MUST ride the same fence as
-    /// `bash`: they sit in the default surface while `bash` is opt-in
-    /// (and `start_process`'s argv[0] may itself be a shell,
-    /// `["bash", "-c", …]`), so leaving any of them out hands ambient shell
-    /// execution to the very posture that turned `bash` off.
+    /// Every tool whose command line the MODEL authors rides this fence:
+    /// they sit in the default surface while `bash` is opt-in (and
+    /// `start_process`'s argv[0] may itself be a shell, `["bash", "-c", …]`),
+    /// so leaving any of them out hands ambient shell execution to the very
+    /// posture that turned `bash` off.
+    ///
+    /// What it does NOT cover, stated plainly so a policy author is not
+    /// misled: the repository-owned command lines that Stella composes
+    /// itself — `repo_*`'s git invocations, `ci_status`'s and the issue
+    /// tools' `gh` calls, `screenshot`'s capture command, `run_lint` /
+    /// `format_code` / `diagnostics`'s argv — reach a subprocess through
+    /// [`crate::exec`] without a `command.started` event, because their text
+    /// is Stella's, not the model's. Neither does `send_stdin`, which can
+    /// drive an already-gated interpreter (see [`crate::process`]). An
+    /// operator who needs *every* subprocess observed wants the OS sandbox,
+    /// not this chain alone.
     fn command_line_for(
         name: &str,
         input: &Value,
@@ -1106,14 +1130,6 @@ impl ToolRegistry {
         }
     }
 
-    /// `[C|R|U|D]`-classify a call: reads → R, writes → C (new) or U
-    /// (existing), edits → U, deletes → D. The path is normalized to its
-    /// workspace-relative POSIX form here, so equivalent spellings
-    /// (`src/./a.rs`, `src/../src/a.rs`) aggregate into one ledger record;
-    /// escaping paths classify as `None` (the tool rejects them anyway).
-    /// `bash` is opaque — file ops done through the shell aren't
-    /// attributable, which is why the CRUD tools exist and the prompt steers
-    /// agents toward them.
     /// [`Self::classify_file_op`] generalized to tools that touch several
     /// files in one call: `apply_edits` yields one Update per distinct file
     /// in its batch (a dry run yields none — nothing is written), everything
@@ -1155,6 +1171,14 @@ impl ToolRegistry {
         ops
     }
 
+    /// `[C|R|U|D]`-classify a single-path call: reads → R, writes → C (new) or
+    /// U (existing), edits → U, deletes → D. The path is normalized to its
+    /// workspace-relative POSIX form here, so equivalent spellings
+    /// (`src/./a.rs`, `src/../src/a.rs`) aggregate into one ledger record;
+    /// escaping paths classify as `None` (the tool rejects them anyway).
+    /// `bash` is opaque — file ops done through the shell aren't
+    /// attributable, which is why the CRUD tools exist and the prompt steers
+    /// agents toward them.
     fn classify_file_op(&self, tool: &str, input: &Value) -> Option<PendingTouch> {
         let raw = input.get("path").and_then(|v| v.as_str())?;
         let full = crate::resolve_within_root(&self.root, raw)?;

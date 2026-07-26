@@ -34,7 +34,7 @@ the single credential deny-list rather than growing a second one that drifts.
 | [`src/catalog.rs`](src/catalog.rs) | The canonical tool table. Open it to add a tool or to answer "is this name taken / is it read-only". |
 | [`src/verify.rs`](src/verify.rs) | `verify_done` — the shadow-worktree witness gate. See below. |
 | [`src/read.rs`](src/read.rs), [`src/read_symbol.rs`](src/read_symbol.rs), [`src/write.rs`](src/write.rs), [`src/edit.rs`](src/edit.rs), [`src/apply_edits.rs`](src/apply_edits.rs), [`src/delete.rs`](src/delete.rs) | File CRUD. They share one read-state ledger so an `old_string` miss can be attributed to out-of-band drift rather than to the model. |
-| [`src/atomic_write.rs`](src/atomic_write.rs) | Durable file replacement. Read the header before touching any write path. |
+| [`src/durable_write.rs`](src/durable_write.rs) | Durable in-place file replacement. Read the header before touching any write path. |
 | [`src/file_touch.rs`](src/file_touch.rs) | The CRUD event model and per-session ledger behind the "Files Touched" panel and its telemetry. |
 | [`src/grep.rs`](src/grep.rs), [`src/glob.rs`](src/glob.rs), [`src/graph.rs`](src/graph.rs), [`src/code_map.rs`](src/code_map.rs) | Text search, file search, code-graph query, and the code-map footer search results carry so the agent's next move is structural. |
 | [`src/overview.rs`](src/overview.rs), [`src/gather.rs`](src/gather.rs), [`src/exploration.rs`](src/exploration.rs), [`src/staleness.rs`](src/staleness.rs) | Orientation and reusable context: `project_overview`, the `gather_context` sweep, saved exploration maps, and the per-file sha256 staleness oracle they all share. |
@@ -119,14 +119,24 @@ got.
   is a byte-level prefix match, so an unsorted list means every process writes a divergent cache
   entry.
 - **`bash` is off by default in every scope** — user, org-managed, and project. It registers only
-  when settings say `tools.bash: "on"`; the default surface has no shell at all. The `web` family
-  has the same posture, because a fetched page is untrusted input *and* an uncontrolled egress
-  channel. Prefer the structured executors (`run_tests`, `run_script`, `repo_*`, the process
-  group), which spawn enumerable argv and never interpret a shell string.
+  when settings say `tools.bash: "on"`. The `web` family has the same posture, because a fetched
+  page is untrusted input *and* an uncontrolled egress channel. Prefer the genuinely
+  shell-free executors (`run_lint`, `format_code`, `diagnostics`, `repo_*`, the process group),
+  which spawn enumerable argv and never interpret a shell string.
+- **Turning `bash` off removes the shell *tool*, not the shell *capability*.** `build_project`
+  and `run_tests` take a `command` override, `verify_done` a `test_cmd`, and `run_script` composes
+  a line from the scripts index — all four are always-on and all four reach `bash -c` through
+  `exec::run`. `STELLA_BASH_SANDBOX` does not cover them either; only the `bash` tool spawns
+  through `src/sandbox.rs`. The one fence that spans the whole class is the registry's
+  `command.started` policy chain (`ToolRegistry::command_line_for` enumerates every member), so a
+  deployment that needs shell execution actually bounded must gate on that chain — not on the
+  `tools.bash` switch. Any new tool that can reach `bash -c` must be added to that enumeration.
 - **Don't reintroduce `tokio::fs::write` on a write path.** It opens with `O_TRUNC`, and a crash
-  in that window left the user's own source file empty. `atomic_write` picks its strategy per
-  target and deliberately rewrites in place for hard-linked or foreign-owned files, because
-  rename-over-target swaps the inode and would sever links or change the owner.
+  in that window left the user's own source file empty. `durable_write` rewrites **in place** —
+  write, then truncate, then `fsync` — and never renames over the target, because rename swaps
+  the inode and would drop the mode, change the owner, sever hard links, and leave any editor or
+  watcher holding the old one (#617). Stella's *own* state files are the opposite case and go
+  through `stella_store::durable::write_atomic` instead.
 - **Three env hygiene rules before any spawn**, all in [`src/exec.rs`](src/exec.rs) and
   [`src/subprocess_env.rs`](src/subprocess_env.rs). Scrub `GIT_REPO_ENV_VARS`: when Stella runs
   from inside a git hook (the pre-push gate), an inherited `GIT_DIR` aims every git call at the

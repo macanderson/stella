@@ -1010,12 +1010,12 @@ fn eviction_marker_renders_as_a_one_line_system_note() {
     assert_eq!(text, "… 1234 earlier entries evicted");
 }
 
-// ---- Transcript prefix colors (ember gutter + violet user prompt) ----
+// ---- Transcript prefix colors (gold gutter + violet user prompt) ----
 
-/// The user prompt is the single exception to the ember gutter: its
+/// The user prompt is the single exception to the gold gutter: its
 /// `[user]:` tag AND every line of the prompt render in exactly the violet
 /// used for the composer's keybind glyphs and the deterministic-first
-/// chip — as one flat color, with no markdown tinting and no ember heat.
+/// chip — as one flat color, with no markdown tinting and no brand gold.
 #[test]
 fn user_prompt_entry_is_one_violet_color_end_to_end() {
     let mut out = Vec::new();
@@ -1043,12 +1043,12 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
                 "user entry span {:?} is not the violet accent",
                 span.content
             );
-            // Belt and suspenders: no ember heat anywhere on the entry.
+            // Belt and suspenders: no status/brand hue anywhere on the entry.
             for banned in [theme::ACCENT, theme::DANGER, theme::WARN] {
                 assert_ne!(
                     span.style.fg,
                     Some(banned),
-                    "user entry leaks an ember color: {:?}",
+                    "user entry leaks a status/brand color: {:?}",
                     span.content
                 );
             }
@@ -1060,11 +1060,11 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
     );
 }
 
-/// Every other entry's `[label]:` prefix stays inside the warm ember
+/// Every other entry's `[label]:` prefix stays inside the warm brand
 /// family — failure crimson, success gold — so no raw ANSI cyan/blue/
-/// magenta survives from before the ember theme landed.
+/// magenta survives from before the palette landed.
 #[test]
-fn transcript_prefix_colors_stay_in_the_ember_family() {
+fn transcript_prefix_colors_stay_in_the_brand_family() {
     let prefix_fg = |entry: &TranscriptEntry| -> Option<Color> {
         let mut out = Vec::new();
         entry_lines(entry, &[], false, false, 80, &mut out);
@@ -1106,11 +1106,11 @@ fn transcript_prefix_colors_stay_in_the_ember_family() {
         Some(theme::DANGER),
         "failed tool-result prefix is crimson",
     );
-    // The stage marker moved off raw cyan onto ember flame.
+    // The stage marker moved off raw cyan onto deep gold.
     assert_eq!(
         prefix_fg(&TranscriptEntry::Stage(StageKind::Execute)),
         Some(theme::ACCENT_DEEP),
-        "stage prefix is ember flame",
+        "stage prefix is deep gold",
     );
 }
 

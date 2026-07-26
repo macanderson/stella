@@ -70,15 +70,19 @@ fields use the `(_)` wildcard because `identifier` vs `type_identifier` vs
 double-captured and deduped by the name node's byte range, higher
 `SymbolKind::rank` winning.
 
-**`codegraph.db` is a cache versioned by convergence, not by a stamp.** Every
+**`codegraph.db` is a cache versioned by convergence, and stamped.** Every
 statement in `MIGRATION` is `CREATE … IF NOT EXISTS` and the whole batch
 replays on every writer `open`, so adding a table or an index *is* the
 migration. That is only acceptable because the file is fully rebuildable by
 `stella init`. A change that needs a *reshape* — an altered or backfilled
-column, which `IF NOT EXISTS` silently skips on an existing store — would need
-versioned machinery introduced first. The `code_graph_` table prefix is a
-holdover from when this shared `stella-context`'s `context.db`; it stays so
-the two schemas cannot collide.
+column, which `IF NOT EXISTS` silently skips on an existing store — still needs
+versioned machinery, and since #617 the file carries the `PRAGMA user_version`
+stamp (`SCHEMA_VERSION`) such machinery would key off: a store already in the
+field is stamped rather than rebuilt, and one written by a newer stella is
+refused instead of written into blind. The writer stamps; `open_read` does not,
+because the pre-write gate must not take a write lock. The `code_graph_` table
+prefix is a holdover from when this shared `stella-context`'s `context.db`; it
+stays so the two schemas cannot collide.
 
 **Mount is warm and non-blocking.** `CodeGraph::mount` opens the store
 synchronously so queries are immediately callable, then runs incremental

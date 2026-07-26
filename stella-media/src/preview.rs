@@ -10,6 +10,13 @@
 //! keeps the ladder fully testable without a terminal (sixel and unicode-mosaic
 //! rungs from the spec are deferred; the plain-path fallback covers every
 //! terminal in between until they land).
+//!
+//! **Nothing in the workspace calls this module yet.** The media tools in
+//! `stella-tools` report a saved artifact by path and never build a preview,
+//! so every item here is exercised only by the tests below. Read the ladder as
+//! a ready port waiting on its caller, not as behaviour a user sees today —
+//! and expect the first real caller to shake out the gaps the tests cannot,
+//! starting with the one on [`render`].
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -127,6 +134,12 @@ pub fn plain_line(kind: MediaKind, path: &str) -> String {
 /// byte size, on top of the caller's copy), so a caller previewing something
 /// large should choose [`PreviewRung::Plain`] rather than push tens of
 /// megabytes of escape sequence through a terminal.
+///
+/// The inline rungs also ignore `kind`: [`kitty_image`] declares its payload
+/// `f=100` (PNG) unconditionally, so handing this function `MediaKind::Video`
+/// bytes on a kitty terminal emits a well-formed transmission of an unreadable
+/// payload rather than declining. Until the kind gate lands, a caller with
+/// anything but PNG bytes must pass [`PreviewRung::Plain`] itself.
 pub fn render(
     rung: PreviewRung,
     kind: MediaKind,

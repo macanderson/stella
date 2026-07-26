@@ -146,8 +146,9 @@ pub enum Inbound {
     SessionReset { agent: AgentId },
     /// A refreshed code-graph snapshot for the Graph tab. Unlike the other
     /// variants this is **not** a folded event — the graph is an out-of-band
-    /// read-model — out-of-band, not folded from events. It
-    /// rides the inbound channel only because that is the driver→deck path;
+    /// read-model, since a graph's structure is not in the per-session event
+    /// stream. It rides the inbound channel only because that is the
+    /// driver→deck path;
     /// [`crate::deck_ui::ingest_inbound`] applies it straight to the view
     /// state (`DeckUi::graph`) and the model fold ignores it. The driver
     /// sends one after `/init` rebuilds the index so the tab reflects it
@@ -1053,6 +1054,12 @@ pub struct McpSearchItem {
 /// A secret string whose `Debug` is redacted, so it can ride the deck's input
 /// channel (and any debug log of it) without leaking. The value is readable
 /// only via [`Secret::reveal`], used solely to write the credential to config.
+///
+/// The plaintext is wiped on drop, so a credential typed into the MCP auth
+/// prompt does not sit in freed heap for the rest of the deck session. The
+/// wipe covers the buffer this value owns at drop time and nothing else —
+/// notably not an earlier allocation abandoned when the underlying `String`
+/// grew, which no `Drop` impl can reach.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);
 
@@ -1063,6 +1070,13 @@ impl Secret {
     /// The raw value — only for writing the credential into config.
     pub fn reveal(&self) -> &str {
         &self.0
+    }
+}
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.0.zeroize();
     }
 }
 

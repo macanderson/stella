@@ -229,7 +229,11 @@ impl Tool for Grep {
         crate::subprocess_env::scrub_sensitive_env(&mut rg);
         rg.stdout(std::process::Stdio::piped());
         rg.stderr(std::process::Stdio::piped());
-
+        // `run_captured` sets `kill_on_drop`: a cancelled turn (Esc) drops this
+        // future mid-`output()`, tokio keeps the child running by default, and
+        // a recursive walk of a large tree is exactly the thing that must not
+        // keep burning IO after the user stopped asking. It also bounds the
+        // wait, so a walk that wedges cannot hold the turn open either.
         match crate::exec::run_captured(rg, SEARCH_TIMEOUT_SECS).await {
             crate::exec::Captured::TimedOut => ToolOutput::Error {
                 message: format!(
@@ -287,6 +291,7 @@ impl Tool for Grep {
                 crate::subprocess_env::scrub_sensitive_env(&mut grep);
                 grep.stdout(std::process::Stdio::piped());
                 grep.stderr(std::process::Stdio::piped());
+                // Same cancellation backstop as the rg arm above.
 
                 match crate::exec::run_captured(grep, FALLBACK_SEARCH_TIMEOUT_SECS).await {
                     crate::exec::Captured::TimedOut => ToolOutput::Error {
@@ -305,6 +310,14 @@ impl Tool for Grep {
                         if !text.is_empty() {
                             let lines: Vec<&str> = text.lines().take(MAX_RESULTS).collect();
                             let mut result = lines.join("\n");
+                            // Say so when the cap bit, exactly as the rg arm
+                            // does: a silently truncated match list reads to
+                            // the agent as "there are no other call sites".
+                            if lines.len() == MAX_RESULTS {
+                                result.push_str(&format!(
+                                    "\n... (showing first {MAX_RESULTS} matches)"
+                                ));
+                            }
                             if let Some(map) =
                                 code_map_for(self.footer, show_tip, &search_dir, root, &lines)
                             {

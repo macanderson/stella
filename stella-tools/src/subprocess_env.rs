@@ -6,6 +6,48 @@
 //! or long-running server lets ordinary repository code print or exfiltrate
 //! the credential that pays for the agent. Apply [`crate::subprocess_env::scrub_sensitive_env`] as
 //! the final environment mutation before every such spawn.
+//!
+//! Two families are removed, and they are removed for different reasons:
+//!
+//! * **Credentials** ([`crate::subprocess_env::is_sensitive_env_name`]) — the variable's *value* is
+//!   or names a secret. Matched by exact name, by a credential suffix, and by
+//!   the names trusted settings register at startup.
+//! * **Ambient authority** ([`crate::subprocess_env::is_ambient_authority_env_name`]) — the value is
+//!   not a secret, but possessing the variable hands the child authority it
+//!   should not inherit, or redirects what a program it runs will execute.
+//!   `SSH_AUTH_SOCK` (a live agent socket signs for the user's keys) and the
+//!   git config/command-injection family (`GIT_CONFIG_COUNT` +
+//!   `GIT_CONFIG_KEY_0` + `GIT_CONFIG_VALUE_0` sets *any* git config key for
+//!   every `git` the subprocess runs; `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`
+//!   and `GIT_PROXY_COMMAND` each name a program git execs) live here. This
+//!   is the same family `stella-cli`'s `.env`-file loader refuses to import,
+//!   applied at the other end of the pipe. It lives here rather than in
+//!   `stella-fleet`'s `SystemGitCli` so `stella-tools`' and `stella-cli`'s
+//!   own git invocations get identical treatment from one list.
+//!
+//! # Re-admitting one variable: `STELLA_SUBPROCESS_ENV_ALLOW`
+//!
+//! Widening a scrub breaks real workflows — a Django dev server started via
+//! `start_process` needs `DJANGO_SECRET_KEY`, and a deploy-key setup drives
+//! git through `GIT_SSH_COMMAND`. The operator re-admits a variable by naming
+//! it in the `STELLA_SUBPROCESS_ENV_ALLOW` environment variable, a
+//! comma-separated list of **exact** names:
+//!
+//! ```sh
+//! STELLA_SUBPROCESS_ENV_ALLOW=DJANGO_SECRET_KEY,SSH_AUTH_SOCK stella
+//! ```
+//!
+//! Matching is exact (ASCII case-insensitive) by design: there are no globs
+//! and no suffix forms, so the hatch can re-admit a named variable but can
+//! never be used to switch the scrub off wholesale. Two further limits:
+//!
+//! * It is read from **Stella's own process environment** only, never from a
+//!   command's `[env]` overrides — a repository tool manifest cannot widen
+//!   the policy that is about to be applied to it.
+//! * A name that trusted settings registered as a model credential
+//!   ([`crate::subprocess_env::register_sensitive_env_names`]) is never re-admitted. The registry is
+//!   monotonic for the process lifetime, so the credential paying for the
+//!   agent cannot be handed back by editing one environment variable.
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
@@ -35,6 +77,56 @@ const CREDENTIAL_SOURCE_ENV_VARS: &[&str] = &[
     "GOOGLE_APPLICATION_CREDENTIALS",
     "AZURE_FEDERATED_TOKEN_FILE",
 ];
+
+/// Credential suffixes. Deliberately *specific*: bare `_KEY` and `_AUTH` are
+/// absent because they overmatch ordinary configuration — `PUBLIC_KEY`,
+/// `LICENSE_KEY`, `SSH_KEY_PATH`, `AUTH_URL` — and silently stripping those
+/// from every model-launched subprocess breaks builds with no diagnostic.
+/// Each entry here names something that is a secret in essentially every
+/// spelling it appears in.
+const CREDENTIAL_ENV_SUFFIXES: &[&str] = &[
+    "_API_KEY",
+    "_APIKEY",
+    "_TOKEN",
+    "_PASSWORD",
+    "_SECRET",
+    "_SECRET_KEY",
+    "_PRIVATE_KEY",
+    "_ACCESS_KEY",
+    "_CREDENTIALS",
+    "_CREDENTIAL",
+    "_PAT",
+];
+
+/// Ambient-authority variables: not secret *values*, but channels that let a
+/// child act as the user or redirect what a program it runs will execute.
+///
+/// `SSH_AUTH_SOCK` is a live agent socket — a child holding it can sign with
+/// the user's keys without ever seeing them. The `GIT_*` entries are git's
+/// documented command- and config-injection surface: `GIT_CONFIG_GLOBAL` /
+/// `GIT_CONFIG_SYSTEM` repoint git at an attacker-written config file, and
+/// `GIT_SSH_COMMAND` / `GIT_EXTERNAL_DIFF` / `GIT_PROXY_COMMAND` name a
+/// program git will exec.
+const AMBIENT_AUTHORITY_ENV_VARS: &[&str] = &[
+    "SSH_AUTH_SOCK",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_SSH_COMMAND",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_PROXY_COMMAND",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
+/// The numbered halves of git's `GIT_CONFIG_COUNT` protocol
+/// (`GIT_CONFIG_KEY_0`, `GIT_CONFIG_VALUE_12`, …). The index is unbounded, so
+/// these are matched by prefix rather than enumerated; no legitimate variable
+/// starts with either string.
+const GIT_CONFIG_NUMBERED_PREFIXES: &[&str] = &["GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"];
+
+/// Environment variable naming exact names the operator re-admits to every
+/// scrubbed subprocess. See this module's docs for the contract.
+pub const SUBPROCESS_ENV_ALLOW_VAR: &str = "STELLA_SUBPROCESS_ENV_ALLOW";
 
 /// Exact environment authentication channels documented by GitHub CLI.
 /// Trusted `gh` call sites may preserve these while still removing every
@@ -80,7 +172,7 @@ where
 pub fn is_sensitive_env_name(name: &OsStr) -> bool {
     let upper = name.to_string_lossy().to_ascii_uppercase();
     matches!(upper.as_str(), "API_KEY" | "TOKEN" | "PASSWORD" | "SECRET")
-        || ["_API_KEY", "_TOKEN", "_PASSWORD", "_SECRET"]
+        || CREDENTIAL_ENV_SUFFIXES
             .iter()
             .any(|suffix| upper.ends_with(suffix))
         || AWS_CREDENTIAL_ENV_VARS.contains(&upper.as_str())
@@ -93,6 +185,39 @@ pub fn is_sensitive_env_name(name: &OsStr) -> bool {
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .contains(&upper)
             })
+}
+
+/// Whether an environment variable name carries ambient authority rather than
+/// a secret value — an agent socket, or one of git's config/command-injection
+/// channels. Separate from [`is_sensitive_env_name`] on purpose: callers that
+/// ask "did this credential get registered for scrubbing?" must keep getting
+/// an answer about credentials.
+pub fn is_ambient_authority_env_name(name: &OsStr) -> bool {
+    let upper = name.to_string_lossy().to_ascii_uppercase();
+    AMBIENT_AUTHORITY_ENV_VARS.contains(&upper.as_str())
+        || GIT_CONFIG_NUMBERED_PREFIXES
+            .iter()
+            .any(|prefix| upper.starts_with(prefix))
+}
+
+/// The full scrub predicate: everything [`scrub_sensitive_env`] removes.
+pub fn is_scrubbed_env_name(name: &OsStr) -> bool {
+    is_sensitive_env_name(name) || is_ambient_authority_env_name(name)
+}
+
+/// Exact names the operator re-admitted through [`SUBPROCESS_ENV_ALLOW_VAR`],
+/// uppercased. Read from Stella's own environment on every scrub so a test —
+/// or a `stella` invoked with a different value — is never answered from a
+/// cached first reading.
+fn operator_allowlist() -> Vec<String> {
+    let Some(raw) = std::env::var_os(SUBPROCESS_ENV_ALLOW_VAR) else {
+        return Vec::new();
+    };
+    raw.to_string_lossy()
+        .split(',')
+        .map(|entry| entry.trim().to_ascii_uppercase())
+        .filter(|entry| !entry.is_empty())
+        .collect()
 }
 
 fn allowlisted_sensitive_env_is_safe_to_preserve(
@@ -155,17 +280,18 @@ pub fn scrub_sensitive_std_env_except(
     // A provider credential name learned from trusted settings always wins
     // over an integration allowlist collision. For example, if a custom
     // provider is configured to use `GH_TOKEN`, `gh` authentication must fail
-    // closed rather than inheriting the model-spend credential.
+    // closed rather than inheriting the model-spend credential. The same rule
+    // governs the operator's `STELLA_SUBPROCESS_ENV_ALLOW` hatch.
+    let operator_allowed = operator_allowlist();
+    let operator_allowed: Vec<&str> = operator_allowed.iter().map(String::as_str).collect();
     let is_preserved = |name: &OsStr| {
-        allowlisted_sensitive_env_is_safe_to_preserve(
-            name,
-            preserved_names,
-            is_registered_model_credential_name(name),
-        )
+        let registered = is_registered_model_credential_name(name);
+        allowlisted_sensitive_env_is_safe_to_preserve(name, preserved_names, registered)
+            || allowlisted_sensitive_env_is_safe_to_preserve(name, &operator_allowed, registered)
     };
     let mut names: Vec<OsString> = std::env::vars_os()
         .filter_map(|(name, _)| {
-            (is_sensitive_env_name(&name) && !is_preserved(&name)).then_some(name)
+            (is_scrubbed_env_name(&name) && !is_preserved(&name)).then_some(name)
         })
         .collect();
 
@@ -176,29 +302,21 @@ pub fn scrub_sensitive_std_env_except(
         command
             .get_envs()
             .filter(|(name, value)| {
-                value.is_some() && is_sensitive_env_name(name) && !is_preserved(name)
+                value.is_some() && is_scrubbed_env_name(name) && !is_preserved(name)
             })
             .map(|(name, _)| name.to_os_string())
             .collect::<Vec<_>>(),
     );
+    // Belt and braces for the exactly-known names: remove them whether or not
+    // this process or this command carries them, so the child's environment
+    // states their absence rather than inheriting one that appeared between
+    // the snapshot above and the spawn.
     names.extend(
         AWS_CREDENTIAL_ENV_VARS
             .iter()
-            .filter(|name| {
-                !preserved_names
-                    .iter()
-                    .any(|allowed| name.eq_ignore_ascii_case(allowed))
-            })
-            .map(OsString::from),
-    );
-    names.extend(
-        CREDENTIAL_SOURCE_ENV_VARS
-            .iter()
-            .filter(|name| {
-                !preserved_names
-                    .iter()
-                    .any(|allowed| name.eq_ignore_ascii_case(allowed))
-            })
+            .chain(CREDENTIAL_SOURCE_ENV_VARS)
+            .chain(AMBIENT_AUTHORITY_ENV_VARS)
+            .filter(|name| !is_preserved(OsStr::new(*name)))
             .map(OsString::from),
     );
 
@@ -268,6 +386,42 @@ pub(crate) mod test_support {
         }
     }
 
+    /// Sets one process environment variable for the guard's lifetime,
+    /// serialized against every other environment-mutating test through the
+    /// same `ENV_LOCK` [`InheritedCredentialFixture`] takes.
+    pub struct ScopedEnvVar {
+        name: &'static str,
+        previous: Option<OsString>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl ScopedEnvVar {
+        pub fn set(name: &'static str, value: &str) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+            let previous = std::env::var_os(name);
+            // SAFETY: the guard owns ENV_LOCK for its whole lifetime and no
+            // production thread runs in this test process.
+            unsafe { std::env::set_var(name, value) };
+            Self {
+                name,
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            // SAFETY: the guard still owns ENV_LOCK during restoration.
+            unsafe {
+                match &self.previous {
+                    Some(value) => std::env::set_var(self.name, value),
+                    None => std::env::remove_var(self.name),
+                }
+            }
+        }
+    }
+
     pub fn assert_scrubbed(output: &str) {
         assert_eq!(
             output, "|||visible|present",
@@ -326,6 +480,138 @@ mod tests {
                 "{benign} must remain available to task subprocesses"
             );
         }
+    }
+
+    #[test]
+    fn widened_credential_suffixes_catch_real_spellings_without_eating_configuration() {
+        for secret in [
+            "STRIPE_SECRET_KEY",
+            "DJANGO_SECRET_KEY",
+            "DEPLOY_PRIVATE_KEY",
+            "MINIO_ACCESS_KEY",
+            "SENTRY_APIKEY",
+            "REGISTRY_CREDENTIALS",
+            "VAULT_CREDENTIAL",
+            "GITHUB_PAT",
+        ] {
+            assert!(
+                is_sensitive_env_name(OsStr::new(secret)),
+                "{secret} must be classified as sensitive"
+            );
+        }
+        // `_KEY` and `_AUTH` are deliberately NOT suffixes: they overmatch
+        // ordinary configuration, and stripping these would break builds
+        // with no diagnostic anywhere.
+        for benign in [
+            "PUBLIC_KEY",
+            "LICENSE_KEY",
+            "SSH_KEY_PATH",
+            "AUTH_URL",
+            "PARTITION_KEY",
+            "SORT_KEY",
+        ] {
+            assert!(
+                !is_sensitive_env_name(OsStr::new(benign)),
+                "{benign} must remain available to task subprocesses"
+            );
+        }
+    }
+
+    #[test]
+    fn git_injection_family_and_agent_socket_are_ambient_authority_not_credentials() {
+        for name in [
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_VALUE_12",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_SSH_COMMAND",
+            "GIT_EXTERNAL_DIFF",
+            "GIT_PROXY_COMMAND",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "SSH_AUTH_SOCK",
+        ] {
+            assert!(
+                is_ambient_authority_env_name(OsStr::new(name)),
+                "{name} hands a child authority it must not inherit"
+            );
+            assert!(
+                is_scrubbed_env_name(OsStr::new(name)),
+                "{name} not scrubbed"
+            );
+            assert!(
+                !is_sensitive_env_name(OsStr::new(name)),
+                "{name} is ambient authority, not a credential string"
+            );
+        }
+        // The numbered prefixes end in `_`, so a name that merely starts with
+        // the same letters is untouched — and git's own ordinary variables
+        // stay available to a subprocess.
+        for benign in [
+            "GIT_CONFIG_KEYRING",
+            "GIT_AUTHOR_NAME",
+            "GIT_TERMINAL_PROMPT",
+            "GIT_PAGER",
+        ] {
+            assert!(
+                !is_scrubbed_env_name(OsStr::new(benign)),
+                "{benign} must remain available to task subprocesses"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn operator_allowlist_readmits_an_exact_name_and_only_an_exact_name() {
+        let _allow = test_support::ScopedEnvVar::set(
+            SUBPROCESS_ENV_ALLOW_VAR,
+            " DJANGO_SECRET_KEY , GIT_SSH_COMMAND ",
+        );
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .args([
+                "-c",
+                "printf '%s|%s|%s|%s|%s' \
+                 \"${DJANGO_SECRET_KEY-unset}\" \
+                 \"${GIT_SSH_COMMAND-unset}\" \
+                 \"${MY_DJANGO_SECRET_KEY-unset}\" \
+                 \"${GIT_CONFIG_KEY_0-unset}\" \
+                 \"${OPENROUTER_API_KEY-unset}\"",
+            ])
+            .env("DJANGO_SECRET_KEY", "dev-server-key")
+            .env("GIT_SSH_COMMAND", "ssh -i deploy_key")
+            // A suffix-shaped near-miss of an allowlisted name, so an
+            // allowlist that matched by suffix would re-admit it.
+            .env("MY_DJANGO_SECRET_KEY", "must-not-leak")
+            .env("GIT_CONFIG_KEY_0", "core.pager")
+            .env("OPENROUTER_API_KEY", "must-not-leak");
+        scrub_sensitive_env(&mut command);
+
+        let output = command.output().await.expect("spawn shell");
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "dev-server-key|ssh -i deploy_key|unset|unset|unset"
+        );
+    }
+
+    #[tokio::test]
+    async fn operator_allowlist_cannot_re_admit_a_registered_model_credential() {
+        register_sensitive_env_names(["STELLA_TEST_ALLOWLIST_MODEL_CRED"]);
+        let _allow = test_support::ScopedEnvVar::set(
+            SUBPROCESS_ENV_ALLOW_VAR,
+            "STELLA_TEST_ALLOWLIST_MODEL_CRED",
+        );
+        let mut command = tokio::process::Command::new("sh");
+        command
+            .args([
+                "-c",
+                "printf '%s' \"${STELLA_TEST_ALLOWLIST_MODEL_CRED-unset}\"",
+            ])
+            .env("STELLA_TEST_ALLOWLIST_MODEL_CRED", "model-spend-secret");
+        scrub_sensitive_env(&mut command);
+
+        let output = command.output().await.expect("spawn shell");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "unset");
     }
 
     #[tokio::test]

@@ -19,11 +19,11 @@
 //! its live event lane, an inbox notification, and (for task workers) the
 //! board task auto-completing. Prompts queue only past the worker cap, on a
 //! dispatch hold, or when they are slash commands (the lead's dispatcher owns
-//! those). The fleet layer now carries its own per-task control verbs
-//! (`Fleet::pause_task` / `resume_task` / `stop_task`, riding
-//! `stella_fleet::WorkerControls` through the `FleetWorker` port);
-//! surfacing `stella fleet` tasks as controllable deck lanes and
-//! fleet-worktree isolation for deck workers remain follow-ups on that seam.
+//! those). The fleet layer's per-task control verbs (`Fleet::pause_task` /
+//! `resume_task` / `stop_task`, riding `stella_fleet::WorkerControls` through
+//! the `FleetWorker` port) are driven by the `stella fleet` dashboard's
+//! `[p]`/`[r]`/`[x]` keys (#645); controllable *deck* lanes and fleet-worktree
+//! isolation for deck workers remain follow-ups on that seam.
 //!
 //! ## The three engine seams handled here
 //!
@@ -1722,7 +1722,10 @@ pub async fn run_deck_session(
                     // submission will run ahead of them all.
                     requeue_front(&mut queue, &in_tx, dispatch.stop_and_hold(Some(&submitted)));
                 } else {
-                    // A plain cancel: retain the dropped prompt so the
+                    // A plain cancel: retain the dropped prompt so the pair's
+                    // escalation — which always lands after this press has
+                    // already dropped the turn — still has something to
+                    // requeue and park on (see [`HoldState`]).
                     dispatch.cancelled(&submitted);
                 }
                 let cancelled_cost =
@@ -2270,9 +2273,12 @@ fn service_inspect_action(
                     messages: recon
                         .messages
                         .iter()
+                        // The CLI's `stella inspect` renderer, reused verbatim:
+                        // the overlay shows wire shape, and the two surfaces
+                        // must not disagree about what a message looked like.
                         .map(|m| stella_tui::InspectMessage {
-                            role: message_role_tag(m.role).to_string(),
-                            content: inspect_message_body(m),
+                            role: crate::inspect::role_tag(m.role).to_string(),
+                            content: crate::inspect::message_body(m),
                         })
                         .collect(),
                     verified: recon.is_verified(),
@@ -2296,47 +2302,6 @@ fn recorded_call_info(call: &stella_store::RecordedCall) -> stella_tui::Recorded
         model: call.model.clone(),
         estimated_input_tokens: call.estimated_input_tokens,
     }
-}
-
-fn message_role_tag(role: stella_protocol::MessageRole) -> &'static str {
-    match role {
-        stella_protocol::MessageRole::System => "system",
-        stella_protocol::MessageRole::User => "user",
-        stella_protocol::MessageRole::Assistant => "assistant",
-        stella_protocol::MessageRole::Tool => "tool",
-    }
-}
-
-/// Flatten one reconstructed message for display: text plus a compact rendering
-/// of the tool calls/results it carried. They are separate blocks in the
-/// receipt but belong to one message on the wire, and the overlay shows wire
-/// shape. Mirrors `crate::inspect::message_body` — the CLI and the deck must
-/// not disagree about what a message looked like.
-fn inspect_message_body(message: &CompletionMessage) -> String {
-    let mut out = String::new();
-    if !message.content.is_empty() {
-        out.push_str(&message.content);
-    }
-    for call in &message.tool_calls {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&format!(
-            "→ tool_call {} {} {}",
-            call.call_id, call.name, call.input
-        ));
-    }
-    for result in &message.tool_results {
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&format!(
-            "← tool_result {} {}",
-            result.call_id,
-            serde_json::to_string(&result.output).unwrap_or_default()
-        ));
-    }
-    out
 }
 
 /// The SESSIONS overlay snapshot: every registry record mapped to the deck's
@@ -4478,8 +4443,8 @@ fn file_change_of(
 fn pseudo_diff(old: &str, new: &str) -> String {
     let mut out = String::new();
     let mut side = |content: &str, prefix: char| {
-        for (lines, line) in content.lines().enumerate() {
-            if lines == PSEUDO_DIFF_MAX_LINES {
+        for (index, line) in content.lines().enumerate() {
+            if index == PSEUDO_DIFF_MAX_LINES {
                 out.push_str(&format!(
                     " … ({} more lines)\n",
                     content.lines().count() - PSEUDO_DIFF_MAX_LINES

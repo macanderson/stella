@@ -470,6 +470,14 @@ impl DiagnosticRunner for GitDiagnosticRunner {
 async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // Cancellation drops this future without unwinding into the timeout arm
+    // below, and a `setsid` child cannot be reached by the terminal's own
+    // signals — so a cancelled turn used to leave a full-length test/diagnostic
+    // command (up to the 300s bound) running unattended. Reaping the direct
+    // child on drop is the same discipline `candidate_ws::git_stdout_to_file`
+    // already applies. Grandchildren still outlive it; only the timeout arm
+    // signals the whole process group.
+    cmd.kill_on_drop(true);
     #[cfg(unix)]
     unsafe {
         cmd.pre_exec(|| {
@@ -489,10 +497,25 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
     };
     #[cfg(unix)]
     let pid = child.id().unwrap_or(0) as i32;
+    // Cancellation backstop, the same guard every other `pre_exec(setsid)`
+    // spawn site in the workspace uses (`stella_tools::exec::GroupKillGuard`)
+    // rather than a second copy of the shape. The child is in its OWN session,
+    // so Ctrl-C's SIGINT never reaches it: without this, dropping the pipeline
+    // future mid-test (Esc, a signal, a `select!` losing the race) left a
+    // whole `cargo test`/`git diff` tree running against the workspace after
+    // the user believed the run had stopped.
+    #[cfg(unix)]
+    let mut guard = stella_tools::exec::GroupKillGuard::arm(pid);
 
     let timeout = Duration::from_secs(300);
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
+        Ok(Ok(output)) => {
+            #[cfg(unix)]
+            guard.disarm();
+            output
+        }
+        // Wait failure leaves the child's state unknown — the still-armed
+        // guard kills the group on return rather than leak it.
         Ok(Err(e)) => {
             return CmdOutcome {
                 exit_code: -1,
@@ -502,11 +525,7 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
         }
         Err(_) => {
             #[cfg(unix)]
-            unsafe {
-                if pid > 0 {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            }
+            guard.kill_now();
             return CmdOutcome {
                 exit_code: -1,
                 stdout_tail: String::new(),
@@ -536,24 +555,6 @@ fn truncate_tail(s: &str, max_bytes: usize) -> String {
     s[idx..].to_string()
 }
 
-/// Build the provider adapter from config. Consults the catalog first
-/// (provider-scoped, since the same slug legitimately exists on several
-/// providers — `gemini-3-pro` on both `gemini` and `vertex`) so an
-/// unrecognized model slug is a hard, immediate, named error — never a
-/// silent construction of a provider that will simply fail its first live
-/// call (L-M1/L-M2). The one exemption is `local`:
-/// a local server's models are whatever the user pulled into it — there is
-/// no curated catalog to check against, and the anti-phantom-slug rule
-/// exists to catch drift in OUR seed data, not to veto the user's own
-/// endpoint.
-///
-/// Each wire dialect gets its own arm: OpenAI (Responses API), Anthropic
-/// (Messages), Gemini direct + Vertex (generateContent), Bedrock (Converse,
-/// SigV4). Everything else — Z.ai, xAI, DeepSeek, OpenRouter, local — is
-/// genuinely the same Chat Completions shape behind different base URLs,
-/// served by the shared adapter re-identified per provider so its
-/// `Provider::id()` and error messages name the surface actually being
-/// called (an xAI 401 must never read "Z.ai rejected the API key").
 /// The registry feature switches for this session's config — the ONE
 /// translation point from settings (`tools.bash`, default off) to
 /// [`stella_tools::RegistryOptions`]. Every session driver (one-shot, goal,
@@ -1156,5 +1157,49 @@ mod diff_baseline_tests {
         let dir = tempfile::tempdir().unwrap();
         let runner = GitDiagnosticRunner::new(dir.path().to_path_buf());
         assert!(runner.baseline_commit().is_none());
+    }
+
+    /// #613: this crate's `pre_exec(setsid)` spawn site had no
+    /// `GroupKillGuard`, so dropping the future mid-run orphaned the whole
+    /// process group — the exact leak #582 fixed in stella-tools and skipped
+    /// here. The grandchild's pid is recorded because an orphaned direct
+    /// child is reaped by init anyway; a surviving grandchild is the leak.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dropped_run_command_kills_the_whole_process_group() {
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let script = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-c").arg(script);
+
+        let handle = tokio::spawn(async move { run_command(cmd).await });
+        let mut pid = None;
+        for _ in 0..250 {
+            if let Some(p) = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+            {
+                pid = Some(p);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let pid = pid.expect("the child never started");
+
+        handle.abort();
+        let _ = handle.await;
+
+        let mut dead = false;
+        for _ in 0..250 {
+            if unsafe { libc::kill(pid, 0) } == -1 {
+                dead = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(dead, "cancelled run_command left subprocess {pid} running");
     }
 }

@@ -374,6 +374,9 @@ fn toml_runs(code: &str) -> Runs {
         // A table header runs to its matching close bracket; a comma inside
         // means this is really an array value line (`[1, 2],`), not a header.
         let chars: Vec<char> = lead.chars().collect();
+        // `depth` cannot underflow: the branch is gated on `lead` starting
+        // with `[`, so the first iteration always increments, and the scan
+        // breaks the moment depth returns to 0. Keep that gate if this moves.
         let mut depth = 0usize;
         let mut end = chars.len();
         for (i, c) in chars.iter().enumerate() {

@@ -20,7 +20,8 @@
 //!   no-I/O heuristic that orders equal-priority [`RunnableSession`]s by
 //!   soonest-to-expire prompt-cache prefix ([`warmest_first`]), so a session
 //!   about to lose its cached prefix is resumed before a colder one takes the
-//!   slot ([`Fleet::with_cache_warmth`] is the dispatch-side seam).
+//!   slot ([`Fleet::with_cache_warmth`] is the dispatch-side seam — API and
+//!   tests today, since no product surface installs a lookup yet).
 //!
 //! and [`fleet`] — **THE dispatch seam** ([`Fleet::dispatch`], L-E9): the one
 //! API subagent fan-out goes through, claiming a task's declared paths as
@@ -29,7 +30,9 @@
 //! the parent [`stella_core::BudgetGuard`], and handing every worker its
 //! per-task control lines ([`WorkerControls`] through the [`FleetWorker`]
 //! port, driven by [`Fleet::pause_task`] / [`Fleet::resume_task`] /
-//! [`Fleet::stop_task`]; restart = re-dispatch).
+//! [`Fleet::stop_task`] — which the `stella fleet` dashboard's
+//! `[p]`/`[r]`/`[x]` keys reach through `stella-cli`'s control pump;
+//! restart = re-dispatch).
 //!
 //! Design constraints: we shell out
 //! to the `git`/`gh` binaries via `tokio::process` behind port traits rather

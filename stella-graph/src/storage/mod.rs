@@ -55,15 +55,6 @@ impl RelationKind {
         }
     }
 
-    pub fn from_tag(tag: &str) -> RelationKind {
-        match tag {
-            "view" => RelationKind::View,
-            "enum" => RelationKind::EnumType,
-            "collection" => RelationKind::Collection,
-            _ => RelationKind::Table,
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             RelationKind::Table => "Table",
@@ -309,13 +300,14 @@ pub fn relation_address(layer: &str, namespace: &str, relation: &str) -> String 
     )
 }
 
-/// Canonical address of a field: `layer/namespace/relation/field`.
-pub fn field_address(layer: &str, namespace: &str, relation: &str, field: &str) -> String {
-    format!(
-        "{}/{}",
-        relation_address(layer, namespace, relation),
-        normalize_name(field)
-    )
+/// Canonical address of a field: `<relation address>/field`.
+///
+/// Takes the already-composed relation address rather than its three parts:
+/// every caller reaches this point holding a `RelationEntry::address` that
+/// [`relation_address`] produced, and splitting it back apart to recompose it
+/// would be the only reason for a four-argument form.
+pub fn field_address(relation_address: &str, field: &str) -> String {
+    format!("{}/{}", relation_address, normalize_name(field))
 }
 
 /// Human rendering of an address (`store://…`, spec §3a).
@@ -500,7 +492,7 @@ mod tests {
             "primary_pg/public/payments"
         );
         assert_eq!(
-            field_address("sql", "default", "payments", "userId"),
+            field_address(&relation_address("sql", "default", "payments"), "userId"),
             "sql/default/payments/user_id"
         );
         assert_eq!(display_address("a/b/c"), "store://a/b/c");

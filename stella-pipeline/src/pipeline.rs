@@ -207,7 +207,10 @@ pub struct PipelineConfig {
     /// configured and the task class verifies unconditionally, an independent
     /// model authors a failing witness test whose command arms the flip
     /// oracle, with tamper exclusion at verify time ([`crate::witness`]).
-    /// Costs one engine turn + up to two test runs per pipeline run.
+    /// Costs one engine turn + up to two test runs per *candidate*: each
+    /// best-of-N candidate authors its own witness inside its own snapshot,
+    /// because a witness written against a sibling's tree witnesses nothing
+    /// about this one's work. At the default `candidates = None` that is once.
     pub witness_writer: bool,
     /// Whether an authored witness is adopted into the real tree along with
     /// the work it verified. Off by default: the witness is scaffolding for
@@ -559,14 +562,6 @@ impl<'a> Pipeline<'a> {
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
         }
-    }
-
-    /// Replace the ordinary channel wrapper with a caller-supplied ordered
-    /// sender. Benchmark mode uses this to journal+flush every event before
-    /// the same event enters the renderer queue.
-    pub fn with_event_sender(mut self, events: EventSender) -> Self {
-        self.events = events;
-        self
     }
 
     /// Drive one prompt through the full staged flow. `messages` is the
@@ -2417,12 +2412,8 @@ impl<'a> Pipeline<'a> {
         total_cost: f64,
         reason: &str,
     ) -> PipelineOutcome {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let outcome = stage_budget::aborted_before_execute(&tx, task_class, total_cost, reason);
-        drop(tx);
-        while let Ok(event) = rx.try_recv() {
-            self.emit(event);
-        }
+        let (event, outcome) = stage_budget::aborted_before_execute(task_class, total_cost, reason);
+        self.emit(event);
         outcome
     }
 

@@ -101,11 +101,26 @@ place.
 - **`NodeRow::valid_from` is always `None`.** The columns exist on `node` but
   `upsert_node` never writes them. Fact history is recoverable; node content
   history is not.
-- **Nothing forgets.** There is no delete or tombstone path, and a node whose
-  uri changed (renamed or deleted file) is orphaned live forever, still serving
-  its last-known content. Recall reads *every* live node and *every* vector
-  under the active fingerprint on each query, so store size and recall latency
-  grow with the workspace's lifetime. This is the plane's first scaling wall.
+- **Nothing forgets.** There is no delete or tombstone path *in this crate*, and
+  a node whose uri changed (renamed or deleted file) is orphaned live forever,
+  still serving its last-known content. Recall reads *every* live node and
+  *every* vector under the active fingerprint on each query, so store size and
+  recall latency grow with the workspace's lifetime. This is the plane's first
+  scaling wall.
+- **`stella memory forget` does not reach in here.** Its tombstone is written to
+  `store.db` and applied by `stella-cli` to the frames `recall` has already
+  packed, so a forgotten memory is still stored, still embedded, still ranked,
+  and still spends the query's `max_frames`/`max_tokens` before the caller drops
+  it — the turn ends up with fewer frames, not with a replacement. Suppression
+  belongs upstream of packing (an exclusion set on the query), which is an API
+  change nobody has made yet.
+- **Every live node becomes a candidate — and a `ContextFrame`.** The recency
+  list contributes all of them, so fusion, MMR (`Θ(n²)` cosines) and
+  `frame_from_node` (which clones each body) run over the whole live store on
+  every recall, and `pack_to_budget` then keeps `max_frames` of them. The
+  `dropped` report is correspondingly the size of the store, not of a candidate
+  pool. Bounding the pool between dedup and MMR is the obvious fix and changes
+  what `dropped` means, so it needs its own tests.
 - **`await_warm()` returning `Ok(0)` does not mean "the index is complete."** It
   means there is no warm left to join — the handle is taken, so a second call
   also returns `Ok(0)`, as does a store opened outside a tokio runtime (where

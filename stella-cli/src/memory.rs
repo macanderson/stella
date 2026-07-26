@@ -279,9 +279,15 @@ impl SessionMemory {
 
     /// A/B recall control (Proposal 4): suppress recall for this turn on a
     /// deterministic `1/rate` schedule, returning whether recall was
-    /// suppressed. A rate of 0 (or 1) never suppresses. The caller records
-    /// the outcome alongside this flag so `stella memory ab-report` can
-    /// compare recalled vs control turns.
+    /// suppressed. A rate of 0 (or 1) never suppresses.
+    ///
+    /// The flag is turn-scoped but only *reset* by this call, so every driver
+    /// that recalls must call it once per turn or inherit the previous turn's
+    /// arm. Today only the interactive REPL's plain prompts do
+    /// (`agent::run_interactive`); the outcome is attributed by tagging the
+    /// episode summary `[ab-control]` (see `agent::record_turn_episode`), which
+    /// is the whole readout — there is no reporting command yet, so the
+    /// comparison is an offline query over the episode store.
     ///
     /// Suppression is driven by a per-session **turn counter**, not a wall
     /// clock. A previous implementation seeded off `SystemTime` nanoseconds
@@ -628,13 +634,13 @@ impl SessionMemory {
         let Ok(log) = std::fs::read_to_string(log_path) else {
             return;
         };
-        // Tombstones from BOTH surfaces: forgetting the memory should stop the
-        // lesson being promoted to a skill, and forgetting the skill should
-        // stop it being re-created from the same log lines it came from.
+        // Every surface a background loop can regenerate; `ContextSurface` owns which.
         let forgotten: Vec<String> = stella_store::Store::open(&self.workspace_root)
             .and_then(|store| {
-                let mut texts = store.forgotten_texts(stella_store::ContextSurface::Memory)?;
-                texts.extend(store.forgotten_texts(stella_store::ContextSurface::Skill)?);
+                let mut texts = Vec::new();
+                for surface in stella_store::ContextSurface::restatement_suppressing() {
+                    texts.extend(store.forgotten_texts(surface)?);
+                }
                 Ok(texts)
             })
             .unwrap_or_default();

@@ -12,6 +12,13 @@
 
 /// Every table the store owns — the allowlist for [`Store::count`](crate::Store::count) and the
 /// fresh-file probe in [`Store::migrate`](crate::Store::migrate).
+///
+/// "Owns" means *versioned by `PRAGMA user_version`*, not "present in the
+/// file". `store.db` also carries the optional `enterprise_export_*` tables,
+/// which converge by column probing outside the migration chain
+/// ([`crate::enterprise_telemetry`]) — they are deliberately absent here, since
+/// the fresh-file probe must answer "has the versioned schema ever been
+/// created?" and those tables are created after it runs.
 pub(crate) const TABLES: [&str; 21] = [
     "executions",
     "forgotten",
@@ -465,8 +472,9 @@ pub(crate) const STEP_MANIFEST_DDL: &str = "CREATE TABLE IF NOT EXISTS step_mani
 /// — the manifest header, one row per committed step (v11, spec §5/§12): which
 /// model served it, and the budget the compaction pass actually compared
 /// against (raw budget / calibration factor), so the receipt's numbers line up
-/// with the decision that was made. The per-zone cache columns (spec §7) are
-/// added additively by a later migration; this is the increment-1 header only.
+/// with the decision that was made. This is the increment-1 header only: the
+/// per-zone cache columns (spec §7) are NOT built yet, and when they are they
+/// arrive as an additive migration on top of this shape.
 /// PRIMARY KEY (execution_id, turn_instance, step, call_seq): one receipt per
 /// model call, not per step — a step can carry the worker call plus the
 /// auxiliary calls that ride it (v13).

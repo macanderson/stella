@@ -12,7 +12,9 @@
 //!
 //! - `repo_commit` and `repo_rollback` require a **non-empty, explicit
 //!   path list** — there is no `-A`, and a whole-tree operation must be
-//!   spelled out path by path, never implied by an empty-args call.
+//!   spelled out path by path, never implied by an empty-args call. Magic
+//!   pathspecs (anything starting `:`) are refused for the same reason:
+//!   `:/` is git's spelling of "the whole repository".
 //! - `repo_push` **refuses the repository's default branch** (resolved
 //!   from the remote HEAD). No override exists, and force-push does not
 //!   exist in this surface at all.
@@ -398,15 +400,35 @@ fn required_paths(input: &Value, tool: &str, verb: &str) -> Result<Vec<String>, 
             ),
         });
     }
+    // A leading `:` is git PATHSPEC MAGIC, not a path: `:/` means "the whole
+    // repository root" and `:(exclude)…` inverts the selection. Either one
+    // turns a named-paths call into the stage-everything mode this surface
+    // structurally does not have — `git add -- :/` commits the entire tree,
+    // and `repo_rollback` would discard every local modification in it.
+    // Refuse before the argv is built; `--` only stops OPTION parsing.
+    if let Some(magic) = paths.iter().find(|p| p.starts_with(':')) {
+        return Err(ToolOutput::Error {
+            message: format!(
+                "`{magic}` is pathspec magic, not a path — {tool} {verb} the literal paths \
+                 you name, and a magic pathspec can silently widen that to the whole tree"
+            ),
+        });
+    }
     Ok(paths)
 }
 
 /// A branch name safe to hand to the backend as its own argv entry: no
-/// leading `-` (option injection), no whitespace or control characters.
+/// leading `-` (option injection), no whitespace or control characters, and
+/// none of the characters `git check-ref-format` forbids in a ref. The last
+/// group matters beyond hygiene: `:` is the refspec separator, so a name
+/// carrying one would splice extra source/destination pairs into the
+/// `refs/heads/{branch}:refs/heads/{branch}` push refspec.
 fn valid_branch_name(branch: &str) -> bool {
+    const BANNED: [char; 7] = [':', '~', '^', '?', '*', '[', '\\'];
     !branch.is_empty()
         && !branch.starts_with('-')
-        && !branch.contains(|c: char| c.is_whitespace() || c.is_control())
+        && !branch.contains("..")
+        && !branch.contains(|c: char| c.is_whitespace() || c.is_control() || BANNED.contains(&c))
 }
 
 /// `repo_status` — read-only: names and states, never content (that is

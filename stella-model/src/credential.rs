@@ -17,6 +17,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum CredentialError {
@@ -43,8 +44,15 @@ pub enum CredentialError {
 
 /// Which step in the resolution chain produced an [`ApiKey`]. Exists so
 /// callers (and tests) can assert precedence without inspecting the secret
-/// itself, and so a successful interactive prompt can be told to persist —
-/// only `Interactive` results get written back to the credentials file.
+/// itself, and so a successful interactive prompt can be *identified* for
+/// write-back — only `Interactive` results are worth persisting, since every
+/// other source already has a durable home.
+///
+/// [`ApiKey::resolve`] never writes anything itself: it borrows the
+/// credentials file (`&CredentialsFile`), so it structurally cannot. The
+/// write-back is the caller's, keyed off this discriminant —
+/// `stella-cli`'s `Config::resolve` sets the row and saves, and treats a
+/// failed save as a warning rather than failing the command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialSource {
     /// An explicit `--api-key`-style flag on the invocation — highest
@@ -64,15 +72,33 @@ pub enum CredentialSource {
     /// "this file" (`ConfigFile`) apart from "this declarative config"
     /// (`SettingsJson`) instead of both reporting as the same source.
     SettingsJson,
-    /// Typed at the masked prompt on first use. The one source `resolve`
-    /// persists — see the write-back note on [`CredentialSource`] itself.
+    /// Typed at the masked prompt on first use. The one source worth
+    /// persisting — see the write-back note on [`CredentialSource`] itself
+    /// for why the write is the caller's, not `resolve`'s.
     Interactive,
 }
 
 /// A secret API key. Deliberately has no `Display` and a redacted `Debug`
-/// so a stray `println!`/`tracing::info!` can never leak it.
+/// so a stray `println!`/`tracing::info!` can never leak it, and its
+/// plaintext is **wiped on drop** ([`Zeroize`]) rather than left legible in
+/// freed heap for the lifetime of the process.
+///
+/// What zeroizing does and does not buy, stated plainly so nobody reads more
+/// into it than is true: the buffer this `ApiKey` owns *at drop time* is
+/// overwritten through a volatile write the optimiser may not elide. It
+/// cannot reach a copy someone else already made — a `String` that grew and
+/// reallocated, a page the OS swapped out, or a `HeaderValue` reqwest built
+/// from `reveal()`. Every copy this crate makes on purpose is wrapped in
+/// [`Zeroizing`] at its call site; the ones inside a third-party HTTP stack
+/// are out of our reach and are not claimed to be covered.
 #[derive(Clone)]
 pub struct ApiKey(String);
+
+impl Drop for ApiKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
 
 impl ApiKey {
     /// Wrap an already-resolved secret. The narrow constructor for callers
@@ -195,11 +221,17 @@ impl fmt::Debug for ApiKey {
 /// only when `resolve` has exhausted the flag/env/file steps and the caller
 /// opted into interactive mode on an actual TTY.
 fn prompt_for_key(provider_id: &str, env_var: &str) -> Result<String, CredentialError> {
-    let value = rpassword::prompt_password(format!(
-        "No {env_var} found for `{provider_id}`. Enter it now (saved to \
-         ~/.stella/credentials.toml for next time; input hidden): "
-    ))
-    .map_err(|e| CredentialError::PromptFailed(e.to_string()))?;
+    // `Zeroizing` because the raw prompt buffer is a second copy of the
+    // secret that the caller never sees: the trimmed `String` returned below
+    // is what becomes an `ApiKey`, and without this the untrimmed original
+    // would be dropped intact into freed heap.
+    let value = Zeroizing::new(
+        rpassword::prompt_password(format!(
+            "No {env_var} found for `{provider_id}`. Enter it now (saved to \
+             ~/.stella/credentials.toml for next time; input hidden): "
+        ))
+        .map_err(|e| CredentialError::PromptFailed(e.to_string()))?,
+    );
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(CredentialError::PromptFailed(
@@ -228,9 +260,51 @@ struct CredentialsFileData {
     credentials: BTreeMap<String, String>,
 }
 
+/// Every stored key is plaintext and the map outlives the calls that read it,
+/// so the whole table is wiped when the file object goes away — the same
+/// posture [`ApiKey`] takes for a single key.
+impl Drop for CredentialsFileData {
+    fn drop(&mut self) {
+        for value in self.credentials.values_mut() {
+            value.zeroize();
+        }
+    }
+}
+
+/// Something worth telling the user about a credentials file we just read —
+/// never a reason to refuse the read.
+///
+/// The distinction is the whole point of this type. `save` creates the file
+/// `0600` from birth, so a loose mode means the file came from somewhere else
+/// (hand-written, restored from a backup, checked out from a dotfiles repo).
+/// Two responses were rejected: **refusing** would lock a user out of their
+/// own credentials over a condition they may not be able to fix from inside
+/// stella, and **silently `chmod`-ing** would change the mode of a file we did
+/// not create, which is not ours to do. So we warn, once, and read it anyway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CredentialAdvisory {
+    /// The credentials file is readable, writable, or executable by group or
+    /// other. `mode` is the permission bits as found (`& 0o777`).
+    LoosePermissions { path: String, mode: u32 },
+}
+
+impl CredentialAdvisory {
+    /// The one-line form a launch path prints (and tests pin).
+    pub fn line(&self) -> String {
+        match self {
+            CredentialAdvisory::LoosePermissions { path, mode } => format!(
+                "{path} is mode {mode:04o} — its plaintext provider keys are readable beyond \
+                 your account. stella did not create it this way; fix it with `chmod 600 \
+                 {path}` (the keys were still read for this run)."
+            ),
+        }
+    }
+}
+
 pub struct CredentialsFile {
     path: PathBuf,
     data: CredentialsFileData,
+    advisories: Vec<CredentialAdvisory>,
 }
 
 /// Names the file and how many keys it holds; never a key, and never a
@@ -251,6 +325,14 @@ impl CredentialsFile {
     /// if the platform has no resolvable home directory (never panics —
     /// callers treat "no credentials file available" as just another
     /// resolution step that falls through).
+    ///
+    /// "Resolvable" here means the `HOME` environment variable specifically,
+    /// not a platform home-directory API. On Windows, where `HOME` is usually
+    /// unset (`USERPROFILE` is the equivalent), this is always `None`: the
+    /// file step of the chain silently drops out and those users are on env
+    /// vars or `--api-key`. That is a known gap, not the intent — the
+    /// non-Unix half of `write_secret_file` exists for the day a home
+    /// lookup covers Windows too.
     pub fn default_path() -> Option<PathBuf> {
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
         Some(home.join(".stella").join("credentials.toml"))
@@ -259,13 +341,24 @@ impl CredentialsFile {
     /// Load from `path`. A missing file is not an error — it's the common
     /// case for anyone using env vars — and yields an empty file ready to
     /// be populated by a later interactive prompt + `save`.
+    ///
+    /// A file whose mode lets group or other read it is loaded **anyway**,
+    /// with a [`CredentialAdvisory`] recorded on the returned value (see
+    /// [`CredentialsFile::advisories`]). The advisory describes the file as
+    /// found at load time and is deliberately not cleared by a later `save`:
+    /// the point it makes — "your secrets were read out of a world-readable
+    /// file on this run" — stays true after the mode is tightened.
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, CredentialError> {
         let path = path.into();
+        let mut advisories = Vec::new();
         let data = match std::fs::read_to_string(&path) {
-            Ok(contents) => toml::from_str(&contents).map_err(|e| CredentialError::FileParse {
-                path: path.display().to_string(),
-                message: e.to_string(),
-            })?,
+            Ok(contents) => {
+                advisories = permission_advisories(&path);
+                toml::from_str(&contents).map_err(|e| CredentialError::FileParse {
+                    path: path.display().to_string(),
+                    message: e.to_string(),
+                })?
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => CredentialsFileData::default(),
             Err(e) => {
                 return Err(CredentialError::FileRead {
@@ -274,7 +367,19 @@ impl CredentialsFile {
                 });
             }
         };
-        Ok(Self { path, data })
+        Ok(Self {
+            path,
+            data,
+            advisories,
+        })
+    }
+
+    /// Advisories raised while reading this file — a loose file mode, today.
+    /// Empty is the normal case. A host is expected to surface these once at
+    /// startup; an advisory nothing prints is worse than no check at all,
+    /// because it reads as a guarantee the code does not actually deliver.
+    pub fn advisories(&self) -> &[CredentialAdvisory] {
+        &self.advisories
     }
 
     /// Load from the default path (`default_path`), or an empty in-memory
@@ -297,6 +402,7 @@ impl CredentialsFile {
         Self {
             path: PathBuf::new(),
             data: CredentialsFileData::default(),
+            advisories: Vec::new(),
         }
     }
 
@@ -337,6 +443,15 @@ impl CredentialsFile {
     /// guarantees no reader ever sees a half-written credentials file.
     /// (Best-effort on non-Unix — Windows ACLs are a different mechanism,
     /// out of scope here.)
+    ///
+    /// The *directory* is not hardened the same way: `create_dir_all` takes
+    /// the process umask, so `~/.stella` is typically `0755` — world-listable,
+    /// though the secret file inside it stays `0600`, so no other user can
+    /// read a key. Two follow-ups worth taking together if this file's threat
+    /// model ever includes a hostile local user with write access to the
+    /// directory: create it `0700`, and open the temp file `create_new` so a
+    /// pre-planted symlink at the predictable `.tmp.<pid>` name cannot
+    /// redirect the write.
     pub fn save(&self) -> Result<(), CredentialError> {
         if self.path.as_os_str().is_empty() {
             return Err(CredentialError::FileWrite {
@@ -358,8 +473,13 @@ impl CredentialsFile {
 
         // Temp file in the SAME directory so the final `rename` is atomic
         // (a cross-filesystem rename would fall back to copy+delete and lose
-        // atomicity). Unique per-process suffix avoids clobbering a temp file
-        // a parallel writer is using.
+        // atomicity). The pid suffix keeps two *processes* — a `stella auth`
+        // invocation and a running deck — off each other's temp file; it does
+        // NOT separate two concurrent `save` calls inside one process, which
+        // would share the name. Every caller today saves from a single
+        // command path, so that case is unreached; a second in-process writer
+        // needs a per-save counter here (the shape `zai.rs`'s `SESSION_SEQ`
+        // uses), not just the pid.
         let tmp_path = self
             .path
             .with_extension(format!("tmp.{}", std::process::id()));
@@ -377,6 +497,44 @@ impl CredentialsFile {
     }
 }
 
+/// Inspect a credentials file we did **not** create and report — never
+/// enforce — a mode that lets anyone but the owner at it.
+///
+/// `0o077` covers group/other read, write, and execute: a group-*writable*
+/// credentials file is strictly worse than a group-readable one (someone else
+/// can substitute a key), so both are flagged by the same advisory rather than
+/// splitting hairs the user cannot act on differently — `chmod 600` is the fix
+/// for every bit in the mask. A file we cannot `stat` yields no advisory: it
+/// was readable a moment ago, and inventing a warning from a failed metadata
+/// call would be noise, not information.
+#[cfg(unix)]
+fn permission_advisories(path: &Path) -> Vec<CredentialAdvisory> {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return Vec::new();
+    };
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 == 0 {
+        return Vec::new();
+    }
+    vec![CredentialAdvisory::LoosePermissions {
+        path: path.display().to_string(),
+        mode,
+    }]
+}
+
+/// Windows expresses this through ACLs, which are not a mode word; there is
+/// no honest check to make here, so no advisory is invented. (Claiming one
+/// would be the false-assurance failure this whole channel exists to avoid.)
+#[cfg(not(unix))]
+fn permission_advisories(_path: &Path) -> Vec<CredentialAdvisory> {
+    Vec::new()
+}
+
+/// One IO failure on the secret-file write path as a named
+/// [`CredentialError::FileWrite`]. Shared by every step of
+/// [`write_secret_file`] so open, chmod, write, and fsync failures all name
+/// the same path rather than each spelling the conversion itself.
 fn write_err(path: &Path, e: std::io::Error) -> CredentialError {
     CredentialError::FileWrite {
         path: path.display().to_string(),
@@ -421,6 +579,13 @@ fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     Ok(())
 }
 
+/// The non-Unix fallback, and honest about what it does not do: no birth-mode
+/// permissions (Windows ACLs are a different mechanism, out of scope) and no
+/// `fsync`, so the caller's `rename` can publish a name whose bytes are still
+/// only in the page cache. The atomicity claim on [`CredentialsFile::save`] is
+/// therefore a Unix claim. Unreached today — [`CredentialsFile::default_path`]
+/// resolves nothing off `HOME`-less platforms — so this is a placeholder for
+/// the port, not a shipped path.
 #[cfg(not(unix))]
 fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     std::fs::write(path, bytes).map_err(|e| write_err(path, e))
@@ -702,6 +867,75 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The posture decision, pinned: a group/world-readable credentials file
+    /// is **read** (refusing would lock the user out of their own keys) and
+    /// **not chmod'ed** (the mode of a file we did not create is not ours to
+    /// change) — it raises an advisory instead.
+    #[cfg(unix)]
+    #[test]
+    fn a_loose_mode_credentials_file_loads_with_an_advisory_and_is_not_repaired() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_credentials_path("loose-mode");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, "[credentials]\nzai = \"sk-zai-secret\"\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let file = CredentialsFile::load(&path).expect("a loose mode must never fail the read");
+        assert_eq!(
+            file.get("zai"),
+            Some("sk-zai-secret"),
+            "the keys must still resolve — warn, do not refuse"
+        );
+        assert_eq!(
+            file.advisories(),
+            [CredentialAdvisory::LoosePermissions {
+                path: path.display().to_string(),
+                mode: 0o644,
+            }]
+        );
+        let line = file.advisories()[0].line();
+        assert!(line.contains("chmod 600"), "{line}");
+        assert!(
+            !line.contains("sk-zai-secret"),
+            "advisory must not echo the secret: {line}"
+        );
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o644,
+            "loading must never silently chmod a user's file"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_owner_only_credentials_file_raises_no_advisory() {
+        let path = temp_credentials_path("tight-mode");
+        let _ = std::fs::remove_file(&path);
+        let mut file = CredentialsFile::load(&path).unwrap();
+        file.set("zai", "sk-zai-secret");
+        file.save().unwrap();
+
+        let reloaded = CredentialsFile::load(&path).unwrap();
+        assert!(
+            reloaded.advisories().is_empty(),
+            "a file we wrote at 0600 is not worth warning about: {:?}",
+            reloaded.advisories()
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_missing_credentials_file_raises_no_advisory() {
+        let path = temp_credentials_path("absent-advisory");
+        let _ = std::fs::remove_file(&path);
+        let file = CredentialsFile::load(&path).unwrap();
+        assert!(file.advisories().is_empty());
     }
 
     #[test]

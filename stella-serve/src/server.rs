@@ -159,6 +159,7 @@ struct ServerState {
     token: String,
     turns: Mutex<HashMap<String, Arc<Entry>>>,
     counter: AtomicU64,
+    unauthorized: Mutex<TokenBucket>,
 }
 
 impl ServerState {
@@ -168,6 +169,65 @@ impl ServerState {
 
     fn lookup(&self, id: &str) -> Option<Arc<Entry>> {
         self.turns().get(id).cloned()
+    }
+
+    /// How long this 401 should be held before it is answered. `Duration::ZERO`
+    /// while the caller is within the burst allowance.
+    fn unauthorized_delay(&self) -> Duration {
+        self.unauthorized
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take(std::time::Instant::now())
+    }
+}
+
+/// Burst of 401s answered with no delay. A host that restarts and races a few
+/// requests against a not-yet-updated token, or a health probe that forgets the
+/// header, should not be punished for the first handful.
+const UNAUTHORIZED_BURST: f64 = 8.0;
+
+/// Steady-state 401s per second once the burst is spent.
+const UNAUTHORIZED_REFILL_PER_SEC: f64 = 2.0;
+
+/// Delay applied to a 401 that arrives with the bucket empty.
+///
+/// This is deliberately a *delay*, not a rejection: a 429 or a dropped
+/// connection would tell an attacker they had been noticed and would break a
+/// legitimate client that is merely misconfigured. Holding the response instead
+/// costs the guesser wall-clock time per attempt — which is the entire point,
+/// since the token is a fixed shared secret with no lockout behind it — while a
+/// correctly-configured host never reaches this path at all.
+const UNAUTHORIZED_PENALTY: Duration = Duration::from_millis(500);
+
+/// A dependency-free token bucket. Deliberately per-process and not per-peer:
+/// tracking source addresses would mean unbounded state keyed by something the
+/// caller chooses, which is its own denial-of-service surface, and this is a
+/// sidecar for exactly one trusted host — a legitimate deployment produces no
+/// sustained 401s at all, so a global bucket costs it nothing.
+struct TokenBucket {
+    tokens: f64,
+    last: std::time::Instant,
+}
+
+impl TokenBucket {
+    fn new() -> Self {
+        Self {
+            tokens: UNAUTHORIZED_BURST,
+            last: std::time::Instant::now(),
+        }
+    }
+
+    /// Spend one token, returning the delay the caller must observe first.
+    fn take(&mut self, now: std::time::Instant) -> Duration {
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        self.last = now;
+        self.tokens = (self.tokens + elapsed * UNAUTHORIZED_REFILL_PER_SEC).min(UNAUTHORIZED_BURST);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            Duration::ZERO
+        } else {
+            UNAUTHORIZED_PENALTY
+        }
     }
 }
 
@@ -203,6 +263,7 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
         token: config.token,
         turns: Mutex::new(HashMap::new()),
         counter: AtomicU64::new(0),
+        unauthorized: Mutex::new(TokenBucket::new()),
     });
     let mut backoff = AcceptBackoff::new();
     loop {
@@ -230,6 +291,11 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
                 AcceptAction::Fatal => return Err(err),
             },
         };
+        // Nagle off. Every frame on this wire gates the next engine step — a
+        // `provider_request` the host has not seen yet is a step that cannot
+        // proceed — so coalescing a small write with the next one trades
+        // nothing for up to a delayed-ACK's worth of added latency per step.
+        let _ = stream.set_nodelay(true);
         let state = Arc::clone(&state);
         // Per-connection errors (client hangup, bad request) stay local to the
         // connection; the accept loop keeps serving.
@@ -258,6 +324,15 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
         None => false,
     };
     if !authorized {
+        // Rate-limited by holding the response, never by changing it: the
+        // body and status a guesser sees are identical whether or not the
+        // bucket was empty, so the throttle leaks nothing about its own state.
+        // The sleep is `tokio::time::sleep` on this connection's task, so a
+        // held 401 costs one task, not a runtime thread.
+        let delay = state.unauthorized_delay();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         return write_json(
             &mut stream,
             "401 Unauthorized",
@@ -505,6 +580,60 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A brute-force run against the only credential this service has must
+    /// stop being free after the burst. Driven over an injected `Instant` so
+    /// the refill is asserted exactly, with no sleeping in the test.
+    #[test]
+    fn sustained_401s_are_throttled_once_the_burst_is_spent() {
+        let start = std::time::Instant::now();
+        let mut bucket = TokenBucket::new();
+
+        for i in 0..UNAUTHORIZED_BURST as usize {
+            assert_eq!(
+                bucket.take(start),
+                Duration::ZERO,
+                "401 #{i} is within the burst and must not be delayed"
+            );
+        }
+        assert_eq!(
+            bucket.take(start),
+            UNAUTHORIZED_PENALTY,
+            "the first 401 past the burst pays the penalty"
+        );
+        assert_eq!(
+            bucket.take(start),
+            UNAUTHORIZED_PENALTY,
+            "and it keeps paying while the bucket is empty"
+        );
+
+        // One second later the bucket has refilled by UNAUTHORIZED_REFILL_PER_SEC.
+        let later = start + Duration::from_secs(1);
+        for _ in 0..UNAUTHORIZED_REFILL_PER_SEC as usize {
+            assert_eq!(bucket.take(later), Duration::ZERO);
+        }
+        assert_eq!(bucket.take(later), UNAUTHORIZED_PENALTY);
+    }
+
+    /// The bucket must not bank credit indefinitely: an idle server does not
+    /// hand a later attacker an unbounded free run.
+    #[test]
+    fn refill_is_capped_at_the_burst_size() {
+        let start = std::time::Instant::now();
+        let mut bucket = TokenBucket::new();
+        for _ in 0..UNAUTHORIZED_BURST as usize {
+            assert_eq!(bucket.take(start), Duration::ZERO);
+        }
+        let much_later = start + Duration::from_secs(3600);
+        for i in 0..UNAUTHORIZED_BURST as usize {
+            assert_eq!(bucket.take(much_later), Duration::ZERO, "burst slot {i}");
+        }
+        assert_eq!(
+            bucket.take(much_later),
+            UNAUTHORIZED_PENALTY,
+            "an hour idle buys one burst, not an hour's worth of attempts"
+        );
+    }
 
     #[test]
     fn zero_steps_is_refused_rather_than_silently_accepted() {

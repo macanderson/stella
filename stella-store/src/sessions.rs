@@ -189,7 +189,7 @@ impl SessionRegistry {
         // iterates `list`. Upserts happen a handful of times per turn, not per
         // event, so the fsync is cheap against what is lost — the same
         // reasoning `journal::write_snapshot` already documents.
-        crate::write_private_atomic(&path, json.as_bytes(), true)
+        crate::private::write_private_atomic(&path, json.as_bytes())
     }
 
     /// All records, newest-started first, with dead-process downgrade
@@ -276,10 +276,19 @@ impl SessionRegistry {
 
     /// The most recently *active* resumable session for `workspace` — what a
     /// bare `stella resume` reopens.
+    ///
+    /// Applies [`Self::resumable`]'s predicate inline rather than calling it:
+    /// [`Self::list`] has already read and downgraded every record, and
+    /// `presented_status` is idempotent, so re-reading each candidate's file
+    /// through `get` would only pay the registry's IO twice.
     pub fn latest_resumable(&self, workspace: &str) -> Option<SessionRecord> {
         self.list()
             .into_iter()
-            .filter(|r| r.workspace == workspace && self.resumable(&r.id))
+            .filter(|r| {
+                r.workspace == workspace
+                    && !r.status.is_live()
+                    && crate::journal::has_state(&self.sidecar_dir(&r.id))
+            })
             .max_by_key(|r| r.updated_at_ms)
     }
 

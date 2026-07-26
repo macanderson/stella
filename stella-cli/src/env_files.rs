@@ -27,13 +27,16 @@
 //!   by something Stella later spawns — the dynamic loader (`LD_*`, `DYLD_*`),
 //!   command lookup (`PATH`, `SHELL`), interpreter startup hooks
 //!   (`NODE_OPTIONS`, `PYTHONSTARTUP`, `BASH_ENV`, …), the git/pager escapes
-//!   (`GIT_SSH_COMMAND`, `LESSOPEN`, …) and the config-file redirections that
+//!   (`GIT_SSH_COMMAND`, `LESSOPEN`, …), the config-file redirections that
 //!   reach the same escapes indirectly (`GIT_CONFIG_*`, `RIPGREP_CONFIG_PATH`,
-//!   `CARGO_TARGET_<TRIPLE>_RUNNER`). A dotenv file is attacker controlled
-//!   the moment you clone an unfamiliar repository, and applying these would
-//!   make `git clone && stella` arbitrary code execution on the first
-//!   subprocess (#553). Refused names are reported, never applied; if you
-//!   genuinely want one, export it in your shell — which still wins.
+//!   `CARGO_TARGET_<TRIPLE>_RUNNER`), and the *roots* those config files hang
+//!   off — `HOME`, `XDG_CONFIG_HOME`, `STELLA_HOME` and friends, which move
+//!   `~/.gitconfig` and Stella's own trusted user scope somewhere the
+//!   repository controls. A dotenv file is attacker controlled the moment you
+//!   clone an unfamiliar repository, and applying any of these would make
+//!   `git clone && stella` arbitrary code execution on the first subprocess
+//!   (#553). Refused names are reported, never applied; if you genuinely want
+//!   one, export it in your shell — which still wins.
 //!
 //! Loading is confined to the current project: the search walks up from the
 //! working directory to the nearest ancestor that actually contains a
@@ -272,21 +275,46 @@ const DENIED_EXACT: &[&str] = &[
     // switches off the system gitattributes file a host may be relying on.
     "GIT_TEMPLATE_DIR",
     "GIT_ATTR_NOSYSTEM",
+    // `git <verb>` dispatches to a `git-<verb>` binary found in
+    // GIT_EXEC_PATH (which git also prepends to PATH for its own children),
+    // so pointing it at a repository directory makes `git status` run the
+    // repository's code. GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR relocate the
+    // `.git` git operates on, hooks and per-repo config included.
+    "GIT_EXEC_PATH",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    // `GIT_ALLOW_PROTOCOL=ext` re-enables the `ext::` transport, whose URL
+    // *is* a command line git runs on clone/submodule update.
+    "GIT_ALLOW_PROTOCOL",
     // Helper programs ssh and anything opening a URL will exec.
     "SSH_ASKPASS",
     "BROWSER",
     // Stella shells out to `rg` (stella-tools/src/grep.rs), and a ripgrep
     // config file may carry `--pre=<command>`, which rg then executes per file.
     "RIPGREP_CONFIG_PATH",
-    // Interpreters that execute a path or flag string at startup.
+    // Interpreters that execute a path or flag string at startup, and the
+    // module-search roots that decide WHICH file an `import`/`require`
+    // resolves to — shadowing a stdlib module is the same hijack as naming
+    // the startup script outright.
     "NODE_OPTIONS",
     "NODE_REPL_EXTERNAL_MODULE",
+    "NODE_PATH",
     "PYTHONSTARTUP",
     "PYTHONPATH",
+    "PYTHONHOME",
+    // `PYTHONUSERBASE` moves the per-user site directory, and site startup
+    // imports `sitecustomize`/`usercustomize` from it before main runs.
+    "PYTHONUSERBASE",
+    // `PYTHONWARNINGS`' filter grammar carries a module field that the
+    // warnings machinery imports at interpreter startup.
+    "PYTHONWARNINGS",
     "PERL5OPT",
     "PERL5LIB",
     "RUBYOPT",
     "RUBYLIB",
+    "GEM_HOME",
+    "GEM_PATH",
     "JAVA_TOOL_OPTIONS",
     "_JAVA_OPTIONS",
     "CLASSPATH",
@@ -297,6 +325,54 @@ const DENIED_EXACT: &[&str] = &[
     "RUSTC_WORKSPACE_WRAPPER",
     "CARGO",
     "CARGO_BUILD_RUSTC_WRAPPER",
+    // glibc loads shared conversion modules from GCONV_PATH — the same
+    // "point the loader at a directory you control" shape as `LD_*`, just
+    // outside that namespace.
+    "GCONV_PATH",
+    // The ROOTS every per-user config file hangs off. Denying
+    // `GIT_CONFIG_GLOBAL` while allowing `HOME` blocks the leaf and leaves
+    // the trunk: git reads `$HOME/.gitconfig` (then
+    // `$XDG_CONFIG_HOME/git/config`) for `core.pager`, `core.sshCommand`, and
+    // aliases with a `!` shell body, and ssh reads `$HOME/.ssh/config` for
+    // `ProxyCommand`. Worse for Stella specifically: the USER settings scope
+    // is `$HOME/.stella/settings.json` (settings.rs) and is *trusted* — it may
+    // declare lifecycle hooks and context providers that the project scope is
+    // gated away from — so a repository that could move `HOME` would walk
+    // straight through the trust boundary `.stella/settings.json` is held to.
+    // `STELLA_HOME`/`STELLA_CONFIG_DIR`/`STELLA_DATA_DIR` are the same trunk
+    // for `~/.stella` (stella-store's `home.rs`).
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    // Windows spellings of the same root: git-for-windows falls back to
+    // HOMEDRIVE+HOMEPATH then USERPROFILE, and the legacy data dir is
+    // %APPDATA%.
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "STELLA_HOME",
+    "STELLA_CONFIG_DIR",
+    "STELLA_DATA_DIR",
+    // Stella's own privileged controls. `STELLA_MANAGED_SETTINGS` names the
+    // org-managed settings file (the authority CEILING); `STELLA_NO_SETTINGS`
+    // switches the whole scope chain off; `STELLA_TRUST_PROJECT` /
+    // `STELLA_PROJECT_HOOKS` are the very trust gate that decides whether
+    // this repository's hooks may run; `STELLA_ENGINE_CONFIG_JSON` is the
+    // trusted-launcher seam that replaces the merged engine posture
+    // wholesale (config.rs), replacement judge prompt included. A repository
+    // granting itself any of these is the whole threat model.
+    "STELLA_MANAGED_SETTINGS",
+    "STELLA_NO_SETTINGS",
+    "STELLA_TRUST_PROJECT",
+    "STELLA_PROJECT_HOOKS",
+    "STELLA_ENGINE_CONFIG_JSON",
+    // The skill-manager verbs are literal command lines Stella shells out to.
+    "STELLA_SKILLS_SEARCH_CMD",
+    "STELLA_SKILLS_INSTALL_CMD",
+    "STELLA_SKILLS_USE_CMD",
 ];
 
 /// Prefixes denied wholesale, because naming the individual members would rot
@@ -698,6 +774,68 @@ mod tests {
         assert_eq!(planned.get("OPENROUTER_API_KEY"), Some(&"sk-legit"));
     }
 
+    /// The third wave: the names that reach the same escapes by moving the
+    /// ROOT a config file is looked up under, rather than naming the file.
+    /// `GIT_CONFIG_GLOBAL` was denied while `HOME`/`XDG_CONFIG_HOME` — which
+    /// select the very same `core.pager`/`core.sshCommand` — were not, and
+    /// `GIT_EXEC_PATH` (the directory `git <verb>` dispatches out of, and
+    /// unset in an ordinary shell, so nothing shadowed it) was open outright.
+    #[test]
+    fn dotenv_cannot_move_the_root_a_config_or_dispatch_path_hangs_off() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        write(
+            d,
+            ".env",
+            "GIT_EXEC_PATH=/tmp/evil-git-libexec\n\
+             GIT_DIR=/tmp/evil.git\n\
+             GIT_ALLOW_PROTOCOL=ext\n\
+             HOME=/tmp/evil-home\n\
+             XDG_CONFIG_HOME=/tmp/evil-config\n\
+             STELLA_HOME=/tmp/evil-stella\n\
+             STELLA_TRUST_PROJECT=1\n\
+             STELLA_ENGINE_CONFIG_JSON={}\n\
+             NODE_PATH=/tmp/evil-node-modules\n\
+             PYTHONHOME=/tmp/evil-python\n\
+             GCONV_PATH=/tmp/evil-gconv\n\
+             OPENROUTER_API_KEY=sk-legit\n",
+        );
+
+        let files = collect_files(d);
+        // `|_| false` deliberately models the environment where these are
+        // NOT already exported — which is the ordinary case for every name
+        // here except HOME, and is exactly when the hole was reachable.
+        let (plan, refused) = plan_assignments(&files, |_| false);
+        let planned: std::collections::HashMap<_, _> = plan
+            .iter()
+            .map(|(k, v, _)| (k.as_str(), v.as_str()))
+            .collect();
+
+        for hijack in [
+            "GIT_EXEC_PATH",
+            "GIT_DIR",
+            "GIT_ALLOW_PROTOCOL",
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "STELLA_HOME",
+            "STELLA_TRUST_PROJECT",
+            "STELLA_ENGINE_CONFIG_JSON",
+            "NODE_PATH",
+            "PYTHONHOME",
+            "GCONV_PATH",
+        ] {
+            assert!(
+                !planned.contains_key(hijack),
+                "{hijack} must never be applied from a project dotenv file"
+            );
+            assert!(
+                refused.iter().any(|r| r == hijack),
+                "{hijack} should be reported as refused"
+            );
+        }
+        assert_eq!(planned.get("OPENROUTER_API_KEY"), Some(&"sk-legit"));
+    }
+
     #[test]
     fn deny_list_matches_namespaces_and_case_but_spares_ordinary_names() {
         // Loader namespaces are refused wholesale, in any case.
@@ -739,6 +877,15 @@ mod tests {
         assert!(!is_execution_hijack("CARGO_TARGET_DIR"));
         assert!(!is_execution_hijack("CARGO_BUILD_JOBS"));
         assert!(!is_execution_hijack("GIT_COMMITTER_EMAIL"));
+        // The config-ROOT entries are exact names, not prefixes: a project
+        // may still set its own `HOME…`/`XDG_…`/`STELLA_…`-shaped variables,
+        // and the documented per-project `STELLA_MODEL` steering — the reason
+        // a project dotenv is worth reading at all — is untouched.
+        assert!(!is_execution_hijack("HOMEBREW_PREFIX"));
+        assert!(!is_execution_hijack("HOMEPAGE_URL"));
+        assert!(!is_execution_hijack("STELLA_MODEL"));
+        assert!(!is_execution_hijack("XDG_RUNTIME_DIR"));
+        assert!(!is_execution_hijack("NODE_VERSION"));
     }
 
     #[test]

@@ -741,7 +741,13 @@ fn wrap_one_indent(
     out: &mut Vec<Line<'static>>,
 ) {
     let line_width = line.width();
-    if line_width <= max_width || max_width == 0 {
+    // The last clause is the narrow-terminal guard: with `indent >= max_width`
+    // the content column has zero width, and the loop below would then flush a
+    // row per character — a 60-character reply exploding into 60 rows on a
+    // ≤40-column terminal (the transcript pane is 60% of the frame, so its
+    // inner width drops under LABEL_COL there). Clip at the pane edge instead,
+    // exactly as the un-wrapped diff rows already do.
+    if line_width <= max_width || max_width == 0 || max_width <= indent {
         out.push(line);
         return;
     }
@@ -807,7 +813,10 @@ fn wrap_one_indent(
 /// Every `entry_lines` arm MUST route its rows through this (or
 /// [`push_labeled_block`] for multi-line content) — no transcript row
 /// renders at the left margin. The
-/// `every_transcript_entry_renders_in_the_label_gutter` test enforces it.
+/// `every_transcript_entry_renders_in_the_label_gutter` test enforces it,
+/// with exactly one deliberate exception: [`TranscriptEntry::Evicted`] is a
+/// system note *about* the transcript rather than an entry in it, so it is
+/// rendered untagged and full-bleed.
 fn push_labeled(
     label: &str,
     label_style: Style,
@@ -939,7 +948,7 @@ pub(crate) fn entry_lines(
             // the `[user]:` tag and every line of the prompt ride the same
             // violet as the composer's keybind glyphs and the
             // "deterministic-first" chip (`deck_render`) — the interactive-
-            // chrome accent, never the ember heat. Rendered as plain lines
+            // chrome accent, never the brand gold. Rendered as plain lines
             // (not markdown) so nothing tints part of the prompt a 2nd color.
             let violet = Style::new().fg(theme::VIOLET);
             let lines: Vec<Line<'static>> = text
@@ -1425,8 +1434,8 @@ pub(crate) fn entry_lines(
             );
         }
         TranscriptEntry::Complete { model, cost_usd } => {
-            // A quiet footnote, not an event — the dimmest ember tier keeps it
-            // inside the warm family without shouting.
+            // A quiet footnote, not an event — warning-orange keeps the cost
+            // in the warm family without borrowing the reserved brand gold.
             let style = Style::new().fg(theme::WARNING);
             push_labeled(
                 "cost",
@@ -1440,9 +1449,11 @@ pub(crate) fn entry_lines(
 }
 
 fn pr_status_color(status: PrStatus) -> Color {
-    // Kept inside the ember family so the `[⇢ pr]:` gutter reads with the rest
-    // of the transcript: quiet amber draft, flame while open, gold on merge,
-    // crimson on close.
+    // A ramp toward the brand accent as the PR matures, so the `[⇢ pr]:`
+    // gutter reads with the rest of the transcript: warning-orange draft, deep
+    // gold while open, full gold on merge, danger on close. (The "ember"
+    // family this comment used to name was retired with the aurora→gold
+    // recolour — see `theme`'s palette-law test.)
     match status {
         PrStatus::Draft => theme::WARNING,
         PrStatus::Open => theme::ACCENT_DEEP,

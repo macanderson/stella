@@ -1349,7 +1349,20 @@ fn main() -> ExitCode {
     let authority_snapshot =
         enterprise_telemetry::StartupAuthoritySnapshot::capture(managed_snapshot.as_ref());
     let mut loaded_env = env_files::maybe_load();
-    let _rejected_privileged = authority_snapshot.restore_after_project_env(&loaded_env.names);
+    // The snapshot rolls back any privileged name a dotenv file did manage to
+    // set (the second-loader backstop behind `env_files`' own deny-list). It
+    // returns the names it clawed back — fold them into the load record so the
+    // rollback is REPORTED like every other refusal rather than swallowed, and
+    // so the diagnostics can't go on claiming a variable was loaded when its
+    // host value was put straight back (#553).
+    let rejected_privileged = authority_snapshot.restore_after_project_env(&loaded_env.names);
+    for name in rejected_privileged {
+        loaded_env.names.retain(|loaded| loaded != &name);
+        loaded_env.name_files.remove(&name);
+        if !loaded_env.refused.contains(&name) {
+            loaded_env.refused.push(name);
+        }
+    }
 
     let cli = Cli::parse();
 
@@ -1559,6 +1572,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // stderr, as advisory warnings that never block the run.
     for issue in settings_check::validate_at_launch(&cfg) {
         eprintln!("⚠ settings: {}", issue.line());
+    }
+
+    // Same posture, one file over: `~/.stella/credentials.toml` is read even
+    // when its mode lets others at it (refusing would lock a user out of their
+    // own keys) and is never silently `chmod`ed (its mode is not ours to
+    // change) — so the only honest response left is to say so, out loud, once.
+    // A check whose finding nothing prints would be worse than no check.
+    for advisory in &cfg.credential_advisories {
+        eprintln!("⚠ credentials: {}", advisory.line());
     }
 
     match cli.command.unwrap_or(Command::Chat) {

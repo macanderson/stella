@@ -31,6 +31,7 @@ pub struct RunnableSession {
 
 impl RunnableSession {
     /// Convenience constructor for a session with a live warm prefix.
+    #[must_use]
     pub fn warm(id: impl Into<String>, priority: u8, warmth_secs: u64) -> Self {
         Self {
             id: id.into(),
@@ -40,6 +41,7 @@ impl RunnableSession {
     }
 
     /// Convenience constructor for a session with no warm prefix to preserve.
+    #[must_use]
     pub fn cold(id: impl Into<String>, priority: u8) -> Self {
         Self {
             id: id.into(),

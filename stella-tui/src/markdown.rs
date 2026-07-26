@@ -81,8 +81,13 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
         }
 
         // ── Numbered list (1. / 42. ) ──────────────────────────────────────
-        if let Some(rest) = strip_numbered(lead) {
-            let prefix = format!("{}  ", " ".repeat(indent));
+        // The ordinal is content, not decoration: an agent answering "1. …
+        // 2. … 3. …" is describing an *order*, and dropping the marker (as
+        // this arm used to, emitting a bare two-space indent) rendered every
+        // step as an identical unlabelled row. Keep the marker, styled like
+        // the bullet glyph.
+        if let Some((marker, rest)) = strip_numbered(lead) {
+            let prefix = format!("{}{marker} ", " ".repeat(indent));
             let mut spans = vec![Span::styled(prefix, Style::new().fg(theme::MUTED))];
             spans.extend(parse_inline_spans(rest));
             out.push(Line::from(spans));
@@ -276,25 +281,29 @@ fn strip_heading(line: &str) -> Option<(usize, &str)> {
     Some((level, content))
 }
 
-/// Strip a numbered list prefix (`1. `, `42. `) and return the remainder.
-fn strip_numbered(lead: &str) -> Option<&str> {
+/// Split a numbered list prefix (`1. `, `42) `) off `lead`, returning the
+/// marker without its trailing space (`"1."`, `"42)"`) and the item text.
+fn strip_numbered(lead: &str) -> Option<(&str, &str)> {
     let digits_end = lead.chars().take_while(|c| c.is_ascii_digit()).count();
     if digits_end == 0 || digits_end >= lead.len() {
         return None;
     }
-    lead.get(digits_end..)?
+    // `digits_end` counts ASCII digits, so it is also a byte offset.
+    let rest = lead.get(digits_end..)?;
+    let text = rest
         .strip_prefix(". ")
-        .or_else(|| lead.get(digits_end..)?.strip_prefix(") "))
+        .or_else(|| rest.strip_prefix(") "))?;
+    Some((&lead[..digits_end + 1], text))
 }
 
 /// Build a heading line with level-appropriate styling.
 ///
 /// The hierarchy is gold → gold → white, all bold:
-/// * **H1** is a filled ember-gold pill — near-black [`theme::GROUND`] text on
+/// * **H1** is a filled brand-gold pill — near-black [`theme::GROUND`] text on
 ///   an [`theme::ACCENT`] background, with a space of padding each side so
 ///   it reads as a solid title bar. This is the deliberate high-contrast
 ///   replacement for the old washed-out heading.
-/// * **H2** is bold ember-gold text (no fill).
+/// * **H2** is bold brand-gold text (no fill).
 /// * **H3+** is bold primary-ink text.
 fn heading_line(content: &str, level: usize) -> Line<'static> {
     if level == 1 {
@@ -457,7 +466,7 @@ mod tests {
     #[test]
     fn h1_is_a_high_contrast_gold_pill() {
         // The exact fix the user asked for: the H1 must be a bold, filled,
-        // high-contrast bar — near-black ink on ember gold — never washed-out
+        // high-contrast bar — near-black ink on brand gold — never washed-out
         // or a light-text-on-pale-background combination.
         let lines = render("# Rust Async Patterns");
         let span = &lines[0].spans[0];
@@ -501,10 +510,14 @@ mod tests {
     }
 
     #[test]
-    fn numbered_list_items_are_indented() {
-        let lines = render("1. first\n2. second");
-        assert_eq!(lines.len(), 2);
-        assert!(collect_spans_text(&lines[0]).contains("first"));
+    fn numbered_list_items_keep_their_ordinal() {
+        // The ordinal is the whole point of an ordered list: two steps that
+        // render as identical unlabelled rows have lost the agent's meaning.
+        let lines = render("1. first\n2. second\n10) tenth");
+        assert_eq!(lines.len(), 3);
+        assert_eq!(collect_spans_text(&lines[0]), "1. first");
+        assert_eq!(collect_spans_text(&lines[1]), "2. second");
+        assert_eq!(collect_spans_text(&lines[2]), "10) tenth");
     }
 
     #[test]

@@ -223,7 +223,11 @@ fn print_reconstruction(
 /// The message's printable body: text content, plus a compact rendering of any
 /// tool calls/results it carried (they are separate blocks in the receipt but
 /// belong to one message on the wire).
-fn message_body(message: &CompletionMessage) -> String {
+///
+/// Shared with the deck's INSPECT overlay (`command_deck::service_inspect_action`):
+/// the CLI and the deck must never disagree about what a message looked like,
+/// so there is one renderer, not a copy per surface.
+pub(crate) fn message_body(message: &CompletionMessage) -> String {
     let mut out = String::new();
     if !message.content.is_empty() {
         out.push_str(&message.content);
@@ -250,7 +254,9 @@ fn message_body(message: &CompletionMessage) -> String {
     out
 }
 
-fn role_tag(role: MessageRole) -> &'static str {
+/// The stable wire tag for a message role — the same token the deck's INSPECT
+/// overlay shows, for the same reason [`message_body`] is shared.
+pub(crate) fn role_tag(role: MessageRole) -> &'static str {
     match role {
         MessageRole::System => "system",
         MessageRole::User => "user",

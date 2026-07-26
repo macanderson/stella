@@ -25,6 +25,17 @@ use crate::registry::Tool;
 /// huge drifted file doesn't flood the context through an error message.
 const DRIFT_ECHO_MAX_LINES: usize = 400;
 
+/// Per-line width cap on the echo, mirroring `read_file`'s. A line cap alone
+/// is not a bound on context: a drifted minified bundle, a one-line JSON
+/// fixture or a generated SQL dump is ONE line of megabytes, sails under
+/// [`DRIFT_ECHO_MAX_LINES`], and would land in the transcript whole — through
+/// an *error message*, which no caller thinks to budget for.
+const DRIFT_ECHO_MAX_LINE_BYTES: usize = 1_000;
+
+/// Ceiling on the whole echo. Many long-but-individually-clipped lines still
+/// add up, so the render stops here and says so.
+const DRIFT_ECHO_MAX_BYTES: usize = 60_000;
+
 #[derive(Default)]
 pub struct EditFile {
     ledger: Arc<ReadLedger>,
@@ -39,20 +50,49 @@ impl EditFile {
 }
 
 /// Render the fresh content echoed inside a drift-attributed error:
-/// line-numbered like `read_file` output (so the model can re-anchor
-/// edits), capped at [`DRIFT_ECHO_MAX_LINES`].
+/// line-numbered like `read_file` output (so the model can re-anchor edits),
+/// bounded on all three axes `read_file` bounds — lines
+/// ([`DRIFT_ECHO_MAX_LINES`]), per-line width
+/// ([`DRIFT_ECHO_MAX_LINE_BYTES`]) and total payload
+/// ([`DRIFT_ECHO_MAX_BYTES`]) — each elision loud, so a capped echo can never
+/// be mistaken for the whole file.
 fn drift_echo(content: &str) -> String {
+    use std::fmt::Write as _;
+
     let lines: Vec<&str> = content.lines().collect();
-    let shown = lines.len().min(DRIFT_ECHO_MAX_LINES);
     let mut numbered = String::new();
-    for (i, line) in lines[..shown].iter().enumerate() {
-        numbered.push_str(&format!("{:>6}\t{line}\n", i + 1));
+    let mut shown = 0usize;
+    let mut stopped_at_byte_cap = false;
+    for (i, line) in lines.iter().take(DRIFT_ECHO_MAX_LINES).enumerate() {
+        if numbered.len() >= DRIFT_ECHO_MAX_BYTES {
+            stopped_at_byte_cap = true;
+            break;
+        }
+        if line.len() <= DRIFT_ECHO_MAX_LINE_BYTES {
+            let _ = writeln!(numbered, "{:>6}\t{line}", i + 1);
+        } else {
+            // Char-boundary-safe: byte slicing would panic mid-UTF-8 on a
+            // long non-ASCII line, and the drifted content is not ours.
+            let head = crate::exec::truncate_preview(line, DRIFT_ECHO_MAX_LINE_BYTES);
+            let elided = line.len() - head.len();
+            let _ = writeln!(numbered, "{:>6}\t{head}[… {elided} bytes elided …]", i + 1);
+        }
+        shown += 1;
     }
     if shown < lines.len() {
-        numbered.push_str(&format!(
-            "(first {shown} of {} lines — use read_file for the rest)\n",
+        let why = if stopped_at_byte_cap {
+            format!(
+                " — stopped at the {} KB echo cap",
+                DRIFT_ECHO_MAX_BYTES / 1024
+            )
+        } else {
+            String::new()
+        };
+        let _ = writeln!(
+            numbered,
+            "(first {shown} of {} lines{why} — use read_file for the rest)",
             lines.len()
-        ));
+        );
     }
     numbered
 }
@@ -196,7 +236,7 @@ impl Tool for EditFile {
             content.replacen(old_string, new_string, 1)
         };
 
-        match crate::atomic_write::replace_file_atomically(
+        match crate::durable_write::write_file_durably(
             full_path.clone(),
             new_content.as_bytes().to_vec(),
         )
@@ -450,6 +490,40 @@ mod tests {
             }
             ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
         }
+    }
+
+    /// The line cap alone never saw this file: 4 MB on ONE line is one line,
+    /// so it sailed under `DRIFT_ECHO_MAX_LINES` and the whole bundle went to
+    /// the model inside an *error message* — the one payload nobody budgets
+    /// for. The width cap must clip it, loudly.
+    #[test]
+    fn drift_echo_clips_a_pathologically_long_line() {
+        let echo = drift_echo(&"x".repeat(4 * 1024 * 1024));
+        assert!(
+            echo.len() < 8 * 1024,
+            "a 4 MB one-liner must not be echoed whole (got {} bytes)",
+            echo.len()
+        );
+        assert!(echo.contains("bytes elided"), "elision is loud: {echo}");
+    }
+
+    /// Many individually-clipped long lines still add up — the render stops
+    /// at the total cap and says which cap it hit.
+    #[test]
+    fn drift_echo_stops_at_the_total_byte_cap() {
+        let body: String = std::iter::repeat_n("y".repeat(4096), 300)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let echo = drift_echo(&body);
+        assert!(
+            echo.len() < DRIFT_ECHO_MAX_BYTES + 4096,
+            "echo stays under the ceiling (got {} bytes)",
+            echo.len()
+        );
+        assert!(
+            echo.contains("echo cap"),
+            "the footer names the cap: {echo}"
+        );
     }
 
     #[tokio::test]

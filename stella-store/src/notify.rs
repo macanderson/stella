@@ -120,7 +120,7 @@ impl NotificationStore {
         // are still only in the page cache, and a power cut surfaces a
         // zero-length notification — which `list` skips, silently breaking
         // the "persist until read" contract this module opens with.
-        crate::write_private_atomic(&path, json.as_bytes(), true)
+        crate::private::write_private_atomic(&path, json.as_bytes())
     }
 
     /// All notifications, newest first. Unreadable files are skipped.

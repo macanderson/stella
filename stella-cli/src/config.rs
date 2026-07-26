@@ -371,7 +371,7 @@ pub static LOCAL_PROVIDER: ProviderConfig = ProviderConfig {
 /// process lifetime in proportion to turns × configured providers. Interning
 /// makes the leak what the doc always promised: bounded by the number of
 /// DISTINCT strings, not by how often they are resynthesized.
-fn leak(s: &str) -> &'static str {
+pub(crate) fn leak(s: &str) -> &'static str {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
 
@@ -559,6 +559,16 @@ pub struct Config {
     /// real credential (flag/env) was involved — not a resolved secret, so
     /// there is no source to report.
     pub credential_source: Option<stella_model::credential::CredentialSource>,
+    /// Advisories raised while reading `~/.stella/credentials.toml` — today,
+    /// a file mode that lets group or other at the plaintext keys. Carried on
+    /// the resolved config so the launch path can print them once, beside the
+    /// settings warnings, instead of a library deciding on its own to write to
+    /// somebody's stderr.
+    ///
+    /// Empty when no file was read: the sealed credential-handoff path and
+    /// `filesystem_settings_disabled` both resolve against an in-memory
+    /// `CredentialsFile::empty()`, which has nothing on disk to warn about.
+    pub credential_advisories: Vec<stella_model::credential::CredentialAdvisory>,
 }
 
 impl Config {
@@ -811,6 +821,7 @@ impl Config {
                     tools_web: false,
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
+                    credential_advisories: credentials_file.advisories().to_vec(),
                 });
             }
 
@@ -996,6 +1007,7 @@ impl Config {
             tools_web: false,
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),
+            credential_advisories: credentials_file.advisories().to_vec(),
         })
     }
 

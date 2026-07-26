@@ -28,6 +28,17 @@ use stella_protocol::MediaKind;
 
 use crate::MediaError;
 
+/// The journal's on-disk schema version, stamped in `PRAGMA user_version`
+/// (#617). [`SCHEMA`] is idempotent convergence — every statement is
+/// `CREATE … IF NOT EXISTS` and the batch replays on every open — so the
+/// stamp is what a *reshape* (an altered or backfilled column, which the
+/// `IF NOT EXISTS` guard silently skips) would key off. Bump it in the same
+/// commit that changes the shape.
+const SCHEMA_VERSION: i64 = 1;
+
+/// The tables [`SCHEMA`] must have produced before the version is stamped.
+const SCHEMA_TABLES: &[&str] = &["media_operations"];
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS media_operations (
     operation_key TEXT PRIMARY KEY,
@@ -237,6 +248,16 @@ impl SqliteMediaOperationJournal {
             .map_err(|error| journal_error(format!("cannot configure journal: {error}")))?;
         initialize_journal_database(&connection)
             .map_err(|error| journal_error(format!("cannot initialize journal: {error}")))?;
+        // After the DDL, so an in-the-field journal is stamped at the version
+        // whose shape it now provably has, and a journal from a newer stella
+        // is refused rather than written into blind (#617).
+        stella_store::durable::ensure_converged_schema_version(
+            &connection,
+            "the media operation journal",
+            SCHEMA_VERSION,
+            SCHEMA_TABLES,
+        )
+        .map_err(|error| journal_error(error.to_string()))?;
         Ok(Self {
             connection: Mutex::new(connection),
             retention,

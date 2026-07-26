@@ -30,7 +30,13 @@ The binary is meant to run containerized —
 [`../packaging/docker/Dockerfile.serve`](../packaging/docker/Dockerfile.serve)
 builds it with `--bin stella-serve`, runs it under a non-root numeric UID, binds
 `0.0.0.0:8080`, and uses the binary's own `stella-serve healthcheck` subcommand as
-the container HEALTHCHECK so the runtime image needs no `curl` or `wget`.
+the container HEALTHCHECK so the runtime image needs no `curl` or `wget`. Those
+are claims a Dockerfile makes and cannot check, so
+[`../.github/workflows/docker-serve.yml`](../.github/workflows/docker-serve.yml)
+builds the image on every change to it and
+[`../scripts/smoke-serve-image.sh`](../scripts/smoke-serve-image.sh) runs the
+container until each one is answered — serving on 8080, the token gate refusing
+and admitting, uid 10001 on PID 1, and Docker's own health verdict (#635).
 
 ```
 host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated OS thread)
@@ -53,7 +59,7 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/accept.rs`](src/accept.rs) | The written `accept()` classification policy — transient vs fatal, the backoff, and the give-up streak. Byte-identical to [`stella-observatory/src/accept.rs`](../stella-observatory/src/accept.rs) (the observatory takes no `stella-*` dependency, so there is no shared crate to hold it); a drift-guard test in both crates fails if the two copies differ. Change one, change the other. |
 | [`src/http.rs`](src/http.rs) | A hand-rolled HTTP/1.1 + SSE layer following [`stella-observatory`](../stella-observatory)'s no-framework idiom, extended with request bodies, bearer auth, and long-lived responses. |
 | [`src/error.rs`](src/error.rs) | `ServeError` — the named failures at the boundary. |
-| [`src/main.rs`](src/main.rs) | The binary: env config (`STELLA_SERVE_BIND` / `_TOKEN` / `_TOOLS`) and the `healthcheck` subcommand. |
+| [`src/main.rs`](src/main.rs) | The binary: env config (`STELLA_SERVE_BIND` / `_TOKEN_FILE` / `_TOKEN` / `_TOOLS`; the file supply wins, and a token under 32 chars warns rather than refusing to start) and the `healthcheck` subcommand. |
 
 ## Key concepts
 
@@ -122,11 +128,25 @@ the engine's backoff.
 - **Chunked request bodies are not decoded.** A chunked POST parses as an empty
   body and fails validation with a 400. That is safe rather than a smuggling hole
   only because this layer serves one request per connection and then closes.
+- **Every request is capped at 1 MiB, head and body together, and going over it
+  gets no response at all** — `read_request` returns `None` and the connection
+  closes ([`src/http.rs`](src/http.rs)). Two consequences worth sizing for: a
+  turn whose assembled conversation exceeds 1 MiB cannot be created, and a
+  `tool-result` carrying an oversized tool output is dropped silently, leaving
+  the engine step it would have answered parked until the turn is torn down.
+- **The SSE stream must not be buffered by anything in front of it.** The
+  response carries `X-Accel-Buffering: no` for nginx-family proxies; a proxy that
+  buffers anyway deadlocks the protocol rather than merely delaying it, because
+  the host cannot answer a `provider_request` it has not received.
 - **The token comparison must stay constant-time.** `constant_time_eq` in
   [`src/server.rs`](src/server.rs) exists because `==` on `&str` stops at the first
   differing byte and leaks the shared secret to a caller timing its own 401s. A
   missing `Authorization` header is a hard `false`, so an empty configured token
-  cannot authorize an anonymous request.
+  cannot authorize an anonymous request. **401s are also rate-limited** by a
+  per-process token bucket (burst 8, refill 2/s, 500 ms penalty once empty) —
+  the response body and status never change, only the latency, so the throttle
+  leaks nothing about its own state and a correctly-configured host never
+  reaches it.
 - **`ToolExecutor::execute` never returns an error.** A tool failure is
   model-visible data, so a host disconnect mid-tool becomes `ToolOutput::Error`,
   not an engine error. The provider port is the opposite: a disconnect there is a

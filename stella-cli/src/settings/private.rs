@@ -1,6 +1,17 @@
-//! Secure persistence for user-scope settings, which may contain API keys.
+//! Secure persistence for settings files, which may contain API keys.
+//!
+//! Both scopes are durable writes under the one contract (#617): the bytes go
+//! through [`stella_store::durable::write_atomic`] — temp + fsync + rename +
+//! fsync of the parent directory — so a crash mid-save can never leave a
+//! truncated `settings.json` where a valid one used to be. What differs
+//! between the scopes is only the *mode* and how hard the destination is
+//! checked, not whether the write is durable.
 
 use std::path::Path;
+
+use stella_store::durable::{
+    MODE_PRIVATE, MODE_SHARED, write_atomic, write_atomic_preserving_mode,
+};
 
 pub(super) fn reject_symlink(path: &Path) -> Result<(), String> {
     if let Ok(metadata) = std::fs::symlink_metadata(path)
@@ -14,6 +25,9 @@ pub(super) fn reject_symlink(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Persist rendered settings. `user_private` selects the user scope, whose
+/// file can hold credentials and is therefore owner-only in an owner-only
+/// directory; the project scope is a committable `.stella/settings.json`.
 pub(super) fn write_settings(path: &Path, bytes: &[u8], user_private: bool) -> Result<(), String> {
     if user_private {
         return write_user_settings(path, bytes);
@@ -22,32 +36,23 @@ pub(super) fn write_settings(path: &Path, bytes: &[u8], user_private: bool) -> R
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
-    // `std::fs::write` opens with `O_TRUNC`: the old bytes are gone before the
-    // new ones land, so a crash, a full disk, or a Ctrl-C in that window left
-    // project settings half-written — and settings that no longer parse take
-    // every configured provider, tool toggle and permission rule down with
-    // them until someone hand-repairs the file.
-    //
-    // This reuses the tools' durable-replace rather than doing a local
-    // temp-then-rename, because a plain rename swaps the inode and silently
-    // drops the file's mode, owner and hard links. `.stella/settings.json` is
-    // a shared, version-controlled file a user may well have chmod'd or
-    // hard-linked; that module already picks the strategy per target and
-    // preserves all three.
-    //
-    // Not [`write_user_settings`]: that one additionally *enforces* 0600 on
-    // the file and 0700 on its parent because it holds API keys, and is
-    // Unix-only for exactly that reason. Project settings need durability,
-    // not confinement.
-    stella_tools::atomic_write::replace_file_atomically_blocking(path, bytes)
+    // Project scope was the last bare `std::fs::write` on a settings path: it
+    // truncated the live file before it had the replacement bytes, so a crash
+    // in that window left the project with an empty (invalid JSON) settings
+    // file and no way to tell what it used to say.
+    write_atomic_preserving_mode(path, bytes, MODE_SHARED).map_err(|e| e.to_string())
 }
 
-#[cfg(unix)]
+/// The user scope adds what the project scope cannot assume: the parent must
+/// be an owner-only directory (created 0700 if absent) and the target must be
+/// a regular file, because this one can hold an API key.
+///
+/// The mode/ownership hardening is unix-only, and on other platforms
+/// [`write_atomic`] performs the same temp + fsync + rename without it rather
+/// than refusing to save — which is what this function's `#[cfg(not(unix))]`
+/// arm used to do, making user settings unwritable on a platform CI never
+/// compiles (#617).
 fn write_user_settings(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write as _;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-
     let parent = path
         .parent()
         .ok_or_else(|| format!("settings path {} has no parent", path.display()))?;
@@ -60,14 +65,18 @@ fn write_user_settings(path: &Path, bytes: &[u8]) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut builder = std::fs::DirBuilder::new();
             builder.recursive(true);
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
             builder
                 .create(parent)
                 .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
         }
         Err(error) => return Err(format!("cannot inspect {}: {error}", parent.display())),
     }
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
@@ -78,42 +87,5 @@ fn write_user_settings(path: &Path, bytes: &[u8]) -> Result<(), String> {
     {
         return Err(format!("{} is not a regular settings file", path.display()));
     }
-
-    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-    let tmp = path.with_extension(format!("tmp.{}.{}", std::process::id(), sequence));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
-    let mut file = options
-        .open(&tmp)
-        .map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
-    let result = (|| {
-        file.write_all(bytes)
-            .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-        file.sync_data()
-            .map_err(|e| format!("cannot fsync {}: {e}", tmp.display()))?;
-        drop(file);
-        std::fs::rename(&tmp, path)
-            .map_err(|e| format!("cannot replace {}: {e}", path.display()))?;
-        std::fs::File::open(parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|e| format!("cannot fsync directory {}: {e}", parent.display()))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
-}
-
-#[cfg(not(unix))]
-fn write_user_settings(path: &Path, _bytes: &[u8]) -> Result<(), String> {
-    Err(format!(
-        "secure user settings persistence is unsupported on this platform: {}",
-        path.display()
-    ))
+    write_atomic(path, bytes, MODE_PRIVATE).map_err(|e| e.to_string())
 }
