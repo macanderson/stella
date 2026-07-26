@@ -31,6 +31,14 @@ blocked the Phase-1 enum/validator freeze — four resolved by existing
 spec/ADRs, three ratified by the owner on 2026-07-24 (including the
 `informational → advisory` edge amended into ADR 0007).
 
+ADR 0010 amends ADR 0005: the destination is unchanged, but the route from
+big-bang cutover becomes incremental transfer. The owner **ratified it on
+2026-07-26** (issue #711), settling its second open question in the same act —
+`node`, `edge`, and `embedding` are a derived index and never transfer
+authority, so `lineage_id` lands on `memory` and `episode` only. Its first open
+question (whether the backfill ever becomes mandatory) is deliberately left
+open; nothing before Phase 3 forces it.
+
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-semantic-taxonomy.md) | Semantic Taxonomy | Accepted (Phase 0) |
@@ -42,4 +50,4 @@ spec/ADRs, three ratified by the owner on 2026-07-24 (including the
 | [0007](0007-immutable-promotion-history.md) | Immutable Promotion History | Accepted — ratified 2026-07-23 (enforcement 4→2); amended 2026-07-24 (`informational`→advisory) |
 | [0008](0008-markdown-canonical-rules.md) | Markdown Repository Rules Remain Canonical | Accepted (Phase 0) |
 | [0009](0009-enum-freeze-resolutions.md) | Enum-Freeze Resolutions (issue #483) | Accepted — ratified 2026-07-24 |
-| [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | **Proposed** — needs ratification |
+| [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | Accepted — ratified 2026-07-26 (index tables do not transfer) |

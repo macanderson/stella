@@ -84,10 +84,11 @@ plane with no supersede path.
    stop it shipping. Apply the same tombstone-plus-restatement filter used on
    every other surface. This closes a hole in a guarantee already made.
 
-7. **Make the point-in-time cutoff honest.** Either apply it to node, vector,
-   and recency reads as well as adjacency, or refuse a query that sets it. Do
-   not leave a parameter that looks honored and is not. Recommendation: apply
-   it — it is the same predicate the edge reader already uses.
+7. **Make the point-in-time cutoff honest.** Apply it to node, vector, and
+   recency reads as well as adjacency, so a query that sets `as_of` is answered
+   from one instant across every signal. Decided 2026-07-26 (#711, decision 3);
+   the alternative — refusing the query — was rejected because the cutoff is
+   the same predicate the edge reader already uses.
 
 8. **Lift tuning constants into settings.** Frame count, token budget, fusion
    constant, diversification lambda, coverage floor, and the lexical-fallback
@@ -184,7 +185,8 @@ which is the part users cannot do today.
 **Why third:** this is the goal line. It is also a **migration, not a build**
 (spec §8) — a live lexical loop already does this, and it must not regress.
 
-**Blocked on:** ratifying ADR 0010.
+**Unblocked:** ADR 0010 ratified 2026-07-26 (#711). `lineage_id` lands on
+`memory` and `episode` only — the retrieval index does not transfer.
 
 ### Deliverables
 
@@ -291,19 +293,22 @@ Phase 1 stands alone and is worth shipping regardless. Phases 2–4 are each
 useful without their successor: 2 without 3 gives inspectable turns; 3 without 4
 gives governed proposals that never retire themselves.
 
-### Decisions needed from the maintainer
+### Decisions — all four settled 2026-07-26 (#711)
 
-1. **Ratify or reject ADR 0010** (incremental authority transfer). Blocks
-   Phase 3. Rejecting it restores the big-bang migration as a phase of its own,
-   ahead of the loop.
-2. **Does `node`/`edge` transfer authority at all?** Recommendation: no — they
-   are a derived index over content, not a record store. Decides whether the
-   lineage column lands on two tables or five. Blocks Phase 3.
-3. **Point-in-time recall: apply or refuse?** Recommendation: apply.
-   Blocks Phase 1 item 7.
-4. **Duplicate memory lineages created by past edits** — report only, or offer
-   an interactive merge? Recommendation: report in Phase 1, propose merges in
-   Phase 3 where proposals have a review surface. Blocks nothing.
+1. **ADR 0010 (incremental authority transfer): ratified.** The big-bang
+   authority cutover leaves the critical path; `context_records` becomes
+   canonical for the records it owns, and that set grows monotonically.
+   Phase 3 unblocked.
+2. **`node`/`edge` transfer authority: no.** They are a derived index over
+   content, not a record store — as is `embedding`. `lineage_id` lands on
+   `memory` and `episode`, two tables, not five. Folded into ADR 0010 as
+   decision point 6.
+3. **Point-in-time recall: apply the cutoff.** It is the same predicate the
+   edge reader already uses. Phase 1 item 7 builds it; a query that sets
+   `as_of` is answered from one instant across every signal, not refused.
+4. **Duplicate memory lineages: report only.** Phase 1's migration detects and
+   reports them and never merges. Merging becomes a Phase 3 proposal, where
+   proposals have a review surface and an undo.
 
 ### Tracker reconciliation
 

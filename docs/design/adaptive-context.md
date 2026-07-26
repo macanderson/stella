@@ -272,7 +272,7 @@ Named so they are decisions rather than omissions:
 | 0007 | Immutable promotion history | Accepted, ratified, amended |
 | 0008 | Markdown-canonical rules | Accepted |
 | 0009 | Enum-freeze resolutions | Accepted, ratified |
-| 0010 | Incremental authority transfer | **Proposed** |
+| 0010 | Incremental authority transfer | Accepted, ratified |
 
 **Note on 0003.** Its characterization is accurate for the low-level edge query
 it pins, but the conclusion does not hold one layer up: within `recall`, the
@@ -285,9 +285,12 @@ compiled frame is now reached by *extending the step manifest* (§6.2), not by
 building a second aggregate. An amendment should record this before Phase 2
 ships.
 
-**Note on 0010.** Proposed, not accepted. It amends 0005 by replacing a big-bang
-authority cutover with incremental transfer. It needs ratification before
-Phase 3.
+**Note on 0010.** Ratified 2026-07-26 ([#711](https://github.com/macanderson/stella/issues/711)).
+It amends 0005 by replacing a big-bang authority cutover with incremental
+transfer, and settles in the same act that the retrieval index — `node`, `edge`,
+`embedding` — never transfers authority: `lineage_id` lands on `memory` and
+`episode` only. Phase 3 is unblocked. Whether the backfill ever becomes
+mandatory remains open and gates nothing before Phase 3.
 
 ---
 

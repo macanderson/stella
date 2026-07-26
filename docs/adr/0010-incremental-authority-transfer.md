@@ -1,8 +1,11 @@
 # ADR 0010: Incremental Authority Transfer
 
-- Status: **Proposed** — amends [ADR 0005](0005-storage-authority.md); needs owner ratification
-- Date: 2026-07-25
-- Deciders: (pending)
+- Status: **Accepted** — ratified by repository owner 2026-07-26 (was: Proposed).
+  Amends [ADR 0005](0005-storage-authority.md).
+- Date: 2026-07-25 (ratified 2026-07-26)
+- Deciders: repository owner (ratified 2026-07-26)
+- Tracking: [issue #711](https://github.com/macanderson/stella/issues/711)
+  (part of Epic #469)
 
 ## Context
 
@@ -93,6 +96,17 @@ Concretely:
    ADR 0005's guarantee is unchanged — it simply applies per record rather than
    to a whole-database cutover.
 
+6. **The retrieval index does not transfer authority.** `node`, `edge`, and
+   `embedding` are a derived retrieval index over content, not a record store —
+   `embedding` is already keyed by `(content_hash, fingerprint)` and rebuildable
+   from content. Only `memory` and `episode` are candidates for authority
+   transfer, so `lineage_id` lands on **two** tables, not five. (Directive-shaped
+   rules are the third record kind that transfers, but they are Markdown-canonical
+   per [ADR 0008](0008-markdown-canonical-rules.md) and are not a `context.db`
+   table.) A record's content is authoritative; its index entries are disposable
+   and may be dropped and rebuilt without consulting `context_records`.
+   Ratified 2026-07-26 (was open question 2).
+
 ADR 0005's hard constraints are inherited verbatim and are *easier* to hold
 under this route: no memory can be lost by a migration that does not rewrite
 it, and the live `recall` path is never cut over.
@@ -128,13 +142,9 @@ promotion history, or the Markdown-canonical rule.
 
 ## Open questions
 
-1. **Does the backfill ever become mandatory?** Recommendation: no — but a
+1. **Does the backfill ever become mandatory?** Open. Recommendation: no — but a
    release that depends on complete historical reconstruction must state that
-   dependency and gate on the remaining-row count reaching zero.
-2. **Do `node`/`edge` transfer at all?** Recommendation: no. They are a derived
-   retrieval index over content, not a record store; the `embedding` table is
-   already keyed by `(content_hash, fingerprint)` and is rebuildable from
-   content. Only `memory`, `episode`, and directive-shaped rules are candidates
-   for authority transfer. This should be settled before the first transfer
-   ships, because it decides whether `lineage_id` is added to two tables or
-   five.
+   dependency and gate on the remaining-row count reaching zero. Nothing before
+   Phase 3 forces this, so it stays open.
+2. ~~**Do `node`/`edge` transfer at all?**~~ **Resolved 2026-07-26** ([#711](https://github.com/macanderson/stella/issues/711)
+   decision 2): no. Folded into the decision above as point 6.
