@@ -629,7 +629,7 @@ mod tests {
         StorageSnapshot {
             layers: vec![],
             relations,
-            orphaned_meanings: vec![],
+            ..Default::default()
         }
     }
 

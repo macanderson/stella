@@ -290,6 +290,10 @@ pub fn merge_snapshot(
         layers,
         relations,
         orphaned_meanings: orphaned,
+        // The merge itself cannot fail — it is handed an already-parsed
+        // manifest. Whether one FAILED to parse is known only to the loader,
+        // which sets this after merging.
+        manifest_error: None,
     }
 }
 

@@ -3287,6 +3287,7 @@ name = "stella-pipeline"
 version = "0.5.35"
 dependencies = [
  "async-trait",
+ "futures-util",
  "proptest",
  "serde",
  "serde_json",

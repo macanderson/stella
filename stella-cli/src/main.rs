@@ -1109,6 +1109,18 @@ fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let snapshot = load_storage_snapshot_checked(&root)?;
+    // A manifest that will not parse contributes nothing — no layers, no
+    // boundaries, no intent — so without this the map simply looks emptier
+    // than the repo declared it to be, and the pre-write gate is quietly
+    // enforcing less than the user believes.
+    if let Some(error) = &snapshot.manifest_error {
+        eprintln!(
+            "{} stella.storage.toml did not parse, so its layers, boundaries and \
+             intent are NOT in this map (and the pre-write gate is not enforcing \
+             them): {error}",
+            "warning:".yellow().bold()
+        );
+    }
     if snapshot.relations.is_empty() && snapshot.layers.is_empty() {
         println!(
             "{}",

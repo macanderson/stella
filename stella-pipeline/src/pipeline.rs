@@ -44,6 +44,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use std::sync::Arc;
+
+use futures_util::StreamExt as _;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use stella_core::hooks::{HookRunner, Hooks};
@@ -116,6 +118,12 @@ fn verification_honest_diff(diff_text: String, file_changes: u32) -> String {
         diff_text
     }
 }
+
+/// How many `git diff --no-index --numstat` probes [`Pipeline::gather_diff`]
+/// keeps in flight at once. High enough that the usual handful of new files
+/// costs roughly one round-trip instead of N, low enough that a turn which
+/// creates hundreds cannot fork an unbounded burst of git processes.
+const UNTRACKED_NUMSTAT_CONCURRENCY: usize = 16;
 
 /// Minimal fallback when the caller supplies no stable system prefix.
 const DEFAULT_SYSTEM_PROMPT: &str =
@@ -2284,8 +2292,25 @@ impl<'a> Pipeline<'a> {
                 .map(|(path, _)| path.as_str())
                 .collect();
             fresh.sort(); // deterministic order for the appended evidence
-            for path in fresh {
-                let added = self.untracked_added_lines(surface, path).await;
+            // Each of these is a `git diff --no-index --numstat` subprocess.
+            // Run sequentially, a turn that creates many untracked files paid
+            // one full process round-trip per file — on every verification
+            // observation and again after every revision, so the cost is
+            // repaid per revision per candidate.
+            //
+            // Bounded concurrency rather than a truncating cap: this count
+            // feeds the zero-diff guard and the diff-size budget, so dropping
+            // the tail would let a large untracked change slip under a budget
+            // it should have tripped. `buffered` preserves input order, so
+            // the appended evidence stays deterministic.
+            let counted: Vec<(&str, u32)> =
+                futures_util::stream::iter(fresh.into_iter().map(|path| async move {
+                    (path, self.untracked_added_lines(surface, path).await)
+                }))
+                .buffered(UNTRACKED_NUMSTAT_CONCURRENCY)
+                .collect()
+                .await;
+            for (path, added) in counted {
                 lines += added;
                 text.push_str(&format!("\n+ untracked change: {path} (+{added} lines)"));
             }

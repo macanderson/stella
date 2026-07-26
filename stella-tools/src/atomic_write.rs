@@ -55,6 +55,17 @@ pub async fn replace_file_atomically(path: PathBuf, bytes: Vec<u8>) -> Result<()
         .map_err(|error| format!("write task failed: {error}"))?
 }
 
+/// [`replace_file_atomically`] for callers that are already synchronous and
+/// off the reactor — settings persistence, which runs on the CLI's own thread
+/// and has no runtime to hand blocking work to.
+///
+/// Same strategy selection, same guarantees. Exposed so those callers get the
+/// mode/hard-link/owner reasoning above rather than reimplementing a weaker
+/// temp-then-rename that silently drops a file's permissions.
+pub fn replace_file_atomically_blocking(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    replace_blocking(path, bytes)
+}
+
 #[cfg(unix)]
 fn replace_blocking(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
