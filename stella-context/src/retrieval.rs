@@ -17,13 +17,16 @@ use std::collections::{HashMap, HashSet};
 
 use contextgraph_types::frame::FrameEmbedding;
 use contextgraph_types::{
-    ContextFrame, ContextQuery, ContextQueryResult, Provenance, Representation,
+    BYTES_PER_BUDGET_TOKEN, ContextFrame, ContextQuery, ContextQueryResult, Provenance,
+    Representation,
 };
+use rusqlite::Connection;
 
 use crate::error::ContextError;
 use crate::store::{
-    ContextStore, NodeRow, domains_by_node, live_nodes, neighbors, node_ids_excluded_by_scope,
-    node_ids_for_uris, vectors_for_fingerprint,
+    ContextStore, NodeMeta, NodeRow, domains_by_node, domains_for_nodes, live_node_metas,
+    neighbors, node_ids_excluded_by_scope, node_ids_for_uris, nodes_by_ids, scan_lexical,
+    score_nodes_by_vector, vectors_for_ids,
 };
 
 /// Provenance `kind` marking a frame's domain tag, so a citation view can show
@@ -233,68 +236,96 @@ impl ContextStore {
             }
         };
 
-        // 2. Gather candidates under one lock acquisition — no await is
-        //    held here (the graph-neighbor expansion in 4b briefly
-        //    re-acquires the connection for its 1-hop lookup). The domain
-        //    filter (if any) is applied here so every downstream signal
-        //    sees only the in-scope nodes.
         let fp_id = self.fingerprint().id();
-        let (nodes, vectors, anchor_ids, domains_by_id) = {
-            let conn = self.conn();
-            let mut nodes = live_nodes(&conn)?;
-            let mut vectors = vectors_for_fingerprint(&conn, &fp_id)?;
-            let anchor_ids = node_ids_for_uris(&conn, &q.anchors)?;
-            // Scope excludes only nodes whose tags are all out of scope;
-            // untagged nodes pass (the overlap boost in 3b still ranks
-            // in-scope tags above them). Dropping untagged nodes here silenced
-            // recall completely after `stella init`: reflections and episodes
-            // are commonly written with no domain tag. The exclusion set is an
-            // empty no-op when `domains` is empty.
-            let excluded = node_ids_excluded_by_scope(&conn, domains)?;
-            if !excluded.is_empty() {
-                nodes.retain(|n| !excluded.contains(&n.id));
-                vectors.retain(|(id, _)| !excluded.contains(id));
-            }
-            // One grouped scan (live nodes only) instead of one statement
-            // per node — entries for scope-filtered nodes are harmless
-            // (lookups below are keyed by candidate id only).
-            let domains_by_id: HashMap<i64, Vec<String>> = domains_by_node(&conn)?;
-            (nodes, vectors, anchor_ids, domains_by_id)
-        };
+        // Steps 2–5 are synchronous SQLite plus scoring with no `.await` in
+        // them, so once polled they run to completion on whichever tokio worker
+        // polled the future — on the first-token path of every turn. Hand the
+        // worker's other tasks to a sibling for the duration.
+        without_blocking_the_worker(|| self.recall_blocking(q, domains, &query_vec, &fp_id))
+    }
 
-        let node_by_id: HashMap<i64, &NodeRow> = nodes.iter().map(|n| (n.id, n)).collect();
-        let vector_by_id: HashMap<i64, &Vec<f32>> =
-            vectors.iter().map(|(id, v)| (*id, v)).collect();
-        let no_domains: Vec<String> = Vec::new();
-        let frame_domains_for = |id: &i64| domains_by_id.get(id).unwrap_or(&no_domains).as_slice();
+    /// The synchronous body of [`Self::recall_scoped`]: candidate gathering,
+    /// fusion, diversification, and packing, under one lock acquisition.
+    ///
+    /// # Two-phase by design
+    ///
+    /// The corpus-wide passes (recency, domain overlap, hash dedup, the `L-C5`
+    /// drop report) read only identity, time, hash, and content *size*, so they
+    /// run on [`NodeMeta`] rows that leave every body in SQLite. Bodies and
+    /// embedding vectors are fetched by id **after** the candidate cut, for the
+    /// ≤`MMR_CANDIDATE_MULTIPLE × max_frames` rows that can still become frames.
+    ///
+    /// This is what the cut at [`MMR_CANDIDATE_MULTIPLE`] could not fix on its
+    /// own: it bounded the per-candidate *work* but the loaders above it still
+    /// materialized every live body and every decoded vector first, so a 5-frame
+    /// recall's I/O and peak heap grew with lifetime memory size regardless.
+    fn recall_blocking(
+        &self,
+        q: &ContextQuery,
+        domains: &[String],
+        query_vec: &[f32],
+        fp_id: &str,
+    ) -> Result<RecallResult, ContextError> {
+        // 2. Gather candidates under one lock acquisition. The domain filter
+        //    (if any) is applied here so every downstream signal sees only the
+        //    in-scope nodes.
+        let conn = self.conn();
+        // Scope excludes only nodes whose tags are all out of scope;
+        // untagged nodes pass (the overlap boost in 3b still ranks
+        // in-scope tags above them). Dropping untagged nodes here silenced
+        // recall completely after `stella init`: reflections and episodes
+        // are commonly written with no domain tag. The exclusion set is an
+        // empty no-op when `domains` is empty.
+        let excluded = node_ids_excluded_by_scope(&conn, domains)?;
+        // Metadata only — no content bodies cross the boundary here.
+        let mut metas = live_node_metas(&conn)?;
+        if !excluded.is_empty() {
+            metas.retain(|m| !excluded.contains(&m.id));
+        }
+        let anchor_ids = node_ids_for_uris(&conn, &q.anchors)?;
+
+        let meta_by_id: HashMap<i64, &NodeMeta> = metas.iter().map(|m| (m.id, m)).collect();
 
         // 3a. Vector-similarity ranking + the cosine values coverage reads.
-        let mut cos_scored: Vec<(i64, f32)> = vectors
-            .iter()
-            .map(|(id, v)| (*id, cosine(&query_vec, v)))
-            .collect();
-        // Ties break on node id. `vectors_for_fingerprint` has no ORDER BY, so
-        // without it two nodes with an identical cosine swap ranks between
-        // runs, and rank is exactly what RRF scores — the same store would
-        // answer the same query in a different order.
+        //     Streamed: each vector is scored straight off its BLOB and never
+        //     decoded into an owned `Vec<f32>`. Only the ids and cosines are
+        //     kept; the candidates' vectors are re-read after the cut.
+        let mut cos_scored =
+            score_nodes_by_vector(&conn, fp_id, query_vec, &excluded, cosine_blob)?;
+        // Ties break on node id. The scan has no ORDER BY, so without it two
+        // nodes with an identical cosine swap ranks between runs, and rank is
+        // exactly what RRF scores — the same store would answer the same query
+        // in a different order.
         cos_scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         let coverage = coverage_score(&cos_scored);
 
         // 3b. Domain-overlap ranking (only when the query is domain-scoped):
         //     nodes sharing more of the query's domains rank higher. Folded
         //     into RRF like any other signal.
+        //
+        //     The corpus-wide tag map is loaded ONLY here, for the overlap
+        //     scan. An unscoped recall needs tags for the frames it mints and
+        //     nothing else, and fetches just those ([`candidate_domains`]).
         let query_domains: HashSet<&str> = domains.iter().map(String::as_str).collect();
+        let scoped_domains: HashMap<i64, Vec<String>> = if query_domains.is_empty() {
+            HashMap::new()
+        } else {
+            domains_by_node(&conn)?
+        };
+        let no_domains: Vec<String> = Vec::new();
         let domain_ranked: Vec<i64> = if query_domains.is_empty() {
             Vec::new()
         } else {
-            let mut scored: Vec<(i64, usize)> = nodes
+            let mut scored: Vec<(i64, usize)> = metas
                 .iter()
-                .filter_map(|n| {
-                    let overlap = frame_domains_for(&n.id)
+                .filter_map(|m| {
+                    let overlap = scoped_domains
+                        .get(&m.id)
+                        .unwrap_or(&no_domains)
                         .iter()
                         .filter(|d| query_domains.contains(d.as_str()))
                         .count();
-                    (overlap > 0).then_some((n.id, overlap))
+                    (overlap > 0).then_some((m.id, overlap))
                 })
                 .collect();
             // Descending overlap, ties on node id: `nodes` arrives in SQLite's
@@ -318,15 +349,20 @@ impl ContextStore {
         let mut extra_dropped: Vec<DroppedFrame> = Vec::new();
         let candidates: Vec<ContextFrame> = if used_lexical_fallback {
             let terms = query_terms(q);
-            let mut frames = Vec::new();
-            for (id, score) in lexical_search(&nodes, &terms, LEXICAL_LIMIT) {
-                if let Some(node) = node_by_id.get(&id) {
+            let scored = lexical_search(&conn, &excluded, &terms, LEXICAL_LIMIT)?;
+            let ids: Vec<i64> = scored.iter().map(|(id, _)| *id).collect();
+            // Bodies for the ≤LEXICAL_LIMIT matches only.
+            let bodies = nodes_by_ids(&conn, &ids)?;
+            let tags = candidate_domains(&conn, &ids, &scoped_domains, &query_domains)?;
+            let mut frames = Vec::with_capacity(ids.len());
+            for (id, score) in scored {
+                if let Some(node) = bodies.get(&id) {
                     frames.push(frame_from_node(
                         node,
                         score,
-                        &fp_id,
+                        fp_id,
                         true,
-                        frame_domains_for(&id),
+                        tags.get(&id).unwrap_or(&no_domains).as_slice(),
                     )?);
                 }
             }
@@ -341,9 +377,9 @@ impl ContextStore {
             //     whole batches tie. Leaving those to the scan order ranked a
             //     batch oldest-first inside a newest-first list, and made the
             //     order depend on SQLite's unordered scan.
-            let mut recency: Vec<&NodeRow> = nodes.iter().collect();
+            let mut recency: Vec<&NodeMeta> = metas.iter().collect();
             recency.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at).then(b.id.cmp(&a.id)));
-            let recency_ranked: Vec<i64> = recency.iter().map(|n| n.id).collect();
+            let recency_ranked: Vec<i64> = recency.iter().map(|m| m.id).collect();
 
             // 4b. Graph adjacency: 1-hop from anchors + strongest vector hits.
             let mut seeds: Vec<i64> = anchor_ids.clone();
@@ -356,7 +392,7 @@ impl ContextStore {
                 // mentioned symbol), so they enter the list with a base weight.
                 *graph_weight.entry(s).or_insert(0.0) += 1.0;
             }
-            for (neighbor, weight) in neighbors(&self.conn(), &seeds, q.as_of.as_deref())? {
+            for (neighbor, weight) in neighbors(&conn, &seeds, q.as_of.as_deref())? {
                 *graph_weight.entry(neighbor).or_insert(0.0) += weight;
             }
             let mut graph_scored: Vec<(i64, f64)> = graph_weight.into_iter().collect();
@@ -383,7 +419,7 @@ impl ContextStore {
                 ],
                 RRF_K,
             );
-            let ordered_all = dedup_by_content_hash(&fused, &node_by_id);
+            let ordered_all = dedup_by_content_hash(&fused, &meta_by_id);
             // Bound the candidate set BEFORE the MMR pass and before any frame
             // is built. Both are per-candidate and both are wasted on a tail
             // that `pack_to_budget` cannot keep. The cut is by fused rank, so
@@ -397,20 +433,31 @@ impl ContextStore {
             // exactly the failure `L-C5` exists to prevent. It is summarized
             // from the node rows rather than by minting frames, so reporting a
             // drop stays cheaper than not bounding at all.
+            // Summarized from the metadata rows: `content_bytes` reproduces
+            // `budget_tokens` exactly, so the tail is reported in full without
+            // its bodies ever being read.
             let mut pre_budget_dropped: Vec<DroppedFrame> = Vec::new();
             for (id, _) in &ordered_all[considered..] {
-                if let Some(node) = node_by_id.get(id) {
+                if let Some(meta) = meta_by_id.get(id) {
                     pre_budget_dropped.push(DroppedFrame {
-                        id: node.public_id.clone(),
-                        title: node.display_name.clone(),
-                        token_cost: contextgraph_types::budget_tokens(&node.content),
+                        id: meta.public_id.clone(),
+                        title: meta.display_name.clone(),
+                        token_cost: budget_tokens_for_bytes(meta.content_bytes),
                         reason: DropReason::FrameCount,
                     });
                 }
             }
 
+            // The cut is in: from here on, everything is per-candidate and
+            // bounded by `keep_candidates`. Bodies, vectors, and domain tags are
+            // fetched for exactly these ids.
+            let candidate_ids: Vec<i64> = ordered.iter().map(|(id, _)| *id).collect();
+            let bodies = nodes_by_ids(&conn, &candidate_ids)?;
+            let candidate_vectors = vectors_for_ids(&conn, fp_id, &candidate_ids)?;
+            let tags = candidate_domains(&conn, &candidate_ids, &scoped_domains, &query_domains)?;
+
             let max_fused = ordered.first().map(|(_, s)| *s).unwrap_or(0.0);
-            let mmr_items: Vec<MmrItem> = ordered
+            let mmr_items: Vec<MmrItem<'_>> = ordered
                 .iter()
                 .map(|(id, s)| MmrItem {
                     relevance: if max_fused > 0.0 {
@@ -418,7 +465,9 @@ impl ContextStore {
                     } else {
                         0.0
                     },
-                    vector: vector_by_id.get(id).map(|v| (*v).clone()),
+                    // Borrowed, not cloned: the item is read inside this
+                    // function and dropped at the end of it.
+                    vector: candidate_vectors.get(id).map(Vec::as_slice),
                 })
                 .collect();
             let mmr_order = mmr_select(&mmr_items, MMR_LAMBDA);
@@ -426,13 +475,13 @@ impl ContextStore {
             let mut frames = Vec::with_capacity(mmr_order.len());
             for &idx in &mmr_order {
                 let (id, _) = ordered[idx];
-                if let Some(node) = node_by_id.get(&id) {
+                if let Some(node) = bodies.get(&id) {
                     frames.push(frame_from_node(
                         node,
                         mmr_items[idx].relevance,
-                        &fp_id,
+                        fp_id,
                         false,
-                        frame_domains_for(&id),
+                        tags.get(&id).unwrap_or(&no_domains).as_slice(),
                     )?);
                 }
             }
@@ -452,6 +501,56 @@ impl ContextStore {
             used_lexical_fallback,
         })
     }
+}
+
+/// Run a synchronous unit of work without wedging the async worker that polled
+/// the future.
+///
+/// Recall's whole pipeline below the query embedding is blocking SQLite and
+/// scoring. `block_in_place` tells the multi-thread scheduler to move the
+/// worker's other tasks elsewhere while it runs, which is the difference between
+/// "this turn's recall is slow" and "every task sharing this worker is stalled
+/// behind it". It panics on a current-thread runtime — where there is no sibling
+/// worker to hand off to anyway — so that case, and a call from outside any
+/// runtime at all, run inline exactly as before.
+fn without_blocking_the_worker<T>(work: impl FnOnce() -> T) -> T {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current().map(|h| h.runtime_flavor()) {
+        Ok(RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
+        _ => work(),
+    }
+}
+
+/// `budget_tokens` over a byte count instead of the bytes themselves.
+///
+/// `contextgraph_types::budget_tokens` is `ceil(content.len() /
+/// BYTES_PER_BUDGET_TOKEN)` over the UTF-8 byte length, so a node's declared
+/// cost is computable from `NodeMeta::content_bytes` with no body in hand — and
+/// is equal to it by construction, not by approximation. Pinned by
+/// `byte_derived_token_cost_matches_the_protocol_function`.
+fn budget_tokens_for_bytes(bytes: usize) -> u32 {
+    bytes.div_ceil(BYTES_PER_BUDGET_TOKEN) as u32
+}
+
+/// Domain tags for the candidate ids, in one shape whichever arm asked.
+///
+/// A domain-scoped recall already loaded the corpus-wide map for the overlap
+/// ranking, so the candidates are projected out of it. An unscoped recall never
+/// loads that map — it needs tags only for the frames it is about to mint — and
+/// fetches those by id.
+fn candidate_domains(
+    conn: &Connection,
+    ids: &[i64],
+    scoped: &HashMap<i64, Vec<String>>,
+    query_domains: &HashSet<&str>,
+) -> Result<HashMap<i64, Vec<String>>, ContextError> {
+    if query_domains.is_empty() {
+        return domains_for_nodes(conn, ids);
+    }
+    Ok(ids
+        .iter()
+        .filter_map(|id| scoped.get(id).map(|tags| (*id, tags.clone())))
+        .collect())
 }
 
 /// Build a frame from a node. **Constructor-level enforcement of `L-C4`:** a
@@ -559,19 +658,36 @@ pub fn is_lexical_fallback(frame: &ContextFrame) -> bool {
         .any(|p| p.method.as_deref() == Some(LEXICAL_FALLBACK_METHOD))
 }
 
-/// Cosine similarity, guarding zero-norm vectors (defined as 0 similarity).
-/// Counts [`cosine`] calls so a test can pin recall's *complexity class*
-/// rather than its wall clock. The candidate bound is output-preserving by
-/// construction — the frames a query returns are the same either way — so the
-/// only thing a witness can observe is how much work was done to produce them.
-/// Test-only: no counter exists in a release build.
+// Counts cosine evaluations — `cosine` and `cosine_blob` both — so a test can
+// pin recall's COMPLEXITY CLASS rather than its wall clock. The candidate bound
+// is output-preserving by construction — the frames a query returns are the same
+// either way — so the only thing a witness can observe is how much work was done
+// to produce them. Test-only: no counter exists in a release build.
+//
+// Thread-local for the same reason as `store::CONTENT_BYTES_LOADED`: a global
+// counter is shared with every concurrently-running test in the binary, which
+// forces the ceiling to be loose enough to be uninformative.
 #[cfg(test)]
-pub(crate) static COSINE_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    static COSINE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
+/// Zero this thread's cosine counter and return the previous value.
+#[cfg(test)]
+pub(crate) fn take_cosine_calls() -> usize {
+    COSINE_CALLS.with(|c| c.replace(0))
+}
+
+#[cfg(test)]
+#[inline]
+fn count_cosine() {
+    COSINE_CALLS.with(|c| c.set(c.get() + 1));
+}
+
+/// Cosine similarity, guarding zero-norm vectors (defined as 0 similarity).
 pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
     #[cfg(test)]
-    COSINE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    count_cosine();
     if a.len() != b.len() {
         return 0.0;
     }
@@ -579,6 +695,36 @@ pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let mut na = 0.0f32;
     let mut nb = 0.0f32;
     for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return 0.0;
+    }
+    dot / (na.sqrt() * nb.sqrt())
+}
+
+/// [`cosine`] against an *undecoded* little-endian f32 BLOB.
+///
+/// The whole-corpus similarity pass reads each stored vector exactly once, so
+/// decoding it into an owned `Vec<f32>` first bought nothing and cost one heap
+/// allocation per live node per turn. The accumulation order is identical to
+/// [`cosine`]'s, so the two agree bit for bit — pinned by
+/// `blob_cosine_matches_the_decoded_one`. A length that does not match the query
+/// (including a blob that is not a whole number of f32s) scores 0.0, the same
+/// answer [`cosine`] gives for mismatched lengths.
+pub(crate) fn cosine_blob(a: &[f32], blob: &[u8]) -> f32 {
+    #[cfg(test)]
+    count_cosine();
+    if blob.len() != a.len() * 4 {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for (x, chunk) in a.iter().zip(blob.chunks_exact(4)) {
+        let y = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
         dot += x * y;
         na += x * x;
         nb += y * y;
@@ -639,18 +785,18 @@ enum DedupKey<'a> {
 /// would destroy graph/taxonomy recall on any initialized workspace.
 fn dedup_by_content_hash(
     fused: &HashMap<i64, f64>,
-    node_by_id: &HashMap<i64, &NodeRow>,
+    meta_by_id: &HashMap<i64, &NodeMeta>,
 ) -> Vec<(i64, f64)> {
     // dedup key -> (best node_id, best score)
     let mut best: HashMap<DedupKey, (i64, f64)> = HashMap::new();
     for (&id, &score) in fused {
-        let Some(node) = node_by_id.get(&id) else {
+        let Some(meta) = meta_by_id.get(&id) else {
             continue;
         };
-        let key = if node.content.trim().is_empty() {
+        let key = if meta.content_blank {
             DedupKey::Distinct(id)
         } else {
-            DedupKey::Content(node.content_hash.as_str())
+            DedupKey::Content(meta.content_hash.as_str())
         };
         let entry = best.entry(key).or_insert((id, f64::MIN));
         // The lower id wins an exact tie: `fused` is a `HashMap`, so which of
@@ -668,9 +814,14 @@ fn dedup_by_content_hash(
 }
 
 /// One candidate for the MMR pass.
-struct MmrItem {
+///
+/// The vector is **borrowed** from the candidate-vector map. It used to be an
+/// owned `Option<Vec<f32>>`, which meant a full heap copy of every candidate's
+/// embedding purely so the item could own it, for a struct that never outlives
+/// the function that builds it.
+struct MmrItem<'a> {
     relevance: f32,
-    vector: Option<Vec<f32>>,
+    vector: Option<&'a [f32]>,
 }
 
 /// Maximal-marginal-relevance selection. Greedily picks the item maximizing
@@ -689,7 +840,7 @@ struct MmrItem {
 /// fed *every live node* — the recency ranking contributes all of them — so
 /// recall was quadratic in lifetime memory size and ran to exhaustion selecting
 /// candidates the budget pass then threw away.
-fn mmr_select(items: &[MmrItem], lambda: f32) -> Vec<usize> {
+fn mmr_select(items: &[MmrItem<'_>], lambda: f32) -> Vec<usize> {
     let n = items.len();
     let mut selected: Vec<usize> = Vec::with_capacity(n);
     let mut remaining: Vec<usize> = (0..n).collect();
@@ -710,9 +861,9 @@ fn mmr_select(items: &[MmrItem], lambda: f32) -> Vec<usize> {
         let picked = remaining.remove(best_pos);
         selected.push(picked);
         // Fold the new pick into every still-unselected candidate's penalty.
-        if let Some(picked_vec) = &items[picked].vector {
+        if let Some(picked_vec) = items[picked].vector {
             for &idx in &remaining {
-                if let Some(v) = &items[idx].vector {
+                if let Some(v) = items[idx].vector {
                     penalty[idx] = penalty[idx].max(cosine(v, picked_vec));
                 }
             }
@@ -772,26 +923,34 @@ fn query_terms(q: &ContextQuery) -> Vec<String> {
 /// Bounded substring/term search over stored content — the honest fallback
 /// when graph/vector coverage is weak (`L-C6`). Score is the fraction of query
 /// terms found in the node's content or label.
-fn lexical_search(nodes: &[NodeRow], terms: &[String], limit: usize) -> Vec<(i64, f32)> {
+///
+/// Streams the corpus past the matcher rather than taking a materialized
+/// `&[NodeRow]`: the scan is inherently corpus-wide, but it no longer requires
+/// the corpus to be *resident* first. Only `(id, score)` for matching nodes is
+/// kept, and the ≤`limit` survivors' bodies are fetched by the caller. The
+/// per-row match is byte-for-byte the one this always did.
+fn lexical_search(
+    conn: &Connection,
+    excluded: &HashSet<i64>,
+    terms: &[String],
+    limit: usize,
+) -> Result<Vec<(i64, f32)>, ContextError> {
     if terms.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let mut scored: Vec<(i64, f32)> = Vec::new();
-    for node in nodes {
-        let haystack = format!("{} {}", node.display_name, node.content).to_lowercase();
+    let mut scored = scan_lexical(conn, excluded, |display_name, content| {
+        let haystack = format!("{display_name} {content}").to_lowercase();
         let hits = terms.iter().filter(|t| haystack.contains(*t)).count();
-        if hits > 0 {
-            scored.push((node.id, hits as f32 / terms.len() as f32));
-        }
-    }
+        (hits > 0).then(|| hits as f32 / terms.len() as f32)
+    })?;
     // Ties break on node id. Term-fraction scores collide heavily (there are
-    // only `terms.len() + 1` possible values) and `nodes` arrives in SQLite's
-    // unordered scan order, so without the tiebreak the `truncate` below keeps
+    // only `terms.len() + 1` possible values) and the scan arrives in SQLite's
+    // unordered order, so without the tiebreak the `truncate` below keeps
     // a *different set* of frames from run to run — not merely a different
     // order — which is the one thing the fallback path must not do.
     scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     scored.truncate(limit);
-    scored
+    Ok(scored)
 }
 
 #[cfg(test)]
@@ -850,18 +1009,32 @@ mod tests {
         }
     }
 
+    /// The metadata projection of [`node_row`] — what the dedup pass actually
+    /// reads now that recall ranks the corpus without its bodies.
+    fn node_meta(id: i64, content: &str) -> NodeMeta {
+        NodeMeta {
+            id,
+            public_id: format!("nod_{id}"),
+            display_name: format!("node {id}"),
+            content_hash: crate::store::sha256_hex(content),
+            content_bytes: content.len(),
+            content_blank: content.trim().is_empty(),
+            recorded_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
     #[test]
     fn dedup_keeps_distinct_empty_content_nodes_but_collapses_true_dupes() {
         // Three distinct nodes with empty content (all share sha256("")) plus
         // two nodes with identical non-empty content (a true duplicate pair).
         let nodes = [
-            node_row(1, ""),
-            node_row(2, ""),
-            node_row(3, ""),
-            node_row(4, "the same body"),
-            node_row(5, "the same body"),
+            node_meta(1, ""),
+            node_meta(2, ""),
+            node_meta(3, ""),
+            node_meta(4, "the same body"),
+            node_meta(5, "the same body"),
         ];
-        let node_by_id: HashMap<i64, &NodeRow> = nodes.iter().map(|n| (n.id, n)).collect();
+        let node_by_id: HashMap<i64, &NodeMeta> = nodes.iter().map(|n| (n.id, n)).collect();
         let fused: HashMap<i64, f64> = [(1, 0.5), (2, 0.4), (3, 0.3), (4, 0.9), (5, 0.8)]
             .into_iter()
             .collect();
@@ -877,6 +1050,55 @@ mod tests {
         assert!(!kept.contains(&5));
         // 3 distinct empties + 1 survivor of the dup pair = 4.
         assert_eq!(out.len(), 4);
+    }
+
+    /// The metadata projection must answer every question the body answered,
+    /// or ranking the corpus without its bodies would change what recall
+    /// returns. Hash, declared token cost, and blankness, over the cases that
+    /// could diverge: empty, ASCII whitespace, multi-byte content (where a
+    /// character count would disagree with a byte count), and a long body.
+    #[test]
+    fn metadata_projection_answers_everything_the_body_did() {
+        let long = "x".repeat(1000);
+        for content in ["", " ", "\n\t ", "plain ascii", "héllo — unicode ✓", &long] {
+            let row = node_row(1, content);
+            let meta = node_meta(1, content);
+            assert_eq!(meta.content_hash, row.content_hash, "hash for {content:?}");
+            assert_eq!(
+                budget_tokens_for_bytes(meta.content_bytes),
+                contextgraph_types::budget_tokens(&row.content),
+                "declared token cost for {content:?} must equal the protocol's \
+                 own count over the same bytes"
+            );
+            assert_eq!(
+                meta.content_blank,
+                row.content.trim().is_empty(),
+                "dedup blankness for {content:?}"
+            );
+        }
+    }
+
+    /// Scoring straight off the stored BLOB must be bit-identical to decoding
+    /// first — it replaces that decode on the corpus-wide pass, so any drift
+    /// would silently reorder every recall.
+    #[test]
+    fn blob_cosine_matches_the_decoded_one() {
+        let query: Vec<f32> = (0..64).map(|i| (i as f32 * 0.37).sin()).collect();
+        let stored: Vec<f32> = (0..64).map(|i| (i as f32 * 0.11).cos()).collect();
+        let blob = crate::store::vector_to_blob(&stored);
+        assert_eq!(cosine_blob(&query, &blob), cosine(&query, &stored));
+
+        // Zero-norm and length-mismatch both answer 0.0, exactly as `cosine`.
+        let zeros = vec![0.0f32; 64];
+        assert_eq!(
+            cosine_blob(&query, &crate::store::vector_to_blob(&zeros)),
+            0.0
+        );
+        assert_eq!(
+            cosine_blob(&query, &crate::store::vector_to_blob(&[1.0])),
+            0.0
+        );
+        assert_eq!(cosine_blob(&query, &[0u8; 3]), 0.0);
     }
 
     #[test]
@@ -1112,8 +1334,6 @@ mod tests {
     /// alone costs ~n²/2, which at n=120 is over 7000 extra calls.
     #[tokio::test]
     async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
-        use std::sync::atomic::Ordering as AtomicOrdering;
-
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("context.db");
         let store = ContextStore::open_with(
@@ -1138,9 +1358,9 @@ mod tests {
         let mut q = base_query("open the database", "packing frames to a budget");
         q.max_frames = 5;
 
-        COSINE_CALLS.store(0, AtomicOrdering::Relaxed);
+        let _ = take_cosine_calls();
         let result = store.recall(&q).await.unwrap();
-        let calls = COSINE_CALLS.load(AtomicOrdering::Relaxed);
+        let calls = take_cosine_calls();
 
         assert!(
             result.frames.len() <= 5,
@@ -1150,15 +1370,78 @@ mod tests {
 
         // The similarity scoring pass legitimately touches every stored vector
         // once. The MMR fold on top must be bounded by the candidate cut
-        // (5 x 4 = 20 candidates → at most ~20²/2 = 200 more), NOT by n²/2.
+        // (5 x 4 = 20 candidates → at most 20²/2 = 200 more), NOT by n²/2.
+        //
+        // The counter is thread-local, so this is recall's own work and the
+        // ceiling can be the real one rather than a generous fraction of the
+        // blowup it is watching for.
+        let candidates = 5 * MMR_CANDIDATE_MULTIPLE;
+        let ceiling = NODES + candidates * candidates / 2;
         let unbounded_mmr_cost = NODES * NODES / 2;
-        let generous_ceiling = NODES + unbounded_mmr_cost / 4;
         assert!(
-            calls < generous_ceiling,
-            "recall made {calls} cosine calls for {NODES} nodes and 5 frames; an \
-             unbounded MMR pass would cost about {} on top of the {NODES} scorings, \
-             which is the quadratic blowup this bound exists to remove",
-            unbounded_mmr_cost
+            calls <= ceiling,
+            "recall made {calls} cosine calls for {NODES} nodes and 5 frames; the \
+             {NODES} similarity scorings plus a fold bounded by {candidates} \
+             candidates is at most {ceiling}. An unbounded MMR pass would add about \
+             {unbounded_mmr_cost}, which is the quadratic blowup this bound exists \
+             to remove."
+        );
+    }
+
+    /// The candidate bound must govern **I/O**, not just arithmetic.
+    ///
+    /// The cosine-call guard above passes just as well when recall has already
+    /// loaded every body and every vector in the workspace and merely declines to
+    /// fold them all — which is what it used to do. This pins the other half: a
+    /// 5-frame recall may move only the candidates' bodies across the SQLite
+    /// boundary, so the bytes it reads track `max_frames`, not lifetime memory
+    /// size.
+    #[tokio::test]
+    async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let store = ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            FixedClock::shared(1_000),
+        )
+        .unwrap();
+
+        const NODES: usize = 120;
+        let mut delta = ContextDelta::new();
+        let mut corpus_bytes = 0usize;
+        for i in 0..NODES {
+            let content = format!("note number {i} about packing frames to a budget");
+            corpus_bytes += content.len();
+            delta = delta.with_node(
+                NodeInput::new(NodeKind::Artifact, format!("note-{i}")).with_content(content),
+            );
+        }
+        store.upsert(delta).await.unwrap();
+
+        let mut q = base_query("open the database", "packing frames to a budget");
+        q.max_frames = 5;
+
+        let _ = crate::store::take_content_bytes_loaded();
+        let result = store.recall(&q).await.unwrap();
+        let loaded = crate::store::take_content_bytes_loaded() as usize;
+
+        // Measuring the graph/vector arm: the lexical fallback scan is
+        // corpus-wide by definition, so it would make this assertion meaningless.
+        assert!(
+            !result.used_lexical_fallback,
+            "this guard measures the fused arm; coverage unexpectedly fell back"
+        );
+        // 5 frames x MMR_CANDIDATE_MULTIPLE = 20 candidates. Their bodies are
+        // all recall is entitled to read.
+        let candidates = 5 * MMR_CANDIDATE_MULTIPLE;
+        let budgeted = corpus_bytes * candidates / NODES;
+        assert!(
+            loaded <= budgeted,
+            "recall read {loaded} content bytes of a {corpus_bytes}-byte corpus for \
+             5 frames; the candidate bound entitles it to about {budgeted} \
+             ({candidates} of {NODES} nodes). Loading the corpus and then \
+             declining to score it is the cost this bound exists to remove."
         );
     }
 
