@@ -16,6 +16,25 @@
 //! `STELLA_LIVE_SMOKE=1 ANTHROPIC_API_KEY=sk-… cargo test -p stella-model \
 //! --test live_smoke -- --nocapture`.
 //!
+//! **What is NOT gated**: the drift guards over [`LIVE_PROVIDERS`] — the
+//! table this suite drives — run on every `cargo test`, with no credential
+//! and no network call. The gate above is right for spending money; it was
+//! wrong for the things a catalog can check offline for free, and applying
+//! it to everything is what let a phantom slug produce a green default run
+//! and surface (at most weekly, from the scheduled workflow) as an ambiguous
+//! wire-shape-or-billing panic. See
+//! [`every_live_smoke_slug_resolves_against_the_catalog_seed`] and
+//! [`every_row_constructs_through_the_real_factory`].
+//!
+//! **How providers are constructed**: through
+//! [`stella_model::factory::build_provider`] — the same factory
+//! `stella_cli::agent::engine::build_provider_parts` delegates to. Each test
+//! used to hand-build its adapter, which meant nine construction sites could
+//! drift from production's one (and did: the OpenRouter attribution literals
+//! were copied verbatim), and meant every one of them silently bypassed the
+//! factory's anti-phantom-slug check. Adding a provider is now a row in
+//! [`LIVE_PROVIDERS`] plus a four-line test.
+//!
 //! **What each test asserts**: wire-shape ACCEPTANCE — the live endpoint
 //! returns 200 and stella's own parser reassembles a `CompletionResult` from
 //! it — never model quality (no assertion on what the model actually says).
@@ -36,14 +55,10 @@
 //! a real cache write is exercised, not just accepted-but-inert) and asserting
 //! the call succeeds.
 
-use stella_model::anthropic::AnthropicProvider;
-use stella_model::bedrock::BedrockProvider;
+use stella_model::catalog::Catalog;
 use stella_model::credential::{ApiKey, CredentialsFile};
-use stella_model::gemini::GeminiProvider;
-use stella_model::openai::OpenAiProvider;
+use stella_model::factory::{Dialect, ProviderSpec, build_provider};
 use stella_model::provider::Provider;
-use stella_model::vertex::VertexProvider;
-use stella_model::zai::ZaiProvider;
 use stella_protocol::{CompletionMessage, CompletionRequest};
 
 /// Serializes the tests in this file that mutate `STELLA_LIVE_SMOKE` (the
@@ -239,8 +254,333 @@ fn armed_key_skips_cleanly_when_the_gate_is_on_but_no_key_resolves() {
         std::env::remove_var("STELLA_LIVE_SMOKE");
     }
 }
+// ---- the provider matrix -------------------------------------------------
+
+/// One row of the live matrix — the parts needed to construct a provider and
+/// name the credential that unlocks it.
+///
+/// This mirrors `stella_cli::config::PROVIDERS`. It has to be a mirror rather
+/// than a reference: `stella-cli` depends on `stella-model`, so this crate
+/// cannot import it without a dependency cycle. The same constraint (and the
+/// same mirroring convention) is documented on
+/// `stella_model::catalog`'s `seed_covers_every_provider_stella_cli_can_select`.
+///
+/// The drift guards below are what make the mirror safe:
+/// [`every_live_smoke_slug_resolves_against_the_catalog_seed`] fails the
+/// moment a slug here stops being real, and
+/// [`every_row_constructs_through_the_real_factory`] fails the moment a row
+/// stops being constructible — both unconditionally, with no network call.
+struct LiveProvider {
+    /// Stable provider id — must match the `stella_cli::config::PROVIDERS` row.
+    id: &'static str,
+    env_var: &'static str,
+    aliases: &'static [&'static str],
+    dialect: Dialect,
+    /// The slug to smoke. Matches the production row's `default_model`, so a
+    /// live run exercises what an auto-detected `stella` run would actually
+    /// send.
+    model: &'static str,
+    base_url: &'static str,
+    seeded: bool,
+}
+
+impl LiveProvider {
+    fn spec(&self) -> ProviderSpec<'_> {
+        ProviderSpec {
+            id: self.id,
+            display_name: self.id,
+            dialect: self.dialect,
+            seeded: self.seeded,
+        }
+    }
+}
+
+/// Every adapter with a live smoke test, in `stella_cli::config::PROVIDERS`
+/// order. Adding an adapter here is all it takes to smoke it — the drift
+/// guards and the per-provider tests below both read this table.
+const LIVE_PROVIDERS: &[LiveProvider] = &[
+    LiveProvider {
+        id: "zai",
+        env_var: "ZAI_API_KEY",
+        aliases: &[],
+        dialect: Dialect::OpenaiCompatible,
+        model: "glm-5.2",
+        base_url: "https://api.z.ai/api/paas/v4",
+        seeded: true,
+    },
+    LiveProvider {
+        id: "anthropic",
+        env_var: "ANTHROPIC_API_KEY",
+        aliases: &[],
+        dialect: Dialect::Anthropic,
+        model: "claude-fable-5",
+        base_url: "https://api.anthropic.com",
+        seeded: true,
+    },
+    LiveProvider {
+        id: "openai",
+        env_var: "OPENAI_API_KEY",
+        aliases: &[],
+        dialect: Dialect::OpenaiResponses,
+        model: "gpt-5.5",
+        base_url: "https://api.openai.com/v1",
+        seeded: true,
+    },
+    LiveProvider {
+        id: "xai",
+        env_var: "XAI_API_KEY",
+        aliases: &[],
+        dialect: Dialect::OpenaiCompatible,
+        model: "grok-4",
+        base_url: "https://api.x.ai/v1",
+        seeded: true,
+    },
+    LiveProvider {
+        id: "deepseek",
+        env_var: "DEEPSEEK_API_KEY",
+        aliases: &[],
+        dialect: Dialect::OpenaiCompatible,
+        model: "deepseek-chat",
+        base_url: "https://api.deepseek.com/v1",
+        seeded: true,
+    },
+    LiveProvider {
+        id: "gemini",
+        env_var: "GEMINI_API_KEY",
+        aliases: &["GOOGLE_API_KEY"],
+        dialect: Dialect::Gemini,
+        model: "gemini-3-pro",
+        base_url: "https://generativelanguage.googleapis.com/v1beta",
+        seeded: true,
+    },
+    LiveProvider {
+        id: "openrouter",
+        env_var: "OPENROUTER_API_KEY",
+        aliases: &[],
+        dialect: Dialect::OpenaiCompatible,
+        model: "openrouter/auto",
+        base_url: "https://openrouter.ai/api/v1",
+        // Deliberately unseeded, matching production: OpenRouter's catalog is
+        // vendor-namespaced and routed, so there is no curated seed row (and
+        // no list price) for its slugs.
+        seeded: false,
+    },
+    LiveProvider {
+        id: "vertex",
+        env_var: "VERTEX_ACCESS_TOKEN",
+        aliases: &[],
+        dialect: Dialect::Vertex,
+        model: "gemini-3-pro",
+        base_url: "https://aiplatform.googleapis.com",
+        seeded: true,
+    },
+    LiveProvider {
+        id: "bedrock",
+        env_var: "AWS_ACCESS_KEY_ID",
+        aliases: &[],
+        dialect: Dialect::Bedrock,
+        model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        base_url: "https://bedrock-runtime.<AWS_REGION>.amazonaws.com",
+        seeded: true,
+    },
+];
+
+fn row(id: &str) -> &'static LiveProvider {
+    LIVE_PROVIDERS
+        .iter()
+        .find(|p| p.id == id)
+        .unwrap_or_else(|| panic!("no LIVE_PROVIDERS row for `{id}`"))
+}
+
+// ---- drift guards (always run; never touch the network) ------------------
+
+/// **The anti-phantom-slug gate for this suite.**
+///
+/// Unconditional on purpose. Every live test below is gated behind
+/// `STELLA_LIVE_SMOKE=1` *and* a resolvable credential, which is right for
+/// something that spends money — but it meant a slug that quietly stopped
+/// existing produced a green run on every default `cargo test --workspace`,
+/// and surfaced at most weekly, as an ambiguous "wire-shape regression OR
+/// account/auth/quota/billing problem" panic from the scheduled workflow.
+///
+/// That is the wrong failure mode for the one thing a *catalog* can check
+/// offline for free. This test runs on every `cargo test`, makes no network
+/// call, needs no credential, and fails by name.
+///
+/// It mirrors `stella_cli::config::tests::
+/// every_provider_default_model_resolves_against_the_catalog_seed`, which
+/// asserts the same property for the production table.
+#[test]
+fn every_live_smoke_slug_resolves_against_the_catalog_seed() {
+    let catalog = Catalog::seed();
+    for provider in LIVE_PROVIDERS {
+        if !provider.seeded {
+            // Unseeded providers (OpenRouter) have no curated rows by design —
+            // asserting a seed hit here would be asserting a falsehood.
+            continue;
+        }
+        catalog
+            .resolve_for(provider.id, provider.model)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "live smoke provider `{}` smokes slug `{}`, which is not in the catalog \
+                     seed: {e}. A live run would spend a real call to discover this; fix the \
+                     slug here (and in stella_cli::config::PROVIDERS, which this table \
+                     mirrors) or add the catalog row.",
+                    provider.id, provider.model
+                )
+            });
+    }
+}
+
+/// Every row constructs through the **real** factory
+/// ([`stella_model::factory::build_provider`]) — the same function
+/// `stella_cli::agent::engine::build_provider_parts` delegates to.
+///
+/// This is the structural half of the fix: before, each test below built its
+/// adapter by hand, so nine construction sites could drift from production's
+/// one (and did — the OpenRouter attribution literals were copied verbatim).
+/// Now the tests call the factory, and this guard proves every row reaches a
+/// constructible adapter with the right identity, offline and for free.
+#[test]
+fn every_row_constructs_through_the_real_factory() {
+    for provider in LIVE_PROVIDERS {
+        // Vertex and Bedrock resolve extra addressing/credentials from the
+        // environment inside the factory; skip those two here rather than
+        // depend on an AWS/GCP environment being present. Their construction
+        // is still exercised live by the tests below when armed.
+        if matches!(provider.dialect, Dialect::Vertex | Dialect::Bedrock) {
+            continue;
+        }
+        let built = build_provider(
+            &provider.spec(),
+            provider.model,
+            ApiKey::new("smoke-test-not-a-real-key".to_string()),
+            provider.base_url.to_string(),
+            None,
+        )
+        .unwrap_or_else(|e| panic!("`{}` must construct through the factory: {e}", provider.id));
+        assert_eq!(
+            &built.id(),
+            &provider.id,
+            "`{}`'s adapter must report its own identity — that id is what error messages, \
+             telemetry, and cost attribution key on",
+            provider.id
+        );
+    }
+}
+
+/// The table stays a faithful mirror: no duplicate ids, and every row names a
+/// credential env var. Cheap, but it is the kind of thing a copy-paste row
+/// gets wrong silently.
+#[test]
+fn the_provider_table_is_well_formed() {
+    let mut seen = std::collections::BTreeSet::new();
+    for provider in LIVE_PROVIDERS {
+        assert!(
+            seen.insert(provider.id),
+            "duplicate LIVE_PROVIDERS row for `{}`",
+            provider.id
+        );
+        assert!(
+            !provider.env_var.is_empty(),
+            "`{}` must name the env var that unlocks it",
+            provider.id
+        );
+        assert!(
+            !provider.model.is_empty(),
+            "`{}` must name a slug to smoke",
+            provider.id
+        );
+    }
+}
 
 // ---- live smoke: one minimal real call per adapter -----------------------
+
+/// Construct `provider`'s adapter through the production factory, or `None`
+/// to skip cleanly.
+///
+/// Returns `None` — never a failure — when the suite is unarmed, the
+/// credential does not resolve, or (Vertex/Bedrock) the extra addressing the
+/// factory needs is absent. A factory error for any *other* reason is a real
+/// failure: that is the anti-phantom-slug gate and the dialect dispatch
+/// talking, and a live run must not paper over them.
+fn armed_provider(provider: &LiveProvider) -> Option<Box<dyn Provider>> {
+    let key = armed_key(provider.id, provider.env_var, provider.aliases)?;
+
+    // Vertex/Bedrock need more than the one credential `armed_key` resolves.
+    // The factory resolves that itself (via `stella_model::credential`), so
+    // pre-flighting here keeps "not configured" a clean skip while leaving the
+    // real resolution to production code.
+    match provider.dialect {
+        Dialect::Vertex => {
+            if let Err(e) = stella_model::credential::VertexAddressing::resolve() {
+                eprintln!(
+                    "[live_smoke] {}: skipped — {} is set but Vertex addressing does not \
+                     resolve: {e}",
+                    provider.id, provider.env_var
+                );
+                return None;
+            }
+        }
+        Dialect::Bedrock => {
+            if let Err(e) = stella_model::credential::BedrockCredentials::resolve() {
+                eprintln!(
+                    "[live_smoke] {}: skipped — {} is set but the AWS credential chain does \
+                     not resolve: {e}",
+                    provider.id, provider.env_var
+                );
+                return None;
+            }
+        }
+        _ => {}
+    }
+
+    match build_provider(
+        &provider.spec(),
+        provider.model,
+        key,
+        provider.base_url.to_string(),
+        None,
+    ) {
+        Ok(built) => Some(built),
+        Err(e) => panic!(
+            "`{}` failed to construct through the factory — this is a config/catalog fault, \
+             not a network one, and would fail an ordinary `stella --model {}/{}` run the \
+             same way: {e}",
+            provider.id, provider.id, provider.model
+        ),
+    }
+}
+
+/// Send `request` and report. Shared by every provider so the success log and
+/// the failure wording stay identical across adapters.
+async fn smoke(provider: &LiveProvider, built: Box<dyn Provider>, request: CompletionRequest) {
+    match built.complete(request).await {
+        Ok(r) => eprintln!(
+            "[live_smoke] {}: OK — model={} finish={:?} usage={:?} cost_usd={} text={:?}",
+            provider.id, r.model, r.finish_reason, r.usage, r.cost_usd, r.text
+        ),
+        // Deliberately does NOT say "rejected the request shape": a failure
+        // here can be an account-billing 400 that never reached shape
+        // validation, so pre-judging the cause would print something false on
+        // the exact failure this suite exists to distinguish from a real
+        // regression. `e` already carries the provider's own status + body
+        // (never a raw credential), so a human reading it tells wire-shape
+        // apart from auth/quota/billing.
+        //
+        // What it can no longer be is an unknown slug: the factory's seed
+        // floor rejects those before any wire call, and
+        // `every_live_smoke_slug_resolves_against_the_catalog_seed` catches
+        // them offline before that.
+        Err(e) => panic!(
+            "{} live smoke did not return a parseable 200 — could be a genuine wire-shape \
+             regression OR an unrelated account/auth/quota/billing problem; read the status \
+             and body below to tell which: {e}",
+            provider.id
+        ),
+    }
+}
 
 /// Anthropic Messages API. Also the `cache_control` settlement: every
 /// Anthropic request `stella` builds carries `cache_control` on the system
@@ -259,17 +599,16 @@ fn armed_key_skips_cleanly_when_the_gate_is_on_but_no_key_resolves() {
 /// A billing/quota 400 (`"credit balance is too low"`) is NOT a wire-shape
 /// verdict: Anthropic names the offending field in `invalid_request_error`
 /// when a request is actually malformed, so a balance rejection never
-/// exercises the request shape at all. Re-run with
-/// `STELLA_LIVE_SMOKE=1 cargo test -p stella-model --test live_smoke \
-/// anthropic_smoke -- --nocapture`.
+/// exercises the request shape at all.
 #[tokio::test]
 async fn anthropic_smoke() {
-    let Some(key) = armed_key("anthropic", "ANTHROPIC_API_KEY", &[]) else {
+    let provider = row("anthropic");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let provider = AnthropicProvider::new(key, "claude-fable-5");
-    let req = tiny_request(anthropic_cache_probe_system_prompt());
-    match provider.complete(req).await {
+    // The one provider whose system prompt is not tiny — see the probe's doc.
+    let request = tiny_request(anthropic_cache_probe_system_prompt());
+    match built.complete(request).await {
         Ok(r) => eprintln!(
             "[live_smoke] anthropic: OK — model={} finish={:?} usage={:?} \
              cache_write_tokens={} cached_input_tokens={} text={:?}",
@@ -280,13 +619,6 @@ async fn anthropic_smoke() {
             r.usage.cached_input_tokens,
             r.text
         ),
-        // Deliberately does NOT say "rejected the request shape": a failure
-        // here can be an account-billing 400 that never reached shape
-        // validation, so pre-judging the cause would print something false on
-        // the exact failure this suite exists to distinguish from a real
-        // regression. `e` already carries the provider's own status + body
-        // (never a raw credential), so a human reading it tells wire-shape
-        // apart from auth/quota/billing.
         Err(e) => panic!(
             "anthropic live smoke did not return a parseable 200 — could be a genuine \
              wire-shape regression OR an unrelated account/auth/quota/billing problem; \
@@ -298,206 +630,97 @@ async fn anthropic_smoke() {
 /// OpenAI Responses API.
 #[tokio::test]
 async fn openai_smoke() {
-    let Some(key) = armed_key("openai", "OPENAI_API_KEY", &[]) else {
+    let provider = row("openai");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let provider = OpenAiProvider::new(key, "gpt-5.5");
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] openai: OK — model={} finish={:?} usage={:?} text={:?}",
-            r.model, r.finish_reason, r.usage, r.text
-        ),
-        Err(e) => panic!("openai live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
-/// Gemini direct `generateContent`. `GEMINI_API_KEY` (spec-documented
-/// alias `GOOGLE_API_KEY`, same as `stella-cli`'s `config::PROVIDERS` row).
+/// Gemini direct `generateContent`. `GEMINI_API_KEY` (spec-documented alias
+/// `GOOGLE_API_KEY`, same as `stella-cli`'s `config::PROVIDERS` row).
 #[tokio::test]
 async fn gemini_smoke() {
-    let Some(key) = armed_key("gemini", "GEMINI_API_KEY", &["GOOGLE_API_KEY"]) else {
+    let provider = row("gemini");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let provider = GeminiProvider::new(key, "gemini-3-pro");
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] gemini: OK — model={} finish={:?} usage={:?} text={:?}",
-            r.model, r.finish_reason, r.usage, r.text
-        ),
-        Err(e) => panic!("gemini live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// Vertex AI `generateContent`. Needs the OAuth2 bearer
 /// (`VERTEX_ACCESS_TOKEN`, e.g. `$(gcloud auth print-access-token)`) AND a
-/// project id (`VERTEX_PROJECT_ID` or `GOOGLE_CLOUD_PROJECT`) — mirrors
-/// `stella-cli::agent::engine::build_provider_parts`'s Vertex arm exactly,
-/// so this test skips the same way a real `stella --model vertex/…` run
-/// would fail with a named error, rather than sending a doomed request.
+/// project id (`VERTEX_PROJECT_ID` or `GOOGLE_CLOUD_PROJECT`).
+///
+/// Both the addressing resolution and the adapter construction are now the
+/// factory's (`stella_model::credential::VertexAddressing` +
+/// `Dialect::Vertex`), so this test cannot drift from what a real
+/// `stella --model vertex/…` run does — it calls the same code.
 #[tokio::test]
 async fn vertex_smoke() {
-    let Some(access_token) = armed_key("vertex", "VERTEX_ACCESS_TOKEN", &[]) else {
+    let provider = row("vertex");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let Some(project) = std::env::var("VERTEX_PROJECT_ID")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::env::var("GOOGLE_CLOUD_PROJECT")
-                .ok()
-                .filter(|v| !v.is_empty())
-        })
-    else {
-        eprintln!(
-            "[live_smoke] vertex: skipped — VERTEX_ACCESS_TOKEN is set but no \
-             VERTEX_PROJECT_ID/GOOGLE_CLOUD_PROJECT"
-        );
-        return;
-    };
-    let location = std::env::var("VERTEX_LOCATION")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "global".to_string());
-    let provider = VertexProvider::new(access_token, "gemini-3-pro", project, location);
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] vertex: OK — model={} finish={:?} usage={:?} text={:?}",
-            r.model, r.finish_reason, r.usage, r.text
-        ),
-        Err(e) => panic!("vertex live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// Amazon Bedrock Converse. Needs the standard AWS chain
 /// (`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`, optional
-/// `AWS_SESSION_TOKEN`/`AWS_REGION`) — mirrors
-/// `build_provider_parts`'s Bedrock arm exactly.
+/// `AWS_SESSION_TOKEN`/`AWS_REGION`), resolved inside the factory by
+/// `stella_model::credential::BedrockCredentials` — the same resolution a
+/// real run uses.
 #[tokio::test]
 async fn bedrock_smoke() {
-    let Some(access_key) = armed_key("bedrock", "AWS_ACCESS_KEY_ID", &[]) else {
+    let provider = row("bedrock");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let Some(secret) = std::env::var("AWS_SECRET_ACCESS_KEY")
-        .ok()
-        .filter(|v| !v.is_empty())
-    else {
-        eprintln!(
-            "[live_smoke] bedrock: skipped — AWS_ACCESS_KEY_ID is set but no \
-             AWS_SECRET_ACCESS_KEY"
-        );
-        return;
-    };
-    let session_token = std::env::var("AWS_SESSION_TOKEN")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .map(ApiKey::new);
-    let region = std::env::var("AWS_REGION")
-        .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "us-east-1".to_string());
-    let provider = BedrockProvider::new(
-        access_key,
-        ApiKey::new(secret),
-        session_token,
-        region,
-        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-    );
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] bedrock: OK — model={} finish={:?} usage={:?} text={:?}",
-            r.model, r.finish_reason, r.usage, r.text
-        ),
-        Err(e) => panic!("bedrock live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
-/// OpenRouter, via the shared OpenAI-compatible `ZaiProvider` re-identified
-/// (`with_identity`) exactly like `build_provider_parts`'s
-/// `Dialect::OpenaiCompatible` arm — including app attribution and
-/// `usage: {"include": true}` accounting, so this test also exercises
-/// OpenRouter's own per-call cost-reporting frame. `openrouter/auto` is the
-/// real vendor-namespaced slug for OpenRouter's own auto-router model (its
-/// catalog is namespaced `vendor/model`; this is genuinely how
-/// `stella-cli`'s auto-detected default reaches it — see
-/// `config::PROVIDERS`'s `openrouter` row).
+/// OpenRouter, via the shared OpenAI-compatible adapter. The app attribution
+/// and `usage: {"include": true}` accounting are applied by the factory's
+/// `Dialect::OpenaiCompatible` arm, not by this test — which is the point:
+/// the attribution literals used to be copy-pasted here and could drift from
+/// production silently. `openrouter/auto` is the real vendor-namespaced slug
+/// for OpenRouter's own auto-router model, and genuinely how `stella-cli`'s
+/// auto-detected default reaches it.
 #[tokio::test]
 async fn openrouter_smoke() {
-    let Some(key) = armed_key("openrouter", "OPENROUTER_API_KEY", &[]) else {
+    let provider = row("openrouter");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let provider = ZaiProvider::new(key, "openrouter/auto")
-        .with_base_url("https://openrouter.ai/api/v1")
-        .with_identity("openrouter", "OpenRouter")
-        .with_attribution("https://stella.oxagen.sh", "Stella")
-        .with_usage_accounting();
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] openrouter: OK — model={} finish={:?} usage={:?} cost_usd={} text={:?}",
-            r.model, r.finish_reason, r.usage, r.cost_usd, r.text
-        ),
-        Err(e) => panic!("openrouter live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// Z.ai (GLM), via the OpenAI-compatible adapter under its own identity.
 #[tokio::test]
 async fn zai_smoke() {
-    let Some(key) = armed_key("zai", "ZAI_API_KEY", &[]) else {
+    let provider = row("zai");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let provider = ZaiProvider::new(key, "glm-5.2")
-        .with_base_url("https://api.z.ai/api/paas/v4")
-        .with_identity("zai", "Z.ai");
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] zai: OK — model={} finish={:?} usage={:?} text={:?}",
-            r.model, r.finish_reason, r.usage, r.text
-        ),
-        Err(e) => panic!("zai live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// DeepSeek, via the OpenAI-compatible adapter under its own identity.
 #[tokio::test]
 async fn deepseek_smoke() {
-    let Some(key) = armed_key("deepseek", "DEEPSEEK_API_KEY", &[]) else {
+    let provider = row("deepseek");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let provider = ZaiProvider::new(key, "deepseek-chat")
-        .with_base_url("https://api.deepseek.com/v1")
-        .with_identity("deepseek", "DeepSeek");
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] deepseek: OK — model={} finish={:?} usage={:?} text={:?}",
-            r.model, r.finish_reason, r.usage, r.text
-        ),
-        Err(e) => panic!("deepseek live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// xAI (Grok), via the OpenAI-compatible adapter under its own identity.
 #[tokio::test]
 async fn xai_smoke() {
-    let Some(key) = armed_key("xai", "XAI_API_KEY", &[]) else {
+    let provider = row("xai");
+    let Some(built) = armed_provider(provider) else {
         return;
     };
-    let provider = ZaiProvider::new(key, "grok-4")
-        .with_base_url("https://api.x.ai/v1")
-        .with_identity("xai", "xAI");
-    let req = tiny_request(TINY_SYSTEM_PROMPT);
-    match provider.complete(req).await {
-        Ok(r) => eprintln!(
-            "[live_smoke] xai: OK — model={} finish={:?} usage={:?} text={:?}",
-            r.model, r.finish_reason, r.usage, r.text
-        ),
-        Err(e) => panic!("xai live smoke failed: {e}"),
-    }
+    smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }

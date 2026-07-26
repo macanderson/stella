@@ -40,6 +40,7 @@ pub mod bedrock;
 pub mod cache_economics;
 pub mod catalog;
 pub mod credential;
+pub mod factory;
 pub mod gemini;
 pub(crate) mod http;
 pub mod modelsdev;

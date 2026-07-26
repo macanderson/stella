@@ -74,18 +74,14 @@ fn cloud_json_path() -> PathBuf {
 
 /// Load the registration, `Default` (all `None`) when absent or unreadable.
 ///
-/// The read goes through [`crate::read_sensitive_file_to_string`] (O_NOFOLLOW,
-/// uid + single-link checks, an owner-controlled parent), which also means an
-/// unreadable-*because-untrustworthy* file degrades to the unregistered state
-/// rather than being believed. That is the correct direction for a file whose
-/// [`CloudRegistration::oauth_token`] slot is reserved for a real credential: a
-/// `cloud.json` sitting under a group-writable home, or replaced by a symlink,
-/// is exactly the file we should not be taking an `org_id` from.
-///
-/// Unconditional, not `#[cfg(unix)]`, and mirroring the write in
-/// [`save_cloud_registration`]: #617 gave the non-Unix arm of the sensitive
-/// helpers a real check (a symlinked or non-directory parent is still refused)
-/// instead of the blanket `Err` that once forced a plain-read fallback here.
+/// The read goes through [`crate::read_sensitive_file_to_string`]
+/// (O_NOFOLLOW, uid + single-link checks, an owner-controlled parent), which
+/// also means an unreadable-*because-untrustworthy* file degrades to the
+/// unregistered state rather than being believed. That is the correct
+/// direction for a file whose [`CloudRegistration::oauth_token`] slot is
+/// reserved for a real credential: a `cloud.json` sitting under a
+/// group-writable home, or replaced by a symlink, is exactly the file we
+/// should not be taking an `org_id` from.
 pub fn cloud_registration() -> CloudRegistration {
     cloud_registration_at(&cloud_json_path())
 }
@@ -93,7 +89,7 @@ pub fn cloud_registration() -> CloudRegistration {
 fn cloud_registration_at(path: &Path) -> CloudRegistration {
     crate::read_sensitive_file_to_string(path)
         .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .and_then(|raw| serde_json::from_str::<CloudRegistration>(&raw).ok())
         .unwrap_or_default()
 }
 
