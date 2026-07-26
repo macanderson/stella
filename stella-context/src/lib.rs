@@ -80,6 +80,7 @@ pub use retrieval::{
     DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_RRF_K, DropReason, DroppedFrame,
     RecallResult, RecallTuning, is_lexical_fallback,
 };
+pub use store::ledger::{AppendOutcome, LedgerAppend, LedgerRecord};
 pub use store::{
     CompactionWatermark, ContextCompactPolicy, ContextCompactReport, ContextStore,
     MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow,

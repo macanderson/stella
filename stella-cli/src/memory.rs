@@ -48,11 +48,16 @@ use stella_pipeline::{ContextRecallPort, RecalledFrame};
 use stella_protocol::{CompletionMessage, MessageRole};
 
 mod learning;
+// Phase 3 (#714): typed observation extraction and proposal induction
+// into the lifecycle ledger.
+pub(crate) mod observations;
 mod private_state;
 mod projection;
+pub(crate) mod proposals;
 #[cfg(test)]
 mod quarantine_tests;
 mod recall;
+pub(crate) mod rules_mining;
 #[path = "memory/skills.rs"]
 mod skill_files;
 mod suppression;
@@ -85,6 +90,14 @@ pub struct ReflectionLesson {
     pub domains: Vec<String>,
     #[serde(default)]
     pub occurred_at: u64,
+    /// Phase 3 (#714): the task this lesson belongs to, for the distinct-task
+    /// counting spec §7 requires. `#[serde(default)]` so every log line written
+    /// before this field existed still parses; when empty, extraction falls
+    /// back to the turn (see `memory::observations`). Nothing populates it yet
+    /// — it exists so a caller with a real task boundary can supply one without
+    /// a log-format change.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub task_id: String,
 }
 
 mod reflection;
@@ -117,6 +130,10 @@ pub struct SessionMemory {
     /// every `rate`-th turn a deterministic control turn (see
     /// [`SessionMemory::maybe_suppress_recall`]).
     ab_turn: u32,
+    /// Phase 3 (#714): `context.lifecycle.enabled`, read once at open. While
+    /// this is off the learning loop runs exactly the lexical path that ships
+    /// today and writes nothing to the lifecycle ledger.
+    lifecycle_enabled: bool,
 }
 
 impl SessionMemory {
@@ -182,6 +199,8 @@ impl SessionMemory {
                     skills_created: 0,
                     ab_suppressed: false,
                     ab_turn: 0,
+                    // Phase 3 (#714)
+                    lifecycle_enabled: tuning::lifecycle_enabled(workspace_root),
                 })
             }
             Err(e) => {
@@ -391,6 +410,14 @@ impl SessionMemory {
         };
         let _ = self.store.upsert(delta).await;
     }
+}
+
+/// Phase 3 (#714): where this workspace's `context.db` lives — the lifecycle
+/// ledger's home, needed by the `stella proposals` review surface, which reads
+/// the ledger without opening a whole session.
+pub(crate) fn context_db_path(workspace_root: &Path) -> Result<PathBuf, String> {
+    stella_store::workspace_private_sqlite_path(workspace_root, "context.db")
+        .map_err(|e| format!("cannot resolve private context state: {e}"))
 }
 
 /// Seconds since the Unix epoch — the episode timestamps' primitive.

@@ -48,7 +48,8 @@ pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 // Only `ContextSettings` is consumed today (the inert `Settings::context`
 // field). The nested types (`LearningMode`, `GovernanceMode`, …) live in
 // `settings::context`; a later phase re-exports them here as it wires them in.
-pub use context::{ContextSettings, RetrievalSettings};
+// Phase 3 (#714) adds the promotion knobs, which now have a reader.
+pub use context::{ContextSettings, InferredDirectivePromotion, RetrievalSettings};
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 pub use merge::ToolScopePolicies;
 

@@ -30,6 +30,7 @@ pub mod mcp_usage;
 pub(crate) mod mining;
 pub mod ports;
 pub mod receipts;
+pub mod redact;
 pub mod retry;
 pub mod router;
 pub mod rules;
@@ -66,6 +67,12 @@ pub use rules::{
     GuardCheck, LoadRulesOptions, ProposedAction, Rule, RuleEnforcement, RuleGuard, RuleMetadata,
     RuleMetadataError, RuleOrigin, RuleRecordKind, RuleSource, evaluate_guards, load_rules,
     render_rule_metadata,
+};
+// Phase 3 (#714): the rules miner, previously defined but never re-exported —
+// which is most of why it shipped unwired. Mirrors the `skills::` exports below.
+pub use rules::{
+    EvidenceSource, MineConfig, RawObservation, RuleCandidate, RuleEvidence, decide_promotion,
+    mine_candidates, render_rule_markdown,
 };
 pub use skills::{
     AutoCreateConfig, AutoCreateDecision, AutoCreateSkip, InstallDecision, LoadSkillsOptions,
