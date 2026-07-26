@@ -549,13 +549,33 @@ impl ContextStore {
     /// behind `stella memory` (its citation stats join on `public_id`, the
     /// same stable id recalled frames carry).
     pub fn memory_nodes(&self) -> Result<Vec<NodeRow>, ContextError> {
+        self.nodes_of_kinds(&["memory"])
+    }
+
+    /// Every live node a recall can actually inject into a prompt: memories
+    /// *and* episodes, newest first.
+    ///
+    /// [`Self::memory_nodes`] shows only `memory`, which left a blind spot.
+    /// An episode is a verbatim copy of a past user prompt; it is recalled and
+    /// injected exactly like a memory, yet no command could display one — so a
+    /// stale instruction that kept surfacing in unrelated runs could not even
+    /// be named, let alone forgotten (`stella memory forget` resolves ids
+    /// through [`Self::node_by_public_id`], which was never the limitation).
+    pub fn recallable_nodes(&self) -> Result<Vec<NodeRow>, ContextError> {
+        self.nodes_of_kinds(&["memory", "episode"])
+    }
+
+    fn nodes_of_kinds(&self, kinds: &[&str]) -> Result<Vec<NodeRow>, ContextError> {
         let conn = lock(&self.conn);
-        let mut stmt = conn.prepare(
+        // Kinds are crate-internal literals, never user input, but the query
+        // is parameterized rather than formatted all the same.
+        let placeholders = vec!["?"; kinds.len()].join(", ");
+        let mut stmt = conn.prepare(&format!(
             "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
-             FROM node WHERE kind = 'memory' AND superseded_at IS NULL
+             FROM node WHERE kind IN ({placeholders}) AND superseded_at IS NULL
              ORDER BY recorded_at DESC, id DESC",
-        )?;
-        let rows = stmt.query_map([], map_node_row)?;
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(kinds), map_node_row)?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
