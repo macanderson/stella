@@ -320,6 +320,84 @@ pub fn run_memory_validate() -> Result<(), String> {
             them = if stale == 1 { "y" } else { "ies" },
         );
     }
+    report_duplicate_lineages(&workspace_root)?;
+    Ok(())
+}
+
+/// Report memories that look like revisions of one another — never merge them.
+///
+/// Before #712 a memory's identity was the hash of its content, so rewording
+/// one produced a *second* memory and left the first live. Those pairs are
+/// still in every workspace that ran the old code, and the lineage migration
+/// deliberately did not repair them: two similar memories and one memory
+/// edited twice are indistinguishable without a judgment about meaning, and a
+/// migration is the wrong place to make one — it runs unattended, on the only
+/// copy a user has. So this reports, and a person decides (#711, decision 4).
+///
+/// The similarity test is the one the tombstone path already uses, so
+/// "restatement" means the same thing here as it does when the reflection loop
+/// declines to re-learn something forgotten.
+fn report_duplicate_lineages(workspace_root: &std::path::Path) -> Result<(), String> {
+    let Some(context) = open_context(workspace_root)? else {
+        return Ok(());
+    };
+    let memories = context
+        .memory_nodes()
+        .map_err(|e| format!("cannot read memories: {e}"))?;
+
+    // O(n²) over live memories, which is a report a person runs, not a path a
+    // turn takes — and `memory_nodes` is already the whole live set.
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut assigned = vec![false; memories.len()];
+    for i in 0..memories.len() {
+        if assigned[i] {
+            continue;
+        }
+        let mut group = vec![i];
+        for j in (i + 1)..memories.len() {
+            if assigned[j] {
+                continue;
+            }
+            if stella_store::is_restatement(&memories[j].content, &memories[i].content) {
+                assigned[j] = true;
+                group.push(j);
+            }
+        }
+        if group.len() > 1 {
+            assigned[i] = true;
+            groups.push(group);
+        }
+    }
+    if groups.is_empty() {
+        return Ok(());
+    }
+
+    println!(
+        "\n  {} {} group{} of memories say close to the same thing. Editing a memory used to \
+         mint a second one and leave the first live; these are what that left behind.",
+        "⚠".yellow(),
+        groups.len(),
+        if groups.len() == 1 { "" } else { "s" }
+    );
+    for group in &groups {
+        println!();
+        for (rank, &idx) in group.iter().enumerate() {
+            let node = &memories[idx];
+            let marker = if rank == 0 { "keep?" } else { "dupe?" };
+            println!(
+                "    {} {} {}",
+                marker.dimmed(),
+                node.public_id,
+                clip(node.content.trim(), 58).dimmed()
+            );
+        }
+    }
+    println!(
+        "\n  {}",
+        "Nothing was merged. Consolidate with `stella memory edit <keep-id> \"<text>\"` and \
+         `stella memory forget <dupe-id>` — both reversible."
+            .dimmed()
+    );
     Ok(())
 }
 
@@ -351,6 +429,20 @@ pub fn run_memory_forget(id: &str, reason: &str) -> Result<(), String> {
         .forget(ContextSurface::Memory, id, &content, reason)
         .map_err(|e| format!("cannot record tombstone: {e}"))?;
 
+    // Project the tombstone into the plane that owns the memory, so recall
+    // stops offering it at the SQL boundary instead of at the CLI after a
+    // budget has already been spent on it (#712 deliverable 4). The tombstone
+    // in `store.db` stays canonical — it is surface-aware, carries the reason,
+    // and outlives the row — so this is a projection, not a second source of
+    // truth, and it is written second: a failure here leaves the tombstone
+    // recorded and the memory merely still visible, which is recoverable, where
+    // the opposite order could hide a memory with no record of why.
+    if let Some(context) = open_context(&workspace_root)? {
+        context
+            .supersede_node(id)
+            .map_err(|e| format!("cannot suppress `{id}` in the context plane: {e}"))?;
+    }
+
     println!("  {} forgot {id}", "✓".green());
     if !content.is_empty() {
         println!("    {}", clip(content.trim(), 72).dimmed());
@@ -366,6 +458,97 @@ pub fn run_memory_forget(id: &str, reason: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Entry point for `stella memory edit <id> <text>` — #712 deliverable 5.
+///
+/// Writes a new revision of the memory's lineage. The mirror node is keyed by
+/// lineage, so it is updated in place: one live record, the same `nod_…` id,
+/// and the old text kept as history rather than left competing for recall
+/// slots.
+///
+/// Before lineage, this operation did not exist and could not be built. A
+/// memory's identity was the hash of its content, so "the same memory with
+/// different words" was a contradiction — you got a second memory, and the
+/// first went on being recalled with its old text and its own vector.
+pub fn run_memory_edit(id: &str, text: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err(
+            "the replacement text must not be empty — use `stella memory forget` to \
+                    remove a memory"
+                .to_string(),
+        );
+    }
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    let Some(context) = open_context(&workspace_root)? else {
+        return Err("this workspace has no context store yet — nothing to edit".to_string());
+    };
+    let Some(node) = context
+        .node_by_public_id(id)
+        .map_err(|e| format!("cannot read memory `{id}`: {e}"))?
+    else {
+        return Err(format!(
+            "`{id}` is not a live memory — check the id against `stella memory list`"
+        ));
+    };
+    let Some(lineage) = context
+        .memory_lineage(id)
+        .map_err(|e| format!("cannot resolve the lineage of `{id}`: {e}"))?
+    else {
+        return Err(format!(
+            "`{id}` is not a memory — only memories have revisions (episodes are a record \
+             of what happened and are not rewritten)"
+        ));
+    };
+    let previous = node.content.clone();
+    // Carry the lineage's classification forward. Defaulting here would
+    // silently reclassify a mined reflection as an authored note, which changes
+    // whether the restatement filter treats it as regenerable.
+    let kind = context
+        .memory_kind(&lineage)
+        .map_err(|e| format!("cannot read the kind of `{id}`: {e}"))?
+        .and_then(|k| stella_context::MemoryKind::parse(&k))
+        .unwrap_or(stella_context::MemoryKind::Note);
+
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("cannot start the async runtime: {e}"))?;
+    runtime
+        .block_on(async {
+            context
+                .upsert(stella_context::ContextDelta::new().with_memory(
+                    stella_context::MemoryInput::new(kind, text.trim()).revises(&lineage),
+                ))
+                .await
+        })
+        .map_err(|e| format!("cannot write the revision: {e}"))?;
+
+    println!("  {} revised {id}", "✓".green());
+    println!(
+        "    {} {}",
+        "was:".dimmed(),
+        clip(previous.trim(), 68).dimmed()
+    );
+    println!("    {} {}", "now:".dimmed(), clip(text.trim(), 68).dimmed());
+    let stats = context
+        .memory_lineage_stats()
+        .map_err(|e| format!("cannot read lineage stats: {e}"))?;
+    println!(
+        "    {}",
+        format!(
+            "{} live {}, {} superseded revision{} kept as history",
+            stats.live,
+            if stats.live == 1 {
+                "memory"
+            } else {
+                "memories"
+            },
+            stats.superseded,
+            if stats.superseded == 1 { "" } else { "s" }
+        )
+        .dimmed()
+    );
+    Ok(())
+}
+
 /// Entry point for `stella memory restore <id>`.
 pub fn run_memory_restore(id: &str) -> Result<(), String> {
     let workspace_root =
@@ -374,6 +557,15 @@ pub fn run_memory_restore(id: &str) -> Result<(), String> {
     let lifted = store
         .restore(ContextSurface::Memory, id)
         .map_err(|e| format!("cannot lift tombstone: {e}"))?;
+    // The exact inverse of what `forget` projected. Run unconditionally rather
+    // than only when `lifted`: the two writes can disagree if a forget failed
+    // halfway, and a restore that refuses to fix that is a memory no command
+    // can bring back.
+    if let Some(context) = open_context(&workspace_root)? {
+        context
+            .restore_node(id)
+            .map_err(|e| format!("cannot lift `{id}` in the context plane: {e}"))?;
+    }
     if lifted {
         println!("  {} restored {id}", "✓".green());
     } else {
@@ -436,16 +628,26 @@ fn clip(text: &str, max: usize) -> String {
     clipped
 }
 
-/// The text of a memory by public id, or `None` when no such memory is live.
-fn memory_text(workspace_root: &std::path::Path, id: &str) -> Result<Option<String>, String> {
+/// The context plane for this workspace, or `None` when the workspace has none
+/// yet. Read-only politeness: an absent `context.db` is "nothing indexed here",
+/// never a database this command creates as a side effect.
+fn open_context(workspace_root: &std::path::Path) -> Result<Option<ContextStore>, String> {
     let Some(context_db) =
         stella_store::existing_workspace_private_sqlite_path(workspace_root, "context.db")
             .map_err(|e| format!("cannot resolve context store: {e}"))?
     else {
         return Ok(None);
     };
-    let context =
-        ContextStore::open(&context_db).map_err(|e| format!("cannot open context store: {e}"))?;
+    ContextStore::open(&context_db)
+        .map(Some)
+        .map_err(|e| format!("cannot open context store: {e}"))
+}
+
+/// The text of a memory by public id, or `None` when no such memory is live.
+fn memory_text(workspace_root: &std::path::Path, id: &str) -> Result<Option<String>, String> {
+    let Some(context) = open_context(workspace_root)? else {
+        return Ok(None);
+    };
     let node = context
         .node_by_public_id(id)
         .map_err(|e| format!("cannot read memory `{id}`: {e}"))?;
@@ -1031,5 +1233,114 @@ mod tests {
         assert!(ok.is_some(), "must verify the existing path");
         let no_anchors = rows.iter().find(|r| r.status == "no-anchors");
         assert!(no_anchors.is_some(), "must flag no-anchor memories");
+    }
+
+    /// The duplicate-lineage report finds what past edits left behind, and
+    /// changes nothing (#711, decision 4).
+    ///
+    /// Two live memories saying close to the same thing is exactly the shape a
+    /// pre-lineage edit produced. Reporting is the whole contract here: a
+    /// merge would have to guess which wording the user meant to keep, and
+    /// guessing wrong is unrecoverable in a way that leaving both is not.
+    #[tokio::test]
+    async fn duplicate_lineages_are_reported_and_never_merged() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let context_db = stella_store::workspace_private_sqlite_path(root, "context.db").unwrap();
+        let context = ContextStore::open(context_db).unwrap();
+        context
+            .upsert(stella_context::ContextDelta {
+                memories: vec![
+                    stella_context::MemoryInput::new(
+                        stella_context::MemoryKind::Note,
+                        "always run the database migration before the deploy step",
+                    ),
+                    stella_context::MemoryInput::new(
+                        stella_context::MemoryKind::Note,
+                        "always run the database migration before the deploy step, every time",
+                    ),
+                    stella_context::MemoryInput::new(
+                        stella_context::MemoryKind::Note,
+                        "the retry budget for the billing webhook is three attempts",
+                    ),
+                ],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        drop(context);
+
+        let before = {
+            let context = ContextStore::open(
+                stella_store::workspace_private_sqlite_path(root, "context.db").unwrap(),
+            )
+            .unwrap();
+            context.memory_lineage_stats().unwrap()
+        };
+        assert_eq!(before.lineages, 3, "three memories, three lineages");
+
+        report_duplicate_lineages(root).expect("report");
+
+        let after = {
+            let context = ContextStore::open(
+                stella_store::workspace_private_sqlite_path(root, "context.db").unwrap(),
+            )
+            .unwrap();
+            context.memory_lineage_stats().unwrap()
+        };
+        assert_eq!(
+            before, after,
+            "reporting duplicates must not merge, supersede, or delete anything"
+        );
+    }
+
+    /// `stella memory edit` revises in place: one live record, the same id, and
+    /// the previous wording kept as history rather than as a competitor.
+    #[tokio::test]
+    async fn editing_a_memory_revises_it_instead_of_minting_a_second() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        let context_db = stella_store::workspace_private_sqlite_path(root, "context.db").unwrap();
+        let context = ContextStore::open(context_db).unwrap();
+        context
+            .upsert(stella_context::ContextDelta {
+                memories: vec![stella_context::MemoryInput::reflection(
+                    "prefer rg over grep",
+                    Vec::<String>::new(),
+                )],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let id = context.memory_nodes().unwrap()[0].public_id.clone();
+        let lineage = context.memory_lineage(&id).unwrap().expect("lineage");
+
+        context
+            .upsert(stella_context::ContextDelta {
+                memories: vec![
+                    stella_context::MemoryInput::new(
+                        stella_context::MemoryKind::Reflection,
+                        "prefer rg over grep, and fd over find",
+                    )
+                    .revises(&lineage),
+                ],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let nodes = context.memory_nodes().unwrap();
+        assert_eq!(nodes.len(), 1, "one memory, not two");
+        assert_eq!(nodes[0].public_id, id, "the id a user holds still resolves");
+        assert_eq!(nodes[0].content, "prefer rg over grep, and fd over find");
+        let stats = context.memory_lineage_stats().unwrap();
+        assert_eq!((stats.lineages, stats.live, stats.superseded), (1, 1, 1));
+        // The kind is carried forward, not reset — a mined reflection stays
+        // mined, which is what decides whether the restatement filter treats it
+        // as regenerable.
+        assert_eq!(
+            context.memory_kind(&lineage).unwrap().as_deref(),
+            Some("reflection")
+        );
     }
 }

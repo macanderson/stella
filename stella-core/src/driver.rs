@@ -1494,10 +1494,12 @@ impl<'a> Engine<'a> {
             // cleanly so the caller can retry instead of swallowing it.
             if result.text.trim().is_empty() {
                 let reason = match result.finish_reason {
+                    // Advised `/compact` until #712; no such command exists,
+                    // and compaction is automatic every step anyway.
                     Some(FinishReason::Length) => format!(
                         "The model reached its output-token limit ({} tokens) before producing \
-                         any visible response — its budget was likely spent on reasoning. Retry, \
-                         raise the output cap, or run /compact to shrink the context.",
+                         any visible response — its budget was likely spent on reasoning. Retry \
+                         or raise the output cap; context compacts automatically each step.",
                         result.usage.output_tokens
                     ),
                     _ => format!(

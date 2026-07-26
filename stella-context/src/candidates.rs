@@ -22,6 +22,25 @@ use rusqlite::{Connection, params};
 use crate::error::ContextError;
 use crate::store::{NodeRow, blob_to_vector, map_node_row};
 
+/// The bitemporal liveness predicate every reader here shares. Bound parameter
+/// `?1` is the `as_of` cutoff: `NULL` reads currently-believed rows, a timestamp
+/// reads the rows believed at that instant.
+///
+/// Written branch-free, as one string with one repeated parameter, on purpose.
+/// The defect this replaces was a cutoff that reached `neighbors` and nothing
+/// else, so a point-in-time recall returned today's node content wearing
+/// yesterday's edges. Two SQL variants per reader is how that happens: each
+/// reader becomes one more place the cutoff can be forgotten. One predicate,
+/// shared textually, cannot be honored by four readers out of five
+/// (#712 deliverable 7).
+///
+/// Expects the `node` table aliased as `n`. Applied to the **node**, never to an
+/// embedding's own `recorded_at`: a vector is a derived index over content, not
+/// a record with its own history (ADR 0010, decision point 6), so when the warm
+/// task happened to catch up must not decide what was believed.
+pub(crate) const NODE_AS_OF: &str = "(?1 IS NULL OR n.recorded_at <= ?1) \
+     AND (n.superseded_at IS NULL OR (?1 IS NOT NULL AND n.superseded_at > ?1))";
+
 /// A live node with everything ranking needs and **no content body**.
 ///
 /// Every signal recall fuses over the whole corpus — recency, domain overlap,
@@ -88,17 +107,20 @@ fn count_content_bytes(len: usize) {
 ///   byte-identical content collapse to one candidate. Empty content — the case
 ///   the dedup exemption actually exists for, since code-graph and taxonomy
 ///   nodes carry no text — is unaffected.
-pub(crate) fn live_node_metas(conn: &Connection) -> Result<Vec<NodeMeta>, ContextError> {
+pub(crate) fn live_node_metas(
+    conn: &Connection,
+    as_of: Option<&str>,
+) -> Result<Vec<NodeMeta>, ContextError> {
     // char(32,9,10,13,11,12) = space, tab, LF, CR, VT, FF — Rust's
     // `char::is_whitespace` over the ASCII range.
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, public_id, display_name, content_hash, recorded_at,
                 length(CAST(content AS BLOB)) AS content_bytes,
                 trim(content, char(32) || char(9) || char(10) || char(13) || char(11) || char(12)) = ''
                     AS content_blank
-         FROM node WHERE superseded_at IS NULL",
-    )?;
-    let rows = stmt.query_map([], |row| {
+         FROM node n WHERE {NODE_AS_OF}"
+    ))?;
+    let rows = stmt.query_map(params![as_of], |row| {
         Ok(NodeMeta {
             id: row.get("id")?,
             public_id: row.get("public_id")?,
@@ -128,11 +150,13 @@ pub(crate) fn live_node_metas(conn: &Connection) -> Result<Vec<NodeMeta>, Contex
 pub(crate) fn scan_lexical(
     conn: &Connection,
     excluded: &std::collections::HashSet<i64>,
+    as_of: Option<&str>,
     mut score: impl FnMut(&str, &str) -> Option<f32>,
 ) -> Result<Vec<(i64, f32)>, ContextError> {
-    let mut stmt =
-        conn.prepare("SELECT id, display_name, content FROM node WHERE superseded_at IS NULL")?;
-    let mut rows = stmt.query([])?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, display_name, content FROM node n WHERE {NODE_AS_OF}"
+    ))?;
+    let mut rows = stmt.query(params![as_of])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         let id: i64 = row.get(0)?;
@@ -155,20 +179,31 @@ pub(crate) fn scan_lexical(
 pub(crate) fn nodes_by_ids(
     conn: &Connection,
     ids: &[i64],
+    as_of: Option<&str>,
 ) -> Result<std::collections::HashMap<i64, NodeRow>, ContextError> {
     let mut out = std::collections::HashMap::with_capacity(ids.len());
     if ids.is_empty() {
         return Ok(out);
     }
-    let placeholders = std::iter::repeat_n("?", ids.len())
+    // Numbered explicitly, never bare `?`: SQLite assigns a bare marker "one
+    // greater than the largest index assigned so far", so mixing the two forms
+    // silently collides with `?1`.
+    let placeholders = (0..ids.len())
+        .map(|i| format!("?{}", i + 2))
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
-        "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
-         FROM node WHERE superseded_at IS NULL AND id IN ({placeholders})"
+        "SELECT n.id, n.public_id, n.kind, n.display_name, n.content, n.content_hash, n.uri,
+                n.valid_from, n.recorded_at
+         FROM node n WHERE {NODE_AS_OF} AND n.id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), map_node_row)?;
+    let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 1);
+    bound.push(&as_of);
+    for id in ids {
+        bound.push(id);
+    }
+    let rows = stmt.query_map(bound.as_slice(), map_node_row)?;
     for r in rows {
         let node = r?;
         count_content_bytes(node.content.len());
@@ -196,15 +231,16 @@ pub(crate) fn score_nodes_by_vector(
     fingerprint: &str,
     query_vec: &[f32],
     excluded: &std::collections::HashSet<i64>,
+    as_of: Option<&str>,
     cosine: impl Fn(&[f32], &[u8]) -> f32,
 ) -> Result<Vec<(i64, f32)>, ContextError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT n.id, e.vector
          FROM embedding e
          JOIN node n ON n.content_hash = e.content_hash
-         WHERE e.fingerprint = ?1 AND n.superseded_at IS NULL",
-    )?;
-    let mut rows = stmt.query(params![fingerprint])?;
+         WHERE e.fingerprint = ?2 AND {NODE_AS_OF}"
+    ))?;
+    let mut rows = stmt.query(params![as_of, fingerprint])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         let id: i64 = row.get(0)?;
@@ -230,25 +266,28 @@ pub(crate) fn vectors_for_ids(
     conn: &Connection,
     fingerprint: &str,
     ids: &[i64],
+    as_of: Option<&str>,
 ) -> Result<std::collections::HashMap<i64, Vec<f32>>, ContextError> {
     let mut out = std::collections::HashMap::with_capacity(ids.len());
     if ids.is_empty() {
         return Ok(out);
     }
-    let placeholders = std::iter::repeat_n("?", ids.len())
+    let placeholders = (0..ids.len())
+        .map(|i| format!("?{}", i + 3))
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
         "SELECT n.id, e.vector
          FROM embedding e
          JOIN node n ON n.content_hash = e.content_hash
-         WHERE e.fingerprint = ?1 AND n.superseded_at IS NULL
+         WHERE e.fingerprint = ?2 AND {NODE_AS_OF}
            AND n.id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
     // Bound positionally with their real types: `params_from_iter` over one
     // homogeneous iterator cannot mix the text fingerprint with integer ids.
-    let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 1);
+    let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 2);
+    bound.push(&as_of);
     bound.push(&fingerprint);
     for id in ids {
         bound.push(id);
@@ -348,10 +387,10 @@ mod tests {
         }
 
         let conn = store.conn();
-        let metas = live_node_metas(&conn).unwrap();
+        let metas = live_node_metas(&conn, None).unwrap();
         assert_eq!(metas.len(), bodies.len());
         let ids: Vec<i64> = metas.iter().map(|m| m.id).collect();
-        let rows = nodes_by_ids(&conn, &ids).unwrap();
+        let rows = nodes_by_ids(&conn, &ids, None).unwrap();
 
         for meta in &metas {
             let row = rows.get(&meta.id).expect("every meta has its row");
@@ -468,7 +507,11 @@ mod tests {
             let version: i64 = conn
                 .query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(version, 4, "a v3 store must migrate to v4 on open");
+            assert_eq!(
+                version,
+                crate::store::SCHEMA_VERSION,
+                "a v3 store must migrate to the current schema on open"
+            );
             let indexed: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master \

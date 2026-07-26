@@ -620,9 +620,21 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
     )
     .unwrap();
     let context_bytes = b"HOSTILE_CONTEXT_DB";
-    let store_bytes = b"HOSTILE_STORE_DB";
     std::fs::write(dot_stella.join("context.db"), context_bytes).unwrap();
-    std::fs::write(dot_stella.join("store.db"), store_bytes).unwrap();
+    // A *real* workspace store rather than a garbage file. What this test
+    // proves about `store.db` is that the isolation gate never opens it, and a
+    // valid database proves that as well as an invalid one. A garbage one no
+    // longer works, because the system prompt now reads this workspace's
+    // workspace-memory tombstones and fails closed when it cannot (#712
+    // deliverable 6) — so the hostile-memory assertion below would pass or fail
+    // for a reason that has nothing to do with the isolation gate.
+    let store_db = {
+        drop(stella_store::Store::open(root).expect("seed workspace store"));
+        stella_store::existing_workspace_private_sqlite_path(root, "store.db")
+            .expect("resolve workspace store")
+            .expect("workspace store exists")
+    };
+    let store_bytes = std::fs::read(&store_db).expect("read seeded store");
 
     let _home = crate::settings::test_user_home(home.path().to_path_buf());
     let isolation = crate::settings::test_filesystem_isolation(true);
@@ -689,10 +701,7 @@ fn benchmark_gate_excludes_hostile_filesystem_steering_and_extensions() {
         std::fs::read(dot_stella.join("context.db")).unwrap(),
         context_bytes
     );
-    assert_eq!(
-        std::fs::read(dot_stella.join("store.db")).unwrap(),
-        store_bytes
-    );
+    assert_eq!(std::fs::read(&store_db).unwrap(), store_bytes);
 
     // Dropping only the isolation signal proves normal product behavior is
     // unchanged against the exact same workspace/user fixtures.

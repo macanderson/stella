@@ -837,6 +837,19 @@ enum MemoryCmd {
         #[arg(long, default_value = "")]
         reason: String,
     },
+    /// Rewrite a memory in place, as a new revision of the same memory.
+    ///
+    /// The old text becomes history rather than a competitor: one live record,
+    /// the same id, and recall stops serving the words you replaced. Before
+    /// memories had a lineage, changing one meant writing a second memory and
+    /// leaving the first live — both citable, with nothing to say which was
+    /// current.
+    Edit {
+        /// The memory's stable id (nod_…) as shown by `stella memory list`
+        id: String,
+        /// The replacement text
+        text: String,
+    },
     /// Lift a tombstone written by `stella memory forget`, letting the memory
     /// be recalled again and be re-learnable.
     Restore {
@@ -1505,6 +1518,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 MemoryCmd::Promote { id } => memory_cmd::run_memory_promote(id),
                 MemoryCmd::Validate => memory_cmd::run_memory_validate(),
                 MemoryCmd::Forget { id, reason } => memory_cmd::run_memory_forget(id, reason),
+                MemoryCmd::Edit { id, text } => memory_cmd::run_memory_edit(id, text),
                 MemoryCmd::Restore { id } => memory_cmd::run_memory_restore(id),
                 MemoryCmd::Forgotten => memory_cmd::run_memory_forgotten(),
             };

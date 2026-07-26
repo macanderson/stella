@@ -36,8 +36,15 @@ link this crate** — it writes its own `.stella/private/codegraph.db`.
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | Crate docs, the module list, and the whole public re-export surface. `#![warn(missing_docs)]` — with `make lint` at `-D warnings`, an undocumented public item is a build failure. |
-| [`src/store.rs`](src/store.rs) | `ContextStore`, the DDL and migrations, and every low-level `pub(crate)` SQL accessor retrieval and write-back share. Open this to change the schema, the pragmas, or warming. |
-| [`src/retrieval.rs`](src/retrieval.rs) | `recall` / `recall_scoped`: fusion, dedup, MMR, budget packing, the coverage gate, and `frame_from_node` (where a `ContextFrame` is actually minted). |
+| [`src/store.rs`](src/store.rs) | `ContextStore` itself — opening, warming, tuning, suppression — plus the re-export surface that keeps every moved name reachable as `crate::store::X`. |
+| [`src/store/schema.rs`](src/store/schema.rs) | The DDL, the migration ladder, the connection pragmas, and the fingerprint registry. Open this to change the schema. |
+| [`src/store/candidate.rs`](src/store/candidate.rs) | The bounded, `as_of`-aware readers `recall` ranks over: `NodeMeta` (no bodies), the shared `NODE_AS_OF` predicate, and `nodes_by_ids` — the one read on the recall path that moves content. |
+| [`src/store/node.rs`](src/store/node.rs) | `NodeKind`/`NodeInput`/`NodeRow`, the upsert, and supersede/restore. |
+| [`src/store/edge.rs`](src/store/edge.rs) | Fact assertion, supersession, and the two point-in-time readers. |
+| [`src/store/embedding.rs`](src/store/embedding.rs) | The vector codec and the fingerprinted index reads. |
+| [`src/store/record.rs`](src/store/record.rs) | Episode and memory rows, including memory lineage and revisions. |
+| [`src/store/domain.rs`](src/store/domain.rs) | The domain tag table, its junctions, and the scope anti-join. |
+| [`src/retrieval.rs`](src/retrieval.rs) | `recall` / `recall_scoped` / `recall_scoped_excluding`: fusion, dedup, MMR, budget packing, the coverage gate, `RecallTuning`, and `frame_from_node` (where a `ContextFrame` is actually minted — for packed survivors only). |
 | [`src/writeback.rs`](src/writeback.rs) | `ContextDelta` and `upsert`, plus bi-temporal fact supersession (`apply_fact`) and the `facts_as_of` audit read. |
 | [`src/provider.rs`](src/provider.rs) | The `ContextProvider` trait, `ContextStore`'s implementation of it (`info`/`capabilities`/`query`/`verify`), and `ProviderRegistry` fan-out. |
 | [`src/embed.rs`](src/embed.rs) | The `Embedder` seam, `EmbedderFingerprint`, and the offline `HashEmbedder` default. |
@@ -97,30 +104,41 @@ place.
   this file with `code_graph_*`-prefixed tables; `MIGRATION_V3` drops any that
   survive, and `stella-graph` opens its own `codegraph.db`. The witness is
   `opening_drops_orphaned_code_graph_tables_from_context_db`
-  ([`src/store.rs`](src/store.rs), ~line 1385). Do not reintroduce graph tables here.
+  ([`src/store/tests.rs`](src/store/tests.rs)). Do not reintroduce graph tables here.
 - **`NodeRow::valid_from` is always `None`.** The columns exist on `node` but
   `upsert_node` never writes them. Fact history is recoverable; node content
   history is not.
-- **Nothing forgets.** There is no delete or tombstone path *in this crate*, and
-  a node whose uri changed (renamed or deleted file) is orphaned live forever,
-  still serving its last-known content. Recall reads *every* live node and
-  *every* vector under the active fingerprint on each query, so store size and
-  recall latency grow with the workspace's lifetime. This is the plane's first
-  scaling wall.
-- **`stella memory forget` does not reach in here.** Its tombstone is written to
-  `store.db` and applied by `stella-cli` to the frames `recall` has already
-  packed, so a forgotten memory is still stored, still embedded, still ranked,
-  and still spends the query's `max_frames`/`max_tokens` before the caller drops
-  it — the turn ends up with fewer frames, not with a replacement. Suppression
-  belongs upstream of packing (an exclusion set on the query), which is an API
-  change nobody has made yet.
-- **Every live node becomes a candidate — and a `ContextFrame`.** The recency
-  list contributes all of them, so fusion, MMR (`Θ(n²)` cosines) and
-  `frame_from_node` (which clones each body) run over the whole live store on
-  every recall, and `pack_to_budget` then keeps `max_frames` of them. The
-  `dropped` report is correspondingly the size of the store, not of a candidate
-  pool. Bounding the pool between dedup and MMR is the obvious fix and changes
-  what `dropped` means, so it needs its own tests.
+- **This plane forgets, but it does not reclaim.** `supersede_node` writes
+  `node.superseded_at` and `restore_node` is its exact inverse; nothing is ever
+  deleted, so a point-in-time query still sees what was believed before. What is
+  *not* managed is space: a superseded row stays, and a node whose uri changed
+  (renamed or deleted file) is still orphaned live, serving its last-known
+  content until something supersedes it. Compaction is a later phase.
+- **`stella memory forget` reaches in here now.** The tombstone in `store.db`
+  stays canonical — it is surface-aware, carries the reason, and outlives the
+  row — and the forget is *projected* onto `node.superseded_at`, where every
+  candidate reader already filters. Derived quarantine has no row here to mark
+  (it is a citation count, recomputed per read), so it arrives as an id set on
+  `recall_scoped_excluding`. Either way suppression lands before the budget, so
+  a suppressed memory frees its slot instead of spending it and being discarded.
+- **Only the cosine scan still touches the whole corpus.** Every other signal is
+  `LIMIT`-bounded at the SQL boundary by a bound derived from the query's
+  `max_frames`, ranking runs over metadata with no bodies, and node content is
+  read for packed survivors only. The similarity scan is the honest exception:
+  "most similar" is not something SQLite can `ORDER BY` without an ANN index. It
+  reads ids and vectors, never content, and an ANN accelerator is the tracked
+  follow-up.
+- **`dropped` counts the shortlist, not the store.** Its denominator is
+  `RecallResult::considered` — the candidates the budget actually chose between
+  — so "12 of 20 dropped" is a statement about this query. Candidates ranked
+  below the shortlist are reported separately as `candidates_cut`; nothing is
+  silent (`L-C5`).
+- **A memory's identity is its lineage, not its text.** `memory.lineage_id` is
+  the durable id and `public_id` identifies a revision, so editing a memory
+  supersedes rather than duplicates and the mirror node — keyed
+  `memory://<lineage>` — updates in place. The old revision's vector is orphaned
+  rather than deleted: `vectors_for_fingerprint` joins through
+  `node.content_hash`, so a vector no live node points at is never selected.
 - **`await_warm()` returning `Ok(0)` does not mean "the index is complete."** It
   means there is no warm left to join — the handle is taken, so a second call
   also returns `Ok(0)`, as does a store opened outside a tokio runtime (where
@@ -168,7 +186,7 @@ The tests worth reading before changing anything are the ones that encode a
 past defect: `kill_mid_index_rolls_back_to_a_consistent_store`,
 `rejects_a_context_db_written_by_a_newer_stella`, the `migrates_v1_/v2_…`
 replays that hand-build an old schema and assert the data survives (all in
-[`src/store.rs`](src/store.rs)), and the two `store_verifies_by_digest…` /
+[`src/store/tests.rs`](src/store/tests.rs)), and the two `store_verifies_by_digest…` /
 `store_frames_declare_a_content_digest…` witnesses in
 [`src/provider.rs`](src/provider.rs).
 
@@ -178,7 +196,7 @@ path cited from a doc comment in this crate does not resolve.
 ## Extending it
 
 **Add a node kind.** 1. Add the variant to `NodeKind` in
-[`src/store.rs`](src/store.rs). 2. Extend `as_str`, `parse`, and
+[`src/store/node.rs`](src/store/node.rs). 2. Extend `as_str`, `parse`, and
 `to_frame_kind` — the compiler catches all three. 3. Add it to `store_kinds()`
 in [`src/provider.rs`](src/provider.rs), or kind-filtered queries will be routed
 away from the store; omitting `Memory` there once did exactly that to memory

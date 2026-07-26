@@ -112,6 +112,14 @@ Against that baseline, the gap is much narrower than eleven phases:
 Four of the nine are defects in shipped code, and they sit underneath every
 remaining gap. That ordering drives the plan.
 
+**Status, 2026-07-26.** Phase 1 ([#712](https://github.com/macanderson/stella/issues/712))
+closed all four defects: candidate generation is bounded by the requested frame
+count, the point-in-time cutoff reaches every signal, supersede and tombstone
+live in the plane that owns the records, and a memory's identity is its lineage
+so an edit revises rather than duplicates. The five remaining rows are gaps, and
+Phases 2–4 build them. The table is left as written — it is the analysis the
+plan was ordered by.
+
 ## 5. Invariants
 
 These are non-negotiable and apply to every phase.
@@ -272,22 +280,27 @@ Named so they are decisions rather than omissions:
 | 0007 | Immutable promotion history | Accepted, ratified, amended |
 | 0008 | Markdown-canonical rules | Accepted |
 | 0009 | Enum-freeze resolutions | Accepted, ratified |
-| 0010 | Incremental authority transfer | **Proposed** |
+| 0010 | Incremental authority transfer | Accepted, ratified |
 
-**Note on 0003.** Its characterization is accurate for the low-level edge query
-it pins, but the conclusion does not hold one layer up: within `recall`, the
-cutoff reaches adjacency only. A point-in-time recall therefore returns current
-content with historical edges. Phase 1 closes this; until it does, the
-bitemporal guarantee is not one Stella can make.
+**Note on 0003.** ~~Within `recall`, the cutoff reaches adjacency only.~~
+**Closed 2026-07-26 by Phase 1 (#712).** Its characterization was accurate for
+the low-level edge query it pins, and the conclusion did not hold one layer up —
+a point-in-time recall returned current content with historical edges. Every
+candidate reader now shares one predicate, so `as_of` is honored across node,
+vector, recency, and adjacency alike. The world-validity axis
+(`valid_from`/`valid_to`) remains unconsulted, as the ADR describes.
 
 **Note on 0006.** Its distinction stands, but it predates the receipts plane. The
 compiled frame is now reached by *extending the step manifest* (§6.2), not by
 building a second aggregate. An amendment should record this before Phase 2
 ships.
 
-**Note on 0010.** Proposed, not accepted. It amends 0005 by replacing a big-bang
-authority cutover with incremental transfer. It needs ratification before
-Phase 3.
+**Note on 0010.** Ratified 2026-07-26 ([#711](https://github.com/macanderson/stella/issues/711)).
+It amends 0005 by replacing a big-bang authority cutover with incremental
+transfer, and settles in the same act that the retrieval index — `node`, `edge`,
+`embedding` — never transfers authority: `lineage_id` lands on `memory` and
+`episode` only. Phase 3 is unblocked. Whether the backfill ever becomes
+mandatory remains open and gates nothing before Phase 3.
 
 ---
 

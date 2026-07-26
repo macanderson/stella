@@ -30,6 +30,18 @@
       "raw_observation_days": 30,
       "proposal_days": 30,
       "inferred_directive_review_days": 180
+    },
+    "retrieval": {
+      "max_frames": 5,
+      "max_tokens": 1200,
+      "rrf_k": 60.0,
+      "recency_weight": 0.15,
+      "mmr_lambda": 0.7,
+      "min_coverage": 0.15,
+      "coverage_topk": 5,
+      "max_vector_seeds": 8,
+      "lexical_limit": 8,
+      "mmr_candidate_multiple": 4
     }
   }
 }

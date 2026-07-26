@@ -14,10 +14,11 @@ they are accurate records of what was decided and why, and rewriting them to
 cite a document that did not exist at the time would falsify the record.
 
 The current spec annotates two ADRs whose conclusions did not survive contact
-with the shipped code — 0003 (the point-in-time cutoff reaches adjacency only,
+with the shipped code — 0003 (the point-in-time cutoff reached adjacency only,
 one layer below `recall`) and 0006 (the compiled frame is now reached by
 extending the step manifest, not by building a parallel aggregate). Read those
-notes alongside the ADRs.
+notes alongside the ADRs. 0003's gap was **closed on 2026-07-26** by Phase 1
+(#712); 0006's amendment is still owed, before Phase 2 ships.
 
 ADRs 0002 and 0007 originally FLAGGED open questions for human sign-off; the
 repository owner **ratified both on 2026-07-23**, so all Phase 0 ADRs are now
@@ -31,15 +32,23 @@ blocked the Phase-1 enum/validator freeze — four resolved by existing
 spec/ADRs, three ratified by the owner on 2026-07-24 (including the
 `informational → advisory` edge amended into ADR 0007).
 
+ADR 0010 amends ADR 0005: the destination is unchanged, but the route from
+big-bang cutover becomes incremental transfer. The owner **ratified it on
+2026-07-26** (issue #711), settling its second open question in the same act —
+`node`, `edge`, and `embedding` are a derived index and never transfer
+authority, so `lineage_id` lands on `memory` and `episode` only. Its first open
+question (whether the backfill ever becomes mandatory) is deliberately left
+open; nothing before Phase 3 forces it.
+
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-semantic-taxonomy.md) | Semantic Taxonomy | Accepted (Phase 0) |
 | [0002](0002-scope-vs-sharing.md) | Scope vs. Sharing | Accepted — ratified 2026-07-23 (4-value SharingScope) |
-| [0003](0003-bitemporal-semantics.md) | Bitemporal Semantics | Accepted (Phase 0) |
+| [0003](0003-bitemporal-semantics.md) | Bitemporal Semantics | Accepted (Phase 0) — recall-layer gap closed 2026-07-26 (#712) |
 | [0004](0004-record-revision-identity.md) | Record Revision Identity | Accepted (Phase 0) |
 | [0005](0005-storage-authority.md) | Storage Authority | Accepted (Phase 0) |
 | [0006](0006-contextframe-vs-compiledcontextframe.md) | ContextFrame vs. CompiledContextFrame | Accepted (Phase 0) |
 | [0007](0007-immutable-promotion-history.md) | Immutable Promotion History | Accepted — ratified 2026-07-23 (enforcement 4→2); amended 2026-07-24 (`informational`→advisory) |
 | [0008](0008-markdown-canonical-rules.md) | Markdown Repository Rules Remain Canonical | Accepted (Phase 0) |
 | [0009](0009-enum-freeze-resolutions.md) | Enum-Freeze Resolutions (issue #483) | Accepted — ratified 2026-07-24 |
-| [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | **Proposed** — needs ratification |
+| [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | Accepted — ratified 2026-07-26 (index tables do not transfer) |

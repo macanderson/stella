@@ -4,35 +4,25 @@
 
 use super::*;
 
-use contextgraph_types::FrameKind;
 use proptest::prelude::*;
 
-fn frame(id: &str, token_cost: u32) -> ContextFrame {
-    ContextFrame {
-        id: id.into(),
-        kind: FrameKind::Snippet,
-        title: id.into(),
-        content: Some(String::new()),
-        uri: None,
-        score: 0.5,
-        token_cost,
-        content_digest: None,
-        representation: Representation::Full,
-        content_fidelity: None,
-        canonical_content_hash: None,
-        content_ref: None,
-        transform: None,
-        minimum_content_fidelity: None,
-        inline_content_requirement: None,
-        canonical_token_cost: None,
-        tokenizer_ref: None,
-        valid_from: None,
-        valid_to: None,
-        recorded_at: None,
-        provenance: vec![],
-        citation_label: Some(id.into()),
-        embedding: None,
-        relations: vec![],
+/// A packing candidate. Packing moved off `ContextFrame` and onto ranking
+/// metadata when frame construction was deferred to the survivors (#712
+/// deliverable 2), so these tests build what the packer actually sees.
+fn candidate(id: &str, token_cost: u32) -> Ranked {
+    Ranked {
+        meta: crate::candidates::NodeMeta {
+            id: id.len() as i64,
+            public_id: id.into(),
+            display_name: id.into(),
+            content_hash: String::new(),
+            // The packer spends `budget_tokens_for_bytes(content_bytes)`, so a
+            // test that wants a cost of N must ask for N tokens' worth of bytes.
+            content_bytes: (token_cost as usize) * 4,
+            content_blank: false,
+            recorded_at: "2026-01-01T00:00:00Z".into(),
+        },
+        relevance: 0.5,
     }
 }
 
@@ -185,7 +175,7 @@ fn recency_cannot_outrank_similarity_on_its_own() {
 
     let equal_weight = rrf_fuse(
         &[(vector_ranked.clone(), 1.0), (recency_ranked.clone(), 1.0)],
-        RRF_K,
+        DEFAULT_RRF_K,
     );
     assert!(
         equal_weight[&FRESH] > equal_weight[&STALE],
@@ -194,8 +184,11 @@ fn recency_cannot_outrank_similarity_on_its_own() {
     );
 
     let damped = rrf_fuse(
-        &[(vector_ranked, 1.0), (recency_ranked, RECENCY_WEIGHT)],
-        RRF_K,
+        &[
+            (vector_ranked, 1.0),
+            (recency_ranked, DEFAULT_RECENCY_WEIGHT),
+        ],
+        DEFAULT_RRF_K,
     );
     assert!(
         damped[&STALE] > damped[&FRESH],
@@ -219,9 +212,9 @@ fn recency_still_reorders_comparably_relevant_frames() {
     let damped = rrf_fuse(
         &[
             (vector_ranked.clone(), 1.0),
-            (recency_ranked, RECENCY_WEIGHT),
+            (recency_ranked, DEFAULT_RECENCY_WEIGHT),
         ],
-        RRF_K,
+        DEFAULT_RRF_K,
     );
     assert!(
         damped[&NEWER] > damped[&OLDER],
@@ -229,13 +222,13 @@ fn recency_still_reorders_comparably_relevant_frames() {
     );
     // Without any recency signal the similarity order stands, which is
     // what makes the assertion above attributable to recency.
-    let no_recency = rrf_fuse(&[(vector_ranked, 1.0)], RRF_K);
+    let no_recency = rrf_fuse(&[(vector_ranked, 1.0)], DEFAULT_RRF_K);
     assert!(no_recency[&OLDER] > no_recency[&NEWER]);
 }
 
 #[test]
 fn packing_respects_frame_count() {
-    let frames = vec![frame("a", 1), frame("b", 1), frame("c", 1)];
+    let frames = vec![candidate("a", 1), candidate("b", 1), candidate("c", 1)];
     let (kept, dropped) = pack_to_budget(frames, 1000, 2);
     assert_eq!(kept.len(), 2);
     assert_eq!(dropped.len(), 1);
@@ -244,10 +237,10 @@ fn packing_respects_frame_count() {
 
 #[test]
 fn packing_skips_an_oversized_frame_but_fits_a_later_small_one() {
-    let frames = vec![frame("big", 500), frame("small", 10)];
+    let frames = vec![candidate("big", 500), candidate("small", 10)];
     let (kept, dropped) = pack_to_budget(frames, 100, 10);
     assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].id, "small");
+    assert_eq!(kept[0].meta.public_id, "small");
     assert_eq!(dropped[0].id, "big");
     assert_eq!(dropped[0].reason, DropReason::TokenBudget);
 }
@@ -301,10 +294,13 @@ proptest! {
         max_frames in 0u32..20,
     ) {
         let n = costs.len();
-        let frames: Vec<ContextFrame> =
-            costs.iter().enumerate().map(|(i, c)| frame(&format!("f{i}"), *c)).collect();
+        let frames: Vec<Ranked> =
+            costs.iter().enumerate().map(|(i, c)| candidate(&format!("f{i}"), *c)).collect();
         let (kept, dropped) = pack_to_budget(frames, max_tokens, max_frames);
-        let kept_tokens: u64 = kept.iter().map(|f| f.token_cost as u64).sum();
+        let kept_tokens: u64 = kept
+                .iter()
+                .map(|f| crate::retrieval::budget_tokens_for_bytes(f.meta.content_bytes) as u64)
+                .sum();
         prop_assert!(kept_tokens <= max_tokens as u64);
         prop_assert!(kept.len() as u32 <= max_frames);
         prop_assert_eq!(kept.len() + dropped.len(), n);
@@ -421,7 +417,7 @@ async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
     // The counter is thread-local, so this is recall's own work and the
     // ceiling can be the real one rather than a generous fraction of the
     // blowup it is watching for.
-    let candidates = 5 * MMR_CANDIDATE_MULTIPLE;
+    let candidates = 5 * DEFAULT_MMR_CANDIDATE_MULTIPLE;
     let ceiling = NODES + candidates * candidates / 2;
     let unbounded_mmr_cost = NODES * NODES / 2;
     assert!(
@@ -480,11 +476,11 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
         !result.used_lexical_fallback,
         "this guard measures the fused arm; coverage unexpectedly fell back"
     );
-    // 5 frames x MMR_CANDIDATE_MULTIPLE = 20 candidates. Their bodies are all
+    // 5 frames x DEFAULT_MMR_CANDIDATE_MULTIPLE = 20 candidates. Their bodies are all
     // recall is entitled to read. Budgeted against the LONGEST body rather than
     // the mean: which 20 nodes win is a ranking outcome, and a mean-based bound
     // would flake whenever the winners ran slightly above average.
-    let candidates = 5 * MMR_CANDIDATE_MULTIPLE;
+    let candidates = 5 * DEFAULT_MMR_CANDIDATE_MULTIPLE;
     let budgeted = candidates * longest_body;
     assert!(
         loaded <= budgeted,
@@ -495,10 +491,21 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
     );
 }
 
-/// The bound must not become a silent truncation — `L-C5` requires every
-/// scored candidate to appear in exactly one of `frames` / `dropped`.
+/// The drop report is a numerator over the shortlist the budget actually
+/// chose between — not over the corpus (#712 deliverable 3).
+///
+/// It used to be over the corpus, because the recency signal contributed every
+/// live node to the fusion. That made a 5-frame recall on a 60-node store
+/// report 55 drops and `truncated: true`, and it would have reported 4,995 on a
+/// 5,000-node store: a number that grew with how long the workspace had been
+/// alive and told a caller nothing they could act on.
+///
+/// `L-C5` still holds — nothing vanishes unreported. Candidates ranked below
+/// the shortlist are reported as `candidates_cut`, kept separate because the
+/// two facts differ in kind: a budget drop is reversible by asking for more,
+/// while a cut candidate was judged not worth scoring.
 #[tokio::test]
-async fn candidates_cut_before_the_budget_pass_are_still_reported() {
+async fn the_drop_report_counts_candidates_considered_not_the_corpus() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("context.db");
     let store = ContextStore::open_with(
@@ -522,11 +529,50 @@ async fn candidates_cut_before_the_budget_pass_are_still_reported() {
     q.max_frames = 5;
     let result = store.recall(&q).await.unwrap();
 
+    // The partition invariant, now over the shortlist.
     assert_eq!(
         result.frames.len() + result.dropped.len(),
-        NODES,
-        "kept + dropped must partition every scored candidate, not just the \
-         ones that reached the budget pass"
+        result.considered,
+        "kept + dropped must partition exactly the candidates the budget saw"
+    );
+    // The shortlist is `max_frames * DEFAULT_MMR_CANDIDATE_MULTIPLE`, so the
+    // report is about this query, not about the workspace's history.
+    assert_eq!(
+        result.considered,
+        (q.max_frames as usize) * DEFAULT_MMR_CANDIDATE_MULTIPLE,
+        "the denominator is the shortlist the frame count asks for"
+    );
+    assert!(
+        result.considered < NODES,
+        "the whole point: {} considered out of {NODES} stored",
+        result.considered
+    );
+    // Nothing is silent: everything the fusion ranked is either considered or
+    // counted as cut.
+    assert!(
+        result.candidates_cut > 0,
+        "a 60-node store ranks more than the shortlist, and the remainder is \
+         reported rather than dropped on the floor"
+    );
+}
+
+/// Asking for more frames must widen the shortlist the drops are counted
+/// against — otherwise "considered" is just another constant.
+#[tokio::test]
+async fn the_denominator_tracks_the_requested_frame_count() {
+    let (_dir, store) = seeded().await;
+    let mut small = base_query("open the database", "packing frames to a budget");
+    small.max_frames = 1;
+    let mut large = small.clone();
+    large.max_frames = 20;
+
+    let small = store.recall(&small).await.unwrap();
+    let large = store.recall(&large).await.unwrap();
+    assert!(
+        large.considered >= small.considered,
+        "a larger frame budget considers at least as many candidates: {} vs {}",
+        large.considered,
+        small.considered
     );
 }
 
@@ -545,7 +591,7 @@ async fn recall_returns_cited_budget_respecting_frames() {
     );
     // The strongly-matching node is retrieved (coverage should be high).
     assert!(
-        result.coverage >= MIN_COVERAGE,
+        result.coverage >= DEFAULT_MIN_COVERAGE,
         "coverage {} too low",
         result.coverage
     );
@@ -658,5 +704,278 @@ async fn recall_falls_back_to_labeled_lexical_when_no_vectors_under_fingerprint(
     assert!(
         result.frames.iter().all(is_lexical_fallback),
         "every fallback frame is labeled, never dressed up as grounding (L-C6)"
+    );
+}
+
+/// Witness for #712 deliverable 7: a point-in-time recall answers from one
+/// instant, across every signal.
+///
+/// The defect was that `as_of` reached `neighbors` and nothing else, so a
+/// query about yesterday returned today's content wearing yesterday's edges.
+/// Here a node written *after* the cutoff must not appear at all — which can
+/// only hold if the cutoff reached the node, vector, and recency reads too.
+#[tokio::test]
+async fn point_in_time_recall_excludes_content_recorded_after_the_cutoff() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let clock = FixedClock::shared(1_000);
+    let store =
+        ContextStore::open_with(&path, Arc::new(HashEmbedder::default()), clock.clone()).unwrap();
+    store
+        .upsert(ContextDelta::new().with_node(
+            NodeInput::new(NodeKind::Concept, "early").with_content("the flux capacitor note"),
+        ))
+        .await
+        .unwrap();
+    let cutoff = crate::clock::format_rfc3339(1_500);
+    clock.set(2_000);
+    store
+        .upsert(ContextDelta::new().with_node(
+            NodeInput::new(NodeKind::Concept, "late").with_content("the flux capacitor note two"),
+        ))
+        .await
+        .unwrap();
+
+    let mut q = base_query("capacitor", "the flux capacitor note");
+    let now = store.recall(&q).await.unwrap();
+    let titles: Vec<&str> = now.frames.iter().map(|f| f.title.as_str()).collect();
+    assert!(
+        titles.contains(&"early") && titles.contains(&"late"),
+        "without a cutoff both are current: {titles:?}"
+    );
+
+    q.as_of = Some(cutoff);
+    let past = store.recall(&q).await.unwrap();
+    let titles: Vec<&str> = past.frames.iter().map(|f| f.title.as_str()).collect();
+    assert!(
+        titles.contains(&"early"),
+        "content that existed at the cutoff must still be recalled: {titles:?}"
+    );
+    assert!(
+        !titles.contains(&"late"),
+        "content recorded after the cutoff must not appear in a point-in-time \
+         recall — the parameter looked honored and was not: {titles:?}"
+    );
+}
+
+/// Witness for #712 deliverable 4: a suppressed memory never occupies a budget
+/// slot.
+///
+/// The defect was arithmetic, not philosophy. Suppression ran at the CLI on
+/// frames the budget had already chosen, so a `max_frames: 1` recall that
+/// ranked the suppressed memory first returned *zero* frames — the budget was
+/// spent on a row that was then thrown away, and the turn silently got less
+/// context than it asked for. Suppressing before the budget means the slot goes
+/// to the next candidate instead.
+#[tokio::test]
+async fn a_superseded_memory_never_costs_a_budget_slot() {
+    let (_dir, store) = seeded().await;
+    let mut q = base_query(
+        "open the database",
+        "open the sqlite connection in wal mode with foreign keys on",
+    );
+    q.max_frames = 1;
+
+    let before = store.recall(&q).await.unwrap();
+    assert_eq!(before.frames.len(), 1, "one frame fits");
+    let winner = before.frames[0].id.clone();
+
+    assert!(
+        store.supersede_node(&winner).unwrap(),
+        "the winning frame is suppressible"
+    );
+    let after = store.recall(&q).await.unwrap();
+    assert_eq!(
+        after.frames.len(),
+        1,
+        "the slot goes to the next candidate — suppression must not silently \
+         hand the turn fewer frames than it asked for"
+    );
+    assert_ne!(
+        after.frames[0].id, winner,
+        "and it is not the suppressed one"
+    );
+
+    // Reversible and singular (spec §5.7).
+    assert!(store.restore_node(&winner).unwrap(), "restore lifts it");
+    let restored = store.recall(&q).await.unwrap();
+    assert_eq!(restored.frames[0].id, winner, "restore is an exact inverse");
+    assert!(
+        !store.supersede_node("nod_does_not_exist").unwrap(),
+        "suppressing an unknown id reports no change rather than erroring"
+    );
+}
+
+/// The derived half of suppression — quarantine, which has no row in this
+/// database to tombstone — must also apply before the budget.
+#[tokio::test]
+async fn an_excluded_id_never_costs_a_budget_slot_either() {
+    let (_dir, store) = seeded().await;
+    let mut q = base_query(
+        "open the database",
+        "open the sqlite connection in wal mode with foreign keys on",
+    );
+    q.max_frames = 1;
+
+    let before = store.recall(&q).await.unwrap();
+    let winner = before.frames[0].id.clone();
+
+    let excluded: std::collections::HashSet<String> = [winner.clone()].into_iter().collect();
+    let after = store
+        .recall_scoped_excluding(&q, &[], &excluded)
+        .await
+        .unwrap();
+    assert_eq!(
+        after.frames.len(),
+        1,
+        "an excluded candidate frees its slot rather than wasting it"
+    );
+    assert_ne!(after.frames[0].id, winner);
+    assert!(
+        !after.dropped.iter().any(|d| d.id == winner),
+        "an excluded id is not a candidate at all, so it is not a budget drop \
+         either — it never entered the ranking"
+    );
+}
+
+/// Witness for #712 deliverable 8: the knobs are reachable, and reaching them
+/// changes what recall does.
+///
+/// A settings block that deserializes but steers nothing is indistinguishable
+/// from no settings block at all — which is what these knobs were before this
+/// change, as eight `const`s the settings file had no path to.
+#[tokio::test]
+async fn tuning_reaches_the_ranking() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let make = |tuning: RecallTuning| {
+        ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            FixedClock::shared(1_000),
+        )
+        .unwrap()
+        .with_tuning(tuning)
+    };
+
+    let store = make(RecallTuning::default());
+    let mut delta = ContextDelta::new();
+    for i in 0..40 {
+        delta = delta.with_node(
+            NodeInput::new(NodeKind::Artifact, format!("note-{i}"))
+                .with_content(format!("note {i:03} about packing frames to a budget")),
+        );
+    }
+    store.upsert(delta).await.unwrap();
+    drop(store);
+
+    let mut q = base_query("open the database", "packing frames to a budget");
+    q.max_frames = 3;
+
+    let narrow = make(RecallTuning::default()).recall(&q).await.unwrap();
+    let wide = make(RecallTuning {
+        mmr_candidate_multiple: 10,
+        ..RecallTuning::default()
+    })
+    .recall(&q)
+    .await
+    .unwrap();
+    assert!(
+        wide.considered > narrow.considered,
+        "widening the shortlist multiple must widen the shortlist: {} vs {}",
+        wide.considered,
+        narrow.considered
+    );
+
+    // The coverage floor decides grounding vs. labeled lexical fallback.
+    let grounded = make(RecallTuning::default()).recall(&q).await.unwrap();
+    assert!(!grounded.used_lexical_fallback);
+    let forced = make(RecallTuning {
+        min_coverage: 1.0,
+        ..RecallTuning::default()
+    })
+    .recall(&q)
+    .await
+    .unwrap();
+    assert!(
+        forced.used_lexical_fallback,
+        "a coverage floor of 1.0 can never be met, so retrieval must fall back \
+         and say so rather than dressing weak hits up as grounding"
+    );
+}
+
+/// The benchmark #712's gate names: recall work bounded by the requested frame
+/// count, at three corpus sizes spanning two orders of magnitude.
+///
+/// The two guards above pin the same property at a single size, which cannot
+/// distinguish "bounded" from "the constant happens to be small here". Three
+/// sizes can: content bytes must come out *byte-identical* across a 100x corpus,
+/// and the cosine scan — the one honest exception, since "most similar" is not
+/// something SQLite can `ORDER BY` without an ANN index — must stay linear
+/// rather than quadratic.
+///
+/// It measures work, not wall clock. A wall-clock assertion cannot tell
+/// "bounded" from "fast on this machine today", and is the kind of test that
+/// gets marked flaky and deleted.
+#[tokio::test]
+async fn recall_work_is_bounded_by_frame_count_not_corpus_size() {
+    const FRAMES: u32 = 5;
+    // (corpus, content bytes read, cosine calls)
+    let mut measured: Vec<(usize, u64, usize)> = Vec::new();
+
+    for corpus in [50usize, 500, 5_000] {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let store = ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            FixedClock::shared(1_000),
+        )
+        .unwrap();
+
+        let mut delta = ContextDelta::new();
+        for i in 0..corpus {
+            // Fixed-width index so every body is byte-identical in length: the
+            // byte assertion below is then exact rather than approximate, and a
+            // regression cannot hide in the rounding.
+            delta = delta.with_node(
+                NodeInput::new(NodeKind::Artifact, format!("note-{i}")).with_content(format!(
+                    "note number {i:06} about packing context frames to a token budget \
+                     and reporting exactly what was dropped and why"
+                )),
+            );
+        }
+        store.upsert(delta).await.unwrap();
+
+        let mut q = base_query("open the database", "packing frames to a budget");
+        q.max_frames = FRAMES;
+
+        let _ = crate::cost_counters::take_content_bytes_loaded();
+        let _ = crate::cost_counters::take_cosine_calls();
+        let result = store.recall(&q).await.unwrap();
+        measured.push((
+            corpus,
+            crate::cost_counters::take_content_bytes_loaded(),
+            crate::cost_counters::take_cosine_calls(),
+        ));
+
+        assert!(
+            result.frames.len() <= FRAMES as usize,
+            "the frame budget binds at corpus {corpus}: {}",
+            result.frames.len()
+        );
+    }
+
+    assert_eq!(
+        measured[0].1, measured[2].1,
+        "content bytes must not grow with the corpus — 100x the store, the same \
+         bytes read: {measured:?}"
+    );
+    let per_node_first = measured[0].2 as f64 / measured[0].0 as f64;
+    let per_node_last = measured[2].2 as f64 / measured[2].0 as f64;
+    assert!(
+        per_node_last < per_node_first * 2.0 + 1.0,
+        "cosine cost per stored node must stay flat as the corpus grows — \
+         {per_node_first:.2} at 50 nodes vs {per_node_last:.2} at 5000: {measured:?}"
     );
 }

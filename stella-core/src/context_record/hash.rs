@@ -10,8 +10,8 @@
 //!    complements the `#[serde(skip_serializing_if = "Option::is_none")]`
 //!    absent-option omission on the record types);
 //! 4. **RFC 8785 JCS** — sort keys, minimal whitespace, canonical numbers, via
-//!    `serde_json_canonicalizer` (the same crate + version CGEP uses, so the
-//!    preimage bytes are byte-identical to CGEP's for export interop);
+//!    `serde_json_canonicalizer` (the same crate + version CGP uses, so the
+//!    preimage bytes are byte-identical to CGP's for export interop);
 //! 5. sha256, lowercase hex, `sha256:` prefix.
 //!
 //! Two normalization steps are the *caller's* responsibility before hashing and

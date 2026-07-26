@@ -213,6 +213,21 @@ impl MemoryKind {
             MemoryKind::Insight => "insight",
         }
     }
+
+    /// Parse a stored `memory.kind` back into the enum.
+    ///
+    /// Needed by the revision path: rewriting a memory must not silently
+    /// reclassify it, so an edit reads the lineage's current kind and carries
+    /// it forward rather than assuming one.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "reflection" => MemoryKind::Reflection,
+            "note" => MemoryKind::Note,
+            "insight" => MemoryKind::Insight,
+            _ => return None,
+        })
+    }
 }
 
 /// A memory to write — content, kind, domains, salience. It becomes a `memory`
@@ -232,6 +247,19 @@ pub struct MemoryInput {
     /// Caller-assigned importance, stored on the `memory` row. As with
     /// [`EpisodeInput::salience`], recall does not rank by it today.
     pub salience: f32,
+    /// The lineage this memory belongs to, when it revises an existing one.
+    ///
+    /// `None` — the overwhelmingly common case — means "a memory in its own
+    /// right", and its lineage is seeded from its content hash so writing the
+    /// same lesson twice stays the idempotent upsert it has always been.
+    ///
+    /// `Some(lineage)` makes this a **revision**: it lands as a new row under
+    /// that lineage, closes whatever revision was live, and overwrites the one
+    /// mirror node the lineage owns. That is the whole of #712 deliverable 5 —
+    /// without it, editing a memory minted a second one and left the first
+    /// live, with its old text and its own vector, competing for slots in every
+    /// future recall.
+    pub lineage: Option<String>,
 }
 
 impl MemoryInput {
@@ -246,6 +274,7 @@ impl MemoryInput {
             content: content.into(),
             domains: domains.into_iter().map(Into::into).collect(),
             salience: 0.0,
+            lineage: None,
         }
     }
 
@@ -256,6 +285,7 @@ impl MemoryInput {
             content: content.into(),
             domains: Vec::new(),
             salience: 0.0,
+            lineage: None,
         }
     }
 
@@ -270,7 +300,22 @@ impl MemoryInput {
         self
     }
 
-    /// Stable identity: kind + content.
+    /// Mark this memory a revision of an existing lineage.
+    ///
+    /// The lineage id is the `mem_…` id of any revision in it — the id
+    /// `ContextStore::memory_lineage` resolves from a recalled frame's node id.
+    #[must_use]
+    pub fn revises(mut self, lineage: impl Into<String>) -> Self {
+        self.lineage = Some(lineage.into());
+        self
+    }
+
+    /// This revision's own identity: kind + content.
+    ///
+    /// Still content-derived, and deliberately so. It is now the identity of a
+    /// *revision* rather than of the memory, which is exactly what a
+    /// content hash is good for: re-writing identical text is the same revision
+    /// and upserts, while changed text is a new one.
     fn public_id(&self) -> String {
         let mut h = Sha256::new();
         h.update(self.kind.as_str().as_bytes());
@@ -279,11 +324,28 @@ impl MemoryInput {
         format!("mem_{}", &to_hex(&h.finalize())[..24])
     }
 
+    /// The durable identity: the lineage when this revises one, else this
+    /// revision's own id.
+    ///
+    /// Seeding a fresh memory's lineage from its content hash is what keeps
+    /// this migration invisible: the lineage id of every memory written before
+    /// #712 equals the id it already had, so its mirror node's uri, its node
+    /// id, and any tombstone naming it are all unchanged.
+    fn lineage_id(&self) -> String {
+        self.lineage.clone().unwrap_or_else(|| self.public_id())
+    }
+
     /// The retrievable Memory node mirroring this memory (carries its domains).
+    ///
+    /// Keyed by **lineage**, not by revision, which is what makes an edit
+    /// update one node in place instead of minting a second. The old revision's
+    /// vector is orphaned rather than deleted — `vectors_for_fingerprint` joins
+    /// through `node.content_hash`, so a vector no live node points at is never
+    /// selected again.
     fn as_node(&self) -> NodeInput {
         let label = truncate_label(&self.content);
         NodeInput::new(NodeKind::Memory, label)
-            .with_uri(format!("memory://{}", self.public_id()))
+            .with_uri(format!("memory://{}", self.lineage_id()))
             .with_content(self.content.clone())
             .with_domains(self.domains.clone())
     }
@@ -545,6 +607,7 @@ impl ContextStore {
             insert_memory(
                 &tx,
                 &memory.public_id(),
+                &memory.lineage_id(),
                 memory.kind.as_str(),
                 &memory.content,
                 memory.salience as f64,

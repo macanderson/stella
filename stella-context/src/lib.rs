@@ -67,8 +67,12 @@ pub use clock::{Clock, FixedClock, SystemClock, format_rfc3339};
 pub use embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedder};
 pub use error::ContextError;
 pub use provider::{ContextProvider, ProviderRegistry};
-pub use retrieval::{DropReason, DroppedFrame, RecallResult, is_lexical_fallback};
-pub use store::{ContextStore, NodeInput, NodeKind, NodeRow};
+pub use retrieval::{
+    DEFAULT_COVERAGE_TOPK, DEFAULT_LEXICAL_LIMIT, DEFAULT_MAX_VECTOR_SEEDS, DEFAULT_MIN_COVERAGE,
+    DEFAULT_MMR_CANDIDATE_MULTIPLE, DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_RRF_K,
+    DropReason, DroppedFrame, RecallResult, RecallTuning, is_lexical_fallback,
+};
+pub use store::{ContextStore, MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow};
 pub use writeback::{
     ContextDelta, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion, FactView, MemoryInput,
     MemoryKind, UpsertReceipt,
