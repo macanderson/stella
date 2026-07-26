@@ -17,10 +17,11 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use stella_protocol::{
-    AgentEvent, BlockKind, BlockOrigin, CacheZone, CompletionMessage, ManifestEntry, MessageRole,
-    ModelCallRole, ToolOutput,
+    AgentEvent, BlockKind, BlockOrigin, CacheZone, CompiledContextFrameBuilt, CompletionMessage,
+    ManifestEntry, MessageRole, ModelCallRole, ToolOutput,
 };
 
 use crate::estimator::{CHARS_PER_TOKEN, estimate_conversation_tokens};
@@ -145,6 +146,19 @@ fn kind_tag(kind: BlockKind) -> &'static str {
         BlockKind::Summary => "summary",
         BlockKind::Attachment => "attachment",
         BlockKind::Other => "other",
+    }
+}
+
+/// The stable snake_case tag for a cache zone, in lockstep with the protocol
+/// enum's `rename_all` for the same reason [`kind_tag`] is: the frame preimage
+/// carries the string, and a divergence would move every stored frame hash
+/// without moving anything a reader can see.
+fn zone_tag(zone: CacheZone) -> &'static str {
+    match zone {
+        CacheZone::StablePrefix => "stable_prefix",
+        CacheZone::Cacheable => "cacheable",
+        CacheZone::Volatile => "volatile",
+        CacheZone::Other => "other",
     }
 }
 
@@ -283,6 +297,34 @@ struct BlockDraft<'a> {
     /// block there is — on every step for the rest of the turn, to hand it to a
     /// registration that had already happened.
     content: Option<&'a str>,
+    /// The `nod_…` record this block was recalled from, for a `RecalledFrame`.
+    /// The join hub of [`BlockOrigin`], filled by decomposition when the block
+    /// is a recall frame and `None` for every structural kind.
+    memory_id: Option<String>,
+    /// The human label a recall frame is cited under, carried to
+    /// `BlockRegistered::citation_label` so a receipt names frames rather than
+    /// ids (L-C4).
+    citation_label: Option<String>,
+    /// Why this block is in the prompt, when the producer knows. `None` for
+    /// structural blocks, whose reason is that they are structural.
+    selection_reason: Option<String>,
+}
+
+impl<'a> BlockDraft<'a> {
+    /// This block as it enters the frame preimage.
+    fn frame_block(&self) -> FrameBlock<'_> {
+        FrameBlock {
+            block_id: &self.block_id,
+            kind: kind_tag(self.kind),
+            cache_zone: zone_tag(self.cache_zone),
+            token_cost: self.token_cost,
+            message_index: self.message_index,
+            content_digest: &self.content_digest,
+            call_id: self.call_id.as_deref(),
+            memory_id: self.memory_id.as_deref(),
+            selection_reason: self.selection_reason.as_deref(),
+        }
+    }
 }
 
 /// Decompose the live message vector into event-granular blocks, in wire order,
@@ -336,6 +378,11 @@ fn decompose<'a>(
                 cache_zone: CacheZone::Cacheable,
                 message_index,
                 content: is_gap_kind(kind).then_some(borrowed).flatten(),
+                // Decomposition fills these for recall frames; every
+                // structural kind leaves them `None` (#713).
+                memory_id: None,
+                citation_label: None,
+                selection_reason: None,
             });
         };
         match message.role {
@@ -410,6 +457,97 @@ fn decompose<'a>(
     drafts
 }
 
+// ── The compiled frame (Phase 2, #713 deliverable 4) ────────────────────────
+
+/// Schema version of the frame preimage. Part of the hashed body on purpose: a
+/// later change to which fields participate must produce different hashes for
+/// the same prompt, or two incompatible preimages would silently share a digest
+/// space and a replay could not tell which scheme minted a stored hash.
+pub const FRAME_SCHEMA_VERSION: &str = "1.0-draft";
+
+/// One block as it enters the frame preimage.
+///
+/// Deliberately NOT [`ManifestEntry`]: `resident_since_step` is on the manifest
+/// and must not be on the frame. It records how long a block has been carried,
+/// which is a fact about the *history* of the session rather than about what
+/// this prompt contained — a turn replayed from step 0 and the same turn reached
+/// after a compaction see identical bytes with different residencies. Hashing it
+/// would make the frame hash a function of when you started looking.
+#[derive(Debug, Serialize)]
+struct FrameBlock<'a> {
+    block_id: &'a str,
+    /// The block's kind tag — the same string that is half its id preimage.
+    /// Carried explicitly so a frame body is readable without a registry join.
+    kind: &'a str,
+    cache_zone: &'a str,
+    token_cost: u32,
+    message_index: usize,
+    /// `sha256:<hex>` of the exact bytes. Present so the frame hash is a
+    /// function of *content*, not only of the 96-bit id prefix that stands in
+    /// for it, and so a stored frame can be verified against the block registry
+    /// without recomputing every id.
+    content_digest: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection_reason: Option<&'a str>,
+}
+
+/// The canonical body a [`CompiledContextFrameBuilt::frame_hash`] is taken over.
+///
+/// Every field here is stable across two runs of identical work. The volatile
+/// fields of the manifest event are absent by construction rather than by
+/// filtering, so adding one back is a visible edit to this struct:
+///
+/// - `provider` / `model` — the served model can differ per run and per
+///   fallback, and the same prompt is the same prompt whoever answers it;
+/// - `call_seq` — an allocation order within an execution, not a property of
+///   the prompt;
+/// - `effective_budget_tokens` / `calibration_factor` /
+///   `estimated_input_tokens` — accounting *about* the frame, and the first two
+///   move with a per-model calibration that learns across a session;
+/// - `resident_since_step` (per block) — see [`FrameBlock`].
+#[derive(Debug, Serialize)]
+struct FrameBody<'a> {
+    schema_version: &'a str,
+    turn_instance: u32,
+    step: usize,
+    /// Which role's prompt this is. Kept: a worker frame and a summarizer frame
+    /// at the same step are different frames, and `call_seq` — the field that
+    /// would otherwise distinguish them — is excluded as volatile.
+    role: ModelCallRole,
+    blocks: Vec<FrameBlock<'a>>,
+}
+
+/// The identity of the compiled frame a set of blocks constitutes: a
+/// content-addressed id and the byte-stable hash it derives from.
+///
+/// The hash reuses the canonical scheme ADR 0004 ratified —
+/// [`crate::context_record::hash::record_hash`]: strip nulls, RFC 8785 JCS,
+/// sha256, `sha256:` prefix. A second hashing scheme in one codebase is two
+/// answers to "are these the same bytes", so this calls the existing one rather
+/// than growing a parallel canonicalizer next to [`block_id`]'s streamed
+/// sha256 (which hashes raw prompt bytes, not JSON, and is a different job).
+///
+/// The id is `cf_` + the first 24 hex chars of the hash, mirroring `blk_…` and
+/// the context store's `nod_…`. Derived from the hash rather than allocated so
+/// two runs that produce the same frame also produce the same id — an id drawn
+/// from a counter would make the determinism gate untestable across processes.
+///
+/// Returns `None` only when the body will not canonicalize, which for this
+/// shape (owned scalars and strings) does not happen — but a receipt is
+/// telemetry, and no frame identity is worth failing a turn over.
+fn frame_identity(body: &FrameBody<'_>) -> Option<CompiledContextFrameBuilt> {
+    let frame_hash = crate::context_record::hash::record_hash(body).ok()?;
+    let hex = frame_hash.strip_prefix("sha256:")?;
+    Some(CompiledContextFrameBuilt {
+        compiled_frame_id: format!("cf_{}", &hex[..24]),
+        frame_hash,
+    })
+}
+
 /// Per-turn receipt state: which blocks have been registered (and at which
 /// step they first appeared, for residency), plus the effective compaction
 /// budget the driver computed for the step about to run. Lives on the stack in
@@ -430,6 +568,12 @@ pub struct ReceiptLedger {
     /// The revision the next receipt describes; see
     /// [`Self::set_transcript_revision`].
     revision: TranscriptRevision,
+    /// Whether `context.lifecycle.enabled` is on for this session. Off by
+    /// default and off for every caller that does not opt in, which is the
+    /// whole point: with it off the receipt is byte-for-byte what it was
+    /// before Phase 2, so the flag's default preserves behavior rather than
+    /// merely gating a feature.
+    lifecycle_enabled: bool,
 }
 
 impl ReceiptLedger {
@@ -451,7 +595,18 @@ impl ReceiptLedger {
             calibration_factor: 1.0,
             digests: BlockDigestCache::default(),
             revision: TranscriptRevision::default(),
+            lifecycle_enabled: false,
         }
+    }
+
+    /// Turn the adaptive-context lifecycle on for this ledger — the session's
+    /// `context.lifecycle.enabled` setting, threaded from the CLI through
+    /// [`crate::EngineConfig`]. While it is off, no manifest carries a compiled
+    /// frame and nothing else about the receipt changes.
+    #[must_use]
+    pub fn with_lifecycle(mut self, enabled: bool) -> Self {
+        self.lifecycle_enabled = enabled;
+        self
     }
 
     /// Record the effective compaction budget and calibration factor the
@@ -520,11 +675,11 @@ impl ReceiptLedger {
                             turn_instance: self.turn_instance,
                             step,
                             call_id: draft.call_id.clone(),
-                            memory_id: None,
+                            memory_id: draft.memory_id.clone(),
                         },
                         token_cost: draft.token_cost,
                         content_digest: draft.content_digest.clone(),
-                        citation_label: None,
+                        citation_label: draft.citation_label.clone(),
                         // The only place a gap block's bytes are copied, and
                         // only on the step it first appears.
                         content: draft.content.map(str::to_string),
@@ -544,6 +699,18 @@ impl ReceiptLedger {
                 call_id: draft.call_id.clone(),
             });
         }
+        // The compiled frame IS this manifest (ADR 0006 as amended), so its
+        // identity is computed from the same drafts the entries came from —
+        // never from a second walk that could disagree with them.
+        let compiled_frame = self.lifecycle_enabled.then(|| {
+            frame_identity(&FrameBody {
+                schema_version: FRAME_SCHEMA_VERSION,
+                turn_instance: self.turn_instance,
+                step,
+                role,
+                blocks: drafts.iter().map(BlockDraft::frame_block).collect(),
+            })
+        });
         let _ = events.send(AgentEvent::StepManifest {
             turn_instance: self.turn_instance,
             step,
@@ -555,6 +722,7 @@ impl ReceiptLedger {
             effective_budget_tokens: self.effective_budget_tokens,
             calibration_factor: self.calibration_factor,
             estimated_input_tokens,
+            compiled_frame: compiled_frame.flatten(),
         });
     }
 
@@ -768,6 +936,199 @@ mod tests {
             "every block has been resident since step 0"
         );
     }
+
+    // ── The compiled frame (#713 deliverable 4) ─────────────────────────────
+
+    /// The compiled frame on a manifest, or `None` when the lifecycle is off.
+    fn frame_of(events: &[AgentEvent]) -> Option<CompiledContextFrameBuilt> {
+        events.iter().find_map(|e| match e {
+            AgentEvent::StepManifest { compiled_frame, .. } => Some(compiled_frame.clone()),
+            _ => None,
+        })?
+    }
+
+    /// Emit one receipt and return the events, with the lifecycle switch and
+    /// the volatile inputs (step, served-by, budget) under the caller's control.
+    fn emit(
+        lifecycle: bool,
+        step: usize,
+        served: ServedBy<'_>,
+        budget: (u64, f64),
+        messages: &[CompletionMessage],
+    ) -> Vec<AgentEvent> {
+        let (tx, mut rx) = unbounded_channel();
+        let events = EventSender::new(tx);
+        let mut ledger = ReceiptLedger::new(0).with_lifecycle(lifecycle);
+        ledger.set_effective_budget(budget.0, budget.1);
+        ledger.emit_step_receipt_estimating(messages, step, served, &events);
+        drain(&mut rx)
+    }
+
+    #[test]
+    fn the_lifecycle_switch_is_off_by_default_and_gates_the_whole_frame() {
+        // The default constructor must produce a receipt byte-identical to the
+        // pre-Phase-2 one. If this ever fails, "default off" is not true and
+        // every existing consumer sees a field it was not promised.
+        let off = emit(false, 0, worker("anthropic", "opus"), (100, 1.0), &convo());
+        assert_eq!(frame_of(&off), None, "lifecycle off ⇒ no compiled frame");
+        // And the manifest is otherwise unchanged: same block count, same order.
+        let blocks = off
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::StepManifest { blocks, .. } => Some(blocks.len()),
+                _ => None,
+            })
+            .expect("a manifest was still emitted");
+        assert_eq!(blocks, 4);
+
+        let on = emit(true, 0, worker("anthropic", "opus"), (100, 1.0), &convo());
+        assert!(frame_of(&on).is_some(), "lifecycle on ⇒ a compiled frame");
+    }
+
+    #[test]
+    fn identical_inputs_produce_byte_identical_frames_and_hashes_across_runs() {
+        // The gate criterion, stated directly: two independent ledgers, no
+        // shared state, same messages.
+        let a = frame_of(&emit(true, 2, worker("p", "m"), (99, 1.25), &convo()));
+        let b = frame_of(&emit(true, 2, worker("p", "m"), (99, 1.25), &convo()));
+        assert_eq!(a, b);
+        let a = a.expect("a frame");
+        assert!(a.frame_hash.starts_with("sha256:"));
+        assert_eq!(a.frame_hash.len(), "sha256:".len() + 64);
+        assert_eq!(a.compiled_frame_id, format!("cf_{}", &a.frame_hash[7..31]));
+    }
+
+    #[test]
+    fn the_volatile_fields_are_excluded_from_the_frame_hash() {
+        // Same prompt, different everything the manifest records ABOUT the
+        // call: who served it, and what the budget arithmetic produced. A frame
+        // hash that moved here would make the determinism gate unmeetable —
+        // provider fallback and per-model calibration both change these
+        // mid-session, on inputs the user never touched.
+        let baseline = frame_of(&emit(true, 1, worker("p", "m"), (100, 1.0), &convo()));
+        let served_elsewhere = frame_of(&emit(
+            true,
+            1,
+            worker("other-provider", "other-model"),
+            (100, 1.0),
+            &convo(),
+        ));
+        let other_budget = frame_of(&emit(true, 1, worker("p", "m"), (777_777, 2.5), &convo()));
+        assert_eq!(baseline, served_elsewhere, "provider/model are volatile");
+        assert_eq!(baseline, other_budget, "budget/calibration are volatile");
+
+        // …and `call_seq` likewise: the summarizer's seat is an allocation
+        // order within an execution, not a property of the prompt it sent.
+        let (tx, mut rx) = unbounded_channel();
+        let events = EventSender::new(tx);
+        ReceiptLedger::with_call_seq(0, RECEIPT_SEQ_SUMMARIZER)
+            .with_lifecycle(true)
+            .emit_step_receipt_estimating(&convo(), 1, worker("p", "m"), &events);
+        assert_eq!(frame_of(&drain(&mut rx)), baseline, "call_seq is volatile");
+    }
+
+    #[test]
+    fn residency_does_not_move_the_frame_hash() {
+        // Two ledgers reach step 1 with the same messages by different routes:
+        // one has carried them since step 0 (resident_since_step 0), the other
+        // is seeing them for the first time (resident_since_step 1). The
+        // manifests differ; the frames must not. Residency is a fact about the
+        // session's history, not about what this prompt contained.
+        let (tx, mut rx) = unbounded_channel();
+        let events = EventSender::new(tx);
+        let mut carried = ReceiptLedger::new(0).with_lifecycle(true);
+        carried.emit_step_receipt_estimating(&convo(), 0, worker("p", "m"), &events);
+        let _ = drain(&mut rx);
+        carried.emit_step_receipt_estimating(&convo(), 1, worker("p", "m"), &events);
+        let carried_events = drain(&mut rx);
+
+        let fresh = emit(true, 1, worker("p", "m"), (0, 1.0), &convo());
+
+        // The manifests genuinely disagree — otherwise this test proves nothing.
+        let residency = |evts: &[AgentEvent]| {
+            evts.iter().find_map(|e| match e {
+                AgentEvent::StepManifest { blocks, .. } => Some(
+                    blocks
+                        .iter()
+                        .map(|b| b.resident_since_step)
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+        };
+        assert_ne!(residency(&carried_events), residency(&fresh));
+        assert_eq!(frame_of(&carried_events), frame_of(&fresh));
+    }
+
+    #[test]
+    fn a_changed_prompt_changes_the_frame_hash() {
+        // The other half of determinism: the hash must actually be a function
+        // of the prompt. A hash that never moves is trivially deterministic.
+        let baseline = frame_of(&emit(true, 0, worker("p", "m"), (0, 1.0), &convo()));
+        let mut edited = convo();
+        edited[1].content = "fix the OTHER failing test".into();
+        assert_ne!(
+            baseline,
+            frame_of(&emit(true, 0, worker("p", "m"), (0, 1.0), &edited))
+        );
+        // As must the step: the same messages at a different step are a
+        // different frame, because a frame identifies one model call.
+        assert_ne!(
+            baseline,
+            frame_of(&emit(true, 1, worker("p", "m"), (0, 1.0), &convo()))
+        );
+    }
+
+    /// The RFC 8785 canonical bytes of a value — the same canonicalizer
+    /// `context_record::hash` builds `record_hash` preimages with.
+    fn jcs<T: serde::Serialize>(value: &T) -> String {
+        serde_json_canonicalizer::to_string(value).expect("canonicalizes")
+    }
+
+    #[test]
+    fn golden_frame_preimage_and_hash_are_pinned() {
+        // The golden vector, in the shape `context_event.rs` set: the exact
+        // canonical bytes first (hand-verifiable — keys sorted, absent options
+        // gone, whitespace minimal), then the digest they hash to.
+        //
+        // These two lines are the wire contract for every stored frame hash.
+        // Renaming a field, retyping one, adding one, or changing which fields
+        // participate breaks exactly one of them — which is the point: a frame
+        // hash that silently changes scheme makes every previously stored hash
+        // unverifiable, and nothing else in the tree would notice.
+        let messages = convo();
+        let mut cache = BlockDigestCache::default();
+        let drafts = decompose(&messages, &mut cache);
+        let body = FrameBody {
+            schema_version: FRAME_SCHEMA_VERSION,
+            turn_instance: 0,
+            step: 0,
+            role: ModelCallRole::Worker,
+            blocks: drafts.iter().map(BlockDraft::frame_block).collect(),
+        };
+        assert_eq!(jcs(&body), GOLDEN_FRAME_PREIMAGE);
+        let identity = frame_identity(&body).expect("the body canonicalizes");
+        assert_eq!(identity.frame_hash, GOLDEN_FRAME_HASH);
+        assert_eq!(identity.compiled_frame_id, GOLDEN_FRAME_ID);
+
+        // And the ledger reaches the same identity through the live path, so
+        // the golden pins the emitted frame rather than a parallel computation.
+        assert_eq!(
+            frame_of(&emit(
+                true,
+                0,
+                worker("anthropic", "opus"),
+                (136_363, 1.1),
+                &convo()
+            )),
+            Some(identity)
+        );
+    }
+
+    const GOLDEN_FRAME_PREIMAGE: &str = r#"{"blocks":[{"block_id":"blk_1a2e1ee86e8551d1b069e12d","cache_zone":"stable_prefix","content_digest":"sha256:aadec3e1342a8b1cd71bc46a3796b4b2fc4ab35cb9822527f31f65d1f610ee90","kind":"system_prefix","message_index":0,"token_cost":8},{"block_id":"blk_901ab18c12179eb804a69d40","cache_zone":"cacheable","content_digest":"sha256:75804d696e4c6efcadc89848672f6a9304612fcf6180cedd429e25ac1cfa1bd1","kind":"user_goal","message_index":1,"token_cost":6},{"block_id":"blk_c49dacefa9f909aca42b2880","cache_zone":"cacheable","call_id":"c1","content_digest":"sha256:6c0ec0938d9f77b7ac74006a2ee21268972407d0c98395fc5b9cc6a0fb1a2602","kind":"tool_call","message_index":2,"token_cost":17},{"block_id":"blk_e7032f26bd4843608dfe31d9","cache_zone":"volatile","call_id":"c1","content_digest":"sha256:bfd1986b0e5cdf2925326cf75fa8d40320722e0a3971274a7844b2147ac927e7","kind":"tool_result","message_index":3,"token_cost":9}],"role":"worker","schema_version":"1.0-draft","step":0,"turn_instance":0}"#;
+    const GOLDEN_FRAME_HASH: &str =
+        "sha256:d022c54960f40c84ad82fae068a87e8b857e917605f0d3b549c6af7047e42ff9";
+    const GOLDEN_FRAME_ID: &str = "cf_d022c54960f40c84ad82fae0";
 
     #[test]
     fn identical_tool_output_resolves_to_the_same_block_id() {

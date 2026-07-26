@@ -357,6 +357,7 @@ pub(crate) fn persist_event(
         effective_budget_tokens,
         calibration_factor,
         estimated_input_tokens,
+        compiled_frame,
     } = event
     {
         let _ = store.record_step_manifest(
@@ -371,6 +372,10 @@ pub(crate) fn persist_event(
                 effective_budget_tokens: *effective_budget_tokens,
                 calibration_factor: *calibration_factor,
                 estimated_input_tokens: *estimated_input_tokens,
+                // Phase 2 (#713): the two travel together or not at all — a
+                // half-written frame identity would be a hash no id resolves.
+                compiled_frame_id: compiled_frame.as_ref().map(|f| f.compiled_frame_id.clone()),
+                frame_hash: compiled_frame.as_ref().map(|f| f.frame_hash.clone()),
                 blocks: blocks
                     .iter()
                     .map(|b| ManifestBlockRow {
@@ -614,6 +619,7 @@ mod stream_tests {
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,
             estimated_input_tokens: 40,
+            compiled_frame: None,
         };
         assert!(persist_event(&store, id, 1, &manifest, "anthropic"));
 

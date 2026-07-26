@@ -980,8 +980,10 @@ fn skill_usage_records_per_execution_version_rows() {
     // tombstones over any context surface — and v15 adds
     // `step_manifest.call_id`, the per-occurrence tool-call attribution that
     // content-addressed block ids cannot carry (byte-identical blocks share an
-    // id, so only the first minting call was ever recorded).
-    assert_eq!(SCHEMA_VERSION, 15);
+    // id, so only the first minting call was ever recorded). v16 adds the
+    // compiled frame's identity to the receipt header — two nullable columns,
+    // not a table, because the frame IS the manifest (ADR 0006 as amended).
+    assert_eq!(SCHEMA_VERSION, 16);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

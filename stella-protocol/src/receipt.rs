@@ -50,7 +50,7 @@ pub enum BlockKind {
     ///
     /// Tolerant on the way in, **lossy on the way out**: the original token is
     /// not preserved, so re-serializing an event that arrived with a future
-    /// kind writes `"other"`. Unlike [`AgentEvent::Unknown`], which keeps the
+    /// kind writes `"other"`. Unlike [`crate::event::AgentEvent::Unknown`], which keeps the
     /// whole original object, a proxy or `replay::to_jsonl` that round-trips a
     /// newer emitter's `block_registered` rewrites the kind. Widen this enum
     /// before relaying a stream whose kinds matter downstream.
@@ -228,7 +228,7 @@ pub struct ContextProviderUsage {
 /// Deliberately **content-free**: budget scalars, an accounting timestamp, and
 /// per-provider counts and costs. The spec's `served_frames` drill-down is
 /// *not* duplicated here — the sibling `frames: Vec<ContextFrameRef>` on the
-/// same [`AgentEvent::ContextRecall`] already records the frame-granular
+/// same [`crate::event::AgentEvent::ContextRecall`] already records the frame-granular
 /// identities locally, so an auditor still walks from a total to its frames
 /// without this type ever carrying one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -442,6 +442,8 @@ mod tests {
                     effective_budget_tokens: 100,
                     calibration_factor: 1.0,
                     estimated_input_tokens: 40,
+                    compiled_frame_id: None,
+                    frame_hash: None,
                     blocks: vec![
                         entry("blk_sys", 0),
                         entry("blk_user", 1),
@@ -493,6 +495,8 @@ mod tests {
                     effective_budget_tokens: 1,
                     calibration_factor: 1.0,
                     estimated_input_tokens: 1,
+                    compiled_frame_id: None,
+                    frame_hash: None,
                     blocks: vec![entry("blk_orphan", 0)],
                 },
             )

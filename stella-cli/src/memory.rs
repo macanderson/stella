@@ -68,6 +68,9 @@ pub(crate) use skill_files::load_workspace_skills;
 pub(crate) use skill_files::{
     load_workspace_skills_with_authority, skill_paths_on_disk, workspace_skills_dir,
 };
+// Phase 2 (#713): the engine-config builder reads the lifecycle switch through
+// here, so exactly one place in the crate resolves a `context.*` sub-block.
+pub use tuning::session_lifecycle_enabled;
 
 /// Marker prefixing a recalled-context message so [`inject_recall_block`]
 /// can find the newest one for dedup. Blocks land at the conversation

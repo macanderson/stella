@@ -63,7 +63,7 @@ pub use completion::{
     CompletionMessage, CompletionRequest, CompletionResult, CompletionUsage, FinishReason,
     GenerationParams, MessageRole, ReasoningEffort, ServiceTier, Verbosity,
 };
-pub use context_event::{LifecycleEvent, LifecycleEventEnvelope};
+pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEventEnvelope};
 pub use error::ProviderError;
 pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,

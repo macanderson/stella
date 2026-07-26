@@ -85,6 +85,9 @@ impl<'a> Pipeline<'a> {
                     turn_instance: 0,
                     step: 0,
                     call_seq: self.raw_call_seq.fetch_add(1, Ordering::Relaxed),
+                    // Phase 2 (#713): a management role rides the session's
+                    // engine config, so it inherits the same lifecycle switch.
+                    lifecycle_enabled: engine.lifecycle_enabled,
                 }),
             },
             budget,

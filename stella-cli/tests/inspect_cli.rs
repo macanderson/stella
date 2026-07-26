@@ -76,6 +76,8 @@ fn seeded_workspace() -> (tempfile::TempDir, i64) {
                 effective_budget_tokens: 136_363,
                 calibration_factor: 1.1,
                 estimated_input_tokens: 20,
+                compiled_frame_id: None,
+                frame_hash: None,
                 blocks: vec![entry("blk_sys", 0), entry("blk_goal", 1)],
             },
         )
@@ -93,6 +95,8 @@ fn seeded_workspace() -> (tempfile::TempDir, i64) {
                 effective_budget_tokens: 136_363,
                 calibration_factor: 1.1,
                 estimated_input_tokens: 10,
+                compiled_frame_id: None,
+                frame_hash: None,
                 blocks: vec![entry("blk_sum", 0)],
             },
         )

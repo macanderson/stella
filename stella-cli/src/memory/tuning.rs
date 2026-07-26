@@ -21,3 +21,17 @@ pub(super) fn session_retrieval_settings(workspace_root: &std::path::Path) -> Re
         .map(|c| c.retrieval)
         .unwrap_or_default()
 }
+
+/// Phase 2 (#713): whether `context.lifecycle.enabled` is on for this session.
+///
+/// Same failure posture as [`session_retrieval_settings`] and for a stronger
+/// reason: an unreadable settings file degrades to `false`, which is the
+/// setting's own default and the state that preserves every pre-adaptive
+/// behavior. Failing *open* here would turn a typo elsewhere in the file into
+/// silently enabling a lifecycle the user never asked for.
+pub fn session_lifecycle_enabled(workspace_root: &std::path::Path) -> bool {
+    crate::settings::Settings::load(workspace_root)
+        .ok()
+        .and_then(|s| s.context)
+        .is_some_and(|c| c.lifecycle.enabled)
+}

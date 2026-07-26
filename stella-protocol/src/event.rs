@@ -78,6 +78,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::context_event::CompiledContextFrameBuilt;
 use crate::tool::{ToolCall, ToolOutput};
 
 // The context-receipts vocabulary lives in `crate::receipt` and is re-exported
@@ -661,6 +662,20 @@ pub enum AgentEvent {
         calibration_factor: f64,
         /// Sum of block token costs, pre-call (the engine's raw estimate).
         estimated_input_tokens: u64,
+        /// This manifest's identity as a **compiled context frame** — ADR 0006
+        /// as amended: the compiled frame is this manifest extended, not a
+        /// parallel aggregate, so its id and hash are fields here rather than a
+        /// second record of the same call.
+        ///
+        /// `Some` only when `context.lifecycle.enabled` is on; `None`
+        /// otherwise and on every manifest recorded before the frame existed.
+        /// The hash covers what entered the prompt and deliberately excludes
+        /// the accounting around it — `provider`, `model`, `call_seq`, the two
+        /// budget numbers, and each entry's `resident_since_step` — so two runs
+        /// of identical work agree even when served by different models. See
+        /// `stella_core::receipts::compiled_frame` for the exact preimage.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compiled_frame: Option<CompiledContextFrameBuilt>,
     },
     /// A verification verdict — from the deterministic ladder (flip oracle,
     /// touched-tests-green) or the model judge (L-E11: deterministic-first;
@@ -1994,6 +2009,7 @@ mod tests {
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,
             estimated_input_tokens: 1290,
+            compiled_frame: None,
         };
         let value = serde_json::to_value(&event).unwrap();
         assert_eq!(value["type"], "step_manifest");
@@ -2001,11 +2017,71 @@ mod tests {
         assert_eq!(value["blocks"][0]["block_id"], "blk_sys");
         assert_eq!(value["blocks"][1]["block_id"], "blk_tail");
         assert_eq!(value["effective_budget_tokens"], 136_363);
+        // A lifecycle-off manifest keeps the frame off the wire entirely
+        // rather than serializing a null: this is the widest event in the
+        // stream, it is emitted once per step, and the default state of the
+        // switch that produces the frame is off.
+        assert!(value.get("compiled_frame").is_none(), "{value}");
         let back: AgentEvent = serde_json::from_str(&value.to_string()).unwrap();
         match back {
             AgentEvent::StepManifest { blocks, .. } => {
                 assert_eq!(blocks.len(), 2);
                 assert_eq!(blocks[0].cache_zone, CacheZone::StablePrefix);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_manifest_from_a_pre_frame_stream_still_parses() {
+        // Phase 2 (#713) added `compiled_frame`. Every `serde(default)` in this
+        // crate owes a hand-written pre-field literal that proves the default;
+        // this is that literal for the frame. A stored manifest recorded by any
+        // build before the compiled frame existed must still decode, because
+        // the journal is read back by newer binaries than wrote it.
+        let legacy = r#"{"type":"step_manifest","turn_instance":0,"step":0,"role":"worker",
+            "provider":"anthropic","model":"opus","blocks":[],
+            "effective_budget_tokens":1,"calibration_factor":1.0,
+            "estimated_input_tokens":1}"#;
+        let event: AgentEvent = serde_json::from_str(legacy).unwrap();
+        match event {
+            AgentEvent::StepManifest {
+                compiled_frame,
+                call_seq,
+                ..
+            } => {
+                assert_eq!(compiled_frame, None, "absent frame ⇒ the lifecycle was off");
+                assert_eq!(call_seq, 0);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_manifest_carrying_a_compiled_frame_round_trips() {
+        let event = AgentEvent::StepManifest {
+            turn_instance: 0,
+            step: 0,
+            call_seq: 0,
+            role: ModelCallRole::Worker,
+            provider: "anthropic".into(),
+            model: "opus".into(),
+            blocks: vec![],
+            effective_budget_tokens: 1,
+            calibration_factor: 1.0,
+            estimated_input_tokens: 1,
+            compiled_frame: Some(crate::CompiledContextFrameBuilt {
+                compiled_frame_id: "cf_abc".into(),
+                frame_hash: "sha256:abc".into(),
+            }),
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["compiled_frame"]["compiled_frame_id"], "cf_abc");
+        assert_eq!(value["compiled_frame"]["frame_hash"], "sha256:abc");
+        let back: AgentEvent = serde_json::from_str(&value.to_string()).unwrap();
+        match back {
+            AgentEvent::StepManifest { compiled_frame, .. } => {
+                assert_eq!(compiled_frame.unwrap().compiled_frame_id, "cf_abc");
             }
             other => panic!("unexpected variant: {other:?}"),
         }
