@@ -47,10 +47,12 @@
 //!
 //!    The rule is applied **only** to attributes that can actually reference
 //!    a resource — `href`, `xlink:href`, `src`, `fill`, `stroke`, `filter`,
-//!    `mask`, `clip-path`, `marker-*`, `style` — and the scheme test is
-//!    anchored at the start of the trimmed value. Both halves are required to
-//!    avoid a false positive: a legitimate value that merely *contains* a
-//!    colon (`font-family="Foo: Bar"`) is neither a resource reference nor
+//!    `mask`, `clip-path`, `cursor`, `marker`, `color-profile`, `style`, and
+//!    the `marker-*` / `mask-*` / `*-image` / `*-source` families (see
+//!    `is_resource_reference_attribute`) — and the scheme test is anchored at
+//!    the start of the trimmed value. Both halves are required to avoid a
+//!    false positive: a legitimate value that merely *contains* a colon
+//!    (`font-family="Foo: Bar"`) is neither a resource reference nor
 //!    scheme-prefixed, and must survive sanitization untouched.
 //! 7. **Drop the `style` attribute** — the `<style>` *element* is dropped by
 //!    rule 2, but the attribute carries the same CSS and so the same
@@ -76,6 +78,13 @@
 //! sanitizer aware of it. Presentation CSS is lost rather than filtered
 //! (rule 7): an artifact that relied on `style="fill:red"` renders unstyled
 //! instead of insecurely.
+//!
+//! Rule 6 allows a *relative* reference (`fill="url(sprite.svg#g)"`), which
+//! `xml:base="https://host/"` could re-base off-host. `xml:base` is removed
+//! in SVG 2 and browsers dropped it years ago for this class of reason, so
+//! nothing here acts on it today; closing it means either dropping `xml:base`
+//! outright or refusing relative references, and that is a separate ruling
+//! about how much a same-directory reference is worth (tracked on #615).
 
 use async_trait::async_trait;
 use roxmltree::{Document, Node};
@@ -367,6 +376,25 @@ fn keep_attribute(name_low: &str, value: &str) -> bool {
 /// merely contains a colon (`font-family="Foo: Bar"`, a `transform`, a path
 /// `d`) from being mistaken for a URL scheme. `style` is listed for
 /// completeness even though rule 7 drops it before rule 6 is reached.
+///
+/// Every entry has a keyword-or-URL value grammar, never free text, so
+/// widening this list carries no false-positive risk — which is why the
+/// shape rules at the end are preferred over enumerating a moving target:
+///
+/// * `marker-` — `marker-start` / `marker-mid` / `marker-end` (`<funciri>`).
+/// * `mask-` — CSS Masking's `mask-image`, `mask-border-source`; the
+///   non-referencing siblings (`mask-type`, `mask-mode`, `mask-repeat`) hold
+///   keywords and are unaffected by being scanned.
+/// * `-image` / `-source` — the CSS `<image>`-valued properties SVG 2 exposes
+///   as presentation attributes (`background-image`, `border-image-source`,
+///   `list-style-image`).
+///
+/// `cursor` is the one that got away in the first cut of this rule:
+/// `cursor="url(evil.svg), auto"` is valid SVG 1.1 and is fetched, exactly
+/// like `fill="url(…)"`. `marker` and `color-profile` are here defensively —
+/// SVG 1.1 makes `marker` a property but *not* a presentation attribute, and
+/// `color-profile` is gone in SVG 2, so a conformant renderer ignores both as
+/// XML attributes; a lenient one does not, and neither costs anything.
 fn is_resource_reference_attribute(name_low: &str) -> bool {
     matches!(
         name_low,
@@ -378,8 +406,14 @@ fn is_resource_reference_attribute(name_low: &str) -> bool {
             | "filter"
             | "mask"
             | "clip-path"
+            | "cursor"
+            | "marker"
+            | "color-profile"
             | "style"
     ) || name_low.starts_with("marker-")
+        || name_low.starts_with("mask-")
+        || name_low.ends_with("-image")
+        || name_low.ends_with("-source")
 }
 
 /// Whether a resource-referencing value names an external target: the value
@@ -732,6 +766,14 @@ mod tests {
                 r##"<rect clip-path="url(data:text/html,x)" stroke="#000"/>"##,
                 "clip-path",
             ),
+            (
+                r##"<rect cursor="url(data:image/svg+xml;base64,AAAA), auto" stroke="#000"/>"##,
+                "cursor",
+            ),
+            (
+                r##"<rect mask-image="url(data:image/svg+xml,x)" stroke="#000"/>"##,
+                "mask-image",
+            ),
         ];
         for (fragment, attribute) in hostile {
             let out = process(&format!(
@@ -744,6 +786,103 @@ mod tests {
                 out.removed
             );
             assert!(out.svg.contains("stroke=\"#000\""), "{}", out.svg);
+        }
+    }
+
+    #[test]
+    fn cursor_url_references_are_stripped_but_keyword_cursors_survive() {
+        // `cursor="url(…), auto"` is valid SVG 1.1 and IS fetched, so it is
+        // the same off-host class as `fill="url(…)"` — it was missed in the
+        // first cut of rule 6.
+        for (fragment, marker) in [
+            (
+                r##"<rect cursor="url(data:image/svg+xml;base64,AAAA), auto" fill="#111"/>"##,
+                "data:",
+            ),
+            (
+                r##"<rect cursor="url(https://evil.example/c.svg), auto" fill="#111"/>"##,
+                "evil.example",
+            ),
+        ] {
+            let out = process(&format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg">{fragment}</svg>"#
+            ));
+            assert!(!out.svg.contains(marker), "{}", out.svg);
+            assert!(!out.svg.contains("cursor"), "{}", out.svg);
+            assert!(
+                out.removed.iter().any(|r| r.contains("cursor")),
+                "the dropped cursor must be reported: {:?}",
+                out.removed
+            );
+            assert!(out.svg.contains("fill=\"#111\""), "{}", out.svg);
+        }
+
+        // A keyword cursor carries no scheme, so it must survive untouched —
+        // the common case, and the one a false-positive-prone rule breaks.
+        let out = process(
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><rect cursor="pointer" fill="#111"/><rect cursor="url(#hand), auto"/><rect mask-type="alpha"/></svg>"##,
+        );
+        assert!(
+            out.removed.is_empty(),
+            "legitimate cursors must survive: {:?}",
+            out.removed
+        );
+        assert!(out.svg.contains(r#"cursor="pointer""#), "{}", out.svg);
+        assert!(out.svg.contains("url(#hand)"), "{}", out.svg);
+        assert!(out.svg.contains(r#"mask-type="alpha""#), "{}", out.svg);
+    }
+
+    #[test]
+    fn resource_reference_attribute_list_is_pinned() {
+        // Rule 6's whole false-positive guard is this list, so what is in it
+        // and what is deliberately out are both part of the contract.
+        for referencing in [
+            "href",
+            "xlink:href",
+            "src",
+            "fill",
+            "stroke",
+            "filter",
+            "mask",
+            "clip-path",
+            "cursor",
+            "marker",
+            "marker-start",
+            "marker-mid",
+            "marker-end",
+            "mask-image",
+            "mask-border-source",
+            "color-profile",
+            "background-image",
+            "border-image-source",
+            "list-style-image",
+            "style",
+        ] {
+            assert!(
+                is_resource_reference_attribute(referencing),
+                "{referencing} can be dereferenced and must be scanned by rule 6"
+            );
+        }
+        // Deliberately out: none of these is fetched, and every one of them
+        // can legitimately hold a colon or a `//`.
+        for inert in [
+            "d",
+            "transform",
+            "font-family",
+            "points",
+            "viewbox",
+            "stop-color",
+            "id",
+            "class",
+            "systemlanguage",
+            "requiredextensions",
+            "xlink:role",
+            "xlink:arcrole",
+        ] {
+            assert!(
+                !is_resource_reference_attribute(inert),
+                "{inert} is not dereferenced; scanning it only risks false positives"
+            );
         }
     }
 
