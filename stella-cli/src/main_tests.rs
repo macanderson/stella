@@ -364,9 +364,21 @@ fn pre_flight_failures_emit_a_machine_readable_error_envelope() {
         serde_json::json!(crate::SUMMARY_SCHEMA_VERSION)
     );
 
+    // Leads with the version, in both encodings — a build convention (every
+    // envelope is a struct with `schema_version` declared first), not a promise
+    // to consumers, who read by key. See `every_summary_envelope_leads_with_its_version`.
+    assert!(
+        pretty.starts_with("{\n  \"schema_version\":"),
+        "pre-flight envelope must lead with its version, got: {pretty}"
+    );
+
     // stream-json is line-delimited: the envelope must be exactly one line.
     let line =
         error_summary_json(OutputFormat::StreamJson, msg).expect("stream-json must emit one");
+    assert!(
+        line.starts_with(r#"{"schema_version":"#),
+        "compact envelope must lead with its version, got: {line}"
+    );
     assert!(
         !line.contains('\n'),
         "stream-json envelope must be one line"

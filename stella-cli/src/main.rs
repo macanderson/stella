@@ -117,10 +117,14 @@ pub(crate) fn note_json_summary_emitted() {
 /// step-loop summary, and the pre-flight error envelope — so a consumer can
 /// branch on the shape it was handed instead of sniffing for keys. A version
 /// stamped on only some summaries would be worse than none: a script could not
-/// rely on reading it. Consumers read it by key: key order is outside the
-/// contract, and in fact varies by construction site — the derived `Serialize`
-/// on `PipelineRunSummary` emits declaration order, while the `json!`-built
-/// envelopes here and in the raw step loop emit their keys sorted.
+/// rely on reading it.
+///
+/// All three envelopes are built from structs with the version declared first,
+/// so a derived `Serialize` puts it at the head of the object. That is a
+/// courtesy to whoever reads the output by eye, not a promise: key order stays
+/// outside the contract and consumers must read by key. Building any of them
+/// with `serde_json::json!` would quietly undo it — a `json!` object is a
+/// sorted map, which buries `schema_version` mid-envelope.
 ///
 /// # Why version at all
 ///
@@ -165,19 +169,38 @@ pub(crate) const SUMMARY_SCHEMA_VERSION: u32 = 1;
 /// means the single most likely headless failure is no longer answered with
 /// empty stdout. `stream-json` gets it compact, so the line-delimited contract
 /// holds.
+///
+/// Built from a struct rather than `serde_json::json!` for the key order: a
+/// `json!` object is a sorted map, which would bury `schema_version` in the
+/// middle of the envelope, while a derived `Serialize` emits fields in
+/// declaration order. Order is not part of the contract — consumers read by key
+/// — but a version a human can see at a glance is worth the struct.
+#[derive(serde::Serialize)]
+struct PreflightErrorSummary<'a> {
+    schema_version: u32,
+    status: &'static str,
+    text: Option<&'a str>,
+    reason: &'a str,
+}
+
 pub(crate) fn error_summary_json(format: OutputFormat, msg: &str) -> Option<String> {
-    let value = serde_json::json!({
-        "schema_version": SUMMARY_SCHEMA_VERSION,
-        "status": "error",
-        "text": null,
-        "reason": msg,
-    });
+    let value = PreflightErrorSummary {
+        schema_version: SUMMARY_SCHEMA_VERSION,
+        status: "error",
+        text: None,
+        reason: msg,
+    };
+    // A struct of two integers and two strings cannot fail to serialize; the
+    // fallback keeps the contract rather than proving the point.
+    let fallback = || format!(r#"{{"schema_version":{SUMMARY_SCHEMA_VERSION},"status":"error"}}"#);
     match format {
         OutputFormat::Text => None,
         OutputFormat::Json => {
-            Some(serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string()))
+            Some(serde_json::to_string_pretty(&value).unwrap_or_else(|_| fallback()))
         }
-        OutputFormat::StreamJson => Some(value.to_string()),
+        OutputFormat::StreamJson => {
+            Some(serde_json::to_string(&value).unwrap_or_else(|_| fallback()))
+        }
     }
 }
 
