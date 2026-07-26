@@ -235,9 +235,14 @@ pub(crate) struct GitCandidateWorkspaces {
     /// the TOPLEVEL, and the candidate's ports re-descend into the matching
     /// subdirectory).
     root: PathBuf,
-    /// Registry switches for the per-candidate tool registry (same secure
-    /// posture as the session's: `bash` only when settings opt in).
+    /// Construction inputs for the per-candidate tool registry — host
+    /// attestations and media prerequisites, same as the session's.
     options: RegistryOptions,
+    /// The operator's tool switches, applied over each candidate's own tool
+    /// stack. A candidate registry is built from the same `RegistryOptions`
+    /// as the session's, so without this best-of-N would be a way around a
+    /// `"tools": {"bash": "off"}`.
+    policy: stella_tools::policy::ToolPolicy,
     /// The session's custom script tools, re-rooted at each candidate's
     /// snapshot (their subprocesses spawn with the snapshot as cwd, so they
     /// stay isolated). Cloned per candidate; the manifests are identical to
@@ -264,12 +269,14 @@ impl GitCandidateWorkspaces {
     pub(crate) fn new(
         root: PathBuf,
         options: RegistryOptions,
+        policy: stella_tools::policy::ToolPolicy,
         custom_tools: Vec<CustomTool>,
         active_rules: crate::rules::ResolvedRules,
     ) -> Self {
         Self {
             root,
             options,
+            policy,
             custom_tools,
             active_rules,
             candidate_mcp: None,
@@ -372,10 +379,14 @@ impl GitCandidateWorkspaces {
                 // when the session shared one (issue #248 Phase 1) — the
                 // native surface above stays the fallthrough for every
                 // non-`mcp__` name either way.
-                let tools: Box<dyn stella_core::ToolExecutor> = match &self.candidate_mcp {
-                    Some(mcp) => Box::new(mcp.for_candidates(Arc::new(native))),
-                    None => Box::new(native),
+                let tools: Arc<dyn stella_core::ToolExecutor> = match &self.candidate_mcp {
+                    Some(mcp) => Arc::new(mcp.for_candidates(Arc::new(native))),
+                    None => Arc::new(native),
                 };
+                // Outermost, over registry + customs + candidate MCP alike.
+                let tools: Box<dyn stella_core::ToolExecutor> = Box::new(
+                    crate::agent::PolicyToolSet::new_owned(tools, self.policy.clone()),
+                );
                 Ok(GitCandidateWorkspace {
                     toplevel,
                     dir: dir.clone(),
@@ -855,6 +866,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             PathBuf::from("unused"),
             options,
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -958,6 +970,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -1026,6 +1039,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -1082,6 +1096,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -1123,6 +1138,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -1172,6 +1188,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             custom_tools,
             crate::rules::ResolvedRules::default(),
         );
@@ -1263,6 +1280,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         )
@@ -1306,6 +1324,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             active_rules,
         );
@@ -1358,6 +1377,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             active_rules,
         );
@@ -1394,6 +1414,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -1451,6 +1472,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -1490,6 +1512,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );
@@ -1542,6 +1565,7 @@ mod tests {
         let port = GitCandidateWorkspaces::new(
             root.clone(),
             RegistryOptions::default(),
+            Default::default(),
             Vec::new(),
             crate::rules::ResolvedRules::default(),
         );

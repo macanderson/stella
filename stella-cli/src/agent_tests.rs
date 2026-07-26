@@ -731,9 +731,8 @@ fn cfg_for(provider_id: &str) -> Config {
         base_url_override: None,
         hooks: None,
         engine_settings: None,
-        tools_bash: false,
+        tool_policy: Default::default(),
         enable_recap: false,
-        tools_web: false,
         authority: crate::settings::AuthorityPolicy::default(),
         credential_advisories: Vec::new(),
     }
@@ -1711,5 +1710,163 @@ fn every_summary_envelope_leads_with_its_version() {
             encoded.starts_with(r#"{"schema_version":"#),
             "the {label} summary must lead with its version, got: {encoded}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-tool policy: the session stack, end to end
+// ---------------------------------------------------------------------------
+
+/// Assemble a session tool stack the way every driver does — real registry,
+/// customs, interactive, the policy filter, discovery on top — and return the
+/// advertised names plus a closure-free handle for calling into it.
+///
+/// Deliberately not a mock: the point of these witnesses is *where* the
+/// decorator sits in the real chain, which a fake inner executor cannot show.
+async fn stack_names_and_execute(
+    root: &std::path::Path,
+    policy: stella_tools::policy::ToolPolicy,
+    custom_tools: Vec<stella_tools::custom::CustomTool>,
+    call: &str,
+) -> (Vec<String>, ToolOutput) {
+    let registry =
+        ToolRegistry::with_backends_and_options(root.to_path_buf(), None, None, Default::default());
+    let customs = CustomToolSet::new(&registry, custom_tools, root.to_path_buf());
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let interactive = InteractiveToolSet::new(&customs, event_tx, default_ask_io(false));
+    let permitted = PolicyToolSet::new(&interactive, policy);
+    let tools = crate::discovery::DiscoveryToolSet::new(&permitted, root.to_path_buf());
+    let names = tools
+        .schemas()
+        .into_iter()
+        .map(|schema| schema.name)
+        .collect();
+    let output = tools
+        .execute(call, &serde_json::json!({"command": "echo hi"}))
+        .await;
+    (names, output)
+}
+
+/// **Witness for the default flip, at the session boundary.** With the
+/// shipped policy (no settings at all), the assembled stack advertises `bash`
+/// and runs it. On the old code the registry was constructed with
+/// `RegistryOptions::bash = false` unless a settings key said otherwise, so
+/// the schema was absent and the call was an unknown tool.
+#[tokio::test]
+async fn the_session_stack_ships_with_bash_available() {
+    let root = tempfile::tempdir().unwrap();
+    let (names, output) = stack_names_and_execute(
+        root.path(),
+        stella_tools::policy::ToolPolicy::allow_all(),
+        vec![],
+        "bash",
+    )
+    .await;
+
+    assert!(
+        names.iter().any(|name| name == "bash"),
+        "bash must be advertised with no settings at all: {names:?}"
+    );
+    match output {
+        ToolOutput::Ok { content } => assert!(content.contains("hi"), "{content}"),
+        ToolOutput::Error { message } => panic!("default bash must run: {message}"),
+    }
+}
+
+/// **Witness: `{"bash": "off"}` hides AND refuses.** Hiding alone is a
+/// prompt-budget measure; a capability gate has to hold when the model calls
+/// the name anyway, from a stale prompt or a replayed trajectory.
+#[tokio::test]
+async fn a_settings_entry_hides_and_refuses_bash_in_the_real_stack() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = serde_json::from_str::<crate::settings::Settings>(r#"{"tools": {"bash": "off"}}"#)
+        .unwrap()
+        .tool_policy();
+    let (names, output) = stack_names_and_execute(root.path(), policy, vec![], "bash").await;
+
+    assert!(
+        !names.iter().any(|name| name == "bash"),
+        "a switched-off tool must not be advertised: {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "read_file"),
+        "and nothing else is withheld"
+    );
+    match output {
+        ToolOutput::Error { message } => assert!(
+            message.contains("unknown tool"),
+            "a disabled tool must not announce itself: {message}"
+        ),
+        other => panic!("a disabled tool must be refused, got {other:?}"),
+    }
+}
+
+/// **Witness: a group key disables the whole family in the real stack.**
+#[tokio::test]
+async fn a_group_entry_disables_every_process_tool_in_the_real_stack() {
+    let root = tempfile::tempdir().unwrap();
+    let policy =
+        serde_json::from_str::<crate::settings::Settings>(r#"{"tools": {"process": "off"}}"#)
+            .unwrap()
+            .tool_policy();
+    let (names, output) =
+        stack_names_and_execute(root.path(), policy, vec![], "start_process").await;
+
+    for withheld in stella_tools::catalog::names_in_group("process") {
+        assert!(
+            !names.iter().any(|name| name == withheld),
+            "`{withheld}` must be withheld by the group switch: {names:?}"
+        );
+    }
+    assert!(
+        names.iter().any(|name| name == "bash"),
+        "bash is its own group"
+    );
+    assert!(matches!(output, ToolOutput::Error { .. }));
+}
+
+/// **Witness: the decorator sits ABOVE the custom-tool layer.** A customer's
+/// registered tool is not in any compile-time table and never passed through
+/// `RegistryOptions`, so the old per-capability booleans could not reach it at
+/// all. `tool_search` must not advertise it either — which is why the policy
+/// filter goes *below* the discovery layer, not on top of it.
+#[tokio::test]
+async fn a_customer_registered_tool_is_covered_by_the_policy() {
+    let root = tempfile::tempdir().unwrap();
+    let manifest = root.path().join(".stella").join("tools");
+    std::fs::create_dir_all(&manifest).unwrap();
+    std::fs::write(
+        manifest.join("deploy_to_staging.toml"),
+        "name = \"deploy_to_staging\"\ndescription = \"ship it\"\ncommand = [\"./deploy.sh\"]",
+    )
+    .unwrap();
+    let custom_tools = stella_tools::custom::discover_in_scopes(root.path(), None, true).tools;
+    assert_eq!(custom_tools.len(), 1, "fixture must register one tool");
+
+    // On: the tool is there, so the fixture proves the *policy* withheld it
+    // below, not a broken manifest.
+    let (names, _) = stack_names_and_execute(
+        root.path(),
+        stella_tools::policy::ToolPolicy::allow_all(),
+        custom_tools.clone(),
+        "read_file",
+    )
+    .await;
+    assert!(names.iter().any(|name| name == "deploy_to_staging"));
+
+    let policy = serde_json::from_str::<crate::settings::Settings>(
+        r#"{"tools": {"deploy_to_staging": "off"}}"#,
+    )
+    .unwrap()
+    .tool_policy();
+    let (names, output) =
+        stack_names_and_execute(root.path(), policy, custom_tools, "deploy_to_staging").await;
+    assert!(
+        !names.iter().any(|name| name == "deploy_to_staging"),
+        "a custom tool named in settings must be withheld: {names:?}"
+    );
+    match output {
+        ToolOutput::Error { message } => assert!(message.contains("unknown tool"), "{message}"),
+        other => panic!("a disabled custom tool must be refused, got {other:?}"),
     }
 }

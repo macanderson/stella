@@ -529,6 +529,14 @@ pub async fn run_deck_session(
     // agent_engine_config plus the picker vocabularies, ready before the
     // user first opens it.
     let _ = in_tx.send(engine_config_inbound(cfg, None));
+    // …and the TOOLS panel beside it. MCP servers are still connecting at this
+    // point, so this first list is the native + custom surface; opening the
+    // panel (or `r`) re-enumerates and picks up every connected server.
+    let _ = in_tx.send(tool_policy_inbound(
+        cfg,
+        &crate::tool_switches::session_tool_names(&*registry, &custom_tools),
+        None,
+    ));
 
     let ask_io = DeckAskUserIo {
         agent: LEAD.to_string(),
@@ -1076,8 +1084,20 @@ pub async fn run_deck_session(
                             && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
                             && !handle_agents_input(&other, cfg, &in_tx)
                             && !handle_issues_input(&other, cfg, &issue_backend_cache, &in_tx)
+                            && !handle_engine_config_input(&other, cfg, &in_tx)
                         {
-                            handle_engine_config_input(&other, cfg, &in_tx);
+                            // The tool list is enumerated here rather than
+                            // cached: MCP servers join the session
+                            // asynchronously, so the panel must ask what the
+                            // stack holds now, not at boot.
+                            let mcp = mcp_slot.get().cloned();
+                            let base: &dyn ToolExecutor = match &mcp {
+                                Some(set) => set.as_ref(),
+                                None => &*registry,
+                            };
+                            let names =
+                                crate::tool_switches::session_tool_names(base, &custom_tools);
+                            handle_tools_input(&other, cfg, &names, &in_tx);
                         }
                         continue 'session;
                     }
@@ -1581,6 +1601,19 @@ pub async fn run_deck_session(
                             | WorkspaceInput::EngineConfigRefresh),
                         ) => {
                             handle_engine_config_input(&input, cfg, &in_tx);
+                        }
+                        // The TOOLS panel likewise. `base_tools` is the very
+                        // stack the running turn is using, so the list the
+                        // panel shows mid-turn is exactly what that turn has.
+                        Some(
+                            input @ (WorkspaceInput::ToolsSave { .. }
+                            | WorkspaceInput::ToolsRefresh),
+                        ) => {
+                            let names = crate::tool_switches::session_tool_names(
+                                base_tools,
+                                &custom_tools,
+                            );
+                            handle_tools_input(&input, cfg, &names, &in_tx);
                         }
                         // The ISSUES tab stays live while a turn runs too —
                         // every op spawns its own task and answers from it,
@@ -3583,6 +3616,99 @@ fn handle_engine_config_input(
     }
 }
 
+// ── Tool switches (the SETTINGS tab's TOOLS panel) ─────────────────────────
+
+/// Build an [`Inbound::ToolPolicy`] from the session's live tool surface and
+/// the settings scope chain.
+///
+/// `names` is enumerated at the call site because only the driver loop holds
+/// the assembled stack: MCP tools appear the moment the background connect
+/// lands, and custom tools come from the workspace's manifests. The scope
+/// chain is re-read every time (cheap local files) so the panel attributes a
+/// switch to the file that carries it *now*, not when the session started.
+///
+/// The effective posture is re-derived from disk rather than read off
+/// [`Config::tool_policy`], which was resolved once at session start: a save
+/// has to be visible in the very next snapshot, and the panel is a *settings*
+/// editor — it shows what the files say. (The running session keeps the stack
+/// it resolved; the status line says so.)
+///
+/// A scope-read failure is reported as the panel's status rather than dropped:
+/// an editor that silently showed "nothing is off" over an unreadable managed
+/// file would misstate the posture in the most dangerous direction.
+fn tool_policy_inbound(cfg: &Config, names: &[String], status: Option<String>) -> Inbound {
+    let root = &cfg.workspace_root;
+    let mut notes: Vec<String> = status.into_iter().collect();
+    let mut note_failure = |e: String| notes.push(format!("settings unreadable: {e}"));
+
+    let effective = match crate::settings::Settings::load(root) {
+        Ok(settings) => settings.tool_policy(),
+        Err(e) => {
+            note_failure(e);
+            cfg.tool_policy.clone()
+        }
+    };
+    let scopes = match crate::settings::Settings::load_tool_scopes(root) {
+        Ok(scopes) => scopes,
+        Err(e) => {
+            note_failure(e);
+            crate::settings::ToolScopePolicies::default()
+        }
+    };
+    Inbound::ToolPolicy {
+        state: crate::tool_switches::tool_policy_state(names, &effective, &scopes),
+        status: (!notes.is_empty()).then(|| notes.join(" · ")),
+    }
+}
+
+/// Handle one TOOLS-panel op (refresh / save) — cheap local settings I/O,
+/// answered with a fresh [`Inbound::ToolPolicy`]. Called from BOTH recv sites
+/// so the panel works mid-turn too. Returns `true` when the input was one of
+/// the panel's.
+///
+/// A save applies to turns started afterwards: the in-flight turn already
+/// resolved its tool stack, and rebuilding it under a running engine is a
+/// different (and much larger) change than editing settings.
+fn handle_tools_input(
+    input: &WorkspaceInput,
+    cfg: &Config,
+    names: &[String],
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    match input {
+        WorkspaceInput::ToolsRefresh => {
+            let _ = in_tx.send(tool_policy_inbound(cfg, names, None));
+            true
+        }
+        WorkspaceInput::ToolsSave { switches, scope } => {
+            let path = match scope {
+                AgentScope::User => crate::settings::user_settings_path(),
+                AgentScope::Project => {
+                    Some(crate::settings::project_settings_path(&cfg.workspace_root))
+                }
+            };
+            // The ceiling is re-read from disk rather than taken from the
+            // session's merged policy: the merged map cannot say which
+            // denials are the org's, and only the org's may refuse a grant.
+            let ceiling = crate::settings::Settings::load_tool_scopes(&cfg.workspace_root)
+                .map(|scopes| scopes.managed)
+                .unwrap_or_default();
+            let status = match path {
+                None => "save failed: cannot determine $HOME for user settings".to_string(),
+                Some(path) => {
+                    match crate::tool_switches::save_switches(&path, switches, &ceiling) {
+                        Ok(status) => status,
+                        Err(e) => format!("save failed: {e}"),
+                    }
+                }
+            };
+            let _ = in_tx.send(tool_policy_inbound(cfg, names, Some(status)));
+            true
+        }
+        _ => false,
+    }
+}
+
 // ── Installed-agents manager (the AGENTS tab's INSTALLED AGENTS pane) ───────
 
 /// Build an [`Inbound::AgentsList`] from the definitions on disk at both
@@ -3962,12 +4088,13 @@ async fn run_lead_turn(
         let (stub_tx, _) = mpsc::unbounded_channel();
         let interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        // Discovery layer above the interactive set (it must see the full
-        // catalog), below the taps (searches are read-only; taps watch writes).
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-                .with_activation(activated.clone());
+        let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
+        // Discovery layer above the policy filter (it must see the full
+        // *permitted* catalog), below the taps (searches are read-only; taps
+        // watch writes).
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
+            .with_activation(activated.clone());
         let tapped = FileChangeTap {
             inner: &tools,
             events: tx.clone(),
@@ -4105,10 +4232,10 @@ async fn run_lead_pipeline_turn(
         let (stub_tx, _) = mpsc::unbounded_channel();
         let interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-                .with_activation(activated.clone());
+        let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
+            .with_activation(activated.clone());
         let tapped = FileChangeTap {
             inner: &tools,
             events: tx.clone(),

@@ -980,13 +980,11 @@ mod tests {
             Some(crate::issues::IssueBackend::GitHub),
             Some(backend()),
             crate::registry::RegistryOptions {
-                bash: true,
                 media_requires_host_approval: true,
                 media_spend_gate: Some(gate.clone()),
                 media_operation_ids: Some(Arc::new(FixedOperationIds("host-isolated-image"))),
                 media_operation_journal: Some(operation_journal()),
                 media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
-                ..Default::default()
             },
         );
         let isolated_names: Vec<_> = isolated

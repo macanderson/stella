@@ -343,6 +343,7 @@ pub(crate) fn workspace_ports(
     let mut candidate_workspaces = crate::candidate_ws::GitCandidateWorkspaces::new(
         root.clone(),
         registry_options,
+        session_tool_policy(cfg),
         custom_tools,
         active_rules,
     );
@@ -555,23 +556,37 @@ fn truncate_tail(s: &str, max_bytes: usize) -> String {
     s[idx..].to_string()
 }
 
-/// The registry feature switches for this session's config — the ONE
-/// translation point from settings (`tools.bash`, default off) to
-/// [`stella_tools::RegistryOptions`]. Every session driver (one-shot, goal,
-/// interactive, deck, sub-session workers, fleet workers) builds its
-/// registry through this, so no path can quietly re-enable the shell.
+/// The registry's construction inputs for this session's config: host
+/// attestations and media prerequisites, and nothing else.
+///
+/// It used to also carry `bash`/`web` booleans translated from settings —
+/// operator policy applied at construction, which covered built-ins and
+/// nothing else. Policy now travels as [`Config::tool_policy`] and is enforced
+/// once, above the entire session tool stack, by
+/// [`crate::agent::PolicyToolSet`]; see [`session_tool_policy`] for the
+/// accompanying half every session driver pairs with this call.
 pub(crate) fn registry_options(cfg: &Config) -> stella_tools::RegistryOptions {
     let process_free = crate::enterprise_telemetry::process_free_authority_active();
     let media_operation_journal = host_media_operation_journal(&cfg.workspace_root);
     stella_tools::RegistryOptions {
-        bash: cfg.tools_bash && !process_free,
-        web: cfg.tools_web && !process_free,
         media_requires_host_approval: cfg.authority.media_requires_host_approval,
         media_operation_journal,
         media_host_data_isolation: process_free
             .then_some(stella_tools::media::HostDataIsolation::ProcessFree),
         ..Default::default()
     }
+}
+
+/// The session's tool policy — the other half of [`registry_options`].
+///
+/// Every session driver wraps its assembled tool stack in
+/// [`crate::agent::PolicyToolSet`] with this, which is what makes a
+/// `"tools"` entry cover built-ins, MCP tools, and customer-registered custom
+/// tools identically. Resolved once in `Config::load_with_settings` (managed
+/// ceiling already folded in), so this is a clone, not a re-derivation — there
+/// is no second place that could disagree about what is switched off.
+pub(crate) fn session_tool_policy(cfg: &Config) -> stella_tools::policy::ToolPolicy {
+    cfg.tool_policy.clone()
 }
 
 fn host_media_operation_journal(
