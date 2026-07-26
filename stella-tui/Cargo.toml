@@ -23,6 +23,7 @@ crossterm.workspace = true
 tachyonfx.workspace = true
 sysinfo.workspace = true
 tui-big-text.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

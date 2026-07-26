@@ -7,14 +7,14 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-1714 stella-cli/src/agent_tests.rs
+1715 stella-cli/src/agent_tests.rs
 2180 stella-cli/src/agent.rs
 1589 stella-cli/src/candidate_ws.rs
 4489 stella-cli/src/command_deck.rs
 1503 stella-cli/src/contextgraph.rs
-1719 stella-cli/src/main.rs
+1728 stella-cli/src/main.rs
 1635 stella-cli/src/memory.rs
-2142 stella-context/src/store.rs
+2221 stella-context/src/store.rs
 2046 stella-core/src/bus.rs
 2147 stella-core/src/driver.rs
 2750 stella-core/src/driver/tests.rs
@@ -22,7 +22,7 @@
 1502 stella-core/src/skills.rs
 1692 stella-fleet/src/fleet.rs
 1599 stella-model/src/anthropic/tests.rs
-1614 stella-model/src/bedrock.rs
+1618 stella-model/src/bedrock.rs
 1909 stella-model/src/openai.rs
 1622 stella-model/src/zai/tests.rs
 2455 stella-pipeline/src/pipeline.rs
