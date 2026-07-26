@@ -55,6 +55,8 @@ mod memory_cmd;
 mod memory_compact;
 mod memory_index;
 mod model_catalog;
+// Phase 3 (#714): the adaptive-context proposal review surface.
+mod proposals_cmd;
 mod rules;
 mod runtime;
 mod scripts_cmd;
@@ -501,6 +503,16 @@ enum Command {
     Models {
         #[command(subcommand)]
         cmd: Option<ModelsCmd>,
+    },
+
+    /// Review what the adaptive-context loop wants to make durable, before it
+    /// lands: the proposals it induced, the distinct tasks behind each, and
+    /// Keep/Edit/Ignore. Every decision is recorded as an immutable event, so
+    /// the review history replays exactly. Offline: reads and appends to
+    /// .stella/private/context.db only, needs no API key. Phase 3 (#714).
+    Proposals {
+        #[command(subcommand)]
+        cmd: proposals_cmd::ProposalsCmd,
     },
 
     /// Show the exact context a past model call was sent — the reconstructed
@@ -1014,6 +1026,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads the local index + manifest only — zero API keys.
             return storage_cmd::run_storage(cmd);
         }
+        // Phase 3 (#714). Reads and appends to the local lifecycle ledger
+        // only — no provider, no API key.
+        Some(Command::Proposals { cmd }) => {
+            return proposals_cmd::run_proposals(cmd);
+        }
         Some(Command::Inspect {
             execution_id,
             turn,
@@ -1315,6 +1332,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Scripts { .. }
         | Command::Storage { .. }
         | Command::Inspect { .. }
+        // Phase 3 (#714)
+        | Command::Proposals { .. }
         | Command::Stats { .. }
         | Command::Usage { .. }
         | Command::Cloud { .. }

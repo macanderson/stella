@@ -254,7 +254,9 @@ impl ContextStore {
     // a user's turn, so there is nothing async to await and nothing to batch.
 
     /// Append one lifecycle record. Idempotent for a byte-identical replay;
-    /// see [`ledger::append`] for why that is a success rather than an error.
+    /// a byte-identical repeat is a success, not an error: extraction replays,
+    /// and it cannot be exactly-once across a crash between the record write
+    /// and its cursor advance.
     pub fn append_record(
         &self,
         record: ledger::LedgerAppend<'_>,
@@ -278,6 +280,16 @@ impl ContextStore {
         limit: usize,
     ) -> Result<Vec<ledger::LedgerRecord>, ContextError> {
         ledger::records_of_kind(&lock(&self.conn), record_kind, limit)
+    }
+
+    /// Lifecycle records of one kind in the order the ledger accepted them —
+    /// the authority for "what happened last", which `observed_at` is not.
+    pub fn records_of_kind_in_append_order(
+        &self,
+        record_kind: &str,
+        limit: usize,
+    ) -> Result<Vec<ledger::LedgerRecord>, ContextError> {
+        ledger::records_of_kind_in_append_order(&lock(&self.conn), record_kind, limit)
     }
 
     /// Every revision in one lineage, oldest first — a single record's audit

@@ -409,7 +409,7 @@ impl PromotionEventRecord {
 pub fn confidence_from_score(score: &ProposalScore) -> Result<Confidence, RecordValidationError> {
     // 20 per distinct task (the axis that resists poisoning), 5 per occurrence
     // beyond the first, 15 for an independently salient signal.
-    let tasks = u32::from(score.distinct_tasks.min(4)) * 20;
+    let tasks = score.distinct_tasks.min(4) * 20;
     let extra = score.occurrences.saturating_sub(1).min(4) * 5;
     let salient = if score.salient { 15 } else { 0 };
     Confidence::new((tasks + extra + salient).min(100) as u16)

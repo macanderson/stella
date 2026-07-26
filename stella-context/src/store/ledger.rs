@@ -190,6 +190,34 @@ pub(crate) fn records_of_kind(
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Every record of one kind in **append order** — the order the ledger accepted
+/// them.
+///
+/// Distinct from [`records_of_kind`], and the distinction is load-bearing.
+/// `observed_at` is the wall clock of the *described event*, at second
+/// granularity, and `record_id` is a content hash — so two decisions made in the
+/// same second sort by hash, which is to say arbitrarily. A replay that folds
+/// "last write wins" over that order gets the wrong answer roughly half the time,
+/// and does so deterministically, which is worse than flaky.
+///
+/// Append order is the authority for "what happened last" in an append-only log.
+/// `rowid` is SQLite's own monotonic insertion counter and the table is never
+/// updated or deleted from, so it cannot be reused or reordered.
+pub(crate) fn records_of_kind_in_append_order(
+    conn: &Connection,
+    record_kind: &str,
+    limit: usize,
+) -> Result<Vec<LedgerRecord>, ContextError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLUMNS} FROM context_records
+         WHERE record_kind = ?1
+         ORDER BY rowid ASC
+         LIMIT ?2"
+    ))?;
+    let rows = stmt.query_map(params![record_kind, limit as i64], row_to_record)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Every revision in one lineage, oldest first — the audit trail for a single
 /// logical record.
 pub(crate) fn records_for_lineage(

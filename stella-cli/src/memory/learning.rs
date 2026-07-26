@@ -208,14 +208,33 @@ impl SessionMemory {
         // alternative — redirect creation to the user-global dir — is worse:
         // it would escalate prose mined under an untrusted workspace into the
         // scope that applies to every other workspace.
+        //
+        // This gate sits on the dispatcher rather than inside either arm, so
+        // it covers the typed path and the lexical one by construction. A
+        // guard that protected only one of them would be a guarantee that
+        // depended on a feature flag.
         if !self.include_workspace_skills {
             return;
         }
-        let Ok(log) = std::fs::read_to_string(log_path) else {
-            return;
-        };
-        // Every surface a background loop can regenerate; `ContextSurface` owns which.
-        let forgotten: Vec<String> = stella_store::Store::open(&self.workspace_root)
+        // Phase 3 (#714). While `context.lifecycle.enabled` is off — the
+        // shipped default — this is byte-for-byte the loop that ships today:
+        // no ledger write, no typed record, no behavior change of any kind.
+        // The typed path is a migration with a behavior-compatibility
+        // obligation (spec §8), and the only honest way to hold that
+        // obligation is to keep the thing it must stay compatible WITH
+        // runnable, so both paths are exercised by the same guarantee suite.
+        if self.lifecycle_enabled {
+            self.auto_create_skills_typed(log_path, quiet);
+        } else {
+            self.auto_create_skills_lexical(log_path, quiet);
+        }
+    }
+
+    /// Every surface a background loop can regenerate; `ContextSurface` owns
+    /// which. Shared by both paths so a tombstone means the same thing on each
+    /// — a second suppression mechanism is a defect (spec §5.7).
+    fn forgotten_texts(&self) -> Vec<String> {
+        stella_store::Store::open(&self.workspace_root)
             .and_then(|store| {
                 let mut texts = Vec::new();
                 for surface in stella_store::ContextSurface::restatement_suppressing() {
@@ -223,30 +242,17 @@ impl SessionMemory {
                 }
                 Ok(texts)
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
 
-        let observations: Vec<SkillObservation> = log
-            .lines()
-            .filter_map(|line| serde_json::from_str::<ReflectionLesson>(line).ok())
-            .filter(|l| {
-                !stella_store::is_suppressed(&l.lesson, forgotten.iter().map(String::as_str))
-            })
-            .map(|l| SkillObservation {
-                reference: format!("reflection:{}", l.occurred_at),
-                text: l.lesson,
-                domains: l.domains,
-                occurred_at: l.occurred_at,
-                salient: false,
-            })
-            .collect();
-        if observations.is_empty() {
-            return;
-        }
-
+    /// Write out whichever candidates the caller decided to keep, under the
+    /// per-session cap and the no-clobber guard.
+    ///
+    /// Shared by both paths, so the cap and the guard are literally the same
+    /// code on each — asserted by test rather than by inspection, which is what
+    /// spec §8 asks for.
+    fn write_candidates(&mut self, candidates: Vec<skills::SkillCandidate>, quiet: bool) {
         let existing = self.load_skills();
-        let candidates =
-            skills::mine_skill_candidates(observations, &existing, &SkillMineConfig::default());
-
         let skills_dir = self.workspace_skills_dir();
         // What the no-clobber guard needs is the set of paths that are
         // OCCUPIED, which is a filesystem question — not the set that loaded,
@@ -290,5 +296,111 @@ impl SessionMemory {
                 AutoCreateDecision::Skip { .. } => {}
             }
         }
+    }
+
+    /// The typed path: extract observations into the ledger, induce durable
+    /// proposals over them, and write only the proposals that are *eligible*.
+    ///
+    /// Two things differ from the lexical path, and both are the point:
+    ///
+    /// 1. **Distinct tasks gate, not events.** A cluster of thirty repetitions
+    ///    inside one task still mines a candidate — the miner is unchanged —
+    ///    but its proposal records `distinct_tasks == 1` and is not eligible,
+    ///    so no file is written. Spec §7's anti-poisoning rule, enforced where
+    ///    it can actually be enforced.
+    /// 2. **There is a record of why.** The proposal carries its supporting
+    ///    observations and its scored components, so "three separate tasks,
+    ///    here they are" is answerable before a skill file exists.
+    ///
+    /// Everything else is identical, deliberately: the same miner, the same
+    /// thresholds, the same tombstone sweep, the same cap, the same no-clobber
+    /// guard, the same rendering.
+    fn auto_create_skills_typed(&mut self, log_path: &Path, quiet: bool) {
+        // 1. Evidence → typed, redacted, replay-idempotent observations.
+        super::observations::extract_reflection_observations(&self.store, log_path);
+
+        // 2. Tombstones. Filtered at MINE time rather than at extraction time:
+        //    ledger records are immutable, so a lesson forgotten after it was
+        //    observed cannot be removed from the ledger — and should not be,
+        //    since the observation genuinely happened. What must not happen is
+        //    that it induces a proposal or a skill, which is what this stops.
+        //    Exactly the same reasoning as the lexical path's log filter, and
+        //    exactly the same predicate.
+        let forgotten = self.forgotten_texts();
+        let observations: Vec<_> = super::observations::all_observations(&self.store, 5_000)
+            .into_iter()
+            .filter(|o| !stella_store::is_suppressed(&o.text, forgotten.iter().map(String::as_str)))
+            .collect();
+        if observations.is_empty() {
+            return;
+        }
+
+        // 3. Induce durable proposals over the unchanged miner.
+        let existing = self.load_skills();
+        let induced = super::proposals::induce_proposals(
+            &self.store,
+            &observations,
+            &existing,
+            &SkillMineConfig::default(),
+        );
+
+        // 4. The re-proposal cooldown. A proposal the user declined must not
+        //    come back next turn — that is what makes "Ignore" mean anything.
+        //    Read from the promotion event log rather than from a status
+        //    column on the proposal: the proposal is immutable, and the
+        //    decision is a separate fact about it that can itself be revised.
+        //    A later Keep overwrites an earlier Ignore because the fold is
+        //    last-write-wins, so declining is reversible, not permanent.
+        let declined = crate::proposals_cmd::decisions(&self.store);
+
+        // 5. Only eligible proposals become files. An ineligible one stays in
+        //    the ledger as a visible "recurring, but not across enough tasks
+        //    yet" — which is information, not a failure.
+        let promotion = super::tuning::inferred_directive_promotion(&self.workspace_root);
+        let eligible: Vec<_> = induced
+            .into_iter()
+            .filter(|i| {
+                declined.get(&i.proposal.lineage_id)
+                    != Some(&stella_core::context_record::PromotionAction::Rejected)
+            })
+            .filter(|i| {
+                i.proposal
+                    .is_eligible(promotion.min_distinct_tasks, promotion.min_observations)
+            })
+            .map(|i| i.candidate)
+            .collect();
+        self.write_candidates(eligible, quiet);
+    }
+
+    /// The lexical path exactly as it shipped — reached whenever
+    /// `context.lifecycle.enabled` is off, which is the default.
+    fn auto_create_skills_lexical(&mut self, log_path: &Path, quiet: bool) {
+        let Ok(log) = std::fs::read_to_string(log_path) else {
+            return;
+        };
+        let forgotten = self.forgotten_texts();
+
+        let observations: Vec<SkillObservation> = log
+            .lines()
+            .filter_map(|line| serde_json::from_str::<ReflectionLesson>(line).ok())
+            .filter(|l| {
+                !stella_store::is_suppressed(&l.lesson, forgotten.iter().map(String::as_str))
+            })
+            .map(|l| SkillObservation {
+                reference: format!("reflection:{}", l.occurred_at),
+                text: l.lesson,
+                domains: l.domains,
+                occurred_at: l.occurred_at,
+                salient: false,
+            })
+            .collect();
+        if observations.is_empty() {
+            return;
+        }
+
+        let existing = self.load_skills();
+        let candidates =
+            skills::mine_skill_candidates(observations, &existing, &SkillMineConfig::default());
+        self.write_candidates(candidates, quiet);
     }
 }

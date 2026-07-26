@@ -30,6 +30,7 @@ pub mod mcp_usage;
 pub(crate) mod mining;
 pub mod ports;
 pub mod receipts;
+pub mod redact;
 pub mod retry;
 pub mod router;
 pub mod rules;
