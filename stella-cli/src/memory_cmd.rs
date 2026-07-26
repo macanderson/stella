@@ -443,27 +443,94 @@ fn memory_text(workspace_root: &std::path::Path, id: &str) -> Result<Option<Stri
     Ok(node.map(|n| n.content))
 }
 
-/// Extract workspace-relative file-path anchors from memory text. A path
-/// anchor is a token matching the pattern `word/word[/word…]` with at least
-/// one slash and a recognized source extension, e.g. `stella-cli/src/agent.rs`,
-/// `src/lib.rs`, `docs/context-reuse.md`.
+/// Source extensions a token must end in to count as a file reference.
+const ANCHOR_EXTS: &[&str] = &[
+    "rs", "py", "ts", "tsx", "js", "jsx", "go", "md", "sql", "toml",
+];
+
+/// Extract file anchors from memory text. Two shapes count:
+///
+/// * **Rooted paths** — `word/word[/word…]` with a recognized source
+///   extension, e.g. `stella-cli/src/agent.rs`, `docs/context-reuse.md`.
+///   These resolve against the workspace root directly.
+/// * **Bare filenames** — a name with a recognized extension and no
+///   directory at all, e.g. `slash_models_witness.rs`, `Cargo.toml`.
+///
+/// Bare filenames matter because that is how reflections actually name
+/// files: a lesson mined from a turn says "in `slash_models_witness.rs`",
+/// not "in `stella-cli/tests/slash_models_witness.rs`". Requiring a slash
+/// meant the memories most likely to rot — the ones naming a single test
+/// file that later got deleted — were reported as `no-anchors` and never
+/// checked, which is the failure this function exists to catch.
 fn extract_path_anchors(text: &str) -> Vec<String> {
-    let exts = [
-        "rs", "py", "ts", "tsx", "js", "jsx", "go", "md", "sql", "toml",
-    ];
     text.split(|c: char| !(c.is_alphanumeric() || c == '/' || c == '.' || c == '-' || c == '_'))
-        .filter(|tok| {
+        .filter_map(|tok| {
             // Trim trailing dots — a sentence like "see src/lib.rs." would
             // otherwise produce token "src/lib.rs." with extension "rs.".
             let tok = tok.trim_end_matches('.');
-            tok.contains('/')
-                && tok
-                    .rsplit('.')
-                    .next()
-                    .is_some_and(|ext| exts.contains(&ext))
+            if tok.len() > 256 || tok.starts_with('/') || tok.split('/').any(|seg| seg == "..") {
+                return None;
+            }
+            let (stem, ext) = tok.rsplit_once('.')?;
+            // A bare `.rs` has no stem and names nothing; `graph_snapshot`
+            // has no extension. Both must stay out.
+            if stem.is_empty() || !ANCHOR_EXTS.contains(&ext) {
+                return None;
+            }
+            Some(tok.to_string())
         })
-        .map(|tok| tok.trim_end_matches('.').to_string())
         .collect()
+}
+
+/// Directories that never hold source a memory would meaningfully anchor to,
+/// and that dominate the walk cost when present.
+const ANCHOR_WALK_SKIP: &[&str] = &[
+    ".git",
+    ".stella",
+    "target",
+    "node_modules",
+    ".next",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "__pycache__",
+];
+
+/// Every file name present anywhere under the workspace, for resolving
+/// bare-filename anchors — they carry no directory to join onto the root, so
+/// existence is a "does the tree contain a file by this name" question.
+///
+/// Built once per `validate` run and bounded: a pathological or symlinked
+/// tree must not stall an inspection command.
+fn workspace_file_names(root: &std::path::Path) -> std::collections::HashSet<String> {
+    const MAX_FILES: usize = 200_000;
+    let mut names = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::from([root.to_path_buf()]);
+    while let Some(dir) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // `is_dir`/`is_file` on the entry type does not follow symlinks,
+            // so a self-referential link cannot re-enter the walk.
+            if kind.is_dir() {
+                if !ANCHOR_WALK_SKIP.contains(&name.as_str()) {
+                    queue.push_back(entry.path());
+                }
+            } else if kind.is_file() {
+                names.insert(name);
+                if names.len() >= MAX_FILES {
+                    return names;
+                }
+            }
+        }
+    }
+    names
 }
 
 /// Validate all memories in a workspace against the current file tree.
@@ -480,6 +547,10 @@ fn validate_memories(workspace_root: &std::path::Path) -> Result<Vec<MemoryValid
         .memory_nodes()
         .map_err(|e| format!("cannot read memories: {e}"))?;
 
+    // Built lazily: a workspace whose memories name no bare filenames never
+    // pays for the walk.
+    let mut file_names: Option<std::collections::HashSet<String>> = None;
+
     let mut rows = Vec::new();
     for node in &memories {
         let anchors = extract_path_anchors(&node.content);
@@ -495,7 +566,15 @@ fn validate_memories(workspace_root: &std::path::Path) -> Result<Vec<MemoryValid
         }
         let missing = anchors
             .iter()
-            .filter(|p| !workspace_root.join(p).exists())
+            .filter(|anchor| {
+                if anchor.contains('/') {
+                    !workspace_root.join(anchor).exists()
+                } else {
+                    !file_names
+                        .get_or_insert_with(|| workspace_file_names(workspace_root))
+                        .contains(anchor.as_str())
+                }
+            })
             .count();
         let status = if missing > 0 { "stale" } else { "ok" };
         rows.push(MemoryValidationRow {
@@ -831,6 +910,73 @@ mod tests {
         assert!(anchors.contains(&"src/lib.rs".to_string()));
         // No false positives from bare words.
         assert!(!anchors.iter().any(|a| a == "graph_snapshot"));
+    }
+
+    #[test]
+    fn extract_path_anchors_finds_bare_filenames() {
+        // The shape reflections actually use: a file named with no directory.
+        let text = "In stella-cli witness tests (slash_models_witness.rs), prefer \
+                    updating assertions rather than changing the renderer.";
+        let anchors = extract_path_anchors(text);
+        assert!(
+            anchors.contains(&"slash_models_witness.rs".to_string()),
+            "bare filenames must anchor: {anchors:?}"
+        );
+    }
+
+    #[test]
+    fn extract_path_anchors_rejects_non_files() {
+        // A bare extension has no stem, version strings have no source
+        // extension, and prose words have no extension at all.
+        let anchors = extract_path_anchors("the .rs files in v0.4.47 use cargo test -- --exact");
+        assert!(anchors.is_empty(), "no false anchors: {anchors:?}");
+    }
+
+    #[test]
+    fn validate_flags_stale_bare_filename_anchors() {
+        // Regression: a memory naming a deleted test file by bare name was
+        // reported `no-anchors` and never checked, so recall kept surfacing
+        // it long after the file was gone.
+        let root = tempdir().unwrap();
+        let context_db =
+            stella_store::workspace_private_sqlite_path(root.path(), "context.db").unwrap();
+        std::fs::create_dir_all(root.path().join("stella-cli/tests")).unwrap();
+        std::fs::write(
+            root.path().join("stella-cli/tests/live_witness.rs"),
+            "#[test] fn t() {}",
+        )
+        .unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let context = stella_context::ContextStore::open(&context_db).unwrap();
+            use stella_context::{ContextDelta, MemoryInput};
+            let delta = ContextDelta {
+                memories: vec![
+                    MemoryInput::reflection(
+                        "In witness tests (deleted_witness.rs), prefer updating assertions.",
+                        Vec::<String>::new(),
+                    ),
+                    MemoryInput::reflection(
+                        "In witness tests (live_witness.rs), prefer updating assertions.",
+                        Vec::<String>::new(),
+                    ),
+                ],
+                ..Default::default()
+            };
+            context.upsert(delta).await.unwrap();
+        });
+
+        let rows = validate_memories(root.path()).unwrap();
+        let stale = rows.iter().find(|r| r.status == "stale").expect(
+            "a memory naming a deleted file by bare name must be flagged stale, not no-anchors",
+        );
+        assert!(stale.memory.contains("deleted_witness.rs"));
+        let ok = rows
+            .iter()
+            .find(|r| r.status == "ok")
+            .expect("live file verifies");
+        assert!(ok.memory.contains("live_witness.rs"));
     }
 
     #[test]
