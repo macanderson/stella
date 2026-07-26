@@ -119,7 +119,7 @@ fn save_cloud_registration_at(path: &Path, reg: &CloudRegistration) -> Result<()
     let body = serde_json::to_string_pretty(reg)
         .map_err(|e| StoreError(format!("cannot render cloud registration: {e}")))?
         + "\n";
-    crate::write_sensitive_file_atomic(&path, body.as_bytes())
+    crate::write_sensitive_file_atomic(path, body.as_bytes())
 }
 
 /// The org this installation reports into, `None` until registered.
