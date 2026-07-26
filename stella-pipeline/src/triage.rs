@@ -277,6 +277,154 @@ fn is_bare_greeting(goal: &str) -> bool {
     GREETINGS.contains(&normalized.as_str())
 }
 
+/// Whether an authored witness test is warranted, resolving triage's opinion
+/// against the deterministic ceiling.
+///
+/// The mirror of [`resolve_task_class`], and deliberately the only thing in
+/// this module that may move assurance *down*. [`deterministic_floor`] may only
+/// ever add ceremony because its evidence is weak — keyword guesses about how
+/// big a task is. This may only ever remove ceremony, and only for the single
+/// shape where the evidence is not a guess at all: see [`is_pure_deletion`].
+///
+/// Everything else keeps the existing contract exactly — triage's explicit call
+/// if it made one, otherwise what the class implies.
+pub fn resolve_witness(model_opinion: Option<bool>, class: TaskClass, goal: &str) -> bool {
+    if is_pure_deletion(goal) {
+        return false;
+    }
+    model_opinion.unwrap_or_else(|| class.verifies_unconditionally())
+}
+
+/// Whether the goal is an unmistakable removal of a named code artifact —
+/// `remove the witness tests`, `delete stella-cli/src/foo.rs`, `get rid of the
+/// old bench/ directory`.
+///
+/// This overrules an explicit `WITNESS: yes` from triage, which no other
+/// deterministic check here is allowed to do. The asymmetry is the point: a
+/// witness test must *fail on the old code and pass on the new*, and there is
+/// nothing to write that against when the change is "this artifact stops
+/// existing". The author is not merely doing unnecessary work — it is cornered
+/// into inventing something vacuous. The real observed failure was a request to
+/// remove the witness tests producing a test file whose whole body was
+/// `panic!("witness tests must be removed")`, which proves nothing about
+/// anything. A deletion's proof is its diff.
+///
+/// Narrow by construction, because the cost of a false positive is a real
+/// behavior change shipping without an authored witness. Three conditions must
+/// all hold: the message must *lead* with a removal verb (after stripping
+/// politeness), it must name a **file-shaped** object rather than a behavior
+/// (`remove the rate limiter` is a behavior change and keeps its witness), and
+/// it must carry no second clause, replacement, or preserved-behavior
+/// qualifier. Anything short of all three falls through to the normal path.
+///
+/// Note this only turns off the *authored witness*. The verification ladder and
+/// the judge still run — deleting the wrong file stays a reviewable mistake.
+fn is_pure_deletion(goal: &str) -> bool {
+    let lower = goal.to_ascii_lowercase();
+
+    // A second clause, a replacement, or a claim about surviving behavior means
+    // this is not a bare removal — hand it back to the normal path.
+    const DISQUALIFIERS: &[&str] = &[
+        "instead",
+        "replace",
+        "so that",
+        "make sure",
+        "ensure",
+        "but keep",
+        "without breaking",
+        "refactor",
+        "rewrite",
+        "migrate",
+        " but ",
+        " if ",
+        " then ",
+    ];
+    if DISQUALIFIERS.iter().any(|m| lower.contains(m)) {
+        return false;
+    }
+    // Sweeping or enumerated work is not the trivial case, whatever verb opens
+    // it: `remove X, then update every caller` is real multi-step work.
+    if deterministic_floor(&lower) == TaskClass::MultiStep || conjoined_imperative(&lower) {
+        return false;
+    }
+
+    // Politeness and framing are not part of the instruction. Stripped as whole
+    // leading words so `deleted` or `removal` in prose can never promote a
+    // non-imperative sentence into a deletion.
+    const PREFIXES: &[&str] = &[
+        "hey", "hi", "ok", "okay", "so", "now", "please", "pls", "can", "could", "would", "will",
+        "you", "just", "go", "ahead", "and", "i", "want", "need", "like", "lets", "let's", "us",
+        "to", "the",
+    ];
+    let mut words = lower
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|w| !w.is_empty())
+        .skip_while(|w| PREFIXES.contains(&w.trim_matches(|c: char| !c.is_ascii_alphanumeric())));
+
+    const REMOVAL_VERBS: &[&str] = &["remove", "delete", "rm", "drop", "kill", "purge"];
+    let leads_with_removal = words
+        .next()
+        .map(|w| {
+            let w = w.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+            REMOVAL_VERBS.contains(&w) || w == "get" // "get rid of"
+        })
+        .unwrap_or(false);
+    if !leads_with_removal {
+        return false;
+    }
+
+    names_a_file_shaped_object(&lower)
+}
+
+/// Whether the goal names a concrete code artifact rather than a behavior — the
+/// second of [`is_pure_deletion`]'s three conditions, and the one doing the
+/// real work of keeping `remove the retry backoff` on the witness path.
+///
+/// Either an explicit path/filename, or one of a small set of nouns that only
+/// ever describe artifacts. Deliberately excludes behavior-flavored nouns
+/// (`check`, `handler`, `limiter`, `flag`) — those are changes that a witness
+/// can genuinely pin.
+fn names_a_file_shaped_object(lower: &str) -> bool {
+    const SOURCE_EXTENSIONS: &[&str] = &[
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".rb", ".c", ".h", ".cpp",
+        ".md", ".toml", ".json", ".yaml", ".yml", ".sh", ".sql",
+    ];
+    let has_path_token = lower.split_whitespace().any(|w| {
+        let w = w.trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '(' | ')' | '.' | ','));
+        w.contains('/') || SOURCE_EXTENSIONS.iter().any(|ext| w.ends_with(ext))
+    });
+    if has_path_token {
+        return true;
+    }
+    const ARTIFACT_NOUNS: &[&str] = &[
+        "file",
+        "files",
+        "test",
+        "tests",
+        "testcase",
+        "test case",
+        "test cases",
+        "directory",
+        "directories",
+        "folder",
+        "dir",
+        "crate",
+        "dead code",
+        "unused import",
+        "unused imports",
+        "commented-out",
+        "commented out",
+    ];
+    lower
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-' && c != ' ')
+        .any(|seg| {
+            seg.split_whitespace().any(|w| ARTIFACT_NOUNS.contains(&w))
+                || ARTIFACT_NOUNS
+                    .iter()
+                    .any(|n| n.contains(' ') && seg.contains(n))
+        })
+}
+
 /// Parse a triage model's classification response into a [`TaskClass`].
 ///
 /// The triage prompt (see [`triage_prompt`]) asks the model to answer with a
@@ -480,7 +628,9 @@ pub fn triage_prompt(goal: &str) -> String {
          WITNESS is whether a failing test should be written first to pin the \
          intended behavior. Say no when the change is mechanical, when \
          correctness is already obvious from the diff, or when the project \
-         has no way to run such a test.\n\
+         has no way to run such a test. Always say no when the ask is to \
+         DELETE something — a witness must fail on the old code and pass on \
+         the new, and a removal leaves nothing to write that against.\n\
          JUDGE is whether a separate model should review the result. Say no \
          when success is self-evident or a test already proves it.\n\
          Prefer `no` for both on small, self-evident work — ceremony that \
@@ -798,6 +948,97 @@ mod tests {
             resolve_task_class(None, "add a field and then update the migration"),
             TaskClass::MultiStep
         );
+    }
+
+    #[test]
+    fn a_bare_deletion_never_authors_a_witness() {
+        // The reported failure, verbatim: this asked for a removal and got a
+        // witness author, which produced a test whose entire body was a
+        // `panic!("witness tests must be removed")`.
+        for goal in [
+            "can you remove the witness tests please",
+            "remove the witness tests",
+            "delete stella-cli/tests/slash_models_witness.rs",
+            "please delete the hi_witness.rs file",
+            "rm bench/old_harness.rs",
+            "get rid of the dead code in stella-graph/src/walk.rs",
+            "drop the unused imports",
+            "delete the docs/legacy folder",
+        ] {
+            assert!(
+                is_pure_deletion(goal),
+                "{goal:?} should be recognized as a bare deletion"
+            );
+            // ... and the ceiling overrules even an explicit WITNESS: yes.
+            assert!(
+                !resolve_witness(Some(true), TaskClass::MultiStep, goal),
+                "{goal:?} must not author a witness even when triage asked for one"
+            );
+            assert!(!resolve_witness(None, TaskClass::SingleTask, goal));
+        }
+    }
+
+    #[test]
+    fn the_deletion_ceiling_does_not_swallow_real_work() {
+        // The negative half, and the one that matters: a false positive here
+        // ships a behavior change with no authored witness. Each of these must
+        // keep the normal path.
+        for goal in [
+            // Behavior removals — nothing file-shaped, a witness can pin these.
+            "remove the retry backoff",
+            "remove the rate limiter from the auth handler",
+            "delete the stale-session check",
+            "drop the trailing-slash redirect",
+            // Deletion plus a second clause / replacement / preserved behavior.
+            "remove the old parser and add the new one",
+            "delete config.toml and replace it with config.yaml",
+            "remove src/legacy.rs but keep the public API working",
+            "delete the cache layer, make sure reads still work",
+            "remove the shim then update every caller",
+            "delete the adapter and refactor the callers",
+            // Sweeping / enumerated work that merely opens with a removal verb.
+            "remove the deprecated helper from every file",
+            "delete all the files under bench/",
+            // Not an imperative removal at all — prose that mentions deletion.
+            "why was stella-cli/src/foo.rs deleted?",
+            "explain the removal of the witness stage",
+            "the tests were deleted, can you tell me what covered auth.rs",
+            // A real change that happens to name a file.
+            "fix the panic in stella-pipeline/src/verify.rs",
+            "add a test to stella-core/src/lib.rs",
+        ] {
+            assert!(
+                !is_pure_deletion(goal),
+                "{goal:?} must NOT be treated as a bare deletion"
+            );
+            assert!(
+                resolve_witness(Some(true), TaskClass::SingleTask, goal),
+                "{goal:?} must honor an explicit WITNESS: yes"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ceiling_leaves_every_other_witness_decision_untouched() {
+        // Outside the deletion shape, `resolve_witness` must be exactly the old
+        // `wants_witness` contract: triage's call, else the class default.
+        let goal = "make the parser handle escaped quotes";
+        assert!(!resolve_witness(Some(false), TaskClass::MultiStep, goal));
+        assert!(resolve_witness(Some(true), TaskClass::SimpleLookup, goal));
+        assert!(!resolve_witness(None, TaskClass::SimpleLookup, goal));
+        assert!(resolve_witness(None, TaskClass::SingleTask, goal));
+        assert!(resolve_witness(None, TaskClass::MultiStep, goal));
+        for class in [
+            TaskClass::SimpleLookup,
+            TaskClass::SingleTask,
+            TaskClass::MultiStep,
+        ] {
+            assert_eq!(
+                resolve_witness(None, class, goal),
+                TaskAssessment::from_class(class).wants_witness(),
+                "{class:?} must keep the class-derived default"
+            );
+        }
     }
 
     #[test]

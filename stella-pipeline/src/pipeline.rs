@@ -69,7 +69,7 @@ use crate::ports::{
 use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review};
 use crate::triage::{
     TaskAssessment, TaskClass, parse_triage_response, resolve_conversational, resolve_task_class,
-    triage_prompt,
+    resolve_witness, triage_prompt,
 };
 use crate::verify::{
     FlipOracle, JudgeVerdict as ModelJudgeVerdict, LadderDecision, LadderInputs,
@@ -849,16 +849,31 @@ impl<'a> Pipeline<'a> {
         // an over-eager model `chat` — a goal with real task signal is work.
         let model_says_chat = assessment.map(|a| a.conversational).unwrap_or(false);
         let conversational = resolve_conversational(model_says_chat, goal);
+        // The witness decision is resolved here for the same reason as the
+        // conversational one: it must hold even when the triage call failed or
+        // was unparseable. `resolve_witness` is the deterministic *ceiling* —
+        // the mirror of the floor above, and the only thing allowed to move
+        // assurance down. It fires on one shape (a bare deletion of a named
+        // artifact) where an authored witness has nothing to fail against and
+        // the author can only invent something vacuous.
         Ok(match assessment {
-            Some(assessment) => TaskAssessment {
-                class: resolve_task_class(Some(assessment.class), goal),
-                conversational,
-                ..assessment
-            },
-            None => TaskAssessment {
-                conversational,
-                ..TaskAssessment::from_class(resolve_task_class(None, goal))
-            },
+            Some(assessment) => {
+                let class = resolve_task_class(Some(assessment.class), goal);
+                TaskAssessment {
+                    class,
+                    conversational,
+                    require_witness: Some(resolve_witness(assessment.require_witness, class, goal)),
+                    ..assessment
+                }
+            }
+            None => {
+                let class = resolve_task_class(None, goal);
+                TaskAssessment {
+                    conversational,
+                    require_witness: Some(resolve_witness(None, class, goal)),
+                    ..TaskAssessment::from_class(class)
+                }
+            }
         })
     }
 
