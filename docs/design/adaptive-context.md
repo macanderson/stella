@@ -276,7 +276,7 @@ Named so they are decisions rather than omissions:
 | 0003 | Bitemporal semantics | Accepted — see note |
 | 0004 | Record revision identity | Accepted |
 | 0005 | Storage authority | Accepted, amended by 0010 |
-| 0006 | ContextFrame vs. CompiledContextFrame | Accepted — see note |
+| 0006 | ContextFrame vs. CompiledContextFrame | Accepted, amended — see note |
 | 0007 | Immutable promotion history | Accepted, ratified, amended |
 | 0008 | Markdown-canonical rules | Accepted |
 | 0009 | Enum-freeze resolutions | Accepted, ratified |
@@ -292,8 +292,9 @@ vector, recency, and adjacency alike. The world-validity axis
 
 **Note on 0006.** Its distinction stands, but it predates the receipts plane. The
 compiled frame is now reached by *extending the step manifest* (§6.2), not by
-building a second aggregate. An amendment should record this before Phase 2
-ships.
+building a second aggregate. The amendment recording this **landed 2026-07-26**
+in the ADR's own body ([#713](https://github.com/macanderson/stella/issues/713)
+deliverable 6), so Phase 2's documentation gate is met before it ships.
 
 **Note on 0010.** Ratified 2026-07-26 ([#711](https://github.com/macanderson/stella/issues/711)).
 It amends 0005 by replacing a big-bang authority cutover with incremental

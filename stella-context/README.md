@@ -108,12 +108,22 @@ place.
 - **`NodeRow::valid_from` is always `None`.** The columns exist on `node` but
   `upsert_node` never writes them. Fact history is recoverable; node content
   history is not.
-- **This plane forgets, but it does not reclaim.** `supersede_node` writes
-  `node.superseded_at` and `restore_node` is its exact inverse; nothing is ever
-  deleted, so a point-in-time query still sees what was believed before. What is
-  *not* managed is space: a superseded row stays, and a node whose uri changed
-  (renamed or deleted file) is still orphaned live, serving its last-known
-  content until something supersedes it. Compaction is a later phase.
+- **This plane forgets *and* reclaims — but they are different mechanisms.**
+  Forgetting is `supersede_node`: a tombstone, with `restore_node` as its exact
+  inverse, so a point-in-time query still sees what was believed before.
+  Reclaiming is `ContextStore::compact` (`stella memory compact`), and it deletes
+  only *derived index entries whose owner is already gone*: embeddings no node in
+  any state and no live memory points at — every `stella memory edit` strands one
+  — orphaned `node_domains`/`edge_domains` rows, and, opt-in behind
+  `--stale-fingerprints`, vectors under an embedder recall is forbidden to read.
+  `edge` rows, `memory` revisions and superseded `node` rows are **named
+  exclusions**; see the `store::compact` module docs for each one's reason.
+  `L-C3` is a guarantee about *queryability*, not bytes — the authority for
+  treating the index as disposable is
+  [ADR 0010](../docs/adr/0010-incremental-authority-transfer.md) decision point 6.
+  What compaction does *not* bound is the live row count: a node whose uri
+  changed (renamed or deleted file) is still orphaned live, serving its
+  last-known content until something supersedes it.
 - **`stella memory forget` reaches in here now.** The tombstone in `store.db`
   stays canonical — it is surface-aware, carries the reason, and outlives the
   row — and the forget is *projected* onto `node.superseded_at`, where every
@@ -139,6 +149,8 @@ place.
   `memory://<lineage>` — updates in place. The old revision's vector is orphaned
   rather than deleted: `vectors_for_fingerprint` joins through
   `node.content_hash`, so a vector no live node points at is never selected.
+  Orphaned is not permanent — `stella memory compact` is what reclaims it, and
+  the stranded vectors are the mass that verb exists for.
 - **`await_warm()` returning `Ok(0)` does not mean "the index is complete."** It
   means there is no warm left to join — the handle is taken, so a second call
   also returns `Ok(0)`, as does a store opened outside a tokio runtime (where

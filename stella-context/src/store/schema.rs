@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 5;
+pub(crate) const SCHEMA_VERSION: i64 = 7;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -194,7 +194,7 @@ CREATE INDEX IF NOT EXISTS idx_embedding_fingerprint ON embedding(fingerprint);
 /// without a similarity judgment, and a migration is the wrong place to make
 /// one: it runs unattended, on the only copy a user has. `stella memory
 /// validate` reports them instead (#711, decision 4).
-fn migrate_v5(tx: &Connection) -> Result<(), ContextError> {
+pub(crate) fn migrate_v5(tx: &Connection) -> Result<(), ContextError> {
     let existing: std::collections::HashSet<String> = {
         let mut stmt = tx.prepare("PRAGMA table_info(memory)")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>("name"))?;
@@ -212,6 +212,94 @@ fn migrate_v5(tx: &Connection) -> Result<(), ContextError> {
     )?;
     Ok(())
 }
+
+/// V6 — the **compaction watermark** ([`crate::store::compact`]).
+///
+/// A singleton row recording that this store has been compacted, when, and how
+/// much each reclaim class took. It exists for the same reason
+/// `compacted_through_execution_id` exists in `stella-store`'s export ledger:
+/// once compaction deletes the rows that proved a fact, a scalar has to
+/// remember in its place. The fact here is "this store's `embedding` count is
+/// no longer its lifetime embedding count" — without the row, a reader
+/// comparing vectors to nodes sees a shortfall it cannot tell from a broken
+/// index, and `stella memory compact` cannot answer "has this ever run".
+///
+/// `compacted_at` is written `MAX(existing, new)` and the counters accumulate,
+/// so every column can only rise. The timestamps are fixed-width RFC-3339, so
+/// SQLite's string `MAX` is a chronological max with no parsing — the same
+/// property the bi-temporal readers rely on.
+///
+/// `CHECK (singleton = 1)` makes "one row" a schema constraint rather than a
+/// convention the writer has to keep. `IF NOT EXISTS` for the same reason V4
+/// and V5 are statement-level idempotent: a store whose `user_version` was
+/// rewound (a partial restore, or the migration fixtures below) must be able to
+/// re-run this without failing on an existing table.
+pub(crate) const MIGRATION_V6: &str = "\
+CREATE TABLE IF NOT EXISTS context_compaction (
+    singleton                    INTEGER PRIMARY KEY CHECK (singleton = 1),
+    compacted_at                 TEXT NOT NULL,
+    orphaned_embeddings          INTEGER NOT NULL DEFAULT 0,
+    orphaned_node_domains        INTEGER NOT NULL DEFAULT 0,
+    orphaned_edge_domains        INTEGER NOT NULL DEFAULT 0,
+    stale_fingerprint_embeddings INTEGER NOT NULL DEFAULT 0
+);
+";
+
+/// V7 — the **IVF (inverted file) similarity index** ([`crate::ann`]).
+///
+/// Three tables, all keyed by fingerprint so a re-embed neither reads nor
+/// invalidates another embedder's index (`L-C2` again, one level up).
+///
+/// - `ann_centroid` holds the cluster representatives a query scores against.
+///   `posting_count` is carried on the row so choosing a probe width costs `k`
+///   integers rather than a `GROUP BY` over every assignment — the probe must
+///   not have to read the postings to decide how many postings to read.
+/// - `ann_assignment` is the posting list, keyed exactly like `embedding`
+///   itself: `(content_hash, fingerprint)`. `idx_ann_assignment_probe` on
+///   `(fingerprint, centroid_id)` is what makes a probe an index range scan
+///   instead of a table scan — without it the accelerator would be slower than
+///   the scan it replaces.
+/// - `ann_index_state` is the build watermark: one row per fingerprint saying
+///   when the index was built and over how many vectors, which is what lets a
+///   reader tell "never indexed" from "indexed and drifted".
+///
+/// **Liveness is deliberately absent from all three.** A posting is a row about
+/// *content*, not about belief: `supersede_node` and `restore_node` flip a
+/// node's liveness without touching `embedding`, and an `as_of` query changes
+/// the live set with no vector change at all. Because the postings join back
+/// through `node` under the shared [`crate::candidates::NODE_AS_OF`] predicate,
+/// all three of those operations need **zero index maintenance** — which is the
+/// entire reason this is an IVF and not a graph index, where each of them would
+/// be an invalidation.
+///
+/// `IF NOT EXISTS` for the reason V4–V6 have it: a store whose `user_version`
+/// was rewound (a partial restore, or the migration fixtures) must be able to
+/// re-run this without failing on an existing table.
+pub(crate) const MIGRATION_V7: &str = "\
+CREATE TABLE IF NOT EXISTS ann_centroid (
+    fingerprint   TEXT NOT NULL,
+    centroid_id   INTEGER NOT NULL,
+    vector        BLOB NOT NULL,
+    posting_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (fingerprint, centroid_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS ann_assignment (
+    content_hash  TEXT NOT NULL,
+    fingerprint   TEXT NOT NULL,
+    centroid_id   INTEGER NOT NULL,
+    PRIMARY KEY (content_hash, fingerprint)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_ann_assignment_probe
+    ON ann_assignment(fingerprint, centroid_id);
+
+CREATE TABLE IF NOT EXISTS ann_index_state (
+    fingerprint    TEXT PRIMARY KEY,
+    built_at       TEXT NOT NULL,
+    vector_count   INTEGER NOT NULL,
+    centroid_count INTEGER NOT NULL
+);
+";
 
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
@@ -319,23 +407,12 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 5 {
         migrate_v5(&tx)?;
     }
-    // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
-    // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
-    // high-water mark. Two branches that each add "the next step" merge
-    // cleanly — git sees two additions to adjacent lines — and produce a
-    // ladder with two steps numbered the same, or a `SCHEMA_VERSION` that
-    // skips one. Nothing in CI catches that: both files compile, and the
-    // mis-numbering only shows up as a corrupt context.db on a user's
-    // machine.
-    //
-    // Adaptive context is being built on two branches in parallel, so the
-    // slot is reserved here in advance:
-    //
-    //   v6: adaptive-context Phase 3 (#714)
-    //
-    // If you are not that phase, take v7 and add your own line here. If
-    // Phase 3 ships without needing its slot, delete this note rather than
-    // leaving a hole — the ladder's numbering is the contract.
+    if version < 6 {
+        tx.execute_batch(MIGRATION_V6)?;
+    }
+    if version < 7 {
+        tx.execute_batch(MIGRATION_V7)?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())

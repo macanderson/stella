@@ -9,9 +9,12 @@
 //! dressing weak context up as grounding (`L-C6`).
 //!
 //! The scoring/fusion/packing steps are plain synchronous functions over owned
-//! data — brute-force top-k cosine is fine at CLI-local scale; an ANN
-//! accelerator is a size-threshold follow-up. They are property-tested at the
-//! bottom of the file.
+//! data. Brute-force top-k cosine is the default and stays the default: it is
+//! exact, it is fine at CLI-local scale, and an approximation that changes which
+//! frames a turn recalls is not something to switch on for someone. The IVF
+//! accelerator in [`crate::ann`] is opt-in through [`RecallTuning::ann_enabled`]
+//! and announces itself on [`RecallResult::used_ann_index`] when it fires. They
+//! are property-tested at the bottom of the file.
 
 use std::collections::{HashMap, HashSet};
 
@@ -103,6 +106,34 @@ pub const DEFAULT_LEXICAL_LIMIT: usize = 8;
 /// keeping the pass `Θ(max_frames² )` instead of `Θ(n²)`. Floored at
 /// [`DEFAULT_LEXICAL_LIMIT`] so a small `max_frames` still considers a sane window.
 pub const DEFAULT_MMR_CANDIDATE_MULTIPLE: usize = 4;
+/// Whether the IVF accelerator (the crate-private `ann` module) serves the
+/// similarity scan.
+///
+/// **`false`, and that is the decision, not a placeholder.** An approximate
+/// index changes which frames a turn recalls, and making that the silent default
+/// would contradict the honesty posture the rest of this module is built on
+/// (`docs/design/adaptive-context.md` §5.5). The exact full scan stays the
+/// default path and therefore stays the tested one; a workspace that wants
+/// sublinear recall turns it on in `context.retrieval` and gets a
+/// [`RecallResult::used_ann_index`] flag saying when it fired.
+pub const DEFAULT_ANN_ENABLED: bool = false;
+/// How many centroid posting lists an enabled probe reads before over-fetch
+/// widens it.
+///
+/// Against the `ceil(√n)` centroids the `ann` module builds, a fixed probe count
+/// means the probed *fraction* shrinks as the corpus grows — 12 of 20 lists at
+/// 400 vectors, 12 of 100 at 10,000 — which is where the sublinearity comes
+/// from. It is a floor, never a cap: the probe widens itself until the postings
+/// it will read cover the depth `coverage_topk` and `max_vector_seeds` actually
+/// consume.
+///
+/// **12 is measured, not guessed.** On the blended synthetic corpus in
+/// `ann/tests.rs`, recall@10 against the exact scan comes out 0.925 at 8 probes
+/// and 0.950 at 12, and 12 is the smallest width that holds ≥0.93 at every
+/// corpus size from 200 to 5,000 vectors. Going to 16 buys 0.975 for another
+/// third of the probe cost; the trade is a setting, which is why this is a
+/// default rather than a constant.
+pub const DEFAULT_ANN_PROBES: usize = 12;
 
 /// The knobs that shape a recall, resolved once per store.
 ///
@@ -135,6 +166,13 @@ pub struct RecallTuning {
     /// Shortlist size as a multiple of `max_frames`. See
     /// [`DEFAULT_MMR_CANDIDATE_MULTIPLE`].
     pub mmr_candidate_multiple: usize,
+    /// Whether the IVF accelerator may serve the similarity scan. Off by
+    /// default; see [`DEFAULT_ANN_ENABLED`] for why that is a decision rather
+    /// than caution.
+    pub ann_enabled: bool,
+    /// Centroid posting lists an enabled probe reads, before over-fetch widens
+    /// it. See [`DEFAULT_ANN_PROBES`].
+    pub ann_probes: usize,
 }
 
 impl Default for RecallTuning {
@@ -148,6 +186,8 @@ impl Default for RecallTuning {
             max_vector_seeds: DEFAULT_MAX_VECTOR_SEEDS,
             lexical_limit: DEFAULT_LEXICAL_LIMIT,
             mmr_candidate_multiple: DEFAULT_MMR_CANDIDATE_MULTIPLE,
+            ann_enabled: DEFAULT_ANN_ENABLED,
+            ann_probes: DEFAULT_ANN_PROBES,
         }
     }
 }
@@ -180,6 +220,11 @@ impl RecallTuning {
             max_vector_seeds: self.max_vector_seeds,
             lexical_limit: self.lexical_limit.max(1),
             mmr_candidate_multiple: self.mmr_candidate_multiple.max(1),
+            ann_enabled: self.ann_enabled,
+            // Zero probes would read no posting list at all and hand the
+            // ranking nothing but the unassigned tail — an empty recall on a
+            // full store. Clamped like every other knob rather than rejected.
+            ann_probes: self.ann_probes.max(1),
         }
     }
 }
@@ -264,6 +309,35 @@ pub struct RecallResult {
     /// `L-C5` bans silent truncation, and a bound that vanishes from the report
     /// is exactly that.
     pub candidates_cut: usize,
+    /// Whether the IVF index served the similarity scan instead of the exact
+    /// one.
+    ///
+    /// Additive and explicit, following the [`Self::considered`] precedent, and
+    /// for the same reason: the alternative is a caller *inferring* it from a
+    /// settings file plus a build watermark plus a drift threshold, three facts
+    /// that can each be true while the probe still declined. This is the only
+    /// place a recall says which scan actually ran.
+    ///
+    /// `false` on a store with the setting on but no index, a stale index, or a
+    /// lexical-fallback turn — in every one of those the exact scan ran and the
+    /// result is what an unindexed store would have returned.
+    pub used_ann_index: bool,
+    /// How many centroid posting lists the probe read, and how many exist:
+    /// `(probed, total)`. `(0, 0)` when the exact scan ran.
+    ///
+    /// The ratio is the honest summary of how approximate this recall was — 8
+    /// of 100 says far more about what the ranking did *not* look at than a bare
+    /// "approximate: true", and it is the number to raise `ann_probes` against
+    /// if a frame that should have been recalled was not.
+    pub ann_probes: (usize, usize),
+    /// How many vectors the similarity pass cosine-scored — the probe's
+    /// candidate count when [`Self::used_ann_index`], the whole live corpus
+    /// under the fingerprint when it is not.
+    ///
+    /// This is the denominator behind the acceleration claim, so it is reported
+    /// rather than asserted in prose: a caller comparing it to their memory
+    /// count can see exactly what fraction of the corpus was considered.
+    pub vectors_scored: usize,
 }
 
 impl RecallResult {
@@ -530,14 +604,44 @@ fn recall_blocking(
     //     Streamed: each vector is scored straight off its BLOB and never
     //     decoded into an owned `Vec<f32>`. Only the ids and cosines are
     //     kept; the candidates' vectors are re-read after the cut.
-    let mut cos_scored = score_nodes_by_vector(
-        conn,
-        &q.fingerprint,
-        query_vec,
-        &excluded,
-        q.as_of.as_deref(),
-        cosine_blob,
-    )?;
+    //
+    //     The IVF probe is tried first ONLY when the workspace opted in, and it
+    //     declines (returning `None`) whenever there is no usable index — so
+    //     the exact scan below is both the default and the fallback, and the
+    //     two produce the identical `(score desc, id asc)` ordering over
+    //     whatever candidates each considered.
+    let probe = if q.tuning.ann_enabled {
+        crate::ann::probe_by_vector(
+            conn,
+            &crate::ann::ProbeRequest {
+                fingerprint: &q.fingerprint,
+                query_vec,
+                excluded: &excluded,
+                as_of: q.as_of.as_deref(),
+                probes: q.tuning.ann_probes,
+                min_candidates: ann_min_candidates(q),
+            },
+            cosine_blob,
+        )?
+    } else {
+        None
+    };
+    let (mut cos_scored, used_ann_index, ann_probes) = match probe {
+        Some(p) => (p.scored, true, (p.probed_centroids, p.centroid_count)),
+        None => (
+            score_nodes_by_vector(
+                conn,
+                &q.fingerprint,
+                query_vec,
+                &excluded,
+                q.as_of.as_deref(),
+                cosine_blob,
+            )?,
+            false,
+            (0, 0),
+        ),
+    };
+    let vectors_scored = cos_scored.len();
     // Ties break on node id. The scan has no ORDER BY, so without it two
     // nodes with an identical cosine swap ranks between runs, and rank is
     // exactly what RRF scores — the same store would answer the same query
@@ -768,7 +872,37 @@ fn recall_blocking(
         used_lexical_fallback,
         considered,
         candidates_cut,
+        used_ann_index,
+        ann_probes,
+        vectors_scored,
     })
+}
+
+/// The candidate floor an IVF probe must clear before its width stops growing.
+///
+/// Every consumer of the similarity list that reads *depth* rather than the
+/// shortlist is folded in here, so widening any one of them widens the probe
+/// with it rather than silently outrunning it:
+///
+/// - `coverage_topk` — the mean this many cosines decide the `L-C6` fallback
+///   gate. A probe that under-fetches lowers that mean and moves the gate.
+/// - `max_vector_seeds` — the strongest hits that seed the graph expansion.
+/// - `max_frames × mmr_candidate_multiple` — the shortlist itself, which the
+///   vector list must be able to fill on its own when the other signals are
+///   silent (a store with no edges and no domain tags).
+/// - `lexical_limit` — the floor the shortlist bound already applies.
+///
+/// Then multiplied by [`crate::ann::PROBE_OVERFETCH`], because posting counts
+/// are an upper bound on *candidates*, not on survivors: liveness, the `as_of`
+/// cutoff, and the `excluded` anti-set all remove rows after the width is
+/// chosen, so a probe planned to return exactly the floor can return less.
+fn ann_min_candidates(q: &RecallInputs) -> usize {
+    q.tuning
+        .coverage_topk
+        .max(q.tuning.max_vector_seeds)
+        .max(q.tuning.lexical_limit)
+        .max((q.max_frames as usize).saturating_mul(q.tuning.mmr_candidate_multiple))
+        .saturating_mul(crate::ann::PROBE_OVERFETCH)
 }
 
 /// `budget_tokens` over a byte count instead of the bytes themselves.
