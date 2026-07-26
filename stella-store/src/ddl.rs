@@ -440,8 +440,11 @@ pub(crate) const CONTEXT_BLOCKS_DDL: &str = "CREATE TABLE IF NOT EXISTS context_
 /// model saw. PRIMARY KEY (execution_id, turn_instance, step, call_seq, ordinal)
 /// is the wire position; `call_seq` separates the several model calls that can
 /// share one step (worker 0, overflow summarizer 1, allocated management roles
-/// 2+ — v13). The second index is the reverse lookup (every step a given block
-/// was resident) that cost-of-carry and eviction analysis read.
+/// 2+ — v13). `call_id` is the per-occurrence tool-call attribution (v15):
+/// block ids are content-addressed, so `context_blocks.call_id` names only the
+/// call that first minted a block, and duplicates would otherwise be
+/// unattributable. The second index is the reverse lookup (every step a given
+/// block was resident) that cost-of-carry and eviction analysis read.
 pub(crate) const STEP_MANIFEST_DDL: &str = "CREATE TABLE IF NOT EXISTS step_manifest (
        execution_id INTEGER NOT NULL,
        turn_instance INTEGER NOT NULL,
@@ -452,6 +455,7 @@ pub(crate) const STEP_MANIFEST_DDL: &str = "CREATE TABLE IF NOT EXISTS step_mani
        cache_zone TEXT NOT NULL,
        resident_since_step INTEGER NOT NULL,
        message_index INTEGER NOT NULL DEFAULT 0,
+       call_id TEXT,
        PRIMARY KEY (execution_id, turn_instance, step, call_seq, ordinal)
      );
      CREATE INDEX IF NOT EXISTS step_manifest_by_block

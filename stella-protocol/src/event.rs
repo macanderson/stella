@@ -959,7 +959,13 @@ pub struct BlockOrigin {
     pub turn_instance: u32,
     /// The step within that turn.
     pub step: usize,
-    /// Tool-call correlation id, for `ToolCall`/`ToolResult` blocks.
+    /// Tool-call correlation id, for `ToolCall`/`ToolResult` blocks — the
+    /// call that *first* minted this block. Block ids are content-addressed,
+    /// so two distinct calls with byte-identical output share one id and only
+    /// the first is registered: this is birth provenance, **not** the complete
+    /// set of calls that carried the block. For "which calls did this block
+    /// serve at step N", read [`ManifestEntry::call_id`], which is recorded
+    /// per occurrence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     /// The `nod_…` memory node id, for a `RecalledFrame` that is a memory.
@@ -987,6 +993,17 @@ pub struct ManifestEntry {
     /// recorded before reconstruction existed.
     #[serde(default)]
     pub message_index: usize,
+    /// The tool call this *occurrence* belongs to, for `ToolCall`/`ToolResult`
+    /// blocks. Content-addressing collapses byte-identical blocks onto one
+    /// `block_id`, so [`BlockOrigin::call_id`] only ever names the first call
+    /// to mint it — two `git status` runs with identical output register once.
+    /// Recording the id per manifest entry keeps the attribution complete:
+    /// joining a compaction event's evicted/deduped/aged `block_id`s against
+    /// the manifests that carried them answers "which *calls* left context"
+    /// without under-reporting the duplicates. `None` for non-tool blocks, and
+    /// on manifests recorded before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
 }
 
 /// One provider's share of a recall's frame mix.
@@ -2092,6 +2109,7 @@ mod tests {
                     token_cost: 1200,
                     resident_since_step: 0,
                     message_index: 0,
+                    call_id: None,
                 },
                 ManifestEntry {
                     block_id: "blk_tail".into(),
@@ -2099,6 +2117,7 @@ mod tests {
                     token_cost: 90,
                     resident_since_step: 3,
                     message_index: 3,
+                    call_id: Some("call_7".into()),
                 },
             ],
             effective_budget_tokens: 136_363,

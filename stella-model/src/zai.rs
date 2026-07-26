@@ -479,46 +479,39 @@ const ZAI_CAPS: crate::attachment::DialectCaps = crate::attachment::DialectCaps 
 /// Content for a user turn: a plain string when there are no attachments,
 /// otherwise a parts array with media before text.
 fn user_content(message: &CompletionMessage) -> ZaiContent {
-    user_content_with_caps(message, ZAI_CAPS)
-}
-
-/// The mapping itself, with caps as a parameter: the degrade arm for parts
-/// this dialect has no shape for is unreachable under the shipped
-/// [`ZAI_CAPS`], so parameterising is what keeps it testable — and keeps a
-/// future caps edit from turning an attachment into a panic.
-fn user_content_with_caps(
-    message: &CompletionMessage,
-    caps: crate::attachment::DialectCaps,
-) -> ZaiContent {
     if message.attachments.is_empty() {
         return ZaiContent::Text(message.content.clone());
     }
-    let mut parts: Vec<ZaiContentPart> = crate::attachment::wire_parts(&message.attachments, caps)
-        .into_iter()
-        .map(|part| match part {
-            crate::attachment::WirePart::Image { media_type, base64 } => ZaiContentPart::ImageUrl {
-                image_url: ZaiImageUrl {
-                    url: format!("data:{media_type};base64,{base64}"),
-                },
-            },
-            crate::attachment::WirePart::Text { text } => ZaiContentPart::Text { text },
-            // PDF/audio/video are switched off in ZAI_CAPS, so wire_parts
-            // normally degrades them to text before they get here. If a
-            // caps flag is ever switched on ahead of a wire shape for it,
-            // say so in text rather than aborting the turn.
-            part @ (crate::attachment::WirePart::Pdf { .. }
-            | crate::attachment::WirePart::Audio { .. }
-            | crate::attachment::WirePart::Video { .. }) => ZaiContentPart::Text {
-                text: crate::attachment::unencodable_part_note(&part, "the Z.ai GLM chat dialect"),
-            },
-        })
-        .collect();
+    let mut parts: Vec<ZaiContentPart> =
+        crate::attachment::wire_parts(&message.attachments, ZAI_CAPS)
+            .into_iter()
+            .map(attachment_part)
+            .collect();
     if !message.content.is_empty() {
         parts.push(ZaiContentPart::Text {
             text: message.content.clone(),
         });
     }
     ZaiContent::Parts(parts)
+}
+
+/// One resolved part as a GLM content part.
+fn attachment_part(part: crate::attachment::WirePart) -> ZaiContentPart {
+    match part {
+        crate::attachment::WirePart::Image { media_type, base64 } => ZaiContentPart::ImageUrl {
+            image_url: ZaiImageUrl {
+                url: format!("data:{media_type};base64,{base64}"),
+            },
+        },
+        crate::attachment::WirePart::Text { text } => ZaiContentPart::Text { text },
+        // Excluded by ZAI_CAPS today; turning one of those caps on without
+        // adding a part arm lands here — degrade, never abort the turn.
+        part @ (crate::attachment::WirePart::Pdf { .. }
+        | crate::attachment::WirePart::Audio { .. }
+        | crate::attachment::WirePart::Video { .. }) => ZaiContentPart::Text {
+            text: crate::attachment::unsupported_part_note(&part, "Z.ai chat API"),
+        },
+    }
 }
 
 /// An assistant-authored tool call echoed back in conversation history

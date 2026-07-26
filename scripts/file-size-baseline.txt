@@ -7,12 +7,12 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-1668 stella-cli/src/agent_tests.rs
-2165 stella-cli/src/agent.rs
+1714 stella-cli/src/agent_tests.rs
+2180 stella-cli/src/agent.rs
 1589 stella-cli/src/candidate_ws.rs
 4489 stella-cli/src/command_deck.rs
 1503 stella-cli/src/contextgraph.rs
-1696 stella-cli/src/main.rs
+1719 stella-cli/src/main.rs
 1635 stella-cli/src/memory.rs
 2142 stella-context/src/store.rs
 2046 stella-core/src/bus.rs
@@ -21,16 +21,17 @@
 1646 stella-core/src/rules.rs
 1502 stella-core/src/skills.rs
 1692 stella-fleet/src/fleet.rs
-1600 stella-model/src/anthropic/tests.rs
-1616 stella-model/src/bedrock.rs
-1917 stella-model/src/openai.rs
-1619 stella-model/src/zai/tests.rs
+1599 stella-model/src/anthropic/tests.rs
+1614 stella-model/src/bedrock.rs
+1909 stella-model/src/openai.rs
+1622 stella-model/src/zai/tests.rs
 2455 stella-pipeline/src/pipeline.rs
 2019 stella-pipeline/src/pipeline/tests.rs
-2405 stella-protocol/src/event.rs
+2424 stella-protocol/src/event.rs
 2231 stella-store/src/lib.rs
-2165 stella-store/src/tests.rs
+2168 stella-store/src/tests.rs
 1828 stella-store/src/usage.rs
+1558 stella-tools/src/media.rs
 2966 stella-tools/src/registry.rs
 1688 stella-tools/src/scripts.rs
 1662 stella-tui/src/deck_render.rs

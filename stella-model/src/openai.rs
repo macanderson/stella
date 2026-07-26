@@ -252,40 +252,32 @@ const OPENAI_CAPS: crate::attachment::DialectCaps = crate::attachment::DialectCa
 
 /// Map a user message's attachments to input parts (media before text).
 fn attachment_parts(message: &CompletionMessage) -> Vec<OpenAiContentPart> {
-    attachment_parts_with_caps(message, OPENAI_CAPS)
+    crate::attachment::wire_parts(&message.attachments, OPENAI_CAPS)
+        .into_iter()
+        .map(attachment_part)
+        .collect()
 }
 
-/// The mapping itself, with caps as a parameter: the degrade arm for parts
-/// this dialect has no shape for is unreachable under the shipped
-/// [`OPENAI_CAPS`], so parameterising is what keeps it testable — and keeps a
-/// future caps edit from turning an attachment into a panic.
-fn attachment_parts_with_caps(
-    message: &CompletionMessage,
-    caps: crate::attachment::DialectCaps,
-) -> Vec<OpenAiContentPart> {
-    crate::attachment::wire_parts(&message.attachments, caps)
-        .into_iter()
-        .map(|part| match part {
-            crate::attachment::WirePart::Image { media_type, base64 } => {
-                OpenAiContentPart::InputImage {
-                    image_url: format!("data:{media_type};base64,{base64}"),
-                }
+/// One resolved part as a Responses input part.
+fn attachment_part(part: crate::attachment::WirePart) -> OpenAiContentPart {
+    match part {
+        crate::attachment::WirePart::Image { media_type, base64 } => {
+            OpenAiContentPart::InputImage {
+                image_url: format!("data:{media_type};base64,{base64}"),
             }
-            crate::attachment::WirePart::Pdf { name, base64 } => OpenAiContentPart::InputFile {
-                filename: name,
-                file_data: format!("data:application/pdf;base64,{base64}"),
-            },
-            crate::attachment::WirePart::Text { text } => OpenAiContentPart::InputText { text },
-            // Audio/video are switched off in OPENAI_CAPS, so wire_parts
-            // normally degrades them to text before they get here. If a caps
-            // flag is ever switched on ahead of a wire shape for it, say so in
-            // text rather than aborting the turn.
-            part @ (crate::attachment::WirePart::Audio { .. }
-            | crate::attachment::WirePart::Video { .. }) => OpenAiContentPart::InputText {
-                text: crate::attachment::unencodable_part_note(&part, "the OpenAI Responses API"),
-            },
-        })
-        .collect()
+        }
+        crate::attachment::WirePart::Pdf { name, base64 } => OpenAiContentPart::InputFile {
+            filename: name,
+            file_data: format!("data:application/pdf;base64,{base64}"),
+        },
+        crate::attachment::WirePart::Text { text } => OpenAiContentPart::InputText { text },
+        // Excluded by OPENAI_CAPS today; turning either cap on without adding
+        // a part arm lands here — degrade, never abort the turn.
+        part @ (crate::attachment::WirePart::Audio { .. }
+        | crate::attachment::WirePart::Video { .. }) => OpenAiContentPart::InputText {
+            text: crate::attachment::unsupported_part_note(&part, "OpenAI Responses API"),
+        },
+    }
 }
 
 /// Streamed SSE payloads from the Responses API. Unlike Chat Completions'
@@ -829,6 +821,44 @@ mod tests {
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// The audio/video arm of [`attachment_part`] is out of reach only
+    /// because `OPENAI_CAPS` switches those kinds off. Flipping one of those
+    /// bools is a routine one-line edit, so the arm it lands in has to
+    /// degrade like every other unsupported attachment instead of aborting
+    /// the process mid-turn.
+    #[test]
+    fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
+        use crate::attachment::{DialectCaps, wire_parts};
+        use stella_protocol::{Attachment, AttachmentSource};
+        let flipped = DialectCaps {
+            images: true,
+            pdfs: true,
+            audio: true,
+            video: true,
+        };
+        for (name, mime) in [("song.mp3", "audio/mpeg"), ("clip.mp4", "video/mp4")] {
+            let attachment = Attachment {
+                name: name.into(),
+                media_type: mime.into(),
+                byte_len: 3,
+                source: AttachmentSource::Data {
+                    base64: "YWJj".into(),
+                },
+            };
+            let parts: Vec<_> = wire_parts(&[attachment], flipped)
+                .into_iter()
+                .map(attachment_part)
+                .collect();
+            let [OpenAiContentPart::InputText { text }] = parts.as_slice() else {
+                panic!("expected a degrade note for {mime}, got {parts:?}");
+            };
+            assert!(
+                text.contains(mime),
+                "the note names what was attached: {text}"
+            );
+        }
+    }
+
     #[test]
     fn user_attachments_map_to_input_image_and_input_file_parts() {
         use stella_protocol::{Attachment, AttachmentSource};
@@ -864,44 +894,6 @@ mod tests {
         );
         assert_eq!(content[3]["type"], "input_text");
         assert_eq!(content[3]["text"], "look");
-    }
-
-    /// Switching a caps flag on must never abort the turn. The audio/video
-    /// arms of the mapping are unreachable only because of the shipped
-    /// `OPENAI_CAPS`; editing a caps const is a routine change, so the arms
-    /// degrade to a descriptive text part — the attachment module's contract
-    /// is that an attachment NEVER fails the request.
-    #[test]
-    fn caps_a_dialect_cannot_encode_degrade_to_text_never_panic() {
-        use stella_protocol::{Attachment, AttachmentSource};
-        let everything = crate::attachment::DialectCaps {
-            images: true,
-            pdfs: true,
-            audio: true,
-            video: true,
-        };
-        let att = |name: &str, mime: &str, b64: &str| Attachment {
-            name: name.into(),
-            media_type: mime.into(),
-            byte_len: 3,
-            source: AttachmentSource::Data { base64: b64.into() },
-        };
-        let message = CompletionMessage::user_with_attachments(
-            "listen",
-            vec![
-                att("song.mp3", "audio/mpeg", "YXVk"),
-                att("clip.mp4", "video/mp4", "dmlk"),
-            ],
-        );
-        let json = serde_json::to_value(attachment_parts_with_caps(&message, everything)).unwrap();
-        let parts = json.as_array().unwrap();
-        assert_eq!(parts.len(), 2, "{json}");
-        for (part, media_type) in parts.iter().zip(["audio/mpeg", "video/mp4"]) {
-            assert_eq!(part["type"], "input_text", "{json}");
-            let note = part["text"].as_str().unwrap();
-            assert!(note.contains(media_type), "{note}");
-            assert!(note.contains("OpenAI Responses API"), "{note}");
-        }
     }
 
     /// Every request carries the session-stable `prompt_cache_key` so

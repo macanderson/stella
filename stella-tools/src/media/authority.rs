@@ -28,6 +28,13 @@ pub struct HostMediaOperation {
 }
 
 pub trait MediaOperationIdSource: Send + Sync {
+    /// Both fields are part of one operation's identity, so a host retrying
+    /// the same call must return the same `expires_at` as well as the same
+    /// `opaque_id`. Deriving the expiry from a clock read *per call* looks
+    /// stable and is not: two calls that straddle a second boundary present
+    /// `now + ttl` and then `now + ttl + 1`, and the journal refuses the
+    /// second as a different request wearing the same key. Mint the expiry
+    /// once, when the operation is created, and hand back the same value.
     fn operation_id(&self) -> HostMediaOperation;
 }
 

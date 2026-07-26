@@ -14,12 +14,13 @@ opens an outbound connection, writes a file, or answers a method other than
 ## Where it sits
 
 A leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde`, `serde_json`,
-`thiserror`, `tokio` (the `net` feature only) and `toml` — no `stella-*`
+`sha2`, `thiserror`, `tokio` (the `net` feature only) and `toml` — no `stella-*`
 dependency at all. That is deliberate: `stella_store::Store::open` creates
 `.stella/` and runs schema migrations, and an observer that migrates what it
-observes is not an observer. The price is one acknowledged copy —
+observes is not an observer. The price is two acknowledged copies —
 `global::data_dir` and `project_id_for` ([`src/global.rs:27`](src/global.rs),
-`:48`) mirror `../stella-store/src/usage.rs`.
+`:48`) mirror `../stella-store/src/usage.rs`, and `/api/explorations` re-hashes
+exploration manifests itself.
 
 Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
 ([`../stella-cli/src/main.rs:847`](../stella-cli/src/main.rs)) preflights the
@@ -36,8 +37,7 @@ free one). This crate builds no binary —
 | [`src/lib.rs`](src/lib.rs) | The HTTP responder: the route table, the `Host` and head-cap gates, the CSP, `serve`. Open it to add a route or to touch anything security-relevant. |
 | [`src/db.rs`](src/db.rs) | Every query against `.stella/private/store.db` and `fleet.db`. Open it when a panel needs a new aggregate; the SQL deliberately mirrors `stella stats` semantics (resolved = outcome `completed`, `off-grid` = provider `local`). |
 | [`src/global.rs`](src/global.rs) | The user-tier view over `~/.stella/usage.db`: the project switcher (`/api/projects`, `?project=`) and the hub-telemetry drill (org → workspace → repo → project). |
-| [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain — plus `redact`, the credential scrubber. |
-| [`src/accept.rs`](src/accept.rs) | The written `accept()` classification policy — which failures are transient (retry, with backoff where it is needed) and which end the loop. Byte-identical to [`../stella-serve/src/accept.rs`](../stella-serve/src/accept.rs): both servers must apply one policy, and this crate takes no `stella-*` dependency that could hold a shared copy, so a drift-guard test in both crates fails if the two files differ. Change one, change the other. |
+| [`src/fsview.rs`](src/fsview.rs) | Views derived from files rather than SQL — skills, memories, rule files, `reflections.jsonl` lessons, `mcp.toml`, the settings scope chain, exploration maps — plus `redact`, the credential scrubber. |
 | [`src/codegraph.rs`](src/codegraph.rs) | `codegraph.db` flattened to `{nodes, edges, groups}` for the force-directed canvas, including the Rust module-path resolution the indexer doesn't do. |
 | [`src/assets/index.html`](src/assets/index.html) | The entire dashboard — markup, styles and script in one file, embedded at compile time. |
 | `src/assets/mark.svg`, `src/assets/wordmark.svg` | Favicon and header lockup, served from `/assets/`. |
@@ -62,7 +62,7 @@ instead. The no-`Host` allowance itself is deliberate — a browser `fetch`
 always sends one, so its absence means raw curl or a test, not the attack.
 
 **Read-only** is `OpenFlags::SQLITE_OPEN_READ_ONLY` at all three open sites —
-`db::open_read_only` (`src/db.rs:716`), `global::open_usage`
+`db::open_read_only` (`src/db.rs:736`), `global::open_usage`
 (`src/global.rs:59`), `codegraph::snapshot` (`src/codegraph.rs:38`) — each with
 a 5 s `busy_timeout`, so a checkpoint or a migration's exclusive lock makes a
 poll wait rather than 500. `Observatory::new` opens nothing, and each open
@@ -99,7 +99,7 @@ keep the original root.
 — one row in `executions`, the foreign key `telemetry`, `tool_calls`,
 `files_touched` and `execution_reflection` hang off; every join in
 `Observatory::executions`, `execution`, `models` and `activity` is on it.
-`run_id` appears only in `Observatory::fleet` (`src/db.rs:658`), against a
+`run_id` appears only in `Observatory::fleet` (`src/db.rs:678`), against a
 different file (`fleet.db`) and a different hierarchy: a fleet run fans out to
 tasks, then attempts, then commits. It is not an execution and not a session,
 and no query may join the two. AGENTS.md's glossary is the authority.
@@ -108,7 +108,7 @@ and no query may join the two. AGENTS.md's glossary is the authority.
 
 A workspace that has never run `stella` renders an empty dashboard, not a 500.
 An absent file yields `None` and an empty payload at the call site; an absent
-*table* is caught by `is_missing_table` (`src/db.rs:779`), degrading
+*table* is caught by `is_missing_table` (`src/db.rs:799`), degrading
 `collect_rows`/`or_empty` to `[]`/`{}`. `global.rs` goes further — `query_rows`
 treats any `prepare` failure as empty, because a `usage.db` predating the hub
 replica has no `telemetry` table at all.
@@ -172,12 +172,6 @@ the parsed JSON. Two `#[tokio::test]`s use a real socket on port 0 for what
 `respond` cannot cover: the response head (CSP, `nosniff`) and the head-cap
 refusal.
 
-[`src/accept.rs`](src/accept.rs) is the exception to the shape above: it needs no
-workspace at all. Its tests pin the `accept()` classification against synthesised
-`io::Error` kinds (EMFILE and ECONNABORTED cannot be provoked locally, and the
-classification is a pure function of the kind), and one of them is the drift guard
-that keeps the file byte-identical to `stella-serve`'s copy.
-
 ## Extending it
 
 Adding an API route:
@@ -207,6 +201,8 @@ through `redact`, or emit key names only, the way `mcp_servers` does.
   (the `execution_id` / `run_id` distinction this crate joins across), "The
   `.stella/` directory (per-workspace state)" for what each store holds, and
   invariant 3, "Zero telemetry egress by default".
+- [`../docs/design/exploration-sharing.md`](../docs/design/exploration-sharing.md)
+  §4e — the exploration-map freshness verdict `fsview::explorations` computes.
 - [`../website/content/docs/commands/observe.mdx`](../website/content/docs/commands/observe.mdx)
   and [`../website/content/docs/telemetry/dashboard.mdx`](../website/content/docs/telemetry/dashboard.mdx)
   — the user-facing flags and a tour of each tab.

@@ -339,6 +339,7 @@ footer b{color:var(--text-2)}
 
   <!-- ══ ACTIVITY ══════════════════════════════════════════════════════ -->
   <section data-tab="activity">
+    <div id="act-undated"></div>
     <div class="grid cols-2e">
       <div class="card">
         <div class="kick">Spend</div>
@@ -434,6 +435,11 @@ footer b{color:var(--text-2)}
         <div class="kick" style="margin-top:18px">Promoted rules</div>
         <div id="rules-list"></div>
       </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="kick">.stella/explorations · shared across every session on this workspace</div>
+      <h2>Exploration maps · freshness re-hashed against the working tree</h2>
+      <div class="scroll-x" id="mem-explorations"></div>
     </div>
   </section>
 
@@ -551,20 +557,16 @@ const inTf = (startedAt) => {
   const d = utc(startedAt);
   return d && (Date.now() - d.getTime()) <= TF_MS[state.tf];
 };
-/* An activity bucket whose rows carried a timestamp SQLite could not read as a
-   date arrives labelled "Undated" rather than as an ISO day (see
-   `db.rs::UNDATED_DAY`). It has no position on a time axis, so it appears only
-   in the "all" timeframe — a trailing-7-day window cannot honestly claim it. */
-const isDatedDay = (day) => /^\d{4}-\d{2}-\d{2}$/.test(day ?? "");
+// `/api/activity` buckets runs whose timestamp didn't parse under the day
+// `undated` (db.rs `UNDATED`). It has no position on a date axis, so it is
+// out of every window — renderActivity reports it beside the charts instead.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const inTfDay = (day) => {
+  if (!ISO_DAY.test(day)) return false;
   if (state.tf === "all") return true;
-  if (!isDatedDay(day)) return false;
   const d = new Date(day + "T00:00:00Z");
   return d && (Date.now() - d.getTime()) <= (TF_MS[state.tf] + 864e5);
 };
-/* Axis tick: ISO days show as MM-DD; anything else (the "Undated" bucket) shows
-   whole, because slicing off its first five characters yields nonsense. */
-const dayTick = (day) => isDatedDay(day) ? day.slice(5) : (day ?? "");
 
 /* ── stat tiles ──────────────────────────────────────────────────────── */
 function tile(k, v, sub, accent) {
@@ -685,7 +687,7 @@ function renderDaily(elId, days, series, fmt, stacked) {
     bars += `<rect class="hit" data-i="${i}" x="${(x0 - group / 2).toFixed(1)}" y="0"
       width="${group.toFixed(1)}" height="${H}" fill="transparent"/>`;
     if (days.length <= 12 || i % Math.ceil(days.length / 12) === 0)
-      labels += `<text x="${x0.toFixed(1)}" y="${H - 6}" text-anchor="middle">${esc(dayTick(d.day))}</text>`;
+      labels += `<text x="${x0.toFixed(1)}" y="${H - 6}" text-anchor="middle">${d.day.slice(5)}</text>`;
   });
   const grid = [0, .5, 1].map(f => {
     const y = padT + innerH * (1 - f);
@@ -701,8 +703,28 @@ function renderDaily(elId, days, series, fmt, stacked) {
     r.addEventListener("mouseleave", hideTip);
   });
 }
+/* Runs stella recorded with a timestamp it can't parse: real work with no
+   day to sit on, so it is named rather than hidden or faked onto the axis. */
+function renderUndated(d) {
+  const el = $("act-undated");
+  if (!d || !((d.runs ?? 0) || (d.tool_calls ?? 0))) {
+    el.innerHTML = "";
+    return;
+  }
+  const runs = d.runs ?? 0;
+  el.innerHTML = `<div class="card" style="margin-bottom:14px">
+    <div class="kick">Off the day axis</div>
+    <h2>${runs} undated ${runs === 1 ? "run" : "runs"}
+      <span class="badge warn">unparseable timestamp</span></h2>
+    <div style="color:var(--text-2)">${fmtUsd(d.cost_usd ?? 0)} ·
+      ${fmtTok(d.input_tokens ?? 0)} in · ${fmtTok(d.output_tokens ?? 0)} out ·
+      ${d.tool_calls ?? 0} tool calls (${d.tool_errors ?? 0} failed) — left out of the
+      charts below because <code>started_at</code> didn't parse as a date.</div></div>`;
+}
 function renderActivity() {
-  const days = (D.activity ?? []).filter(d => inTfDay(d.day));
+  const rows = D.activity ?? [];
+  renderUndated(rows.find(d => !ISO_DAY.test(d.day)));
+  const days = rows.filter(d => inTfDay(d.day));
   const withOther = days.map(d => ({ ...d, other: (d.runs ?? 0) - (d.resolved ?? 0) }));
   renderDaily("ch-cost", days,
     [{ key: "cost_usd", label: "spend", color: "var(--c1)" }], fmtUsd, false);
@@ -992,7 +1014,45 @@ function renderMcpTab(cfg) {
 }
 
 /* ── memory & rules tab ──────────────────────────────────────────────── */
-function renderMemoryTab(files, rules) {
+/* The human-facing twin of the startup index every session reads: which
+   maps exist, and whether the tree still matches the manifest they pinned. */
+const FRESHNESS = {
+  fresh: ["ok", "✓ fresh"],
+  drifted: ["warn", "◌ drifted"],
+  unknown: ["dim", "· unknown"],
+};
+function renderExplorations(rows) {
+  rows = rows ?? [];
+  if (!rows.length) {
+    $("mem-explorations").innerHTML = `<div class="empty">no exploration maps yet —
+      stella writes one to <code>.stella/explorations/</code> when a session maps a slice
+      of this codebase, and every other session reads it instead of re-reading the tree</div>`;
+    return;
+  }
+  $("mem-explorations").innerHTML = `<table><thead><tr>
+    <th>map</th><th>freshness</th><th class="num">files</th>
+    <th>drift</th><th class="num">recorded</th></tr></thead><tbody>` +
+    rows.map(r => {
+      const [cls, label] = FRESHNESS[r.freshness] ?? ["dim", r.freshness];
+      const changed = r.changed ?? [], missing = r.missing ?? [];
+      const drift = [
+        changed.length ? `${changed.length} changed` : "",
+        missing.length ? `${missing.length} missing` : "",
+      ].filter(Boolean).join(" · ") || "—";
+      return `<tr>
+        <td class="main" title="${esc(r.slice ?? "")}">${esc(r.title || r.slice || "—")}
+          ${r.status === "draft"
+            ? `<span class="badge dim" title="a session is exploring this slice right now">◐ in flight · pid ${esc(r.pid)}</span>`
+            : ""}</td>
+        <td><span class="badge ${cls}">${esc(label)}</span></td>
+        <td class="num">${r.manifest_files ?? 0}</td>
+        <td class="wrap-txt" style="max-width:420px;color:var(--text-2)"
+            title="${esc(changed.concat(missing).join("\n"))}">${esc(drift)}</td>
+        <td class="num">${r.created_at_ms ? agoMs(r.created_at_ms) : "—"}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+}
+function renderMemoryTab(files, rules, explorations) {
+  renderExplorations(explorations);
   $("mem-files").innerHTML = (files ?? []).length
     ? files.map(f => `<div class="mem-card">
         <span class="name">${esc(f.name)}</span>
@@ -1605,9 +1665,11 @@ async function loadTab(tab, force) {
       lazyCache[key] = data;
       renderMcpTab(data);
     } else if (tab === "memory") {
-      const data = cached ?? await Promise.all([api("/api/memories"), api("/api/rules")]);
+      const data = cached ?? await Promise.all([
+        api("/api/memories"), api("/api/rules"), api("/api/explorations"),
+      ]);
       lazyCache[key] = data;
-      renderMemoryTab(data[0], data[1]);
+      renderMemoryTab(data[0], data[1], data[2]);
     } else if (tab === "improve") {
       const data = cached ?? await api("/api/skills");
       lazyCache[`skills:${state.project}`] = data;

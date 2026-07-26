@@ -28,7 +28,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 14] = [
+pub(crate) const MIGRATIONS: [Migration; 15] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -77,6 +77,11 @@ pub(crate) const MIGRATIONS: [Migration; 14] = [
     // v13 → v14: `forgotten` — explicit, reversible human tombstones over any
     // context surface. Purely additive; no existing table changes shape.
     migrate_v13_to_v14,
+    // v14 → v15: `step_manifest` grows a nullable `call_id` — per-occurrence
+    // tool-call attribution, which content-addressed block ids cannot carry
+    // (byte-identical blocks share an id, so only the first minting call was
+    // ever recorded). Additive ADD COLUMN, column-guarded.
+    migrate_v14_to_v15,
 ];
 
 /// The schema version this build writes — the `PRAGMA user_version` of
@@ -423,6 +428,22 @@ fn migrate_v9_to_v10(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// in the shared DDL also tolerates a partial file that already grew it.
 fn migrate_v13_to_v14(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     tx.execute_batch(FORGOTTEN_DDL)?;
+    Ok(())
+}
+
+/// v14 → v15: per-occurrence tool-call attribution on the manifest (#364 gap 1).
+/// `block_id` is content-addressed, so two distinct calls with byte-identical
+/// output share one id and `BlockRegistered`/`context_blocks.call_id` keeps only
+/// the first — which silently under-reports "which calls left context" when a
+/// compaction pass evicts such a block. `step_manifest` grows a nullable
+/// `call_id` recorded per entry instead. Plain additive ADD COLUMN, nullable
+/// because pre-v15 rows genuinely do not know theirs (and non-tool blocks never
+/// have one); column-guarded for stores whose tables were created at the v15
+/// shape by this build's [`STEP_MANIFEST_DDL`].
+fn migrate_v14_to_v15(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "step_manifest", "call_id")? {
+        tx.execute_batch("ALTER TABLE step_manifest ADD COLUMN call_id TEXT;")?;
+    }
     Ok(())
 }
 
@@ -802,5 +823,70 @@ mod tests {
 
         // Idempotent on a file already at the v13 shape.
         apply_migration(&mut conn, migrate_v12_to_v13, 13).expect("idempotent");
+    }
+
+    #[test]
+    fn v15_migration_adds_manifest_call_id_leaving_older_rows_honestly_null() {
+        // A v14-shaped file with one recorded manifest row. The pre-v15 row
+        // genuinely does not know its call, so it must migrate to NULL rather
+        // than borrow the block's birth provenance — an inferred attribution
+        // would be exactly the under-reporting this column exists to fix.
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE step_manifest (
+               execution_id INTEGER NOT NULL, turn_instance INTEGER NOT NULL, step INTEGER NOT NULL,
+               call_seq INTEGER NOT NULL DEFAULT 0, ordinal INTEGER NOT NULL,
+               block_id TEXT NOT NULL, cache_zone TEXT NOT NULL,
+               resident_since_step INTEGER NOT NULL, message_index INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY (execution_id, turn_instance, step, call_seq, ordinal));
+             INSERT INTO step_manifest
+               (execution_id, turn_instance, step, call_seq, ordinal, block_id, cache_zone,
+                resident_since_step, message_index)
+               VALUES (1, 0, 2, 0, 0, 'blk_tool', 'volatile', 0, 1);",
+        )
+        .expect("v14 receipts shape");
+        assert!(!column_exists(&conn, "step_manifest", "call_id").unwrap());
+
+        apply_migration(&mut conn, migrate_v14_to_v15, 15).expect("migrate");
+
+        assert!(column_exists(&conn, "step_manifest", "call_id").unwrap());
+        let (block, call_id): (String, Option<String>) = conn
+            .query_row(
+                "SELECT block_id, call_id FROM step_manifest WHERE execution_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("manifest row preserved");
+        assert_eq!(block, "blk_tool", "the existing row survives verbatim");
+        assert_eq!(call_id, None, "pre-v15 rows admit they do not know");
+
+        // Two occurrences of one content-addressed block, each with its own
+        // call — the shape the old schema could not express at all.
+        conn.execute_batch(
+            "INSERT INTO step_manifest
+               (execution_id, turn_instance, step, call_seq, ordinal, block_id, cache_zone,
+                resident_since_step, message_index, call_id)
+               VALUES (1, 0, 3, 0, 0, 'blk_dup', 'volatile', 0, 1, 'c1'),
+                      (1, 0, 3, 0, 1, 'blk_dup', 'volatile', 0, 2, 'c2');",
+        )
+        .expect("duplicate block, distinct calls");
+        // Scoped so the statement's borrow of `conn` ends before the
+        // idempotency re-run below needs it mutably.
+        let calls: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT call_id FROM step_manifest
+                     WHERE block_id = 'blk_dup' ORDER BY ordinal",
+                )
+                .expect("prepare");
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .expect("query")
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .expect("rows")
+        };
+        assert_eq!(calls, vec!["c1", "c2"], "both calls are attributable");
+
+        // Idempotent on a file already at the v15 shape.
+        apply_migration(&mut conn, migrate_v14_to_v15, 15).expect("idempotent");
     }
 }

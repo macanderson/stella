@@ -26,6 +26,14 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+### Changed
+
+- Every `--output-format json|stream-json` summary now leads with
+  `schema_version` instead of burying it mid-object. Two of the three envelopes
+  were built with `serde_json::json!`, which emits a sorted map; they are now
+  structs, so the version is the first key a reader sees. Key order remains
+  outside the contract — consumers must keep reading by key, not position.
+
 ## [0.5.32] — 2026-07-26
 
 ### Added

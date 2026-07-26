@@ -379,6 +379,7 @@ pub(crate) fn persist_event(
                         token_cost: b.token_cost,
                         resident_since_step: b.resident_since_step as u64,
                         message_index: b.message_index as u64,
+                        call_id: b.call_id.clone(),
                     })
                     .collect(),
             },
@@ -608,6 +609,7 @@ mod stream_tests {
                 token_cost: 40,
                 resident_since_step: 0,
                 message_index: 0,
+                call_id: Some("call_tool1".into()),
             }],
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,

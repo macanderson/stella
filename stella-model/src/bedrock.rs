@@ -263,69 +263,61 @@ fn sanitize_document_name(name: &str) -> String {
 /// A media type outside Converse's format allowlists degrades to a note
 /// instead of a hard API rejection.
 fn attachment_blocks(message: &CompletionMessage) -> Vec<BedrockContentBlock> {
-    attachment_blocks_with_caps(message, BEDROCK_CAPS)
+    crate::attachment::wire_parts(&message.attachments, BEDROCK_CAPS)
+        .into_iter()
+        .map(attachment_block)
+        .collect()
 }
 
-/// The mapping itself, with caps as a parameter: the degrade arm for parts
-/// this dialect has no shape for is unreachable under the shipped
-/// [`BEDROCK_CAPS`], so parameterising is what keeps it testable — and keeps a
-/// future caps edit from turning an attachment into a panic.
-fn attachment_blocks_with_caps(
-    message: &CompletionMessage,
-    caps: crate::attachment::DialectCaps,
-) -> Vec<BedrockContentBlock> {
-    crate::attachment::wire_parts(&message.attachments, caps)
-        .into_iter()
-        .map(|part| match part {
-            crate::attachment::WirePart::Text { text } => BedrockContentBlock {
-                text: Some(text),
-                ..Default::default()
-            },
-            crate::attachment::WirePart::Image { media_type, base64 } => {
-                match bedrock_image_format(&media_type) {
-                    Some(format) => BedrockContentBlock {
-                        image: Some(BedrockMediaBlock {
-                            format,
-                            source: BedrockMediaSource { bytes: base64 },
-                        }),
-                        ..Default::default()
-                    },
-                    None => unsupported_format_note("image", &media_type),
-                }
+/// One resolved part as a Converse content block.
+fn attachment_block(part: crate::attachment::WirePart) -> BedrockContentBlock {
+    match part {
+        crate::attachment::WirePart::Text { text } => BedrockContentBlock {
+            text: Some(text),
+            ..Default::default()
+        },
+        crate::attachment::WirePart::Image { media_type, base64 } => {
+            match bedrock_image_format(&media_type) {
+                Some(format) => BedrockContentBlock {
+                    image: Some(BedrockMediaBlock {
+                        format,
+                        source: BedrockMediaSource { bytes: base64 },
+                    }),
+                    ..Default::default()
+                },
+                None => unsupported_format_note("image", &media_type),
             }
-            crate::attachment::WirePart::Video { media_type, base64 } => {
-                match bedrock_video_format(&media_type) {
-                    Some(format) => BedrockContentBlock {
-                        video: Some(BedrockMediaBlock {
-                            format,
-                            source: BedrockMediaSource { bytes: base64 },
-                        }),
-                        ..Default::default()
-                    },
-                    None => unsupported_format_note("video", &media_type),
-                }
+        }
+        crate::attachment::WirePart::Video { media_type, base64 } => {
+            match bedrock_video_format(&media_type) {
+                Some(format) => BedrockContentBlock {
+                    video: Some(BedrockMediaBlock {
+                        format,
+                        source: BedrockMediaSource { bytes: base64 },
+                    }),
+                    ..Default::default()
+                },
+                None => unsupported_format_note("video", &media_type),
             }
-            crate::attachment::WirePart::Pdf { name, base64 } => BedrockContentBlock {
-                document: Some(BedrockDocumentBlock {
-                    format: "pdf",
-                    name: sanitize_document_name(&name),
-                    source: BedrockMediaSource { bytes: base64 },
-                }),
-                ..Default::default()
-            },
-            // Audio is switched off in BEDROCK_CAPS, so wire_parts normally
-            // degrades it to a text block before it gets here. If the caps flag
-            // is ever switched on ahead of a Converse shape for audio, say so
-            // in text rather than aborting the turn.
-            part @ crate::attachment::WirePart::Audio { .. } => BedrockContentBlock {
-                text: Some(crate::attachment::unencodable_part_note(
-                    &part,
-                    "Bedrock's Converse API",
-                )),
-                ..Default::default()
-            },
-        })
-        .collect()
+        }
+        crate::attachment::WirePart::Pdf { name, base64 } => BedrockContentBlock {
+            document: Some(BedrockDocumentBlock {
+                format: "pdf",
+                name: sanitize_document_name(&name),
+                source: BedrockMediaSource { bytes: base64 },
+            }),
+            ..Default::default()
+        },
+        // Excluded by BEDROCK_CAPS today; turning audio on without adding a
+        // block arm lands here — degrade, never abort the turn.
+        part @ crate::attachment::WirePart::Audio { .. } => BedrockContentBlock {
+            text: Some(crate::attachment::unsupported_part_note(
+                &part,
+                "Bedrock Converse API",
+            )),
+            ..Default::default()
+        },
+    }
 }
 
 fn unsupported_format_note(kind: &str, media_type: &str) -> BedrockContentBlock {
@@ -1121,6 +1113,45 @@ mod tests {
     use wiremock::matchers::{body_string_contains, header_regex, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// The audio arm of [`attachment_block`] is out of reach only because
+    /// `BEDROCK_CAPS` switches audio off. Flipping that bool is a routine
+    /// one-line edit, so the arm it lands in has to degrade like every other
+    /// unsupported attachment instead of aborting the process mid-turn.
+    #[test]
+    fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
+        use crate::attachment::{DialectCaps, wire_parts};
+        use stella_protocol::{Attachment, AttachmentSource};
+        let flipped = DialectCaps {
+            images: true,
+            pdfs: true,
+            audio: true,
+            video: true,
+        };
+        let attachment = Attachment {
+            name: "song.mp3".into(),
+            media_type: "audio/mpeg".into(),
+            byte_len: 3,
+            source: AttachmentSource::Data {
+                base64: "YWJj".into(),
+            },
+        };
+        let blocks: Vec<_> = wire_parts(&[attachment], flipped)
+            .into_iter()
+            .map(attachment_block)
+            .collect();
+        let [block] = blocks.as_slice() else {
+            panic!("expected one degrade block, got {blocks:?}");
+        };
+        let note = block
+            .text
+            .as_deref()
+            .unwrap_or_else(|| panic!("expected a text degrade note, got {block:?}"));
+        assert!(
+            note.contains("audio/mpeg"),
+            "the note names what was attached: {note}"
+        );
+    }
+
     #[test]
     fn user_attachments_map_to_converse_blocks_with_format_allowlists() {
         use stella_protocol::{Attachment, AttachmentSource};
@@ -1157,39 +1188,6 @@ mod tests {
             "{json}"
         );
         assert_eq!(content[4]["text"], "look");
-    }
-
-    /// Switching a caps flag on must never abort the turn. The audio arm of
-    /// the mapping is unreachable only because of the shipped `BEDROCK_CAPS`;
-    /// editing a caps const is a routine change, so the arm degrades to a
-    /// descriptive text block — the attachment module's contract is that an
-    /// attachment NEVER fails the request.
-    #[test]
-    fn caps_a_dialect_cannot_encode_degrade_to_text_never_panic() {
-        use stella_protocol::{Attachment, AttachmentSource};
-        let everything = crate::attachment::DialectCaps {
-            images: true,
-            pdfs: true,
-            audio: true,
-            video: true,
-        };
-        let message = CompletionMessage::user_with_attachments(
-            "listen",
-            vec![Attachment {
-                name: "song.mp3".into(),
-                media_type: "audio/mpeg".into(),
-                byte_len: 3,
-                source: AttachmentSource::Data {
-                    base64: "YXVk".into(),
-                },
-            }],
-        );
-        let json = serde_json::to_value(attachment_blocks_with_caps(&message, everything)).unwrap();
-        let blocks = json.as_array().unwrap();
-        assert_eq!(blocks.len(), 1, "{json}");
-        let note = blocks[0]["text"].as_str().unwrap();
-        assert!(note.contains("audio/mpeg"), "{note}");
-        assert!(note.contains("Converse API"), "{note}");
     }
 
     #[test]

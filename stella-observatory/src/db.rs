@@ -15,6 +15,11 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
+/// Day bucket for rows SQLite's `date()` can't parse — see
+/// [`Observatory::activity`]. The dashboard matches on this exact string to
+/// keep the bucket off its date axis, so the two must not drift apart.
+pub const UNDATED: &str = "undated";
+
 /// Everything that can go wrong serving observatory data.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -520,9 +525,11 @@ impl Observatory {
     /// across the three tables in Rust (a day may have tool calls but no
     /// finished executions, or vice versa).
     ///
-    /// Rows SQLite cannot date fall into one single `"Undated"` bucket rather
-    /// than failing the whole rollup — see `UNDATED_DAY` in this module for why
-    /// the bucket is surfaced instead of dropped.
+    /// Rows whose timestamp SQLite cannot parse land in the `UNDATED`
+    /// bucket: `date()` returns NULL for those, and reading NULL as `String`
+    /// used to fail the whole query and blank the dashboard. They are real
+    /// runs, so they keep a named bucket instead of being dropped — the UI
+    /// keeps them off the date axis and reports the total separately.
     pub fn activity(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
@@ -537,6 +544,15 @@ impl Observatory {
                 })
             })
         }
+        // The `coalesce(date(…), '')` in each query below turns an unparseable
+        // timestamp into the empty string; name it here so it never reaches
+        // the UI blank. `UNDATED` sorts after every ISO day, so it lands last.
+        fn day_key(row: &Value) -> String {
+            match row["day"].as_str().unwrap_or_default() {
+                "" => UNDATED.to_string(),
+                day => day.to_string(),
+            }
+        }
         let mut days: BTreeMap<String, Value> = BTreeMap::new();
         for row in collect_rows(
             &conn,
@@ -546,14 +562,14 @@ impl Observatory {
              FROM executions GROUP BY 1",
             |r| {
                 Ok(json!({
-                    "day": day_bucket(r, 0)?,
+                    "day": r.get::<_, String>(0)?,
                     "runs": r.get::<_, i64>(1)?,
                     "resolved": r.get::<_, i64>(2)?,
                     "cost_usd": r.get::<_, f64>(3)?,
                 }))
             },
         )? {
-            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let day = day_key(&row);
             let entry = day_slot(&mut days, &day);
             entry["runs"] = row["runs"].clone();
             entry["resolved"] = row["resolved"].clone();
@@ -569,14 +585,14 @@ impl Observatory {
              GROUP BY 1",
             |r| {
                 Ok(json!({
-                    "day": day_bucket(r, 0)?,
+                    "day": r.get::<_, String>(0)?,
                     "input_tokens": r.get::<_, i64>(1)?,
                     "output_tokens": r.get::<_, i64>(2)?,
                     "model_ms": r.get::<_, i64>(3)?,
                 }))
             },
         )? {
-            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let day = day_key(&row);
             let entry = day_slot(&mut days, &day);
             entry["input_tokens"] = row["input_tokens"].clone();
             entry["output_tokens"] = row["output_tokens"].clone();
@@ -584,18 +600,17 @@ impl Observatory {
         }
         for row in collect_rows(
             &conn,
-            "SELECT coalesce(date(ts), ''), count(*),
-                    count(*) FILTER (WHERE ok = 0)
+            "SELECT coalesce(date(ts), ''), count(*), count(*) FILTER (WHERE ok = 0)
              FROM tool_calls GROUP BY 1",
             |r| {
                 Ok(json!({
-                    "day": day_bucket(r, 0)?,
+                    "day": r.get::<_, String>(0)?,
                     "tool_calls": r.get::<_, i64>(1)?,
                     "tool_errors": r.get::<_, i64>(2)?,
                 }))
             },
         )? {
-            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let day = day_key(&row);
             let entry = day_slot(&mut days, &day);
             entry["tool_calls"] = row["tool_calls"].clone();
             entry["tool_errors"] = row["tool_errors"].clone();
@@ -732,41 +747,6 @@ fn open_read_only(path: &Path) -> Option<Connection> {
     // writing stores use) instead of 500-ing a dashboard poll on SQLITE_BUSY.
     let _ = conn.busy_timeout(std::time::Duration::from_millis(5_000));
     Some(conn)
-}
-
-/// The day bucket for rows whose timestamp SQLite could not read as a date.
-///
-/// `date('whenever')` returns NULL, and every activity query groups on it, so
-/// such rows need *somewhere* to land. Three options were on the table —
-/// "Unknown", "Undated", or dropping the bucket. This is "Undated", visible:
-///
-/// - **Visible, not hidden.** The activity tab is the only place these rows
-///   would be filtered out, while `/api/overview` still counts them; two tabs
-///   silently disagreeing about how many runs the workspace has is a worse bug
-///   than one odd bar label, and it is the kind that gets debugged twice.
-/// - **"Undated" over "Unknown".** The row is not unknown — its provider,
-///   model, cost and outcome all read fine. Exactly one field is unusable, and
-///   the label says which.
-///
-/// It sorts after every ISO date (`'U' > '2'`), so the bucket lands at the end
-/// of the rollup rather than interleaved with real days. The dashboard shows it
-/// only in the "all" timeframe: an undated row cannot honestly be placed inside
-/// a trailing-7-day window.
-const UNDATED_DAY: &str = "Undated";
-
-/// Read a `coalesce(date(…), '')` bucket key, mapping the unreadable case to
-/// [`UNDATED_DAY`].
-///
-/// Tolerates a NULL as well as the empty string the `coalesce` produces: this
-/// is the crash site (`get::<_, String>` on a NULL is `InvalidColumnType`, which
-/// failed the entire dashboard request), so it must not depend on every caller's
-/// SQL keeping its `coalesce`.
-fn day_bucket(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<String> {
-    let raw: Option<String> = row.get(idx)?;
-    Ok(match raw {
-        Some(day) if !day.is_empty() => day,
-        _ => UNDATED_DAY.to_string(),
-    })
 }
 
 /// Run a query collecting every row; a missing table degrades to `[]` so a

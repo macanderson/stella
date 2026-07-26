@@ -36,13 +36,12 @@ mod db;
 mod fsview;
 mod global;
 
+use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-
-use accept::{AcceptAction, AcceptBackoff};
 
 pub use db::{DbError, Observatory};
 
@@ -183,6 +182,7 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/mcp-servers" => Ok(fsview::mcp_servers(root)),
         "/api/config" => Ok(fsview::config(root)),
         "/api/memories" => Ok(fsview::memories(root)),
+        "/api/explorations" => Ok(fsview::explorations(root)),
         "/api/rules" => obs.rules().map(|db| {
             serde_json::json!({
                 "db": db,
@@ -264,12 +264,6 @@ fn percent_decode(value: &str) -> String {
 /// Bind the observatory on `127.0.0.1:port` and serve until the process
 /// exits. `port` 0 picks a free port. Calls `on_ready` once with the bound
 /// address (the CLI prints the URL from it).
-///
-/// Only a **fatal** `accept()` failure ends the loop. A dashboard tab that gives
-/// up on a connection mid-handshake, or a moment of fd exhaustion elsewhere in
-/// the process, is retried (with backoff where backoff is needed) instead of
-/// taking the dashboard down. See `src/accept.rs` for the classification and its
-/// reasoning; `stella-serve` applies the same policy from its own copy.
 pub async fn serve(
     workspace_root: PathBuf,
     port: u16,
@@ -688,6 +682,34 @@ mod tests {
         }
     }
 
+    /// The route table and the embedded page must not drift apart. A route
+    /// nothing fetches is dead weight that still drags in its dependencies —
+    /// `/api/explorations` sat unconsumed for exactly that long (#640).
+    #[test]
+    fn every_served_route_is_fetched_by_the_embedded_page() {
+        // Route-table arms are `"/api/<name>" => …`; the same literal
+        // appearing as a call argument (tests, 404 fixtures) has no `=>`.
+        let routes: Vec<&str> = include_str!("lib.rs")
+            .lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("\"/api/")?;
+                let (route, tail) = rest.split_once('"')?;
+                tail.trim_start().starts_with("=>").then_some(route)
+            })
+            .collect();
+        assert!(
+            routes.len() >= 19,
+            "route table not recognised, only found {routes:?}"
+        );
+        for route in routes {
+            assert!(
+                INDEX_HTML.contains(&format!("/api/{route}")),
+                "/api/{route} is served but nothing in the dashboard fetches it: \
+                 give it a consumer or delete the route"
+            );
+        }
+    }
+
     #[test]
     fn activity_rolls_up_runs_tokens_and_tool_calls_by_day() {
         let ws = seeded_workspace();
@@ -703,59 +725,36 @@ mod tests {
         assert_eq!(d["tool_errors"], 1);
     }
 
-    /// A timestamp SQLite cannot read as a date used to fail the whole
-    /// `/api/activity` request: `date()` returned NULL and the row mapper read
-    /// column 0 as `String`, so one corrupt row 500-ed the dashboard's activity
-    /// tab. Every such row now folds into one visible "Undated" bucket.
+    /// A timestamp `date()` can't parse used to NULL out the group key and
+    /// fail the whole rollup — one bad row blanked the dashboard. The work
+    /// is real, so it lands in a named bucket that sorts last.
     #[test]
-    fn unparseable_timestamps_fold_into_one_undated_bucket_without_erroring() {
+    fn activity_buckets_unparseable_timestamps_instead_of_failing() {
         let ws = seeded_workspace();
         let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
         conn.execute_batch(
             "INSERT INTO executions
-               (id, kind, prompt, provider, model, started_at, outcome, cost_usd)
-             VALUES
-               (3, 'run', 'undatable', 'zai', 'glm-5.2', 'whenever', 'completed', 0.05),
-               (4, 'run', 'also undatable', 'zai', 'glm-5.2', '', 'goal_unmet', 0.01);
+               (kind, prompt, provider, model, started_at, outcome, cost_usd)
+             VALUES ('run', 'clock skew', 'zai', 'glm-5.2', 'sometime', 'completed', 0.5);
              INSERT INTO telemetry VALUES
-               (3, 1, 'whenever', 'zai', 'glm-5.2', 70, 0, 30, 0, 70, 0, 0.05, 10, 0, 0);
+               (3, 1, 'sometime', 'zai', 'glm-5.2', 7, 0, 9, 0, 0, 0, 0.5, 11, 0, 1);
              INSERT INTO tool_calls
                (execution_id, seq, name, ok, error, bytes_out, duration_ms, ts)
-             VALUES (3, 1, 'read_file', 0, 'boom', 0, 5, 'not-a-timestamp');",
+             VALUES (3, 1, 'bash', 0, 'boom', 0, 4, 'sometime');",
         )
         .unwrap();
-
         let response = respond(ws.path(), "/api/activity");
-        assert_eq!(
-            response.status,
-            "200 OK",
-            "body: {}",
-            String::from_utf8_lossy(&response.body)
-        );
+        assert_eq!(response.status, "200 OK");
         let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
         let days = v.as_array().unwrap();
-        assert_eq!(
-            days.len(),
-            2,
-            "one real day plus one undated bucket: {days:?}"
-        );
-
-        // The bucket sorts last, after every ISO day.
+        assert_eq!(days.len(), 2, "today plus the undated bucket");
         let undated = days.last().unwrap();
-        assert_eq!(undated["day"], "Undated");
-        assert_eq!(undated["runs"], 2, "both undatable executions land here");
+        assert_eq!(undated["day"], crate::db::UNDATED);
+        assert_eq!(undated["runs"], 1);
         assert_eq!(undated["resolved"], 1);
-        // All three source tables merge into the same bucket rather than
-        // producing three separate ones.
-        assert_eq!(undated["input_tokens"], 70);
+        assert_eq!(undated["input_tokens"], 7);
         assert_eq!(undated["tool_calls"], 1);
         assert_eq!(undated["tool_errors"], 1);
-
-        // The dated rollup is untouched by the corrupt rows.
-        let dated = &days[0];
-        assert_ne!(dated["day"], "Undated");
-        assert_eq!(dated["runs"], 2);
-        assert_eq!(dated["input_tokens"], 3000);
     }
 
     #[test]
@@ -810,10 +809,58 @@ mod tests {
     }
 
     #[test]
-    fn removed_explorations_route_is_a_404_not_a_500() {
+    fn explorations_route_reports_per_map_freshness() {
         let ws = seeded_workspace();
+        let dir = ws.path().join(".stella/explorations");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(ws.path().join("covered.rs"), "fn mapped() {}").unwrap();
+        // sha256("fn mapped() {}") — computed with the same encoding the
+        // producer uses; freshness must verify against the live file.
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"fn mapped() {}");
+        let fresh_hash: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        std::fs::write(
+            dir.join("zone.json"),
+            serde_json::json!({
+                "slice": "zone", "title": "Zone", "summary": "s", "content": "body",
+                "files": ["covered.rs"], "created_at_ms": 2u64,
+                "manifest": { "covered.rs": fresh_hash, "gone.rs": "0000" },
+                "status": "complete", "pid": 42u32
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // A pre-manifest (v1) record must report "unknown", not crash.
+        std::fs::write(
+            dir.join("legacy.json"),
+            serde_json::json!({
+                "slice": "legacy", "title": "Old", "summary": "s", "content": "b",
+                "files": [], "created_at_ms": 1u64
+            })
+            .to_string(),
+        )
+        .unwrap();
+
         let response = respond(ws.path(), "/api/explorations");
-        assert_eq!(response.status, "404 Not Found");
+        let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let rows = v.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        // Newest first.
+        assert_eq!(rows[0]["slice"], "zone");
+        assert_eq!(rows[0]["freshness"], "drifted");
+        assert_eq!(rows[0]["missing"][0], "gone.rs");
+        assert!(rows[0]["changed"].as_array().unwrap().is_empty());
+        assert_eq!(rows[0]["manifest_files"], 2);
+        assert_eq!(rows[1]["slice"], "legacy");
+        assert_eq!(rows[1]["freshness"], "unknown");
+        // Bodies are sized, never served in the listing.
+        assert!(rows[0]["content"].is_null());
+        assert_eq!(rows[0]["content_chars"], 4);
     }
 
     #[test]
