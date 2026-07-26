@@ -133,10 +133,35 @@ fn age_content(content: &str) -> String {
 /// needed (already under budget) — or if the pass changed nothing (all
 /// remaining content is protected), so a permanently-over-budget
 /// conversation doesn't emit a no-op `Compaction` event before every step.
+///
+/// Prefer [`compact_measured`] on the step path: this form throws away the
+/// post-pass token count, which the caller then has to walk the whole
+/// transcript again to recover.
 pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option<CompactionReport> {
+    compact_measured(messages, budget_tokens).1
+}
+
+/// [`compact`], plus the conversation's token count **after** the pass.
+///
+/// Every `None` path here already knows that number — the under-budget return
+/// compares against it, and the nothing-compactable return re-scanned for
+/// eviction — so returning it costs nothing. The caller needs it for the
+/// overflow-summarizer decision, and without it `run_compaction_pass` ran a
+/// second full `estimate_conversation_tokens` over the whole transcript on
+/// every step that did NOT compact, i.e. the common case. Worse, that walk was
+/// eager: it also ran when `summarize_overflow` was off and the value was
+/// never read.
+///
+/// The returned count is exact, not an estimate of an estimate: it is the same
+/// `estimate_conversation_tokens` value the discarded walk would have produced
+/// over the same (already-mutated) slice.
+pub fn compact_measured(
+    messages: &mut [CompletionMessage],
+    budget_tokens: u64,
+) -> (u64, Option<CompactionReport>) {
     let before_tokens = estimate_conversation_tokens(messages);
     if before_tokens <= budget_tokens {
-        return None;
+        return (before_tokens, None);
     }
 
     let mut deduped = 0usize;
@@ -424,22 +449,26 @@ pub fn compact(messages: &mut [CompletionMessage], budget_tokens: u64) -> Option
     }
 
     if evicted == 0 && deduped == 0 && superseded == 0 && aged == 0 {
-        // Over budget but nothing compactable — don't report a no-op.
-        return None;
+        // Over budget but nothing compactable — don't report a no-op. Nothing
+        // was mutated, so pass 4's re-scan is still the live count.
+        return (current_tokens, None);
     }
     let after_tokens = estimate_conversation_tokens(messages);
-    Some(CompactionReport {
-        before_tokens,
+    (
         after_tokens,
-        evicted,
-        deduped,
-        superseded,
-        aged,
-        evicted_blocks,
-        deduped_blocks,
-        superseded_blocks,
-        aged_blocks,
-    })
+        Some(CompactionReport {
+            before_tokens,
+            after_tokens,
+            evicted,
+            deduped,
+            superseded,
+            aged,
+            evicted_blocks,
+            deduped_blocks,
+            superseded_blocks,
+            aged_blocks,
+        }),
+    )
 }
 
 #[cfg(test)]

@@ -689,12 +689,14 @@ mod stream_tests {
         });
         let mut ledger = ReceiptLedger::new(0);
         ledger.set_effective_budget(136_363, 1.1);
-        ledger.emit_step_receipt(
+        ledger.emit_step_receipt_estimating(
             &original,
             1,
-            stella_protocol::ModelCallRole::Worker,
-            "anthropic",
-            "opus",
+            stella_core::receipts::ServedBy {
+                role: stella_protocol::ModelCallRole::Worker,
+                provider: "anthropic",
+                model: "opus",
+            },
             &events,
         );
         drop(events);

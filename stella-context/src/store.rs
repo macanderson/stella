@@ -25,7 +25,7 @@ use crate::error::ContextError;
 use contextgraph_types::FrameKind;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -156,6 +156,22 @@ const MIGRATION_V3: &str = "\
 DROP TABLE IF EXISTS code_graph_symbols;
 DROP TABLE IF EXISTS code_graph_imports;
 DROP TABLE IF EXISTS code_graph_files;
+";
+
+/// V4 — index `embedding(fingerprint)`.
+///
+/// `embedding` is `WITHOUT ROWID` with `PRIMARY KEY (content_hash,
+/// fingerprint)`, so `WHERE fingerprint = ?` matches no prefix of the primary
+/// key and SQLite could only answer it by scanning the whole clustered index —
+/// every blob of every fingerprint, including the stale rows a fingerprint bump
+/// leaves behind. Recall runs exactly that predicate on every turn
+/// ([`score_nodes_by_vector`]), so the scan was proportional to the store's
+/// lifetime embedding count rather than to the active fingerprint's.
+///
+/// `IF NOT EXISTS` because the index is also created by a fresh v4 store that
+/// applied V1..V4 in one transaction.
+const MIGRATION_V4: &str = "\
+CREATE INDEX IF NOT EXISTS idx_embedding_fingerprint ON embedding(fingerprint);
 ";
 
 /// Typed node vocabulary. Stored as its `as_str` form; retrieval maps it onto
@@ -377,19 +393,30 @@ pub struct NodeRow {
 /// Nothing here forgets. `node.superseded_at` is never written (only edges are
 /// versioned), there is no delete or tombstone path, and a node whose uri
 /// changed — a renamed or deleted file — is orphaned live forever, still
-/// serving its last-known content. Recall still *reads* every live node and
-/// every vector under the active fingerprint on each query, so the store's size
-/// and the bytes crossing the SQLite boundary per recall grow monotonically
-/// with the workspace's lifetime.
+/// serving its last-known content. So the row count a recall *considers* still
+/// grows monotonically with the workspace's lifetime.
 ///
-/// What no longer grows quadratically is the work done on those rows: the
-/// fused candidate list is cut to a multiple of the query's `max_frames`
-/// before the MMR pass and before any frame is built
-/// (`retrieval::MMR_CANDIDATE_MULTIPLE`), so the diversity fold and the content
-/// clones are bounded by the budget rather than by lifetime memory size. The
-/// remaining linear scan is fine at CLI-local scale and is the plane's first
-/// scaling wall; a `LIMIT`-bounded candidate query, a decoded-vector cache, and
-/// a forget/compaction path are the tracked follow-ups, not oversights.
+/// What that costs is now bounded by the query rather than by that row count:
+///
+/// - The fused candidate list is cut to a multiple of the query's `max_frames`
+///   before the MMR pass and before any frame is built
+///   (`retrieval::MMR_CANDIDATE_MULTIPLE`), so the diversity fold is quadratic in
+///   the budget, not in lifetime memory size.
+/// - **No content body crosses the SQLite boundary for a non-candidate.** The
+///   corpus-wide passes read a metadata projection — identity, time, hash, and
+///   content *size* — and bodies are fetched by id after the cut.
+/// - **No embedding vector is decoded for a non-candidate.** The similarity pass
+///   scores each vector off its stored BLOB and keeps only `(id, cosine)`; the
+///   candidates' vectors are re-read by id.
+///
+/// What remains linear in live rows is one metadata scan, one indexed vector
+/// scan (`idx_embedding_fingerprint`), and — only on a weak-coverage turn — the
+/// lexical scan, which streams instead of materializing the corpus. All of it
+/// runs on the blocking pool rather than on the worker that awaited it, so the
+/// timeouts callers wrap around recall can actually fire. That is fine at
+/// CLI-local scale and is the plane's next scaling wall; an ANN index over the
+/// vector scan and a forget/compaction path are the tracked follow-ups, not
+/// oversights.
 ///
 /// # Drop
 ///
@@ -582,6 +609,16 @@ impl ContextStore {
         lock(&self.conn)
     }
 
+    /// An owned handle to the same connection, for a `'static` unit of work.
+    ///
+    /// [`Self::conn`] borrows from `&self`, which cannot cross a
+    /// `spawn_blocking` boundary — and recall's whole pipeline is blocking SQLite
+    /// on the first-token path, so it must. Cloning the `Arc` shares the one
+    /// connection; it does not open a second.
+    pub(crate) fn conn_handle(&self) -> Arc<Mutex<Connection>> {
+        Arc::clone(&self.conn)
+    }
+
     /// Count of currently-live nodes (`superseded_at IS NULL`).
     pub fn node_count(&self) -> Result<usize, ContextError> {
         let conn = lock(&self.conn);
@@ -653,6 +690,12 @@ impl ContextStore {
             .optional()?;
         Ok(row)
     }
+}
+
+/// [`lock`] over a connection reached through [`ContextStore::conn_handle`], with
+/// the same poison tolerance as [`ContextStore::conn`].
+pub(crate) fn lock_conn(m: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
+    lock(m)
 }
 
 /// Lock a mutex, recovering the guard even if a previous holder panicked. This
@@ -761,6 +804,9 @@ fn migrate(conn: &Connection) -> Result<(), ContextError> {
     }
     if version < 3 {
         tx.execute_batch(MIGRATION_V3)?;
+    }
+    if version < 4 {
+        tx.execute_batch(MIGRATION_V4)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -887,7 +933,7 @@ pub(crate) fn upsert_node(
     Ok(id)
 }
 
-fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
+pub(crate) fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
     let kind_str: String = row.get("kind")?;
     Ok(NodeRow {
         id: row.get("id")?,
@@ -908,20 +954,6 @@ fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow> {
     })
 }
 
-/// Every live node (for recency scoring, lexical fallback, and warm scanning).
-pub(crate) fn live_nodes(conn: &Connection) -> Result<Vec<NodeRow>, ContextError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
-         FROM node WHERE superseded_at IS NULL",
-    )?;
-    let rows = stmt.query_map([], map_node_row)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
-}
-
 /// Live node ids whose uri matches one of `uris` (anchor resolution).
 pub(crate) fn node_ids_for_uris(
     conn: &Connection,
@@ -934,30 +966,6 @@ pub(crate) fn node_ids_for_uris(
         for id in ids {
             out.push(id?);
         }
-    }
-    Ok(out)
-}
-
-/// (node_id, vector) for every live node with an embedding under `fingerprint`.
-/// The join on `content_hash` is what enforces "never mix fingerprints"
-/// structurally — a vector under any other fingerprint is simply not selected.
-pub(crate) fn vectors_for_fingerprint(
-    conn: &Connection,
-    fingerprint: &str,
-) -> Result<Vec<(i64, Vec<f32>)>, ContextError> {
-    let mut stmt = conn.prepare(
-        "SELECT n.id, e.vector
-         FROM embedding e
-         JOIN node n ON n.content_hash = e.content_hash
-         WHERE e.fingerprint = ?1 AND n.superseded_at IS NULL",
-    )?;
-    let rows = stmt.query_map(params![fingerprint], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
-    })?;
-    let mut out = Vec::new();
-    for r in rows {
-        let (id, blob) = r?;
-        out.push((id, blob_to_vector(&blob)?));
     }
     Ok(out)
 }
@@ -1298,7 +1306,7 @@ pub(crate) fn tag_edge_domains(
 /// citation display — the batched form of the old per-node query. Recall
 /// runs this once per prompt; one statement per live node was an N+1 whose
 /// cost grew with lifetime memory size. Superseded nodes are filtered in
-/// SQL (same liveness predicate as [`live_nodes`]): recall only looks up
+/// SQL (same liveness predicate as [`live_node_metas`]): recall only looks up
 /// live candidates, so loading dead nodes' tags made the scan grow with
 /// historical store size for no reader.
 pub(crate) fn domains_by_node(

@@ -174,14 +174,19 @@ pub async fn run_accounted_call(
     // A fresh ledger per call is correct — these are one-shot contexts, so every
     // block is first-seen and registers with its bytes.
     if let Some(receipt) = call.receipt {
-        ReceiptLedger::with_call_seq(receipt.turn_instance, receipt.call_seq).emit_step_receipt(
-            &call.request.messages,
-            receipt.step,
-            call.role,
-            provider,
-            &result.model,
-            events,
-        );
+        // One-shot context: no prior estimate exists for these messages, so the
+        // ledger computes it. The step loop passes its own in instead.
+        ReceiptLedger::with_call_seq(receipt.turn_instance, receipt.call_seq)
+            .emit_step_receipt_estimating(
+                &call.request.messages,
+                receipt.step,
+                crate::receipts::ServedBy {
+                    role: call.role,
+                    provider,
+                    model: &result.model,
+                },
+                events,
+            );
     }
     let _ = events.send(AgentEvent::StepUsage {
         step: 0,

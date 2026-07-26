@@ -80,7 +80,7 @@ use stella_protocol::{
 };
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
-use crate::compaction::compact;
+use crate::compaction::compact_measured;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matches, run_hooks};
@@ -657,13 +657,12 @@ impl<'a> Engine<'a> {
         events: &EventSender,
     ) -> f64 {
         let (compaction_budget, factor) = self.effective_compaction_budget(calibration_model);
-        // Post-pass size, for the overflow decision below. `compact` already
-        // re-estimates the conversation to fill `after_tokens`, so reusing it
-        // saves a second whole-transcript walk on every step a pass fires;
-        // `None` (under budget, or nothing compactable) has no report to read
-        // and must estimate.
-        let after_tokens = if let Some(report) = compact(messages, compaction_budget) {
-            let after_tokens = report.after_tokens;
+        // Post-pass size, for the overflow decision below. `compact_measured`
+        // returns the count it already computed on every path — including both
+        // `None` paths, the common case — so this walks the transcript once per
+        // step rather than eagerly re-deriving a number the callee just discarded.
+        let (after_tokens, report) = compact_measured(messages, compaction_budget);
+        if let Some(report) = report {
             let _ = events.send(AgentEvent::Compaction {
                 before_tokens: report.before_tokens,
                 after_tokens,
@@ -684,10 +683,7 @@ impl<'a> Engine<'a> {
                 effective_budget_tokens: compaction_budget,
                 calibration_factor: factor,
             });
-            after_tokens
-        } else {
-            crate::estimator::estimate_conversation_tokens(messages)
-        };
+        }
         // Overflow fallback: still over budget after every pure pass means
         // the weight is in PROTECTED content (user/assistant text, the
         // latest tool result) — without this, the next provider call
@@ -1063,7 +1059,6 @@ impl<'a> Engine<'a> {
             .cloned()
             .collect();
         let estimated_input_tokens = estimate_conversation_tokens(messages);
-        let messages_snapshot = messages.to_vec();
         let req_config = &self.config;
         let speculation_read_only = read_only_tools.clone();
         let speculation_hook_gated = hook_gated;
@@ -1087,7 +1082,10 @@ impl<'a> Engine<'a> {
         // the way out (#370) — and the retry builds a fresh channel and pool.
         let attempt: RetryAttemptFn = Box::new(move || {
             let req = CompletionRequest {
-                messages: messages_snapshot.clone(),
+                // From the borrowed transcript: `CompletionRequest` owns its
+                // messages and this closure is `FnMut`, so one copy per attempt
+                // is unavoidable — the snapshot made every step pay two.
+                messages: messages.to_vec(),
                 max_output_tokens: req_config.max_output_tokens,
                 temperature: req_config.temperature,
                 effort: req_config.effort,
@@ -1213,10 +1211,14 @@ impl<'a> Engine<'a> {
         // are already known.
         receipts.emit_step_receipt(
             messages,
+            // The same estimate `StepUsage` reports below, not a second walk.
+            estimated_input_tokens,
             step,
-            self.call_role,
-            self.provider.id(),
-            &result.model,
+            crate::receipts::ServedBy {
+                role: self.call_role,
+                provider: self.provider.id(),
+                model: &result.model,
+            },
             events,
         );
 
@@ -2042,10 +2044,10 @@ const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
 /// the record's own call. A key that is absent — or poisoned because that
 /// same call produced two different outputs — leaves `identity: None` and
 /// the detector falls back to the output bytes.
-fn recent_call_records(
-    messages: &[CompletionMessage],
+fn recent_call_records<'a>(
+    messages: &'a [CompletionMessage],
     identities: &ResultIdentities,
-) -> Vec<CallRecord> {
+) -> Vec<CallRecord<'a>> {
     let turn_start = messages
         .iter()
         .rposition(|m| {
@@ -2072,7 +2074,9 @@ fn recent_call_records(
                         .rev()
                         .find(|r| r.output.is_none() && r.call.call_id == result.call_id)
                     {
-                        record.output = Some(comparable_output(&result.output).into_owned());
+                        // Kept as the `Cow` it comes back as: with no volatile
+                        // footer (the common path) this borrows, not copies.
+                        record.output = Some(comparable_output(&result.output));
                         let key = call_identity_key(&record.call);
                         record.identity = identities.get(&key).cloned().flatten();
                     }
