@@ -36,6 +36,11 @@ pub enum MemoryFormat {
 #[derive(Debug, Clone, Serialize)]
 struct MemoryListRow {
     id: String,
+    /// `memory` (a mined reflection) or `episode` (a verbatim past prompt).
+    /// Episodes are listed because they are recalled and injected exactly like
+    /// memories — omitting them hid a whole class of steering input from the
+    /// only command that can name it for `stella memory forget`.
+    kind: String,
     citations: i64,
     avg_score: f64,
     truthful_rate: f64,
@@ -113,8 +118,10 @@ fn list_rows(workspace_root: &std::path::Path) -> Result<Vec<MemoryListRow>, Str
     };
     let context =
         ContextStore::open(&context_db).map_err(|e| format!("cannot open context store: {e}"))?;
+    // Episodes as well as memories: both are recalled and injected, so both
+    // must be nameable for `stella memory forget`.
     let memories = context
-        .memory_nodes()
+        .recallable_nodes()
         .map_err(|e| format!("cannot read memories: {e}"))?;
     let stats = citation_stats(workspace_root)?;
     Ok(join_rows(memories, &stats))
@@ -226,6 +233,7 @@ fn join_rows(memories: Vec<NodeRow>, stats: &[MemoryCitationStats]) -> Vec<Memor
         match stats.iter().find(|s| s.memory_id == node.public_id) {
             Some(s) => cited.push(MemoryListRow {
                 id: node.public_id.clone(),
+                kind: node.kind.as_str().to_string(),
                 citations: s.citations,
                 avg_score: s.avg_score,
                 truthful_rate: s.truthful_rate,
@@ -236,6 +244,7 @@ fn join_rows(memories: Vec<NodeRow>, stats: &[MemoryCitationStats]) -> Vec<Memor
             }),
             None => uncited.push(MemoryListRow {
                 id: node.public_id.clone(),
+                kind: node.kind.as_str().to_string(),
                 citations: 0,
                 avg_score: 0.0,
                 truthful_rate: 0.0,
@@ -543,8 +552,10 @@ fn validate_memories(workspace_root: &std::path::Path) -> Result<Vec<MemoryValid
     };
     let context =
         ContextStore::open(&context_db).map_err(|e| format!("cannot open context store: {e}"))?;
+    // Episodes as well as memories: both are recalled and injected, so both
+    // must be nameable for `stella memory forget`.
     let memories = context
-        .memory_nodes()
+        .recallable_nodes()
         .map_err(|e| format!("cannot read memories: {e}"))?;
 
     // Built lazily: a workspace whose memories name no bare filenames never
@@ -638,11 +649,11 @@ fn slugify(label: &str) -> String {
 
 /// Column headers, in `MemoryListRow` field order (`memory` last, so the
 /// one unbounded column never breaks alignment).
-const TABLE_HEADERS: [&str; 7] = [
-    "ID", "CITES", "AVG", "TRUTHFUL", "STREAK", "STATUS", "MEMORY",
+const TABLE_HEADERS: [&str; 8] = [
+    "ID", "KIND", "CITES", "AVG", "TRUTHFUL", "STREAK", "STATUS", "MEMORY",
 ];
 
-fn table_cells(row: &MemoryListRow) -> [String; 7] {
+fn table_cells(row: &MemoryListRow) -> [String; 8] {
     let mut memory: String = row.memory.chars().take(60).collect();
     if row.memory.chars().count() > 60 {
         memory.push('…');
@@ -658,6 +669,7 @@ fn table_cells(row: &MemoryListRow) -> [String; 7] {
     };
     [
         row.id.clone(),
+        row.kind.clone(),
         row.citations.to_string(),
         if row.citations > 0 {
             format!("{:.1}", row.avg_score)
@@ -678,7 +690,7 @@ fn table_cells(row: &MemoryListRow) -> [String; 7] {
 /// Aligned table, `stella stats` style: left-aligned strings, right-aligned
 /// numbers, two-space gutter, no trailing whitespace.
 fn render_table(rows: &[MemoryListRow]) -> String {
-    let body: Vec<[String; 7]> = rows.iter().map(table_cells).collect();
+    let body: Vec<[String; 8]> = rows.iter().map(table_cells).collect();
     let mut widths: Vec<usize> = TABLE_HEADERS.iter().map(|h| h.len()).collect();
     for cells in &body {
         for (w, cell) in widths.iter_mut().zip(cells.iter()) {
@@ -690,8 +702,9 @@ fn render_table(rows: &[MemoryListRow]) -> String {
             .iter()
             .enumerate()
             .map(|(i, cell)| {
-                // Numeric middle columns right-align; ID and MEMORY stay left.
-                if (1..=4).contains(&i) {
+                // Numeric middle columns right-align; ID, KIND and MEMORY
+                // stay left.
+                if (2..=5).contains(&i) {
                     format!("{cell:>width$}", width = widths[i])
                 } else {
                     format!("{cell:<width$}", width = widths[i])
