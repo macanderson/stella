@@ -56,6 +56,7 @@
 // which is the point: the gap cannot reopen one field at a time.
 #![warn(missing_docs)]
 
+mod ann;
 mod candidates;
 mod clock;
 #[cfg(test)]
@@ -68,14 +69,16 @@ mod store;
 mod warm;
 mod writeback;
 
+pub use ann::{AnnIndexPolicy, AnnIndexReport, AnnIndexState};
 pub use clock::{Clock, FixedClock, SystemClock, format_rfc3339};
 pub use embed::{EmbedError, Embedder, EmbedderFingerprint, Embedding, HashEmbedder};
 pub use error::ContextError;
 pub use provider::{ContextProvider, ProviderRegistry};
 pub use retrieval::{
-    DEFAULT_COVERAGE_TOPK, DEFAULT_LEXICAL_LIMIT, DEFAULT_MAX_VECTOR_SEEDS, DEFAULT_MIN_COVERAGE,
-    DEFAULT_MMR_CANDIDATE_MULTIPLE, DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_RRF_K,
-    DropReason, DroppedFrame, RecallResult, RecallTuning, is_lexical_fallback,
+    DEFAULT_ANN_ENABLED, DEFAULT_ANN_PROBES, DEFAULT_COVERAGE_TOPK, DEFAULT_LEXICAL_LIMIT,
+    DEFAULT_MAX_VECTOR_SEEDS, DEFAULT_MIN_COVERAGE, DEFAULT_MMR_CANDIDATE_MULTIPLE,
+    DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_RRF_K, DropReason, DroppedFrame,
+    RecallResult, RecallTuning, is_lexical_fallback,
 };
 pub use store::{
     CompactionWatermark, ContextCompactPolicy, ContextCompactReport, ContextStore,

@@ -18,8 +18,12 @@ mod node;
 mod record;
 mod schema;
 
+// `pub(crate)` only so `crate::ann`'s migration test can reuse `open_legacy`
+// rather than hand-rolling a second, subtly different v6 fixture — two fixture
+// builders for one schema ladder is how a migration test ends up asserting
+// against a shape the ladder never produces.
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -43,12 +47,8 @@ pub(crate) use domain::{
 };
 pub(crate) use edge::{close_edge, edges_as_of, insert_edge, neighbors};
 pub(crate) use embedding::{
-    blob_to_vector, embedding_exists, nodes_missing_embedding, store_embedding,
+    blob_to_vector, embedding_exists, nodes_missing_embedding, store_embedding, vector_to_blob,
 };
-// The encoder has one caller (`store_embedding`, inside its own module) and one
-// test; the decoder is used crate-wide by `candidates`.
-#[cfg(test)]
-pub(crate) use embedding::vector_to_blob;
 pub use node::{NodeInput, NodeKind, NodeRow};
 pub(crate) use node::{
     map_node_row, node_by_id, node_exists_any_state, node_ids_for_uris, restore_node,
@@ -127,9 +127,16 @@ pub struct MemoryLineageStats {
 /// scan (`idx_embedding_fingerprint`), and — only on a weak-coverage turn — the
 /// lexical scan, which streams instead of materializing the corpus. All of it
 /// runs on the blocking pool rather than on the worker that awaited it, so the
-/// timeouts callers wrap around recall can actually fire. That is fine at
-/// CLI-local scale and is the plane's next scaling wall; an ANN index over the
-/// vector scan is the remaining tracked follow-up, not an oversight.
+/// timeouts callers wrap around recall can actually fire.
+///
+/// The vector scan is the one of those three that a workspace can now opt out
+/// of: [`Self::index_ann`] builds an IVF index and
+/// `context.retrieval.ann_enabled` lets recall probe it instead, which makes
+/// that pass `O(√n)` rather than `O(n)`. It is off by default because it is
+/// approximate — it changes which frames a turn can recall, not merely how fast
+/// it recalls them — and every recall it serves says so on
+/// `RecallResult::used_ann_index`. The metadata scan and the lexical fallback
+/// remain linear and remain exact.
 ///
 /// # Drop
 ///

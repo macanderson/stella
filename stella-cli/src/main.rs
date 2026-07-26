@@ -53,6 +53,7 @@ mod mcp_cmd;
 mod memory;
 mod memory_cmd;
 mod memory_compact;
+mod memory_index;
 mod model_catalog;
 mod rules;
 mod runtime;
@@ -868,6 +869,14 @@ enum MemoryCmd {
     /// Memories, episodes, facts and forget tombstones are never touched —
     /// point-in-time queries answer identically before and after.
     Compact(memory_compact::CompactArgs),
+    /// Build the approximate-similarity (IVF) index recall can use instead of
+    /// scoring every stored vector on every turn.
+    ///
+    /// Opt-in twice over: this builds it, and `context.retrieval.ann_enabled`
+    /// in settings.json is what lets a recall use it. An approximate index
+    /// considers a subset of the corpus, so it can miss a frame the exact scan
+    /// would have found — which is why neither half is on by default.
+    Index(memory_index::IndexArgs),
 }
 
 /// NUL boundaries prevent LLVM's string pooling from adjoining identifier
@@ -1531,6 +1540,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 MemoryCmd::Restore { id } => memory_cmd::run_memory_restore(id),
                 MemoryCmd::Forgotten => memory_cmd::run_memory_forgotten(),
                 MemoryCmd::Compact(args) => memory_compact::run_memory_compact(args),
+                MemoryCmd::Index(args) => memory_index::run_memory_index(args),
             };
         }
         Some(Command::Mcp { cmd }) => {

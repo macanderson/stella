@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 6;
+pub(crate) const SCHEMA_VERSION: i64 = 7;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -245,6 +245,62 @@ CREATE TABLE IF NOT EXISTS context_compaction (
 );
 ";
 
+/// V7 — the **IVF (inverted file) similarity index** ([`crate::ann`]).
+///
+/// Three tables, all keyed by fingerprint so a re-embed neither reads nor
+/// invalidates another embedder's index (`L-C2` again, one level up).
+///
+/// - `ann_centroid` holds the cluster representatives a query scores against.
+///   `posting_count` is carried on the row so choosing a probe width costs `k`
+///   integers rather than a `GROUP BY` over every assignment — the probe must
+///   not have to read the postings to decide how many postings to read.
+/// - `ann_assignment` is the posting list, keyed exactly like `embedding`
+///   itself: `(content_hash, fingerprint)`. `idx_ann_assignment_probe` on
+///   `(fingerprint, centroid_id)` is what makes a probe an index range scan
+///   instead of a table scan — without it the accelerator would be slower than
+///   the scan it replaces.
+/// - `ann_index_state` is the build watermark: one row per fingerprint saying
+///   when the index was built and over how many vectors, which is what lets a
+///   reader tell "never indexed" from "indexed and drifted".
+///
+/// **Liveness is deliberately absent from all three.** A posting is a row about
+/// *content*, not about belief: `supersede_node` and `restore_node` flip a
+/// node's liveness without touching `embedding`, and an `as_of` query changes
+/// the live set with no vector change at all. Because the postings join back
+/// through `node` under the shared [`crate::candidates::NODE_AS_OF`] predicate,
+/// all three of those operations need **zero index maintenance** — which is the
+/// entire reason this is an IVF and not a graph index, where each of them would
+/// be an invalidation.
+///
+/// `IF NOT EXISTS` for the reason V4–V6 have it: a store whose `user_version`
+/// was rewound (a partial restore, or the migration fixtures) must be able to
+/// re-run this without failing on an existing table.
+pub(crate) const MIGRATION_V7: &str = "\
+CREATE TABLE IF NOT EXISTS ann_centroid (
+    fingerprint   TEXT NOT NULL,
+    centroid_id   INTEGER NOT NULL,
+    vector        BLOB NOT NULL,
+    posting_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (fingerprint, centroid_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS ann_assignment (
+    content_hash  TEXT NOT NULL,
+    fingerprint   TEXT NOT NULL,
+    centroid_id   INTEGER NOT NULL,
+    PRIMARY KEY (content_hash, fingerprint)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_ann_assignment_probe
+    ON ann_assignment(fingerprint, centroid_id);
+
+CREATE TABLE IF NOT EXISTS ann_index_state (
+    fingerprint    TEXT PRIMARY KEY,
+    built_at       TEXT NOT NULL,
+    vector_count   INTEGER NOT NULL,
+    centroid_count INTEGER NOT NULL
+);
+";
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -353,6 +409,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     }
     if version < 6 {
         tx.execute_batch(MIGRATION_V6)?;
+    }
+    if version < 7 {
+        tx.execute_batch(MIGRATION_V7)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;

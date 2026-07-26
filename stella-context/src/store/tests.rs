@@ -6,7 +6,8 @@ use std::sync::atomic::Ordering;
 
 use super::embedding::{blob_to_vector, vector_to_blob};
 use super::schema::{
-    MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V6, SCHEMA_VERSION,
+    MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4, MIGRATION_V6, MIGRATION_V7,
+    SCHEMA_VERSION,
 };
 use super::*;
 use tempfile::TempDir;
@@ -663,14 +664,14 @@ fn as_of_ignores_world_validity_valid_from_valid_to() {
 
 /// A raw connection migrated up to `version` with `user_version` stamped,
 /// so `ContextStore::open` sees a legacy db to upgrade. The `node`/`edge`
-/// tables are identical across v1..v6, so the crate's writers apply to any
+/// tables are identical across v1..v7, so the crate's writers apply to any
 /// version >= 1; the `memory` table requires v2, and `memory.lineage_id`
 /// requires v5.
 ///
 /// Each arm is the same statement the real ladder runs, so a fixture at
 /// version N is the shape a stella that stopped at N would have left behind —
 /// never today's shape with an old stamp on it.
-fn open_legacy(path: &std::path::Path, version: i64) -> Connection {
+pub(crate) fn open_legacy(path: &std::path::Path, version: i64) -> Connection {
     let conn = Connection::open(path).unwrap();
     conn.execute_batch(MIGRATION_V1).unwrap();
     if version >= 2 {
@@ -687,6 +688,9 @@ fn open_legacy(path: &std::path::Path, version: i64) -> Connection {
     }
     if version >= 6 {
         conn.execute_batch(MIGRATION_V6).unwrap();
+    }
+    if version >= 7 {
+        conn.execute_batch(MIGRATION_V7).unwrap();
     }
     conn.pragma_update(None, "user_version", version).unwrap();
     conn

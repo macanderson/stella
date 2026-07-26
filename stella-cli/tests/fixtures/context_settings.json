@@ -41,7 +41,9 @@
       "coverage_topk": 5,
       "max_vector_seeds": 8,
       "lexical_limit": 8,
-      "mmr_candidate_multiple": 4
+      "mmr_candidate_multiple": 4,
+      "ann_enabled": false,
+      "ann_probes": 12
     }
   }
 }

@@ -223,6 +223,24 @@ pub struct RetrievalSettings {
     /// Shortlist size as a multiple of `max_frames` — what the budget chooses
     /// between, and the denominator of the drop report.
     pub mmr_candidate_multiple: usize,
+    /// Let the IVF index serve the similarity scan instead of scoring every
+    /// stored vector.
+    ///
+    /// **Off by default, deliberately.** This is the one knob in this block
+    /// that changes *which* memories a turn can recall rather than how they are
+    /// ordered: an approximate index considers a subset of the corpus, so a
+    /// frame the exact scan would have found can be missed. Turning it on is a
+    /// trade a workspace makes knowingly, and every recall it serves says so on
+    /// `RecallResult::used_ann_index`.
+    ///
+    /// It also does nothing until `stella memory index` has built one — there
+    /// is no implicit build, because building is a whole-corpus pass and the
+    /// per-turn path must never pay for it.
+    pub ann_enabled: bool,
+    /// How many centroid posting lists an enabled probe reads. Higher is more
+    /// exact and slower; the probe widens past this on its own when the
+    /// ranking's own depth requirements demand it, so this is a floor.
+    pub ann_probes: usize,
 }
 
 impl Default for RetrievalSettings {
@@ -241,6 +259,8 @@ impl Default for RetrievalSettings {
             max_vector_seeds: t.max_vector_seeds,
             lexical_limit: t.lexical_limit,
             mmr_candidate_multiple: t.mmr_candidate_multiple,
+            ann_enabled: t.ann_enabled,
+            ann_probes: t.ann_probes,
         }
     }
 }
@@ -267,6 +287,8 @@ impl RetrievalSettings {
             max_vector_seeds: self.max_vector_seeds,
             lexical_limit: self.lexical_limit,
             mmr_candidate_multiple: self.mmr_candidate_multiple,
+            ann_enabled: self.ann_enabled,
+            ann_probes: self.ann_probes,
         }
         .sanitized()
     }
@@ -396,7 +418,9 @@ mod tests {
                 "coverage_topk":7,
                 "max_vector_seeds":13,
                 "lexical_limit":17,
-                "mmr_candidate_multiple":6
+                "mmr_candidate_multiple":6,
+                "ann_enabled":true,
+                "ann_probes":23
             }
         }}"#;
         let s: Settings = serde_json::from_str(json).expect("parse");
@@ -440,6 +464,8 @@ mod tests {
         assert_eq!(r.max_vector_seeds, 13);
         assert_eq!(r.lexical_limit, 17);
         assert_eq!(r.mmr_candidate_multiple, 6);
+        assert!(r.ann_enabled);
+        assert_eq!(r.ann_probes, 23);
     }
 
     /// The defaults must reproduce the values that shipped as `const`s, or
@@ -463,6 +489,14 @@ mod tests {
             d.mmr_candidate_multiple,
             stella_context::DEFAULT_MMR_CANDIDATE_MULTIPLE
         );
+        assert_eq!(d.ann_enabled, stella_context::DEFAULT_ANN_ENABLED);
+        assert!(
+            !d.ann_enabled,
+            "the ANN accelerator must ship off: it changes WHICH memories a turn \
+             can recall, and a silent default for that would be exactly the \
+             kind of invisible behavior change §5.5 forbids"
+        );
+        assert_eq!(d.ann_probes, stella_context::DEFAULT_ANN_PROBES);
         assert_eq!(
             d.tuning(),
             stella_context::RecallTuning::default(),
@@ -480,7 +514,8 @@ mod tests {
             "min_coverage":-4.0,
             "coverage_topk":0,
             "lexical_limit":0,
-            "mmr_candidate_multiple":0
+            "mmr_candidate_multiple":0,
+            "ann_probes":0
         }}}"#;
         let s: Settings = serde_json::from_str(json).expect("parse");
         let t = s.context.expect("present").retrieval.tuning();
@@ -496,6 +531,11 @@ mod tests {
         assert_eq!(
             t.mmr_candidate_multiple, 1,
             "zero would make every recall empty"
+        );
+        assert_eq!(
+            t.ann_probes, 1,
+            "zero probes would read no posting list at all — an empty recall on \
+             a full store"
         );
     }
 }
