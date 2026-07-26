@@ -109,6 +109,47 @@ impl Tool for CodeGraphQuery {
     }
 }
 
+/// The single phrasing of the non-fatal index-pass diagnostic, shared by every
+/// surface that reports it so the model and the operator read the same words
+/// (and a test can assert on it without pinning the store's error text).
+pub(crate) const INDEX_PASS_WARNING: &str = "warning: the code graph index pass \
+     failed — answering from what the index already holds, which may be stale";
+
+/// An open graph handle **plus** whatever non-fatal diagnostic its opening
+/// catch-up pass produced.
+///
+/// A library must not own the process's stderr: Stella's primary surface is a
+/// TUI, where a stray print to stderr paints raw text over the rendered frame
+/// (issue #643). So the warning travels back to the caller as data instead,
+/// and every caller has somewhere to put it — the tool output the model reads,
+/// the `stella graph` output the operator reads, the overview JSON, or (for
+/// impact selection) a stand-down note. It is never dropped on the floor.
+pub(crate) struct OpenedGraph {
+    pub(crate) graph: stella_graph::CodeGraph,
+    /// `Some(message)` when the `index_all` catch-up pass failed and the
+    /// answer therefore comes from whatever the index already held.
+    pub(crate) index_warning: Option<String>,
+}
+
+/// Attach a non-fatal index warning to a rendered answer.
+///
+/// The warning goes **above** a successful answer — the model reads the caveat
+/// before the possibly-stale frames it qualifies — and below a failure, where
+/// the named error is the headline and the failed index pass is context for it.
+pub(crate) fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOutput {
+    let Some(warning) = warning else {
+        return output;
+    };
+    match output {
+        ToolOutput::Ok { content } => ToolOutput::Ok {
+            content: format!("({warning})\n{content}"),
+        },
+        ToolOutput::Error { message } => ToolOutput::Error {
+            message: format!("{message}\n({warning})"),
+        },
+    }
+}
+
 /// Open the code graph for a read, **building it on first use** when no
 /// index exists yet.
 ///
@@ -120,9 +161,10 @@ impl Tool for CodeGraphQuery {
 /// the freshness pass that lets the graph see files the agent just wrote.
 ///
 /// The `stale answers are worse than none` rule still holds: the pass runs
-/// on every open, and only a hard failure to prepare the store surfaces as
-/// an error to the caller.
-pub(crate) fn open_or_build(root: &Path) -> Result<stella_graph::CodeGraph, String> {
+/// on every open, only a hard failure to prepare the store surfaces as an
+/// error to the caller, and a failed pass is reported as
+/// [`OpenedGraph::index_warning`] rather than silently tolerated.
+pub(crate) fn open_or_build(root: &Path) -> Result<OpenedGraph, String> {
     // The WRITABLE path (creates `.stella/private/`), not the read-only
     // `existing_...` probe — this is the one place a query is allowed to
     // create the index it needs.
@@ -130,29 +172,66 @@ pub(crate) fn open_or_build(root: &Path) -> Result<stella_graph::CodeGraph, Stri
         .map_err(|error| format!("cannot prepare the code graph store: {error}"))?;
     let graph = stella_graph::CodeGraph::open(root, &db_path)
         .map_err(|error| format!("could not open the code graph: {error}"))?;
-    if let Err(error) = graph.index_all() {
-        // A build/refresh failure is not fatal to a query: an existing index
-        // still answers from its last good state, and a brand-new one answers
-        // empty rather than aborting the agent's turn.
-        eprintln!("stella: code graph index pass failed, answering from what exists: {error}");
-    }
-    Ok(graph)
+    // A build/refresh failure is not fatal to a query: an existing index
+    // still answers from its last good state, and a brand-new one answers
+    // empty rather than aborting the agent's turn. It is still reported —
+    // returned to the caller, never printed over the frame.
+    let index_warning = graph
+        .index_all()
+        .err()
+        .map(|error| format!("{INDEX_PASS_WARNING}: {error}"));
+    Ok(OpenedGraph {
+        graph,
+        index_warning,
+    })
+}
+
+/// Make the next `index_all` pass over `db` fail while leaving every read
+/// answering — a trigger that aborts the pass's first row insert.
+///
+/// Tests only, and shared across this crate's modules (`graph`, `read_symbol`,
+/// `gather` all thread the resulting warning). This is the shape of the real
+/// failure the warning exists for: a store the pass cannot write to, over an
+/// index that still holds usable rows. Every other way to break the pass —
+/// an unwritable file or directory — breaks `CodeGraph::open` first and so
+/// exercises the hard-error branch instead of this one.
+///
+/// The caller must also make the pass *attempt* a write (add or change an
+/// indexable file); an unchanged tree is skipped by the byte-compat check
+/// and never reaches the trigger.
+#[cfg(test)]
+pub(crate) fn block_index_writes(db: &Path) {
+    let conn = rusqlite::Connection::open(db).expect("open the index for the test trigger");
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS stella_test_block_index_writes \
+         BEFORE INSERT ON code_graph_files \
+         BEGIN SELECT RAISE(ABORT, 'index writes blocked by the test'); END;",
+    )
+    .expect("install the test trigger");
 }
 
 /// Open → query → shutdown, entirely synchronous underneath (SQLite reads
-/// plus the [`open_or_build`] catch-up pass). Shared by the tool and the
+/// plus the `open_or_build` catch-up pass). Shared by the tool and the
 /// `stella graph` subcommand so both render the exact same frames.
 ///
 /// **Synchronous — an async caller must wrap it in `spawn_blocking`**, the
 /// same contract `stella_graph::CodeGraph::index_all` states.
+///
+/// A failed catch-up pass rides back out on the returned [`ToolOutput`], which
+/// is what crosses the `spawn_blocking` boundary in `execute` — so the model
+/// (tool call) and the operator (`stella graph`, which prints this content)
+/// both see it.
 pub fn run_query(root: &Path, op: &str, target: &str) -> ToolOutput {
-    let graph = match open_or_build(root) {
-        Ok(g) => g,
+    let OpenedGraph {
+        graph,
+        index_warning,
+    } = match open_or_build(root) {
+        Ok(opened) => opened,
         Err(message) => return ToolOutput::Error { message },
     };
     let output = run_query_with(&graph, op, target);
     graph.shutdown();
-    output
+    with_index_warning(output, index_warning)
 }
 
 /// One query against an **already-open** handle, so a caller answering a
@@ -415,6 +494,95 @@ mod tests {
             "graph_query blocked the runtime worker: a concurrently spawned task never got \
              to run while the code-graph index pass was in flight"
         );
+    }
+
+    /// The #643 witness, direct path: a failed catch-up pass must come back to
+    /// the caller as text, not go to the process's stderr — where it would
+    /// paint over the TUI frame. This is also the operator's path: `stella
+    /// graph` prints exactly this content.
+    #[test]
+    fn a_failed_index_pass_returns_its_warning_to_the_caller() {
+        let dir = indexed_workspace();
+        block_index_writes(&graph_db_path(dir.path()));
+        // Without a pending write the pass has nothing to abort on: the
+        // byte-compat skip would let it succeed.
+        std::fs::write(dir.path().join("added.rs"), "pub fn added_later() {}\n").expect("write");
+
+        let output = run_query(dir.path(), "definitions", "greet");
+        match output {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains(INDEX_PASS_WARNING),
+                    "the index-pass failure must reach the caller, not stderr: {content}"
+                );
+                assert!(
+                    content.contains("index writes blocked by the test"),
+                    "the underlying store error is named: {content}"
+                );
+                // The whole point of the non-fatal branch: the last good index
+                // still answers.
+                assert!(
+                    content.contains("greet"),
+                    "the existing index still answers: {content}"
+                );
+            }
+            ToolOutput::Error { message } => {
+                panic!("a failed index pass is not fatal to a query: {message}")
+            }
+        }
+    }
+
+    /// The same warning must survive the `spawn_blocking` hop the tool takes,
+    /// so the model — not just an in-process caller — reads it.
+    #[tokio::test]
+    async fn the_index_warning_crosses_the_spawn_blocking_boundary_to_the_model() {
+        let dir = indexed_workspace();
+        block_index_writes(&graph_db_path(dir.path()));
+        std::fs::write(dir.path().join("added.rs"), "pub fn added_later() {}\n").expect("write");
+
+        let out = CodeGraphQuery
+            .execute(
+                &serde_json::json!({"op": "definitions", "target": "greet"}),
+                dir.path(),
+            )
+            .await;
+        match out {
+            ToolOutput::Ok { content } => assert!(
+                content.contains(INDEX_PASS_WARNING) && content.contains("greet"),
+                "{content}"
+            ),
+            ToolOutput::Error { message } => panic!("expected a warned answer, got: {message}"),
+        }
+    }
+
+    /// A failing query that ALSO had a failing index pass must report both —
+    /// the named error leads, the stale-index caveat follows it.
+    #[test]
+    fn a_failed_query_keeps_both_its_error_and_the_index_warning() {
+        let warned = with_index_warning(
+            ToolOutput::Error {
+                message: "code-graph query failed: boom".into(),
+            },
+            Some(format!("{INDEX_PASS_WARNING}: disk on fire")),
+        );
+        match warned {
+            ToolOutput::Error { message } => {
+                assert!(
+                    message.starts_with("code-graph query failed: boom"),
+                    "{message}"
+                );
+                assert!(message.contains(INDEX_PASS_WARNING), "{message}");
+            }
+            ToolOutput::Ok { content } => panic!("an error must stay an error: {content}"),
+        }
+        // No warning, no noise: the common path is byte-identical.
+        let clean = with_index_warning(
+            ToolOutput::Ok {
+                content: "frames".into(),
+            },
+            None,
+        );
+        assert!(matches!(clean, ToolOutput::Ok { content } if content == "frames"));
     }
 
     #[tokio::test]

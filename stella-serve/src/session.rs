@@ -14,6 +14,7 @@
 //! this without changing the transport.
 
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use stella_core::{BudgetGuard, Engine, EngineConfig};
 use stella_protocol::{
@@ -25,7 +26,9 @@ use tokio::sync::mpsc;
 use crate::error::ServeError;
 use crate::frame::{ServerFrame, TurnOutcomeWire};
 use crate::pending::Pending;
-use crate::remote::{RemoteProvider, RemoteToolExecutor, TokioSleeper};
+use crate::remote::{
+    DEFAULT_REVERSE_REQUEST_TIMEOUT, RemoteProvider, RemoteToolExecutor, TokioSleeper,
+};
 
 /// Everything needed to run one turn. The host assembles this — it owns prompt
 /// construction, recall, model selection, and the tool set (advertised as
@@ -43,6 +46,17 @@ pub struct SessionSpec {
     pub config: EngineConfig,
     /// Spend guard for the turn.
     pub budget: BudgetGuard,
+    /// How long each reverse request (model call, tool call) waits for the host
+    /// before the port gives up on it — the bound that stops an unanswered
+    /// reverse request from parking an OS thread forever. Defaults to
+    /// [`SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT`].
+    pub reverse_request_timeout: Duration,
+}
+
+impl SessionSpec {
+    /// The default [`SessionSpec::reverse_request_timeout`]: five minutes. See
+    /// the constant's own docs in `remote.rs` for how that number was picked.
+    pub const DEFAULT_REVERSE_REQUEST_TIMEOUT: Duration = DEFAULT_REVERSE_REQUEST_TIMEOUT;
 }
 
 /// A running session. The host drives it by reading [`ServerFrame`]s with
@@ -123,6 +137,19 @@ impl Session {
     pub fn fail_provider(&self, request_id: &str, error: ProviderError) -> Result<(), ServeError> {
         self.pending.resolve_provider(request_id, Err(error))
     }
+
+    /// Cancel the turn. Any parked reverse request wakes immediately and no new
+    /// one is allowed to park, so the turn unwinds to
+    /// [`TurnOutcomeWire::Aborted`] within one engine step and its thread is
+    /// released.
+    ///
+    /// Idempotent, and safe to call from the server runtime while the session
+    /// thread is mid-turn — [`Pending`] is the shared handle both sides hold. It
+    /// does **not** kill the thread outright: the turn is allowed to unwind so
+    /// the terminal frame still reaches a host that is streaming events.
+    pub fn cancel(&self) {
+        self.pending.cancel();
+    }
 }
 
 impl Drop for Session {
@@ -153,8 +180,18 @@ fn run_session(spec: SessionSpec, frame_tx: mpsc::UnboundedSender<ServerFrame>, 
     };
 
     runtime.block_on(async move {
-        let provider = RemoteProvider::new(spec.provider_id, frame_tx.clone(), pending.clone());
-        let tools = RemoteToolExecutor::new(spec.tools, frame_tx.clone(), pending.clone());
+        let provider = RemoteProvider::new(
+            spec.provider_id,
+            frame_tx.clone(),
+            pending.clone(),
+            spec.reverse_request_timeout,
+        );
+        let tools = RemoteToolExecutor::new(
+            spec.tools,
+            frame_tx.clone(),
+            pending.clone(),
+            spec.reverse_request_timeout,
+        );
         let sleeper = TokioSleeper;
         let engine = Engine::with_sleeper(&provider, &tools, spec.config, &sleeper);
 

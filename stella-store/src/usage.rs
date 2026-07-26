@@ -28,8 +28,8 @@
 //! [`crate::drain`].
 //!
 //! Schema: `usage.db` is versioned by *convergence*, not by a `user_version`
-//! migration list (unlike `.stella/private/store.db`, see [`crate::migrations`]).
-//! Every table in [`USAGE_SCHEMA`] is `CREATE ... IF NOT EXISTS` and the whole
+//! migration list (unlike `.stella/private/store.db`, see `crate::migrations`).
+//! Every table in `USAGE_SCHEMA` is `CREATE ... IF NOT EXISTS` and the whole
 //! batch replays on every open, so an additive table or index reaches an
 //! existing hub the next time it is opened. Adding a table here is the
 //! migration; a table that ever needs a *reshape* would need the versioned
@@ -716,7 +716,7 @@ impl UsageStore {
     /// (the table's PK is `(project_id, source_rowid)`, so its `rowid` is
     /// implicit and not VACUUM-stable) while the cloud cursor is stored as a
     /// `rowid`, every cursor is re-anchored after `VACUUM` against the stable
-    /// `(project_id, source_rowid)` key — see [`Self::vacuum_and_reanchor`].
+    /// `(project_id, source_rowid)` key — see `Self::vacuum_and_reanchor`.
     ///
     /// `dry_run` computes the same report but rolls the transaction back and
     /// skips `VACUUM`, so nothing is deleted.

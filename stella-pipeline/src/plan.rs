@@ -82,7 +82,7 @@ pub fn parse_plan(text: &str) -> Option<Vec<PlanStep>> {
 }
 
 /// Strict-JSON plan parse: scans for the first `[`/`{` … balanced span and
-/// tries to deserialize it as a [`PlanJson`]. Whitespace and prose around the
+/// tries to deserialize it as a `PlanJson`. Whitespace and prose around the
 /// JSON are tolerated (models often wrap JSON in ```` ```json ```` fences or a
 /// sentence). Returns `None` if no embedded JSON parses into a non-empty
 /// step list.

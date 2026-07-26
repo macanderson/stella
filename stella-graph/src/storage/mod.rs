@@ -3,17 +3,17 @@
 //! relation / field), stable addresses, name normalization, and per-adapter
 //! structural extraction (spec §4a):
 //!
-//! - [`sql`] — deep DDL: types, nullability, defaults, constraints, FKs,
+//! - `sql` — deep DDL: types, nullability, defaults, constraints, FKs,
 //!   `ALTER TABLE … ADD COLUMN`, `COMMENT ON` harvesting.
-//! - [`prisma`] — `.prisma` schemas: models, enums, `@map`/`@@map`,
+//! - `prisma` — `.prisma` schemas: models, enums, `@map`/`@@map`,
 //!   `@relation` FKs, `///` doc harvesting, Mongo-provider detection.
-//! - [`ts`] — TypeScript/JavaScript: Drizzle `pgTable`-family calls,
+//! - `ts` — TypeScript/JavaScript: Drizzle `pgTable`-family calls,
 //!   TypeORM `@Entity`/`@Column` decorators, Mongoose schemas (document
 //!   paths included), DynamoDB CDK/SDK table definitions.
-//! - [`py`] — Python: Django `models.Model` classes, SQLAlchemy declarative
+//! - `py` — Python: Django `models.Model` classes, SQLAlchemy declarative
 //!   and core `Table(...)` definitions.
 //!
-//! Extraction here is **shared** by the indexer ([`crate::store`]) and the
+//! Extraction here is **shared** by the indexer (`crate::store`) and the
 //! pre-write gate (`stella-tools`), so the gate and the index cannot drift
 //! apart. Structure only: intent/boundary meaning comes from the committed
 //! manifest ([`crate::manifest`]) and is merged at snapshot time, never
@@ -216,7 +216,7 @@ pub fn is_storage_file(path: &str) -> bool {
 
 /// Whether a path should be indexed for storage even though no
 /// [`Language`] grammar claims it (`.prisma` — its own DSL, parsed by the
-/// [`prisma`] adapter). Used by the walker and watcher membership tests.
+/// `prisma` adapter). Used by the walker and watcher membership tests.
 pub fn indexes_without_language(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())

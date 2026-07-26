@@ -43,7 +43,7 @@ impl Store {
     ///
     /// Grouped by `executions.session_id`; sessions with no `session_id`
     /// (pre-v8 telemetry, or an execution dispatched outside a registered
-    /// session — same exclusion [`crate::cache_gaps::Store::cache_call_gaps`]
+    /// session — same exclusion [`Store::cache_call_gaps`]
     /// makes) are excluded, since there is no session to trend. Ordered by
     /// `MIN(e.id) DESC` rather than `MIN(started_at) DESC`: execution ids are
     /// assigned in AUTOINCREMENT order and `started_at`'s

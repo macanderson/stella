@@ -30,7 +30,7 @@
 //!
 //! Recalled context rides as a **volatile message after the byte-stable system
 //! prefix**, never mutated into the system block itself, so prompt-cache hits
-//! on the stable prefix survive across turns. See [`assemble_user_message`].
+//! on the stable prefix survive across turns. See `assemble_user_message`.
 //!
 //! # Breaker feedback boundary
 //!

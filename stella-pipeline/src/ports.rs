@@ -553,7 +553,7 @@ pub struct PipelinePorts<'a> {
     /// Candidate isolation (L-E7): one snapshot per candidate and passing-only
     /// adoption. Also required for authored witnesses at `candidates = 1`.
     pub candidate_workspaces: Option<&'a dyn CandidateWorkspacePort>,
-    /// Orchestrator MCP pre-fetch (issue #248) — see [`crate::mcp_prefetch::fold`].
+    /// Orchestrator MCP pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
     pub mcp_prefetch: Option<&'a dyn McpPrefetchPort>,
     /// Step-boundary steering for the EXECUTE engine only — mid-turn user
     /// messages injected as the model's next observation (`stella_core`'s

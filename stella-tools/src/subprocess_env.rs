@@ -4,7 +4,7 @@
 //! Stella needs provider credentials in its own process, but tools do not.
 //! Passing the full inherited environment to a shell, project script, hook,
 //! or long-running server lets ordinary repository code print or exfiltrate
-//! the credential that pays for the agent. Apply [`scrub_sensitive_env`] as
+//! the credential that pays for the agent. Apply [`crate::subprocess_env::scrub_sensitive_env`] as
 //! the final environment mutation before every such spawn.
 
 use std::collections::HashSet;
@@ -136,7 +136,7 @@ pub fn scrub_sensitive_env(command: &mut tokio::process::Command) {
 /// This is only for a trusted executable whose documented authentication
 /// channel is itself an environment variable (for example `gh`). Arbitrary
 /// shells, hooks, test commands, repository tools, and model-selected
-/// executables must use [`scrub_sensitive_env`] with no exceptions.
+/// executables must use [`crate::subprocess_env::scrub_sensitive_env`] with no exceptions.
 pub fn scrub_sensitive_env_except(command: &mut tokio::process::Command, preserved_names: &[&str]) {
     scrub_sensitive_std_env_except(command.as_std_mut(), preserved_names);
 }

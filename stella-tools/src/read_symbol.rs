@@ -88,23 +88,46 @@ impl Tool for ReadSymbol {
         // region (the open runs a full `index_all` catch-up pass) goes to the
         // blocking pool so it never occupies a runtime worker (#549); the
         // handle lives and dies inside the closure and only the plain
-        // `SymbolSpan` data crosses back.
-        let spans = {
+        // `SymbolSpan` data — plus any index-pass warning, which a library must
+        // return rather than print (#643) — crosses back.
+        let looked_up = {
             let root = root.to_path_buf();
             let name = name.to_string();
             tokio::task::spawn_blocking(move || {
-                let graph = crate::graph::open_or_build(&root)?;
+                let crate::graph::OpenedGraph {
+                    graph,
+                    index_warning,
+                } = crate::graph::open_or_build(&root)?;
                 let spans = graph.definition_spans(&name);
                 graph.shutdown();
-                spans.map_err(|e| format!("code-graph lookup failed: {e}"))
+                spans
+                    .map(|spans| (spans, index_warning))
+                    .map_err(|e| format!("code-graph lookup failed: {e}"))
             })
             .await
             .unwrap_or_else(|_| Err("the code-graph symbol lookup was cancelled".into()))
         };
-        let mut spans = match spans {
-            Ok(spans) => spans,
+        let (spans, index_warning) = match looked_up {
+            Ok(found) => found,
             Err(message) => return ToolOutput::Error { message },
         };
+        // Every answer below is qualified by a failed catch-up pass — the span
+        // it read may be the one the failed pass would have moved.
+        crate::graph::with_index_warning(self.render(input, root, name, spans).await, index_warning)
+    }
+}
+
+impl ReadSymbol {
+    /// Disambiguate the definition sites and read the chosen span. Split out of
+    /// `execute` so its many early returns are all wrapped by one
+    /// [`crate::graph::with_index_warning`] call at the boundary.
+    async fn render(
+        &self,
+        input: &Value,
+        root: &std::path::Path,
+        name: &str,
+        mut spans: Vec<stella_graph::SymbolSpan>,
+    ) -> ToolOutput {
         if spans.is_empty() {
             return ToolOutput::Error {
                 message: format!(
@@ -261,6 +284,35 @@ mod tests {
                 );
             }
             ToolOutput::Error { message } => panic!("expected the span, got: {message}"),
+        }
+    }
+
+    /// The #643 witness for this tool: `read_symbol` returns content to the
+    /// model, so a failed index pass is prepended to that content instead of
+    /// being printed over the TUI frame — and it survives the `spawn_blocking`
+    /// hop the lookup takes.
+    #[tokio::test]
+    async fn a_failed_index_pass_warns_the_model_and_still_reads_the_span() {
+        let dir = indexed_workspace(&[("lib.rs", FIXTURE)]);
+        crate::graph::block_index_writes(&crate::graph::graph_db_path(dir.path()));
+        // Give the pass a write to abort on (an unchanged tree is skipped).
+        std::fs::write(dir.path().join("added.rs"), "fn added_later() {}\n").unwrap();
+
+        let out = tool()
+            .execute(&serde_json::json!({"name": "target_fn"}), dir.path())
+            .await;
+        match out {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.starts_with(&format!("({}", crate::graph::INDEX_PASS_WARNING)),
+                    "the caveat leads the answer it qualifies: {content}"
+                );
+                assert!(
+                    content.contains("fn target_fn (lib.rs:5-8)"),
+                    "the last good index still resolves the span: {content}"
+                );
+            }
+            ToolOutput::Error { message } => panic!("expected a warned span, got: {message}"),
         }
     }
 

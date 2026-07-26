@@ -562,7 +562,7 @@ pub struct FleetDashResult {
 /// Run the live dashboard until every task is terminal, the `done` signal
 /// fires, or the user detaches with `q`. Owns the alternate screen for its
 /// lifetime and restores the terminal on every exit path (including panic, via
-/// [`PanicHookGuard`]).
+/// `PanicHookGuard`).
 pub async fn run(
     label: impl Into<String>,
     tasks: Vec<(String, String)>,

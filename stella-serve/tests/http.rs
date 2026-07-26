@@ -183,6 +183,144 @@ async fn zero_max_steps_is_rejected_instead_of_starting_a_doomed_turn() {
     );
 }
 
+/// The reverse-request deadline is reachable from the wire, and an unanswered
+/// reverse request fails the turn on it instead of wedging the connection. The
+/// override keeps this test fast; the served default is five minutes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unanswered_reverse_request_fails_on_the_wire_deadline() {
+    let addr = start_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+        "reverse_request_timeout_ms": 50,
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(
+        status.contains("200"),
+        "create status: {status}, body: {body}"
+    );
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let turn_id = created["turn_id"].as_str().unwrap().to_string();
+
+    // Stream the turn but never POST a provider-result.
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+    let mut outcome = None;
+    while let Some(event) = next_event(&mut sse).await {
+        if event["type"].as_str() == Some("turn_complete") {
+            outcome = Some(event["outcome"].clone());
+        }
+    }
+
+    let outcome = outcome.expect("the stream ended with a terminal frame, not a hang");
+    assert_eq!(outcome["status"].as_str(), Some("aborted"));
+    let reason = outcome["reason"].as_str().unwrap_or_default();
+    assert!(reason.contains("deadline"), "abort reason: {reason}");
+}
+
+/// A zero deadline would expire every reverse request before the host could
+/// answer, so it is refused at the door rather than starting a doomed turn —
+/// the same treatment `max_steps: 0` gets.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn zero_reverse_request_timeout_is_rejected() {
+    let addr = start_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+        "reverse_request_timeout_ms": 0,
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(
+        status.contains("400"),
+        "create status: {status}, body: {body}"
+    );
+    assert!(
+        body.contains("reverse_request_timeout_ms"),
+        "error names the field: {body}"
+    );
+}
+
+/// An in-flight turn can be cancelled by its id: the parked reverse request wakes
+/// at once, the stream still delivers a terminal `aborted` frame, and the id is
+/// gone from the registry afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_in_flight_turn_can_be_cancelled_by_id() {
+    let addr = start_server().await;
+
+    let create = json!({
+        "provider_id": "mock",
+        "tools": [echo_tool()],
+        "messages": [serde_json::to_value(CompletionMessage::user("cancel me")).unwrap()],
+    })
+    .to_string();
+    let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create).await;
+    assert!(
+        status.contains("200"),
+        "create status: {status}, body: {body}"
+    );
+    let created: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let turn_id = created["turn_id"].as_str().unwrap().to_string();
+    let cancel_path = format!("/v1/turns/{turn_id}/cancel");
+
+    let mut sse = open_sse(addr, &format!("/v1/turns/{turn_id}/events"), TOKEN).await;
+
+    // Wait until the turn is genuinely in flight — parked on a reverse request
+    // the host is expected to answer — then cancel instead of answering.
+    let mut cancelled = false;
+    let mut outcome = None;
+    while let Some(event) = next_event(&mut sse).await {
+        match event["type"].as_str().unwrap_or_default() {
+            "provider_request" if !cancelled => {
+                let (status, resp) = post_json(addr, &cancel_path, Some(TOKEN), "").await;
+                assert!(status.contains("200"), "cancel: {status} {resp}");
+                assert!(resp.contains("cancelled"), "cancel body: {resp}");
+                cancelled = true;
+            }
+            "turn_complete" => outcome = Some(event["outcome"].clone()),
+            _ => {}
+        }
+    }
+
+    assert!(cancelled, "the turn was in flight before being cancelled");
+    let outcome = outcome.expect("a cancelled turn still reports a terminal frame");
+    assert_eq!(
+        outcome["status"].as_str(),
+        Some("aborted"),
+        "outcome: {outcome}"
+    );
+
+    // The turn is gone: cancelling again, or answering it late, is a 404.
+    let (status, _) = post_json(addr, &cancel_path, Some(TOKEN), "").await;
+    assert!(status.contains("404"), "second cancel status: {status}");
+    let late = json!({ "request_id": "prov-0", "status": "ok", "result": model_result("late") })
+        .to_string();
+    let (status, _) = post_json(
+        addr,
+        &format!("/v1/turns/{turn_id}/provider-result"),
+        Some(TOKEN),
+        &late,
+    )
+    .await;
+    assert!(status.contains("404"), "late result status: {status}");
+}
+
+/// Cancellation is behind the bearer token like every other `/v1` route, and an
+/// unknown id is a 404 rather than a silent success.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_requires_auth_and_404s_an_unknown_turn() {
+    let addr = start_server().await;
+
+    let (status, _) = post_json(addr, "/v1/turns/turn-99/cancel", None, "").await;
+    assert!(status.contains("401"), "unauthenticated cancel: {status}");
+
+    let (status, body) = post_json(addr, "/v1/turns/turn-99/cancel", Some(TOKEN), "").await;
+    assert!(status.contains("404"), "unknown turn cancel: {status}");
+    assert!(body.contains("unknown turn"), "body: {body}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn full_turn_round_trips_over_http() {
     let addr = start_server().await;

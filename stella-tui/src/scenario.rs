@@ -193,7 +193,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                         120,
                     ),
                     frame(
-                        "ADR-023 event-log REPL",
+                        "event-log REPL (stella-tui)",
                         "workspace-memory",
                         "stella-context",
                         "memory",

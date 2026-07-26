@@ -13,18 +13,18 @@
 //!
 //! # Deferred-flush events (L-E10)
 //!
-//! [`crate::retry::retry_with_backoff_observed`] returns committed retry
+//! `retry_with_backoff_observed` returns committed retry
 //! history while synchronously exposing each failed provider attempt to the
 //! accounting path. Ordinary retry narration stays deferred until success;
 //! content-free `UsageIncomplete` envelopes are durable immediately because
 //! a later successful attempt cannot recover the failed call's usage. A
 //! caller-side hard cancel that drops the turn while an attempt is still in
 //! flight emits one `Cancelled` envelope from a drop guard
-//! ([`CancelUsageGuard`]) armed for exactly that window.
+//! (`CancelUsageGuard`) armed for exactly that window.
 //!
 //! # Retry re-executes only read-only tool calls, never a mutating one
 //!
-//! [`crate::retry::retry_with_backoff_observed`] wraps the model call
+//! `retry_with_backoff_observed` wraps the model call
 //! (`Provider::complete_observed`) together with that attempt's speculation
 //! pump (`crate::speculation`). The exactly-once guarantee is scoped to
 //! MUTATING tools: a mutating call runs once, after a model call has
@@ -322,7 +322,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Attribute this engine's provider calls to a concrete pipeline role.
-    /// Ordinary execution defaults to [`ModelCallRole::Worker`].
+    /// Ordinary execution defaults to [`stella_protocol::ModelCallRole::Worker`].
     pub fn with_call_role(mut self, role: stella_protocol::ModelCallRole) -> Self {
         self.call_role = role;
         self

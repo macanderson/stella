@@ -1,7 +1,7 @@
 //! `bash` — run a shell command in the workspace root with a timeout.
 //! Process-group based kill so children don't outlive the timeout — or a
 //! cancelled turn: the driving future being dropped arms the same group kill
-//! ([`crate::exec::GroupKillGuard`]).
+//! (`crate::exec::GroupKillGuard`).
 //!
 //! **Opt-in, never ambient.** This tool is registered only when the host
 //! enabled it ([`crate::registry::RegistryOptions::bash`], set from the
@@ -436,7 +436,7 @@ mod tests {
     }
 
     /// Dropping the future mid-wait (a cancelled turn) must kill the whole
-    /// process group — the [`crate::exec::GroupKillGuard`] backstop. Without
+    /// process group — the `crate::exec::GroupKillGuard` backstop. Without
     /// it, Esc during a long `bash` call left the command running and
     /// mutating the tree, `setsid`'d beyond the reach of anything else.
     #[cfg(unix)]

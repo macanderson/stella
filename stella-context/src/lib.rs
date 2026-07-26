@@ -14,7 +14,7 @@
 //!
 //! 1. **Routing & fusion** — fan a query to capability-matching sources, fuse
 //!    vector + recency + graph-adjacency via reciprocal-rank fusion, dedup by
-//!    content hash ([`retrieval`]).
+//!    content hash (`retrieval`).
 //! 2. **Budgeting** — every frame carries a `token_cost`; assembly packs to the
 //!    caller's budget and reports what was dropped. Silent truncation is banned
 //!    (`L-C5`).

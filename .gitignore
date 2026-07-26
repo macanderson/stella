@@ -137,8 +137,6 @@ bench/warm-memory/
 
 # Rust analyzer
 rust-project.json
-# Generated deck render dump (written by stella-tui/tests/deck_snapshot.rs)
-deck-snapshots.txt
 # macOS custom-folder-icon marker (the real filename is "Icon\r" — a bare
 # "Icon" pattern never matches it). The trailing class must exclude word
 # characters: a bare "Icon?" also matches any five-character name starting

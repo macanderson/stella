@@ -15,7 +15,7 @@
 //! 1. **Exact repeat** — the same tool called with byte-identical input,
 //!    over and over (`read_file` on the same path, `bash` re-running the
 //!    same failing command).
-//! 2. **Short cycle** — a fixed sequence of 2 to [`MAX_CYCLE_PERIOD`]
+//! 2. **Short cycle** — a fixed sequence of 2 to `MAX_CYCLE_PERIOD`
 //!    distinct calls repeating with no other call interleaved
 //!    (`read_file` → `edit_file` that keeps getting rejected →
 //!    `read_file` again; or the period-3 read → failing edit → failing
@@ -85,7 +85,7 @@ pub struct LoopDetectionConfig {
     /// flag an exact-repeat loop. `0` or `1` disable exact-repeat
     /// detection — a single call can't be "repeated" by definition.
     pub exact_repeat_threshold: usize,
-    /// Full cycles (of any period `2..=`[`MAX_CYCLE_PERIOD`]) required to
+    /// Full cycles (of any period `2..=MAX_CYCLE_PERIOD`) required to
     /// flag a short-cycle loop. `0` disables short-cycle detection.
     pub short_cycle_repeats: usize,
 }
@@ -128,7 +128,7 @@ pub enum LoopVerdict {
         count: usize,
     },
     /// A fixed sequence of `pattern.len()` calls (2 to
-    /// [`MAX_CYCLE_PERIOD`], in cycle order — oldest position first)
+    /// `MAX_CYCLE_PERIOD`, in cycle order — oldest position first)
     /// repeated with no other call interleaved and byte-identical outputs
     /// at every position, for `repeats` full cycles at the end of the
     /// inspected history, at or above
@@ -248,7 +248,7 @@ fn detect_exact_repeat(records: &[CallRecord], threshold: usize) -> Option<LoopV
     }
 }
 
-/// For each period `2..=`[`MAX_CYCLE_PERIOD`] (shortest first), count how
+/// For each period `2..=MAX_CYCLE_PERIOD` (shortest first), count how
 /// far the trailing history repeats its last `period` records; report
 /// `ShortCycle` if any period spans `>= repeats_threshold` full cycles.
 /// `repeats_threshold == 0`, history too short for every period, and a

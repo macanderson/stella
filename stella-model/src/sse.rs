@@ -104,7 +104,7 @@ pub enum SseError {
     /// Bytes that are not merely an incomplete trailing UTF-8 sequence
     /// (which the decoder buffers) but an actually invalid one.
     InvalidUtf8,
-    /// A single event exceeded [`MAX_BUFFERED_EVENT_BYTES`] without
+    /// A single event exceeded `MAX_BUFFERED_EVENT_BYTES` without
     /// terminating — a runaway or hostile stream, not a large response.
     EventTooLarge,
 }
@@ -150,7 +150,7 @@ impl SseDecoder {
     /// two network chunks is reassembled rather than rejected.
     ///
     /// Unbounded by design — the wire path is [`SseDecoder::push_bytes`],
-    /// which is where [`MAX_BUFFERED_EVENT_BYTES`] is enforced.
+    /// which is where `MAX_BUFFERED_EVENT_BYTES` is enforced.
     pub fn push(&mut self, chunk: &str) {
         self.buf.push_str(chunk);
     }

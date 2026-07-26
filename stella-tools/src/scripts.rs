@@ -71,7 +71,7 @@ impl ScriptEntry {
 pub struct ScriptIndex {
     pub scripts: Vec<ScriptEntry>,
     pub verbs: BTreeMap<&'static str, String>,
-    /// Workspace members beyond [`MAX_WORKSPACE_MEMBERS`] that were skipped.
+    /// Workspace members beyond `MAX_WORKSPACE_MEMBERS` that were skipped.
     pub truncated_members: usize,
 }
 

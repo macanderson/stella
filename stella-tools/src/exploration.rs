@@ -33,7 +33,7 @@
 //! Records are plain JSON files, one per slice, so they are inspectable,
 //! diffable, and shareable through the filesystem with zero coordination —
 //! and each one is published by a synced temp-sibling rename
-//! ([`write_atomically`]), never truncated in place, because the reader
+//! (`write_atomically`), never truncated in place, because the reader
 //! skips a corrupt record silently.
 
 use std::collections::BTreeMap;

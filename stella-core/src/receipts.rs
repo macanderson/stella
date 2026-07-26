@@ -501,7 +501,11 @@ mod tests {
             })
             .expect("manifest");
         let tool_entries: Vec<_> = manifest.iter().filter(|b| b.call_id.is_some()).collect();
-        assert_eq!(tool_entries.len(), 2, "both occurrences are on the manifest");
+        assert_eq!(
+            tool_entries.len(),
+            2,
+            "both occurrences are on the manifest"
+        );
         assert_eq!(
             tool_entries[0].block_id, tool_entries[1].block_id,
             "and they do share the one content-addressed id"

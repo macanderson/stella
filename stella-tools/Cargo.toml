@@ -36,3 +36,7 @@ toml.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
 tempfile.workspace = true
 wiremock.workspace = true
+# Tests only: install a trigger in the code-graph index so its next write pass
+# fails while every read still answers — the one way to exercise the non-fatal
+# index-pass warning path (#643) without making the whole store unopenable.
+rusqlite.workspace = true

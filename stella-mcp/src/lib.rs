@@ -44,6 +44,14 @@
 //! - **Security.** stdio servers are spawned with a
 //!   *scrubbed* environment: no ambient credential is ever inherited by a
 //!   child ([`stdio`]).
+//! - **Diagnosable.** Nothing this layer learns about a server is kept from the
+//!   operator (#638): [`McpToolSet::health`] separates a server whose *calls*
+//!   fail from one that is merely unreachable (a reconnect proves connect
+//!   health, never call health — see [`HealthState`]), a dead stdio child's
+//!   last stderr lines ride along on the error that reports its death
+//!   ([`stdio`]), and a truncated tool list is reported as itself rather than
+//!   as an outage ([`McpToolSet::over_advertising_servers`],
+//!   [`McpToolSet::dropped_tool_count`]).
 //! - **Bounded context.** A server is untrusted input, so everything it can
 //!   push at the model is capped *at ingest* ([`client`]): a rendered
 //!   `tools/call` result is middle-out truncated with an explicit elision
@@ -75,7 +83,9 @@ pub mod stdio;
 pub mod toolset;
 pub mod transport;
 
-pub use client::{HealthState, McpClient, McpToolInfo, ServerHealth, render_content};
+pub use client::{
+    HealthState, MAX_TOOLS_PER_SERVER, McpClient, McpToolInfo, ServerHealth, render_content,
+};
 pub use config::{McpConfig, McpServerConfig, McpTransport};
 pub use error::McpError;
 pub use http::HttpTransport;

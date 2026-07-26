@@ -6,12 +6,17 @@ Option B, the Rust sidecar. It builds its own binary and nothing in
 `stella-cli` links it, so a change here never reaches a `stella` user.
 **This document describes the target surface, not all of it is built:** the
 code today serves one turn per registered id, with no sessions-over-turns, no
-steering, no pause/cancel, no approval gate, no SSE replay via `?after=<seq>`,
-no `Host`-header guard, and no SIGTERM drain. Sections below flag the gaps
-individually; treat `stella-serve/src/` as the state and this doc as the
+steering, no pause, no approval gate, no SSE replay via `?after=<seq>`,
+no `Host`-header guard, and no SIGTERM drain. Turn cancellation and a
+reverse-request deadline *have* shipped — see
+[Cancellation and deadlines](#cancellation-and-deadlines). Sections below flag
+the gaps individually; treat `stella-serve/src/` as the state and this doc as the
 destination. **Date:** 2026-07-20. **Owner:** Mac Anderson.
 **Companion:** `oxagen-platform/docs/specs/agent-engine-v2/` (ADR-033 + spec) —
-the host side. That repository is private to Oxagen; this document is the
+the host side. ADR-033 lives in that repository, not in this one: Stella's own
+`docs/adr/` is a separate 0001-0009 series scoped to Phase 0 adaptive-context,
+so every bare "ADR-033" reference here and in `stella-serve/src/` means the
+Oxagen ADR. That repository is private to Oxagen; this document is the
 *Stella* side of the same integration and is self-contained without it.
 
 ---
@@ -104,7 +109,7 @@ multi-thread runtime, sessions addressed by id.
 │                                                                                            │
 │  POST /v1/sessions            → create Session { id, workspace_root, provider cfg, ... }    │
 │  POST /v1/sessions/:id/turn   → drive one turn/pipeline; returns run id                     │
-│  GET  /v1/sessions/:id/events → SSE stream of AgentEvent (resumable via ?after=<seq>)       │
+│  GET  /v1/sessions/:id/events → SSE stream of AgentEvent (no ?after=<seq> replay yet)       │
 │  POST /v1/sessions/:id/steer  → TurnSteering::drain_steering  (mid-turn message)            │
 │  POST /v1/sessions/:id/pause  → TurnGate::wait_if_paused                                     │
 │  POST /v1/sessions/:id/cancel → soft-stop (keep work) | hard-cancel (drop future)           │
@@ -135,6 +140,56 @@ This is exactly the "reverse tool-call protocol" ADR-033 Option B names, and it
 is why the sovereignty rule holds: **the engine never gains ambient authority —
 every effect re-enters `kernel.invoke()` on the host.**
 
+### Cancellation and deadlines
+
+A turn that stops making progress is bounded from two sides. Unlike most of this
+document, **both of these ship today** (#641).
+
+**Reverse-request deadline.** Every reverse request — a model call or a tool
+call — carries a deadline, defaulting to **five minutes**
+(`SessionSpec::reverse_request_timeout`; on the wire, an optional
+`reverse_request_timeout_ms` on `POST /v1/turns`, refused at `0` and clamped to
+one hour so a caller cannot restore the unbounded wait). The default is sized to
+clear the slowest legitimate reverse request — an extended-thinking completion,
+or a tool shelling out to a test suite — while turning "wedged forever" into
+"fails in minutes". An expired **provider** request fails the turn with a
+*terminal* error, deliberately not a retryable transport one: retrying would
+hand an unresponsive host the same full wait once per attempt, multiplying the
+window the deadline exists to close. An expired **tool** request becomes a
+`ToolOutput::Error` the model can react to, because the `ToolExecutor` port's
+contract is that `execute` never returns `Err`.
+
+**`POST /v1/turns/{id}/cancel`** ends an in-flight turn. It takes the
+action-suffixed shape of its sibling routes rather than a bare `POST
+/v1/turns/{id}`, because every verb in this API is already the last path
+segment; a bare `POST` to a collection member would be the one route whose
+meaning came from its method. Semantics:
+
+- `200 {"status":"cancelled"}` once the turn is **signalled**, not once it has
+  unwound — blocking on the unwind would deadlock a single-connection client.
+- Any parked reverse request wakes at once, and no new one may park, so the turn
+  unwinds via a non-retryable `Cancelled` error within one engine step.
+- The turn is **unwound, not killed**: a host streaming `/events` still receives
+  its terminal frame with an `aborted` outcome, so a cancelled turn reports its
+  settled cost like any other.
+- The id leaves the registry immediately, so a second `cancel` — or a late
+  `tool-result` / `provider-result` — is a `404`.
+- Cancelling a turn nobody streamed is valid, and is how a caller reclaims its
+  OS thread.
+
+Still absent: a step-scoped cancellation token threaded through `run_step`.
+Cancellation is enforced at the reverse-RPC boundary, which is where every long
+wait actually happens; it does not interrupt CPU-bound work *between* reverse
+requests.
+
+**Accept-loop lifetime.** `serve` runs until a **fatal** accept error, not the
+first one (#637). `accept()` failures are classified in
+`stella-serve/src/accept.rs` — duplicated byte-identically in
+`stella-observatory`, with a test enforcing that: a peer that hung up before we
+accepted it is retried at once, resource exhaustion backs off 10ms→1s, and only
+a structurally unusable listener — or one that has accepted nothing across 64
+consecutive backoffs — ends the loop.
+
 ### The step-scoped facade (`stella-engine`)
 
 ```rust
@@ -160,9 +215,12 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
 ### Wire protocol
 
 - **Events (engine → host):** newline-delimited `AgentEvent` JSON over SSE,
-  identical to `stream-json`. Each carries a monotonic `seq`; the SSE endpoint
-  replays from `?after=<seq>` so a reconnect resumes losslessly (mirrors the
-  Observatory's read model and Oxagen's `agent_events` log discipline).
+  identical to `stream-json`. Each carries a monotonic `seq`. **Planned, not
+  built:** the SSE endpoint is to replay from `?after=<seq>` so a reconnect
+  resumes losslessly (mirroring the Observatory's read model and Oxagen's
+  `agent_events` log discipline). At this baseline no `?after=` parameter is
+  parsed and no event history is retained, so a dropped connection loses
+  whatever was streamed while it was down.
 - **Reverse RPC (host → engine):** the engine surfaces a `tool_start` /
   `scope_review` / `ask_user` `AgentEvent` carrying a `call_id`; the host runs
   the governed work and POSTs the result back to

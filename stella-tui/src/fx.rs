@@ -11,7 +11,7 @@
 //! tab change); [`crate::splash`] drives [`dissolve_out`] for its dissolve
 //! phase. The splash's coalesce-in stays a hand-built effect there — it is
 //! splash-specific, not part of the deck's shared motion language — but it
-//! shares [`FX_SEED`] and the [`apply`] plumbing.
+//! shares `FX_SEED` and the [`apply`] plumbing.
 //!
 //! Effects here may be rebuilt fresh every frame and *scrubbed* to a point
 //! on an external timeline (see `deck_render`/`splash`): a
@@ -19,7 +19,7 @@
 //! `process(elapsed)` call on a fresh effect lands exactly where continuous
 //! playback would have. That only holds if randomized effects pick the same
 //! cells every rebuild, which is why the randomized constructors pin their
-//! RNG to [`FX_SEED`].
+//! RNG to `FX_SEED`.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

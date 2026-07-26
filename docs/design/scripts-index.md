@@ -245,7 +245,7 @@ Stella's own workspace (`Cargo.toml` + `package.json`/pnpm + `Makefile`):
   "scripts": [
     { "id": "cargo:build", "runner": "cargo", "name": "build", "command": "cargo build --workspace", "dir": ".", "source": "synthesized", "verb": "build" },
     { "id": "cargo:test", "runner": "cargo", "name": "test", "command": "cargo test --workspace", "dir": ".", "source": "synthesized", "verb": "test" },
-    { "id": "make:deck-snapshots", "runner": "make", "name": "deck-snapshots", "command": "make deck-snapshots", "dir": ".", "source": "Makefile" },
+    { "id": "make:gate", "runner": "make", "name": "gate", "command": "make gate", "dir": ".", "source": "Makefile" },
     { "id": "pnpm:docs:dev", "runner": "pnpm", "name": "docs:dev", "command": "pnpm run docs:dev", "dir": ".", "source": "package.json", "raw": "pnpm --dir website dev" }
   ]
 }

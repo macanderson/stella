@@ -335,22 +335,41 @@ impl McpToolSet {
         &self.failed
     }
 
-    /// Connected servers that advertised more tools than the per-server cap
-    /// allows, as `(name, dropped)` — the tools past the cap were refused at
-    /// ingest so one over-advertising server cannot eat the model's context
-    /// (#551).
+    /// Connected servers whose advertised tool list was **truncated** at
+    /// ingest, as `(name, dropped)` — the tools past
+    /// [`crate::MAX_TOOLS_PER_SERVER`] were refused so one over-advertising server
+    /// cannot eat the model's context (#551).
     ///
-    /// Deliberately **not** folded into [`McpToolSet::failed_servers`]: these
-    /// servers are connected and their kept tools route normally, and callers
-    /// render that list as "server unavailable", which would be a lie here.
-    /// Each `dropped` count is a floor — discovery stops at the cap. Empty for
-    /// every well-behaved server.
+    /// This is the bounded record of *who* truncated: at most one entry per
+    /// connected server, and it holds a borrowed name plus a count, never the
+    /// dropped tools themselves.
+    ///
+    /// Deliberately **not** folded into [`McpToolSet::failed_servers`] (#638):
+    /// these servers are connected and their kept tools route normally, and
+    /// callers render that list as "server unavailable", which would be a lie
+    /// here. Each `dropped` count is a floor — discovery stops at the cap.
+    /// Empty for every well-behaved server.
     pub fn over_advertising_servers(&self) -> Vec<(&str, usize)> {
         self.clients
             .iter()
             .filter(|c| c.dropped_tool_count() > 0)
             .map(|c| (c.name(), c.dropped_tool_count()))
             .collect()
+    }
+
+    /// How many advertised tools this session refused across *every* connected
+    /// server — the single number a status line can carry ("2 servers
+    /// truncated, 31 tools dropped") without iterating
+    /// [`McpToolSet::over_advertising_servers`] itself. `0` when nothing was
+    /// truncated, which is the case for every well-behaved server.
+    ///
+    /// A floor, for the same reason each per-server count is: discovery stops
+    /// on the page where the cap bites, so tools the server would have listed
+    /// later are never counted. A non-zero value means *at least* this many
+    /// tools exist that the model was never told about — the operator-visible
+    /// half of the cap.
+    pub fn dropped_tool_count(&self) -> usize {
+        self.clients.iter().map(McpClient::dropped_tool_count).sum()
     }
 
     /// How many servers are live.
@@ -550,9 +569,9 @@ fn is_namespaceable(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::{
+    use crate::client::MAX_TOOLS_PER_SERVER;
+    use crate::client::ingest::{
         MAX_TOOL_DESCRIPTION_CHARS, MAX_TOOL_RESULT_BYTES, MAX_TOOL_SCHEMA_BYTES,
-        MAX_TOOLS_PER_SERVER,
     };
     use crate::error::McpError;
     use crate::protocol::PREFERRED_PROTOCOL_VERSION;
@@ -1171,6 +1190,56 @@ mod tests {
     async fn a_well_behaved_server_records_no_overflow() {
         let set = McpToolSet::from_clients(vec![connected_client("files", "read").await]);
         assert!(set.over_advertising_servers().is_empty());
+        assert_eq!(set.dropped_tool_count(), 0);
+    }
+
+    /// A connected client that advertised `overflow` tools past the cap.
+    async fn over_advertising_client(name: &str, overflow: usize) -> McpClient {
+        let advertised: Vec<Value> = (0..MAX_TOOLS_PER_SERVER + overflow)
+            .map(|i| serde_json::json!({ "name": format!("t{i}"), "inputSchema": { "type": "object" } }))
+            .collect();
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok("tools/list", serde_json::json!({ "tools": advertised }));
+        let mut client = McpClient::new(name, Box::new(transport));
+        client.initialize().await.unwrap();
+        client
+    }
+
+    /// #638: the truncation has to be legible to an operator, which means one
+    /// number for the session and one record per server — never folded into
+    /// `failed_servers`, which is rendered as "server unavailable" and would be
+    /// a lie about a server that is up and answering.
+    #[tokio::test]
+    async fn truncation_is_reported_per_server_and_as_a_session_total() {
+        let set = McpToolSet::from_clients(vec![
+            over_advertising_client("greedy", 7).await,
+            connected_client("files", "read").await,
+            over_advertising_client("greedier", 40).await,
+        ]);
+
+        assert_eq!(
+            set.over_advertising_servers(),
+            vec![("greedy", 7), ("greedier", 40)],
+            "the bounded record names only the servers that truncated"
+        );
+        assert_eq!(
+            set.dropped_tool_count(),
+            47,
+            "…and the total is the one number a status line can carry"
+        );
+        assert!(
+            set.failed_servers().is_empty(),
+            "a chatty server is NOT an unavailable one"
+        );
+        assert_eq!(
+            set.connected_count(),
+            3,
+            "every server, truncated or not, is connected and routing"
+        );
     }
 
     #[tokio::test]

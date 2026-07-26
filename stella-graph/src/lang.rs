@@ -29,7 +29,7 @@ pub enum Language {
 impl Language {
     /// Classify a path by extension, or `None` if it is not an indexable
     /// source file. This is the single gate the directory walk
-    /// ([`crate::walk`]) uses to decide what to open.
+    /// (`crate::walk`) uses to decide what to open.
     pub fn from_path(path: &Path) -> Option<Language> {
         let ext = path.extension()?.to_str()?;
         Some(match ext {

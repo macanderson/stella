@@ -3932,7 +3932,7 @@ async fn run_deck_command(
 }
 
 /// One engine turn for the lead agent: the deck-mode analogue of
-/// [`agent::run_turn`] — same engine, same tool stack, same persistence —
+/// `agent::run_turn` — same engine, same tool stack, same persistence —
 /// with the stdout renderer replaced by [`spawn_forwarder`] and the tool
 /// stack wrapped in the [`FileChangeTap`].
 #[allow(clippy::too_many_arguments)]

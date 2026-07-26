@@ -11,6 +11,9 @@
 //! - `--die-after <n>`: exit(0) upon the `(n+1)`-th request, before answering
 //!   it (exercises mid-call server death).
 //! - `--garbage`: answer `tools/call` with an unparseable `result`.
+//! - `--stderr <text>`: write `<text>` to stderr at startup and again before
+//!   every response — a server that logs (and, with `--die-after`, one whose
+//!   log is the only clue why it died).
 //!
 //! Tools it advertises: `echo`, `env_probe`, `make_image`, `make_resource`,
 //! `fail` (`isError:true`), `jsonrpc_error` (a JSON-RPC error response).
@@ -26,6 +29,7 @@ struct Flags {
     garbage: bool,
     paginate: bool,
     protocol_version: String,
+    stderr: Option<String>,
 }
 
 impl Flags {
@@ -36,6 +40,7 @@ impl Flags {
             garbage: false,
             paginate: false,
             protocol_version: "2025-06-18".to_string(),
+            stderr: None,
         };
         let args: Vec<String> = std::env::args().skip(1).collect();
         let mut i = 0;
@@ -56,6 +61,12 @@ impl Flags {
                         flags.protocol_version = args[i].clone();
                     }
                 }
+                "--stderr" => {
+                    i += 1;
+                    if i < args.len() {
+                        flags.stderr = Some(args[i].clone());
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -69,6 +80,8 @@ fn main() {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut served: u64 = 0;
+
+    log_stderr(&flags);
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -96,6 +109,10 @@ fn main() {
         {
             std::process::exit(0);
         }
+
+        // Interleave the log line with real traffic: proves stderr noise
+        // cannot corrupt the JSON-RPC framing on stdout.
+        log_stderr(&flags);
 
         let method = message.get("method").and_then(Value::as_str).unwrap_or("");
         let params = message.get("params").cloned().unwrap_or(Value::Null);
@@ -128,6 +145,16 @@ fn main() {
 
         write_line(&mut stdout, &response);
         served += 1;
+    }
+}
+
+/// Emit `--stderr <text>` (when set) on the *other* stream. Flushed so a
+/// `--die-after` exit cannot strand it in a buffer.
+fn log_stderr(flags: &Flags) {
+    if let Some(text) = &flags.stderr {
+        let mut stderr = io::stderr();
+        let _ = writeln!(stderr, "{text}");
+        let _ = stderr.flush();
     }
 }
 

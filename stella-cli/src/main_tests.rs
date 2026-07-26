@@ -126,6 +126,23 @@ fn telemetry_status_remains_a_distinct_top_level_command() {
     ));
 }
 
+/// `doctor` runs on local state alone, so it must parse (and dispatch) without
+/// a provider or key — bare and with the opt-in repair.
+#[test]
+fn doctor_parses_bare_and_with_repair() {
+    let bare = Cli::try_parse_from(["stella", "doctor"]).expect("`doctor` must parse bare");
+    assert!(matches!(
+        bare.command,
+        Some(Command::Doctor { repair: false })
+    ));
+    let repair =
+        Cli::try_parse_from(["stella", "doctor", "--repair"]).expect("`doctor --repair` parses");
+    assert!(matches!(
+        repair.command,
+        Some(Command::Doctor { repair: true })
+    ));
+}
+
 /// The load-bearing invariant: every flag defined at the root MUST be
 /// `global = true`, or it is silently unaccepted after a subcommand token
 /// (`stella fleet … --budget 5` → "unexpected argument"). Introspects the

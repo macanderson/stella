@@ -62,7 +62,7 @@
 //!   [`crate::bash`]) and a named error is returned.
 //! - **Cancellation** (the driving future dropped mid-wait, e.g. Esc) → the
 //!   same group kill, armed as an RAII guard
-//!   ([`crate::exec::GroupKillGuard`]), so nothing survives the turn.
+//!   (`crate::exec::GroupKillGuard`), so nothing survives the turn.
 //! - **Spawn failure** (e.g. missing script) → a named error naming the path
 //!   that was tried, so the developer can fix the manifest.
 //!
@@ -1069,7 +1069,7 @@ command = []"#;
     }
 
     /// Dropping the future mid-wait (a cancelled turn) must kill the whole
-    /// process group — the [`crate::exec::GroupKillGuard`] backstop, the same
+    /// process group — the `crate::exec::GroupKillGuard` backstop, the same
     /// leak the `bash` tool had. Without it, a cancelled turn left the
     /// script's own children running, `setsid`'d beyond anyone's reach.
     #[cfg(unix)]

@@ -83,6 +83,14 @@ jobs:
       - name: every workflow action is pinned to a commit SHA
         run: ./scripts/check-action-pins.sh
 
+      # Also toolchain-free. Three fleet plans asserted a 1500-line file ratchet
+      # that nothing enforced, so it decayed into decoration while the worst
+      # offender grew past 4x the limit (#629). Existing offenders are
+      # grandfathered with per-file ceilings; this blocks new bloat and any
+      # further growth of the known ones.
+      - name: no new .rs file over the 1500-line ratchet
+        run: ./scripts/check-file-size.sh
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
@@ -95,6 +103,12 @@ jobs:
 
       - name: cargo clippy -D warnings
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Nothing gated rustdoc, so its warning count only grew — one crate's doc
+      # link to a private fn had made `cargo doc` a hard failure, unnoticed
+      # (#634). Gating is what stops it regrowing.
+      - name: cargo doc -D warnings
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
       - name: cargo test
         run: cargo test --workspace

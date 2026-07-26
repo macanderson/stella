@@ -3346,6 +3346,7 @@ dependencies = [
  "libc",
  "rand 0.10.2",
  "reqwest",
+ "rusqlite",
  "scraper",
  "serde",
  "serde_json",

@@ -635,3 +635,73 @@ pub(crate) fn open_private_sqlite(path: &Path) -> Result<Connection> {
         | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW;
     Connection::open_with_flags(path, flags).map_err(Into::into)
 }
+
+/// Open an EXISTING private SQLite database for reading only, creating nothing
+/// and writing nothing.
+///
+/// The diagnostic counterpart to [`open_private_sqlite`], for
+/// [`crate::integrity`]: a read-write open lets SQLite recover and checkpoint a
+/// leftover `-wal` on the spot, which is right for a session and wrong for a
+/// check — a corrupt file the user may still want to salvage must not be
+/// rewritten by the command that merely inspects it.
+///
+/// `immutable=1` rather than a plain `SQLITE_OPEN_READ_ONLY`, because the store
+/// is a WAL database and a read-only connection to one needs to create the
+/// `-shm` file it is not allowed to create (SQLite: "it is not possible to open
+/// read-only WAL databases"), so a plain read-only open fails with
+/// `SQLITE_CANTOPEN` on a perfectly healthy store. Immutable skips locking and
+/// shared memory entirely and reads the main database file as it stands — no
+/// byte of the user's state can move. The trade-off is that a `-wal`'s
+/// uncheckpointed pages are invisible, which [`crate::integrity::check_file`]
+/// handles by escalating a bad verdict (never a good one) to a session-shaped
+/// open when a `-wal` exists.
+///
+/// The same no-follow, owner-and-single-link, regular-file validation as the
+/// read-write path runs first, through [`open_private_file`]. It deliberately
+/// does not reuse [`prepare_private_sqlite_path`]: that opens `create(true)` and
+/// would materialize an empty database instead of reporting an absent one.
+///
+/// `SQLITE_OPEN_NOFOLLOW` is absent — unlike [`open_private_sqlite`], which
+/// keeps it — because SQLite refuses the combination: a read-only open carrying
+/// that flag fails with `SQLITE_CANTOPEN` for every path, symlink or not. The
+/// symlink guard is therefore [`open_private_file`]'s `O_NOFOLLOW` on the line
+/// above, which validates the same final component microseconds earlier; the
+/// residual window is only exploitable by someone who can already write inside
+/// the 0700 `private/` directory, i.e. the owner.
+pub(crate) fn open_private_sqlite_read_only(path: &Path) -> Result<Connection> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    drop(open_private_file(path, options)?);
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+    Connection::open_with_flags(immutable_uri(path)?, flags).map_err(Into::into)
+}
+
+/// `file:`-URI form of `path` with `immutable=1`.
+///
+/// Only `%`, `?` and `#` are escaped — the three characters SQLite's URI parser
+/// gives meaning to (percent-decoding, query, fragment). Everything else,
+/// spaces and non-ASCII included, is passed through as SQLite expects.
+fn immutable_uri(path: &Path) -> Result<String> {
+    let absolute = std::path::absolute(path)
+        .map_err(|e| StoreError(format!("cannot absolutize {}: {e}", path.display())))?;
+    let text = absolute.to_str().ok_or_else(|| {
+        StoreError(format!(
+            "cannot read {} through a SQLite URI: the path is not valid UTF-8",
+            absolute.display()
+        ))
+    })?;
+    let mut uri = String::with_capacity(text.len() + 20);
+    uri.push_str("file:");
+    for character in text.chars() {
+        match character {
+            '%' => uri.push_str("%25"),
+            '?' => uri.push_str("%3F"),
+            '#' => uri.push_str("%23"),
+            other => uri.push(other),
+        }
+    }
+    uri.push_str("?immutable=1");
+    Ok(uri)
+}

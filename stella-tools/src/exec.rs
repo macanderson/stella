@@ -1,8 +1,8 @@
 //! Shared subprocess runner for tools that spawn commands: process-group
 //! spawn, hard timeout with a group kill, combined output, middle-out
-//! truncation. Two entry points: [`run`] shells out via `bash -c`
+//! truncation. Two entry points: `run` shells out via `bash -c`
 //! (`verify_done`, `build_project`, `run_tests`, `run_script`, `screenshot`);
-//! [`run_argv`] execs an argv vector directly with NO shell anywhere
+//! `run_argv` execs an argv vector directly with NO shell anywhere
 //! (`run_lint`, `format_code`, `diagnostics`, the `repo_*` tools).
 //!
 //! The opt-in `bash` tool does NOT come through here — it spawns its own
@@ -103,7 +103,7 @@ pub(crate) async fn run(
 /// Run a repository-owned GitHub CLI command while preserving only GitHub
 /// CLI's exact documented authentication variables. The command text must be
 /// constructed by Stella code with user values shell-quoted; model-authored
-/// arbitrary shell commands must use [`run`] and receive no credential.
+/// arbitrary shell commands must use `run` and receive no credential.
 pub(crate) async fn run_github(
     command: &str,
     dir: &std::path::Path,
@@ -126,7 +126,7 @@ pub(crate) async fn run_github(
 /// `dir`. The runner for the manifest-verb tools (`run_script`, `run_lint`,
 /// `format_code`): arguments reach the child exactly as given, so no
 /// model-supplied string is ever shell-interpreted. Same process-group
-/// spawn, timeout kill, and truncation as [`run`].
+/// spawn, timeout kill, and truncation as `run`.
 pub(crate) async fn run_argv(
     program: &str,
     args: &[String],
@@ -138,7 +138,7 @@ pub(crate) async fn run_argv(
         .map(|(code, output)| (code, truncate_middle(output)))
 }
 
-/// [`run_argv`] without the middle-out truncation — for callers that PARSE
+/// `run_argv` without the middle-out truncation — for callers that PARSE
 /// the full output into a bounded structure of their own (`diagnostics`
 /// consuming a `--message-format=json` stream: truncating the raw stream
 /// would sever JSON lines and silently drop the very records the parse
@@ -185,7 +185,7 @@ impl Drop for GroupKillGuard {
     }
 }
 
-/// Shared spawn/wait/kill body of [`run`] and [`run_argv`] — `command` is
+/// Shared spawn/wait/kill body of `run` and `run_argv` — `command` is
 /// the human-readable command line for error messages. Output is returned
 /// UNTRUNCATED; the wrappers apply [`truncate_middle`] except
 /// [`run_argv_untruncated`], whose callers parse the full stream.
@@ -266,7 +266,7 @@ async fn drive(
     Ok((output.status.code().unwrap_or(-1), combined))
 }
 
-/// [`run`] with the PASSED/FAILED framing shared by `build_project`,
+/// `run` with the PASSED/FAILED framing shared by `build_project`,
 /// `run_tests`, and `run_script` — the model reads success or failure from
 /// the first line without a follow-up question.
 pub(crate) async fn run_and_report(
@@ -291,7 +291,7 @@ pub(crate) async fn run_and_report(
 ///
 /// The crate's ONE implementation of this security primitive: it lives here
 /// because this module owns the `bash -c` runner every composed command line
-/// eventually reaches ([`run`], [`run_github`]). `scripts::shell_quote`,
+/// eventually reaches (`run`, [`run_github`]). `scripts::shell_quote`,
 /// `ci::shell_quote`, `screenshot::shell_quote` and `issue_ops::quote` were
 /// four independent copies — the shape that lets one of them drift.
 pub(crate) fn shell_quote(s: &str) -> String {

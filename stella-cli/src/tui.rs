@@ -480,7 +480,7 @@ const STELLAR_STOPS: [(u8, u8, u8); 2] = [
     (0xFF, 0xDD, 0x00), // gold
 ];
 
-/// Color at horizontal position `t` ∈ [0,1] along the stellar gradient.
+/// Color at horizontal position `t` ∈ `[0,1]` along the stellar gradient.
 fn stellar_color_at(t: f64) -> (u8, u8, u8) {
     let clamped = t.clamp(0.0, 1.0);
     let segments = (STELLAR_STOPS.len() - 1) as f64;

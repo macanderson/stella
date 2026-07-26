@@ -604,7 +604,7 @@ impl Config {
         )
     }
 
-    /// [`Config::load`] over an already-merged [`Settings`] value — the
+    /// [`Config::load`] over an already-merged [`crate::settings::Settings`] value — the
     /// seam tests use to exercise provider resolution without touching
     /// `$HOME`, `/etc`, or the real scope chain.
     fn load_with_settings(

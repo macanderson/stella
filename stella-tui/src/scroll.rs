@@ -44,7 +44,7 @@ impl ScrollState {
     /// The `[start, end)` line range to render, clamped so it is always a
     /// valid slice of `0..total` no taller than `height`.
     ///
-    /// Invariants (all proven by [`window_is_always_a_valid_bounded_slice`]):
+    /// Invariants (all proven by `window_is_always_a_valid_bounded_slice`):
     /// `start <= end <= total`, `end - start <= height`, and when
     /// `total <= height` the whole log is shown (`0..total`). While
     /// following, `end == total` whenever `height > 0`.
