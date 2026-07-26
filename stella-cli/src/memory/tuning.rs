@@ -22,15 +22,15 @@ pub(super) fn session_retrieval_settings(workspace_root: &std::path::Path) -> Re
         .unwrap_or_default()
 }
 
-/// Phase 3 (#714): whether the adaptive-context lifecycle is on for this
-/// session.
+/// Whether `context.lifecycle.enabled` is on for this session (#713, #714).
 ///
-/// Defaults to `false` — the shipped default — and degrades to `false` on an
-/// unreadable settings file. That posture is the opposite of the retrieval read
-/// above and deliberately so: this flag switches the learning loop from the
-/// path users are running today onto a new one, and the safe answer to "I could
-/// not tell" is "keep doing what already works".
-pub(super) fn lifecycle_enabled(workspace_root: &std::path::Path) -> bool {
+/// Degrades to `false` on an unreadable settings file. That is the setting's
+/// own default, and it is the opposite posture to the retrieval read above,
+/// deliberately: this flag moves both the recall plane and the learning loop
+/// off the paths users run today. Failing *open* would turn a typo elsewhere in
+/// the file into silently enabling a lifecycle nobody asked for, and the safe
+/// answer to "I could not tell" is "keep doing what already works".
+pub fn session_lifecycle_enabled(workspace_root: &std::path::Path) -> bool {
     crate::settings::Settings::load(workspace_root)
         .ok()
         .and_then(|s| s.context)
