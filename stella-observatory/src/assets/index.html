@@ -551,11 +551,20 @@ const inTf = (startedAt) => {
   const d = utc(startedAt);
   return d && (Date.now() - d.getTime()) <= TF_MS[state.tf];
 };
+/* An activity bucket whose rows carried a timestamp SQLite could not read as a
+   date arrives labelled "Undated" rather than as an ISO day (see
+   `db.rs::UNDATED_DAY`). It has no position on a time axis, so it appears only
+   in the "all" timeframe — a trailing-7-day window cannot honestly claim it. */
+const isDatedDay = (day) => /^\d{4}-\d{2}-\d{2}$/.test(day ?? "");
 const inTfDay = (day) => {
   if (state.tf === "all") return true;
+  if (!isDatedDay(day)) return false;
   const d = new Date(day + "T00:00:00Z");
   return d && (Date.now() - d.getTime()) <= (TF_MS[state.tf] + 864e5);
 };
+/* Axis tick: ISO days show as MM-DD; anything else (the "Undated" bucket) shows
+   whole, because slicing off its first five characters yields nonsense. */
+const dayTick = (day) => isDatedDay(day) ? day.slice(5) : (day ?? "");
 
 /* ── stat tiles ──────────────────────────────────────────────────────── */
 function tile(k, v, sub, accent) {
@@ -676,7 +685,7 @@ function renderDaily(elId, days, series, fmt, stacked) {
     bars += `<rect class="hit" data-i="${i}" x="${(x0 - group / 2).toFixed(1)}" y="0"
       width="${group.toFixed(1)}" height="${H}" fill="transparent"/>`;
     if (days.length <= 12 || i % Math.ceil(days.length / 12) === 0)
-      labels += `<text x="${x0.toFixed(1)}" y="${H - 6}" text-anchor="middle">${d.day.slice(5)}</text>`;
+      labels += `<text x="${x0.toFixed(1)}" y="${H - 6}" text-anchor="middle">${esc(dayTick(d.day))}</text>`;
   });
   const grid = [0, .5, 1].map(f => {
     const y = padT + innerH * (1 - f);

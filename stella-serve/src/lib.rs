@@ -27,7 +27,26 @@
 //! of [`Session`] (SSE = the frame stream; POST endpoints = the resolve calls);
 //! it is deliberately a separate slice so the `!Send` concurrency bridge here is
 //! provable in isolation.
+//!
+//! # Bounding a turn that stops making progress
+//!
+//! A reverse request hands control to the host, and the parked engine step holds
+//! an OS thread while it waits — so a host that never answers used to wedge a
+//! turn, and its thread, forever. Two bounds close that:
+//!
+//! - **A deadline on every reverse request**
+//!   ([`SessionSpec::reverse_request_timeout`], five minutes by default). The
+//!   automatic bound: an unanswered model call fails the turn, an unanswered
+//!   tool call becomes a tool error the model can react to.
+//! - **Cancellation** ([`Session::cancel`], or `POST /v1/turns/{id}/cancel` over
+//!   HTTP). The manual bound: the caller gives up, the parked step wakes at once,
+//!   and the turn unwinds to an `aborted` outcome rather than being killed — so
+//!   its settled cost still reaches the host.
+//!
+//! See the module docs in `src/server.rs` for the HTTP shape of cancellation
+//! (the route table, and why `cancel` is a path segment rather than a `DELETE`).
 
+mod accept;
 mod error;
 mod frame;
 mod http;

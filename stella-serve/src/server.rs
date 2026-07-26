@@ -9,15 +9,38 @@
 //! | `GET /v1/turns/{id}/events` | SSE stream of [`ServerFrame`]s until `turn_complete` |
 //! | `POST /v1/turns/{id}/tool-result` | answer a `tool_request` ([`ToolResultIn`]) |
 //! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` ([`ProviderResultIn`]) |
+//! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
 //!
 //! The SSE stream is the engine → host direction; the two result POSTs are the
 //! host → engine direction. Together they are the reverse tool-call protocol —
 //! the engine never runs a model or tool call itself.
+//!
+//! # Cancellation
+//!
+//! `POST /v1/turns/{id}/cancel` is the caller's way to give up on a turn, and it
+//! answers `200` as soon as the turn is *signalled*, not once it has finished:
+//!
+//! - It takes the action-suffixed shape of the three routes above rather than a
+//!   bare `POST /v1/turns/{id}`, because every verb in this API is already the
+//!   last path segment, and `POST` to a collection member would be the one route
+//!   whose meaning came from its method instead of its path.
+//! - The turn is dropped from the registry immediately, so a later
+//!   `tool-result` / `provider-result` / `cancel` for that id is a `404`.
+//! - A host streaming `/events` still receives the terminal `turn_complete`
+//!   frame (an `aborted` outcome): the engine turn is unwound, not killed, so a
+//!   cancelled turn reports its settled cost like any other.
+//! - Cancelling a turn nobody has streamed also works, and reclaims its thread.
+//!
+//! Cancellation and the reverse-request deadline
+//! ([`SessionSpec::reverse_request_timeout`]) are the two bounds on a turn that
+//! stops making progress: the deadline is the automatic one, cancel the manual
+//! one.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use stella_core::{BudgetGuard, EngineConfig};
@@ -25,6 +48,7 @@ use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::accept::{self, AcceptAction, AcceptBackoff};
 use crate::frame::{ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn};
 use crate::http::{read_request, write_json, write_sse_frame, write_sse_head};
 use crate::pending::Pending;
@@ -53,6 +77,10 @@ struct TurnRequest {
     budget: BudgetSpec,
     #[serde(default)]
     max_steps: Option<usize>,
+    /// Per-reverse-request deadline override, in milliseconds. Omitted means
+    /// [`SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT`].
+    #[serde(default)]
+    reverse_request_timeout_ms: Option<u64>,
 }
 
 /// Spend policy for a turn — the serializable projection of a [`BudgetGuard`].
@@ -103,6 +131,22 @@ fn validate_max_steps(requested: usize) -> Option<usize> {
     (requested > 0).then(|| requested.min(MAX_SERVED_STEPS))
 }
 
+/// Ceiling on a host-supplied reverse-request deadline: one hour.
+///
+/// Same reasoning as [`MAX_SERVED_STEPS`]. The deadline is what bounds a turn
+/// holding an OS thread on a host that never answers, so letting a caller set it
+/// to `u64::MAX` would hand back the unbounded wait it exists to remove. An hour
+/// is far past any legitimate model call or tool run.
+const MAX_REVERSE_REQUEST_TIMEOUT: Duration = Duration::from_secs(3600);
+
+/// Validate a host-supplied reverse-request deadline: `None` when it is unusable
+/// (`0` would expire every reverse request before the host could possibly
+/// answer, making the turn fail rather than run), otherwise clamped down to
+/// [`MAX_REVERSE_REQUEST_TIMEOUT`].
+fn validate_reverse_request_timeout(requested_ms: u64) -> Option<Duration> {
+    (requested_ms > 0).then(|| Duration::from_millis(requested_ms).min(MAX_REVERSE_REQUEST_TIMEOUT))
+}
+
 /// One registered turn. `pending` answers reverse requests (shared, always
 /// available); `session` is taken exactly once by the SSE stream.
 struct Entry {
@@ -127,8 +171,16 @@ impl ServerState {
     }
 }
 
-/// Bind and serve until the accept loop errors. `on_ready` fires once with the
-/// bound address (so a `:0` bind can report its port).
+/// Bind and serve until the accept loop hits a **fatal** error. `on_ready` fires
+/// once with the bound address (so a `:0` bind can report its port).
+///
+/// Not every `accept()` failure ends the server: a peer that hangs up before its
+/// connection is accepted, or transient fd exhaustion, is retried (with backoff
+/// where backoff is needed) rather than taken as a shutdown signal. Only a
+/// listener that is structurally unusable — or one that has accepted nothing for
+/// the whole give-up streak — returns. `src/accept.rs` holds the full
+/// classification and the reasoning; `stella-observatory` applies the same policy
+/// from its own copy.
 ///
 /// # Operational limits
 ///
@@ -137,12 +189,13 @@ impl ServerState {
 ///
 /// - **No admission control.** Connections and turns are both unbounded; a
 ///   turn holds an OS thread from `POST /v1/turns` until its stream ends.
-/// - **No per-turn deadline.** A reverse request the host never answers parks
-///   its engine step, and therefore its thread, indefinitely.
 /// - **Turn ids are sequential**, so they are guessable by anyone holding the
 ///   token — the token is the only tenancy boundary, one process per tenant.
 /// - **No read timeout**, so a peer that dribbles a request head holds a
 ///   connection open. Front it with a proxy or a private network.
+///
+/// Reverse requests *are* bounded (see [`SessionSpec::reverse_request_timeout`]),
+/// and a turn can be ended early with `POST /v1/turns/{id}/cancel`.
 pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> std::io::Result<()> {
     let listener = TcpListener::bind(config.bind).await?;
     on_ready(listener.local_addr()?);
@@ -151,8 +204,32 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
         turns: Mutex::new(HashMap::new()),
         counter: AtomicU64::new(0),
     });
+    let mut backoff = AcceptBackoff::new();
     loop {
-        let (stream, _) = listener.accept().await?;
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => {
+                backoff.succeeded();
+                stream
+            }
+            Err(err) => match accept::classify(&err) {
+                // A dead pending connection or an interrupted syscall: the
+                // listener is fine, and this cannot spin (see `accept`).
+                AcceptAction::Retry => {
+                    backoff.succeeded();
+                    continue;
+                }
+                // Exhaustion, or a condition `io::ErrorKind` cannot name. Sleep
+                // so it cannot busy-loop, and give up if it never clears.
+                AcceptAction::Backoff => match backoff.next_delay() {
+                    Some(delay) => {
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    None => return Err(err),
+                },
+                AcceptAction::Fatal => return Err(err),
+            },
+        };
         let state = Arc::clone(&state);
         // Per-connection errors (client hangup, bad request) stay local to the
         // connection; the accept loop keeps serving.
@@ -198,6 +275,7 @@ async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io:
         ("POST", ["v1", "turns", id, "provider-result"]) => {
             handle_provider_result(&mut stream, &state, id, &req.body).await
         }
+        ("POST", ["v1", "turns", id, "cancel"]) => handle_cancel(&mut stream, &state, id).await,
         _ => write_json(&mut stream, "404 Not Found", br#"{"error":"not found"}"#).await,
     }
 }
@@ -231,6 +309,18 @@ async fn handle_create(
         };
         config.max_steps = effective;
     }
+    let mut reverse_request_timeout = SessionSpec::DEFAULT_REVERSE_REQUEST_TIMEOUT;
+    if let Some(requested_ms) = turn.reverse_request_timeout_ms {
+        let Some(effective) = validate_reverse_request_timeout(requested_ms) else {
+            return write_json(
+                stream,
+                "400 Bad Request",
+                &error_body("reverse_request_timeout_ms must be at least 1"),
+            )
+            .await;
+        };
+        reverse_request_timeout = effective;
+    }
     let spec = SessionSpec {
         provider_id: turn.provider_id,
         tools: turn.tools,
@@ -241,6 +331,7 @@ async fn handle_create(
             turn.budget.turn_limit_usd,
             turn.budget.session_limit_usd,
         ),
+        reverse_request_timeout,
     };
 
     let session = Session::start(spec);
@@ -366,6 +457,33 @@ async fn handle_provider_result(
     }
 }
 
+/// `POST /v1/turns/{id}/cancel` — end an in-flight turn.
+///
+/// Answers once the turn is *signalled*, not once it has unwound: the parked
+/// engine step wakes immediately, but the turn still needs a moment to produce
+/// its terminal frame, and a host streaming `/events` is the one that observes
+/// that. Blocking this response on it would deadlock a single-connection client.
+async fn handle_cancel(
+    stream: &mut TcpStream,
+    state: &ServerState,
+    id: &str,
+) -> std::io::Result<()> {
+    // Remove and signal, so a second cancel — or a late result POST — gets an
+    // honest 404 rather than silently doing nothing. Scoped so the (non-`Send`)
+    // guard is dropped before the await below.
+    let removed = { state.turns().remove(id) };
+    let Some(entry) = removed else {
+        return write_json(stream, "404 Not Found", &error_body("unknown turn")).await;
+    };
+    entry.pending.cancel();
+    // Dropping our `Arc` here is what reclaims a turn whose stream never opened:
+    // the registry no longer holds it, so this may be the last handle, and
+    // `Drop for Session` releases the engine thread. A turn that *is* streaming
+    // keeps its own handle and unwinds through `handle_events` as usual.
+    drop(entry);
+    write_json(stream, "200 OK", br#"{"status":"cancelled"}"#).await
+}
+
 fn error_body(message: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({ "error": message })).unwrap_or_default()
 }
@@ -409,6 +527,36 @@ mod tests {
             validate_max_steps(usize::MAX),
             Some(MAX_SERVED_STEPS),
             "an unbounded step loop must not be reachable from the wire"
+        );
+    }
+
+    #[test]
+    fn zero_reverse_request_deadline_is_refused() {
+        // A 0 ms deadline expires before the host could possibly answer, so
+        // every turn would fail on its first reverse request.
+        assert_eq!(validate_reverse_request_timeout(0), None);
+    }
+
+    #[test]
+    fn reverse_request_deadline_is_clamped_to_the_ceiling() {
+        assert_eq!(
+            validate_reverse_request_timeout(50),
+            Some(Duration::from_millis(50))
+        );
+        assert_eq!(
+            validate_reverse_request_timeout(300_000),
+            Some(Duration::from_secs(300)),
+            "the default is expressible from the wire"
+        );
+        assert_eq!(
+            validate_reverse_request_timeout(MAX_REVERSE_REQUEST_TIMEOUT.as_millis() as u64),
+            Some(MAX_REVERSE_REQUEST_TIMEOUT)
+        );
+        assert_eq!(
+            validate_reverse_request_timeout(u64::MAX),
+            Some(MAX_REVERSE_REQUEST_TIMEOUT),
+            "a caller must not be able to restore the unbounded wait the \
+             deadline exists to remove"
         );
     }
 }

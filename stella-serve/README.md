@@ -37,6 +37,7 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
   ▲                                                   │
   └──GET .../events: SSE frames (agent events + reverse-RPC requests)──┘
   └──POST .../tool-result, .../provider-result──► Pending ──unparks the engine step
+  └──POST .../cancel───────────────────────────► Pending ──unwinds the turn
 ```
 
 ## Layout
@@ -48,7 +49,8 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/remote.rs`](src/remote.rs) | The two remoted port impls, plus `TokioSleeper` for the engine's retry backoff. |
 | [`src/pending.rs`](src/pending.rs) | `Pending`, the `request_id` → one-shot registry shared across the two runtimes. Open it when a resolve POST returns 409. |
 | [`src/frame.rs`](src/frame.rs) | The wire vocabulary: `ServerFrame`, `TurnOutcomeWire`, `ToolResultIn`, `ProviderResultIn`, `ProviderErrorWire`. Every wire-shape change starts here. |
-| [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the four `/v1/turns` routes, the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
+| [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the five `/v1/turns` routes (including `cancel`), the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
+| [`src/accept.rs`](src/accept.rs) | The written `accept()` classification policy — transient vs fatal, the backoff, and the give-up streak. Byte-identical to [`stella-observatory/src/accept.rs`](../stella-observatory/src/accept.rs) (the observatory takes no `stella-*` dependency, so there is no shared crate to hold it); a drift-guard test in both crates fails if the two copies differ. Change one, change the other. |
 | [`src/http.rs`](src/http.rs) | A hand-rolled HTTP/1.1 + SSE layer following [`stella-observatory`](../stella-observatory)'s no-framework idiom, extended with request bodies, bearer auth, and long-lived responses. |
 | [`src/error.rs`](src/error.rs) | `ServeError` — the named failures at the boundary. |
 | [`src/main.rs`](src/main.rs) | The binary: env config (`STELLA_SERVE_BIND` / `_TOKEN` / `_TOOLS`) and the `healthcheck` subcommand. |
@@ -107,9 +109,10 @@ the engine's backoff.
   a turn. They are safe because the resolve routes are scoped by turn id — do not
   treat them as global handles.
 - **A turn's event stream is exclusive and one-shot.** The second
-  `GET /v1/turns/{id}/events` gets 409, and the registry entry is removed only
-  when a stream ends. A turn created and never streamed keeps its entry and its
-  thread indefinitely.
+  `GET /v1/turns/{id}/events` gets 409, and the registry entry is removed when a
+  stream ends — or when the turn is cancelled. A turn created and never streamed
+  keeps its entry and its thread until one of those happens, so `cancel` is how a
+  caller reclaims one it decided not to stream.
 - **`max_steps` from the wire is validated, not trusted.** `0` is a 400 (it would
   produce a zero-iteration turn that aborts with the misleading "reached the step
   cap (0)"), and anything above `MAX_SERVED_STEPS` (10 000, fifty times
@@ -128,11 +131,25 @@ the engine's backoff.
   model-visible data, so a host disconnect mid-tool becomes `ToolOutput::Error`,
   not an engine error. The provider port is the opposite: a disconnect there is a
   `ProviderError::Transport`.
-- **The server has no admission control, no per-turn deadline, and no read
-  timeout** — see the `# Operational limits` rustdoc on `serve`. A reverse request
-  the host never answers parks a thread indefinitely. Front it with a proxy on a
-  private network; it is a sidecar for one trusted host, not an internet-facing
-  server.
+- **The server has no admission control and no read timeout** — see the
+  `# Operational limits` rustdoc on `serve`. Front it with a proxy on a private
+  network; it is a sidecar for one trusted host, not an internet-facing server.
+- **A turn that stops making progress is bounded from two sides.** Every reverse
+  request carries a deadline (`SessionSpec::reverse_request_timeout`, five
+  minutes by default, overridable per turn as `reverse_request_timeout_ms` on
+  `POST /v1/turns`), so a host that never answers fails the turn in minutes
+  instead of parking its thread forever. `POST /v1/turns/{id}/cancel` is the
+  manual side: the parked step wakes at once and the turn unwinds to an `aborted`
+  outcome, so its settled cost still reaches a host that is streaming `/events`.
+- **A transient `accept()` failure does not stop the server.** `accept()` errors
+  are classified — see [`src/accept.rs`](src/accept.rs), which also explains why
+  that file is duplicated verbatim in
+  [`stella-observatory`](../stella-observatory/src/accept.rs) and must stay in
+  sync. A peer that hangs up before its connection is accepted is retried; fd
+  exhaustion backs off; only a structurally unusable listener (or one that has
+  accepted nothing for the whole give-up streak) ends the loop. `serve`'s
+  contract is therefore "serve until a **fatal** accept error", not "until the
+  accept loop errors".
 
 ## Testing
 
@@ -146,15 +163,21 @@ access are needed; the suites either bind `127.0.0.1:0` or use no socket at all.
 
 - [`tests/bridge.rs`](tests/bridge.rs) drives a live `Session` from a mock host
   with **no HTTP**, answering reverse-RPC requests in-process. It covers the full
-  model → tool → model loop, the no-tool path, and a classified provider failure
-  aborting cleanly. Because the bridge is the risky part, prove a change here
-  first.
+  model → tool → model loop, the no-tool path, a classified provider failure
+  aborting cleanly, both reverse-request deadline paths, and cancelling a parked
+  turn. Because the bridge is the risky part, prove a change here first.
 - [`tests/http.rs`](tests/http.rs) runs the same protocol end-to-end over a real
-  socket: `POST /v1/turns`, SSE, and the two result POSTs, plus the auth and
-  `max_steps` rejections.
+  socket: `POST /v1/turns`, SSE, the two result POSTs, and `cancel`, plus the
+  auth, `max_steps` and deadline rejections.
 - Unit tests live beside the code in [`src/frame.rs`](src/frame.rs) (wire
   round-trips, including that a legacy `aborted` payload without `cost_usd` still
-  deserializes) and [`src/server.rs`](src/server.rs) (the step-cap clamp).
+  deserializes), [`src/server.rs`](src/server.rs) (the step-cap and deadline
+  clamps) and [`src/accept.rs`](src/accept.rs) (the `accept()` classification
+  table against synthesised `io::Error` kinds, plus the drift guard that keeps
+  this file byte-identical to the observatory's copy).
+
+Deadline tests inject a short `reverse_request_timeout` — never the five-minute
+default — so the suite stays fast. A test that waits out a real deadline is a bug.
 
 Both integration suites need `#[tokio::test(flavor = "multi_thread")]`: a
 current-thread test runtime cannot both drive the socket and let the session
@@ -194,9 +217,10 @@ the wire would be silently reclassified.
 - [`../docs/design/serve-surface.md`](../docs/design/serve-surface.md) — the full
   design. Its status line now flags the gaps itself: it describes a larger
   target surface than what is implemented (sessions rather than turns,
-  steering, pause/cancel, an approval gate, SSE replay from `?after=<seq>`, a
+  steering, pause, an approval gate, SSE replay from `?after=<seq>`, a
   `Host`-header guard, and a SIGTERM drain); the code today serves one turn per
-  registered id with no resume. Treat the doc as the destination, `src/` as the
-  state.
+  registered id with no resume. Cancellation is no longer on that list — it ships
+  as `POST /v1/turns/{id}/cancel`. Treat the doc as the destination, `src/` as
+  the state.
 - [`../packaging/docker/Dockerfile.serve`](../packaging/docker/Dockerfile.serve) —
   how the binary is actually deployed, and the constraints that shape `main.rs`.
