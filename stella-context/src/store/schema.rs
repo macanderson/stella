@@ -319,6 +319,23 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 5 {
         migrate_v5(&tx)?;
     }
+    // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
+    // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
+    // high-water mark. Two branches that each add "the next step" merge
+    // cleanly — git sees two additions to adjacent lines — and produce a
+    // ladder with two steps numbered the same, or a `SCHEMA_VERSION` that
+    // skips one. Nothing in CI catches that: both files compile, and the
+    // mis-numbering only shows up as a corrupt context.db on a user's
+    // machine.
+    //
+    // Adaptive context is being built on two branches in parallel, so the
+    // slot is reserved here in advance:
+    //
+    //   v6: adaptive-context Phase 3 (#714)
+    //
+    // If you are not that phase, take v7 and add your own line here. If
+    // Phase 3 ships without needing its slot, delete this note rather than
+    // leaving a hole — the ladder's numbering is the contract.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())

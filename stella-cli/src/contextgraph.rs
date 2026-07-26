@@ -41,6 +41,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use clap::ValueEnum;
 use contextgraph_conformance::{ProviderTarget, run_conformance};
 use contextgraph_host::{
     ConsentDecision, ConsentRecord, ContextProvider, Host, HostError, ProviderResult,
@@ -709,6 +710,50 @@ fn now_rfc3339() -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or_default();
     stella_context::format_rfc3339(secs)
+}
+
+/// The five code-graph queries, mirroring the `graph_query` agent tool's ops
+/// one-for-one so a human at the CLI and the model inside a turn see the
+/// same frames for the same question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum GraphOp {
+    /// Where a symbol is defined
+    Definitions,
+    /// Best-effort textual references to a symbol
+    References,
+    /// What a file imports
+    Imports,
+    /// Which files import a file
+    Importers,
+    /// A file's immediate graph neighborhood (symbols + edges)
+    Neighbors,
+}
+
+impl GraphOp {
+    fn as_str(self) -> &'static str {
+        match self {
+            GraphOp::Definitions => "definitions",
+            GraphOp::References => "references",
+            GraphOp::Imports => "imports",
+            GraphOp::Importers => "importers",
+            GraphOp::Neighbors => "neighbors",
+        }
+    }
+}
+
+/// `stella graph <op> <target>` — the human door to the same query surface
+/// the `graph_query` tool gives the agent. Frames print exactly as the model
+/// would receive them.
+pub fn run_graph(op: GraphOp, target: &str) -> Result<(), String> {
+    let root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    match stella_tools::graph::run_query(&root, op.as_str(), target) {
+        stella_protocol::tool::ToolOutput::Ok { content } => {
+            println!("{content}");
+            Ok(())
+        }
+        stella_protocol::tool::ToolOutput::Error { message } => Err(message),
+    }
 }
 
 #[cfg(test)]

@@ -13,12 +13,78 @@
 //! deliberately explicit and human-invoked: eligibility is computed
 //! automatically, the write only happens here.
 
-use clap::ValueEnum;
+use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::Serialize;
 use stella_context::{ContextStore, NodeKind, NodeRow};
 use stella_core::rules::{self, PromoteStatus, RuleCandidate};
 use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
+
+/// `stella memory` subcommands — the inspection and promotion surface of the
+/// memory-citation loop (agents cite the memories that informed a turn via
+/// the `cite_memory` tool; the citations aggregate into the eligibility gate
+/// `promote` enforces).
+#[derive(Subcommand)]
+pub enum MemoryCmd {
+    /// List memories ranked by citation count, with average usefulness,
+    /// truthfulness rate, and rule-promotion eligibility
+    List {
+        /// Output format: table (aligned) or json
+        #[arg(long, value_enum, default_value = "table")]
+        format: MemoryFormat,
+    },
+    /// Promote an eligible memory to a project rule at
+    /// `.stella/rules/<slug>.md`. Eligibility is strict: cited successfully
+    /// MORE THAN 10 consecutive times since its last negative remark — one
+    /// negative citation resets the count until it is re-earned.
+    Promote {
+        /// The memory's stable id (nod_…) as shown by `stella memory list`
+        id: String,
+    },
+    /// Re-validate old memories against the current codebase (Proposal 5).
+    /// Scans each memory for file-path anchors (e.g. `stella-cli/src/agent.rs`),
+    /// checks whether those paths still exist, and flags stale ones. A stale
+    /// memory is one whose referenced path no longer exists — a strong signal
+    /// the memory is about refactored-away code and may mislead.
+    Validate,
+    /// Forget a memory: stop it steering the agent, and stop the reflection
+    /// loop re-learning it. Reversible with `stella memory restore <id>`.
+    ///
+    /// This is a tombstone, not a delete. The reflection loop re-mines
+    /// paraphrases of lessons it has already learned, so removing the row
+    /// alone does not hold — the tombstone also suppresses restatements at
+    /// the point new lessons are recorded and at the point the log is mined
+    /// into skills.
+    Forget {
+        /// The memory's stable id (nod_…) as shown by `stella memory list`
+        id: String,
+        /// Optional note on why, shown by `stella memory forgotten`
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Rewrite a memory in place, as a new revision of the same memory.
+    ///
+    /// The old text becomes history rather than a competitor: one live record,
+    /// the same id, and recall stops serving the words you replaced. Before
+    /// memories had a lineage, changing one meant writing a second memory and
+    /// leaving the first live — both citable, with nothing to say which was
+    /// current.
+    Edit {
+        /// The memory's stable id (nod_…) as shown by `stella memory list`
+        id: String,
+        /// The replacement text
+        text: String,
+    },
+    /// Lift a tombstone written by `stella memory forget`, letting the memory
+    /// be recalled again and be re-learnable.
+    Restore {
+        /// The memory's stable id (nod_…) as shown by `stella memory forgotten`
+        id: String,
+    },
+    /// List the tombstones in this workspace — what was forgotten, when, and
+    /// why.
+    Forgotten,
+}
 
 /// Output format for `stella memory list`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
