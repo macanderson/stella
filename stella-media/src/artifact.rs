@@ -18,9 +18,9 @@
 //! pid-tagged sibling temp that is `fsync`ed, renamed over the manifest, and
 //! followed by an `fsync` of the directory — so neither a crash nor a power
 //! loss can publish a partial manifest. The read → upsert → replace cycle is
-//! serialized across processes by [`mutation_lock`]; atomicity of the
-//! replacement alone would not stop two racers from both reading the same
-//! pre-image.
+//! serialized across processes by `mutation_lock` (crate-private, so this
+//! names it rather than linking it); atomicity of the replacement alone would
+//! not stop two racers from both reading the same pre-image.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
