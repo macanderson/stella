@@ -74,35 +74,27 @@ fn cloud_json_path() -> PathBuf {
 
 /// Load the registration, `Default` (all `None`) when absent or unreadable.
 ///
-/// On Unix the read goes through [`crate::read_sensitive_file_to_string`]
-/// (O_NOFOLLOW, uid + single-link checks, an owner-controlled parent), which
-/// also means an unreadable-*because-untrustworthy* file degrades to the
-/// unregistered state rather than being believed. That is the correct
-/// direction for a file whose [`CloudRegistration::oauth_token`] slot is
-/// reserved for a real credential: a `cloud.json` sitting under a
-/// group-writable home, or replaced by a symlink, is exactly the file we
-/// should not be taking an `org_id` from.
+/// The read goes through [`crate::read_sensitive_file_to_string`] (O_NOFOLLOW,
+/// uid + single-link checks, an owner-controlled parent), which also means an
+/// unreadable-*because-untrustworthy* file degrades to the unregistered state
+/// rather than being believed. That is the correct direction for a file whose
+/// [`CloudRegistration::oauth_token`] slot is reserved for a real credential: a
+/// `cloud.json` sitting under a group-writable home, or replaced by a symlink,
+/// is exactly the file we should not be taking an `org_id` from.
+///
+/// Unconditional, not `#[cfg(unix)]`, and mirroring the write in
+/// [`save_cloud_registration`]: #617 gave the non-Unix arm of the sensitive
+/// helpers a real check (a symlinked or non-directory parent is still refused)
+/// instead of the blanket `Err` that once forced a plain-read fallback here.
 pub fn cloud_registration() -> CloudRegistration {
     cloud_registration_at(&cloud_json_path())
 }
 
 fn cloud_registration_at(path: &Path) -> CloudRegistration {
-    read_cloud_json(path)
+    crate::read_sensitive_file_to_string(path)
+        .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
-}
-
-#[cfg(unix)]
-fn read_cloud_json(path: &Path) -> Option<String> {
-    crate::read_sensitive_file_to_string(path).ok()
-}
-
-/// The non-Unix branch keeps the plain read: the sensitive helpers are
-/// hard-wired to `Err` off Unix, so routing this through them would make every
-/// Windows install permanently unregistered.
-#[cfg(not(unix))]
-fn read_cloud_json(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
 }
 
 /// Persist the registration through [`crate::write_sensitive_file_atomic`]:
@@ -127,7 +119,7 @@ fn save_cloud_registration_at(path: &Path, reg: &CloudRegistration) -> Result<()
     let body = serde_json::to_string_pretty(reg)
         .map_err(|e| StoreError(format!("cannot render cloud registration: {e}")))?
         + "\n";
-    crate::write_sensitive_file_atomic(&path, body.as_bytes())
+    crate::write_sensitive_file_atomic(path, body.as_bytes())
 }
 
 /// The org this installation reports into, `None` until registered.
@@ -400,6 +392,44 @@ mod tests {
             cloud_registration_at(&path),
             reg,
             "the read path must agree"
+        );
+    }
+
+    /// The read must go through the sensitive helper, not a plain
+    /// `std::fs::read_to_string`. A group-writable parent means anyone in the
+    /// group could have substituted the `oauth_token`, so the file is refused
+    /// and the install reads as unregistered rather than believing it.
+    ///
+    /// Pins the property, not the spelling: #699 dropped this read's helper
+    /// while leaving the call site, and the cheap repair is to reach for a
+    /// plain read — which would pass every other test in this module.
+    #[cfg(unix)]
+    #[test]
+    fn a_cloud_json_under_a_group_writable_parent_is_refused_not_believed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("loose");
+        let path = dir.join("cloud.json");
+        let reg = CloudRegistration {
+            org_id: Some("org-abc".into()),
+            oauth_token: Some("tok-secret".into()),
+        };
+        save_cloud_registration_at(&path, &reg).unwrap();
+        assert_eq!(
+            cloud_registration_at(&path),
+            reg,
+            "sanity: readable at 0700"
+        );
+
+        // Open the parent to group-write, which is exactly the substitution
+        // risk `validate_owner_controlled_parent` exists to catch.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o770)).unwrap();
+        assert_eq!(
+            cloud_registration_at(&path),
+            CloudRegistration::default(),
+            "a cloud.json under a group-writable parent must degrade to \
+             unregistered, not hand back an org_id we cannot vouch for"
         );
     }
 
