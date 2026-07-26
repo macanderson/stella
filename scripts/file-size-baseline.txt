@@ -14,8 +14,6 @@
 2095 stella-core/src/bus.rs
 2258 stella-core/src/driver.rs
 2819 stella-core/src/driver/tests.rs
-1666 stella-core/src/rules.rs
-1502 stella-core/src/skills.rs
 1759 stella-fleet/src/fleet.rs
 1599 stella-model/src/anthropic/tests.rs
 1638 stella-model/src/bedrock.rs
