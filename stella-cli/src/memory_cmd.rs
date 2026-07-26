@@ -84,6 +84,22 @@ pub enum MemoryCmd {
     /// List the tombstones in this workspace — what was forgotten, when, and
     /// why.
     Forgotten,
+    /// Reclaim space in .stella/private/context.db by dropping derived index
+    /// rows whose owner is already gone: embedding vectors no memory, node or
+    /// episode points at (every `memory edit` strands one), and domain tags
+    /// pointing at rows that no longer exist.
+    ///
+    /// Memories, episodes, facts and forget tombstones are never touched —
+    /// point-in-time queries answer identically before and after.
+    Compact(crate::memory_compact::CompactArgs),
+    /// Build the approximate-similarity (IVF) index recall can use instead of
+    /// scoring every stored vector on every turn.
+    ///
+    /// Opt-in twice over: this builds it, and `context.retrieval.ann_enabled`
+    /// in settings.json is what lets a recall use it. An approximate index
+    /// considers a subset of the corpus, so it can miss a frame the exact scan
+    /// would have found — which is why neither half is on by default.
+    Index(crate::memory_index::IndexArgs),
 }
 
 /// Output format for `stella memory list`.
