@@ -89,12 +89,12 @@ fn each_path(case: impl Fn(Loop)) {
 /// session reads at open. Writing real settings rather than reaching into the
 /// struct is deliberate: the flag's whole job is to be readable from a user's
 /// settings file, and a test that bypassed that would not prove it works.
-fn enable_lifecycle(root: &Path) {
+fn set_lifecycle(root: &Path, enabled: bool) {
     let dir = root.join(".stella");
     std::fs::create_dir_all(&dir).expect("stella dir");
     std::fs::write(
         dir.join("settings.json"),
-        r#"{"context":{"lifecycle":{"enabled":true}}}"#,
+        format!(r#"{{"context":{{"lifecycle":{{"enabled":{enabled}}}}}}}"#),
     )
     .expect("write settings");
 }
@@ -109,9 +109,10 @@ fn session_with_workspace_skills(
     path: Loop,
     include_workspace_skills: bool,
 ) -> SessionMemory {
-    if path == Loop::Typed {
-        enable_lifecycle(root);
-    }
+    // Both arms write settings explicitly. The lifecycle now ships ON, so
+    // "write nothing and get the lexical loop" is no longer true — a lexical
+    // case has to opt out in the same way a user would.
+    set_lifecycle(root, path == Loop::Typed);
     SessionMemory::open_with_workspace_skills(root, false, include_workspace_skills)
         .expect("session memory")
 }
@@ -570,7 +571,8 @@ fn the_typed_path_records_why_it_promoted() {
 }
 
 /// …and the lexical path records nothing, so turning the flag off really does
-/// mean "no ledger writes", not "quieter ledger writes".
+/// mean "no ledger writes", not "quieter ledger writes". Since the lifecycle
+/// now ships on, this is the opt-out path rather than the default one.
 #[test]
 fn the_lexical_path_writes_nothing_to_the_ledger() {
     let dir = workspace_with_log(&three_occurrences_of(RECURRING));
@@ -580,7 +582,7 @@ fn the_lexical_path_writes_nothing_to_the_ledger() {
     assert_eq!(
         memory.store.record_counts().expect("counts"),
         Vec::new(),
-        "the default path touched the lifecycle ledger"
+        "the opted-out path touched the lifecycle ledger"
     );
     assert!(
         !skill_files(dir.path()).is_empty(),
@@ -740,7 +742,7 @@ fn a_well_evidenced_rule_activates_and_reaches_the_loader() {
 }
 
 /// The rules miner is off with the flag off, exactly like the rest of the
-/// typed path. Nothing appears in `.stella/rules` on the default path.
+/// typed path. Nothing appears in `.stella/rules` when a user opts out.
 #[test]
 fn the_lexical_path_mines_no_rules() {
     let strong = "Always run the database migration before the integration suite starts.";
@@ -750,6 +752,6 @@ fn the_lexical_path_mines_no_rules() {
     memory.auto_create_skills(&log_path(dir.path()), true);
     assert!(
         !dir.path().join(".stella/rules").exists(),
-        "the default path wrote a rule"
+        "the opted-out path wrote a rule"
     );
 }

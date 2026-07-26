@@ -23,8 +23,8 @@
 use serde::{Deserialize, Serialize};
 
 /// The `context` block of `settings.json`. All fields default, so `"context":
-/// {}` — or an absent block — yields the behavior-preserving defaults
-/// (lifecycle disabled, learning off, governance solo).
+/// {}` — or an absent block — yields the shipped defaults: the lifecycle **on**,
+/// learning off, governance solo.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ContextSettings {
@@ -38,12 +38,21 @@ pub struct ContextSettings {
 }
 
 /// Master switch for the whole adaptive-context lifecycle.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LifecycleSettings {
-    /// `false` (default) preserves all pre-adaptive-context behavior: every
-    /// other field in the `context` block is ignored while this is off.
+    /// `true` (default) — the lifecycle ships on. Setting it `false` restores
+    /// every pre-adaptive-context behavior: the recall block is not
+    /// decomposed, no frame identity is recorded, and the learning loop runs
+    /// its lexical path. Every other field in the `context` block is ignored
+    /// while this is off.
     pub enabled: bool,
+}
+
+impl Default for LifecycleSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// How much of the learning loop runs. Orthogonal to [`GovernanceMode`].
@@ -313,11 +322,12 @@ mod tests {
     }
 
     #[test]
-    fn empty_context_block_yields_behavior_preserving_defaults() {
+    fn empty_context_block_yields_the_shipped_defaults() {
         let s: Settings = serde_json::from_str(r#"{"context":{}}"#).expect("empty context parse");
         let ctx = s.context.expect("context present");
-        // The one field that gates behavior: disabled by default.
-        assert!(!ctx.lifecycle.enabled, "lifecycle must default disabled");
+        // The one field that gates behavior. It ships ON: an empty block is a
+        // request for the defaults, and the default is now the lifecycle.
+        assert!(ctx.lifecycle.enabled, "lifecycle must default enabled");
         assert_eq!(ctx.learning.mode, LearningMode::Off);
         assert_eq!(ctx.governance.mode, GovernanceMode::Solo);
         assert_eq!(ctx, ContextSettings::default());
@@ -327,8 +337,8 @@ mod tests {
     fn canonical_fixture_deserializes_to_the_documented_defaults() {
         let s: Settings = serde_json::from_str(FIXTURE).expect("fixture parse");
         let ctx = s.context.expect("fixture has a context block");
-        // Disabled-by-default lifecycle is what keeps behavior unchanged.
-        assert!(!ctx.lifecycle.enabled);
+        // The lifecycle ships on; the fixture documents that.
+        assert!(ctx.lifecycle.enabled);
         assert_eq!(ctx.learning.mode, LearningMode::Off);
         assert_eq!(ctx.governance.mode, GovernanceMode::Solo);
         assert_eq!(ctx.promotion.inferred_directive.min_observations, 3);

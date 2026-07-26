@@ -1,7 +1,7 @@
 {
   "context": {
     "lifecycle": {
-      "enabled": false
+      "enabled": true
     },
     "learning": {
       "mode": "off"
