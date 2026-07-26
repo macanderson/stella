@@ -1,11 +1,22 @@
 //! GitHub-PR-style diff presentation, shared by every diff surface (the
-//! session REPL's right pane and the deck's Files tab) so there is exactly one
-//! implementation of "how a diff looks". The layout is the design-doc
-//! contract: the full file path inline in a horizontal rule **above** the
-//! body, a line-number gutter on the body itself, and a closing rule **below**
-//! that counts the added/removed lines. Colors come from [`crate::theme`]
-//! only — the add/remove/hunk semantics stay consistent with the rest of the
-//! deck (and with any future light variant of the theme) by construction.
+//! session REPL's right pane, the deck's Files tab, and the transcript's
+//! inline diffs) so there is exactly one implementation of "how a diff looks".
+//!
+//! A *viewer* gets the full design-doc layout: the file path inline in a
+//! horizontal rule above the body, a line-number gutter on the body, and a
+//! closing rule below counting the added/removed lines. The transcript's
+//! inline form ([`body_lines_inline`]) drops that surrounding chrome, because
+//! there the call row already names the file and the result row already states
+//! `+n −m` — the rules would be the same facts a second time, wrapped around
+//! what is often a two-row change.
+//!
+//! Two things the body does everywhere: context lines keep their syntax
+//! colours (context exists to be read), and a `-`/`+` pair close enough to
+//! align gets its differing middle picked out on a brighter ground, so a
+//! one-token edit names itself instead of leaving the reader to compare two
+//! near-identical lines by eye. Colors come from [`crate::theme`] only — the
+//! add/remove/hunk semantics stay consistent with the rest of the deck (and
+//! with any future light variant of the theme) by construction.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -110,33 +121,245 @@ pub fn body_lines(diff: &str, path: Option<&str>) -> Vec<Line<'static>> {
     body_lines_capped(diff, path, usize::MAX).0
 }
 
-/// Like [`body_lines`], but styles at most `cap` lines, returning the styled
-/// prefix plus the total line count the full render would produce — so a
-/// caller that collapses long diffs (the inline transcript view) never pays
-/// tokenizing cost for lines it drops.
+/// Like [`body_lines`], but shows at most `cap` lines, returning the styled
+/// selection plus the number of lines it withheld.
+///
+/// The cap is **hunk-aware**: it emits whole hunks while they fit and drops
+/// the rest, rather than slicing the body at line `cap`. A flat cut lands
+/// wherever it lands — routinely between a `-` line and the `+` line that
+/// replaces it — leaving a change that reads as a pure deletion. Whole hunks
+/// are the smallest unit that is honest on its own. Only when the *first*
+/// hunk alone overruns the budget does this fall back to a window, and even
+/// then the window is centred on the changed lines rather than anchored at
+/// the hunk's leading context.
 pub fn body_lines_capped(
     diff: &str,
     path: Option<&str>,
     cap: usize,
 ) -> (Vec<Line<'static>>, usize) {
+    render_body(diff, path, cap, true)
+}
+
+/// [`body_lines_capped`] for the transcript's inline diffs, which drop a lone
+/// `@@ -a,b +c,d @@` header.
+///
+/// In a diff *viewer* the hunk header is orientation. Inline under a tool call
+/// it is a row of chrome restating what the line-number gutter beside it
+/// already says, and a two-line change should not cost three rows. With more
+/// than one hunk the headers stay: there they earn their space as the boundary
+/// between two disjoint regions of the file.
+pub fn body_lines_inline(
+    diff: &str,
+    path: Option<&str>,
+    cap: usize,
+) -> (Vec<Line<'static>>, usize) {
+    let multi = diff.lines().filter(|l| l.starts_with("@@")).count() > 1;
+    render_body(diff, path, cap, multi)
+}
+
+fn render_body(
+    diff: &str,
+    path: Option<&str>,
+    cap: usize,
+    hunk_headers: bool,
+) -> (Vec<Line<'static>>, usize) {
     let lang = match path {
         Some(p) => lang_from_path(p),
         None => lang_from_diff_header(diff),
     };
+    // `.lines()`, not `.split('\n')`: a diff ending in a trailing newline
+    // must not render (and count against hunk state) a spurious empty row.
+    let raw: Vec<&str> = diff.lines().collect();
+    let keep = select_lines(&raw, cap);
+    let emphasis = word_emphasis(&raw);
     let mut old_no: Option<u32> = None;
     let mut new_no: Option<u32> = None;
     let mut in_hunk = false;
     let mut lines = Vec::new();
-    let mut total = 0usize;
-    // `.lines()`, not `.split('\n')`: a diff ending in a trailing newline
-    // must not render (and count against hunk state) a spurious empty row.
-    for raw in diff.lines() {
-        total += 1;
-        if lines.len() < cap {
-            lines.push(body_line(raw, lang, &mut old_no, &mut new_no, &mut in_hunk));
+    let mut hidden = 0usize;
+    for (i, text) in raw.iter().enumerate() {
+        // Every line advances the gutter counters, shown or not — skipping a
+        // line must not renumber the ones after it.
+        let line = body_line(
+            text,
+            lang,
+            &mut old_no,
+            &mut new_no,
+            &mut in_hunk,
+            emphasis.get(&i).copied(),
+        );
+        if !keep[i] {
+            hidden += 1;
+        } else if hunk_headers || !text.starts_with("@@") {
+            lines.push(line);
         }
     }
-    (lines, total)
+    (lines, hidden)
+}
+
+/// Choose which diff lines a `cap`-limited render shows. See
+/// [`body_lines_capped`] for the policy; this is the mechanism.
+fn select_lines(raw: &[&str], cap: usize) -> Vec<bool> {
+    let n = raw.len();
+    if n <= cap {
+        return vec![true; n];
+    }
+    let mut keep = vec![false; n];
+    // Hunk boundaries. Anything before the first `@@` is file metadata that
+    // belongs with the hunk it introduces, so the first boundary is pulled
+    // back to 0; a headerless pseudo-diff (stella's event path emits these)
+    // is simply one unbounded hunk.
+    let mut bounds: Vec<usize> = (0..n).filter(|&i| raw[i].starts_with("@@")).collect();
+    if bounds.first().copied().unwrap_or(1) != 0 {
+        bounds.insert(0, 0);
+    }
+    bounds.push(n);
+
+    let mut used = 0usize;
+    for w in bounds.windows(2) {
+        let (start, end) = (w[0], w[1]);
+        if used + (end - start) > cap {
+            break;
+        }
+        keep[start..end].fill(true);
+        used += end - start;
+    }
+    if used > 0 {
+        return keep;
+    }
+
+    // The first hunk alone overruns the budget. Keep its `@@` header (it is
+    // the line that says *where* in the file this is) and a window of the
+    // body starting two lines of context above the first real change.
+    let end = bounds[1];
+    let first_change = (0..end)
+        .find(|&i| matches!(raw[i].as_bytes().first(), Some(b'+') | Some(b'-')) && !is_meta(raw[i]))
+        .unwrap_or(0);
+    let header = (0..end).find(|&i| raw[i].starts_with("@@"));
+    let mut budget = cap;
+    if let Some(h) = header {
+        keep[h] = true;
+        budget = budget.saturating_sub(1);
+    }
+    let start = first_change
+        .saturating_sub(2)
+        .max(header.map_or(0, |h| h + 1));
+    for slot in &mut keep[start..end] {
+        if budget == 0 {
+            break;
+        }
+        if !*slot {
+            *slot = true;
+            budget -= 1;
+        }
+    }
+    keep
+}
+
+/// Whether a line is diff metadata rather than source content.
+fn is_meta(line: &str) -> bool {
+    line.starts_with("+++ ")
+        || line.starts_with("--- ")
+        || line.starts_with("diff ")
+        || line.starts_with("index ")
+}
+
+/// The byte range within each changed line that actually differs from its
+/// counterpart, keyed by line index.
+///
+/// A one-token edit — `tool_policy::` becoming `crate::tool_policy::` — renders
+/// as two nearly identical lines, and finding the difference is left to the
+/// reader diffing them by eye, character by character. That is the single
+/// most common edit an agent makes and the one the transcript reads worst.
+/// Trimming the shared prefix and suffix off a `-`/`+` pair isolates the part
+/// that changed, which the body then paints brighter than the rest of the line.
+///
+/// Pairing is deliberately conservative: only a run of removals immediately
+/// followed by an equally long run of additions pairs up, index for index.
+/// Unequal runs mean lines were added or dropped, so no positional pairing is
+/// trustworthy and the whole-line colouring is left to speak for itself.
+fn word_emphasis(raw: &[&str]) -> std::collections::HashMap<usize, (usize, usize)> {
+    let mut out = std::collections::HashMap::new();
+    // A headerless pseudo-diff — bare `+`/`-` lines with no `@@`, which the
+    // event path can emit — is one implicit hunk. Starting `false` there would
+    // skip every line and silently disable emphasis for that whole shape.
+    let mut in_hunk = !raw.iter().any(|l| l.starts_with("@@"));
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i].starts_with("@@") {
+            in_hunk = true;
+            i += 1;
+            continue;
+        }
+        if !in_hunk || is_meta(raw[i]) {
+            i += 1;
+            continue;
+        }
+        let del_start = i;
+        while i < raw.len() && raw[i].starts_with('-') && !is_meta(raw[i]) {
+            i += 1;
+        }
+        let del_end = i;
+        let add_start = i;
+        while i < raw.len() && raw[i].starts_with('+') && !is_meta(raw[i]) {
+            i += 1;
+        }
+        let add_end = i;
+        let (dn, an) = (del_end - del_start, add_end - add_start);
+        if dn > 0 && dn == an {
+            for k in 0..dn {
+                let (o, n) = (raw[del_start + k], raw[add_start + k]);
+                if let Some((os, oe, ns, ne)) = changed_span(&o[1..], &n[1..]) {
+                    // +1 on every offset: the `+`/`-` marker is one ASCII byte
+                    // that the caller's slice keeps in front of the code.
+                    out.insert(del_start + k, (os + 1, oe + 1));
+                    out.insert(add_start + k, (ns + 1, ne + 1));
+                }
+            }
+        }
+        if del_end == del_start && add_end == add_start {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Trim the shared prefix and suffix off two versions of a line, returning
+/// `(old_start, old_end, new_start, new_end)` byte ranges of the differing
+/// middles — or `None` when the pair is too dissimilar for the answer to mean
+/// anything.
+fn changed_span(old: &str, new: &str) -> Option<(usize, usize, usize, usize)> {
+    if old == new {
+        return None;
+    }
+    let prefix = old
+        .char_indices()
+        .zip(new.char_indices())
+        .take_while(|((_, a), (_, b))| a == b)
+        .last()
+        .map_or(0, |((i, c), _)| i + c.len_utf8());
+    // Suffix scan stops at the prefix boundary on both sides, so the two
+    // ranges can never cross and produce a negative-width middle.
+    let mut suffix = 0usize;
+    {
+        let mut o = old[prefix..].chars().rev();
+        let mut n = new[prefix..].chars().rev();
+        loop {
+            match (o.next(), n.next()) {
+                (Some(a), Some(b)) if a == b => suffix += a.len_utf8(),
+                _ => break,
+            }
+        }
+    }
+    let (o_end, n_end) = (old.len() - suffix, new.len() - suffix);
+    // Below this much shared text the lines are different statements rather
+    // than one statement edited, and an "emphasis" covering nearly the whole
+    // row would say less than the row's own add/remove colour already does.
+    let shared = prefix + suffix;
+    if shared * 10 < old.len().max(new.len()) * 3 {
+        return None;
+    }
+    Some((prefix, o_end, prefix, n_end))
 }
 
 fn body_line(
@@ -145,6 +368,7 @@ fn body_line(
     old_no: &mut Option<u32>,
     new_no: &mut Option<u32>,
     in_hunk: &mut bool,
+    emph: Option<(usize, usize)>,
 ) -> Line<'static> {
     if raw.starts_with("diff ") {
         // A new file section: the next `+++ `/`--- ` pair are headers again.
@@ -203,6 +427,7 @@ fn body_line(
                 theme::OK,
                 Some(theme::DIFF_ADD_BG),
                 lang,
+                emph.map(|(s, e)| (s - 1, e - 1, theme::DIFF_ADD_BG_EMPH)),
             ));
             Line::from(spans)
         }
@@ -216,6 +441,7 @@ fn body_line(
                 theme::BAD,
                 Some(theme::DIFF_DEL_BG),
                 lang,
+                emph.map(|(s, e)| (s - 1, e - 1, theme::DIFF_DEL_BG_EMPH)),
             ));
             Line::from(spans)
         }
@@ -231,11 +457,13 @@ fn body_line(
                 None => ("", raw),
             };
             let mut spans = vec![gutter(n)];
-            // Context lines stay fully muted (no syntax colors — `lang` is
-            // deliberately not passed): de-emphasis is what separates the
-            // unchanged surroundings from the change itself, and a keyword
-            // glowing brand-amber on both would erase that distinction.
-            spans.extend(code_spans(marker, code, theme::MUTED, None, None));
+            // Context lines keep their syntax colours. Context exists to be
+            // *read* — it is how a reader places the change inside the
+            // function around it — and flattening it to one grey erases the
+            // structure that makes it readable at a glance. The add/remove
+            // tint already separates changed from unchanged; a second,
+            // redundant signal is not worth an unreadable surround.
+            spans.extend(code_spans(marker, code, theme::MUTED, None, lang, None));
             Line::from(spans)
         }
     }
@@ -253,21 +481,68 @@ fn code_spans(
     base: Color,
     bg: Option<Color>,
     lang: Option<Lang>,
+    emph: Option<(usize, usize, Color)>,
 ) -> Vec<Span<'static>> {
     let base_style = with_bg(Style::default().fg(base), bg);
     let Some(lang) = lang else {
-        return vec![Span::styled(format!("{marker}{code}"), base_style)];
+        let plain = vec![(code.to_string(), None)];
+        return marker_then(marker, base_style, plain, base_style, bg, emph);
     };
+    marker_then(
+        marker,
+        base_style,
+        tokenize(code, lang),
+        base_style,
+        bg,
+        emph,
+    )
+}
+
+/// Assemble a code line's spans: the uncoloured marker, then each syntax run,
+/// with any run overlapping the emphasis range split out and repainted onto
+/// the brighter background.
+fn marker_then(
+    marker: &str,
+    marker_style: Style,
+    runs: Vec<(String, Option<crate::syntax::Tok>)>,
+    base_style: Style,
+    bg: Option<Color>,
+    emph: Option<(usize, usize, Color)>,
+) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     if !marker.is_empty() {
-        spans.push(Span::styled(marker.to_string(), base_style));
+        spans.push(Span::styled(marker.to_string(), marker_style));
     }
-    for (text, tok) in tokenize(code, lang) {
+    let mut at = 0usize;
+    for (text, tok) in runs {
         let style = match tok {
             Some(t) => with_bg(tok_style(t), bg),
             None => base_style,
         };
-        spans.push(Span::styled(text, style));
+        let end = at + text.len();
+        match emph {
+            // The run overlaps the changed span: split it so only the changed
+            // bytes take the brighter ground.
+            Some((s, e, colour)) if s < end && e > at && s < e => {
+                let (lo, hi) = (s.max(at), e.min(end));
+                for (range, hot) in [(at..lo, false), (lo..hi, true), (hi..end, false)] {
+                    if range.is_empty() {
+                        continue;
+                    }
+                    let slice = &text[range.start - at..range.end - at];
+                    let st = if hot {
+                        style
+                            .bg(colour)
+                            .add_modifier(ratatui::style::Modifier::BOLD)
+                    } else {
+                        style
+                    };
+                    spans.push(Span::styled(slice.to_string(), st));
+                }
+            }
+            _ => spans.push(Span::styled(text, style)),
+        }
+        at = end;
     }
     spans
 }
@@ -609,18 +884,24 @@ mod tests {
 
     #[test]
     fn unknown_language_falls_back_to_a_single_plain_code_span() {
-        // No path and no inferable header → one code span per line, exactly
-        // like the pre-highlighting rendering (gutter + one styled span).
+        // No path and no inferable header → the code is one unsplit span.
+        // The `+`/`-` marker is always its own span, language or not: it is
+        // diff structure rather than source text, and splitting it uniformly
+        // means the word-diff emphasis offsets mean the same thing on every
+        // line instead of shifting by one on the un-highlighted ones.
         let line = body_lines("@@ -1 +1 @@\n+fn x", None).pop().unwrap();
         assert_eq!(
             line.spans.len(),
-            2,
-            "gutter + one plain span: {:?}",
+            3,
+            "gutter + marker + one plain code span: {:?}",
             line.spans
         );
-        assert_eq!(line.spans[1].content, "+fn x");
-        assert_eq!(line.spans[1].style.fg, Some(theme::OK));
-        assert_eq!(line.spans[1].style.bg, Some(theme::DIFF_ADD_BG));
+        assert_eq!(line.spans[1].content, "+");
+        assert_eq!(line.spans[2].content, "fn x");
+        for span in &line.spans[1..] {
+            assert_eq!(span.style.fg, Some(theme::OK));
+            assert_eq!(span.style.bg, Some(theme::DIFF_ADD_BG));
+        }
     }
 
     #[test]
@@ -663,26 +944,51 @@ mod tests {
         let line = body_lines(diff, Some("q.sql")).pop().unwrap();
         assert_eq!(
             line.spans.len(),
-            2,
-            "gutter + one plain span, no Python keywords: {:?}",
+            3,
+            "gutter + marker + one plain code span, no Python keywords: {:?}",
+            line.spans
+        );
+        assert_eq!(line.spans[2].content, "import x");
+        assert_eq!(
+            line.spans[2].style.fg,
+            Some(theme::OK),
+            "the whole code run keeps the add colour — no token was recognized: {:?}",
             line.spans
         );
     }
 
     #[test]
-    fn context_lines_stay_fully_muted_without_syntax_colors() {
-        // De-emphasis is the whole point of a context line: even with a
-        // recognized language its keywords keep the muted foreground.
+    fn context_lines_keep_their_syntax_colors() {
+        // Context exists to be *read* — it is how a reader places the change
+        // inside the function around it — so it highlights exactly like the
+        // changed lines do. Flattening it to one grey erased the structure
+        // that makes it readable, and bought nothing: the add/remove
+        // background tint already says which lines changed, so a second,
+        // redundant de-emphasis signal only costs legibility.
         let diff = "@@ -1,2 +1,2 @@\n fn unchanged() {}\n+fn added() {}";
         let lines = body_lines(diff, Some("m.rs"));
         let context = &lines[1];
+        let kw = span_with(context, "fn").expect("`fn` is its own span on a context line");
         assert_eq!(
-            context.spans.len(),
-            2,
-            "gutter + one muted span: {:?}",
+            kw.style.fg,
+            Some(theme::SYNTAX_KEYWORD),
+            "context keywords are coloured: {:?}",
             context.spans
         );
-        assert_eq!(context.spans[1].style.fg, Some(theme::MUTED));
+        assert_eq!(
+            kw.style.bg, None,
+            "…but carry no add/remove tint — that is what still separates \
+             changed from unchanged: {:?}",
+            context.spans
+        );
+        // The un-tokenized remainder falls back to the muted body colour, so
+        // context still reads a shade quieter than a changed line overall.
+        assert_eq!(
+            span_with(context, " unchanged() {}").map(|s| s.style.fg),
+            Some(Some(theme::MUTED)),
+            "plain runs stay muted: {:?}",
+            context.spans
+        );
         let added = &lines[2];
         assert_eq!(
             span_with(added, "fn").map(|s| s.style.fg),
@@ -690,18 +996,54 @@ mod tests {
             "added lines still highlight: {:?}",
             added.spans
         );
+        assert_eq!(
+            span_with(added, "fn").map(|s| s.style.bg),
+            Some(Some(theme::DIFF_ADD_BG)),
+            "and keep the add tint the context line lacks: {:?}",
+            added.spans
+        );
     }
 
     #[test]
-    fn capped_rendering_styles_only_the_cap_but_counts_every_line() {
+    fn capped_rendering_styles_only_the_cap_and_reports_what_it_withheld() {
+        // The second return value is the *hidden* count, not the total: the
+        // only caller is the "⋯ N lines · ctrl+o" fold hint, and a total
+        // makes it do subtraction the renderer already knows the answer to.
         let diff = "+one\n+two\n+three\n+four\n+five";
-        let (lines, total) = body_lines_capped(diff, Some("x.rs"), 2);
+        let (lines, hidden) = body_lines_capped(diff, Some("x.rs"), 2);
         assert_eq!(lines.len(), 2, "styles stop at the cap");
-        assert_eq!(total, 5, "the footer math sees the full length");
-        // An uncapped call is byte-identical to `body_lines`.
+        assert_eq!(hidden, 3, "and the other three are reported as withheld");
+        // An uncapped call withholds nothing and is byte-identical to
+        // `body_lines`.
         let (all, n) = body_lines_capped(diff, Some("x.rs"), usize::MAX);
-        assert_eq!(n, 5);
+        assert_eq!(n, 0);
         assert_eq!(all, body_lines(diff, Some("x.rs")));
+    }
+
+    #[test]
+    fn the_cap_emits_whole_hunks_rather_than_slicing_mid_change() {
+        // A flat cut lands wherever it lands — routinely between a `-` line
+        // and the `+` line that replaces it — leaving a change that reads as
+        // a pure deletion. Whole hunks are the smallest unit that is honest
+        // on its own, so a budget that cannot fit the second hunk drops all
+        // of it instead of showing its opening half.
+        let diff = "@@ -1,2 +1,2 @@\n-a\n+A\n@@ -9,2 +9,2 @@\n-b\n+B";
+        let (lines, hidden) = body_lines_capped(diff, Some("x.rs"), 4);
+        let texts: Vec<String> = lines.iter().map(line_text).collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "the whole first hunk, header included: {texts:?}"
+        );
+        assert_eq!(hidden, 3, "the entire second hunk is withheld");
+        assert!(
+            texts.iter().any(|t| t.contains("-a")) && texts.iter().any(|t| t.contains("+A")),
+            "the pair that replaces one line stays together: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("-b")),
+            "no half of the second hunk leaks in under the remaining budget: {texts:?}"
+        );
     }
 
     #[test]

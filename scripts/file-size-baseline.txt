@@ -12,7 +12,7 @@
 1599 stella-cli/src/candidate_ws.rs
 4465 stella-cli/src/command_deck.rs
 1503 stella-cli/src/contextgraph.rs
-1789 stella-cli/src/main.rs
+1776 stella-cli/src/main.rs
 1641 stella-cli/src/memory.rs
 2224 stella-context/src/store.rs
 2095 stella-core/src/bus.rs
@@ -28,7 +28,7 @@
 2504 stella-pipeline/src/pipeline.rs
 2019 stella-pipeline/src/pipeline/tests.rs
 2636 stella-protocol/src/event.rs
-2270 stella-store/src/lib.rs
+2268 stella-store/src/lib.rs
 2168 stella-store/src/tests.rs
 1884 stella-store/src/usage.rs
 1558 stella-tools/src/media.rs
@@ -36,6 +36,5 @@
 1797 stella-tools/src/scripts.rs
 1670 stella-tui/src/deck_render.rs
 3940 stella-tui/src/deck_ui.rs
-1616 stella-tui/src/model.rs
-1513 stella-tui/src/render.rs
+1609 stella-tui/src/model.rs
 1650 stella-tui/src/views/engine.rs
