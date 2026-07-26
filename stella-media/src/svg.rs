@@ -37,10 +37,27 @@
 //!    references (`#id`) survive; `http(s):`, `data:`, `javascript:`,
 //!    protocol-relative, and every other target is stripped. This neutralizes
 //!    remote `<image>` exfil pixels and `javascript:` navigation.
-//! 6. **Drop attribute values that reference external resources** via a URL
-//!    scheme (`…://…`), a protocol-relative prefix (`//host/…`, including inside
-//!    `url(//…)`), or `javascript:` anywhere in the value — covers
-//!    `fill="url(http://…)"`, external paint servers, filters, and masks.
+//! 6. **Drop resource-referencing attributes whose value names an external
+//!    target** — the value (or any `url(…)` argument inside it) is external
+//!    when it begins with a URL scheme (`<ascii-alpha>[a-z0-9+.-]*:`, so
+//!    `http:`, `https:`, `data:`, `blob:`, `file:` and every future scheme
+//!    are covered), begins with the protocol-relative `//host/…`, or contains
+//!    `javascript:`. A bare `#fragment` and a relative path are same-document
+//!    or same-directory and survive, so `fill="url(#grad)"` still paints.
+//!
+//!    The rule is applied **only** to attributes that can actually reference
+//!    a resource — `href`, `xlink:href`, `src`, `fill`, `stroke`, `filter`,
+//!    `mask`, `clip-path`, `marker-*`, `style` — and the scheme test is
+//!    anchored at the start of the trimmed value. Both halves are required to
+//!    avoid a false positive: a legitimate value that merely *contains* a
+//!    colon (`font-family="Foo: Bar"`) is neither a resource reference nor
+//!    scheme-prefixed, and must survive sanitization untouched.
+//! 7. **Drop the `style` attribute** — the `<style>` *element* is dropped by
+//!    rule 2, but the attribute carries the same CSS and so the same
+//!    `url(…)`/`@import` off-host fetch. It is dropped outright rather than
+//!    URL-filtered: parsing CSS to decide is a second parser's worth of
+//!    attack surface, and an inline presentation style is never load-bearing
+//!    for an artifact whose presentation attributes survive.
 //!
 //! # Optimization (light, step 4)
 //! Comments and processing instructions are dropped; `<metadata>` elements
@@ -49,13 +66,16 @@
 //! a viewBox"), which keeps the artifact safely scalable when inlined.
 //!
 //! # Known limits (recorded, not fixed)
-//! Rule 6 keys on `//` and `javascript:`, so a `data:` URI in a non-`href`
-//! attribute value survives — including in a `style="…"` *attribute*, which
-//! (unlike the `<style>` element of rule 2) has no rule of its own. Neither
-//! is exploitable in the terminal preview ladder, which never renders SVG;
-//! both matter the moment a sanitized artifact is inlined into an HTML
-//! context, so tightening rule 6 to a scheme allow-list and adding `style` to
-//! the attribute deny-list is the recorded follow-up.
+//! Rule 6's reach is the resource-attribute list above. An attribute outside
+//! it keeps a value that happens to look like a URL — deliberate, because the
+//! attributes outside the list (`d`, `transform`, `font-family`, `points`, …)
+//! are not fetched by any renderer, and testing them all is what produced the
+//! false positives this rule was rewritten to avoid. A *new* SVG attribute
+//! that dereferences its value therefore has to be added to
+//! `is_resource_reference_attribute` in the same change that makes the
+//! sanitizer aware of it. Presentation CSS is lost rather than filtered
+//! (rule 7): an artifact that relied on `style="fill:red"` renders unstyled
+//! instead of insecurely.
 
 use async_trait::async_trait;
 use roxmltree::{Document, Node};
@@ -329,21 +349,95 @@ fn keep_attribute(name_low: &str, value: &str) -> bool {
     if name_low == "href" || name_low == "xlink:href" {
         return value.trim_start().starts_with('#');
     }
-    // Rule 6: any external/script URL reference in a value.
-    if references_external(value) {
+    // Rule 7: the `style` attribute carries the same CSS as the `<style>`
+    // element rule 2 drops, so it is dropped for the same reason.
+    if name_low == "style" {
+        return false;
+    }
+    // Rule 6: an external/script URL reference, but only where the attribute
+    // can actually dereference its value.
+    if is_resource_reference_attribute(name_low) && references_external(value) {
         return false;
     }
     true
 }
 
-/// Whether a value references an external resource: any absolute URL scheme
-/// (`…://…`), a protocol-relative URL (`//host/…`, including inside `url(//…)`),
-/// or a `javascript:` pseudo-scheme — case-insensitive. `://` is a subset of
-/// `//`, so the single `//` check covers both absolute and protocol-relative
-/// forms.
+/// Attributes whose value a renderer can dereference — the only ones rule 6
+/// inspects. Restricting the scan is what keeps a legitimate value that
+/// merely contains a colon (`font-family="Foo: Bar"`, a `transform`, a path
+/// `d`) from being mistaken for a URL scheme. `style` is listed for
+/// completeness even though rule 7 drops it before rule 6 is reached.
+fn is_resource_reference_attribute(name_low: &str) -> bool {
+    matches!(
+        name_low,
+        "href"
+            | "xlink:href"
+            | "src"
+            | "fill"
+            | "stroke"
+            | "filter"
+            | "mask"
+            | "clip-path"
+            | "style"
+    ) || name_low.starts_with("marker-")
+}
+
+/// Whether a resource-referencing value names an external target: the value
+/// itself, or any `url(…)` argument inside it, is scheme-prefixed or
+/// protocol-relative — or the value contains the `javascript:` pseudo-scheme
+/// anywhere. Case-insensitive.
 fn references_external(value: &str) -> bool {
-    let low = value.to_ascii_lowercase();
-    low.contains("//") || low.contains("javascript:")
+    let trimmed = value.trim();
+    if is_external_target(trimmed) {
+        return true;
+    }
+    let low = trimmed.to_ascii_lowercase();
+    if low.contains("javascript:") {
+        return true;
+    }
+    // `url(<target>)` is CSS functional notation: how paint servers, filters,
+    // masks and markers name what they reference. ASCII-lowercasing is
+    // byte-length preserving, so offsets found in `low` index `trimmed`.
+    let mut cursor = 0usize;
+    while let Some(offset) = low[cursor..].find("url(") {
+        let start = cursor + offset + "url(".len();
+        let end = trimmed[start..]
+            .find(')')
+            .map_or(trimmed.len(), |i| start + i);
+        if is_external_target(&trimmed[start..end]) {
+            return true;
+        }
+        cursor = start;
+    }
+    false
+}
+
+/// Whether one reference target points off-document: it carries a URL scheme
+/// or is protocol-relative. A bare `#fragment` (same document) and a relative
+/// path (same directory) are neither.
+fn is_external_target(raw: &str) -> bool {
+    let target = raw.trim().trim_matches(['"', '\'']).trim();
+    target.starts_with("//") || starts_with_url_scheme(target)
+}
+
+/// Whether `text` begins with an RFC 3986 scheme: an ASCII letter followed by
+/// any number of `[A-Za-z0-9+.-]`, then `:`. Anchored at the start on purpose
+/// — a colon later in a value (`font-family="Foo: Bar"`) is punctuation, not
+/// a scheme, and treating it as one is the false positive that blocked this
+/// rule from landing.
+fn starts_with_url_scheme(text: &str) -> bool {
+    let mut bytes = text.bytes();
+    if !bytes.next().is_some_and(|b| b.is_ascii_alphabetic()) {
+        return false;
+    }
+    for byte in bytes {
+        match byte {
+            b':' => return true,
+            b if b.is_ascii_alphanumeric() || matches!(b, b'+' | b'.' | b'-') => {}
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// Does the subtree use any XLink-namespaced attribute? Governs whether the
@@ -596,6 +690,118 @@ mod tests {
         );
         assert!(!out.svg.contains("attacker.example"), "{}", out.svg);
         assert!(out.svg.contains("stroke=\"#000\""));
+    }
+
+    #[test]
+    fn style_attribute_is_dropped_with_its_data_uri_payload() {
+        // The `<style>` element was already dropped (rule 2); the attribute
+        // carries the same CSS and so the same off-host fetch (rule 7).
+        let out = process(
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><rect style="background-image:url(data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIi8+)" fill="#111"/></svg>"##,
+        );
+        assert!(!out.svg.contains("style"), "{}", out.svg);
+        assert!(!out.svg.contains("data:"), "{}", out.svg);
+        assert!(!out.svg.contains("base64"), "{}", out.svg);
+        assert!(out.svg.contains("fill=\"#111\""), "{}", out.svg);
+        assert!(out.removed.iter().any(|r| r.contains("style")));
+    }
+
+    #[test]
+    fn data_uri_targets_are_stripped_everywhere_they_can_be_dereferenced() {
+        // Each of these survived the old `//`-substring test: a `data:` URI
+        // has no `//` at all, so an inlined artifact re-opened the
+        // active-content vector the sanitizer exists to close.
+        let hostile = [
+            (
+                r##"<rect fill="url(data:image/svg+xml;base64,PHN2Zy8+)" stroke="#000"/>"##,
+                "fill",
+            ),
+            (
+                r##"<rect filter="url(data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)" stroke="#000"/>"##,
+                "filter",
+            ),
+            (
+                r##"<path marker-end="url(data:image/svg+xml,%3Csvg/%3E)" stroke="#000"/>"##,
+                "marker-end",
+            ),
+            (
+                r##"<rect mask="url(data:text/html,x)" stroke="#000"/>"##,
+                "mask",
+            ),
+            (
+                r##"<rect clip-path="url(data:text/html,x)" stroke="#000"/>"##,
+                "clip-path",
+            ),
+        ];
+        for (fragment, attribute) in hostile {
+            let out = process(&format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg">{fragment}</svg>"#
+            ));
+            assert!(!out.svg.contains("data:"), "{attribute}: {}", out.svg);
+            assert!(
+                out.removed.iter().any(|r| r.contains(attribute)),
+                "{attribute} was not reported as removed: {:?}",
+                out.removed
+            );
+            assert!(out.svg.contains("stroke=\"#000\""), "{}", out.svg);
+        }
+    }
+
+    #[test]
+    fn hostile_href_schemes_and_protocol_relative_targets_are_stripped() {
+        let out = process(
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"><rect/></a><image href="//evil.example/x.svg"/><image href="data:text/html;base64,PHNjcmlwdD4="/></svg>"##,
+        );
+        assert!(!out.svg.contains("javascript"), "{}", out.svg);
+        assert!(!out.svg.contains("evil.example"), "{}", out.svg);
+        assert!(!out.svg.contains("data:"), "{}", out.svg);
+        assert_eq!(
+            out.removed.iter().filter(|r| r.contains("href")).count(),
+            3,
+            "every hostile href must be reported: {:?}",
+            out.removed
+        );
+    }
+
+    #[test]
+    fn legitimate_svg_survives_the_tightened_reference_rules() {
+        // The false positive the scheme test had to avoid: a value that
+        // merely *contains* a colon is not a URL, and an attribute that no
+        // renderer dereferences is not a reference at all.
+        let out = process(
+            r##"<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="grad"/></defs><use href="#gradient"/><path d="M0 0L1 1" fill="url(#grad)" stroke="url(#grad)"/><text font-family="Foo: Bar" transform="translate(1,2)">hi</text></svg>"##,
+        );
+        assert!(
+            out.removed.is_empty(),
+            "legitimate SVG must survive intact: {:?}",
+            out.removed
+        );
+        assert!(out.svg.contains(r##"href="#gradient""##), "{}", out.svg);
+        assert!(out.svg.contains(r##"fill="url(#grad)""##), "{}", out.svg);
+        assert!(out.svg.contains(r#"d="M0 0L1 1""#), "{}", out.svg);
+        assert!(out.svg.contains(r#"font-family="Foo: Bar""#), "{}", out.svg);
+        assert!(
+            out.svg.contains(r#"transform="translate(1,2)""#),
+            "{}",
+            out.svg
+        );
+    }
+
+    #[test]
+    fn scheme_test_is_anchored_and_accepts_relative_references() {
+        assert!(starts_with_url_scheme("data:text/html,x"));
+        assert!(starts_with_url_scheme("HTTPS://example.test"));
+        assert!(starts_with_url_scheme("x-custom+v1.0-beta:payload"));
+        // Anchored: a colon after the first non-scheme byte is punctuation.
+        assert!(!starts_with_url_scheme("Foo Bar: baz"));
+        assert!(!starts_with_url_scheme("#fragment"));
+        assert!(!starts_with_url_scheme("1nvalid:x"));
+        assert!(!starts_with_url_scheme("./icons/star.svg"));
+        assert!(!starts_with_url_scheme(""));
+        // …but a colon straight after a legal scheme body still counts, which
+        // is why the resource-attribute restriction is the second half of the
+        // guard rather than an optimization.
+        assert!(starts_with_url_scheme("Foo: Bar"));
     }
 
     #[test]
