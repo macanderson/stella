@@ -22,10 +22,14 @@
 //!
 //! ## The slug gate is layered, on purpose
 //!
-//! [`build_provider`] enforces the **seed floor** unconditionally: a slug that
-//! is not in [`Catalog::seed`] for a `seeded` provider is a hard, named error
-//! before any wire call. That is the half that needs no on-disk state, so it
-//! can live here and apply to every caller including tests.
+//! [`build_provider`] enforces the **catalog floor** unconditionally: a slug
+//! that is not in [`Catalog::current`] for a `seeded` provider is a hard, named
+//! error before any wire call. With no runtime catalog installed, `current()`
+//! is the compiled [`Catalog::seed`], so a bare `stella-model` embedder or a
+//! live smoke test gets exactly the seed floor with no on-disk state; when the
+//! CLI has installed a runtime catalog (seed + synced model cards), a
+//! newly-released synced model passes here too, matching the CLI ladder's
+//! store-hit allow rather than silently narrowing it.
 //!
 //! The *escalation* — vetoing a slug against the user's synced master list,
 //! with suggestions — needs `stella-store`'s catalog database, which sits above
@@ -100,18 +104,29 @@ pub struct ProviderSpec<'a> {
 /// server — exempt from the slug floor.
 const LOCAL_PROVIDER_ID: &str = "local";
 
-/// Enforce the seed floor: reject a slug that a `seeded` provider's catalog
-/// seed does not know, before any wire call.
+/// Enforce the catalog floor: reject a slug that a `seeded` provider's catalog
+/// does not know, before any wire call.
+///
+/// Resolves against [`Catalog::current`], not [`Catalog::seed`]: when
+/// `stella-cli` has installed a runtime catalog (the seed merged with the
+/// on-disk model cards synced from each provider's live `/models` listing), a
+/// newly-released model that is present in that runtime catalog but not yet in
+/// the compiled seed must pass — otherwise this floor would silently veto slugs
+/// the CLI's fuller ladder (`validate_model_slug`) already allowed via its
+/// store-hit path, blocking every seeded provider's auto-synced models. A bare
+/// `stella-model` embedder or a live smoke test never installs a runtime
+/// catalog, so `current()` falls back to the seed and the anti-phantom-slug
+/// floor is exactly the seed there.
 ///
 /// Exemptions mirror the CLI's fuller ladder: `local` is always exempt, and an
 /// unseeded provider (custom endpoint) keeps its endpoint-is-the-authority
-/// posture. See the module docs for why the synced-catalog escalation is not
-/// here.
+/// posture. See the module docs for why the synced-catalog escalation with
+/// suggestions is not here.
 pub fn check_seed_floor(spec: &ProviderSpec<'_>, model_id: &str) -> Result<(), String> {
     if spec.id == LOCAL_PROVIDER_ID || !spec.seeded {
         return Ok(());
     }
-    Catalog::seed()
+    Catalog::current()
         .resolve_for(spec.id, model_id)
         .map(|_| ())
         .map_err(|e| e.to_string())
