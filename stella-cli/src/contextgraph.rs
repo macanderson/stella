@@ -587,6 +587,30 @@ pub struct HostRecall {
     pub frames: Vec<AttributedContextFrame>,
     /// The per-request cost roll-up (`docs/context-reuse.md` §2).
     pub usage: ContextUsage,
+    /// What the host's own merge dropped, and why — Phase 2 (#713).
+    ///
+    /// This re-pack is a **second** budget pass, downstream of the context
+    /// plane's: each provider already respected the budget individually, so
+    /// the merge across providers has to as well. It had no drop report at
+    /// all, which made it a silent truncation (`L-C5` bans exactly this) and
+    /// meant a required-item precedence that only landed in `pack_to_budget`
+    /// would be undone here without a trace.
+    pub dropped: Vec<HostDroppedFrame>,
+}
+
+/// A frame the host's cross-provider merge did not admit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostDroppedFrame {
+    /// The serving provider's routing key.
+    pub provider: String,
+    /// The provider's frame id.
+    pub id: String,
+    /// The human citation, so the report reads as names not ids (`L-C4`).
+    pub citation_label: String,
+    /// What it would have cost.
+    pub token_cost: u32,
+    /// Which limit dropped it, in the same vocabulary the context plane uses.
+    pub reason: stella_context::DropReason,
 }
 
 /// Fan `query` out through the host, **select** by score, and **render** in
@@ -645,21 +669,44 @@ pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> HostRecall {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    // Phase 2 (#713): required-item precedence and an honest drop report, both
+    // of which this second pack lacked entirely. A frame the context plane
+    // marked required (a file the goal named verbatim) survived
+    // `pack_to_budget` and was then silently dropped here the moment a
+    // higher-scoring frame from any provider filled the count budget first —
+    // so the guarantee held in one packer and was undone in the other. The
+    // required pass runs first for the same reason it does there.
     let mut seen = std::collections::HashSet::new();
     let mut kept: Vec<AttributedContextFrame> = Vec::new();
+    let mut dropped: Vec<HostDroppedFrame> = Vec::new();
     let mut spent_tokens: u32 = 0;
-    for frame in frames {
-        if kept.len() >= query.max_frames as usize {
-            break;
+    let (required, ranked): (Vec<_>, Vec<_>) = frames.into_iter().partition(is_required_frame);
+    for (frames, count_limited) in [(required, false), (ranked, true)] {
+        for frame in frames {
+            if !seen.insert((frame.provider.clone(), frame.frame.id.clone())) {
+                continue;
+            }
+            // `break` became `continue` with a report: the old loop stopped
+            // walking the moment the count filled, so everything after it
+            // vanished uncounted as well as unkept.
+            if count_limited && kept.len() >= query.max_frames as usize {
+                dropped.push(host_dropped(&frame, stella_context::DropReason::FrameCount));
+                continue;
+            }
+            if spent_tokens.saturating_add(frame.frame.token_cost) > query.max_tokens {
+                dropped.push(host_dropped(
+                    &frame,
+                    if count_limited {
+                        stella_context::DropReason::TokenBudget
+                    } else {
+                        stella_context::DropReason::RequiredOverBudget
+                    },
+                ));
+                continue;
+            }
+            spent_tokens += frame.frame.token_cost;
+            kept.push(frame);
         }
-        if spent_tokens.saturating_add(frame.frame.token_cost) > query.max_tokens {
-            continue;
-        }
-        if !seen.insert((frame.provider.clone(), frame.frame.id.clone())) {
-            continue;
-        }
-        spent_tokens += frame.frame.token_cost;
-        kept.push(frame);
     }
     // Selection is finished; how the survivors *render* must now be free of
     // score and cost (§1 D2/D3). `canonical_order` puts the identities in the
@@ -671,6 +718,37 @@ pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> HostRecall {
     HostRecall {
         frames: kept,
         usage,
+        dropped,
+    }
+}
+
+/// Whether the context plane marked this frame required, read back from the
+/// provenance chain — the only channel that survives the CGP seam, which is
+/// why the reason is written there (`stella_context::SELECTION_PROVENANCE_KIND`).
+/// A frame from a provider that declares no selection reason is not required,
+/// which is the safe default: an external provider cannot claim exemption from
+/// the host's budget merely by omitting a field.
+fn is_required_frame(frame: &AttributedContextFrame) -> bool {
+    frame.frame.provenance.iter().any(|entry| {
+        entry.kind == stella_context::SELECTION_PROVENANCE_KIND
+            && entry.method.as_deref() == Some(stella_context::SelectionReason::Anchored.as_str())
+    })
+}
+
+fn host_dropped(
+    frame: &AttributedContextFrame,
+    reason: stella_context::DropReason,
+) -> HostDroppedFrame {
+    HostDroppedFrame {
+        provider: frame.provider.clone(),
+        id: frame.frame.id.clone(),
+        citation_label: frame
+            .frame
+            .citation_label
+            .clone()
+            .unwrap_or_else(|| frame.frame.title.clone()),
+        token_cost: frame.frame.token_cost,
+        reason,
     }
 }
 

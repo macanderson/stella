@@ -303,7 +303,15 @@ async fn run_pipeline_one_shot(
             .await;
     }
     if let Some(m) = &memory {
-        inject_recall_block(&mut messages, m.recall_block(prompt).await);
+        // Phase 2 (#713): the one-shot path recalled and reported nothing, so
+        // `stella run` — the primary surface — left no record of what context
+        // it was given. The stream is already live here, so the event goes
+        // straight out.
+        let recalled = m.recall_block_reported(prompt).await;
+        if let Some(event) = recalled.telemetry_event() {
+            let _ = tx.send(event);
+        }
+        inject_recall_block(&mut messages, recalled.text);
     }
     let mut budget = build_budget_guard(budget_limit);
     budget.begin_turn();
@@ -887,9 +895,13 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 continue;
             }
             println!();
+            // Phase 2 (#713): carried to `run_goal_turn`, which owns the
+            // event channel this turn's telemetry rides.
+            let mut recall_event = None;
             if let Some(m) = &memory {
-                let block = m.recall_block(goal).await;
-                inject_recall_block(&mut messages, block);
+                let recalled = m.recall_block_reported(goal).await;
+                recall_event = recalled.telemetry_event();
+                inject_recall_block(&mut messages, recalled.text);
             }
             // Everything the goal loop appends past here is this turn's work,
             // gating reflection on it (see `turn_warrants_reflection`).
@@ -909,6 +921,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 &store,
                 goal,
                 Some(presence.id()),
+                recall_event,
             )
             .await;
             presence.needs_input();
@@ -964,13 +977,15 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         messages.push(crate::attachments::user_message(input));
         println!();
 
+        let mut recall_event = None;
         if let Some(m) = &mut memory {
             // Proposal 4: A/B recall measurement — on ~1/10 turns (the A/B
             // rate), suppress recall so the outcome is comparable to recalled
             // turns. The suppressed flag rides with the turn for attribution.
             m.maybe_suppress_recall(AB_RECALL_RATE);
-            let block = m.recall_block(input).await;
-            inject_recall_block(&mut messages, block);
+            let recalled = m.recall_block_reported(input).await;
+            recall_event = recalled.telemetry_event();
+            inject_recall_block(&mut messages, recalled.text);
         }
 
         // Everything `run_turn` appends past here is this turn's work; the
@@ -994,6 +1009,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             input,
             Some(presence.id()),
             &repl_activation,
+            recall_event,
         )
         .await;
         presence.needs_input();
@@ -2030,6 +2046,13 @@ async fn run_turn(
     prompt: &str,
     session: Option<&str>,
     activated: &crate::discovery::ActivatedTools,
+    // Phase 2 (#713): this turn's `ContextRecall`, if recall ran. Recall
+    // happens before the turn's event channel exists — it has to, because its
+    // frames go into the messages the turn is built from — so the caller hands
+    // the event forward rather than emitting it into a stream that is not
+    // there yet. Passed rather than re-derived: re-running recall to report it
+    // would double the retrieval cost of every interactive turn.
+    recall_event: Option<AgentEvent>,
 ) -> Result<(), String> {
     budget.begin_turn();
     let turn_start = Instant::now();
@@ -2048,6 +2071,13 @@ async fn run_turn(
         cfg.provider.id.to_string(),
         durable_pre_persisted,
     );
+    // First event of the turn: what recall put in front of the model. It
+    // precedes the stage boundaries deliberately — the context was assembled
+    // before the turn began, and a receipt that ordered it after the first
+    // stage would misdescribe when it entered.
+    if let Some(event) = recall_event {
+        let _ = tx.send(event);
+    }
 
     // The scoped tool set must drop its tx clone before awaiting the renderer.
     let outcome = if crate::enterprise_telemetry::process_free_authority_active() {

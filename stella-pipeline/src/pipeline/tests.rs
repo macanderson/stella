@@ -1212,6 +1212,7 @@ fn assemble_user_message_puts_recall_before_the_task() {
         content: "run_turn".into(),
         token_cost: 5,
         id: None,
+        content_digest: None,
     }];
     let msg = assemble_user_message("do the thing", &frames);
     let recall_idx = msg.find("Recalled context").unwrap();
@@ -1912,6 +1913,7 @@ impl ContextRecallPort for MeteredRecall {
                 content: "run_turn".into(),
                 token_cost: 120,
                 id: None,
+                content_digest: None,
             }],
             usage: Some(ContextUsage {
                 budget_requested: 1200,

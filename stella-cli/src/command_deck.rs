@@ -1209,9 +1209,13 @@ pub async fn run_deck_session(
         // the turn itself appends. In pipeline mode the pipeline owns BOTH —
         // recall rides inside its one volatile recall+goal message (L-E8), so
         // the driver appending either would double them.
+        // Phase 2 (#713): the deck recalled and reported nothing. The event
+        // is carried to `run_lead_turn`, which owns the turn's channel.
+        let mut recall_event = None;
         if !pipeline_on && let Some(m) = &memory {
-            let block = m.recall_block(&prompt).await;
-            inject_recall_block(&mut messages, block);
+            let recalled = m.recall_block_reported(&prompt).await;
+            recall_event = recalled.telemetry_event();
+            inject_recall_block(&mut messages, recalled.text);
         }
         let turn_base = messages.len();
         if !pipeline_on {
@@ -1335,6 +1339,7 @@ pub async fn run_deck_session(
                         &lead_holder,
                         &discovery_activation,
                         &steering,
+                        recall_event,
                     )
                     .await
                 }
@@ -4055,6 +4060,9 @@ async fn run_lead_turn(
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
     steering: &subsession::SteeringTap,
+    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
+    // because recall runs before this channel exists.
+    recall_event: Option<AgentEvent>,
 ) -> Result<(), String> {
     budget.begin_turn();
 
@@ -4066,6 +4074,10 @@ async fn run_lead_turn(
         in_tx.clone(),
         LEAD.to_string(),
     );
+    // First event of the turn: what recall put in front of the model.
+    if let Some(event) = recall_event {
+        let _ = tx.send(event);
+    }
 
     // Claim-on-first-write over the shared tree (crate::claims): wraps the
     // base executor, so a refused write surfaces as the tool's own error —

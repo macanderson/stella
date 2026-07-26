@@ -16,6 +16,27 @@ use stella_protocol::{CompletionMessage, MessageRole};
 use super::projection::{is_suppressed_local_frame, project_recalled_frame};
 use super::{RECALL_MARKER, SessionMemory};
 
+/// The rendered recalled-context block, and the structured recall it was
+/// rendered from. See [`SessionMemory::recall_block_reported`].
+#[derive(Debug, Default)]
+pub struct RecalledBlock {
+    /// The message to inject, or `None` when nothing relevant surfaced (an
+    /// empty block would only burn cache) or the turn is an A/B control.
+    pub text: Option<String>,
+    /// What recall actually returned and what it cost — the material the
+    /// `ContextRecall` event is built from.
+    pub recall: Recall,
+}
+
+impl RecalledBlock {
+    /// This block's recall telemetry, ready to send. `None` when no frame was
+    /// recalled — a turn whose block is only skills has no frames to report.
+    #[must_use]
+    pub fn telemetry_event(&self) -> Option<stella_protocol::AgentEvent> {
+        self.recall.telemetry_event()
+    }
+}
+
 impl SessionMemory {
     /// Build the volatile recalled-context block for a prompt: relevant
     /// memories (similarity + domain overlap + recency via the context
@@ -30,13 +51,38 @@ impl SessionMemory {
     /// **A/B control (Proposal 4):** when `ab_suppressed` is true (set by a
     /// deterministic coin flip), recall returns `None` so the turn runs
     /// without context — the outcome is then comparable to recalled turns.
+    ///
+    /// Test-only since Phase 2 (#713): every production caller now takes
+    /// [`Self::recall_block_reported`], because a caller that only wants the
+    /// string is a caller that emits no recall telemetry — which is exactly
+    /// the defect deliverable 3 closes. Keeping the convenience form reachable
+    /// from production would let the next recall site reintroduce it silently.
+    #[cfg(test)]
     pub async fn recall_block(&self, prompt: &str) -> Option<String> {
+        self.recall_block_reported(prompt).await.text
+    }
+
+    /// The recalled-context block **without throwing the recall away**.
+    ///
+    /// Phase 2 (#713) deliverable 3. `recall_block` rendered a `String` and
+    /// dropped the structured [`Recall`] — frames, provider mix, and the CGP
+    /// usage report — on the floor. That discard is the whole reason the
+    /// one-shot run, the interactive REPL, `/goal`, and the Command Deck
+    /// emitted no `ContextRecall` event: they had nothing left to emit. The
+    /// pipeline was the only surface that reported its recall, and it is the
+    /// surface real users touch least.
+    ///
+    /// So the block and the recall behind it now travel together, for the same
+    /// reason [`Recall`] itself carries frames and usage together: they are
+    /// answers to different questions about one request, and separating them
+    /// means either re-running recall to report it or losing it entirely.
+    pub async fn recall_block_reported(&self, prompt: &str) -> RecalledBlock {
         if self.ab_suppressed {
-            return None;
+            return RecalledBlock::default();
         }
         let mut sections: Vec<String> = Vec::new();
-        let frames = self.recalled_frames(prompt).await.frames;
-        if let Some(section) = render_context_section(&frames) {
+        let recall = self.recalled_frames(prompt).await;
+        if let Some(section) = render_context_section(&recall.frames) {
             sections.push(section);
         }
 
@@ -60,10 +106,17 @@ impl SessionMemory {
             sections.push(section);
         }
 
-        if sections.is_empty() {
-            None
-        } else {
-            Some(format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n")))
+        RecalledBlock {
+            // Skills and draft claims can produce a block with no frames behind
+            // it; frames can be recalled and then filtered out of the render by
+            // the citation-label rule. The two fields are therefore reported
+            // independently rather than one gating the other — a provider still
+            // spent the tokens for a frame the host later dropped, and a cost
+            // that vanishes because the render discarded it is exactly the
+            // unmeterable cost this event exists to surface.
+            text: (!sections.is_empty())
+                .then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n"))),
+            recall,
         }
     }
 
@@ -160,6 +213,21 @@ impl SessionMemory {
         // and a cost that vanishes because the host discarded the frames is
         // exactly the unmeterable cost #452 exists to surface.
         let recalled = crate::contextgraph::recall_via_host(&self.host, &query).await;
+        // Phase 2 (#713): the host's cross-provider merge is a second budget
+        // pass and reported nothing at all, so anything it cut vanished
+        // without a trace — a silent truncation `L-C5` bans. A required item
+        // it could not honor is the loudest case and is named first: the
+        // caller pointed at that file, and being told it did not fit is the
+        // whole difference between a budget and a lie.
+        for drop in &recalled.dropped {
+            if drop.reason == stella_context::DropReason::RequiredOverBudget {
+                report(format!(
+                    "recall could not fit an anchored frame: {} ({} tokens) exceeds the \
+                     {}-token budget — raise context.retrieval.max_tokens to include it",
+                    drop.citation_label, drop.token_cost, query.max_tokens
+                ));
+            }
+        }
         Recall {
             frames: recalled
                 .frames

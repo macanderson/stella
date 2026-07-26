@@ -119,19 +119,36 @@ fn list_calls(store: &Store, execution_id: i64, format: InspectFormat) -> Result
         println!("Execution {execution_id} has no recorded receipts.");
         return Ok(());
     }
+    // The FRAME column is empty for every call recorded while
+    // `context.lifecycle.enabled` was off, which is the default — so it reads
+    // as "not computed", not as "computed and empty". Two calls showing the
+    // same id saw byte-identical context; that comparison is the column's job,
+    // so the id is shown rather than the full hash it prefixes.
+    let any_frame = calls.iter().any(|c| c.compiled_frame_id.is_some());
     println!(
-        "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}",
-        "TURN", "STEP", "SEQ", "ROLE", "PROVIDER", "EST TOK"
+        "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}{}",
+        "TURN",
+        "STEP",
+        "SEQ",
+        "ROLE",
+        "PROVIDER",
+        "EST TOK",
+        if any_frame { "  FRAME" } else { "" }
     );
     for call in &calls {
         println!(
-            "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}",
+            "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}{}",
             call.turn_instance,
             call.step,
             call.call_seq,
             truncate(&call.call_role, 14),
             truncate(&call.provider, 10),
             call.estimated_input_tokens,
+            match (&call.compiled_frame_id, any_frame) {
+                (Some(id), _) => format!("  {id}"),
+                (None, true) => "  —".to_string(),
+                (None, false) => String::new(),
+            }
         );
     }
     println!(
@@ -283,6 +300,13 @@ struct CallJson {
     provider: String,
     model: String,
     estimated_input_tokens: u64,
+    /// Phase 2 (#713): the compiled frame's identity, when the lifecycle was
+    /// on for this call. Omitted rather than null when it was off — a receipt
+    /// with no frame is not a receipt with an empty frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compiled_frame_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -318,6 +342,8 @@ fn call_json(call: &RecordedCall) -> CallJson {
         provider: call.provider.clone(),
         model: call.model.clone(),
         estimated_input_tokens: call.estimated_input_tokens,
+        compiled_frame_id: call.compiled_frame_id.clone(),
+        frame_hash: call.frame_hash.clone(),
     }
 }
 

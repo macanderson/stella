@@ -25,6 +25,13 @@ pub struct ReceiptContext {
     pub turn_instance: u32,
     pub step: usize,
     pub call_seq: u64,
+    /// The session's `context.lifecycle.enabled` — Phase 2 (#713). Carried per
+    /// call rather than read from a global because an auxiliary call has no
+    /// [`crate::EngineConfig`] of its own to inherit it from, and a management
+    /// role's prompt deserves the same frame identity a worker step gets:
+    /// leaving it permanently off here would make exactly the calls that are
+    /// hardest to reconstruct the ones with no frame hash.
+    pub lifecycle_enabled: bool,
 }
 
 /// One fully-specified provider call for [`run_accounted_call`]: what to send,
@@ -177,6 +184,7 @@ pub async fn run_accounted_call(
         // One-shot context: no prior estimate exists for these messages, so the
         // ledger computes it. The step loop passes its own in instead.
         ReceiptLedger::with_call_seq(receipt.turn_instance, receipt.call_seq)
+            .with_lifecycle(receipt.lifecycle_enabled)
             .emit_step_receipt_estimating(
                 &call.request.messages,
                 receipt.step,
@@ -431,6 +439,7 @@ mod tests {
                     turn_instance: 4,
                     step: 7,
                     call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
+                    lifecycle_enabled: false,
                 }),
             },
             &mut budget,
