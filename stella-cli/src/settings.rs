@@ -48,7 +48,7 @@ pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 // Only `ContextSettings` is consumed today (the inert `Settings::context`
 // field). The nested types (`LearningMode`, `GovernanceMode`, …) live in
 // `settings::context`; a later phase re-exports them here as it wires them in.
-pub use context::ContextSettings;
+pub use context::{ContextSettings, RetrievalSettings};
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;

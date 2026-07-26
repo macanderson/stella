@@ -1,8 +1,21 @@
 # ADR 0003: Bitemporal Semantics
 
-- Status: Accepted (Phase 0)
+- Status: Accepted (Phase 0) — the recall-layer gap noted below was closed
+  2026-07-26 by Phase 1 ([#712](https://github.com/macanderson/stella/issues/712))
 - Date: 2026-07-23
 - Deciders: (Phase 0 baseline)
+
+> **Update, 2026-07-26.** The characterization below is accurate for the
+> low-level edge query it pins, but the conclusion did not hold one layer up:
+> inside `recall`, `as_of` was passed to `neighbors` and to nothing else, so a
+> point-in-time recall returned today's node content wearing yesterday's edges.
+> Until that was fixed the bitemporal guarantee was not one Stella could make.
+> Phase 1 gave every candidate reader one shared predicate
+> (`store::candidate::NODE_AS_OF`), so a query that sets `as_of` is now answered
+> from a single instant across every signal — the decision recorded here,
+> actually delivered. Prose below is left as written: it is an accurate record
+> of what was true when it was written. The world-validity axis
+> (`valid_from`/`valid_to`) is still not consulted, exactly as described.
 
 ## Context
 

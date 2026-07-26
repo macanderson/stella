@@ -45,7 +45,7 @@ pub const DEFAULT_RRF_K: f64 = 60.0;
 /// How much the recency list counts for, relative to vector similarity.
 ///
 /// Recency used to be fused at full weight, as a peer of similarity. Because
-/// RRF is flat (see [`rrf_fuse`]), that made the N most recently written nodes
+/// RRF is flat (see `rrf_fuse`), that made the N most recently written nodes
 /// structurally guaranteed a top-N slot no matter what the query asked: the
 /// newest node banked `1/61` from recency alone — the exact contribution of the
 /// single best semantic match — so with `max_frames: 5` the five newest rows

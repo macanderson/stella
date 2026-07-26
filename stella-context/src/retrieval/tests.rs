@@ -797,3 +797,69 @@ async fn an_excluded_id_never_costs_a_budget_slot_either() {
          either — it never entered the ranking"
     );
 }
+
+/// Witness for #712 deliverable 8: the knobs are reachable, and reaching them
+/// changes what recall does.
+///
+/// A settings block that deserializes but steers nothing is indistinguishable
+/// from no settings block at all — which is what these knobs were before this
+/// change, as eight `const`s the settings file had no path to.
+#[tokio::test]
+async fn tuning_reaches_the_ranking() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let make = |tuning: RecallTuning| {
+        ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            FixedClock::shared(1_000),
+        )
+        .unwrap()
+        .with_tuning(tuning)
+    };
+
+    let store = make(RecallTuning::default());
+    let mut delta = ContextDelta::new();
+    for i in 0..40 {
+        delta = delta.with_node(
+            NodeInput::new(NodeKind::Artifact, format!("note-{i}"))
+                .with_content(format!("note {i:03} about packing frames to a budget")),
+        );
+    }
+    store.upsert(delta).await.unwrap();
+    drop(store);
+
+    let mut q = base_query("open the database", "packing frames to a budget");
+    q.max_frames = 3;
+
+    let narrow = make(RecallTuning::default()).recall(&q).await.unwrap();
+    let wide = make(RecallTuning {
+        mmr_candidate_multiple: 10,
+        ..RecallTuning::default()
+    })
+    .recall(&q)
+    .await
+    .unwrap();
+    assert!(
+        wide.considered > narrow.considered,
+        "widening the shortlist multiple must widen the shortlist: {} vs {}",
+        wide.considered,
+        narrow.considered
+    );
+
+    // The coverage floor decides grounding vs. labeled lexical fallback.
+    let grounded = make(RecallTuning::default()).recall(&q).await.unwrap();
+    assert!(!grounded.used_lexical_fallback);
+    let forced = make(RecallTuning {
+        min_coverage: 1.0,
+        ..RecallTuning::default()
+    })
+    .recall(&q)
+    .await
+    .unwrap();
+    assert!(
+        forced.used_lexical_fallback,
+        "a coverage floor of 1.0 can never be met, so retrieval must fall back \
+         and say so rather than dressing weak hits up as grounding"
+    );
+}
