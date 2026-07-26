@@ -14,7 +14,6 @@
 1503 stella-cli/src/contextgraph.rs
 1776 stella-cli/src/main.rs
 1641 stella-cli/src/memory.rs
-2224 stella-context/src/store.rs
 2095 stella-core/src/bus.rs
 2252 stella-core/src/driver.rs
 2818 stella-core/src/driver/tests.rs
