@@ -16,14 +16,24 @@
 //! # The finding this file exists to pin
 //!
 //! The overlap between the two formats is exactly inverted from what a golden
-//! replay needs. The reference events that *do* deserialize as `AgentEvent`
-//! (`text`, `reasoning`) are precisely the ones [`event_signature`] treats as
-//! structurally inert; every event that carries structural identity — the stage
-//! kind, the tool call pairing, the terminator — either fails to parse or has
-//! no counterpart at all. A half-imported reference recording would thus be
-//! *all* volatile content and *no* structure: it would parse into something
-//! that looks like a trajectory and asserts nothing. That is why
-//! [`GoldenTrajectory`] gates on load instead of trusting a recording.
+//! replay needs. The reference events that deserialize into a *typed*
+//! `AgentEvent` (`text`, `reasoning`) are precisely the ones
+//! [`event_signature`] treats as structurally inert; every event that carries
+//! structural identity — the stage kind, the tool call pairing, the terminator
+//! — lands in one of two buckets, neither of which is usable:
+//!
+//!   - `tool` and `result` are tags this protocol has never heard of, so
+//!     forward compatibility preserves them as `AgentEvent::Unknown`.
+//!     Preserved is not understood: an `Unknown` carries no structural
+//!     identity and is excluded from the structural diff entirely.
+//!   - `stage` collides with a tag this protocol *does* define, so it reaches
+//!     the typed decoder and is rejected on its body. That rejection is the
+//!     forward-compat rule working as designed, not a gap in it.
+//!
+//! A half-imported reference recording would thus be *all* volatile content
+//! and *no* structure: it would parse into something that looks like a
+//! trajectory and asserts nothing. That is why [`GoldenTrajectory`] gates on
+//! load instead of trusting a recording.
 
 use stella_pipeline::replay::event_signature;
 use stella_pipeline::replay::golden::{GoldenError, GoldenTrajectory};
@@ -74,9 +84,18 @@ fn reference_stream() -> Vec<ReferenceLine> {
     ]
 }
 
-/// The kinds that already deserialize — recorded here so the list cannot grow
-/// silently. Both are volatile-content events.
+/// The kinds that deserialize into a *typed* variant — recorded here so the
+/// list cannot grow silently. Both are volatile-content events.
 const ALREADY_PARSES: [&str; 2] = ["text", "reasoning"];
+
+/// The kinds this protocol also names, so they reach the typed decoder and are
+/// rejected on their *body*. `stage` collides by name only: the reference
+/// sends a free-text `label`, `AgentEvent::Stage` needs a typed `StageKind`.
+///
+/// This is the forward-compat rule's other branch, and the reason the rule is
+/// scoped to tags alone: a recognized tag carrying a foreign body is a real
+/// mismatch that must stay loud, not a version skew to be absorbed.
+const REJECTED_ON_BODY: [&str; 1] = ["stage"];
 
 fn kind(json: &str) -> String {
     let value: serde_json::Value = serde_json::from_str(json).expect("sample is valid JSON");
@@ -88,47 +107,71 @@ fn kind(json: &str) -> String {
 
 #[test]
 fn the_reference_wire_format_is_not_this_protocol() {
-    let mut unparseable = Vec::new();
+    let mut foreign = Vec::new();
+    let mut rejected = Vec::new();
     for line in reference_stream() {
         let parsed = serde_json::from_str::<AgentEvent>(line.json);
         let kind = kind(line.json);
         if ALREADY_PARSES.contains(&kind.as_str()) {
             assert!(
-                parsed.is_ok(),
-                "`{kind}` was expected to already parse; if it stopped, this \
-                 file's account of the gap is stale: {}",
+                parsed.is_ok_and(|e| !e.is_unknown()),
+                "`{kind}` was expected to parse as a typed variant; if it \
+                 stopped, this file's account of the gap is stale: {}",
                 line.json
             );
-        } else {
+        } else if REJECTED_ON_BODY.contains(&kind.as_str()) {
             assert!(
                 parsed.is_err(),
-                "`{kind}` parsed as an AgentEvent — the reference format and \
-                 this protocol have converged, so the adapter contract needs \
-                 revisiting (adapter must: {})",
+                "`{kind}` is a tag this protocol knows, so a foreign body must \
+                 be a hard error rather than being absorbed as Unknown \
+                 (adapter must: {})",
                 line.adapter_must
             );
-            unparseable.push(kind);
+            rejected.push(kind);
+        } else {
+            // A tag this protocol has never heard of. It is preserved rather
+            // than rejected — but preserved is not understood: it lands as
+            // `Unknown`, which carries no structural identity.
+            let event = parsed.expect("an unrecognized tag must be preserved, not rejected");
+            assert!(
+                event.is_unknown(),
+                "`{kind}` deserialized into a typed variant — the reference \
+                 format and this protocol have converged, so the adapter \
+                 contract needs revisiting (adapter must: {})",
+                line.adapter_must
+            );
+            foreign.push(kind);
         }
     }
     assert_eq!(
-        unparseable,
-        vec!["stage", "tool", "tool", "result"],
+        rejected,
+        vec!["stage"],
+        "the name-collision case must stay accounted for"
+    );
+    assert_eq!(
+        foreign,
+        vec!["tool", "tool", "result"],
         "every structurally-identifying reference event must be accounted for"
     );
 }
 
 #[test]
-fn the_reference_events_that_do_parse_carry_no_structural_identity() {
-    // The damning half of the finding: the overlap is exactly the events the
-    // differ ignores. Importing only what parses yields a trajectory that
-    // asserts nothing about stages, tools, or termination.
+fn no_reference_event_yields_structural_identity() {
+    // The damning half of the finding, and it survives the open enum intact.
+    // Whether a reference line parses as a typed variant (`text`/`reasoning`)
+    // or is preserved as `Unknown` (`tool`/`result`), the signature it
+    // produces is one the differ treats as inert. Importing a reference
+    // recording therefore yields a trajectory that asserts nothing about
+    // stages, tool pairing, or termination — exactly as before.
     for line in reference_stream() {
         let Ok(event) = serde_json::from_str::<AgentEvent>(line.json) else {
             continue;
         };
         let signature = event_signature(&event);
+        let inert =
+            matches!(signature.as_str(), "text" | "reasoning") || signature.starts_with("unknown:");
         assert!(
-            matches!(signature.as_str(), "text" | "reasoning"),
+            inert,
             "a reference event that parses must be structurally inert, got `{signature}`"
         );
     }

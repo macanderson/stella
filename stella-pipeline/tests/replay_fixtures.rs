@@ -15,6 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use stella_pipeline::replay::{parse_jsonl, streams_equivalent, structural_diff, validate_stream};
+use stella_protocol::AgentEvent;
 
 fn fixture(name: &str) -> String {
     let path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "fixtures", name]
@@ -60,6 +61,66 @@ fn a_judge_escalation_diverges_from_a_deterministic_pass() {
     );
     // And the escalation stream is itself well-formed.
     assert!(validate_stream(&escalation).is_empty());
+}
+
+#[test]
+fn a_stream_from_a_newer_stella_parses_and_stays_valid() {
+    // The conformance fixture: a well-formed turn carrying two event types
+    // this build has never heard of. An older reader must take the whole
+    // stream, not choke on the first line it does not recognize.
+    //
+    // Any client in any language that claims to consume stella's event stream
+    // should be held to exactly this: parse it, skip what you cannot decode,
+    // and keep going. A client that errors on `from_a_newer_stella.jsonl` is
+    // not forward compatible, however well it handles today's vocabulary.
+    let events = parse_jsonl(&fixture("from_a_newer_stella.jsonl"))
+        .expect("future events must not be fatal");
+    assert_eq!(
+        events.len(),
+        10,
+        "every line is kept, including the unknown"
+    );
+
+    let unknown: Vec<&str> = events
+        .iter()
+        .filter(|e| e.is_unknown())
+        .map(AgentEvent::type_tag)
+        .collect();
+    assert_eq!(unknown, vec!["quantum_reticulation", "holographic_verdict"]);
+
+    // The known vocabulary around them still validates: stage ordering, tool
+    // pairing, and the terminal `complete` are unaffected by their presence.
+    let violations = validate_stream(&events);
+    assert!(
+        violations.is_empty(),
+        "unknown events must not break stream invariants, got: {violations:?}"
+    );
+
+    // Payloads survive intact, so this reader could re-export the stream
+    // without dropping what it could not interpret.
+    let reticulation = events.iter().find(|e| e.is_unknown()).unwrap();
+    let AgentEvent::Unknown { payload, .. } = reticulation else {
+        unreachable!("filtered above")
+    };
+    assert_eq!(payload["splines"][1], "beta");
+    assert_eq!(payload["nested"]["depth"], 3);
+}
+
+#[test]
+fn a_newer_stream_is_structurally_equivalent_to_its_older_recording() {
+    // The point of the whole exercise, stated as a comparison: the same run
+    // recorded by a newer stella (with two extra event types) and by an older
+    // one must be judged structurally equivalent. If unknown events counted
+    // toward the positional diff, every golden trajectory would break the
+    // moment the vocabulary grew — which is precisely the failure the
+    // `structural_diff` keep-set exists to prevent.
+    let newer = parse_jsonl(&fixture("from_a_newer_stella.jsonl")).unwrap();
+    let older = parse_jsonl(&fixture("from_a_newer_stella_baseline.jsonl")).unwrap();
+    let diff = structural_diff(&newer, &older);
+    assert!(
+        streams_equivalent(&newer, &older),
+        "a vocabulary addition must not read as behavioural drift; got: {diff:?}"
+    );
 }
 
 #[test]

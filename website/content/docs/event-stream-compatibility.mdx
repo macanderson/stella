@@ -1,0 +1,166 @@
+---
+title: Event stream compatibility
+description: The versioning contract behind Stella's event stream — what stays stable, what may change, and what a client in any language must do to keep working across upgrades.
+---
+
+Every machine-readable surface Stella exposes carries the same event objects:
+
+- [`--output-format stream-json`](/docs/scripting) — one event per line on stdout
+- `--output-format json` — the same objects, batched under an `events` key
+- the session journal Stella writes to `.stella/private/` and replays on `stella resume`
+
+So there is one compatibility contract to learn, and it applies everywhere. This
+page is that contract, stated for someone writing a client in a language other
+than Rust.
+
+## The guarantee
+
+**A client written against one version of Stella keeps working against later
+versions, without changes.** Concretely, upgrading Stella will not make your
+parser fail on a stream it used to handle.
+
+That holds in both directions:
+
+| Change | Older client, newer stream | Newer client, older stream |
+| --- | --- | --- |
+| A new field on an existing event | Ignored | Filled with its default |
+| A brand-new event type | Preserved, reported as unrecognized | Never appears |
+| A renamed or removed event type | **Does not happen** — the vocabulary is additive only | — |
+
+Event type names and field names are never renamed or repurposed once shipped.
+Growth is by addition.
+
+## The two rules that matter
+
+Everything above reduces to a single distinction that your client should mirror,
+because Stella's own reader enforces it exactly:
+
+**1. An event `type` you do not recognize is normal. Skip it and keep going.**
+
+It means the stream came from a newer Stella than your client knows about. It is
+not an error, and it is not a reason to stop reading. Stella's own decoder
+preserves such events whole rather than failing the line.
+
+**2. A `type` you *do* recognize, carrying a body that does not fit, is a real
+error. Fail loudly.**
+
+That is not a version skew — it is corruption, or a bug in whatever produced the
+stream. Treating it as "probably just something new" converts a loud failure into
+silent data loss, which is how a bad record ends up in your database instead of
+in your logs.
+
+<Callout type="warn">
+  The tempting shortcut is a single `try { parse } catch { skip }` around each
+  line. Do not do that. It collapses both rules into rule 1 and will quietly
+  swallow malformed events that you needed to hear about. Branch on whether the
+  `type` is one you know, *then* parse.
+</Callout>
+
+## What a client must do
+
+A conforming client:
+
+1. Reads the stream **line by line** and parses each line as an independent JSON
+   object. Never buffer the whole stream and parse it as one document.
+2. Dispatches on the `"type"` string.
+3. On an unrecognized `"type"`: does not fail, does not warn loudly, and does not
+   guess at semantics from the name. Count it, log it at debug level, or pass it
+   through — nothing more.
+4. On a recognized `"type"` whose body does not parse: surfaces a real error.
+5. Ignores unknown *fields* on events it does recognize.
+6. Tolerates a torn final line. A writer killed mid-line leaves a partial JSON
+   object; the clean prefix before it is still valid.
+
+Point 6 matters more than it sounds — a crashed or cancelled run is a normal
+occurrence, not an exceptional one.
+
+```ts
+// TypeScript: the shape the contract asks for.
+const KNOWN = new Set(["stage", "text", "text_delta", "tool_start", "tool_result", "complete", /* … */]);
+
+for (const line of stream) {
+  if (!line.trim()) continue;
+
+  let event: { type?: string };
+  try {
+    event = JSON.parse(line);
+  } catch {
+    // Not JSON. Only forgivable as the final line of a killed run.
+    if (isFinalLine) break;
+    throw new Error(`corrupt event line: ${line}`);
+  }
+
+  if (typeof event.type !== "string" || !KNOWN.has(event.type)) {
+    // Rule 1: from a newer Stella. Inert, not fatal.
+    onUnrecognized?.(event);
+    continue;
+  }
+
+  // Rule 2: a type we know — a body that does not fit is a real error.
+  handle(parseKnownEvent(event));
+}
+```
+
+## Unrecognized events in practice
+
+Suppose a future Stella adds a `spline_reticulated` event. A client built before
+it existed sees:
+
+```json
+{"type":"stage","name":"execute"}
+{"type":"spline_reticulated","call_id":"q_1","splines":["alpha","beta"]}
+{"type":"text","delta":"Done."}
+{"type":"complete","model":"m","cost_usd":0.002}
+```
+
+It processes `stage`, `text`, and `complete` exactly as before, and treats line 2
+as inert. The run is fully usable. Nothing is lost that the client could have
+understood anyway.
+
+If your client re-emits or stores events, keep unrecognized ones **whole**. A
+proxy or recorder that drops them silently degrades the stream for whatever reads
+it next, which may be a newer client that would have understood them.
+
+<Callout type="info">
+  Object key order is not part of the contract and may change — JSON object keys
+  are unordered by definition. Compare parsed values, never raw lines.
+</Callout>
+
+## What is *not* guaranteed
+
+- **Ordering between event types** beyond what the pipeline documents. `text_delta`
+  lines interleave with other events.
+- **That every event has a stable meaning to you.** `text_delta` is an explicit
+  best-effort preview: the `text` event that follows carries the authoritative
+  step text, and you must *replace* accumulated deltas with it rather than append
+  (a retried model call re-streams its deltas from the start). See
+  [Scripting & automation](/docs/scripting).
+- **Internal lifecycle events.** Stella's adaptive-context machinery emits its own
+  versioned envelope, deliberately kept off this stream. Do not build on it.
+- **Byte-level stability.** Whitespace and key order may vary.
+
+## Conformance
+
+The repository ships a fixture whose only purpose is to break clients that get
+rule 1 wrong:
+
+```
+stella-pipeline/tests/fixtures/from_a_newer_stella.jsonl
+```
+
+It is a well-formed turn containing two event types that do not exist. A client
+that parses it end to end, reports two unrecognized events, and reconstructs the
+run from the rest is forward compatible. A client that throws is not — however
+well it handles today's vocabulary.
+
+If you maintain a Stella client, run it against that file in CI. It is the
+cheapest possible guard against the failure mode this contract exists to
+prevent, and it costs one test.
+
+## Detecting a version gap
+
+You do not need to know Stella's version to consume the stream correctly — that
+is the point of rule 1. But if you want to *report* a gap ("this run used
+features your dashboard cannot display"), count unrecognized types and surface
+the count. Stella's Rust decoder exposes the same information through the
+`KNOWN_TYPE_TAGS` list in `stella-protocol`.

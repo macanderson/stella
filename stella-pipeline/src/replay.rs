@@ -28,9 +28,15 @@
 //! A crashed writer must never poison a reader: [`parse_jsonl`] tolerates a
 //! single unparseable *final* line (a torn tail) by dropping it, while a
 //! malformed *interior* line is a real error. Envelope evolution is
-//! additive-only, so parsing is forward-tolerant by construction (serde
-//! ignores unknown fields on the structs that opt in; unknown *variants* are
-//! the one thing that can't be tolerated and surface as an interior error).
+//! additive-only, so parsing is forward-tolerant by construction: serde
+//! ignores unknown fields on the structs that opt in, and an unknown event
+//! *variant* is preserved as [`stella_protocol::AgentEvent::Unknown`] rather
+//! than failing the line — so a stream from a newer stella replays here
+//! intact. `tests/fixtures/from_a_newer_stella.jsonl` pins that.
+//!
+//! What remains fatal is real damage: a line that is not valid JSON, or one
+//! whose `"type"` this build *does* know but whose body does not fit that
+//! variant. Both mean the record is wrong, not merely newer.
 
 pub mod golden;
 
@@ -263,6 +269,14 @@ pub fn event_signature(event: &AgentEvent) -> String {
         AgentEvent::UsageIncomplete { reason, .. } => {
             format!("usage_incomplete:{reason:?}")
         }
+        // An event from a newer stella. Its tag is the only part this build
+        // can honestly read, and two different unknown tags are genuinely
+        // different events — so keep the tag and nothing else. Excluded from
+        // `structural_diff` below regardless (see the keep-set), so this
+        // signature exists mainly to keep the function total and to make an
+        // unknown event legible in a diff that is printed rather than
+        // compared.
+        AgentEvent::Unknown { event_type, .. } => format!("unknown:{event_type}"),
         // A goal verdict's structural identity is whether the goal was met
         // (mirrors `judge_verdict`); the reasoning text and cost are volatile.
         AgentEvent::GoalVerdict { met, .. } => format!("goal_verdict:met={met}"),
@@ -337,6 +351,14 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
     // `SpeculationDiscarded` (#415) joins them: it is a run-to-run scheduling
     // artifact absent from pre-speculation goldens, so it too must not shift
     // aligned positions.
+    // `Unknown` is the general case of that same rule. An event this build
+    // cannot decode came from a different stella, so it is present in exactly
+    // one of the two streams by construction — keeping it would shift every
+    // later position and report drift that says nothing about behaviour. The
+    // comparison is therefore over the vocabulary both sides share, which is
+    // the only vocabulary either side can reason about. Unknown events are
+    // still counted and still validated; they are only excluded from
+    // *positional* structural comparison.
     let keep = |e: &&AgentEvent| {
         !matches!(
             e,
@@ -344,6 +366,7 @@ pub fn structural_diff(left: &[AgentEvent], right: &[AgentEvent]) -> Vec<StreamD
                 | AgentEvent::BlockRegistered { .. }
                 | AgentEvent::StepManifest { .. }
                 | AgentEvent::SpeculationDiscarded { .. }
+                | AgentEvent::Unknown { .. }
         )
     };
     let left: Vec<&AgentEvent> = left.iter().filter(keep).collect();
@@ -383,6 +406,11 @@ pub enum JsonlError {
 /// non-empty line fails to parse — the signature of a writer that crashed
 /// mid-line — it is dropped rather than failing the whole parse. A malformed
 /// *interior* line is a [`JsonlError::MalformedLine`].
+///
+/// A line carrying an event type this build does not recognize is **not**
+/// malformed: it parses into [`stella_protocol::AgentEvent::Unknown`] with its
+/// payload preserved. Only genuinely broken JSON, or a recognized `"type"`
+/// with a body that does not fit it, is an error.
 pub fn parse_jsonl(input: &str) -> Result<Vec<AgentEvent>, JsonlError> {
     // Collect (1-indexed line number, content) for every non-blank line.
     let lines: Vec<(usize, &str)> = input

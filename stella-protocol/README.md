@@ -50,26 +50,39 @@ stella-protocol ← stella-core ← stella-cli / stella-pipeline / stella-tui �
 
 ## Key concepts
 
-**Additivity is directional, and the asymmetry is the whole design.** New
-*fields* ride `#[serde(default)]`, so a newer binary parses every older stream.
-New `AgentEvent` *variants* do not travel backwards: the enum is internally
-tagged (`#[serde(tag = "type")]`), so an older binary meets an unrecognized
-`"type"` with a hard deserialization error, and the JSONL replay reader treats
-an unparseable interior line as fatal. An event that must be readable by an
-older binary therefore rides `LifecycleEventEnvelope` instead, whose `payload`
-stays a raw `Value` and whose `decode()` degrades an unrecognized `event_type`
-to `LifecycleEvent::Unknown` with the payload intact. Picking the wrong channel
-is the single most expensive mistake available in this crate.
+**Additivity holds in both directions, and the boundary between "newer" and
+"broken" is the whole design.** New *fields* ride `#[serde(default)]`, so a
+newer binary parses every older stream. New `AgentEvent` *variants* travel
+backwards via `AgentEvent::Unknown { event_type, payload }`: an older binary
+meets an unrecognized `"type"` by preserving the event whole and moving on, and
+the JSONL replay reader keeps the line.
 
-**`AgentEvent::type_tag` is a compile-time guard, not a convenience.**
-`src/event.rs:712` matches every variant with no wildcard arm, so adding a
-variant fails `cargo build -p stella-protocol` with `E0004` right there. Its
-doc comment carries the full downstream checklist: which matchers the compiler
-will also stop you at (`stella-pipeline` `replay::event_signature`,
-`stella-tui` `model::Model::apply`, `textline::event_line`, `deck::trace_of`)
-and — the dangerous half — which ones it cannot (`replay::structural_diff`'s
-volatile keep-set, `deck::event_intensity`, `deck::status_from_event`). Read
-that list before you add a variant; it is maintained there, not here.
+The tolerance is scoped to the **tag alone**. A `"type"` this build knows,
+carrying a body that does not fit its variant, is still a hard error — that is
+corruption or an encoder bug, not a version skew, and laundering it into
+`Unknown` would convert a loud failure into silent data loss. `KNOWN_TYPE_TAGS`
+is the exact boundary, and it is generated from the same macro list as
+`type_tag()` so the two cannot drift.
+
+`LifecycleEventEnvelope` remains the right channel for stella-*internal*
+lifecycle events — it adds an explicit `schema_version`, and it keeps internal
+vocabulary off the public cross-language event contract. It is no longer the
+only way to stay readable by an older binary.
+
+**The `agent_event_tags!` list is a compile-time guard, not a convenience.**
+It generates both `type_tag()` and `KNOWN_TYPE_TAGS` from one variant→tag
+mapping, and the generated match has no wildcard arm — so adding a variant
+fails `cargo build -p stella-protocol` with `E0004` right at the invocation.
+The comment directly below it carries the full downstream checklist: which
+matchers the compiler will also stop you at (`stella-pipeline`
+`replay::event_signature`, `stella-tui` `model::Model::apply`,
+`textline::event_line`, `deck::trace_of`) and — the dangerous half — which ones
+it cannot (`replay::structural_diff`'s volatile keep-set,
+`deck::event_intensity`, `deck::status_from_event`). Read that list before you
+add a variant; it is maintained there, not here.
+
+Note the guard is now about *this workspace's* renderers staying complete, not
+about wire safety: external readers survive a new variant on their own.
 
 **Content-freedom is a type-level property.** `UsageIncompleteReason` is a
 closed enum precisely so an error body cannot be represented;
