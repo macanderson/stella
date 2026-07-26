@@ -15,8 +15,14 @@
 #   docker run -v /run/secrets/stella:/run/secrets/stella:ro \
 #     -e STELLA_SERVE_TOKEN_FILE=/run/secrets/stella/token -p 8080:8080 stella-serve
 
-# rust-toolchain.toml pins the exact compiler; this base tag must track it.
-FROM rust:1.97-bookworm AS builder
+# rust-toolchain.toml pins the exact compiler; this base tag must track it —
+# to the patch level, which `rust:1.97-bookworm` did not. That tag floats to
+# the newest 1.97.x (1.97.1 today), so cargo read the toolchain file and had
+# rustup download a whole second toolchain — five components — inside every
+# build before compiling a line. Naming the patch version leaves rustup only
+# the one component the official image omits (clippy). Bump this in the same
+# commit that bumps rust-toolchain.toml; docker-serve.yml fails if they drift.
+FROM rust:1.97.0-bookworm AS builder
 WORKDIR /src
 COPY . .
 # Build only the server binary and its dependency graph, in release.
@@ -34,7 +40,13 @@ COPY --from=builder /src/target/release/stella-serve /usr/local/bin/stella-serve
 # executes no local tools (STELLA_SERVE_TOOLS=remote) and writes nothing to the
 # filesystem — so it must not run as root. Numeric USER so the constraint holds
 # even under a runtime that ignores /etc/passwd.
-RUN useradd --system --uid 10001 --user-group stella
+#
+# Not `--system`: that flag asks for an id below SYS_UID_MAX (999), so with an
+# explicit --uid 10001 useradd warned on every build and put the *group* at
+# gid 999 while the user sat at 10001 — a service account split across two id
+# ranges. A no-home, no-shell account is what this uid should be anyway; it
+# never logs in and writes nothing.
+RUN useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin stella
 USER 10001
 
 # Bind all interfaces inside the container; the bearer token is the auth gate and

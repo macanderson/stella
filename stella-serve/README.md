@@ -30,7 +30,13 @@ The binary is meant to run containerized —
 [`../packaging/docker/Dockerfile.serve`](../packaging/docker/Dockerfile.serve)
 builds it with `--bin stella-serve`, runs it under a non-root numeric UID, binds
 `0.0.0.0:8080`, and uses the binary's own `stella-serve healthcheck` subcommand as
-the container HEALTHCHECK so the runtime image needs no `curl` or `wget`.
+the container HEALTHCHECK so the runtime image needs no `curl` or `wget`. Those
+are claims a Dockerfile makes and cannot check, so
+[`../.github/workflows/docker-serve.yml`](../.github/workflows/docker-serve.yml)
+builds the image on every change to it and
+[`../scripts/smoke-serve-image.sh`](../scripts/smoke-serve-image.sh) runs the
+container until each one is answered — serving on 8080, the token gate refusing
+and admitting, uid 10001 on PID 1, and Docker's own health verdict (#635).
 
 ```
 host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated OS thread)

@@ -20,12 +20,12 @@
 //! receives [`WorkerControls`] (a pause watch + a stop oneshot — the exact
 //! channel shapes the deck's sub-sessions use), and the fleet exposes the
 //! matching verbs, [`Fleet::pause_task`] / [`Fleet::resume_task`] /
-//! [`Fleet::stop_task`]. That makes the "fleet supervisor seam"
-//! `command_deck.rs` named as the follow-up *available*: per-worker
-//! pause/stop exists and is tested at the fleet layer, not just for deck
-//! sub-session lanes. It is not yet *closed* — nothing in the product drives
-//! these verbs today, so wiring the deck's key handling to them is still the
-//! open follow-up. Restart is deliberately not a fleet verb —
+//! [`Fleet::stop_task`]. That closes the "fleet supervisor seam"
+//! `command_deck.rs` named as the follow-up: the verbs are reachable by a
+//! user, driven by the `stella fleet` live dashboard's `[p]`/`[r]`/`[x]`
+//! keys through `stella_tui::FleetControl` and the control pump in
+//! `stella-cli/src/fleet_cmd.rs` (#645). Surfacing fleet tasks as deck lanes
+//! remains a separate follow-up. Restart is deliberately not a fleet verb —
 //! [`Fleet::dispatch`] is re-runnable, so a restart is the caller
 //! re-dispatching the same [`Task`]; the fleet keeps no respawn state.
 //!
@@ -805,7 +805,7 @@ where
         }
     }
 
-    // Read-through accessors (tests + real callers)
+    // Read-through accessors. Every caller today is a test (no production one).
 
     /// The parent budget guard's current state (a `Copy` snapshot).
     pub fn budget_snapshot(&self) -> BudgetGuard {

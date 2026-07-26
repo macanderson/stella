@@ -2,8 +2,9 @@
 #
 # Guard: no NEW Rust file may exceed the 1500-line ratchet. See #629.
 #
-# Three fleet plans assert this limit as a standard the tree follows
-# (docs/design/serve-surface.fleet.toml, docs/design/fleet.plan.toml x2), and
+# Three fleet plans asserted this limit as a standard the tree follows
+# (docs/design/serve-surface.fleet.toml, plus the since-deleted
+# docs/design/fleet.plan.toml x2), and
 # nothing enforced it. An unenforced limit reads as a standard the codebase is
 # meeting, which it is not: at the time this guard was written 31 files already
 # exceeded it and stella-tui/src/deck_ui.rs had grown to 6,884 lines — over 4x

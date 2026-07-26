@@ -98,7 +98,7 @@ pub use envelope::{
     SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
 };
 pub use fleet_dashboard::{
-    FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,
+    FleetControl, FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,
 };
 pub use graph::{GraphEdge, GraphNode, GraphSnapshot};
 pub use resource::ResourceMonitor;

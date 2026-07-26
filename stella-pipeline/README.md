@@ -176,7 +176,11 @@ touches three functions in [`src/witness.rs`](src/witness.rs) that must agree:
    single exact test. A form that can run a whole suite would credit a flip the witness did
    not earn.
 3. `is_witness_test_path` — teach it the language's test-file shape so the artifact is
-   recognized at all.
+   recognized at all. Accept a filename-only form (`test_*.py`, `*_test.go`) **only** if
+   that runner really collects the file wherever it sits. Rust does not: cargo runs an
+   integration test only from `tests/`, so the `rs` arm requires a recognized test
+   directory. Accepting `src/backdoor_test.rs` would let a production file ride in as a
+   witness whose required `cargo test --test <stem>` can then never pass.
 
 **Adding a port**: define the trait in [`src/ports.rs`](src/ports.rs), add the field to
 `PipelinePorts`, and choose deliberately between a no-op default and an `Option` — a port

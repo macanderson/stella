@@ -15,8 +15,7 @@ round trip to the site.
 | Path | What it is |
 |---|---|
 | [`adr/`](adr/README.md) | Architecture Decision Records for the adaptive-context work — the ratified answers the specs below are built on. |
-| [`design/`](design/) | Design specifications and RFCs: the context frame, directive schema, storage map, Context PR workflow, telemetry receipts, the serve surface, and the adaptive-context bundle under [`design/adaptive-context/`](design/adaptive-context/). |
-| [`adaptive-context/`](adaptive-context/phase-0-baseline.md) | The frozen Phase 0 baseline the adaptive-context lifecycle is built on, grounded in `file:line` references against a pinned commit. |
+| [`design/`](design/) | Design specifications and RFCs: the context frame, directive schema, storage map, Context PR workflow, telemetry receipts, the serve surface, and [adaptive context](design/adaptive-context.md). |
 | [`papers/`](papers/README.md) | The research notes behind Stella's design: [The Deterministic Engine](papers/deterministic-engine.md) and [Stella's Defensible Position](papers/stella-defensible-position.md). The live site links to these at their exact paths — don't move or rename them. |
 | [`brand/`](brand/) | Logo, mark, wordmark, and icon assets — current cuts at the top level, retired originals under `brand/legacy/`. |
 | [`why-stella.md`](why-stella.md) | The technical overview, written for someone evaluating Stella rather than contributing to it. |
