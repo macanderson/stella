@@ -19,10 +19,12 @@
 //! Every worker also honors its `stella_fleet::WorkerControls`: the stop
 //! line races the turn (the clean drop-at-await cancel the deck's
 //! sub-sessions use) and the pause line gates the raw step-loop at the
-//! engine's step boundary via a `TurnGate`. `stella fleet` itself drives
-//! workers to completion — the control verbs (`Fleet::pause_task` /
-//! `resume_task` / `stop_task`) exist for a supervisor; surfacing fleet
-//! tasks as controllable deck lanes is the named follow-up.
+//! engine's step boundary via a `TurnGate`. The control verbs
+//! (`Fleet::pause_task` / `resume_task` / `stop_task`) are driven from the
+//! live dashboard: its `[p]`/`[r]`/`[x]` keys send a
+//! `stella_tui::FleetControl` down a channel that this module's control pump
+//! applies to the `Fleet` (#645). Surfacing fleet tasks as
+//! controllable deck lanes is still the named follow-up.
 //!
 //! Worktrees are deliberately left in place after the run — the branches
 //! (`fleet/<task>`) carry the work product for the user to review and merge.
@@ -218,9 +220,30 @@ pub async fn run_fleet(
             let _ = done_tx.send(());
             r
         };
-        let (run_result, dash_result) = tokio::join!(
+        // The supervisor seam (#645): the dashboard sends verbs, this pump
+        // applies them to the real `Fleet`. It lives in the same `join!` as the
+        // run because `Fleet`'s three control verbs take `&self` and are
+        // synchronous — no clone, no `Arc`, no second task. The pump ends when
+        // the dashboard drops its sender, which is exactly when the dashboard
+        // returns, so the `join!` always completes.
+        let (ctl_tx, mut ctl_rx) = mpsc::unbounded_channel::<stella_tui::FleetControl>();
+        let control_pump = async {
+            while let Some(verb) = ctl_rx.recv().await {
+                // Every verb answers `false` for a task with no live worker
+                // (already finished, or never dispatched). That is the
+                // documented stale-verb no-op, not an error worth surfacing
+                // over the alternate screen.
+                let _ = match &verb {
+                    stella_tui::FleetControl::Pause(id) => fleet.pause_task(id),
+                    stella_tui::FleetControl::Resume(id) => fleet.resume_task(id),
+                    stella_tui::FleetControl::Stop(id) => fleet.stop_task(id),
+                };
+            }
+        };
+        let (run_result, dash_result, ()) = tokio::join!(
             run_and_signal,
-            stella_tui::run_fleet_dashboard(label, seed, dash_rx, done_rx)
+            stella_tui::run_fleet_dashboard(label, seed, dash_rx, done_rx, ctl_tx),
+            control_pump
         );
         let report = run_result.map_err(|e| format!("fleet run failed: {e}"))?;
         if let Ok(res) = dash_result {

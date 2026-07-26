@@ -28,13 +28,13 @@
 //! - **TOOL-AGO** (per task) — time since *that* task last started a tool call.
 //!   Yellow past 60s, red past 180s; `----` once the task is finished.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
@@ -71,6 +71,40 @@ pub enum FleetMsg {
     /// which distinguishes done/failed more reliably than inferring from the
     /// event stream).
     Status { id: String, status: FleetStatus },
+}
+
+// ── Wire type: dashboard → fleet driver ─────────────────────────────────────
+
+/// One supervisor verb the dashboard asks its driver to perform on one task.
+///
+/// The dashboard deliberately does **not** hold a `Fleet`: `stella-tui` does
+/// not depend on `stella-fleet`, and keeping the view a pure fold of its
+/// inbound stream is what makes it testable without a terminal. So the three
+/// control verbs travel the other way down this channel, and the driver
+/// (`stella-cli/src/fleet_cmd.rs`) applies them to the real `Fleet`.
+///
+/// The verbs map one-to-one onto `Fleet::pause_task` / `Fleet::resume_task` /
+/// `Fleet::stop_task`. Each is a no-op against a task with no live worker, so
+/// a stale verb is never an error — but the dashboard still declines to send
+/// one for a task it can already see is terminal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FleetControl {
+    /// Park the task's worker at its next safe step boundary.
+    Pause(String),
+    /// Un-park a paused worker.
+    Resume(String),
+    /// Fire the task's stop line; the worker drops its turn future at the
+    /// next await point.
+    Stop(String),
+}
+
+impl FleetControl {
+    /// The task id this verb addresses.
+    pub fn task_id(&self) -> &str {
+        match self {
+            FleetControl::Pause(id) | FleetControl::Resume(id) | FleetControl::Stop(id) => id,
+        }
+    }
 }
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -134,6 +168,16 @@ impl FleetStatus {
             self,
             FleetStatus::Done | FleetStatus::Failed | FleetStatus::Killed
         )
+    }
+
+    /// True while a dispatched worker backs this task, i.e. `Fleet` has live
+    /// control lines registered for it. Only `Running` and `Blocked` qualify:
+    /// `Blocked` is reached from an `AskUser`/`ScopeReview` event, which fires
+    /// inside the worker's run span, whereas `Queued` (not yet dispatched) and
+    /// the terminal states have no controls — a verb there is a guaranteed
+    /// no-op.
+    pub fn has_live_worker(self) -> bool {
+        matches!(self, FleetStatus::Running | FleetStatus::Blocked)
     }
 
     /// Sort bucket for the default ordering: blocked first (can't hide), then
@@ -479,9 +523,26 @@ impl SortKey {
 
 /// Ephemeral interaction state — focus is pinned to a task **id** so it survives
 /// re-sorts, exactly as the spec requires.
+///
+/// The three supervisor sets below record what *this supervisor asked for*, not
+/// what the fleet reports: a pause has no wire representation coming back (the
+/// worker parks silently at a step boundary), so without local intent the grid
+/// could not distinguish a parked worker from a slow one. Fleet truth still
+/// wins wherever the two can disagree — a task that reaches a terminal status
+/// is rendered from its status, never from these sets.
 struct FleetView {
     focused_id: Option<String>,
     sort: SortKey,
+    /// Tasks this supervisor has paused and not yet resumed.
+    paused: HashSet<String>,
+    /// Tasks whose stop line this supervisor has already fired. Kept so the
+    /// grid can show the stop as in-flight during the window between the verb
+    /// and the worker's terminal `Status`.
+    stopped: HashSet<String>,
+    /// The task a first `[x]` armed. Stop is the one irreversible verb here —
+    /// it drops a worker's turn and loses whatever it had not committed — so it
+    /// takes two keystrokes. Any other keystroke disarms it.
+    pending_stop: Option<String>,
 }
 
 impl FleetView {
@@ -489,7 +550,108 @@ impl FleetView {
         Self {
             focused_id: rows.first().map(|r| r.id.clone()),
             sort: SortKey::Default,
+            paused: HashSet::new(),
+            stopped: HashSet::new(),
+            pending_stop: None,
         }
+    }
+
+    /// The supervisor marker for one row, if any. Terminal status wins: a task
+    /// that finished while paused is done, not paused.
+    fn marker(&self, entry: &TaskRow) -> Option<&'static str> {
+        if entry.status.is_terminal() {
+            return None;
+        }
+        if self.stopped.contains(&entry.id) {
+            Some("stopping")
+        } else if self.paused.contains(&entry.id) {
+            Some("paused")
+        } else {
+            None
+        }
+    }
+}
+
+/// What one keystroke decided. Returned rather than acted on so the whole key
+/// surface is unit-testable without a terminal — the gap that kept these verbs
+/// unwired (#645).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum KeyAction {
+    /// Handled internally (focus, sort, arming a stop) or ignored.
+    None,
+    /// Leave the dashboard; the run continues in the background.
+    Detach,
+    /// Send this verb to the driver.
+    Control(FleetControl),
+}
+
+/// The focused task, but only when a supervisor verb could still reach a live
+/// worker. Control lines exist only for the span a worker runs, so a task
+/// without a live worker — a terminal task *or* a still-`Queued` one that has
+/// not been dispatched — would have `Fleet` answer `false`. The dashboard
+/// declines rather than record local intent (`paused`/`stopped`) and render a
+/// marker for a verb that is guaranteed to be a no-op.
+fn controllable_focus(board: &FleetBoard, view: &FleetView) -> Option<String> {
+    let id = view.focused_id.as_deref()?;
+    let row = board.rows.iter().find(|r| r.id == id)?;
+    row.status.has_live_worker().then(|| row.id.clone())
+}
+
+/// Fold one keystroke into the view, returning what the caller should do.
+///
+/// Pure apart from the `view` mutation: it never touches the terminal and never
+/// sends anything, which is what lets the tests drive the entire supervisor
+/// surface as a sequence of `KeyEvent`s.
+fn on_key(key: KeyEvent, board: &FleetBoard, view: &mut FleetView, now: Instant) -> KeyAction {
+    // Taken unconditionally: an armed stop must not survive an unrelated
+    // keystroke, so every branch below starts from a disarmed view and only
+    // the confirming `[x]` reads what was armed.
+    let armed = view.pending_stop.take();
+
+    match key.code {
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyAction::Detach,
+        KeyCode::Char('q') | KeyCode::Esc => KeyAction::Detach,
+        KeyCode::Up | KeyCode::Char('k') => {
+            move_focus(board, view, now, -1);
+            KeyAction::None
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            move_focus(board, view, now, 1);
+            KeyAction::None
+        }
+        KeyCode::Char('s') => {
+            view.sort = view.sort.next();
+            KeyAction::None
+        }
+        KeyCode::Char('p') => match controllable_focus(board, view) {
+            Some(id) => {
+                view.paused.insert(id.clone());
+                KeyAction::Control(FleetControl::Pause(id))
+            }
+            None => KeyAction::None,
+        },
+        KeyCode::Char('r') => match controllable_focus(board, view) {
+            Some(id) => {
+                view.paused.remove(&id);
+                KeyAction::Control(FleetControl::Resume(id))
+            }
+            None => KeyAction::None,
+        },
+        KeyCode::Char('x') => match controllable_focus(board, view) {
+            // Second `[x]` on the same task confirms.
+            Some(id) if armed.as_deref() == Some(id.as_str()) => {
+                view.paused.remove(&id);
+                view.stopped.insert(id.clone());
+                KeyAction::Control(FleetControl::Stop(id))
+            }
+            // First `[x]` arms; the footer says so until something disarms it.
+            Some(id) => {
+                view.pending_stop = Some(id);
+                KeyAction::None
+            }
+            None => KeyAction::None,
+        },
+        _ => KeyAction::None,
     }
 }
 
@@ -563,11 +725,16 @@ pub struct FleetDashResult {
 /// fires, or the user detaches with `q`. Owns the alternate screen for its
 /// lifetime and restores the terminal on every exit path (including panic, via
 /// `PanicHookGuard`).
+///
+/// `control` carries the supervisor verbs back to the driver. It is dropped
+/// when this function returns, which is how the driver's control pump learns
+/// the dashboard is gone and stops.
 pub async fn run(
     label: impl Into<String>,
     tasks: Vec<(String, String)>,
     mut inbound: UnboundedReceiver<FleetMsg>,
     mut done: oneshot::Receiver<()>,
+    control: tokio::sync::mpsc::UnboundedSender<FleetControl>,
 ) -> io::Result<FleetDashResult> {
     let guard = TerminalGuard::enter(false)?;
     let _hook = PanicHookGuard::install(None, &guard);
@@ -631,18 +798,12 @@ pub async fn run(
             maybe_key = key_rx.recv(), if keys_open => {
                 match maybe_key {
                     Some(Event::Key(key)) if key.kind != KeyEventKind::Release => {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => { detached = true; break 'run; }
-                            KeyCode::Char('c')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                detached = true;
-                                break 'run;
-                            }
-                            KeyCode::Up | KeyCode::Char('k') => move_focus(&board, &mut view, now, -1),
-                            KeyCode::Down | KeyCode::Char('j') => move_focus(&board, &mut view, now, 1),
-                            KeyCode::Char('s') => view.sort = view.sort.next(),
-                            _ => {}
+                        match on_key(key, &board, &mut view, now) {
+                            KeyAction::Detach => { detached = true; break 'run; }
+                            // A closed control channel means the driver already
+                            // settled the run; the verb is moot, not an error.
+                            KeyAction::Control(verb) => { let _ = control.send(verb); }
+                            KeyAction::None => {}
                         }
                     }
                     Some(_) => {}
@@ -735,7 +896,7 @@ fn render(board: &FleetBoard, view: &FleetView, now: Instant, area: Rect, buf: &
     render_grid(board, view, &order, now, bands[3], buf);
     rule(bands[4], buf);
     render_detail(board, view, &order, now, bands[5], buf);
-    render_footer(bands[6], buf);
+    render_footer(view, bands[6], buf);
 }
 
 fn render_header(board: &FleetBoard, now: Instant, area: Rect, buf: &mut Buffer) {
@@ -835,13 +996,15 @@ fn render_grid(
         .map(|(pos, &i)| {
             let entry = &board.rows[i];
             let focused = view.focused_id.as_deref() == Some(entry.id.as_str());
-            grid_row(pos + 1, entry, now, focused)
+            grid_row(pos + 1, entry, now, focused, view.marker(entry))
         })
         .collect();
     let widths = [
         Constraint::Length(3),  // #
         Constraint::Length(22), // TASK
-        Constraint::Length(8),  // STATUS
+        // 10, not 8: wide enough for the longest supervisor marker
+        // ("⏸ stopping") as well as every `FleetStatus::label`.
+        Constraint::Length(10), // STATUS
         Constraint::Fill(1),    // LAST ACTION
         Constraint::Length(9),  // TOOL-AGO
         Constraint::Length(8),  // ELAPSED
@@ -852,13 +1015,28 @@ fn render_grid(
         .render(area, buf);
 }
 
-fn grid_row(pos: usize, entry: &TaskRow, now: Instant, focused: bool) -> Row<'static> {
+fn grid_row(
+    pos: usize,
+    entry: &TaskRow,
+    now: Instant,
+    focused: bool,
+    marker: Option<&'static str>,
+) -> Row<'static> {
     let status_color = entry.status.color();
     let caret = if focused { "▸" } else { " " };
     let num = Cell::from(format!("{caret}{pos}")).style(theme::muted());
     let task = Cell::from(truncate(&entry.title_or_id(), 22)).style(theme::body());
-    let status = Cell::from(format!("{} {}", entry.status.glyph(), entry.status.label()))
-        .style(Style::default().fg(status_color));
+    // A supervised task reads as its supervisor verb rather than its fleet
+    // status: "running" on a worker the operator just paused would be a lie the
+    // grid tells for as long as the park lasts.
+    let (status_text, status_color) = match marker {
+        Some(m) => (format!("⏸ {m}"), theme::WARNING_BRIGHT),
+        None => (
+            format!("{} {}", entry.status.glyph(), entry.status.label()),
+            status_color,
+        ),
+    };
+    let status = Cell::from(status_text).style(Style::default().fg(status_color));
     let action = Cell::from(entry.action_text()).style(theme::body());
 
     let (tool_ago_text, tool_ago_color) = match entry.tool_ago(now) {
@@ -967,10 +1145,30 @@ fn render_detail(
     Paragraph::new(lines).render(area, buf);
 }
 
-fn render_footer(area: Rect, buf: &mut Buffer) {
+fn render_footer(view: &FleetView, area: Rect, buf: &mut Buffer) {
+    // An armed stop replaces the whole help line: it is the only state in this
+    // view where the next keystroke is destructive, so it must not have to
+    // compete for attention with the key legend.
+    if let Some(id) = &view.pending_stop {
+        let line = Line::from(vec![
+            Span::styled(
+                format!("  stop {id}? "),
+                Style::default()
+                    .fg(theme::DANGER_BRIGHT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("[x] again to confirm   ", theme::muted()),
+            Span::styled("any other key cancels", theme::muted()),
+        ]);
+        Paragraph::new(line).render(area, buf);
+        return;
+    }
     let line = Line::from(vec![
         Span::styled("  [↑/↓] focus   ", theme::muted()),
         Span::styled("[s] sort   ", theme::muted()),
+        Span::styled("[p] pause   ", theme::muted()),
+        Span::styled("[r] resume   ", theme::muted()),
+        Span::styled("[x] stop   ", theme::muted()),
         Span::styled("[q] detach   ", theme::muted()),
         Span::styled("·   deeper telemetry: ", theme::muted()),
         Span::styled("stella observe", Style::default().fg(theme::ACCENT)),

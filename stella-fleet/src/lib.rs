@@ -29,7 +29,9 @@
 //! the parent [`stella_core::BudgetGuard`], and handing every worker its
 //! per-task control lines ([`WorkerControls`] through the [`FleetWorker`]
 //! port, driven by [`Fleet::pause_task`] / [`Fleet::resume_task`] /
-//! [`Fleet::stop_task`]; restart = re-dispatch).
+//! [`Fleet::stop_task`] — which the `stella fleet` dashboard's
+//! `[p]`/`[r]`/`[x]` keys reach through `stella-cli`'s control pump;
+//! restart = re-dispatch).
 //!
 //! Design constraints: we shell out
 //! to the `git`/`gh` binaries via `tokio::process` behind port traits rather
