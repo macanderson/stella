@@ -8,11 +8,19 @@
 //! payload bytes — the preimage already lives in the originating event in the
 //! journal, so this is an index over the fold, not a second content store.
 //!
-//! Granularity is event-level (increment 1): the engine decomposes what it can
-//! see in the message vec — the system prefix, each assistant text and
-//! tool-call, and each tool result by `call_id`. Splitting the recalled user
-//! message into per-frame `RecalledFrame` blocks (with `memory_id`) is the
-//! memory-join increment (spec §9), where the pipeline participates.
+//! Granularity is what the engine can see in the message vec: the system
+//! prefix, each assistant text and tool-call, each tool result by `call_id`,
+//! each attachment, and — since Phase 2 (#713) — the assembled recall block
+//! split into one `RecalledFrame` block per recalled item, with the `nod_…`
+//! record each resolves to. The driver's own User-role injections (the overflow
+//! summary, the stuck-loop steer) are classified as `Summary` and `Steered`
+//! rather than attributed to the person who did not write them.
+//!
+//! Per step the receipt also carries the **compiled frame**'s identity — a
+//! content-addressed id and a byte-stable hash over what entered the prompt,
+//! excluding the accounting around it. ADR 0006 as amended: the compiled frame
+//! is this manifest extended, not a parallel aggregate. Gated on
+//! `context.lifecycle.enabled`, off by default.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -183,6 +191,15 @@ fn estimate_tokens(content: &str) -> u32 {
 /// assistant text ride the journal (`ToolStart`/`ToolResult`/`Text`); the
 /// system prefix and the assembled user/recall/steer/summary messages do not,
 /// so their bytes are carried as local-only block content (spec §5.3).
+///
+/// [`BlockKind::Attachment`] joined this list in Phase 2 (#713), and what it
+/// carries is worth being precise about: an attachment at rest is
+/// `AttachmentSource::Path` — a name, a MIME type, a byte count, and a
+/// workspace path — and that metadata is the preimage. The base64 payload
+/// exists only after the model layer hydrates a request, which happens below
+/// this point and never on the messages a receipt sees. A hydrated attachment
+/// that somehow reached here is stripped by
+/// [`BlockDraft::without_local_content`] rather than journaled.
 fn is_gap_kind(kind: BlockKind) -> bool {
     matches!(
         kind,
@@ -191,6 +208,7 @@ fn is_gap_kind(kind: BlockKind) -> bool {
             | BlockKind::RecalledFrame
             | BlockKind::Steered
             | BlockKind::Summary
+            | BlockKind::Attachment
     )
 }
 
@@ -278,6 +296,128 @@ impl BlockDigestCache {
     }
 }
 
+/// Why a block is in the prompt, as recorded on the frame preimage.
+///
+/// A deliberately small, closed vocabulary of `&'static str` rather than an
+/// enum: it participates in the frame hash, so its wire spelling is the
+/// contract and a Rust-level rename that did not change the string would be
+/// invisible where it matters. The retrieval plane has its own, finer
+/// `SelectionReason` for why a *candidate* won ranking
+/// (`stella_context::SelectionReason`); this one answers the coarser question a
+/// receipt asks — which mechanism put these bytes in front of the model.
+///
+/// Only recall carries a reason today. Structural blocks — the system prefix,
+/// the goal, tool I/O — have none, because "it is structural" is not a
+/// selection decision anybody made and recording it would be noise in every
+/// frame body.
+pub const SELECTION_RECALLED: &str = "recalled";
+
+/// Marker prefixing the volatile recalled-context message the CLI assembles
+/// and lands at the conversation tail. Lives here, next to the decomposition
+/// that reads it, because the engine cannot recognize a recall block without
+/// it — and `stella-cli` re-exports this rather than keeping a second copy,
+/// since two spellings of one marker is a decomposition that silently stops
+/// firing the day one of them is edited.
+pub const RECALL_MARKER: &str = "[auto-recalled context]";
+
+/// Which block kind a `User`-role message actually is.
+///
+/// Not every `User` message is the user's goal. The driver injects two of its
+/// own — the overflow summary and the stuck-loop steer, both
+/// `CompletionMessage::user` — and the CLI injects the recalled-context block.
+/// Before Phase 2 all four collapsed onto [`BlockKind::UserGoal`], so a receipt
+/// attributed engine-generated text to the person. The three markers are
+/// prefixes on content the engine and CLI both write, which is why this is a
+/// prefix match and not a heuristic.
+fn user_block_kind(content: &str) -> BlockKind {
+    if content.starts_with(crate::driver::SUMMARY_MARKER_PREFIX) {
+        BlockKind::Summary
+    } else if content.starts_with(crate::driver::LOOP_STEER_PREFIX) {
+        BlockKind::Steered
+    } else if content.starts_with(RECALL_MARKER) {
+        BlockKind::RecalledFrame
+    } else {
+        BlockKind::UserGoal
+    }
+}
+
+/// One piece of a decomposed recall block: a contiguous slice of the assembled
+/// message, plus whatever provenance its first line declares.
+struct RecallSegment<'a> {
+    text: &'a str,
+    memory_id: Option<String>,
+    citation_label: Option<String>,
+}
+
+/// Split the assembled recall message into per-item segments.
+///
+/// **The segments concatenate back to the input byte for byte**, and that is
+/// the load-bearing property, not the split itself: reconstruction rebuilds the
+/// message by appending each block's preimage in manifest order, so a split
+/// that lost or duplicated a separator would break byte-exact reconstruction —
+/// the one signal this whole plane exists to provide.
+///
+/// The cut is the start of every line beginning with `"- "`, which is how the
+/// CLI renders one recalled frame. Everything before the first such line (the
+/// marker and the section header) is its own leading segment. A frame whose
+/// *body* happens to contain a line starting with `"- "` splits into two
+/// segments: the concatenation still holds, and the second segment simply
+/// parses no label. That is the right failure — a mis-split is a coarser
+/// receipt, never a wrong reconstruction.
+fn split_recall(content: &str) -> Vec<RecallSegment<'_>> {
+    let mut cuts: Vec<usize> = vec![0];
+    let mut at = 0usize;
+    for line in content.split_inclusive('\n') {
+        if at > 0 && line.starts_with("- ") {
+            cuts.push(at);
+        }
+        at += line.len();
+    }
+    cuts.push(content.len());
+    cuts.dedup();
+    cuts.windows(2)
+        .filter(|w| w[0] < w[1])
+        .map(|w| {
+            let text = &content[w[0]..w[1]];
+            let (memory_id, citation_label) = parse_recall_item(text);
+            RecallSegment {
+                text,
+                memory_id,
+                citation_label,
+            }
+        })
+        .collect()
+}
+
+/// The `nod_…` id and human label a rendered recall line declares.
+///
+/// The CLI renders a memory as `- [nod_…] <label> — <body>` and every other
+/// frame kind as `- <label> — <body>`. Both are parsed; anything else yields
+/// `(None, None)` rather than a guess, because a wrong `memory_id` is worse
+/// than an absent one — it is the join key the write→citation loop reads, so a
+/// mis-parse would attribute a turn's use to the wrong record.
+fn parse_recall_item(segment: &str) -> (Option<String>, Option<String>) {
+    let Some(first) = segment.lines().next() else {
+        return (None, None);
+    };
+    let Some(rest) = first.strip_prefix("- ") else {
+        return (None, None);
+    };
+    let (memory_id, rest) = match rest.strip_prefix('[').and_then(|r| r.split_once(']')) {
+        Some((id, after)) if id.starts_with("nod_") => {
+            (Some(id.to_string()), after.trim_start().to_string())
+        }
+        _ => (None, rest.to_string()),
+    };
+    // The em-dash separator the renderer writes between label and body. A line
+    // without one is all label — the shape a frame with empty content takes.
+    let label = rest
+        .split_once(" — ")
+        .map_or(rest.as_str(), |(l, _)| l)
+        .trim();
+    (memory_id, (!label.is_empty()).then(|| label.to_string()))
+}
+
 /// One decomposed context block, before it becomes a manifest entry.
 struct BlockDraft<'a> {
     block_id: String,
@@ -296,7 +436,7 @@ struct BlockDraft<'a> {
     /// turn. Owning it here meant re-cloning the system prefix — the largest gap
     /// block there is — on every step for the rest of the turn, to hand it to a
     /// registration that had already happened.
-    content: Option<&'a str>,
+    content: Option<Cow<'a, str>>,
     /// The `nod_…` record this block was recalled from, for a `RecalledFrame`.
     /// The join hub of [`BlockOrigin`], filled by decomposition when the block
     /// is a recall frame and `None` for every structural kind.
@@ -334,23 +474,38 @@ impl<'a> BlockDraft<'a> {
 /// tail that is recomputed each step; cache attribution (spec §7, A3) refines
 /// these against reported usage.
 ///
-/// Two known gaps, named rather than papered over — closing either moves every
-/// stored manifest's numbers or ids, so both are fidelity increments, not
-/// comment fixes:
+/// Both of the gaps this function used to name are closed as of Phase 2
+/// (#713), and closing them moved block ids — a block's id is
+/// `sha256(kind_tag \0 content)`, so a message that used to hash as
+/// `user_goal` and now hashes as `summary` is a different id. That is a
+/// one-way fidelity change, accepted deliberately: the ids that moved were
+/// wrong, and a receipt that attributes the engine's own compaction notice to
+/// the person is not a receipt anyone should be asked to keep for stability's
+/// sake. Stored ids from before the change remain valid for the receipts that
+/// cite them; nothing rewrites history.
 ///
-/// - **Every `User` message becomes [`BlockKind::UserGoal`].** The driver also
-///   injects User-role messages that are not the user's goal: the overflow
-///   summary (`driver::SUMMARY_MARKER_PREFIX`) and the stuck-loop steer
-///   (`driver::LOOP_STEER_PREFIX`), plus real mid-turn steers from
-///   `ports::TurnSteering`. [`BlockKind::Steered`] and [`BlockKind::Summary`]
-///   exist for exactly those and are never emitted from here, so a receipt
-///   attributes engine-generated text to the user. Reclassifying changes
-///   `kind_tag`, and with it the block id.
-/// - **Attachments are not decomposed.** `CompletionMessage::attachments`
-///   yields no block, while `crate::estimator` counts its base64 weight — so on
-///   a multimodal turn the manifest's summed `token_cost` reads materially
-///   below the same event's `estimated_input_tokens`. [`BlockKind::Attachment`]
-///   is the seat reserved for it.
+/// - **`User` messages are classified, not assumed** ([`user_block_kind`]).
+///   The overflow summary and the stuck-loop steer are the driver's own text
+///   and now land on [`BlockKind::Summary`] and [`BlockKind::Steered`]; the
+///   assembled recall block lands on [`BlockKind::RecalledFrame`], **split per
+///   item** ([`split_recall`]) so a receipt can say *what* was recalled rather
+///   than only that something was.
+/// - **Attachments are decomposed.** Each yields an [`BlockKind::Attachment`]
+///   block over its metadata, so a multimodal turn's summed manifest
+///   `token_cost` stops reading materially below the same event's
+///   `estimated_input_tokens`.
+///
+/// What did NOT move is cache zones (spec §5.1): the head is still the system
+/// prefix and the tail is still the last block, so the prefix a provider caches
+/// is byte-identical before and after this change. Splitting only ever adds
+/// blocks *within* the volatile region.
+///
+/// Nor did the hashing budget move: every block a message yields — including
+/// each recall segment and each attachment — is minted through the one `push`
+/// below and is therefore memoized in `cache` under `(message_index, ordinal)`.
+/// Splitting a message into more blocks makes the memo finer, never absent, so
+/// a decomposed recall block is still hashed once per turn rather than once per
+/// step.
 fn decompose<'a>(
     messages: &'a [CompletionMessage],
     cache: &mut BlockDigestCache,
@@ -365,7 +520,7 @@ fn decompose<'a>(
                         cache: &mut BlockDigestCache,
                         kind: BlockKind,
                         content: &dyn Fn() -> Cow<'a, str>,
-                        borrowed: Option<&'a str>,
+                        local: Option<Cow<'a, str>>,
                         call_id: Option<String>| {
             let digests = cache.digests((message_index, ordinal), kind, content);
             ordinal += 1;
@@ -377,7 +532,7 @@ fn decompose<'a>(
                 call_id,
                 cache_zone: CacheZone::Cacheable,
                 message_index,
-                content: is_gap_kind(kind).then_some(borrowed).flatten(),
+                content: is_gap_kind(kind).then_some(local).flatten(),
                 // Decomposition fills these for recall frames; every
                 // structural kind leaves them `None` (#713).
                 memory_id: None,
@@ -392,22 +547,43 @@ fn decompose<'a>(
                     cache,
                     BlockKind::SystemPrefix,
                     &|| Cow::Borrowed(message.content.as_str()),
-                    Some(message.content.as_str()),
+                    Some(Cow::Borrowed(message.content.as_str())),
                     None,
                 );
             }
-            MessageRole::User => {
-                // The recalled frames live inside this message; splitting them
-                // into per-frame blocks is the memory-join increment (§9).
-                push(
-                    &mut drafts,
-                    cache,
-                    BlockKind::UserGoal,
-                    &|| Cow::Borrowed(message.content.as_str()),
-                    Some(message.content.as_str()),
-                    None,
-                );
-            }
+            MessageRole::User => match user_block_kind(&message.content) {
+                // The recalled frames live inside this message, one per
+                // segment. Each is pushed like any other block — same memo,
+                // same `(message_index, ordinal)` key — and only then gains the
+                // provenance that is the segment's alone.
+                BlockKind::RecalledFrame => {
+                    for segment in split_recall(&message.content) {
+                        push(
+                            &mut drafts,
+                            cache,
+                            BlockKind::RecalledFrame,
+                            &|| Cow::Borrowed(segment.text),
+                            Some(Cow::Borrowed(segment.text)),
+                            None,
+                        );
+                        if let Some(draft) = drafts.last_mut() {
+                            draft.memory_id = segment.memory_id;
+                            draft.citation_label = segment.citation_label;
+                            draft.selection_reason = Some(SELECTION_RECALLED.to_string());
+                        }
+                    }
+                }
+                kind => {
+                    push(
+                        &mut drafts,
+                        cache,
+                        kind,
+                        &|| Cow::Borrowed(message.content.as_str()),
+                        Some(Cow::Borrowed(message.content.as_str())),
+                        None,
+                    );
+                }
+            },
             MessageRole::Assistant => {
                 if !message.content.is_empty() {
                     push(
@@ -415,7 +591,7 @@ fn decompose<'a>(
                         cache,
                         BlockKind::AssistantText,
                         &|| Cow::Borrowed(message.content.as_str()),
-                        Some(message.content.as_str()),
+                        Some(Cow::Borrowed(message.content.as_str())),
                         None,
                     );
                 }
@@ -442,6 +618,33 @@ fn decompose<'a>(
                     );
                 }
             }
+        }
+        // Attachments ride any role, so they are decomposed after the role
+        // match rather than inside it. The preimage is the attachment's own
+        // JSON — a name, a MIME type, a byte count, and (at rest) a path — so
+        // the block is both content-addressed and reconstructable. A hydrated
+        // attachment carries inline base64 and must not be journaled: its
+        // identity still hashes the real value, but the local preimage is
+        // dropped so the bytes never reach the event stream.
+        for attachment in &message.attachments {
+            let content = serde_json::to_string(attachment).unwrap_or_default();
+            // A hydrated attachment's preimage is dropped rather than
+            // journaled, so its inline base64 never reaches the event stream.
+            // The identity still hashes the real value either way.
+            let local = match attachment.source {
+                stella_protocol::AttachmentSource::Data { .. } => None,
+                stella_protocol::AttachmentSource::Path { .. } => {
+                    Some(Cow::Owned(content.clone()))
+                }
+            };
+            push(
+                &mut drafts,
+                cache,
+                BlockKind::Attachment,
+                &|| Cow::Owned(content.clone()),
+                local,
+                None,
+            );
         }
     }
     // Structural zones: the head is the stable prefix, the tail is volatile.
@@ -682,7 +885,7 @@ impl ReceiptLedger {
                         citation_label: draft.citation_label.clone(),
                         // The only place a gap block's bytes are copied, and
                         // only on the step it first appears.
-                        content: draft.content.map(str::to_string),
+                        content: draft.content.as_deref().map(str::to_string),
                     });
                     step
                 }
@@ -934,6 +1137,164 @@ mod tests {
         assert!(
             manifest.iter().all(|b| b.resident_since_step == 0),
             "every block has been resident since step 0"
+        );
+    }
+
+    // ── Decomposed recall (#713 deliverable 1) ──────────────────────────────
+
+    fn recall_message(body: &str) -> String {
+        format!("{RECALL_MARKER}\n\n{body}")
+    }
+
+    #[test]
+    fn recall_segments_always_concatenate_back_to_the_original_bytes() {
+        // The property the whole split rests on. If this ever fails, byte-exact
+        // reconstruction of a recall turn is broken — and it would fail
+        // silently, as a transcript that looks plausible and is not what the
+        // model saw. Cases chosen to be adversarial about separators: no items,
+        // a trailing newline, blank lines between items, a body line that
+        // itself starts with "- ", CRLF, and a lone item with no header.
+        for content in [
+            recall_message("Relevant context:\n- [nod_a] x — y\n- b — z"),
+            recall_message("Relevant context:\n- a — b\n"),
+            recall_message("Relevant context:\n\n- a — b\n\n- c — d\n\n"),
+            recall_message("Relevant context:\n- a — steps:\n- one\n- two\n"),
+            recall_message("Relevant context:\r\n- a — b\r\n"),
+            "- only an item, no header".to_string(),
+            recall_message(""),
+            String::new(),
+        ] {
+            let joined: String = split_recall(&content)
+                .iter()
+                .map(|s| s.text)
+                .collect::<Vec<_>>()
+                .concat();
+            assert_eq!(joined, content, "segments must partition the input exactly");
+        }
+    }
+
+    #[test]
+    fn a_recall_block_splits_per_item_and_resolves_memory_frames_to_their_records() {
+        let content = recall_message(
+            "Relevant context:\n\
+             - [nod_abc] auth module — validate the token\n\
+             - engine step-driver (driver.rs) — the step loop\n",
+        );
+        let segments = split_recall(&content);
+        // A leading segment (marker + section header) plus one per item.
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].memory_id, None, "the header is not an item");
+        assert_eq!(segments[1].memory_id.as_deref(), Some("nod_abc"));
+        assert_eq!(segments[1].citation_label.as_deref(), Some("auth module"));
+        // A non-memory frame keeps its label and has no record to point at —
+        // code-graph hits are grounding, not memories, and inventing an id for
+        // one would corrupt the join the citation loop reads.
+        assert_eq!(segments[2].memory_id, None);
+        assert_eq!(
+            segments[2].citation_label.as_deref(),
+            Some("engine step-driver (driver.rs)")
+        );
+    }
+
+    #[test]
+    fn a_bracketed_prefix_that_is_not_a_record_id_is_not_read_as_one() {
+        // A memory whose text happens to open with a bracket must not be
+        // mistaken for a record id. A wrong `memory_id` is worse than none:
+        // it is the key the write→citation loop joins on, so it would
+        // attribute this turn's use to a record that had nothing to do with it.
+        let content = recall_message("Relevant context:\n- [TODO] fix this — later\n");
+        let segments = split_recall(&content);
+        assert_eq!(segments[1].memory_id, None);
+    }
+
+    #[test]
+    fn the_drivers_own_messages_stop_being_attributed_to_the_user() {
+        // The gap the old `decompose` named in a comment and never closed.
+        assert_eq!(
+            user_block_kind(crate::driver::SUMMARY_MARKER_PREFIX),
+            BlockKind::Summary
+        );
+        assert_eq!(
+            user_block_kind(crate::driver::LOOP_STEER_PREFIX),
+            BlockKind::Steered
+        );
+        assert_eq!(user_block_kind(RECALL_MARKER), BlockKind::RecalledFrame);
+        assert_eq!(user_block_kind("fix the failing test"), BlockKind::UserGoal);
+    }
+
+    #[test]
+    fn a_hydrated_attachment_never_puts_its_payload_on_the_event_stream() {
+        // An at-rest attachment is metadata and rides as a gap kind. A hydrated
+        // one carries inline base64, and journaling that would put the payload
+        // on stdout under `--output-format stream-json`. Its identity still
+        // hashes the real value; only the local preimage is withheld.
+        use stella_protocol::{Attachment, AttachmentSource};
+        let at_rest = CompletionMessage {
+            role: MessageRole::User,
+            content: "look at this".into(),
+            tool_calls: vec![],
+            tool_results: vec![],
+            attachments: vec![Attachment::from_path("a.png", "image/png", 9, "/tmp/a.png")],
+        };
+        let hydrated = CompletionMessage {
+            role: MessageRole::User,
+            content: "look at this".into(),
+            tool_calls: vec![],
+            tool_results: vec![],
+            attachments: vec![Attachment {
+                name: "a.png".into(),
+                media_type: "image/png".into(),
+                byte_len: 9,
+                source: AttachmentSource::Data {
+                    base64: "aGVsbG8=".into(),
+                },
+            }],
+        };
+        let at_rest_msgs = [at_rest];
+        let hydrated_msgs = [hydrated];
+        let at_rest = decompose(&at_rest_msgs, &mut BlockDigestCache::default());
+        let hydrated = decompose(&hydrated_msgs, &mut BlockDigestCache::default());
+        let attachment_of = |drafts: &[BlockDraft]| {
+            drafts
+                .iter()
+                .find(|d| d.kind == BlockKind::Attachment)
+                .map(|d| (d.content.as_deref().map(str::to_string), d.content_digest.clone()))
+                .expect("an attachment block")
+        };
+        let (at_rest_bytes, _) = attachment_of(&at_rest);
+        let (hydrated_bytes, hydrated_digest) = attachment_of(&hydrated);
+        assert!(
+            at_rest_bytes.is_some(),
+            "a path attachment is reconstructable"
+        );
+        assert_eq!(hydrated_bytes, None, "base64 never reaches the journal");
+        // …and the withheld block is still content-addressed over the truth.
+        assert!(hydrated_digest.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn decomposition_does_not_move_the_cache_zones_the_prefix_depends_on() {
+        // Spec §5.1: cache stability outranks everything. Splitting the recall
+        // block adds blocks inside the volatile region and must leave the head
+        // exactly where it was — a zone shift on the prefix is a full-rate
+        // re-bill for the rest of the session.
+        let messages = vec![
+            CompletionMessage::system("you are a careful engineer"),
+            CompletionMessage::user(recall_message("Relevant context:\n- a — b\n- c — d")),
+            CompletionMessage::user("fix the failing test"),
+        ];
+        let drafts = decompose(&messages, &mut BlockDigestCache::default());
+        assert_eq!(drafts[0].kind, BlockKind::SystemPrefix);
+        assert_eq!(drafts[0].cache_zone, CacheZone::StablePrefix);
+        assert_eq!(
+            drafts.last().expect("a tail").cache_zone,
+            CacheZone::Volatile
+        );
+        assert!(
+            drafts[1..drafts.len() - 1]
+                .iter()
+                .all(|d| d.cache_zone == CacheZone::Cacheable),
+            "everything between head and tail is ordinary cacheable"
         );
     }
 

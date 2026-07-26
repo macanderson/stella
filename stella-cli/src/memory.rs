@@ -77,7 +77,12 @@ pub use tuning::session_lifecycle_enabled;
 /// tail and stay in place as durable history (L-E8: the byte-stable
 /// prefix — system prompt AND replayed turns — is never rewritten, which
 /// is what preserves prompt-cache hits).
-pub const RECALL_MARKER: &str = "[auto-recalled context]";
+///
+/// Phase 2 (#713) moved the definition to `stella-core`, where receipt
+/// decomposition reads it to recognize a recall block. This is a re-export,
+/// not a second copy: two spellings of one marker is a decomposition that
+/// silently stops firing the day either is edited.
+pub use stella_core::receipts::RECALL_MARKER;
 
 /// One reflection lesson as the model returns it and as persisted to the
 /// mining log (`.stella/private/reflections.jsonl`, one JSON object per line).

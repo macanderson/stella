@@ -2020,7 +2020,7 @@ impl Drop for SpeculationDropGuard {
 /// [`recent_call_records`]: the marker is User-role on the wire, but it is
 /// NOT a real user turn and must not act as a loop-detection window
 /// boundary.
-const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
+pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
 
 /// Consecutive overflow-summarizer failures this turn that trip the give-up
 /// latch ([`SummarizerHealth`]). Each failed attempt is a wasted completion
@@ -2076,8 +2076,7 @@ struct CompactionPass {
     rewrote: bool,
 }
 
-const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
-
+pub(crate) const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
 /// callers match on this to render "stopped" rather than "failed", and to
 /// keep (never truncate) the turn's completed work.
