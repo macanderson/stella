@@ -19,6 +19,13 @@ use super::{
     ReflectionLesson, ReflectionReport, SessionMemory, reflect_on_turn, skill_paths_on_disk,
 };
 
+/// Spec §8 behavior-compatibility tests, written against the pre-migration
+/// loop. A child module rather than a sibling so it can reach
+/// [`SessionMemory::auto_create_skills`] without widening its visibility for
+/// tests' sake.
+#[cfg(test)]
+mod guarantees;
+
 impl SessionMemory {
     /// Post-turn self-reflection: one cheap model call producing 0-3
     /// durable lessons, stored as domain-tagged reflection memories AND

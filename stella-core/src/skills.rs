@@ -836,4 +836,6 @@ fn union_domains(cluster: &[SkillObservation]) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod migration_contract;
+#[cfg(test)]
 mod tests;
