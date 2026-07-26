@@ -48,8 +48,10 @@
 //! acceptance criteria says: turns *within one session*.
 
 use std::collections::HashMap;
+use std::path::Path;
 
-use clap::ValueEnum;
+use clap::{Subcommand, ValueEnum};
+use colored::Colorize as _;
 use serde::Serialize;
 use stella_model::cache_economics::{
     diagnose_cache, hit_rate, is_cache_expired_rewrite, provider_cache_ttl_secs,
@@ -57,13 +59,51 @@ use stella_model::cache_economics::{
 use stella_model::catalog::Catalog;
 use stella_protocol::CompletionUsage;
 use stella_store::cache_trend::SessionCacheTrendRow;
-use stella_store::{CacheCallGap, Store, UsageStatsRow};
+use stella_store::usage::{UsageStore, project_id_for};
+use stella_store::{CacheCallGap, Store, StorePrunePolicy, StorePruneReport, UsageStatsRow};
+
+use crate::usage_cmd::parse_age_window;
 
 /// Below this hit rate (with enough turns to have established a cache to
 /// hit) a row earns a diagnosis line — matches
 /// `stella_model::cache_economics::diagnose_cache`'s own "~20%" acceptance
 /// bar.
 const LOW_HIT_RATE_THRESHOLD: f64 = 0.20;
+
+/// Subcommands under `stella stats`. Bare `stella stats` (no subcommand) is
+/// still the report — this only adds verbs that *write*.
+#[derive(Subcommand, Clone)]
+pub enum StatsCmd {
+    /// Bound this workspace's store (.stella/private/store.db) by dropping
+    /// old executions and everything keyed to them: events, telemetry, tool
+    /// calls, context blocks, receipts. Replication-safe by default — never
+    /// drops an execution whose telemetry has not reached the usage hub
+    Prune {
+        /// Drop executions older than this window: N followed by d, w, h, mo,
+        /// or y (e.g. 90d, 12w, 720h, 3mo). A bare number means days
+        #[arg(long, value_name = "AGE")]
+        older_than: Option<String>,
+
+        /// Hard ceiling on retained executions; evict the oldest prunable
+        /// ones until at/under it
+        #[arg(long, value_name = "N")]
+        max_rows: Option<i64>,
+
+        /// Also drop executions whose telemetry has not replicated into the
+        /// usage hub — permanently loses that cost data. Off by default
+        #[arg(long)]
+        force: bool,
+
+        /// VACUUM afterwards to hand freed pages back to the filesystem (also
+        /// automatic for a large prune)
+        #[arg(long)]
+        vacuum: bool,
+
+        /// Report what would be pruned without deleting anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
 
 /// Output format for `stella stats`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -211,6 +251,141 @@ fn session_diagnosis_lines(sessions: &[SessionCacheTrendRow]) -> Vec<String> {
             .map(|cause| format!("session {}: {}", s.session_id, cause.hint()))
         })
         .collect()
+}
+
+/// Entry point for `stella stats prune` — retention for `store.db` (#616).
+///
+/// The store engine ([`Store::prune`]) owns the deletion and the
+/// "is this telemetry safe to destroy" invariant; this function owns the two
+/// things that cross a database boundary and so cannot live there:
+///
+/// 1. **Reading the watermark in.** The replication cursor lives in the usage
+///    hub (`~/.stella/usage.db`), not in `store.db`. An unreachable hub reads
+///    as cursor `0`, which protects every execution that produced a model
+///    call — the safe default, announced rather than silently applied.
+/// 2. **Writing the corrected watermark back.** Pruning frees (and may
+///    renumber) the `telemetry.rowid`s the hub's cursor addresses; the report
+///    carries the re-measured value and it is persisted here. Skipping this
+///    would strand un-replicated rows above a stale cursor forever.
+pub fn run_stats_prune(
+    older_than: Option<&str>,
+    max_rows: Option<i64>,
+    force: bool,
+    vacuum: bool,
+    dry_run: bool,
+) -> Result<(), String> {
+    if older_than.is_none() && max_rows.is_none() {
+        return Err("nothing to prune — pass at least one of --older-than or --max-rows".into());
+    }
+    let older_than = older_than.map(parse_age_window).transpose()?;
+    if max_rows.is_some_and(|n| n < 0) {
+        return Err("--max-rows must not be negative".into());
+    }
+
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    // Same courtesy as the report: never create `.stella/` just to prune it.
+    if stella_store::existing_workspace_private_sqlite_path(&workspace_root, "store.db")
+        .map_err(|e| format!("cannot resolve local store: {e}"))?
+        .is_none()
+    {
+        println!("no local store in this workspace — nothing to prune");
+        return Ok(());
+    }
+    let store =
+        Store::open(&workspace_root).map_err(|e| format!("cannot open local store: {e}"))?;
+
+    let project_id = project_id_for(&workspace_root);
+    let hub = UsageStore::open_default().ok();
+    let telemetry_cursor = match &hub {
+        Some(hub) => hub.telemetry_cursor(&project_id).unwrap_or(0),
+        None => 0,
+    };
+    if hub.is_none() {
+        println!(
+            "{}",
+            "the usage hub is unreachable, so no telemetry counts as replicated — \
+             only executions with no model calls can be pruned"
+                .yellow()
+        );
+    }
+
+    let report = store
+        .prune(&StorePrunePolicy {
+            older_than,
+            max_rows,
+            telemetry_cursor,
+            force,
+            vacuum,
+            dry_run,
+        })
+        .map_err(|e| format!("prune failed: {e}"))?;
+
+    // Persist the re-measured watermark before reporting success: a prune that
+    // deleted rows and then failed to move the cursor has silently broken
+    // replication, and the user must not read "removed N rows" as all-clear.
+    if let (Some(hub), Some(cursor)) = (&hub, report.telemetry_cursor_after) {
+        hub.rewind_telemetry_cursor(&project_id, cursor)
+            .map_err(|e| format!("pruned, but could not re-anchor the usage hub cursor: {e}"))?;
+    }
+
+    print_prune_report(&report, dry_run, &workspace_root);
+    Ok(())
+}
+
+fn print_prune_report(report: &StorePruneReport, dry_run: bool, workspace_root: &Path) {
+    let verb = if dry_run { "would remove" } else { "removed" };
+    if report.aged_out > 0 {
+        println!("{verb} {} aged-out execution(s)", report.aged_out);
+    }
+    if report.ceiling_evicted > 0 {
+        println!(
+            "{verb} {} execution(s) to meet the --max-rows ceiling",
+            report.ceiling_evicted
+        );
+    }
+    if report.dependent_rows > 0 {
+        println!(
+            "{verb} {} dependent row(s) across {} table(s), including {} telemetry row(s)",
+            report.dependent_rows,
+            stella_store::DEPENDENT_TABLES.len(),
+            report.telemetry_pruned,
+        );
+    }
+    if report.protected_unreplicated > 0 {
+        println!(
+            "{}",
+            format!(
+                "kept {} execution(s) whose telemetry has not reached the usage hub — \
+                 run `stella usage sync`, then re-run; or pass --force to drop them anyway",
+                report.protected_unreplicated
+            )
+            .yellow()
+        );
+    }
+    if report.still_over_ceiling > 0 {
+        println!(
+            "{}",
+            format!(
+                "still {} execution(s) over --max-rows (un-replicated telemetry) — \
+                 sync first, or re-run with --force",
+                report.still_over_ceiling
+            )
+            .yellow()
+        );
+    }
+    if report.vacuumed {
+        println!(
+            "vacuumed {}",
+            workspace_root.join(".stella/private/store.db").display()
+        );
+    }
+    if let Some(cursor) = report.telemetry_cursor_after {
+        println!("re-anchored the usage hub replication cursor to {cursor}");
+    }
+    if report.total_rows() == 0 {
+        println!("nothing to prune — the store is already within policy");
+    }
 }
 
 /// Entry point for `stella stats`. `provider` filters rows to one provider

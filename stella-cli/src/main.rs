@@ -529,7 +529,8 @@ enum Command {
     },
 
     /// Summarize cost, tokens, and resolve rate per provider/model from
-    /// local telemetry (.stella/private/store.db) — $/resolved-task receipts
+    /// local telemetry (.stella/private/store.db) — $/resolved-task receipts.
+    /// `stella stats prune` bounds that store's growth
     Stats {
         /// Output format: table (aligned, with TOTAL row), json, or csv
         #[arg(long, value_enum, default_value = "table")]
@@ -539,6 +540,9 @@ enum Command {
         /// local)
         #[arg(long)]
         provider: Option<String>,
+
+        #[command(subcommand)]
+        cmd: Option<stats::StatsCmd>,
     },
 
     /// Cross-project telemetry hub (~/.stella/usage.db): global report,
@@ -1424,12 +1428,31 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads the local receipt tables only — no provider, no API key.
             return inspect::run_inspect(*execution_id, *turn, *step, *call_seq, *format, *full);
         }
-        Some(Command::Stats { format, provider }) => {
+        Some(Command::Stats {
+            format,
+            provider,
+            cmd,
+        }) => {
             // Reads local telemetry only — works with zero API keys.
             // `*format`: this match borrows `&cli.command` (the Tools arm
             // needs `validate` by ref), so `format` binds as `&StatsFormat`;
             // it is `Copy`, so deref rather than move.
-            return stats::run_stats(*format, provider.as_deref());
+            return match cmd {
+                None => stats::run_stats(*format, provider.as_deref()),
+                Some(stats::StatsCmd::Prune {
+                    older_than,
+                    max_rows,
+                    force,
+                    vacuum,
+                    dry_run,
+                }) => stats::run_stats_prune(
+                    older_than.as_deref(),
+                    *max_rows,
+                    *force,
+                    *vacuum,
+                    *dry_run,
+                ),
+            };
         }
         Some(Command::Usage { cmd }) => {
             // Hub-only reads/writes — no provider, no API keys.

@@ -264,7 +264,7 @@ editing Stella's own code should know what lives where:
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |
 | `.stella/private/` | Owner-only generated local state (`0700`; files `0600`). The generated `.stella/.gitignore` excludes this whole directory. |
 | `.stella/private/reflections.jsonl` | Per-turn reflection mining log (one JSON object per line). |
-| `.stella/private/store.db` | Canonical local SQLite telemetry (executions, events, cost/tokens). Community/default has zero telemetry egress; an enrolled Enterprise seat may derive only the documented content-free operational rollup. |
+| `.stella/private/store.db` | Canonical local SQLite telemetry (executions, events, cost/tokens). Community/default has zero telemetry egress; an enrolled Enterprise seat may derive only the documented content-free operational rollup. Retention is opt-in via `stella stats prune` (`Store::prune`): dropping an execution explicitly cascades to the 13 tables keyed off `executions.id` — the schema declares no foreign keys — and never destroys telemetry the usage hub has not replicated yet without `--force`. |
 | `.stella/private/context.db` | Recallable memories, episodes, facts, and temporal context. |
 | `.stella/private/codegraph.db` | Tree-sitter code-graph index, built on `stella init`. |
 | `.stella/private/fleet.db` | Fleet run, attempt, commit, and spend ledger. |

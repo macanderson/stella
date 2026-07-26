@@ -383,6 +383,30 @@ impl UsageStore {
             .unwrap_or(0))
     }
 
+    /// Move one project's replication watermark to `last_source_rowid`,
+    /// **downward included** — the repair path for a source `store.db` whose
+    /// `telemetry.rowid`s a prune invalidated.
+    ///
+    /// [`Self::replicate_telemetry`] advances the cursor with `MAX(...)` so a
+    /// late or out-of-order batch can never rewind it. That is right for
+    /// replication and wrong here: `store.db`'s `telemetry.rowid` is implicit
+    /// (its key is `UNIQUE (execution_id, step)`), so deleting rows or
+    /// `VACUUM`ing that file renumbers the surviving ones *down*, stranding
+    /// this cursor above rows that have never shipped. `stella stats prune`
+    /// computes the corrected value
+    /// ([`StorePruneReport::telemetry_cursor_after`](crate::StorePruneReport::telemetry_cursor_after))
+    /// and writes it back through here. Erring low only re-ships rows the hub
+    /// dedups on `(project_id, source_rowid)`; erring high loses them.
+    pub fn rewind_telemetry_cursor(&self, project_id: &str, last_source_rowid: i64) -> Result<()> {
+        self.lock().execute(
+            "INSERT INTO telemetry_sync_cursors (project_id, last_source_rowid) \
+             VALUES (?1, ?2) \
+             ON CONFLICT(project_id) DO UPDATE SET last_source_rowid = excluded.last_source_rowid",
+            params![project_id, last_source_rowid],
+        )?;
+        Ok(())
+    }
+
     /// Replicate a batch of source telemetry rows into the hub and advance
     /// the project's cursor, in one transaction. Idempotent on
     /// (project_id, source_rowid): a re-replicated row overwrites itself, so
@@ -1759,6 +1783,38 @@ mod tests {
             vec![4],
             "a row replicated after a non-vacuum prune must still be drainable"
         );
+    }
+
+    /// `replicate_telemetry` advances the source cursor with `MAX(...)`, so it
+    /// structurally cannot undo itself. `stella stats prune` needs exactly
+    /// that: pruning `store.db` frees and (per SQLite's docs) may renumber the
+    /// `telemetry.rowid`s this watermark addresses, leaving it pointing past
+    /// rows that never shipped.
+    #[test]
+    fn rewind_telemetry_cursor_can_lower_a_watermark_replication_cannot() {
+        let hub = UsageStore::in_memory().unwrap();
+        let scope = scope(None, None);
+        hub.replicate_telemetry(&scope, &[source_row(7, 0.01)])
+            .unwrap();
+        assert_eq!(hub.telemetry_cursor(&scope.project_id).unwrap(), 7);
+
+        // Replication alone can never walk it back…
+        hub.replicate_telemetry(&scope, &[source_row(2, 0.01)])
+            .unwrap();
+        assert_eq!(
+            hub.telemetry_cursor(&scope.project_id).unwrap(),
+            7,
+            "MAX() keeps an out-of-order batch from rewinding the cursor"
+        );
+
+        // …the prune repair path can.
+        hub.rewind_telemetry_cursor(&scope.project_id, 2).unwrap();
+        assert_eq!(hub.telemetry_cursor(&scope.project_id).unwrap(), 2);
+
+        // And it works for a project the hub has never seen (cursor row
+        // absent), which is the never-synced workspace case.
+        hub.rewind_telemetry_cursor("proj_unknown", 0).unwrap();
+        assert_eq!(hub.telemetry_cursor("proj_unknown").unwrap(), 0);
     }
 
     #[test]

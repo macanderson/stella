@@ -101,6 +101,8 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //               opt-in, never-deleting quarantine behind `stella doctor`
 //   journal     append-only per-session sidecar journal (crash-safe resume)
 //   notify      persist-until-read cross-session notifications
+//   prune       retention/deletion for `store.db`: the explicit
+//               execution-cascade delete `stella stats prune` drives (#616)
 //   sessions    cross-process session registry (one JSON file per session)
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
 mod ddl;
@@ -133,6 +135,7 @@ pub mod identity;
 pub mod integrity;
 pub mod journal;
 pub mod notify;
+pub mod prune;
 pub mod sessions;
 pub mod usage;
 
@@ -171,6 +174,7 @@ pub(crate) use private::{
     ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,
     open_private_file, open_private_sqlite, open_private_sqlite_read_only, read_private_to_string,
 };
+pub use prune::{DEPENDENT_TABLES, StorePrunePolicy, StorePruneReport};
 pub use receipts::{
     ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,
 };
