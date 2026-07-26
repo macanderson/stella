@@ -339,6 +339,10 @@ impl ReceiptLedger {
                 token_cost: draft.token_cost,
                 resident_since_step,
                 message_index: draft.message_index,
+                // Per occurrence, not per block: `BlockRegistered` fires once
+                // for a content-addressed id, so a repeat of byte-identical
+                // tool output would otherwise keep only the first call's id.
+                call_id: draft.call_id.clone(),
             });
         }
         let _ = events.send(AgentEvent::StepManifest {
@@ -434,6 +438,82 @@ mod tests {
             .filter(|e| matches!(e, AgentEvent::BlockRegistered { .. }))
             .count();
         assert_eq!(registered, 4);
+    }
+
+    /// Two distinct calls whose output is byte-identical collapse onto one
+    /// content-addressed `block_id`, so `BlockRegistered` fires once and its
+    /// `BlockOrigin` can only name the first call. If the manifest inherited
+    /// that provenance, "which calls left context" would silently drop the
+    /// duplicate — an eviction of this block would be attributed to `c1` alone.
+    /// The manifest records the call per occurrence, so both survive.
+    #[test]
+    fn identical_output_from_two_calls_keeps_both_call_ids_on_the_manifest() {
+        let (tx, mut rx) = unbounded_channel();
+        let events = EventSender::new(tx);
+        let mut ledger = ReceiptLedger::new(0);
+        // Same bytes, different calls — e.g. the agent runs `git status` twice.
+        let identical = |call_id: &str| CompletionMessage {
+            role: MessageRole::Tool,
+            content: String::new(),
+            tool_calls: vec![],
+            tool_results: vec![ToolResult {
+                call_id: call_id.into(),
+                output: ToolOutput::Ok {
+                    content: "nothing to commit".into(),
+                },
+            }],
+            attachments: vec![],
+        };
+        let messages = vec![
+            CompletionMessage::system("s"),
+            identical("c1"),
+            identical("c2"),
+        ];
+        ledger.emit_step_receipt(&messages, 0, ModelCallRole::Worker, "p", "m", &events);
+        let evts = drain(&mut rx);
+
+        // The content-addressed contract still holds: one registration, one id.
+        let registered: Vec<_> = evts
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::BlockRegistered {
+                    block_id, origin, ..
+                } => Some((block_id.clone(), origin.call_id.clone())),
+                _ => None,
+            })
+            .collect();
+        let dupes: Vec<_> = registered
+            .iter()
+            .filter(|(_, call_id)| call_id.is_some())
+            .collect();
+        assert_eq!(dupes.len(), 1, "byte-identical results register once");
+        assert_eq!(
+            dupes[0].1.as_deref(),
+            Some("c1"),
+            "birth provenance is the first call to mint the block"
+        );
+
+        let manifest = evts
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::StepManifest { blocks, .. } => Some(blocks.clone()),
+                _ => None,
+            })
+            .expect("manifest");
+        let tool_entries: Vec<_> = manifest.iter().filter(|b| b.call_id.is_some()).collect();
+        assert_eq!(tool_entries.len(), 2, "both occurrences are on the manifest");
+        assert_eq!(
+            tool_entries[0].block_id, tool_entries[1].block_id,
+            "and they do share the one content-addressed id"
+        );
+        assert_eq!(
+            tool_entries
+                .iter()
+                .map(|b| b.call_id.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["c1", "c2"],
+            "each occurrence keeps its own call — the join is not lossy"
+        );
     }
 
     #[test]

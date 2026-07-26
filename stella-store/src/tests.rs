@@ -976,9 +976,12 @@ fn skill_usage_records_per_execution_version_rows() {
     // reconstruction support (context_blocks.content / step_manifest.message_index),
     // v13 rekeys both receipt tables on call_seq so the auxiliary calls
     // sharing a step (overflow summarizer, pipeline management roles) each keep
-    // their own receipt, and v14 adds `forgotten` — explicit, reversible human
-    // tombstones over any context surface.
-    assert_eq!(SCHEMA_VERSION, 14);
+    // their own receipt, v14 adds `forgotten` — explicit, reversible human
+    // tombstones over any context surface — and v15 adds
+    // `step_manifest.call_id`, the per-occurrence tool-call attribution that
+    // content-addressed block ids cannot carry (byte-identical blocks share an
+    // id, so only the first minting call was ever recorded).
+    assert_eq!(SCHEMA_VERSION, 15);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

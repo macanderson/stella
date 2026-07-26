@@ -40,6 +40,11 @@ pub struct ManifestBlockRow {
     /// The sent-message this block belonged to; reconstruction regroups blocks
     /// sharing a `message_index` back into one `CompletionMessage` (spec §5.1).
     pub message_index: u64,
+    /// The tool call this occurrence belongs to. Distinct from
+    /// `ContextBlockRow::call_id`, which is birth provenance only: a
+    /// content-addressed block minted by one call and repeated by another is
+    /// registered once, so per-occurrence attribution has to live here.
+    pub call_id: Option<String>,
 }
 
 /// A full per-step manifest: the header (`step_receipt`) plus its ordered
@@ -141,8 +146,8 @@ impl Store {
             tx.execute(
                 "INSERT INTO step_manifest
                    (execution_id, turn_instance, step, call_seq, ordinal, block_id,
-                    cache_zone, resident_since_step, message_index)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    cache_zone, resident_since_step, message_index, call_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     execution_id,
                     turn,
@@ -153,6 +158,7 @@ impl Store {
                     block.cache_zone,
                     resident,
                     message_index,
+                    block.call_id,
                 ],
             )?;
         }
@@ -201,7 +207,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT sm.block_id, sm.cache_zone, cb.token_cost, sm.resident_since_step,
-                    sm.message_index
+                    sm.message_index, sm.call_id
              FROM step_manifest sm
              LEFT JOIN context_blocks cb
                ON cb.execution_id = sm.execution_id AND cb.block_id = sm.block_id
@@ -222,6 +228,7 @@ impl Store {
                         token_cost: r.get::<_, Option<i64>>(2)?.unwrap_or(0) as u32,
                         resident_since_step: r.get::<_, i64>(3)? as u64,
                         message_index: r.get::<_, i64>(4)? as u64,
+                        call_id: r.get(5)?,
                     })
                 },
             )?
@@ -372,6 +379,7 @@ mod tests {
                     token_cost: 100,
                     resident_since_step: 0,
                     message_index: 0,
+                    call_id: None,
                 },
                 ManifestBlockRow {
                     block_id: "blk_tail".into(),
@@ -379,6 +387,7 @@ mod tests {
                     token_cost: 103,
                     resident_since_step: 3,
                     message_index: 1,
+                    call_id: Some("call_a".into()),
                 },
             ],
         };
@@ -418,6 +427,7 @@ mod tests {
                     token_cost: 1,
                     resident_since_step: 0,
                     message_index: 0,
+                    call_id: None,
                 })
                 .collect(),
         };
