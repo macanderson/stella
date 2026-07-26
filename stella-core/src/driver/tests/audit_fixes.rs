@@ -222,7 +222,10 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
         "{SUMMARY_MARKER_PREFIX} to fit context — full detail was compacted away; \
          re-read files or re-run tools for specifics]\n\nSUMMARY"
     ));
-    let records = recent_call_records(&history(summary), &Default::default());
+    // `recent_call_records` borrows the transcript it reads, so the history has
+    // to outlive the records rather than being a temporary in the call.
+    let summarized = history(summary);
+    let records = recent_call_records(&summarized, &Default::default());
     assert_eq!(
         records
             .iter()
@@ -234,8 +237,8 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
     // The detector can only prove no-progress from outputs, so the window
     // must carry each call's result, not bare calls.
     assert!(
-        records.iter().all(|r| r.output
-            == Some(ToolOutput::Ok {
+        records.iter().all(|r| r.output.as_deref()
+            == Some(&ToolOutput::Ok {
                 content: "ok".into()
             })),
         "records must pair each call with its result: {records:?}"
@@ -244,7 +247,8 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
     let steer = CompletionMessage::user(format!(
         "{LOOP_STEER_PREFIX}] you appear to be looping: change strategy."
     ));
-    let records = recent_call_records(&history(steer), &Default::default());
+    let steered = history(steer);
+    let records = recent_call_records(&steered, &Default::default());
     assert_eq!(
         records.len(),
         2,
@@ -252,10 +256,8 @@ fn engine_injected_user_messages_are_not_loop_window_boundaries() {
     );
 
     // A REAL user message (a steer, a REPL turn) still resets the window.
-    let records = recent_call_records(
-        &history(CompletionMessage::user("also check the tests")),
-        &Default::default(),
-    );
+    let user_turn = history(CompletionMessage::user("also check the tests"));
+    let records = recent_call_records(&user_turn, &Default::default());
     assert_eq!(
         records
             .iter()
@@ -868,7 +870,7 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
         let mut identities = HashMap::new();
         snapshot_result_identities(messages, &mut identities);
         assert!(
-            compact(messages, 16).is_some(),
+            crate::compaction::compact(messages, 16).is_some(),
             "fixture sanity: the budget must force a real compaction pass"
         );
         let rewritten = messages
@@ -1015,7 +1017,7 @@ fn a_provider_recycling_call_ids_per_response_still_gets_loop_detection() {
     let mut identities = HashMap::new();
     snapshot_result_identities(&messages, &mut identities);
     assert!(
-        compact(&mut messages, 16).is_some(),
+        crate::compaction::compact(&mut messages, 16).is_some(),
         "fixture sanity: the budget must force a real compaction pass"
     );
     assert!(

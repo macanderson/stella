@@ -11,7 +11,7 @@ its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
 | [`providers`](#the-providers-map) | Override any built-in provider — or define new ones | per field |
 | [`agent_engine_config`](/docs/configuration/agent-engine-config) | Per-agent models, gateways, prompts, effort, params | per field, per agent |
 | [`hooks`](#lifecycle-hooks) | Shell commands on lifecycle events | concatenate |
-| [`tools`](#the-tools-section) | Built-in tool switches (`bash`, `web`) | last scope wins |
+| [`tools`](#the-tools-section) | Per-tool switches — any tool name, group, or `"*"` | last scope wins per key |
 | [`mcp`](#the-mcp-section) | MCP registry override | last scope wins |
 | [`authority`](#managed-authority-ceilings) | Managed ceilings for project prompts, custom tools, bash, web, and media approval | org-managed only; denial cannot be overridden |
 
@@ -210,33 +210,45 @@ so a project can point at a different registry than the user default.
 
 ## The `tools` section
 
-The top-level `tools` section switches built-in tools that are **off by default**. There
-are two such switches — raw `bash` and the `web` family:
+Stella ships with **every tool on**, `bash` and the web family included. The top-level
+`tools` section is the one way to turn something off, and it works identically for
+built-ins, MCP-server tools, and tools you registered yourself:
 
 ```json title="settings.json"
 {
   "tools": {
-    "bash": "on",
-    "web": "on"
+    "bash": "off",
+    "process": "off",
+    "mcp__github__create_issue": "off"
   }
 }
 ```
 
-Absent or `"off"`, the `bash` tool is **not registered** in any session — including
-interactive ones; the agent works through the structured tools (`run_tests`,
-`build_project`, `run_script`, the process tools) instead.
+A key is one of three things, and the most specific one wins:
 
-`"web": "on"` registers the [web family](/docs/agent-tools#web-opt-in) — `web_fetch`,
-`web_extract_assets`, `web_download`, and (with a `BRAVE_API_KEY` or `TAVILY_API_KEY`)
-`web_search`. It is off by default for the same reason as `bash`: a fetched page is both
-untrusted input and an outbound network channel. Logged-in fetches are configured
-separately in `~/.stella/web_auth.toml`.
+1. an exact **tool name** — `repo_push`, `mcp__github__create_issue`, your own
+   `deploy_to_staging`;
+2. a **group** — the families in [Built-in tools](/docs/agent-tools): `file`, `search`,
+   `context`, `build`, `scripts`, `process`, `bash`, `web`, `repo`, `ci`, `media`,
+   `task`, `issue`, `session`, plus `mcp` and `custom` for anything the built-in catalog
+   has never heard of;
+3. `"*"`, every tool.
+
+Anything unmentioned is on. So `{"*": "off", "read_file": "on"}` is a read-only agent in
+two lines, and `{"process": "off", "read_output": "on"}` keeps exactly one of the four
+process tools.
+
+A switched-off tool is **withheld from the schema list and refused if it is called
+anyway** — the refusal reads like the unknown-tool error, so a disabled tool is
+indistinguishable from one that was never built. The gate is at the tool boundary, not in
+the prompt.
 
 The values are the strings `"on"`/`"off"` — a bare boolean or a typo is a hard, named
-parse error rather than a silent ignore. Each field merges independently. A project
-`"off"` always narrows an earlier grant; project `"on"` requires
-`STELLA_TRUST_PROJECT=1`. A managed `"off"` remains a ceiling even for a trusted project.
-See [Built-in tools](/docs/agent-tools) for what registers when.
+parse error rather than a silent ignore. Keys merge independently across scopes, later
+scope winning. A project `"off"` always narrows an earlier grant; project `"on"` requires
+`STELLA_TRUST_PROJECT=1`. A managed `"off"` remains a ceiling even for a trusted project,
+at any level of specificity: a managed `{"process": "off"}` cannot be defeated by a
+project naming `{"start_process": "on"}`.
 
 ## Managed authority ceilings
 
@@ -276,9 +288,10 @@ file until you opt in with **`STELLA_TRUST_PROJECT=1`**:
   `providers.<id>.api_key`, `providers.<id>.api_key_env`, and `mcp.registry_url` are
   **silently dropped** (the trusted-scope values win) — otherwise a malicious repo could
   point a provider at its own base URL and exfiltrate the key you attach.
-- **Built-in tools.** Project `tools.bash: "on"` and `tools.web: "on"` do not grant those
-  capabilities until full project trust is present. Project `"off"` remains effective as
-  a restriction.
+- **Tool switches.** A project-scope `"on"` for any key does not grant that capability
+  until full project trust is present — it reverts to whatever the user/org-managed
+  scopes said, or to the shipped default. Project `"off"` remains effective as a
+  restriction: a repo may narrow the tool surface, never widen it.
 - **Replacement prompts.** Project `agent_engine_config.agents.<role>.prompt` values are
   restored from user/org-managed scopes unless full project trust is present and the
   managed authority ceiling permits project prompts.

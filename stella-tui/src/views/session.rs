@@ -11,7 +11,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use stella_protocol::{TaskItem, TaskStatus};
@@ -24,6 +24,106 @@ use crate::render::{
     render_transcript_window,
 };
 use crate::theme;
+use crate::transcript_nav::TurnDigest;
+
+/// Which turns render as a one-line digest this frame, and which entries that
+/// hides.
+///
+/// Computed fresh each frame from the transcript and the deck's fold sets, and
+/// summarized into `signature` so the incremental cache invalidates the moment
+/// the *set* of folded turns changes — which happens without any keypress when
+/// a turn finishes while the fold-all overlay is on.
+#[derive(Debug, Clone, Default)]
+pub struct FoldPlan {
+    /// Turn-start entry index → the digest rendered in the whole turn's place.
+    digests: HashMap<usize, TurnDigest>,
+    /// Entries swallowed by a folded turn (its start excluded).
+    hidden: HashSet<usize>,
+    signature: u64,
+}
+
+impl FoldPlan {
+    /// Build the plan for `transcript` given a predicate for "is this turn
+    /// folded", which the deck supplies so the exception-list semantics of
+    /// `ctrl+z` live in one place.
+    pub fn build(
+        transcript: &[TranscriptEntry],
+        is_folded: impl Fn(&crate::transcript_nav::Turn) -> bool,
+    ) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut plan = FoldPlan::default();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for turn in crate::transcript_nav::turns(transcript) {
+            if !is_folded(&turn) {
+                continue;
+            }
+            turn.rows.start.hash(&mut hasher);
+            turn.rows.end.hash(&mut hasher);
+            plan.digests.insert(
+                turn.rows.start,
+                crate::transcript_nav::digest(transcript, &turn),
+            );
+            plan.hidden.extend(turn.rows.start + 1..turn.rows.end);
+        }
+        plan.signature = hasher.finish();
+        plan
+    }
+
+    /// Whether entry `idx` renders at all.
+    fn hides(&self, idx: usize) -> bool {
+        self.hidden.contains(&idx)
+    }
+}
+
+/// The one line a folded turn renders as.
+///
+/// It has to answer "can I skip this?" without being unfolded, so it carries
+/// what the turn was asked to do and what it cost: tool calls, distinct files
+/// touched, elapsed time — and, in the danger colour, whether anything in
+/// there failed. A turn with a failure count is the one a reader opens.
+fn digest_line(d: &TurnDigest, folded: bool, width: usize) -> Vec<Line<'static>> {
+    let chevron = if folded { "▸" } else { "▾" };
+    let mut metric: Vec<Span<'static>> = Vec::new();
+    if d.failures > 0 {
+        metric.push(Span::styled(
+            format!("{} failed · ", d.failures),
+            Style::new().fg(theme::BAD),
+        ));
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if d.tools > 0 {
+        parts.push(format!("{} tools", d.tools));
+    }
+    if d.files > 0 {
+        parts.push(format!("{} files", d.files));
+    }
+    if d.duration_ms > 0 {
+        parts.push(crate::render::human_duration(d.duration_ms));
+    }
+    metric.push(Span::styled(
+        parts.join(" · "),
+        Style::new().fg(theme::MUTED),
+    ));
+    let left = vec![Span::styled(
+        d.prompt.clone(),
+        Style::new().fg(theme::VIOLET),
+    )];
+    let mut spans = vec![Span::styled(
+        format!("{chevron} "),
+        Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
+    )];
+    spans.extend(crate::render::justify(left, metric, width, 2));
+    vec![Line::from(spans)]
+}
+
+/// Everything the settled prefix was folded under. Any change invalidates it,
+/// so each term is a thing that can silently alter an already-rendered row:
+/// the agent, thinking/expand-all overlays and their revision, the pane width,
+/// how many entries have been evicted off the front, the file-mutation count
+/// (an inline diff can go stale without anything being appended), and the set
+/// of folded turns (which changes on its own when a turn finishes under the
+/// fold-all overlay).
+type FoldKey = (String, bool, bool, u64, usize, usize, u64, u64);
 
 /// Incremental transcript fold for the Session tab.
 ///
@@ -38,7 +138,7 @@ use crate::theme;
 /// longer grows with session length.
 #[derive(Debug, Clone, Default)]
 pub struct SessionFold {
-    key: Option<(String, bool, bool, u64, usize, usize, u64)>,
+    key: Option<FoldKey>,
     settled: usize,
     prefix: Vec<Line<'static>>,
     entry_rows: Vec<Range<usize>>,
@@ -67,6 +167,7 @@ impl SessionFold {
         expand_all: bool,
         expanded_rev: u64,
         width: usize,
+        plan: &FoldPlan,
     ) {
         // Front-eviction shifts every retained index, so the settled prefix
         // no longer describes the entries now occupying 0..settled. The
@@ -90,6 +191,7 @@ impl SessionFold {
             width,
             evicted,
             file_gen,
+            plan.signature,
         );
         if self.key.as_ref() != Some(&key) || self.settled > transcript.len().saturating_sub(1) {
             self.key = Some(key);
@@ -101,27 +203,52 @@ impl SessionFold {
         while self.settled < target {
             let i = self.settled;
             let start = self.prefix.len();
-            entry_lines(
-                &transcript[i],
-                files,
-                thinking,
-                expand_all || expanded.contains(&i),
-                width,
-                &mut self.prefix,
-            );
+            if let Some(d) = plan.digests.get(&i) {
+                self.prefix.extend(digest_line(d, true, width));
+            } else if plan.hides(i) {
+                // Swallowed by the turn above. It still gets a row range —
+                // the digest's — so that selecting, scrolling to, or
+                // searching a hidden entry lands on the line standing in for
+                // it rather than on nothing.
+                let digest_rows = self
+                    .entry_rows
+                    .iter()
+                    .rev()
+                    .find(|r| !r.is_empty())
+                    .cloned()
+                    .unwrap_or(start..start);
+                self.entry_rows.push(digest_rows);
+                self.settled += 1;
+                continue;
+            } else {
+                entry_lines(
+                    &transcript[i],
+                    files,
+                    thinking,
+                    expand_all || expanded.contains(&i),
+                    width,
+                    &mut self.prefix,
+                );
+            }
             self.entry_rows.push(start..self.prefix.len());
             self.settled += 1;
         }
         self.tail.clear();
         if let Some(last) = transcript.last() {
-            entry_lines(
-                last,
-                files,
-                thinking,
-                expand_all || expanded.contains(&target),
-                width,
-                &mut self.tail,
-            );
+            // The tail obeys the same plan: a last entry inside a folded turn
+            // must not reappear below the digest that already stands for it.
+            if let Some(d) = plan.digests.get(&target) {
+                self.tail.extend(digest_line(d, true, width));
+            } else if !plan.hides(target) {
+                entry_lines(
+                    last,
+                    files,
+                    thinking,
+                    expand_all || expanded.contains(&target),
+                    width,
+                    &mut self.tail,
+                );
+            }
         }
         if !streaming.is_empty() {
             let preview = TranscriptEntry::Text(streaming.to_string());
@@ -221,6 +348,9 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let width = inner_width(bands[5]);
     let empty = HashSet::new();
     let expanded_set = ui.expanded.get(&agent.meta.id).unwrap_or(&empty);
+    let plan = FoldPlan::build(&sm.transcript, |turn| {
+        crate::deck_ui::is_folded(ui, &agent.meta.id, turn)
+    });
     ui.session_fold.refresh(
         &agent.meta.id,
         &sm.transcript,
@@ -231,6 +361,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         ui.transcript_expand_all,
         ui.expanded_rev,
         width,
+        &plan,
     );
     let height = inner_height(bands[5]);
     let total = ui.session_fold.total();
@@ -271,22 +402,97 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // mode advertises its own way out (ctrl+o/Esc collapse the expand-all
     // overlay, Esc clears a highlight) and the resting state teaches the
     // scroll verbs (↑ scrolls; ⌘/⌃ ] and ⌘/⌃ [ jump to the ends).
-    let hint = if ui.transcript_expand_all {
-        "all expanded · ⌃O or Esc collapses"
+    // Every occurrence of a live query is lit inside the rows on screen.
+    // Done here on the materialized window rather than inside the fold cache
+    // so the query never becomes a cache-key term — typing must not rebuild
+    // the whole transcript on every keystroke.
+    if ui.search.open && !ui.search.query.is_empty() {
+        highlight_matches(&mut visible, &ui.search.query);
+    }
+    // Contextual help, keyed to the transcript's interaction state: every
+    // mode advertises its own way out (ctrl+o/Esc collapse the expand-all
+    // overlay, Esc clears a highlight) and the resting state teaches the
+    // scroll verbs (↑ scrolls; ⌘/⌃ ] and ⌘/⌃ [ jump to the ends).
+    let hint = if ui.search.open {
+        // A search bar with no match count is a search bar you cannot trust.
+        let pos = if ui.search.hits.is_empty() {
+            if ui.search.query.is_empty() {
+                "type to search".to_string()
+            } else {
+                "no matches".to_string()
+            }
+        } else {
+            format!("{}/{}", ui.search.cursor + 1, ui.search.hits.len())
+        };
+        format!(
+            "find: {}▏ · {pos} · ⏎ next · ⌃P prev · Esc close",
+            ui.search.query
+        )
+    } else if ui.fold_all_turns {
+        "turns folded · ⌃Z or Esc unfolds · ⌃F find".to_string()
+    } else if ui.transcript_expand_all {
+        "all expanded · ⌃O or Esc collapses".to_string()
     } else if ui.session_selected.is_some() {
-        "⌃O expand/collapse · Esc clears · ↑ ↓ move"
+        "⌃O expand · ⌃Z fold turn · ⌃N next failure · Esc clears".to_string()
     } else {
-        "↑ scroll · ⌘/⌃ ] end · ⌘/⌃ [ start · ⌃O expand all"
+        "↑ scroll · ⌃F find · ⌃N failure · ⌃Z fold turns · ⌃O expand all".to_string()
     };
     render_transcript_window(
         visible,
         window,
         total,
         ui.session_scroll.follow,
-        Some(hint),
+        Some(&hint),
         bands[5],
         buf,
     );
+}
+
+/// Light every occurrence of `query` inside the rows on screen.
+///
+/// Splitting spans at the match keeps the row's own colours — a hit inside a
+/// diff stays a diff line, a hit in a path stays a path — so the highlight
+/// reads as an annotation over the transcript rather than as a different
+/// rendering of it. Matching is done on each span's text, which is what the
+/// reader can actually see.
+fn highlight_matches(lines: &mut [Line<'static>], query: &str) {
+    // Lowered once for the whole pass. Doing it per span allocated twice for
+    // every span of every visible row on every keystroke, which is the kind of
+    // cost that turns an incremental search into a laggy one.
+    let needle = query.to_lowercase();
+    for line in lines.iter_mut() {
+        if !line
+            .spans
+            .iter()
+            .any(|s| s.content.to_lowercase().contains(&needle))
+        {
+            continue;
+        }
+        let mut rebuilt: Vec<Span<'static>> = Vec::with_capacity(line.spans.len());
+        for span in std::mem::take(&mut line.spans) {
+            let ranges = crate::transcript_nav::match_ranges(&span.content, query);
+            if ranges.is_empty() {
+                rebuilt.push(span);
+                continue;
+            }
+            let text = span.content.to_string();
+            let mut at = 0usize;
+            for r in ranges {
+                if r.start > at {
+                    rebuilt.push(Span::styled(text[at..r.start].to_string(), span.style));
+                }
+                rebuilt.push(Span::styled(
+                    text[r.clone()].to_string(),
+                    span.style.bg(theme::MATCH_BG).add_modifier(Modifier::BOLD),
+                ));
+                at = r.end;
+            }
+            if at < text.len() {
+                rebuilt.push(Span::styled(text[at..].to_string(), span.style));
+            }
+        }
+        line.spans = rebuilt;
+    }
 }
 
 /// Most checklist rows the TASKS card shows before collapsing the tail.
@@ -543,6 +749,7 @@ mod tests {
             false,
             0,
             80,
+            &FoldPlan::default(),
         );
         for i in 1_000..(MAX_TRANSCRIPT_ENTRIES + 50) {
             model.apply(&retry(i));
@@ -558,6 +765,7 @@ mod tests {
             false,
             0,
             80,
+            &FoldPlan::default(),
         );
 
         let mut fresh = SessionFold::default();
@@ -571,6 +779,7 @@ mod tests {
             false,
             0,
             80,
+            &FoldPlan::default(),
         );
         assert_eq!(fold.total(), fresh.total());
         assert_eq!(
@@ -634,6 +843,7 @@ mod tests {
             false,
             0,
             120,
+            &FoldPlan::default(),
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -664,6 +874,7 @@ mod tests {
             false,
             0,
             120,
+            &FoldPlan::default(),
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -701,6 +912,7 @@ mod tests {
             false,
             0,
             120,
+            &FoldPlan::default(),
         );
         let text: String = fold
             .window_lines(0..fold.total())
@@ -728,6 +940,7 @@ mod tests {
             false,
             0,
             120,
+            &FoldPlan::default(),
         );
         assert_eq!(
             fold.window_lines(0..fold.total()),
@@ -919,6 +1132,188 @@ mod tests {
         assert!(
             !buffer_text(&buf).contains("#1 Fix the auth redirect"),
             "cleared board removes the checklist rows"
+        );
+    }
+
+    /// A settled turn of `tools` calls against `path`, `failures` of them
+    /// failing, whose successful output is the distinctive `folded_away_body`.
+    fn model_with_one_turn(prompt: &str, tools: usize, failures: usize) -> SessionModel {
+        use stella_protocol::{ToolCall, ToolOutput};
+        let mut m = SessionModel::new();
+        m.push_user_prompt(prompt);
+        for i in 0..tools {
+            let id = format!("c{i}");
+            m.apply(&AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: id.clone(),
+                    name: "run_command".into(),
+                    input: serde_json::json!({ "path": "src/main.rs" }),
+                },
+            });
+            m.apply(&AgentEvent::ToolResult {
+                call_id: id,
+                output: if i < failures {
+                    ToolOutput::Error {
+                        message: "exit status 1".into(),
+                    }
+                } else {
+                    ToolOutput::Ok {
+                        content: "folded_away_body".into(),
+                    }
+                },
+                duration_ms: 20,
+                speculated: false,
+            });
+        }
+        m.apply(&AgentEvent::Complete {
+            model: "m".into(),
+            cost_usd: 0.0,
+        });
+        m
+    }
+
+    /// Fold `model` with every settled turn collapsed, and return the cache.
+    fn folded(model: &SessionModel, fold_all: bool) -> SessionFold {
+        let plan = FoldPlan::build(&model.transcript, |turn| fold_all && turn.finished);
+        let mut fold = SessionFold::default();
+        fold.refresh(
+            "lead",
+            &model.transcript,
+            &model.files,
+            "",
+            false,
+            &HashSet::new(),
+            false,
+            0,
+            120,
+            &plan,
+        );
+        fold
+    }
+
+    /// Flatten every row a fold holds to plain text.
+    fn fold_text(fold: &SessionFold) -> String {
+        fold.window_lines(0..fold.total())
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.clone())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_folded_turn_collapses_to_one_digest_line() {
+        // The whole promise of ⌃Z is that a turn a reader has finished with
+        // stops costing them screen: it must not merely gain a header, it
+        // must *replace* everything it produced with one line that still
+        // says what the turn was and what it cost.
+        let model = model_with_one_turn("fix the auth redirect", 3, 0);
+        let open = folded(&model, false);
+        let shut = folded(&model, true);
+
+        let text = fold_text(&shut);
+        assert_eq!(shut.total(), 1, "the whole turn is one row now:\n{text}");
+        assert!(
+            text.contains("fix the auth redirect"),
+            "the digest still names what was asked:\n{text}"
+        );
+        assert!(text.contains("3 tools"), "…and what it cost:\n{text}");
+        assert!(
+            !text.contains("folded_away_body"),
+            "but the output it produced is gone:\n{text}"
+        );
+        assert!(
+            open.total() > shut.total(),
+            "and the row count actually collapsed ({} → {})",
+            open.total(),
+            shut.total()
+        );
+    }
+
+    #[test]
+    fn a_folded_turn_with_failures_flags_them_in_the_danger_colour() {
+        // The failure count is what makes folding safe to use at all: a
+        // reader skimming digests has to be able to tell which collapsed
+        // turn is the one they must open, without opening any of them.
+        let model = model_with_one_turn("run the suite", 3, 2);
+        let fold = folded(&model, true);
+        let lines = fold.window_lines(0..fold.total());
+        let text = fold_text(&fold);
+        assert!(text.contains("2 failed"), "the count is stated:\n{text}");
+
+        let flagged = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("2 failed"))
+            .expect("a span carries the marker");
+        assert_eq!(
+            flagged.style.fg,
+            Some(theme::BAD),
+            "and carries the danger colour, not the muted metric one"
+        );
+    }
+
+    #[test]
+    fn a_hidden_entry_reports_the_digest_rows_that_stand_in_for_it() {
+        // ↑/↓, ⌃N and search all address *entries*, and the renderer scrolls
+        // to whatever row range the entry claims. An entry folded away has no
+        // rows of its own, so it must borrow the digest's — an empty range
+        // would scroll the reader to a row that is not there.
+        let model = model_with_one_turn("fix the auth redirect", 3, 0);
+        let fold = folded(&model, true);
+        let digest_rows = fold.rows_of(0);
+        assert!(!digest_rows.is_empty(), "the digest occupies real rows");
+        // Entry 2 is a ToolResult swallowed by the fold (0 = prompt, 1 =
+        // ToolStart), and not the tail entry — which has its own fallback.
+        assert!(matches!(
+            model.transcript[2],
+            TranscriptEntry::ToolResult { .. }
+        ));
+        assert_eq!(
+            fold.rows_of(2),
+            digest_rows,
+            "a hidden entry lands on the line standing in for it"
+        );
+    }
+
+    #[test]
+    fn highlighting_a_match_splits_the_span_without_editing_its_text() {
+        // A highlighter that corrupts what it highlights is worse than none:
+        // the reader is looking at the row *because* they searched for it, so
+        // the one row they are staring at must be the one the transcript
+        // actually holds — only re-styled, never re-written.
+        let original = "compiling src/auth.rs and src/auth.rs again";
+        let base = Style::new().fg(theme::MUTED);
+        let mut lines = vec![Line::from(vec![Span::styled(original, base)])];
+        highlight_matches(&mut lines, "auth");
+
+        let rebuilt: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(rebuilt, original, "the text survives the split verbatim");
+        let lit: Vec<&Span<'_>> = lines[0]
+            .spans
+            .iter()
+            .filter(|s| s.style.bg == Some(theme::MATCH_BG))
+            .collect();
+        assert_eq!(lit.len(), 2, "every occurrence is lit, not just the first");
+        assert!(
+            lit.iter().all(|s| s.content == "auth"),
+            "and only the matched substring is: {lit:?}"
+        );
+        assert!(
+            lit.iter()
+                .all(|s| s.style.add_modifier.contains(Modifier::BOLD)),
+            "matches are bolded over the row's own colour"
+        );
+        assert!(
+            lines[0]
+                .spans
+                .iter()
+                .all(|s| s.style.fg == Some(theme::MUTED)),
+            "which the unmatched fragments keep untouched"
         );
     }
 

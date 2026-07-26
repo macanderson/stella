@@ -46,6 +46,8 @@
 //! a pure function over owned data either way; it never learns what
 //! compaction is.
 
+use std::borrow::Cow;
+
 use stella_protocol::{ToolCall, ToolOutput};
 
 /// Longest trailing cycle period the short-cycle detector considers.
@@ -70,10 +72,17 @@ const MAX_CYCLE_PERIOD: usize = 4;
 /// *before* compaction can hand it in here and keep the evidence.
 /// `None` means "no snapshot available" and falls back to comparing the
 /// outputs themselves.
+/// The output is a [`Cow`] because the caller normalizes it before comparing
+/// (`driver::comparable_output` strips `read_file`'s volatile session-tally
+/// footer) and that normalization changes nothing on the overwhelmingly common
+/// path. Borrowing there is the whole point: this window is rebuilt on EVERY
+/// step, so an owned output meant a full heap copy of every tool result in the
+/// turn — quadratic in steps across a long turn — to compare bytes the
+/// transcript was already holding.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CallRecord {
+pub struct CallRecord<'a> {
     pub call: ToolCall,
-    pub output: Option<ToolOutput>,
+    pub output: Option<Cow<'a, ToolOutput>>,
     pub identity: Option<String>,
 }
 
@@ -191,7 +200,7 @@ impl LoopVerdict {
 /// identities missing falls back to the output bytes. Either way an
 /// unresolved output still matches nothing — an identity is evidence about
 /// an output that was observed, never a substitute for observing one.
-fn same_record(a: &CallRecord, b: &CallRecord) -> bool {
+fn same_record(a: &CallRecord<'_>, b: &CallRecord<'_>) -> bool {
     a.call.name == b.call.name
         && a.call.input == b.call.input
         && match (&a.output, &b.output) {
@@ -222,7 +231,7 @@ fn same_record(a: &CallRecord, b: &CallRecord) -> bool {
 /// Never panics on any input — empty history, a single call, history
 /// shorter than every threshold, and a zeroed-out `config` (which disables
 /// both checks) all return `NoLoop` rather than indexing out of bounds.
-pub fn detect_loop(records: &[CallRecord], config: LoopDetectionConfig) -> LoopVerdict {
+pub fn detect_loop(records: &[CallRecord<'_>], config: LoopDetectionConfig) -> LoopVerdict {
     if let Some(verdict) = detect_exact_repeat(records, config.exact_repeat_threshold) {
         return verdict;
     }
@@ -235,7 +244,7 @@ pub fn detect_loop(records: &[CallRecord], config: LoopDetectionConfig) -> LoopV
 /// Count the trailing run of records identical (by [`same_record`]) to the
 /// last record; report `ExactRepeat` if that run is `>= threshold`.
 /// `threshold < 2` and empty `records` both return `None` (no detection).
-fn detect_exact_repeat(records: &[CallRecord], threshold: usize) -> Option<LoopVerdict> {
+fn detect_exact_repeat(records: &[CallRecord<'_>], threshold: usize) -> Option<LoopVerdict> {
     if threshold < 2 {
         return None;
     }
@@ -262,7 +271,7 @@ fn detect_exact_repeat(records: &[CallRecord], threshold: usize) -> Option<LoopV
 /// `repeats_threshold == 0`, history too short for every period, and a
 /// candidate pattern that is itself an exact repeat (one record against
 /// itself, not distinct calls) all return `None`.
-fn detect_short_cycle(records: &[CallRecord], repeats_threshold: usize) -> Option<LoopVerdict> {
+fn detect_short_cycle(records: &[CallRecord<'_>], repeats_threshold: usize) -> Option<LoopVerdict> {
     if repeats_threshold == 0 {
         return None;
     }
@@ -313,7 +322,11 @@ mod tests {
 
     use super::*;
 
-    fn record(name: &str, input: serde_json::Value, output: Option<ToolOutput>) -> CallRecord {
+    fn record(
+        name: &str,
+        input: serde_json::Value,
+        output: Option<ToolOutput>,
+    ) -> CallRecord<'static> {
         // Distinct `call_id` per invocation, on purpose — providers never
         // reuse call ids, and the detector must not depend on them.
         static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -324,7 +337,7 @@ mod tests {
                 name: name.into(),
                 input,
             },
-            output,
+            output: output.map(Cow::Owned),
             // No snapshot: these fixtures exercise the raw-output
             // comparison. The identity path has its own witness in
             // `driver::tests::audit_fixes`.
@@ -334,12 +347,12 @@ mod tests {
 
     /// The same record with a caller-supplied output identity attached —
     /// the shape the driver builds once it has a pre-compaction snapshot.
-    fn with_identity(mut record: CallRecord, identity: &str) -> CallRecord {
+    fn with_identity(mut record: CallRecord<'static>, identity: &str) -> CallRecord<'static> {
         record.identity = Some(identity.to_string());
         record
     }
 
-    fn call(name: &str, input: serde_json::Value, output: &str) -> CallRecord {
+    fn call(name: &str, input: serde_json::Value, output: &str) -> CallRecord<'static> {
         record(
             name,
             input,
@@ -351,7 +364,7 @@ mod tests {
 
     /// Re-reading an unchanged file: same input, same output — the classic
     /// no-progress ingredient.
-    fn read(path: &str) -> CallRecord {
+    fn read(path: &str) -> CallRecord<'static> {
         call(
             "read_file",
             serde_json::json!({ "path": path }),
@@ -360,7 +373,7 @@ mod tests {
     }
 
     /// An edit that keeps failing the same way: same input, same error.
-    fn edit(path: &str) -> CallRecord {
+    fn edit(path: &str) -> CallRecord<'static> {
         record(
             "edit_file",
             serde_json::json!({ "path": path, "old": "x", "new": "y" }),
@@ -437,7 +450,7 @@ mod tests {
         // handle, no cursor field — the input is byte-identical every
         // time, but each poll returns new bytes. Visible progress, never a
         // loop, however long it goes on.
-        let records: Vec<CallRecord> = (0..10)
+        let records: Vec<CallRecord<'static>> = (0..10)
             .map(|i| {
                 call(
                     "read_output",
@@ -457,7 +470,7 @@ mod tests {
         // No result observed (the result message is gone from the window,
         // or the call never ran): progress cannot be ruled out, so
         // repetition alone is not evidence.
-        let records: Vec<CallRecord> = (0..5)
+        let records: Vec<CallRecord<'static>> = (0..5)
             .map(|_| record("read_file", serde_json::json!({ "path": "a.rs" }), None))
             .collect();
         assert_eq!(
@@ -483,7 +496,7 @@ mod tests {
         // `record()` assigns a fresh call_id every time; ToolCall's derived
         // PartialEq would see these as all-different. The detector must
         // still catch the repeat.
-        let records: Vec<CallRecord> = (0..3).map(|_| read("a.rs")).collect();
+        let records: Vec<CallRecord<'static>> = (0..3).map(|_| read("a.rs")).collect();
         let ids: std::collections::HashSet<_> =
             records.iter().map(|r| r.call.call_id.clone()).collect();
         assert_eq!(ids.len(), 3, "test fixture sanity: call_ids must differ");
@@ -674,7 +687,7 @@ mod tests {
                 ),
             ]
         };
-        let records: Vec<CallRecord> = (0..3).flat_map(|_| cycle()).collect();
+        let records: Vec<CallRecord<'static>> = (0..3).flat_map(|_| cycle()).collect();
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 3,
@@ -706,7 +719,7 @@ mod tests {
                 ),
             ]
         };
-        let records: Vec<CallRecord> = (0..3).rev().flat_map(cycle).collect();
+        let records: Vec<CallRecord<'static>> = (0..3).rev().flat_map(cycle).collect();
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 2,
@@ -728,7 +741,7 @@ mod tests {
                 ),
             ]
         };
-        let records: Vec<CallRecord> = (0..2).flat_map(|_| cycle()).collect();
+        let records: Vec<CallRecord<'static>> = (0..2).flat_map(|_| cycle()).collect();
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 2,
@@ -759,7 +772,7 @@ mod tests {
                 ),
             ]
         };
-        let records: Vec<CallRecord> = (0..3).flat_map(|_| cycle()).collect();
+        let records: Vec<CallRecord<'static>> = (0..3).flat_map(|_| cycle()).collect();
         let config = LoopDetectionConfig {
             exact_repeat_threshold: 100,
             short_cycle_repeats: 2,
@@ -929,7 +942,7 @@ mod tests {
     /// property-test runs actually exercise repeats and cycles instead of
     /// almost always generating trivially-varied (and thus trivially
     /// NoLoop) sequences. Includes unresolved (`None`) outputs.
-    fn arb_call_record() -> impl Strategy<Value = CallRecord> {
+    fn arb_call_record() -> impl Strategy<Value = CallRecord<'static>> {
         (0..3usize, 0..2usize, 0..3usize).prop_map(|(name_idx, input_idx, output_idx)| {
             let names = ["read_file", "edit_file", "bash"];
             let inputs = [
@@ -998,11 +1011,11 @@ mod tests {
             exact_repeat_threshold in 2usize..8,
             short_cycle_repeats in 2usize..8,
         ) {
-            let records: Vec<CallRecord> = records
+            let records: Vec<CallRecord<'static>> = records
                 .into_iter()
                 .enumerate()
                 .map(|(i, mut record)| {
-                    record.output = Some(ToolOutput::Ok { content: format!("output {i}") });
+                    record.output = Some(Cow::Owned(ToolOutput::Ok { content: format!("output {i}") }));
                     record
                 })
                 .collect();

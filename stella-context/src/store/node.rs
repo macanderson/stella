@@ -1,7 +1,9 @@
 //! Node access — the typed vocabulary, the write shape, the read shape, and
 //! the statements that put nodes in and take them out.
 //!
-//! Split out of the store module unchanged (#712 deliverable 1).
+//! Split out of the store module unchanged (#712 deliverable 1). The
+//! ranking-time readers are not here: they live one level up in
+//! [`crate::candidates`], because they answer to a different constraint.
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -290,20 +292,15 @@ pub(crate) fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow>
     })
 }
 
-/// Node ids whose uri matches one of `uris` and that are live at `as_of`
-/// (anchor resolution).
+/// Live node ids whose uri matches one of `uris` (anchor resolution).
 pub(crate) fn node_ids_for_uris(
     conn: &Connection,
     uris: &[String],
-    as_of: Option<&str>,
 ) -> Result<Vec<i64>, ContextError> {
     let mut out = Vec::new();
-    let mut stmt = conn.prepare(&format!(
-        "SELECT n.id FROM node n WHERE n.uri = ?2 AND {}",
-        super::candidate::NODE_AS_OF
-    ))?;
+    let mut stmt = conn.prepare("SELECT id FROM node WHERE uri = ?1 AND superseded_at IS NULL")?;
     for uri in uris {
-        let ids = stmt.query_map(params![as_of, uri], |r| r.get::<_, i64>(0))?;
+        let ids = stmt.query_map(params![uri], |r| r.get::<_, i64>(0))?;
         for id in ids {
             out.push(id?);
         }

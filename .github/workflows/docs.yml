@@ -8,17 +8,11 @@ on:
   pull_request:
     paths:
       - "website/**"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - "pnpm-lock.yaml"
       - ".github/workflows/docs.yml"
   push:
     branches: [main]
     paths:
       - "website/**"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - "pnpm-lock.yaml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -35,16 +29,29 @@ jobs:
     name: typecheck + build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Every step runs inside the package. The site's manifest, lockfile and
+    # pnpm settings all live in `website/` now — there is no root package to
+    # hop through, so the scripts are invoked where they are defined.
+    defaults:
+      run:
+        working-directory: website
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
-        # Version comes from the root package.json's packageManager field.
+        with:
+          # `defaults.run.working-directory` does not apply to `uses:` steps,
+          # so the action needs the manifest path spelled out to read
+          # `packageManager` from it.
+          package_json_file: website/package.json
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: pnpm
+          # Likewise: the cache key is hashed from the lockfile, which no
+          # longer sits at the repo root.
+          cache-dependency-path: website/pnpm-lock.yaml
 
       - name: pnpm install
         run: pnpm install --frozen-lockfile

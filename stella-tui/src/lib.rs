@@ -63,6 +63,7 @@ pub mod scenario;
 pub mod splash;
 pub mod syntax;
 pub mod theme;
+pub mod transcript_nav;
 pub mod views;
 
 pub use attach::probe_path_attachment;
@@ -95,7 +96,8 @@ pub use envelope::{
     EngineConfigState, EngineRole, EntityField, EntityHit, Inbound, InspectMessage, InspectView,
     InstalledAgentEntry, IssueAction, IssueRow, McpSearchItem, McpSearchOutcome, McpServerInfo,
     NotificationInfo, RecordedCallInfo, Secret, SessionInfo, SessionPhase, SkillOp, SkillRow,
-    SkillScope, SkillSearchHit, SkillsView, SplashCue, WorkspaceInput,
+    SkillScope, SkillSearchHit, SkillsView, SplashCue, ToolDenial, ToolPolicyState, ToolRow,
+    ToolScope, WorkspaceInput,
 };
 pub use fleet_dashboard::{
     FleetControl, FleetDashResult, FleetMsg, FleetStatus, TaskSummary, run as run_fleet_dashboard,

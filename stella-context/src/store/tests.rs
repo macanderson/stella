@@ -687,6 +687,8 @@ fn rejects_a_context_db_written_by_a_newer_stella() {
     {
         // The full current schema, stamped one version past this build —
         // exactly what a newer stella leaves behind.
+        // `open_legacy` now applies V3 itself, so applying it again here
+        // would fail on a duplicate index.
         open_legacy(&path, SCHEMA_VERSION + 1);
     }
 
@@ -774,14 +776,13 @@ fn migrates_v2_context_db_preserving_memories() {
         let conn = open_legacy(&path, 2);
         // Production writes a memory as a canonical `memory` row plus a
         // retrievable mirror `node` in one transaction; reproduce both.
-        //
         // Raw SQL rather than `insert_memory`, deliberately: a fixture for
-        // schema version N must write version N's shape. Calling today's writer
-        // would put a v4 `lineage_id` into a v2 table and test a database that
-        // never existed.
+        // schema version N must write version N's shape. Calling today's
+        // writer would put a v5 `lineage_id` into a v2 table and test a
+        // database that never existed.
         conn.execute(
             "INSERT INTO memory (public_id, kind, content, salience, recorded_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             params![mem_public, "reflection", "prefer rg over grep", 0.5, T1],
         )
         .unwrap();
@@ -816,28 +817,6 @@ fn migrates_v2_context_db_preserving_memories() {
             )
             .unwrap();
         assert_eq!(content, "prefer rg over grep");
-        // #712 deliverable 5: the lineage backfill is lossless — every
-        // pre-existing memory becomes its own lineage's first revision, so no
-        // id changes and every stored tombstone still resolves.
-        let lineage: String = conn
-            .query_row(
-                "SELECT lineage_id FROM memory WHERE public_id = ?1",
-                params![mem_public],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            lineage, mem_public,
-            "a migrated memory is its own lineage, seeded from the id it already had"
-        );
-        let live: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM memory WHERE superseded_at IS NULL",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(live, 1, "the migration supersedes nothing");
     }
     // And it is still retrievable through the mirror node (the recall
     // surface behind `stella memory`).

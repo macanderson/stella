@@ -10,6 +10,8 @@
 //! pure fold of *its* `AgentEvent`s; the envelope only adds the routing tag the
 //! deck needs to keep N folds side by side.
 
+use std::collections::BTreeMap;
+
 use stella_protocol::AgentEvent;
 
 use crate::graph::GraphSnapshot;
@@ -278,6 +280,20 @@ pub enum Inbound {
     /// replaces the overlay's hint line (save outcomes, errors).
     EngineConfig {
         state: EngineConfigState,
+        status: Option<String>,
+    },
+    /// A refreshed snapshot of the session's tool surface and the `"tools"`
+    /// switches in force, for the SETTINGS tab's tool editor. Out-of-band view
+    /// state exactly like [`Inbound::EngineConfig`].
+    ///
+    /// The driver is the only thing that can build this: MCP tools and a
+    /// customer's own registered tools exist only in the assembled session
+    /// stack, so a catalog-driven list would be a list of the tools Stella
+    /// ships — not of the tools this operator has. Sent at startup, after
+    /// every [`WorkspaceInput::ToolsSave`], and on
+    /// [`WorkspaceInput::ToolsRefresh`].
+    ToolPolicy {
+        state: ToolPolicyState,
         status: Option<String>,
     },
     /// The answer to an ISSUES-tab [`WorkspaceInput::IssuesRefresh`] (and the
@@ -728,6 +744,22 @@ pub enum WorkspaceInput {
     /// ENGINE overlay opened (or wants a reload): re-read the settings
     /// scope chain and answer with a fresh [`Inbound::EngineConfig`].
     EngineConfigRefresh,
+    /// TOOLS panel: persist the operator's tool switches into `settings.json`
+    /// at `scope`, answered with a fresh [`Inbound::ToolPolicy`].
+    ///
+    /// `switches` carries only the keys the panel actually changed — a tool
+    /// name, a group name, or `"*"` — and the driver merges them into that
+    /// scope's own `"tools"` object rather than replacing it. Sending the
+    /// whole merged map instead would copy the OTHER scopes' switches into
+    /// the file being written and freeze them there.
+    ToolsSave {
+        switches: BTreeMap<String, bool>,
+        scope: AgentScope,
+    },
+    /// TOOLS panel opened (or wants a reload): re-read the settings scope
+    /// chain, re-enumerate the session's tools, and answer with a fresh
+    /// [`Inbound::ToolPolicy`].
+    ToolsRefresh,
     /// ISSUES tab: list (or tracker-search) issues. `query`/`state` are the
     /// tracker-side filters; the driver answers with [`Inbound::IssuesList`]
     /// echoing `seq` so stale replies can be dropped.
@@ -885,6 +917,85 @@ impl EngineConfigState {
             .position(|r| *r == role)
             .and_then(|i| self.agents.get(i))
     }
+}
+
+/// Which settings file carries the `"tools"` key that switched a tool off.
+///
+/// Not the same list as [`AgentScope`], and deliberately so: the editor writes
+/// to two scopes but has to *report* three, because the third one is the one
+/// it cannot write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolScope {
+    /// The org-managed settings file. A denial here is a ceiling — no user or
+    /// project switch can lift it, which is why such a row renders locked.
+    Managed,
+    /// `~/.stella/settings.json`.
+    User,
+    /// `<workspace>/.stella/settings.json`.
+    Project,
+}
+
+impl ToolScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            ToolScope::Managed => "org-managed",
+            ToolScope::User => "user",
+            ToolScope::Project => "project",
+        }
+    }
+}
+
+/// Why one tool is off: the `"tools"` key that did it, and where that key
+/// lives. Both halves matter — `"off"` alone leaves an operator hunting three
+/// settings files for a switch they may not have written themselves, and the
+/// key alone does not say which file to edit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolDenial {
+    /// The exact tool name, its group (`"process"`), or `"*"` — resolved
+    /// most-specific-first, the same order the policy itself resolves.
+    pub key: String,
+    /// The scope whose file carries that key. `None` when the merged posture
+    /// and the individual scopes disagree (files changed under the snapshot) —
+    /// the row still reports the key rather than inventing a scope.
+    pub scope: Option<ToolScope>,
+}
+
+/// One tool the session actually has, as the SETTINGS tab's tool editor lists
+/// it. Driver-built (only the driver can see the assembled tool stack — MCP
+/// servers and a customer's own registered tools exist nowhere else), and
+/// deliberately NOT carrying an `enabled` flag: on/off is derived from
+/// [`ToolPolicyState::switches`] plus the panel's unsaved edits, so there is
+/// exactly one answer to "is this on?" rather than two that can drift.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolRow {
+    /// The exact dispatch name — and the exact settings key toggling this row
+    /// writes.
+    pub name: String,
+    /// The family this tool belongs to (`"file"`, `"process"`, …, or `"mcp"` /
+    /// `"custom"` for tools the catalog has never heard of). The editor's
+    /// section headers, and the key a header toggle writes.
+    pub group: String,
+    /// The org-managed scope denies this tool. The row is read-only: it cannot
+    /// be toggled on, and it must not render as though it could.
+    pub locked: bool,
+    /// Why it is off under the SAVED settings, or `None` when it is on.
+    /// Unsaved edits in the panel do not change this — it describes disk.
+    pub off: Option<ToolDenial>,
+}
+
+/// The tool-switch snapshot the SETTINGS tab's tool editor renders
+/// ([`Inbound::ToolPolicy`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolPolicyState {
+    /// Every tool this session can dispatch, before the policy filters it:
+    /// built-ins the environment satisfied, each connected MCP server's, and
+    /// each custom tool the workspace registered. Sorted by group then name.
+    pub tools: Vec<ToolRow>,
+    /// The merged `"tools"` section in force — tool names, group names, and
+    /// `"*"` mapped to on/off, with the org-managed ceiling already folded in.
+    /// The panel resolves a row's live value against this map (plus its own
+    /// unsaved edits) using the policy's own most-specific-first precedence.
+    pub switches: BTreeMap<String, bool>,
 }
 
 /// Which scope a skill lives in / is installed to. The loader reads both

@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 4;
+pub(crate) const SCHEMA_VERSION: i64 = 5;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -147,36 +147,71 @@ DROP TABLE IF EXISTS code_graph_imports;
 DROP TABLE IF EXISTS code_graph_files;
 ";
 
-/// V4 — **memory identity moves to lineage** (#712 deliverable 5).
+/// V4 — index `embedding(fingerprint)`.
+///
+/// `embedding` is `WITHOUT ROWID` with `PRIMARY KEY (content_hash,
+/// fingerprint)`, so `WHERE fingerprint = ?` matches no prefix of the primary
+/// key and SQLite could only answer it by scanning the whole clustered index —
+/// every blob of every fingerprint, including the stale rows a fingerprint bump
+/// leaves behind. Recall runs exactly that predicate on every turn
+/// ([`score_nodes_by_vector`]), so the scan was proportional to the store's
+/// lifetime embedding count rather than to the active fingerprint's.
+///
+/// `IF NOT EXISTS` because the index is also created by a fresh v4 store that
+/// applied V1..V4 in one transaction.
+pub(crate) const MIGRATION_V4: &str = "\
+CREATE INDEX IF NOT EXISTS idx_embedding_fingerprint ON embedding(fingerprint);
+";
+
+/// V5 — **memory identity moves to lineage** (#712 deliverable 5).
 ///
 /// A memory's identity was the hash of its kind and its content, so changing a
 /// word made a *different memory*. The old row stayed live, with its old text,
 /// its own vector, and full participation in every future recall — and because
-/// the mirror node's uri was derived from that same hash, the node duplicated
-/// too. Two rows, one lesson, both cited.
+/// the mirror node's uri came from that same hash, the node duplicated too. Two
+/// rows, one lesson, both cited.
 ///
 /// `lineage_id` is the durable identity a revision belongs to; `public_id`
 /// stays the identity of *this revision*. `superseded_at` closes the previous
 /// revision when a new one lands, so a lineage has exactly one live row and the
 /// history survives (`L-C3` — nothing is deleted).
 ///
-/// **Lossless and idempotent.** Every existing row is its own lineage's first
-/// revision, so the backfill is `lineage_id = public_id`: no content is read,
-/// nothing is merged, and no id changes. A new memory still seeds its lineage
-/// from its content hash, so the ids minted before this migration are the ids
-/// minted after it and every stored tombstone still resolves.
+/// **Lossless.** Every existing row is its own lineage's first revision, so the
+/// backfill is `lineage_id = public_id`: no content read, no merge, no id
+/// change. A new memory still seeds its lineage from its content hash, so the
+/// ids minted before this migration are the ids minted after it and every
+/// stored tombstone still resolves.
+///
+/// **Idempotent at the statement level, not merely at the version ladder.**
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, and a store whose `user_version`
+/// was rewound — which is exactly how the migration tests build their fixtures,
+/// and what a partial restore looks like — would re-run this and fail on a
+/// duplicate column. So the columns are added only if `table_info` says they
+/// are absent, and the backfill touches only rows still carrying NULL.
 ///
 /// Duplicate lineages that past edits already created are **not** repaired
 /// here. They are indistinguishable from two genuinely different memories
 /// without a similarity judgment, and a migration is the wrong place to make
 /// one: it runs unattended, on the only copy a user has. `stella memory
 /// validate` reports them instead (#711, decision 4).
-pub(crate) const MIGRATION_V4: &str = "\
-ALTER TABLE memory ADD COLUMN lineage_id TEXT;
-ALTER TABLE memory ADD COLUMN superseded_at TEXT;
-UPDATE memory SET lineage_id = public_id WHERE lineage_id IS NULL;
-CREATE INDEX idx_memory_lineage ON memory(lineage_id);
-";
+fn migrate_v5(tx: &Connection) -> Result<(), ContextError> {
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = tx.prepare("PRAGMA table_info(memory)")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>("name"))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    if !existing.contains("lineage_id") {
+        tx.execute_batch("ALTER TABLE memory ADD COLUMN lineage_id TEXT;")?;
+    }
+    if !existing.contains("superseded_at") {
+        tx.execute_batch("ALTER TABLE memory ADD COLUMN superseded_at TEXT;")?;
+    }
+    tx.execute_batch(
+        "UPDATE memory SET lineage_id = public_id WHERE lineage_id IS NULL;
+         CREATE INDEX IF NOT EXISTS idx_memory_lineage ON memory(lineage_id);",
+    )?;
+    Ok(())
+}
 
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
@@ -281,6 +316,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 4 {
         tx.execute_batch(MIGRATION_V4)?;
     }
+    if version < 5 {
+        migrate_v5(&tx)?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
@@ -309,3 +347,7 @@ pub(crate) fn register_fingerprint(
     )?;
     Ok(())
 }
+
+// Low-level accessors (pub(crate)) shared by retrieval.rs and writeback.rs.
+// All take a `&Connection` (a `&Transaction` derefs to one), so a caller can
+// batch many of them inside a single transaction.

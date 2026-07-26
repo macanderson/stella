@@ -1,8 +1,9 @@
-//! Retrieval tests — moved verbatim out of the module's inline `mod tests`
-//! when #712 needed room in `retrieval.rs` for the bounded candidate
-//! readers. The assertions are unchanged.
+//! Tests for the recall pipeline: the scoring/fusion/packing units, the
+//! end-to-end integration over a real store, and the two cost guards that
+//! pin recall's complexity and I/O class rather than its wall clock.
 
 use super::*;
+
 use proptest::prelude::*;
 
 /// A packing candidate. Packing moved off `ContextFrame` and onto ranking
@@ -10,13 +11,16 @@ use proptest::prelude::*;
 /// deliverable 2), so these tests build what the packer actually sees.
 fn candidate(id: &str, token_cost: u32) -> Ranked {
     Ranked {
-        meta: NodeMeta {
+        meta: crate::candidates::NodeMeta {
             id: id.len() as i64,
             public_id: id.into(),
             display_name: id.into(),
             content_hash: String::new(),
-            blank: false,
-            token_cost,
+            // The packer spends `budget_tokens_for_bytes(content_bytes)`, so a
+            // test that wants a cost of N must ask for N tokens' worth of bytes.
+            content_bytes: (token_cost as usize) * 4,
+            content_blank: false,
+            recorded_at: "2026-01-01T00:00:00Z".into(),
         },
         relevance: 0.5,
     }
@@ -29,14 +33,31 @@ fn cosine_is_one_for_identical_and_zero_for_orthogonal() {
     assert_eq!(cosine(&[0.0, 0.0], &[1.0, 1.0]), 0.0);
 }
 
-fn meta(id: i64, content: &str) -> NodeMeta {
+fn node_row(id: i64, content: &str) -> NodeRow {
+    NodeRow {
+        id,
+        public_id: format!("nod_{id}"),
+        kind: crate::store::NodeKind::Concept,
+        display_name: format!("node {id}"),
+        content: content.into(),
+        content_hash: crate::store::sha256_hex(content),
+        uri: None,
+        valid_from: None,
+        recorded_at: "2026-01-01T00:00:00Z".into(),
+    }
+}
+
+/// The metadata projection of [`node_row`] — what the dedup pass actually
+/// reads now that recall ranks the corpus without its bodies.
+fn node_meta(id: i64, content: &str) -> NodeMeta {
     NodeMeta {
         id,
         public_id: format!("nod_{id}"),
         display_name: format!("node {id}"),
         content_hash: crate::store::sha256_hex(content),
-        blank: content.trim().is_empty(),
-        token_cost: contextgraph_types::budget_tokens(content),
+        content_bytes: content.len(),
+        content_blank: content.trim().is_empty(),
+        recorded_at: "2026-01-01T00:00:00Z".into(),
     }
 }
 
@@ -45,19 +66,19 @@ fn dedup_keeps_distinct_empty_content_nodes_but_collapses_true_dupes() {
     // Three distinct nodes with empty content (all share sha256("")) plus
     // two nodes with identical non-empty content (a true duplicate pair).
     let nodes = [
-        meta(1, ""),
-        meta(2, ""),
-        meta(3, ""),
-        meta(4, "the same body"),
-        meta(5, "the same body"),
+        node_meta(1, ""),
+        node_meta(2, ""),
+        node_meta(3, ""),
+        node_meta(4, "the same body"),
+        node_meta(5, "the same body"),
     ];
-    let meta_by_id: HashMap<i64, NodeMeta> = nodes.iter().map(|n| (n.id, n.clone())).collect();
+    let node_by_id: HashMap<i64, &NodeMeta> = nodes.iter().map(|n| (n.id, n)).collect();
     let fused: HashMap<i64, f64> = [(1, 0.5), (2, 0.4), (3, 0.3), (4, 0.9), (5, 0.8)]
         .into_iter()
         .collect();
 
-    let out = dedup_by_content_hash(&fused, &meta_by_id);
-    let kept: std::collections::HashSet<i64> = out.iter().map(|(id, _)| *id).collect();
+    let out = dedup_by_content_hash(&fused, &node_by_id);
+    let kept: HashSet<i64> = out.iter().map(|(id, _)| *id).collect();
 
     // Every distinct empty-content node survives (the graph/taxonomy recall
     // the old sha256("")-collapse destroyed).
@@ -67,6 +88,55 @@ fn dedup_keeps_distinct_empty_content_nodes_but_collapses_true_dupes() {
     assert!(!kept.contains(&5));
     // 3 distinct empties + 1 survivor of the dup pair = 4.
     assert_eq!(out.len(), 4);
+}
+
+/// The metadata projection must answer every question the body answered,
+/// or ranking the corpus without its bodies would change what recall
+/// returns. Hash, declared token cost, and blankness, over the cases that
+/// could diverge: empty, ASCII whitespace, multi-byte content (where a
+/// character count would disagree with a byte count), and a long body.
+#[test]
+fn metadata_projection_answers_everything_the_body_did() {
+    let long = "x".repeat(1000);
+    for content in ["", " ", "\n\t ", "plain ascii", "héllo — unicode ✓", &long] {
+        let row = node_row(1, content);
+        let meta = node_meta(1, content);
+        assert_eq!(meta.content_hash, row.content_hash, "hash for {content:?}");
+        assert_eq!(
+            budget_tokens_for_bytes(meta.content_bytes),
+            contextgraph_types::budget_tokens(&row.content),
+            "declared token cost for {content:?} must equal the protocol's \
+             own count over the same bytes"
+        );
+        assert_eq!(
+            meta.content_blank,
+            row.content.trim().is_empty(),
+            "dedup blankness for {content:?}"
+        );
+    }
+}
+
+/// Scoring straight off the stored BLOB must be bit-identical to decoding
+/// first — it replaces that decode on the corpus-wide pass, so any drift
+/// would silently reorder every recall.
+#[test]
+fn blob_cosine_matches_the_decoded_one() {
+    let query: Vec<f32> = (0..64).map(|i| (i as f32 * 0.37).sin()).collect();
+    let stored: Vec<f32> = (0..64).map(|i| (i as f32 * 0.11).cos()).collect();
+    let blob = crate::store::vector_to_blob(&stored);
+    assert_eq!(cosine_blob(&query, &blob), cosine(&query, &stored));
+
+    // Zero-norm and length-mismatch both answer 0.0, exactly as `cosine`.
+    let zeros = vec![0.0f32; 64];
+    assert_eq!(
+        cosine_blob(&query, &crate::store::vector_to_blob(&zeros)),
+        0.0
+    );
+    assert_eq!(
+        cosine_blob(&query, &crate::store::vector_to_blob(&[1.0])),
+        0.0
+    );
+    assert_eq!(cosine_blob(&query, &[0u8; 3]), 0.0);
 }
 
 #[test]
@@ -110,7 +180,7 @@ fn recency_cannot_outrank_similarity_on_its_own() {
     assert!(
         equal_weight[&FRESH] > equal_weight[&STALE],
         "the pre-fix behavior this test exists to prevent: the newest row \
-             beats the best semantic match purely on recency"
+         beats the best semantic match purely on recency"
     );
 
     let damped = rrf_fuse(
@@ -227,7 +297,10 @@ proptest! {
         let frames: Vec<Ranked> =
             costs.iter().enumerate().map(|(i, c)| candidate(&format!("f{i}"), *c)).collect();
         let (kept, dropped) = pack_to_budget(frames, max_tokens, max_frames);
-        let kept_tokens: u64 = kept.iter().map(|f| f.meta.token_cost as u64).sum();
+        let kept_tokens: u64 = kept
+                .iter()
+                .map(|f| crate::retrieval::budget_tokens_for_bytes(f.meta.content_bytes) as u64)
+                .sum();
         prop_assert!(kept_tokens <= max_tokens as u64);
         prop_assert!(kept.len() as u32 <= max_frames);
         prop_assert_eq!(kept.len() + dropped.len(), n);
@@ -303,8 +376,6 @@ async fn seeded() -> (TempDir, ContextStore) {
 /// alone costs ~n²/2, which at n=120 is over 7000 extra calls.
 #[tokio::test]
 async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
-    use std::sync::atomic::Ordering as AtomicOrdering;
-
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("context.db");
     let store = ContextStore::open_with(
@@ -329,9 +400,9 @@ async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
     let mut q = base_query("open the database", "packing frames to a budget");
     q.max_frames = 5;
 
-    COSINE_CALLS.store(0, AtomicOrdering::Relaxed);
+    let _ = crate::cost_counters::take_cosine_calls();
     let result = store.recall(&q).await.unwrap();
-    let calls = COSINE_CALLS.load(AtomicOrdering::Relaxed);
+    let calls = crate::cost_counters::take_cosine_calls();
 
     assert!(
         result.frames.len() <= 5,
@@ -341,15 +412,82 @@ async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
 
     // The similarity scoring pass legitimately touches every stored vector
     // once. The MMR fold on top must be bounded by the candidate cut
-    // (5 x 4 = 20 candidates → at most ~20²/2 = 200 more), NOT by n²/2.
+    // (5 x 4 = 20 candidates → at most 20²/2 = 200 more), NOT by n²/2.
+    //
+    // The counter is thread-local, so this is recall's own work and the
+    // ceiling can be the real one rather than a generous fraction of the
+    // blowup it is watching for.
+    let candidates = 5 * DEFAULT_MMR_CANDIDATE_MULTIPLE;
+    let ceiling = NODES + candidates * candidates / 2;
     let unbounded_mmr_cost = NODES * NODES / 2;
-    let generous_ceiling = NODES + unbounded_mmr_cost / 4;
     assert!(
-        calls < generous_ceiling,
-        "recall made {calls} cosine calls for {NODES} nodes and 5 frames; an \
-             unbounded MMR pass would cost about {} on top of the {NODES} scorings, \
-             which is the quadratic blowup this bound exists to remove",
-        unbounded_mmr_cost
+        calls <= ceiling,
+        "recall made {calls} cosine calls for {NODES} nodes and 5 frames; the \
+         {NODES} similarity scorings plus a fold bounded by {candidates} \
+         candidates is at most {ceiling}. An unbounded MMR pass would add about \
+         {unbounded_mmr_cost}, which is the quadratic blowup this bound exists \
+         to remove."
+    );
+}
+
+/// The candidate bound must govern **I/O**, not just arithmetic.
+///
+/// The cosine-call guard above passes just as well when recall has already
+/// loaded every body and every vector in the workspace and merely declines to
+/// fold them all — which is what it used to do. This pins the other half: a
+/// 5-frame recall may move only the candidates' bodies across the SQLite
+/// boundary, so the bytes it reads track `max_frames`, not lifetime memory
+/// size.
+#[tokio::test]
+async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let store = ContextStore::open_with(
+        &path,
+        Arc::new(HashEmbedder::default()),
+        FixedClock::shared(1_000),
+    )
+    .unwrap();
+
+    const NODES: usize = 120;
+    let mut delta = ContextDelta::new();
+    let mut corpus_bytes = 0usize;
+    let mut longest_body = 0usize;
+    for i in 0..NODES {
+        let content = format!("note number {i} about packing frames to a budget");
+        corpus_bytes += content.len();
+        longest_body = longest_body.max(content.len());
+        delta = delta.with_node(
+            NodeInput::new(NodeKind::Artifact, format!("note-{i}")).with_content(content),
+        );
+    }
+    store.upsert(delta).await.unwrap();
+
+    let mut q = base_query("open the database", "packing frames to a budget");
+    q.max_frames = 5;
+
+    let _ = crate::cost_counters::take_content_bytes_loaded();
+    let result = store.recall(&q).await.unwrap();
+    let loaded = crate::cost_counters::take_content_bytes_loaded() as usize;
+
+    // Measuring the graph/vector arm: the lexical fallback scan is
+    // corpus-wide by definition, so it would make this assertion meaningless.
+    assert!(
+        !result.used_lexical_fallback,
+        "this guard measures the fused arm; coverage unexpectedly fell back"
+    );
+    // 5 frames x DEFAULT_MMR_CANDIDATE_MULTIPLE = 20 candidates. Their bodies are all
+    // recall is entitled to read. Budgeted against the LONGEST body rather than
+    // the mean: which 20 nodes win is a ranking outcome, and a mean-based bound
+    // would flake whenever the winners ran slightly above average.
+    let candidates = 5 * DEFAULT_MMR_CANDIDATE_MULTIPLE;
+    let budgeted = candidates * longest_body;
+    assert!(
+        loaded <= budgeted,
+        "recall read {loaded} content bytes of a {corpus_bytes}-byte corpus for \
+         5 frames; the candidate bound entitles it to about {budgeted} \
+         ({candidates} of {NODES} nodes). Loading the corpus and then \
+         declining to score it is the cost this bound exists to remove."
     );
 }
 
@@ -569,104 +707,6 @@ async fn recall_falls_back_to_labeled_lexical_when_no_vectors_under_fingerprint(
     );
 }
 
-// The gate for #712 deliverable 2: recall work is bounded by the requested
-// frame count, not by corpus size.
-
-/// The benchmark, at three corpus sizes spanning two orders of magnitude.
-///
-/// It measures *work*, not wall clock: rows and bytes of node content pulled
-/// across the SQLite boundary, plus cosine calls. Wall clock cannot tell
-/// "bounded" from "fast on this machine today", and it is exactly the kind of
-/// assertion that gets marked flaky and deleted.
-///
-/// The claim under test: everything except the similarity scan is set by
-/// `max_frames`. Before this change a 5-frame recall read *every* live node
-/// with its full body — recency contributes all of them — so content bytes grew
-/// linearly with the workspace's lifetime while the answer stayed five frames
-/// long. The similarity scan is the one honest exception: "most similar" is not
-/// something SQLite can `ORDER BY` without an ANN index, so cosine calls are
-/// expected to track corpus size, and this pins that they track it *linearly*
-/// rather than quadratically.
-#[tokio::test]
-async fn recall_work_is_bounded_by_frame_count_not_corpus_size() {
-    use crate::store::{CONTENT_BYTES_READ, CONTENT_ROWS_READ};
-    use std::sync::atomic::Ordering as AtomicOrdering;
-
-    const FRAMES: u32 = 5;
-    let mut measured: Vec<(usize, usize, usize, usize)> = Vec::new();
-
-    for corpus in [50usize, 500, 5_000] {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("context.db");
-        let store = ContextStore::open_with(
-            &path,
-            Arc::new(HashEmbedder::default()),
-            FixedClock::shared(1_000),
-        )
-        .unwrap();
-
-        let mut delta = ContextDelta::new();
-        for i in 0..corpus {
-            delta = delta.with_node(
-                // Fixed-width index so every body is byte-identical in length:
-                // the byte assertion below is then exact rather than
-                // approximate, and a regression cannot hide in the rounding.
-                NodeInput::new(NodeKind::Artifact, format!("note-{i}")).with_content(format!(
-                    "note number {i:06} about packing context frames to a token budget \
-                     and reporting exactly what was dropped and why"
-                )),
-            );
-        }
-        store.upsert(delta).await.unwrap();
-
-        let mut q = base_query("open the database", "packing frames to a budget");
-        q.max_frames = FRAMES;
-
-        CONTENT_ROWS_READ.store(0, AtomicOrdering::Relaxed);
-        CONTENT_BYTES_READ.store(0, AtomicOrdering::Relaxed);
-        COSINE_CALLS.store(0, AtomicOrdering::Relaxed);
-        let result = store.recall(&q).await.unwrap();
-        measured.push((
-            corpus,
-            CONTENT_ROWS_READ.load(AtomicOrdering::Relaxed),
-            CONTENT_BYTES_READ.load(AtomicOrdering::Relaxed),
-            COSINE_CALLS.load(AtomicOrdering::Relaxed),
-        ));
-
-        assert!(
-            result.frames.len() <= FRAMES as usize,
-            "the frame budget binds at corpus {corpus}: {}",
-            result.frames.len()
-        );
-    }
-
-    // Content reads: capped by the frame count at every size. Not "grows
-    // slowly" — identical.
-    for &(corpus, rows, _, _) in &measured {
-        assert!(
-            rows <= FRAMES as usize,
-            "corpus {corpus} read {rows} bodies for {FRAMES} frames; content is \
-             read for packed survivors only"
-        );
-    }
-    let bytes: Vec<usize> = measured.iter().map(|&(_, _, b, _)| b).collect();
-    assert_eq!(
-        bytes[0], bytes[2],
-        "content bytes must not grow with the corpus: {measured:?}"
-    );
-
-    // Cosine calls: linear in the corpus, which is the similarity scan doing
-    // its job. Quadratic would be 100x between the first and last size; linear
-    // is 100x on a per-node basis, so per-node cost must stay flat.
-    let per_node_first = measured[0].3 as f64 / measured[0].0 as f64;
-    let per_node_last = measured[2].3 as f64 / measured[2].0 as f64;
-    assert!(
-        per_node_last < per_node_first * 2.0 + 1.0,
-        "cosine cost per stored node must stay flat as the corpus grows — \
-         {per_node_first:.2} at 50 nodes vs {per_node_last:.2} at 5000: {measured:?}"
-    );
-}
-
 /// Witness for #712 deliverable 7: a point-in-time recall answers from one
 /// instant, across every signal.
 ///
@@ -861,5 +901,81 @@ async fn tuning_reaches_the_ranking() {
         forced.used_lexical_fallback,
         "a coverage floor of 1.0 can never be met, so retrieval must fall back \
          and say so rather than dressing weak hits up as grounding"
+    );
+}
+
+/// The benchmark #712's gate names: recall work bounded by the requested frame
+/// count, at three corpus sizes spanning two orders of magnitude.
+///
+/// The two guards above pin the same property at a single size, which cannot
+/// distinguish "bounded" from "the constant happens to be small here". Three
+/// sizes can: content bytes must come out *byte-identical* across a 100x corpus,
+/// and the cosine scan — the one honest exception, since "most similar" is not
+/// something SQLite can `ORDER BY` without an ANN index — must stay linear
+/// rather than quadratic.
+///
+/// It measures work, not wall clock. A wall-clock assertion cannot tell
+/// "bounded" from "fast on this machine today", and is the kind of test that
+/// gets marked flaky and deleted.
+#[tokio::test]
+async fn recall_work_is_bounded_by_frame_count_not_corpus_size() {
+    const FRAMES: u32 = 5;
+    // (corpus, content bytes read, cosine calls)
+    let mut measured: Vec<(usize, u64, usize)> = Vec::new();
+
+    for corpus in [50usize, 500, 5_000] {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let store = ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            FixedClock::shared(1_000),
+        )
+        .unwrap();
+
+        let mut delta = ContextDelta::new();
+        for i in 0..corpus {
+            // Fixed-width index so every body is byte-identical in length: the
+            // byte assertion below is then exact rather than approximate, and a
+            // regression cannot hide in the rounding.
+            delta = delta.with_node(
+                NodeInput::new(NodeKind::Artifact, format!("note-{i}")).with_content(format!(
+                    "note number {i:06} about packing context frames to a token budget \
+                     and reporting exactly what was dropped and why"
+                )),
+            );
+        }
+        store.upsert(delta).await.unwrap();
+
+        let mut q = base_query("open the database", "packing frames to a budget");
+        q.max_frames = FRAMES;
+
+        let _ = crate::cost_counters::take_content_bytes_loaded();
+        let _ = crate::cost_counters::take_cosine_calls();
+        let result = store.recall(&q).await.unwrap();
+        measured.push((
+            corpus,
+            crate::cost_counters::take_content_bytes_loaded(),
+            crate::cost_counters::take_cosine_calls(),
+        ));
+
+        assert!(
+            result.frames.len() <= FRAMES as usize,
+            "the frame budget binds at corpus {corpus}: {}",
+            result.frames.len()
+        );
+    }
+
+    assert_eq!(
+        measured[0].1, measured[2].1,
+        "content bytes must not grow with the corpus — 100x the store, the same \
+         bytes read: {measured:?}"
+    );
+    let per_node_first = measured[0].2 as f64 / measured[0].0 as f64;
+    let per_node_last = measured[2].2 as f64 / measured[2].0 as f64;
+    assert!(
+        per_node_last < per_node_first * 2.0 + 1.0,
+        "cosine cost per stored node must stay flat as the corpus grows — \
+         {per_node_first:.2} at 50 nodes vs {per_node_last:.2} at 5000: {measured:?}"
     );
 }

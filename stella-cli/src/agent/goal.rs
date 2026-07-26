@@ -410,9 +410,9 @@ pub(crate) async fn run_goal_turn(
         );
         let interactive = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
+        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
         let hook_runner = ShellHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
@@ -583,9 +583,9 @@ async fn run_goal_pipeline_turn(
         );
         let interactive = InteractiveToolSet::new(&customs, tx.clone(), default_ask_io(true))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
+        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
 
         let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
         let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);

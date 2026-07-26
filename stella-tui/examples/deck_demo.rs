@@ -23,8 +23,32 @@ use tokio::sync::mpsc;
 use stella_tui::scenario::{demo_graph, demo_inbound};
 use stella_tui::{
     AgentControl, AgentMeta, AgentStatus, DeckOptions, EngineConfigState, GraphNode, GraphSnapshot,
-    Inbound, ScopeDecision, SkillsView, SlashCommand, UserInput, WorkspaceInput, run_deck,
+    Inbound, ScopeDecision, SkillsView, SlashCommand, ToolPolicyState, ToolRow, UserInput,
+    WorkspaceInput, run_deck,
 };
+
+/// A stand-in session tool surface for the TOOLS panel: two built-in families,
+/// one MCP server's tool, and one custom tool — enough for every section kind
+/// the panel renders.
+fn demo_tool_rows() -> Vec<ToolRow> {
+    [
+        ("read_file", "file"),
+        ("write_file", "file"),
+        ("bash", "bash"),
+        ("start_process", "process"),
+        ("send_stdin", "process"),
+        ("mcp__github__create_issue", "mcp"),
+        ("deploy_to_staging", "custom"),
+    ]
+    .into_iter()
+    .map(|(name, group)| ToolRow {
+        name: name.to_string(),
+        group: group.to_string(),
+        locked: false,
+        off: None,
+    })
+    .collect()
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -225,6 +249,30 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::EngineConfigRefresh => {
                     let _ = react_tx.send(Inbound::EngineConfig {
                         state: EngineConfigState::default(),
+                        status: Some("the demo has no settings on disk".to_string()),
+                    });
+                }
+                // The TOOLS panel, likewise: a save echoes a snapshot carrying
+                // the submitted switches (so the round-trip and the
+                // unsaved-marker clearing are demoable), a refresh answers with
+                // a small hand-built surface — one built-in family, one MCP
+                // tool, one custom tool — so the grouping is visible without a
+                // real session.
+                WorkspaceInput::ToolsSave { switches, .. } => {
+                    let _ = react_tx.send(Inbound::ToolPolicy {
+                        state: ToolPolicyState {
+                            tools: demo_tool_rows(),
+                            switches,
+                        },
+                        status: Some("demo: switches accepted (not persisted)".to_string()),
+                    });
+                }
+                WorkspaceInput::ToolsRefresh => {
+                    let _ = react_tx.send(Inbound::ToolPolicy {
+                        state: ToolPolicyState {
+                            tools: demo_tool_rows(),
+                            switches: Default::default(),
+                        },
                         status: Some("the demo has no settings on disk".to_string()),
                     });
                 }

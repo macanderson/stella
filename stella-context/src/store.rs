@@ -10,7 +10,6 @@
 //! kicks embedding catch-up as a background task at mount instead of paying it
 //! lazily on the first real query.
 
-mod candidate;
 mod domain;
 mod edge;
 mod embedding;
@@ -31,32 +30,34 @@ use crate::clock::{Clock, SystemClock};
 use crate::embed::{Embedder, EmbedderFingerprint, HashEmbedder};
 use crate::error::ContextError;
 
-use node::map_node_row;
 use schema::{migrate, register_fingerprint};
 
-// The module was one 2,224-line file until #712 split it along the seams it
+// The module was one 2,232-line file until #712 split it along the seams it
 // already had. Everything below stays reachable as `crate::store::X`, which is
 // the path every consumer uses, so the split is invisible outside this file.
-#[cfg(test)]
-pub(crate) use candidate::{CONTENT_BYTES_READ, CONTENT_ROWS_READ};
-pub(crate) use candidate::{
-    NodeMeta, domain_ranked_ids, domains_for_nodes, lexical_node_meta, node_meta_for_ids,
-    nodes_by_ids, recent_node_meta,
-};
 pub(crate) use domain::{
-    list_domains, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains, upsert_domain,
+    domains_by_node, list_domains, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains,
+    upsert_domain,
 };
 pub(crate) use edge::{close_edge, edges_as_of, insert_edge, neighbors};
 pub(crate) use embedding::{
-    embedding_exists, nodes_missing_embedding, store_embedding, vectors_for_fingerprint,
+    blob_to_vector, embedding_exists, nodes_missing_embedding, store_embedding,
 };
+// The encoder has one caller (`store_embedding`, inside its own module) and one
+// test; the decoder is used crate-wide by `candidates`.
+#[cfg(test)]
+pub(crate) use embedding::vector_to_blob;
 pub use node::{NodeInput, NodeKind, NodeRow};
 pub(crate) use node::{
-    node_by_id, node_exists_any_state, node_ids_for_uris, restore_node, supersede_node, upsert_node,
+    map_node_row, node_by_id, node_exists_any_state, node_ids_for_uris, restore_node,
+    supersede_node, upsert_node,
 };
 pub use record::MemoryRevision;
 pub(crate) use record::{insert_episode, insert_memory, memory_kind, memory_revisions};
 pub(crate) use schema::open_connection;
+// Only a migration test asserts against it; a release build has no reader.
+#[cfg(test)]
+pub(crate) use schema::SCHEMA_VERSION;
 
 /// A count of what the memory lineage layer holds (#712 deliverable 5).
 ///
@@ -83,28 +84,33 @@ pub struct MemoryLineageStats {
 ///
 /// # Retention
 ///
-/// This plane forgets. `node.superseded_at` is written by
-/// [`Self::supersede_node`] — for a memory that was edited into a new revision,
-/// and for one a person forgot — and every candidate reader filters on it, so
-/// suppression takes effect at the SQL boundary rather than after a budget has
-/// already been spent on the suppressed row. Supersession never deletes
-/// (`L-C3`): the row survives, so [`Self::restore_node`] is an exact inverse
-/// and a point-in-time query can still see what was believed before.
+/// Nothing here forgets. `node.superseded_at` is never written (only edges are
+/// versioned), there is no delete or tombstone path, and a node whose uri
+/// changed — a renamed or deleted file — is orphaned live forever, still
+/// serving its last-known content. So the row count a recall *considers* still
+/// grows monotonically with the workspace's lifetime.
 ///
-/// What is *not* retention-managed: a node whose uri changed — a renamed or
-/// deleted file — is still orphaned live, serving its last-known content until
-/// something supersedes it. Compaction of superseded rows is a later phase;
-/// nothing here reclaims space.
+/// What that costs is now bounded by the query rather than by that row count:
 ///
-/// # What a recall costs
+/// - The fused candidate list is cut to a multiple of the query's `max_frames`
+///   before the MMR pass and before any frame is built
+///   (`retrieval::MMR_CANDIDATE_MULTIPLE`), so the diversity fold is quadratic in
+///   the budget, not in lifetime memory size.
+/// - **No content body crosses the SQLite boundary for a non-candidate.** The
+///   corpus-wide passes read a metadata projection — identity, time, hash, and
+///   content *size* — and bodies are fetched by id after the cut.
+/// - **No embedding vector is decoded for a non-candidate.** The similarity pass
+///   scores each vector off its stored BLOB and keeps only `(id, cosine)`; the
+///   candidates' vectors are re-read by id.
 ///
-/// Every signal is `LIMIT`-bounded at the SQL boundary and every bound derives
-/// from the query's `max_frames`, so per-turn cost is set by what the caller
-/// asked for rather than by how long the workspace has been alive. Node bodies
-/// are read for packed survivors only — the ranking runs over metadata. The one
-/// remaining full-corpus pass is the cosine scan over the vector index, which
-/// reads ids and vectors and never content; an ANN accelerator is the tracked
-/// follow-up that would bound it too.
+/// What remains linear in live rows is one metadata scan, one indexed vector
+/// scan (`idx_embedding_fingerprint`), and — only on a weak-coverage turn — the
+/// lexical scan, which streams instead of materializing the corpus. All of it
+/// runs on the blocking pool rather than on the worker that awaited it, so the
+/// timeouts callers wrap around recall can actually fire. That is fine at
+/// CLI-local scale and is the plane's next scaling wall; an ANN index over the
+/// vector scan and a forget/compaction path are the tracked follow-ups, not
+/// oversights.
 ///
 /// # Drop
 ///
@@ -320,6 +326,16 @@ impl ContextStore {
         lock(&self.conn)
     }
 
+    /// An owned handle to the same connection, for a `'static` unit of work.
+    ///
+    /// [`Self::conn`] borrows from `&self`, which cannot cross a
+    /// `spawn_blocking` boundary — and recall's whole pipeline is blocking SQLite
+    /// on the first-token path, so it must. Cloning the `Arc` shares the one
+    /// connection; it does not open a second.
+    pub(crate) fn conn_handle(&self) -> Arc<Mutex<Connection>> {
+        Arc::clone(&self.conn)
+    }
+
     /// Count of currently-live nodes (`superseded_at IS NULL`).
     pub fn node_count(&self) -> Result<usize, ContextError> {
         let conn = lock(&self.conn);
@@ -492,6 +508,12 @@ impl ContextStore {
             .optional()?;
         Ok(row)
     }
+}
+
+/// [`lock`] over a connection reached through [`ContextStore::conn_handle`], with
+/// the same poison tolerance as [`ContextStore::conn`].
+pub(crate) fn lock_conn(m: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
+    lock(m)
 }
 
 /// Lock a mutex, recovering the guard even if a previous holder panicked. This

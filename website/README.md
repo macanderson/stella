@@ -23,6 +23,10 @@ generated file directly, because the next `make brand` overwrites it.
 
 ## Develop
 
+Every command here runs from this directory — the site owns its own
+`package.json`, `pnpm-lock.yaml`, and pnpm settings, and the repo root is
+pure cargo.
+
 ```bash
 pnpm install
 pnpm dev          # http://localhost:3400
@@ -99,8 +103,9 @@ src/mdx-components.tsx   # MDX component map
 ## Deploy
 
 Deploys as a standard Next.js app. On Vercel, the project auto-detects Next.js + pnpm; set
-the production domain to `stella.oxagen.sh`. `pnpm-workspace.yaml` approves the `esbuild` /
-`sharp` build scripts so `pnpm install` exits cleanly in CI.
+the production domain to `stella.oxagen.sh` and the **Root Directory to `website`**, since
+that is where the manifest and lockfile live. `pnpm-workspace.yaml` (in this directory)
+approves the `esbuild` / `sharp` build scripts so `pnpm install` exits cleanly in CI.
 
 **No deploy step lives in this repository.** `.github/workflows/docs.yml`
 typechecks and builds the site on every PR that touches it, but nothing

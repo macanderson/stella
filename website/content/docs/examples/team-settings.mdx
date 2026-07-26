@@ -30,7 +30,7 @@ A committed project `settings.json` that works for every teammate:
   "providers": {
     "zai": { "api_key_env": "ACME_ZAI_KEY" }
   },
-  "tools": { "bash": "on" },
+  "tools": { "web": "off" },
   "agent_engine_config": {
     "default_model": "zai/glm-5.2",
     "pipeline_judge_model": "anthropic/claude-fable-5"
@@ -49,7 +49,9 @@ A committed project `settings.json` that works for every teammate:
   vault/CI change, not a settings edit.
 - **`agent_engine_config`** is deliberately *outside* the trust boundary — model
   routing suggestions from a repo are safe and apply immediately for everyone.
-- **`tools.bash`** and the guard hook travel with the repo that needs them.
+- **`tools`** and the guard hook travel with the repo that needs them: this repo
+  handles customer data, so it switches the whole `web` family off for everyone who
+  clones it. Narrowing needs no trust flag — only *granting* does.
 
 ## The flag that makes it real
 
@@ -95,8 +97,9 @@ written once via the interactive prompt). Personal endpoint routing — like a
   model, a user's `effort: "high"` still applies.
 - `hooks` **concatenate** — org policy hooks, repo guard hooks, and personal hooks all
   fire; none replaces another.
-- `tools` and `mcp` are **last scope wins** — the repo's `bash: "on"` beats a user's
-  off.
+- `tools` and `mcp` are **last scope wins, per key** — the repo's `web: "off"` beats a
+  user's `"on"`. The reverse needs `STELLA_TRUST_PROJECT=1`: a repo may narrow the tool
+  surface on its own, never widen it.
 - `allowed_models` **replaces wholesale** — whichever scope sets it owns the whole
   list.
 

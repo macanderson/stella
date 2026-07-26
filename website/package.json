@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Documentation site for the Stella CLI \u2014 stella.oxagen.sh",
+  "description": "Documentation site for the Stella CLI — stella.oxagen.sh",
+  "packageManager": "pnpm@11.13.0",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev --port 3400",
     "build": "NODE_ENV=production next build",

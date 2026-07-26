@@ -526,17 +526,19 @@ pub struct Config {
     /// means the section is absent everywhere; consumers treat that as
     /// all-defaults (`crate::engine_config` resolves it per run).
     pub engine_settings: Option<crate::settings::AgentEngineConfig>,
-    /// Whether the `bash` tool is enabled (`tools.bash` in the settings
-    /// scope chain; absent = OFF). Threaded into every `ToolRegistry`
-    /// construction via `agent::registry_options` — the default tool
-    /// surface has no shell.
-    pub tools_bash: bool,
+    /// Which tools this session withholds, resolved from the `tools` section
+    /// of the settings scope chain with the org-managed ceiling already
+    /// folded in. Empty — the shipped default — means every tool is on.
+    ///
+    /// This replaces the `tools_bash` / `tools_web` booleans that used to
+    /// live here. They were threaded into `RegistryOptions` at construction,
+    /// which covered built-ins only: an MCP server's tool or a customer's own
+    /// never passed through them. The policy is enforced once, above the
+    /// whole session tool stack (`crate::agent::PolicyToolSet`), so it covers
+    /// all three by name.
+    pub tool_policy: stella_tools::policy::ToolPolicy,
     /// End-of-run recap in text mode (settings `enable_recap`).
     pub enable_recap: bool,
-    /// Whether the web tool family is enabled (`tools.web`; absent = OFF).
-    /// Same threading as `tools_bash` — the default tool surface has no
-    /// network egress.
-    pub tools_web: bool,
     /// Monotonic authority computed while loading the scope chain. Runtime
     /// adapters consume this instead of reinterpreting trust environment
     /// variables or repository settings independently.
@@ -685,9 +687,12 @@ impl Config {
         };
         cfg.engine_settings = settings.agent_engine_config.clone();
         cfg.authority = settings.authority_policy;
-        cfg.tools_bash = settings.bash_tool_enabled() && cfg.authority.bash_allowed;
+        // The managed ceiling is already folded into `settings.tools` by
+        // `Settings::load`, so this is a straight read — no second place that
+        // could forget to re-apply authority (which is exactly what the
+        // `&& cfg.authority.bash_allowed` conjunctions here used to be).
+        cfg.tool_policy = settings.tool_policy();
         cfg.enable_recap = settings.recap_enabled();
-        cfg.tools_web = settings.web_tools_enabled() && cfg.authority.web_allowed;
         Ok(cfg)
     }
 
@@ -805,9 +810,8 @@ impl Config {
                     base_url_override: Some(base_url),
                     hooks: None,
                     engine_settings: None,
-                    tools_bash: false,
+                    tool_policy: Default::default(),
                     enable_recap: false,
-                    tools_web: false,
                     authority: crate::settings::AuthorityPolicy::default(),
                     credential_source,
                     credential_advisories: credentials_file.advisories().to_vec(),
@@ -991,9 +995,8 @@ impl Config {
             // `load_with_settings` stamps them after the provider resolves.
             hooks: None,
             engine_settings: None,
-            tools_bash: false,
+            tool_policy: Default::default(),
             enable_recap: false,
-            tools_web: false,
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: Some(source),
             credential_advisories: credentials_file.advisories().to_vec(),

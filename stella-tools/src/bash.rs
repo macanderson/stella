@@ -3,23 +3,26 @@
 //! cancelled turn: the driving future being dropped arms the same group kill
 //! (`crate::exec::GroupKillGuard`).
 //!
-//! **Opt-in, never ambient.** This tool is registered only when the host
-//! enabled it ([`crate::registry::RegistryOptions::bash`], set from the
-//! settings key `tools.bash: "on"`). Prefer the structured executors —
-//! `run_lint`, `format_code`, `diagnostics`, the process group, and the
-//! `repo_*` tools — which spawn enumerable argv and never interpret a shell
-//! string.
+//! **Registered by default, switchable off.** This tool ships on, like every
+//! other built-in; `"tools": {"bash": "off"}` in `settings.json` withholds it
+//! (see [`crate::policy::ToolPolicy`], enforced above the whole session tool
+//! stack rather than at construction). It used to be the reverse — opt-in
+//! through a `RegistryOptions` boolean — which covered built-ins only and
+//! meant most operators simply never found the switch. Prefer the structured
+//! executors anyway — `run_tests`, `build_project`, `run_lint`, `format_code`,
+//! `run_script`, the process group, and the `repo_*` tools — which spawn
+//! enumerable argv and never interpret a shell string.
 //!
-//! The opt-in bounds the *general-purpose* shell, not every path to one.
+//! Switching it off bounds the *general-purpose* shell, not every path to one.
 //! `build_project` and `run_tests` accept a `command` override,
 //! `verify_done` a `test_cmd`, and `run_script` composes from the scripts
-//! index — all four reach `bash -c` through `crate::exec::run`, and all
-//! four are always-on. Turning `tools.bash` off therefore removes the
-//! shell TOOL, not the shell CAPABILITY; the fence that covers every one of
-//! them uniformly is the registry's `command.started` policy chain (see
-//! `ToolRegistry::command_line_for`), which is why that chain enumerates
-//! them all. An operator who needs shell execution actually contained wants
-//! the OS sandbox below plus that chain, not the registration switch alone.
+//! index — all four reach `bash -c` through `crate::exec::run`. So
+//! `"bash": "off"` removes the shell TOOL, not the shell CAPABILITY; the fence
+//! that covers every one of them uniformly is the registry's `command.started`
+//! policy chain (see `ToolRegistry::command_line_for`), which is why that chain
+//! enumerates them all — and, since #615, the text written into an already
+//! running interpreter as well. An operator who needs shell execution actually
+//! contained wants the OS sandbox below plus that chain, not the switch alone.
 //!
 //! Opt-in OS sandbox: `STELLA_BASH_SANDBOX=workspace-write|restricted` wraps
 //! the spawn in `sandbox-exec` (macOS, Seatbelt) or `bwrap` (Linux) — file

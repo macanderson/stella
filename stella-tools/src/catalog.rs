@@ -33,15 +33,21 @@
 /// CLI's interactive and discovery layers and are listed here only so
 /// [`ALL_NAMES`] can back `RESERVED_NAMES` — a custom manifest must not shadow
 /// them either.
+/// **Availability is not policy.** A variant here names something the
+/// *environment* either supplies or does not — a provider key, an issue
+/// backend. Whether a satisfiable tool is *allowed* is
+/// [`crate::policy::ToolPolicy`]'s business, driven by `settings.json`.
+///
+/// The `Bash` and `Web` variants that used to live here were the exception
+/// that proved the rule: neither named a prerequisite, only a default. They
+/// are gone — `bash` and the key-free web tools are [`Availability::Always`],
+/// and an operator turns them off with `"tools": {"bash": "off"}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Availability {
     /// Registers in every session, with no configuration and no prerequisite.
     Always,
-    /// The `"tools": {"bash": "on"}` settings opt-in.
-    Bash,
-    /// The `"tools": {"web": "on"}` settings opt-in.
-    Web,
-    /// The web opt-in *and* a BYOK search key (`BRAVE_API_KEY`/`TAVILY_API_KEY`).
+    /// A BYOK search key (`BRAVE_API_KEY`/`TAVILY_API_KEY`). The other three
+    /// web tools need no key and are [`Availability::Always`].
     WebSearch,
     /// An image-capable BYOK media provider key.
     Media,
@@ -105,7 +111,7 @@ macro_rules! catalog {
     };
 }
 
-use Availability::{Always, Bash, Issue, Media, Session, Video, Web, WebSearch};
+use Availability::{Always, Issue, Media, Session, Video, WebSearch};
 
 catalog! {
     // ---- Always-on: registered in every session ----
@@ -163,11 +169,14 @@ catalog! {
     "task_complete"       => (false, Always, "task"),
     "task_cancel"         => (false, Always, "task"),
     "task_assign"         => (false, Always, "task"),
-    // ---- Conditionally registered ----
-    "bash"                => (false, Bash, "bash"),
-    "web_fetch"           => (true, Web, "web"),
-    "web_extract_assets"  => (true, Web, "web"),
-    "web_download"        => (false, Web, "web"),
+    // The shell. No prerequisite — it is on unless `"tools": {"bash": "off"}`
+    // says otherwise, exactly like every other row in this block.
+    "bash"                => (false, Always, "bash"),
+    // The key-free web tools. `web_search` needs a search key and is below.
+    "web_fetch"           => (true, Always, "web"),
+    "web_extract_assets"  => (true, Always, "web"),
+    "web_download"        => (false, Always, "web"),
+    // ---- Conditionally registered: the environment must supply something ----
     "web_search"          => (true, WebSearch, "web"),
     "generate_image"      => (false, Media, "media"),
     "generate_video"      => (false, Video, "media"),

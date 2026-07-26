@@ -552,11 +552,15 @@ async fn run_worker(
         execution.as_ref().map(|(store, _)| store.clone()),
         format!("{session_id}/{}", spec.lane),
     );
+    // A worker's tool surface is the session's, so the operator's switches
+    // apply to it identically — a sub-agent must not be a way to reach a tool
+    // the lead was denied.
+    let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(cfg));
     let raced = {
         let gate = WatchGate(pause_rx);
         let engine = Engine::with_sleeper(
             &*provider,
-            &claims,
+            &permitted,
             agent::engine_config_for(cfg),
             &TokioSleeper,
         )
