@@ -475,6 +475,7 @@ impl WorkspaceModel {
             | Inbound::Notifications(_)
             | Inbound::McpOauthStatus { .. }
             | Inbound::EngineConfig { .. }
+            | Inbound::ToolPolicy { .. }
             | Inbound::IssuesList { .. }
             | Inbound::IssueActDone { .. }
             | Inbound::EntityHits { .. }

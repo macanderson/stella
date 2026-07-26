@@ -2,11 +2,36 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use stella_tools::policy::ToolPolicy;
+
 use super::authority::{
     apply_tool_ceiling, managed_tool_ceiling, restore_project_prompts, restore_project_tools,
 };
 use super::managed::managed_settings_path;
 use super::*;
+
+/// What each settings scope says about tools, kept APART instead of merged.
+///
+/// [`Settings::tool_policy`] answers *whether* a tool is on — the only question
+/// enforcement asks. A settings editor has to answer a second one: *who said
+/// so*, because "bash is off" and "your org turned bash off" are different
+/// facts, and only one of them is something the operator can change. Merging
+/// the scopes destroys exactly that distinction, so this type never does.
+#[derive(Debug, Clone, Default)]
+pub struct ToolScopePolicies {
+    /// The org-managed ceiling, [`managed_tool_ceiling`]'s output — the same
+    /// value [`Settings::load`] folds into the merged settings. A tool it
+    /// denies is denied for good: neither user nor project can grant it, and
+    /// the editor must render it LOCKED rather than as a switch that appears
+    /// to work and silently does nothing.
+    pub managed: ToolPolicy,
+    /// The user scope's own switches (`~/.stella/settings.json`).
+    pub user: ToolPolicy,
+    /// The project scope's own switches (`<workspace>/.stella/settings.json`),
+    /// as written — trust restoration is not applied, because this is a report
+    /// of what the file says, not of what the runtime honored.
+    pub project: ToolPolicy,
+}
 
 /// Append `extra`'s matchers onto `base`, per event. `None + None` stays
 /// `None` so a hook-free session carries no hooks handle at all.
@@ -287,6 +312,40 @@ impl Settings {
             }
         }
         Ok(merged)
+    }
+
+    /// Read the same three scope files [`Settings::load`] reads, but keep
+    /// their `tools` sections apart — see [`ToolScopePolicies`] for why the
+    /// merged answer is not enough.
+    ///
+    /// Cheap local reads, and deliberately re-read on every call rather than
+    /// cached: the editor's whole job is to change these files, and a stale
+    /// snapshot would attribute a switch to the scope that used to carry it.
+    pub fn load_tool_scopes(workspace_root: &Path) -> Result<ToolScopePolicies, String> {
+        if filesystem_settings_disabled() {
+            return Ok(ToolScopePolicies::default());
+        }
+        let user = match user_settings_path() {
+            Some(path) => Self::load_scope(&path)?,
+            None => Self::default(),
+        };
+        let managed = Self::load_managed_scope(&managed_settings_path())?;
+        let project = Self::load_scope(&project_settings_path(workspace_root))?;
+        let own = |scope: &Settings| {
+            scope
+                .tools
+                .as_ref()
+                .map(ToolsSettings::policy)
+                .unwrap_or_default()
+        };
+        Ok(ToolScopePolicies {
+            managed: managed_tool_ceiling(
+                managed.managed_authority.as_ref(),
+                managed.tools.as_ref(),
+            ),
+            user: own(&user),
+            project: own(&project),
+        })
     }
 
     /// Merge the files at `paths`, later paths taking precedence. Split out

@@ -54,13 +54,6 @@ mod outcome;
 mod output;
 mod persistence;
 mod prompt;
-// FOLLOW-UP: `src/tool_policy.rs` is a top-level module and belongs beside the
-// others in `main.rs` (`mod tool_policy;`). It is declared from here with an
-// explicit `#[path]` only because this change could not edit `main.rs`; when
-// that declaration lands, delete these two lines and re-point the
-// `crate::agent::PolicyToolSet` re-export below at `crate::tool_policy`.
-#[path = "tool_policy.rs"]
-mod tool_policy;
 mod tools;
 
 pub(crate) use engine::*;
@@ -79,7 +72,9 @@ pub(crate) use persistence::{
     persist_event, record_execution_end, spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use prompt::*;
-pub(crate) use tool_policy::PolicyToolSet;
+// `tool_policy` is a top-level module (`main.rs`); the re-export keeps every
+// session driver's `agent::PolicyToolSet` reading as "the agent's tool stack".
+pub(crate) use crate::tool_policy::PolicyToolSet;
 pub(crate) use tools::*;
 
 /// Construct the native tool registry without consulting optional host/user backends when the
@@ -1569,7 +1564,7 @@ pub(crate) async fn discover_custom_tools(
 /// Why a tool is off, phrased as the settings entry that did it — nothing is
 /// "disabled (default)" any more, so the only honest answer names a key.
 fn policy_reason(policy: &stella_tools::policy::ToolPolicy, name: &str) -> String {
-    match tool_policy::disabled_by(policy, name) {
+    match crate::tool_policy::disabled_by(policy, name) {
         Some(key) => format!("\"tools\": {{\"{key}\": \"off\"}} in settings"),
         // Unreachable for a name the caller already found denied; a plain
         // sentence beats an unwrap if the two ever disagree.

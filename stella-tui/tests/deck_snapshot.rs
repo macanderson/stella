@@ -13,7 +13,9 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use stella_tui::scenario::{demo_graph, demo_inbound};
-use stella_tui::{DeckTab, DeckUi, WorkspaceModel, render_deck};
+use stella_tui::{
+    DeckTab, DeckUi, ToolDenial, ToolPolicyState, ToolRow, ToolScope, WorkspaceModel, render_deck,
+};
 
 fn folded_model() -> WorkspaceModel {
     let mut model = WorkspaceModel::new();
@@ -118,7 +120,7 @@ fn agents_dashboard_shows_status_and_spend_columns() {
 #[test]
 fn settings_tab_hosts_the_agents_config_editor() {
     let model = folded_model();
-    // The config editor is the full-width body of the SETTINGS tab now.
+    // The config editor is one of the SETTINGS tab's two sections.
     let text = render_tab(&model, DeckTab::Settings, 120, 24);
     assert!(
         text.contains("agents"),
@@ -131,6 +133,88 @@ fn settings_tab_hosts_the_agents_config_editor() {
     );
     assert!(
         text.contains("edit agents config"),
+        "the unfocused focus hint renders:\n{text}"
+    );
+}
+
+/// The SETTINGS tab's second section: the tool-switch editor, listing what
+/// this session actually has — including a connected MCP server's tool and a
+/// tool the customer registered themselves, neither of which any compiled-in
+/// table knows about.
+#[test]
+fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() {
+    let model = folded_model();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.tab = DeckTab::Settings;
+    ui.tools.state = Some(ToolPolicyState {
+        tools: [
+            ("read_file", "file"),
+            ("bash", "bash"),
+            ("start_process", "process"),
+            ("send_stdin", "process"),
+            ("mcp__github__create_issue", "mcp"),
+            ("deploy_to_staging", "custom"),
+        ]
+        .into_iter()
+        .map(|(name, group)| ToolRow {
+            name: name.to_string(),
+            group: group.to_string(),
+            locked: name == "bash",
+            off: (name == "bash").then(|| ToolDenial {
+                key: "bash".to_string(),
+                scope: Some(ToolScope::Managed),
+            }),
+        })
+        .collect(),
+        switches: std::collections::BTreeMap::from([("bash".to_string(), false)]),
+    });
+
+    let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let buf = terminal.backend().buffer();
+    let area = *buf.area();
+    let text: String = (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // The frame goes to the same discoverable artifact the whole-deck snapshot
+    // uses — the honest headless stand-in for a TTY capture of this panel.
+    let artifact = concat!(env!("CARGO_TARGET_TMPDIR"), "/settings-tools-panel.txt");
+    match std::fs::write(artifact, &text) {
+        Ok(()) => println!("SETTINGS tab frame written to {artifact}"),
+        Err(err) => println!("SETTINGS tab frame not written to {artifact}: {err}"),
+    }
+
+    assert!(
+        text.contains("tools ·"),
+        "the tool panel renders beside the agents editor:\n{text}"
+    );
+    for section in ["FILE", "PROCESS", "MCP", "CUSTOM"] {
+        assert!(
+            text.contains(section),
+            "the {section} section header renders:\n{text}"
+        );
+    }
+    assert!(
+        text.contains("deploy_to_staging"),
+        "a customer's own tool is listed by name:\n{text}"
+    );
+    assert!(
+        text.contains("mcp__github__create_is"),
+        "an MCP server's tool is listed by name:\n{text}"
+    );
+    assert!(
+        text.contains("org-locked") && text.contains("locked"),
+        "an org-denied row renders locked rather than as a working switch:\n{text}"
+    );
+    assert!(
+        text.contains("t edit tool switches"),
         "the unfocused focus hint renders:\n{text}"
     );
 }

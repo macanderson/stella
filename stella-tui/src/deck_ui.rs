@@ -687,6 +687,11 @@ pub struct DeckUi {
     /// `settings.json` → `agent_engine_config`, over a driver-owned snapshot
     /// ([`Inbound::EngineConfig`]). Modal while open.
     pub engine: crate::views::engine::EngineOverlay,
+    /// The TOOLS panel (SETTINGS tab): the editor for `settings.json` →
+    /// `tools` — which of this session's tools are switched off — over a
+    /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
+    /// mutually exclusive with `engine`: one editor owns the tab's keyboard.
+    pub tools: crate::views::tools::ToolsOverlay,
 }
 
 impl Default for DeckUi {
@@ -750,6 +755,7 @@ impl Default for DeckUi {
             inbox_sel: 0,
             pending_inputs: Vec::new(),
             engine: crate::views::engine::EngineOverlay::default(),
+            tools: crate::views::tools::ToolsOverlay::default(),
         }
     }
 }
@@ -1087,6 +1093,13 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         crate::views::engine::ingest_config(ui, state, status);
         return;
     }
+    // The tool-switch snapshot — the other half of the SETTINGS tab, out-of-band
+    // in exactly the same way. Its ingest retires the unsaved edits the write
+    // actually landed; the model fold never sees it.
+    if let Inbound::ToolPolicy { state, status } = inbound {
+        crate::views::tools::ingest_policy(ui, state, status);
+        return;
+    }
     // The ISSUES tab's out-of-band replies, each lane seq-guarded: only the
     // newest emitted request's answer is applied; anything older is stale
     // and dropped (the per-keystroke type-ahead stream depends on this).
@@ -1398,6 +1411,13 @@ pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -
     // focus flag can never trap the keyboard elsewhere.
     if ui.tab == DeckTab::Settings && ui.engine.focused {
         return crate::views::engine::handle_engine_key(key, ui);
+    }
+    // The TOOLS panel is the SETTINGS tab's second editor and is modal on
+    // exactly the same terms — its letter verbs are the engine panel's, so
+    // leaking one into the composer would be as bad here as there. Focusing
+    // either panel unfocuses the other, so these two arms can never both fire.
+    if ui.tab == DeckTab::Settings && ui.tools.focused {
+        return crate::views::tools::handle_tools_key(key, ui);
     }
 
     // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the
@@ -3387,15 +3407,20 @@ fn handle_mcp_auth_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 }
 
 /// The SETTINGS tab's browse keys (non-modal — the composer stays live). The
-/// tab hosts the `agent_engine_config` editor; `e` hands it the keyboard (its
-/// own Esc hands it back), gated on a blank composer like every other tab's
-/// letter verb so typing a prompt still works from here. Once focused, the
-/// editor claims every key ahead of this handler (see `handle_deck_key`).
+/// tab hosts two editors side by side: `e` hands the keyboard to the
+/// `agent_engine_config` editor, `t` to the `tools` switch editor (each one's
+/// own Esc hands it back). Both are gated on a blank composer like every other
+/// tab's letter verb so typing a prompt still works from here. Once focused,
+/// that editor claims every key ahead of this handler (see `handle_deck_key`).
 fn handle_settings_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
-    if composer_empty && key.modifiers.is_empty() && matches!(key.code, KeyCode::Char('e')) {
-        return Some(crate::views::engine::focus_panel(ui));
+    if !composer_empty || !key.modifiers.is_empty() {
+        return None;
     }
-    None
+    match key.code {
+        KeyCode::Char('e') => Some(crate::views::engine::focus_panel(ui)),
+        KeyCode::Char('t') => Some(crate::views::tools::focus_panel(ui)),
+        _ => None,
+    }
 }
 
 fn handle_agents_key(

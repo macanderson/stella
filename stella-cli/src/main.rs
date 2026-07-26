@@ -62,6 +62,8 @@ mod signals;
 mod skill_manager;
 mod stats;
 mod subsession;
+mod tool_policy;
+mod tool_switches;
 mod tui;
 mod usage_cmd;
 

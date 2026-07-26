@@ -50,6 +50,7 @@ pub use authority::{AuthorityPolicy, ManagedAuthoritySettings};
 // `settings::context`; a later phase re-exports them here as it wires them in.
 pub use context::ContextSettings;
 pub use context_providers::{ContextProviderSettings, ExternalContextProvider, ProviderEndpoint};
+pub use merge::ToolScopePolicies;
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in
@@ -595,6 +596,72 @@ impl ToolsSettings {
                 })
                 .collect(),
         }
+    }
+
+    /// The `"tools"` section of ONE settings file — what that scope says, not
+    /// what the merged chain resolved to.
+    ///
+    /// The distinction is the whole reason this exists rather than reading
+    /// [`Settings::load`]'s answer: the settings editor read-modify-writes a
+    /// single scope, and writing a *merged* map back would copy the other two
+    /// scopes' switches into this file and freeze them there — a project's
+    /// `{"bash": "off"}` would silently become the user's, and would survive
+    /// the project removing it.
+    ///
+    /// A missing file is an empty section (the shipped default); a file whose
+    /// `tools` value is not a map of `on`/`off` is a named error, never a
+    /// silent reset — an editor that quietly discarded switches it could not
+    /// parse would be worse than one that refuses to save.
+    pub fn read_from(path: &Path) -> Result<Self, String> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let root: serde_json::Value = serde_json::from_str(&contents)
+            .map_err(|e| format!("invalid settings file {}: {e}", path.display()))?;
+        match root.get("tools") {
+            None => Ok(Self::default()),
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|e| format!("invalid settings file {}: tools: {e}", path.display())),
+        }
+    }
+
+    /// Persist THIS section as the `"tools"` key of the settings file at
+    /// `path`, preserving every other key in the file byte-for-byte at the
+    /// value level — the exact contract (and the exact shape) of
+    /// [`AgentEngineConfig::save_to`], because a settings editor that rewrote
+    /// the whole file would silently drop `providers`, `hooks`, `mcp`, and
+    /// every forward-compat key it has never heard of.
+    ///
+    /// An EMPTY section removes the key rather than writing `{}`: "no switches"
+    /// is the shipped posture, and the file should read as though the editor
+    /// had never been opened.
+    pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        private::reject_symlink(path)?;
+        let mut root: serde_json::Value = match std::fs::read_to_string(path) {
+            Ok(contents) => serde_json::from_str(&contents)
+                .map_err(|e| format!("invalid settings file {}: {e}", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let object = root
+            .as_object_mut()
+            .ok_or_else(|| format!("settings file {} is not a JSON object", path.display()))?;
+        if self.entries.is_empty() {
+            object.remove("tools");
+        } else {
+            let value =
+                serde_json::to_value(self).map_err(|e| format!("cannot serialize tools: {e}"))?;
+            object.insert("tools".to_string(), value);
+        }
+        let mut rendered = serde_json::to_string_pretty(&root)
+            .map_err(|e| format!("cannot render settings: {e}"))?;
+        rendered.push('\n');
+        let user_private = user_settings_path().as_deref() == Some(path);
+        // Same split as `AgentEngineConfig::save_to`: owner-only atomic writes
+        // are reserved for the user scope, which can hold credentials.
+        private::write_settings(path, rendered.as_bytes(), user_private)
     }
 }
 
