@@ -99,7 +99,7 @@ pub fn html_to_markdown(html: &str, base: Option<&Url>) -> (Option<String>, Stri
 }
 
 /// Render fetched HTML as plain text (no markdown syntax): block tags break
-/// paragraphs, everything in [`SKIP_TAGS`] is dropped.
+/// paragraphs, everything in `SKIP_TAGS` is dropped.
 pub fn html_to_text(html: &str) -> (Option<String>, String) {
     let doc = Html::parse_document(html);
     let title = doc_title(&doc);

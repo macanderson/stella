@@ -2,13 +2,13 @@
 //! for speed; falls back to the system `grep -rn` otherwise.
 //!
 //! Three independent caps bound what reaches the model, because
-//! [`MAX_RESULTS`] alone does not: ripgrep's `--max-count` is per FILE, so a
+//! `MAX_RESULTS` alone does not: ripgrep's `--max-count` is per FILE, so a
 //! recursive search over N matching files can emit 200·N lines, and a single
 //! match inside a minified bundle or a base64 blob is one line of megabytes.
-//! So: [`MAX_COLUMNS`] clips each match line (rg's own
+//! So: `MAX_COLUMNS` clips each match line (rg's own
 //! `--max-columns-preview`, re-implemented in Rust for the `grep` fallback,
-//! which has no such flag), [`crate::exec::truncate_middle`] caps the whole
-//! buffered payload, and only then does the [`MAX_RESULTS`] line cap apply —
+//! which has no such flag), `crate::exec::truncate_middle` caps the whole
+//! buffered payload, and only then does the `MAX_RESULTS` line cap apply —
 //! that order is what keeps the "showing first 200 matches" note true.
 
 use async_trait::async_trait;
@@ -27,7 +27,7 @@ const MAX_RESULTS: usize = 200;
 const MAX_COLUMNS: usize = 400;
 
 /// The `grep` fallback's stand-in for rg's `--max-columns-preview`: clip
-/// every line to [`MAX_COLUMNS`] bytes with the crate's loud elision marker.
+/// every line to `MAX_COLUMNS` bytes with the crate's loud elision marker.
 /// Short lines pass through byte-identically, so ordinary results are
 /// untouched. Char-boundary-safe — byte slicing would panic mid-UTF-8.
 fn cap_columns(text: &str) -> String {

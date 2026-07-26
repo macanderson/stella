@@ -3,8 +3,8 @@
 
 //! `stella-tools` — the built-in tool set the agent loop calls.
 //!
-//! Every tool implements [`Tool`], takes a JSON input from the model, and
-//! returns a [`ToolOutput`] (success or a typed, named error — never a bare
+//! Every tool implements [`registry::Tool`], takes a JSON input from the model, and
+//! returns a [`stella_protocol::ToolOutput`] (success or a typed, named error — never a bare
 //! string). Tools are workspace-root-pinned: file paths resolve against the
 //! configured root, and `cd` inside `bash` cannot silently diverge the root
 //! for subsequent file operations (L-S2).

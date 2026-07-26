@@ -109,7 +109,7 @@ impl Tool for ProjectOverview {
 /// and kept to a few lines so it stays cheap in the cache-stable system
 /// prefix. Every line is bounded by construction (issue #328): entry points
 /// come from one SQL anti-join and the layout collapses past
-/// [`MAX_TOP_LEVEL_DIRS`], so a monorepo far beyond a few hundred files
+/// `MAX_TOP_LEVEL_DIRS`, so a monorepo far beyond a few hundred files
 /// renders the same useful map a small tree does.
 pub fn render_orientation_block(root: &Path) -> Option<String> {
     let path = stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
@@ -334,7 +334,7 @@ fn domains_section(root: &Path) -> Value {
 /// indexed-file count (largest first, ties by name), the remainder and any
 /// root-level files collapsed to counts. Derived from the index's sorted
 /// file list, so it is deterministic for a given index state — and it never
-/// degrades: past [`MAX_TOP_LEVEL_DIRS`] the summary collapses instead of
+/// degrades: past `MAX_TOP_LEVEL_DIRS` the summary collapses instead of
 /// disappearing, which is what keeps the injected map useful on a monorepo.
 fn top_level_summary(files: &[String]) -> Option<String> {
     if files.is_empty() {

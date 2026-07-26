@@ -211,7 +211,7 @@ pub(crate) fn block_index_writes(db: &Path) {
 }
 
 /// Open → query → shutdown, entirely synchronous underneath (SQLite reads
-/// plus the [`open_or_build`] catch-up pass). Shared by the tool and the
+/// plus the `open_or_build` catch-up pass). Shared by the tool and the
 /// `stella graph` subcommand so both render the exact same frames.
 ///
 /// **Synchronous — an async caller must wrap it in `spawn_blocking`**, the

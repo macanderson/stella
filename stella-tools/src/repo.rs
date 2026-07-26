@@ -21,7 +21,7 @@
 //! - History rewriting (`reset --hard`, rebase, amend) is deliberately
 //!   absent: `repo_rollback` restores named paths to the last committed
 //!   state and that is the only "undo" this surface offers.
-//! - `repo_diff` caps its patch payload at [`MAX_PATCH_BYTES`] with a
+//! - `repo_diff` caps its patch payload at `MAX_PATCH_BYTES` with a
 //!   **loud elision marker**, so a capped review can never be mistaken
 //!   for a complete one.
 
@@ -94,7 +94,7 @@ pub struct RepoStatus {
     pub ahead: Option<u32>,
     /// Commits behind upstream; `None` when no upstream is configured.
     pub behind: Option<u32>,
-    /// Changed files, capped at [`MAX_CHANGED_ROWS`].
+    /// Changed files, capped at `MAX_CHANGED_ROWS`.
     pub changed: Vec<ChangedFile>,
     /// True when the changed-file list was truncated at the cap.
     pub truncated: bool,
@@ -442,8 +442,8 @@ impl Tool for RepoStatusTool {
 }
 
 /// Render a [`RepoDiff`] as a compact per-file summary followed by the raw
-/// patch hunks, capping the summary rows at [`MAX_CHANGED_ROWS`] and the
-/// patch at [`MAX_PATCH_BYTES`] — always with loud elision (module doc).
+/// patch hunks, capping the summary rows at `MAX_CHANGED_ROWS` and the
+/// patch at `MAX_PATCH_BYTES` — always with loud elision (module doc).
 fn render_diff(diff: &RepoDiff, staged: bool) -> String {
     let scope = if staged { "staged" } else { "unstaged" };
     let patch = diff.patch.trim_end();
