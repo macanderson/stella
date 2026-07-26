@@ -1666,3 +1666,49 @@ fn the_json_summary_envelope_declares_its_schema_version_on_both_arms() {
     );
     assert!(keys(&ok).contains("schema_version"));
 }
+
+/// Both machine-readable summaries lead with `schema_version`. Key order is
+/// deliberately *not* part of the consumer contract — this pins a build
+/// convention, not a promise: every envelope is assembled from a struct with the
+/// version declared first, so a derived `Serialize` emits it at the head of the
+/// object where a human eyeballing output sees it immediately. Rebuilding any of
+/// them with `serde_json::json!` would silently undo that (a `json!` object is a
+/// sorted map, which sorts `schema_version` into the middle), and nothing else
+/// in the suite would notice.
+#[test]
+fn every_summary_envelope_leads_with_its_version() {
+    let pipeline = PipelineRunSummary {
+        schema_version: crate::SUMMARY_SCHEMA_VERSION,
+        status: "completed",
+        text: None,
+        cost_usd: 0.0,
+        reason: None,
+        task_class: None,
+        verdict: None,
+        revisions: None,
+        candidates_run: None,
+        model: "anthropic/claude-opus".to_string(),
+        events: Vec::new(),
+        reflection: serde_json::Value::Null,
+    };
+    let raw = RawRunSummary {
+        schema_version: crate::SUMMARY_SCHEMA_VERSION,
+        status: "completed",
+        text: None,
+        cost_usd: None,
+        reason: None,
+        model: "anthropic/claude-opus".to_string(),
+        events: Vec::new(),
+        files_touched: serde_json::Value::Null,
+    };
+
+    for (label, encoded) in [
+        ("pipeline", serde_json::to_string(&pipeline).unwrap()),
+        ("raw step-loop", serde_json::to_string(&raw).unwrap()),
+    ] {
+        assert!(
+            encoded.starts_with(r#"{"schema_version":"#),
+            "the {label} summary must lead with its version, got: {encoded}"
+        );
+    }
+}

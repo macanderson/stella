@@ -159,6 +159,29 @@ struct PipelineRunSummary {
     reflection: serde_json::Value,
 }
 
+/// The `--output-format json` summary of a raw (`--no-pipeline`) step-loop run.
+/// A different key set from [`PipelineRunSummary`] — no verification ladder ran,
+/// and this path is the one that carries `files_touched` — but the same
+/// contract, so it declares the same [`crate::SUMMARY_SCHEMA_VERSION`]. The two
+/// can never drift: both read the one constant.
+///
+/// A struct rather than `serde_json::json!` so the version leads the object:
+/// `json!` builds a sorted map and would bury it mid-envelope. Key order is not
+/// contractual either way; this is for whoever reads the output by eye.
+#[derive(serde::Serialize)]
+struct RawRunSummary {
+    schema_version: u32,
+    status: &'static str,
+    text: Option<String>,
+    cost_usd: Option<f64>,
+    reason: Option<String>,
+    model: String,
+    events: Vec<AgentEvent>,
+    /// The session file-touch telemetry payload (one record per normalized
+    /// path: crud_events, line-delta totals, audit log).
+    files_touched: serde_json::Value,
+}
+
 impl PipelineRunSummary {
     /// Print the summary to stdout and record that the machine-readable
     /// contract has been satisfied, so `main`'s catch-all does not follow a
@@ -2070,24 +2093,16 @@ async fn run_turn(
                 ("aborted", None, Some(*cost_usd), Some(reason.clone()))
             }
         };
-        let summary = serde_json::json!({
-            // Governed by the same bump rule as the pipeline summary
-            // (`crate::SUMMARY_SCHEMA_VERSION`) — the two paths are one
-            // contract surface with different key sets, so they must never
-            // carry different version numbers. Written first here for the
-            // reader's benefit only: `json!` emits its keys sorted, so this
-            // lands mid-object on the wire. Consumers read it by key.
-            "schema_version": crate::SUMMARY_SCHEMA_VERSION,
-            "status": status,
-            "text": text,
-            "cost_usd": cost_usd,
-            "reason": reason,
-            "model": format!("{}/{}", cfg.provider.id, cfg.model_id),
-            "events": collected,
-            // The session file-touch telemetry payload (one record per
-            // normalized path: crud_events, line-delta totals, audit log).
-            "files_touched": registry.file_touch_telemetry().to_json(),
-        });
+        let summary = RawRunSummary {
+            schema_version: crate::SUMMARY_SCHEMA_VERSION,
+            status,
+            text,
+            cost_usd,
+            reason,
+            model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+            events: collected,
+            files_touched: registry.file_touch_telemetry().to_json(),
+        };
         println!(
             "{}",
             serde_json::to_string_pretty(&summary).unwrap_or_else(|e| format!(
