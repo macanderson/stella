@@ -142,7 +142,7 @@ pub struct OutcomeAssessment {
 
 impl OutcomeAssessment {
     /// Completion cannot pass on a contract that did not (lifecycle §8.13:
-    /// broken coverage "make[s] validation_status error, and completion cannot
+    /// broken coverage "make\[s\] validation_status error, and completion cannot
     /// pass"; §8.12: "do not declare completion until the artifact contract
     /// passes").
     ///

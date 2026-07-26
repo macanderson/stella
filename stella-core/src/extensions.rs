@@ -93,7 +93,7 @@ pub struct CommandDef {
     /// `name:` or the filename stem). `/`-prefixed on display.
     pub name: String,
     /// Menu description — frontmatter `description:`, falling back to the
-    /// body's first line (see [`fallback_description`]).
+    /// body's first line (see `fallback_description`).
     pub description: String,
     /// The markdown body: the prompt template ([`expand_command`]).
     pub body: String,

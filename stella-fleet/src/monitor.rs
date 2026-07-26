@@ -11,8 +11,9 @@
 //!   runs are still progressing; a cumulative wall cap (default 2h) always
 //!   bounds it, and a run that stops progressing without completing times out
 //!   naming what was last observed. The timing decision is a pure function
-//!   ([`decide`]) so the cap arithmetic is table-testable with an injected
-//!   [`Clock`]; the async loop only handles polling and sleeping.
+//!   (`decide`, private to this module) so the cap arithmetic is table-testable
+//!   with an injected [`Clock`]; the async loop only handles polling and
+//!   sleeping.
 //!
 //! Long external waits are deferred waits with their own cumulative caps —
 //! never a raised global turn timeout (L-E4).
