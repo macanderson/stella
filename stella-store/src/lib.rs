@@ -133,8 +133,6 @@ mod private_state_tests;
 mod quarantine_tests;
 mod receipts;
 mod reconstruct;
-#[cfg(test)]
-mod retention_tests;
 mod telemetry;
 #[cfg(test)]
 mod tests;

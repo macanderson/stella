@@ -296,7 +296,7 @@ silently `chmod`-ing changes the mode of a file Stella did not create.
 advertise a guarantee nothing enforces. Consequence: a secret the *user* pastes
 into a prompt, or that appears in a tool result, is stored in
 `store.db` (`executions.prompt`, `events.payload`) in the clear. The mitigation
-available today is retention — `stella storage prune` — not redaction.
+available today is retention — `stella stats prune` — not redaction.
 
 ## Platform and posture summary
 

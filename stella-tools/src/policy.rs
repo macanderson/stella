@@ -28,7 +28,7 @@
 //!
 //! 1. the exact tool name — `"repo_push"`
 //! 2. its group — `"repo"`, or `"mcp"` / `"custom"` for tools the catalog does
-//!    not know (see [`catalog::group_for`](crate::catalog::group_for))
+//!    not know (see [`crate::catalog::group_for`])
 //! 3. `"*"`, every tool
 //!
 //! So `{"*": "off", "read_file": "on"}` is a read-only agent in two lines, and
