@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 7;
+pub(crate) const SCHEMA_VERSION: i64 = 8;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -301,6 +301,121 @@ CREATE TABLE IF NOT EXISTS ann_index_state (
 );
 ";
 
+/// V8 — **the lifecycle ledger** (#714, adaptive-context Phase 3), plus the
+/// `episode.lineage_id` column ADR 0010 point 6 calls for and Phase 1 did not
+/// land.
+///
+/// ## `context_records` — born canonical, never migrated
+///
+/// ADR 0010 splits ADR 0005's model from its delivery: `context_records` is the
+/// canonical local authority **for the records it owns**, and that set grows
+/// monotonically. Observations, proposals, and promotion events have no legacy
+/// counterpart anywhere, so they are written here from birth — immutable, JCS-
+/// hashed per ADR 0004 — and no migration exists for them because they were
+/// never anywhere else. Not one legacy row is rewritten by this migration.
+///
+/// It lives in `context.db` rather than a new file because ADR 0005 says extend,
+/// do not replace: retention policy cannot live in a different database from the
+/// data it governs, and the tombstones, memories, and episodes these records
+/// reason about are all here.
+///
+/// **Immutability is enforced by the database, not by convention.** Two triggers
+/// abort any `UPDATE` or `DELETE` against the table. Append-only is the entire
+/// value of a ledger — a "reconstruct what was believed at time T" answer read
+/// out of a table something could have quietly rewritten is worth nothing — and
+/// an invariant that holds only as long as every future caller remembers it is
+/// not an invariant. A correction is a new revision carrying `supersedes`, which
+/// is an INSERT and therefore permitted.
+///
+/// `record_id` is the identity of one revision; `lineage_id` is the durable
+/// identity the revision belongs to, exactly as on `memory`. `body` holds the
+/// record's canonical JSON, and `record_hash` is the ADR 0004 hash over it, so
+/// any row can be re-verified against its own content without the writer being
+/// trusted.
+///
+/// ## `context_extraction_cursor` — what makes extraction replay-idempotent
+///
+/// The reflection log is append-only and re-read in full every turn. Without a
+/// cursor, every pass would re-extract every line and mint duplicate
+/// observations forever. The cursor records how far each evidence source has
+/// been consumed; combined with the deterministic, content-derived `record_id`,
+/// re-running an extraction over already-consumed evidence is a no-op rather
+/// than a duplicate.
+///
+/// ## `episode.lineage_id` — closing a documented/actual mismatch
+///
+/// ADR 0010 point 6 (ratified 2026-07-26) says `lineage_id` lands on **`memory`
+/// and `episode`**, and the plan document says Phase 1 delivered exactly that.
+/// It did not: `migrate_v5` altered `memory` alone, and `episode` has no
+/// lineage column anywhere in the tree.
+///
+/// Resolved in favor of the ratified ADR rather than by amending it down to
+/// match the code. The ADR's reasoning — that `memory` and `episode` are the two
+/// record kinds that transfer authority, while `node`/`edge`/`embedding` are a
+/// disposable index — is unaffected by the omission, and re-opening a ratified
+/// decision to legalize an implementation gap is the wrong direction. The
+/// backfill is the same lossless one v5 used for `memory`: every existing row is
+/// its own lineage's first revision, so `lineage_id = public_id`. No content is
+/// read, nothing is merged, and no id changes.
+///
+/// Statement-level idempotent for the same reason `migrate_v5` is: SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, and a store whose `user_version` was rewound —
+/// how the migration tests build fixtures, and what a partial restore looks like
+/// — would otherwise fail on a duplicate column.
+fn migrate_v8(tx: &Connection) -> Result<(), ContextError> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS context_records (
+            record_id      TEXT PRIMARY KEY,
+            lineage_id     TEXT NOT NULL,
+            record_kind    TEXT NOT NULL,
+            record_hash    TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            body           TEXT NOT NULL,
+            observed_at    TEXT NOT NULL,
+            recorded_at    TEXT NOT NULL,
+            supersedes     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_context_records_kind
+            ON context_records(record_kind);
+        CREATE INDEX IF NOT EXISTS idx_context_records_lineage
+            ON context_records(lineage_id);
+        CREATE INDEX IF NOT EXISTS idx_context_records_observed
+            ON context_records(observed_at);
+
+        CREATE TRIGGER IF NOT EXISTS context_records_are_immutable_update
+        BEFORE UPDATE ON context_records BEGIN
+            SELECT RAISE(ABORT, 'context_records is append-only: supersede with a new revision instead of updating');
+        END;
+        CREATE TRIGGER IF NOT EXISTS context_records_are_immutable_delete
+        BEFORE DELETE ON context_records BEGIN
+            SELECT RAISE(ABORT, 'context_records is append-only: records are never deleted');
+        END;
+
+        CREATE TABLE IF NOT EXISTS context_extraction_cursor (
+            source     TEXT PRIMARY KEY,
+            position   TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );",
+    )?;
+
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = tx.prepare("PRAGMA table_info(episode)")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>("name"))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    if !existing.contains("lineage_id") {
+        tx.execute_batch("ALTER TABLE episode ADD COLUMN lineage_id TEXT;")?;
+    }
+    if !existing.contains("superseded_at") {
+        tx.execute_batch("ALTER TABLE episode ADD COLUMN superseded_at TEXT;")?;
+    }
+    tx.execute_batch(
+        "UPDATE episode SET lineage_id = public_id WHERE lineage_id IS NULL;
+         CREATE INDEX IF NOT EXISTS idx_episode_lineage ON episode(lineage_id);",
+    )?;
+    Ok(())
+}
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -413,6 +528,24 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 7 {
         tx.execute_batch(MIGRATION_V7)?;
     }
+    if version < 8 {
+        migrate_v8(&tx)?;
+    }
+    // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
+    // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
+    // high-water mark. Two branches that each add "the next step" merge
+    // cleanly — git sees two additions to adjacent lines — and produce a
+    // ladder with two steps numbered the same, or a `SCHEMA_VERSION` that
+    // skips one. Nothing in CI catches that: both files compile, and the
+    // mis-numbering only shows up as a corrupt context.db on a user's
+    // machine.
+    //
+    // Adaptive context is being built on two branches in parallel, so the
+    // slot is reserved here in advance:
+    //
+    //   v6: adaptive-context Phase 3 (#714) — TAKEN, see `migrate_v6`
+    //
+    // If you are not that phase, take v7 and add your own line here.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())

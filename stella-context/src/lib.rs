@@ -84,6 +84,7 @@ pub use store::{
     CompactionWatermark, ContextCompactPolicy, ContextCompactReport, ContextStore,
     MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow,
 };
+pub use store::ledger::{AppendOutcome, LedgerAppend, LedgerRecord};
 pub use writeback::{
     ContextDelta, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion, FactView, MemoryInput,
     MemoryKind, UpsertReceipt,

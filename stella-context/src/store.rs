@@ -14,6 +14,7 @@ mod compact;
 mod domain;
 mod edge;
 mod embedding;
+pub mod ledger;
 mod node;
 mod record;
 mod schema;
@@ -243,6 +244,65 @@ impl ContextStore {
     /// The retrieval knobs in force for this store.
     pub(crate) fn tuning(&self) -> crate::retrieval::RecallTuning {
         self.tuning
+    }
+
+    // ── The lifecycle ledger (#714) ──────────────────────────────────────
+    //
+    // Append-only, immutable, hashed records — adaptive-context spec §6.3,
+    // born canonical per ADR 0010. These are thin, synchronous wrappers: the
+    // ledger is written on the reflection path, which must never block or fail
+    // a user's turn, so there is nothing async to await and nothing to batch.
+
+    /// Append one lifecycle record. Idempotent for a byte-identical replay;
+    /// see [`ledger::append`] for why that is a success rather than an error.
+    pub fn append_record(
+        &self,
+        record: ledger::LedgerAppend<'_>,
+    ) -> Result<ledger::AppendOutcome, ContextError> {
+        let now = self.clock.now_rfc3339();
+        ledger::append(&lock(&self.conn), record, &now)
+    }
+
+    /// One lifecycle record by its revision id.
+    pub fn record_by_id(
+        &self,
+        record_id: &str,
+    ) -> Result<Option<ledger::LedgerRecord>, ContextError> {
+        ledger::record_by_id(&lock(&self.conn), record_id)
+    }
+
+    /// Lifecycle records of one kind, oldest first.
+    pub fn records_of_kind(
+        &self,
+        record_kind: &str,
+        limit: usize,
+    ) -> Result<Vec<ledger::LedgerRecord>, ContextError> {
+        ledger::records_of_kind(&lock(&self.conn), record_kind, limit)
+    }
+
+    /// Every revision in one lineage, oldest first — a single record's audit
+    /// trail.
+    pub fn records_for_lineage(
+        &self,
+        lineage_id: &str,
+    ) -> Result<Vec<ledger::LedgerRecord>, ContextError> {
+        ledger::records_for_lineage(&lock(&self.conn), lineage_id)
+    }
+
+    /// How many records of each kind the ledger holds.
+    pub fn record_counts(&self) -> Result<Vec<(String, u64)>, ContextError> {
+        ledger::record_counts(&lock(&self.conn))
+    }
+
+    /// How far `source` has been consumed by observation extraction, if ever.
+    pub fn extraction_cursor(&self, source: &str) -> Result<Option<String>, ContextError> {
+        ledger::extraction_cursor(&lock(&self.conn), source)
+    }
+
+    /// Advance `source`'s extraction cursor.
+    pub fn set_extraction_cursor(&self, source: &str, position: &str) -> Result<(), ContextError> {
+        let now = self.clock.now_rfc3339();
+        ledger::set_extraction_cursor(&lock(&self.conn), source, position, &now)
     }
 
     /// Open and immediately kick embedding catch-up as a background tokio task
