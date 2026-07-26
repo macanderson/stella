@@ -82,6 +82,24 @@ pub(crate) const MIGRATIONS: [Migration; 15] = [
     // (byte-identical blocks share an id, so only the first minting call was
     // ever recorded). Additive ADD COLUMN, column-guarded.
     migrate_v14_to_v15,
+    // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
+    // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
+    // a slot is claimed by position, not by name. Two branches that each
+    // append "the next migration" merge cleanly — git sees two additions to
+    // different lines — and produce a ladder where one migration silently
+    // runs at the other's version. Nothing in CI catches that: both files
+    // compile, and the mis-numbering only shows up as a corrupt store on a
+    // user's machine.
+    //
+    // Adaptive context is being built on two branches in parallel, so the
+    // slots are reserved here in advance:
+    //
+    //   v15 → v16: adaptive-context Phase 2 (#713)
+    //   v16 → v17: adaptive-context Phase 3 (#714)
+    //
+    // If you are neither of those, take v17 → v18 and add your own line
+    // here. If a reserved phase ships without needing its slot, delete its
+    // line rather than leaving a hole — index order is the contract.
 ];
 
 /// The schema version this build writes — the `PRAGMA user_version` of
