@@ -96,10 +96,13 @@ and re-checks the store until tokens appear, so a login completed mid-session
 takes effect on the next tool call with no reconnect. Tokens live in the
 caller-chosen JSON file — `stella-cli` puts it at
 `.stella/private/mcp_oauth.json`, inside the gitignored `private/` directory.
-Persistence is **Unix-only**: every open is `O_NOFOLLOW | O_CLOEXEC` at `0600`
-under a `0700` parent, rejects a non-regular or multiply-linked file, and writes
-through a temp file + `rename` + parent `fsync`. Elsewhere `TokenStore` refuses
-to read or write rather than fall back to a world-readable file.
+Persistence is **hardened on Unix**: every open is `O_NOFOLLOW | O_CLOEXEC` at
+`0600` under a `0700` parent and rejects a non-regular or multiply-linked file.
+The write itself is the workspace's one durable-write contract
+(`stella_store::durable::write_atomic`, #617) — temp + `fsync` + `rename` +
+parent `fsync` — on every platform. Off Unix the hardening has no equivalent
+and is skipped rather than made a precondition: refusing to persist does not
+protect the token, it just leaves the user re-authenticating every session.
 
 ## Gotchas
 

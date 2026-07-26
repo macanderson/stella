@@ -189,7 +189,7 @@ impl SessionRegistry {
         // iterates `list`. Upserts happen a handful of times per turn, not per
         // event, so the fsync is cheap against what is lost — the same
         // reasoning `journal::write_snapshot` already documents.
-        crate::write_private_atomic(&path, json.as_bytes(), true)
+        crate::private::write_private_atomic(&path, json.as_bytes())
     }
 
     /// All records, newest-started first, with dead-process downgrade

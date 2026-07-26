@@ -92,39 +92,17 @@ fn cloud_registration_at(path: &Path) -> CloudRegistration {
         .unwrap_or_default()
 }
 
-#[cfg(unix)]
-fn read_cloud_json(path: &Path) -> Option<String> {
-    crate::read_sensitive_file_to_string(path).ok()
-}
-
-/// See [`write_cloud_json`] for why the non-Unix branch keeps the plain read:
-/// the sensitive helpers are hard-wired to `Err` off Unix, so routing this
-/// through them would make every Windows install permanently unregistered.
-#[cfg(not(unix))]
-fn read_cloud_json(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
-}
-
-/// Persist the registration.
+/// Persist the registration through [`crate::write_sensitive_file_atomic`]:
+/// no-follow, 0600, in an owner-controlled directory, temp + fsync + rename +
+/// fsync of the parent.
 ///
-/// On Unix the bytes go out through [`crate::write_sensitive_file_atomic`] —
-/// the no-follow, `0600`, fsync + rename primitive the rest of the crate's
-/// private-state writes use. This replaces the plain `std::fs::write` +
-/// `rename` that landed the file at the process umask, followed a symlinked
-/// terminal path, and fsynced nothing; confidentiality no longer rests solely
-/// on the `0700` parent that `ensure_private_dir` enforces just above.
-///
-/// Off Unix the old plain path is kept **deliberately**, and this is the
-/// whole reason the swap is conditional rather than wholesale:
-/// `write_sensitive_file_atomic` begins with `validate_owner_controlled_parent`,
-/// which is an unconditional `Err` on every non-Unix target (there is no uid or
-/// mode word to check). Calling it there would not harden `cloud.json` — it
-/// would make it unwritable, so `stella cloud register` would fail and
-/// [`org_id`] would be permanently `None` on Windows. A fail-closed outcome is
-/// right when the alternative is trusting a file we cannot vet; it is not right
-/// when the check itself is simply unimplemented for the platform. The honest
-/// statement of the gap: on Windows this file is protected by its parent
-/// directory's ACLs and nothing else.
+/// It used to be a `std::fs::write` to a **fixed** `cloud.json.tmp` followed
+/// by a rename — the file landed at the process umask rather than 0600, a
+/// symlink at the terminal path was followed, nothing was fsynced, and two
+/// registrations could interleave on the one temp name. Confidentiality
+/// rested entirely on the 0700 parent. For a file whose
+/// [`CloudRegistration::oauth_token`] slot is reserved for a real credential
+/// that was thin cover, and #617's contract made the fix a one-liner.
 pub fn save_cloud_registration(reg: &CloudRegistration) -> Result<()> {
     save_cloud_registration_at(&cloud_json_path(), reg)
 }
@@ -136,20 +114,7 @@ fn save_cloud_registration_at(path: &Path, reg: &CloudRegistration) -> Result<()
     let body = serde_json::to_string_pretty(reg)
         .map_err(|e| StoreError(format!("cannot render cloud registration: {e}")))?
         + "\n";
-    write_cloud_json(path, &body)
-}
-
-#[cfg(unix)]
-fn write_cloud_json(path: &Path, body: &str) -> Result<()> {
-    crate::write_sensitive_file_atomic(path, body.as_bytes())
-}
-
-#[cfg(not(unix))]
-fn write_cloud_json(path: &Path, body: &str) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, body)
-        .and_then(|()| std::fs::rename(&tmp, path))
-        .map_err(|e| StoreError(format!("cannot write cloud registration: {e}")))
+    crate::write_sensitive_file_atomic(&path, body.as_bytes())
 }
 
 /// The org this installation reports into, `None` until registered.

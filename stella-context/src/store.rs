@@ -1090,26 +1090,6 @@ pub(crate) fn insert_edge(
     Ok(id)
 }
 
-/// The currently-believed edge with this subject and relation, if any, as
-/// `(edge_id, dst_id)`. Used to decide whether a new assertion is idempotent,
-/// a correction (supersede), or fresh.
-pub(crate) fn currently_valid_edge(
-    conn: &Connection,
-    src_id: i64,
-    rel: &str,
-) -> Result<Option<(i64, i64)>, ContextError> {
-    let row = conn
-        .query_row(
-            "SELECT id, dst_id FROM edge
-             WHERE src_id = ?1 AND rel = ?2 AND superseded_at IS NULL
-             ORDER BY id DESC LIMIT 1",
-            params![src_id, rel],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
-        )
-        .optional()?;
-    Ok(row)
-}
-
 /// Close an edge's intervals: set `superseded_at` (transaction time) and, if
 /// not already ended, `valid_to` (world time). **Never deletes** (`L-C3`) — the
 /// row survives so "what did we believe at T1" still answers.

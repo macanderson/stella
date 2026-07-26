@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use stella_store::durable::{MODE_SHARED, write_atomic_preserving_mode};
 
 use crate::storage::{
     DEFAULT_NAMESPACE, LayerEntry, RedirectEntry, RelationEntry, StorageSnapshot, normalize_name,
@@ -312,23 +313,22 @@ pub fn append_meaning(
         toml_escape(intent.trim()),
         toml_escape(origin),
     ));
-    // Write-then-rename rather than truncate-in-place: a crash (or a full
-    // disk) partway through a direct write would leave a committed file
-    // truncated mid-entry, i.e. invalid TOML that no longer parses — and
-    // with it every intent sentence a human ever wrote. The temp file is a
-    // sibling of the manifest, so the rename is atomic on the same
-    // filesystem. The `sync_all` before the rename is what makes that
-    // atomicity mean something after a power loss: without it the rename can
-    // land while the temp file's bytes are still only in the page cache,
-    // publishing an empty or half-written manifest under the real name.
-    let tmp = path.with_extension("toml.tmp");
-    {
-        use std::io::Write as _;
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&tmp, &path)
+    // Durable replace rather than truncate-in-place: a crash (or a full disk)
+    // partway through a direct write would leave a committed file truncated
+    // mid-entry, i.e. invalid TOML that no longer parses — and with it every
+    // intent sentence a human ever wrote. This is the workspace's one write
+    // contract (#617): a pid-tagged sibling temp (the fixed `.toml.tmp` this
+    // used to use let two concurrent appends interleave into one file and
+    // publish a spliced manifest), fsynced before the rename so the rename
+    // cannot publish page-cache bytes, and the directory fsynced after it so
+    // the rename itself survives a power loss.
+    //
+    // Still NOT serialized across writers: two concurrent appends can both
+    // read the same pre-image and the later rename wins, silently dropping
+    // the earlier entry. That needs a lock around the whole read-modify-write
+    // and is deliberately not in this change (#617 rules on atomicity, not on
+    // a locking protocol).
+    write_atomic_preserving_mode(&path, text.as_bytes(), MODE_SHARED).map_err(std::io::Error::other)
 }
 
 fn toml_escape(text: &str) -> String {

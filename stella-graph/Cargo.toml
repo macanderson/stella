@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 contextgraph-types = { git = "https://github.com/macanderson/context-graph-protocol", rev = "6f8d7ef13b2528c26913c6472405408ba2584a85" }
+# For the workspace's single durable-write + schema-version contract
+# (`stella_store::durable`, #617) — one implementation of temp + fsync +
+# rename, not one per crate.
+stella-store = { path = "../stella-store" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

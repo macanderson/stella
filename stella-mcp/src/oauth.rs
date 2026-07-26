@@ -48,6 +48,7 @@ use rand::Rng as _;
 use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use stella_store::durable::{MODE_PRIVATE, write_atomic};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -186,7 +187,7 @@ impl TokenStore {
     }
 
     fn save(&self, file: &TokenFile) -> Result<(), McpError> {
-        let parent = ensure_private_token_parent(&self.path)?;
+        ensure_private_token_parent(&self.path)?;
         let json = serde_json::to_string_pretty(file)
             .map_err(|e| McpError::Auth(format!("cannot serialize token store: {e}")))?;
         if let Ok(metadata) = std::fs::symlink_metadata(&self.path)
@@ -197,37 +198,11 @@ impl TokenStore {
                 self.path.display()
             )));
         }
-        use std::io::Write as _;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-        let tmp = self.path.with_extension(format!(
-            "tmp.{}.{}",
-            std::process::id(),
-            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        let mut output = open_private_token_file(&tmp, options)?;
-        let result = (|| {
-            output
-                .write_all(json.as_bytes())
-                .map_err(|e| McpError::Auth(format!("cannot write {}: {e}", tmp.display())))?;
-            output
-                .sync_data()
-                .map_err(|e| McpError::Auth(format!("cannot fsync {}: {e}", tmp.display())))?;
-            drop(output);
-            std::fs::rename(&tmp, &self.path).map_err(|e| {
-                McpError::Auth(format!("cannot replace {}: {e}", self.path.display()))
-            })?;
-            std::fs::File::open(&parent)
-                .and_then(|dir| dir.sync_all())
-                .map_err(|e| McpError::Auth(format!("cannot fsync {}: {e}", parent.display())))?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&tmp);
-        }
-        result
+        // The workspace's one durable-write contract (#617): pid-tagged temp,
+        // fsync, rename, fsync of the parent directory, temp removed on any
+        // failure. This used to be a sixth hand-rolled copy of it.
+        write_atomic(&self.path, json.as_bytes(), MODE_PRIVATE)
+            .map_err(|e| McpError::Auth(e.to_string()))
     }
 
     /// The stored tokens for `server`, if a login has completed.
@@ -298,12 +273,41 @@ fn ensure_private_token_parent(path: &Path) -> Result<PathBuf, McpError> {
     Ok(parent.to_path_buf())
 }
 
+/// Without POSIX modes there is no 0700 to enforce, so the directory is
+/// created (inheriting the parent's ACL) and checked for being a real
+/// directory. Refusing outright — this arm's previous behaviour — meant MCP
+/// OAuth simply did not work off unix, which stores the secret somewhere
+/// Stella does not manage rather than storing it under the OS's own
+/// permissions (#617).
 #[cfg(not(unix))]
 fn ensure_private_token_parent(path: &Path) -> Result<PathBuf, McpError> {
-    Err(McpError::Auth(format!(
-        "secure OAuth token persistence is unsupported on this platform: {}",
-        path.display()
-    )))
+    let parent = path
+        .parent()
+        .ok_or_else(|| McpError::Auth(format!("token store {} has no parent", path.display())))?;
+    match std::fs::symlink_metadata(parent) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(McpError::Auth(format!(
+                "token directory {} is not a real directory",
+                parent.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                McpError::Auth(format!(
+                    "cannot create token directory {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+        Err(error) => {
+            return Err(McpError::Auth(format!(
+                "cannot inspect token directory {}: {error}",
+                parent.display()
+            )));
+        }
+    }
+    Ok(parent.to_path_buf())
 }
 
 #[cfg(unix)]
@@ -334,15 +338,31 @@ fn open_private_token_file(
     Ok(file)
 }
 
+/// The regular-file check with none of the unix-only hardening — no
+/// `O_NOFOLLOW`, no link count, no 0600. See
+/// [`ensure_private_token_parent`] for why this reads the file instead of
+/// refusing to.
 #[cfg(not(unix))]
 fn open_private_token_file(
     path: &Path,
-    _options: std::fs::OpenOptions,
+    options: std::fs::OpenOptions,
 ) -> Result<std::fs::File, McpError> {
-    Err(McpError::Auth(format!(
-        "secure OAuth token persistence is unsupported on this platform: {}",
-        path.display()
-    )))
+    let file = options
+        .open(path)
+        .map_err(|e| McpError::Auth(format!("cannot open token store {}: {e}", path.display())))?;
+    let metadata = file.metadata().map_err(|e| {
+        McpError::Auth(format!(
+            "cannot inspect token store {}: {e}",
+            path.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(McpError::Auth(format!(
+            "token store {} is not a regular file",
+            path.display()
+        )));
+    }
+    Ok(file)
 }
 
 // ── Runtime: manager + per-server token source ──────────────────────────────

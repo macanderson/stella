@@ -125,6 +125,7 @@ pub mod cache_trend;
 pub mod catalog;
 pub mod content_free;
 pub mod drain;
+pub mod durable;
 pub mod enterprise_telemetry;
 pub mod forget;
 pub mod home;
@@ -169,7 +170,6 @@ pub use private::{
 pub(crate) use private::{
     ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,
     open_private_file, open_private_sqlite, open_private_sqlite_read_only, read_private_to_string,
-    write_private_atomic,
 };
 pub use receipts::{
     ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,

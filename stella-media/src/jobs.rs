@@ -12,9 +12,9 @@
 //! the persistence and the load-then-poll flow.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
+use stella_store::durable::{MODE_SHARED, write_atomic_preserving_mode};
 
 use crate::error::MediaError;
 use crate::provider::{MediaJob, MediaJobStatus, MediaProvider};
@@ -23,13 +23,13 @@ const JOBS_NAME: &str = "jobs.json";
 
 /// A small JSON-backed store of in-flight video jobs, rooted at the artifacts
 /// directory. Reads and writes the whole file (a handful of jobs, not a
-/// database); writes are atomic against process death via
-/// temp-write-then-rename, with the read-modify-write serialized across
-/// threads *and* processes by an advisory lock on a sibling `jobs.json.lock`
-/// (a plain rename is atomic but does not stop two racers from both reading
-/// the pre-image and one losing its row). Nothing is `fsync`ed, so this is
-/// crash consistency, not power-loss durability — a lost record costs a
-/// resume, and the truth is always the provider's anyway.
+/// database); the replacement is a durable write under the workspace's one
+/// contract ([`stella_store::durable::write_atomic`], #617: pid-tagged temp,
+/// `fsync`, rename, `fsync` of the directory), with the read-modify-write
+/// serialized across threads *and* processes by an advisory lock on a sibling
+/// `jobs.json.lock` (a plain rename is atomic but does not stop two racers
+/// from both reading the pre-image and one losing its row). A dollar-cost job
+/// handle is worth the fsync it used to skip.
 #[derive(Debug, Clone)]
 pub struct JobStore {
     path: PathBuf,
@@ -165,25 +165,12 @@ impl JobStore {
         }
         let body = serde_json::to_string_pretty(file)
             .map_err(|e| MediaError::Artifact(format!("cannot serialize job store: {e}")))?;
-        static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-        let tmp = self.path.with_extension(format!(
-            "json.tmp.{}.{}",
-            std::process::id(),
-            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(&tmp, body).map_err(|e| {
-            MediaError::Artifact(format!(
-                "cannot write temp job store {}: {e}",
-                tmp.display()
-            ))
-        })?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| {
+        write_atomic_preserving_mode(&self.path, body.as_bytes(), MODE_SHARED).map_err(|e| {
             MediaError::Artifact(format!(
                 "cannot commit job store {}: {e}",
                 self.path.display()
             ))
-        })?;
-        Ok(())
+        })
     }
 
     fn mutation_lock(&self) -> Result<std::fs::File, MediaError> {
