@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.5.32] — 2026-07-26
+
 ### Added
 
 - `--output-format json|stream-json` summaries now declare `schema_version`
