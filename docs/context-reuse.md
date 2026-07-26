@@ -26,6 +26,21 @@
   Upstream is dual-licensed MIT OR Apache-2.0 (LICENSE-MIT / LICENSE-APACHE in
   that repository). That licensing carries with this copy; it is not changed by
   this workspace's AGPL-3.0-only terms.
+
+  Two things about the body below are upstream's shape, kept verbatim so this
+  copy stays diffable against the pinned rev — do NOT "fix" them here:
+
+  1. Sibling links (`./protocol-surface.md`, `./stability.md`, and their
+     anchors) are CGP-repo-relative and have no counterpart in this workspace,
+     because only this one document is vendored. Read them at
+     https://github.com/macanderson/context-graph-protocol/blob/6f8d7ef/docs/
+     — e.g. .../docs/protocol-surface.md.
+  2. The intro numbers four guarantees, but the document ships §1, §2 and §4:
+     consent scopes and receipts (§3) is not written yet upstream, so the
+     "#3-consent-scopes-and-receipts" link in the intro list does not resolve.
+     scripts/check-doc-citations.sh enforces this from the Rust side — a
+     rustdoc comment citing §3 fails the build rather than pointing a reader
+     at a section that does not exist.
 -->
 
 This is a companion to the [protocol surface](./protocol-surface.md). Where

@@ -94,7 +94,14 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         };
         let meta = format!("  ({}·{})", row.scope.label(), row.origin);
         // Description fills whatever width remains, truncated char-safe.
-        let used = marker.len() + boxed.len() + row.name.chars().count() + ver.len() + meta.len();
+        // Count *chars*, not bytes: the selected marker "▸ " is 4 bytes but 2
+        // columns, so a byte count made the description column jump two cells
+        // narrower the moment a row was selected.
+        let used = marker.chars().count()
+            + boxed.chars().count()
+            + row.name.chars().count()
+            + ver.chars().count()
+            + meta.chars().count();
         let desc_room = (inner.width as usize).saturating_sub(used + 3);
         let desc = if desc_room >= 6 && !row.description.is_empty() {
             format!("  {}", truncate(&row.description, desc_room))

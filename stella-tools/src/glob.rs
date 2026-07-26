@@ -96,6 +96,10 @@ impl Tool for Glob {
         crate::subprocess_env::scrub_sensitive_env(&mut fd);
         fd.stdout(std::process::Stdio::piped());
         fd.stderr(std::process::Stdio::piped());
+        // A cancelled turn (Esc) drops this future mid-`output()`; tokio keeps
+        // the child running by default, and a full-tree walk must not keep
+        // burning IO after the user stopped asking.
+        fd.kill_on_drop(true);
 
         match fd.output().await {
             Ok(output) => {
@@ -105,12 +109,7 @@ impl Tool for Glob {
                         content: "(no files found)".into(),
                     };
                 }
-                let content = text
-                    .lines()
-                    .take(MAX_RESULTS)
-                    .map(|l| relativize(l, canon_root.as_deref()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let content = render_matches(&text, canon_root.as_deref());
                 ToolOutput::Ok {
                     content: with_code_map(content, root, self.footer),
                 }
@@ -124,6 +123,8 @@ impl Tool for Glob {
                 crate::subprocess_env::scrub_sensitive_env(&mut find);
                 find.stdout(std::process::Stdio::piped());
                 find.stderr(std::process::Stdio::piped());
+                // Same cancellation backstop as the fd arm above.
+                find.kill_on_drop(true);
 
                 match find.output().await {
                     Ok(output) => {
@@ -133,12 +134,7 @@ impl Tool for Glob {
                                 content: "(no files found)".into(),
                             }
                         } else {
-                            let content = text
-                                .lines()
-                                .take(MAX_RESULTS)
-                                .map(|l| relativize(l, canon_root.as_deref()))
-                                .collect::<Vec<_>>()
-                                .join("\n");
+                            let content = render_matches(&text, canon_root.as_deref());
                             ToolOutput::Ok {
                                 content: with_code_map(content, root, self.footer),
                             }
@@ -151,6 +147,29 @@ impl Tool for Glob {
             }
         }
     }
+}
+
+/// Render the backend's match lines as workspace-relative paths, capped at
+/// [`MAX_RESULTS`] — and SAY SO when the cap bit. A silently truncated file
+/// list is worse than a short one: the agent reads the absence of a path as
+/// proof the file does not exist and goes on to recreate it. (`fd` is also
+/// given `--max-results`, so an exactly-full list may or may not have had
+/// more behind it; "first N" is the honest phrasing either way — the same
+/// wording `grep` uses for the same reason.)
+fn render_matches(text: &str, canon_root: Option<&std::path::Path>) -> String {
+    let paths: Vec<String> = text
+        .lines()
+        .take(MAX_RESULTS)
+        .map(|l| relativize(l, canon_root))
+        .collect();
+    let capped = paths.len() == MAX_RESULTS;
+    let mut content = paths.join("\n");
+    if capped {
+        content.push_str(&format!(
+            "\n... (showing first {MAX_RESULTS} files — narrow `pattern` or `path` for the rest)"
+        ));
+    }
+    content
 }
 
 /// Append the code-map footer for these matched paths, when the footer is
@@ -243,6 +262,24 @@ mod tests {
             }
             ToolOutput::Error { message } => panic!("expected files, got: {message}"),
         }
+    }
+
+    /// A truncated file list must say it was truncated — an agent that reads
+    /// a silently-capped list as complete concludes a file does not exist.
+    #[test]
+    fn the_result_cap_is_announced_and_invisible_below_it() {
+        let short = "a.rs\nb.rs";
+        assert_eq!(render_matches(short, None), short);
+
+        let many: String = (0..MAX_RESULTS + 10)
+            .map(|i| format!("f{i}.rs\n"))
+            .collect();
+        let rendered = render_matches(&many, None);
+        assert_eq!(rendered.lines().count(), MAX_RESULTS + 1, "capped + note");
+        assert!(
+            rendered.contains(&format!("showing first {MAX_RESULTS} files")),
+            "{rendered}"
+        );
     }
 
     #[tokio::test]

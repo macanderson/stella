@@ -360,7 +360,7 @@ pub static LOCAL_PROVIDER: ProviderConfig = ProviderConfig {
 /// process lifetime in proportion to turns × configured providers. Interning
 /// makes the leak what the doc always promised: bounded by the number of
 /// DISTINCT strings, not by how often they are resynthesized.
-fn leak(s: &str) -> &'static str {
+pub(crate) fn leak(s: &str) -> &'static str {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
 

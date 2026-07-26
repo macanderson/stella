@@ -125,9 +125,6 @@ pub fn compaction(
     }
 }
 
-/// The spend line. Visibility policy stays surface-side (the plain surface
-/// suppresses ticks in `BudgetMode::Off`; the deck shows every tick and may
-/// append the mode as detail).
 /// An event this build cannot decode, emitted by a newer stella.
 ///
 /// Rendered rather than dropped: the realistic way the TUI meets one of these
@@ -146,6 +143,9 @@ pub fn unknown_event(event_type: &str) -> EventLine {
     }
 }
 
+/// The spend line. Visibility policy stays surface-side (the plain surface
+/// suppresses ticks in `BudgetMode::Off`; the deck shows every tick and may
+/// append the mode as detail).
 pub fn budget_tick(spent_usd: f64, limit_usd: Option<f64>) -> EventLine {
     EventLine {
         glyph: "$",

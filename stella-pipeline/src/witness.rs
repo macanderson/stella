@@ -620,9 +620,16 @@ pub fn parse_witness_command(text: &str) -> Option<String> {
     let mut found: Option<String> = None;
     for line in text.lines() {
         let trimmed = line.trim().trim_start_matches('`');
-        if trimmed.len() >= TEST_COMMAND_MARKER.len()
-            && trimmed[..TEST_COMMAND_MARKER.len()].eq_ignore_ascii_case(TEST_COMMAND_MARKER)
-        {
+        // `get(..n)`, never a bare `[..n]` slice: the marker's length is a BYTE
+        // count, and this scans model-authored text. A reply line that opens
+        // with multi-byte characters (any non-ASCII prose) puts that index
+        // mid-character, and slicing there panics — taking the whole run down
+        // over a witness author that happened to explain itself in Japanese.
+        // A non-boundary is simply not the marker, so `None` skips the line.
+        let Some(head) = trimmed.get(..TEST_COMMAND_MARKER.len()) else {
+            continue;
+        };
+        if head.eq_ignore_ascii_case(TEST_COMMAND_MARKER) {
             let cmd = trimmed[TEST_COMMAND_MARKER.len()..]
                 .trim()
                 .trim_matches('`')
@@ -673,6 +680,18 @@ mod tests {
         assert_eq!(
             parse_witness_command("test_command: go test ./pkg -run TestWitness"),
             Some("go test ./pkg -run TestWitness".to_string())
+        );
+    }
+
+    #[test]
+    fn a_multibyte_reply_is_scanned_without_slicing_mid_character() {
+        // The marker length is a byte count, so a line of multi-byte
+        // characters can clear it in bytes while landing mid-character at that
+        // index — the shape that panicked a whole run inside the parser.
+        assert_eq!(parse_witness_command("日本語のテキスト"), None);
+        assert_eq!(
+            parse_witness_command("テストを書きました。\nTEST_COMMAND: pytest tests/test_x.py"),
+            Some("pytest tests/test_x.py".to_string())
         );
     }
 

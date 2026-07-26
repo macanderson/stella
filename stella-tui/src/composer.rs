@@ -603,8 +603,9 @@ pub struct SlashMenu<'a> {
 }
 
 impl<'a> SlashMenu<'a> {
-    /// Case-insensitive prefix filter over `commands`. An empty query (just
-    /// `/`) matches everything.
+    /// ASCII-case-insensitive prefix filter over `commands`. An empty query
+    /// (just `/`) matches everything. Command names are ASCII slugs, so the
+    /// cheap fold is exact for every name the CLI actually registers.
     pub fn filter(commands: &'a [SlashCommand], query: &str) -> Self {
         let needle = query.to_ascii_lowercase();
         let matches = commands
@@ -646,13 +647,26 @@ pub enum SlashPopupOutcome {
 /// choose, Tab completes into the buffer, Enter dispatches the selection,
 /// Esc dismisses. Returns `None` for a key the popup doesn't claim, so the
 /// caller can fall through to normal composer editing. `matches` must be
-/// non-empty — callers only reach this once the popup is confirmed active.
+/// non-empty — callers only reach this once the popup is confirmed active; an
+/// empty slice trips a `debug_assert!` and then claims nothing, so a caller
+/// bug degrades to "the popup isn't open" rather than a panic mid-keystroke.
 pub fn handle_slash_popup_key(
     key: KeyEvent,
     matches: &[String],
     composer: &mut Composer,
     slash_selected: &mut usize,
 ) -> Option<SlashPopupOutcome> {
+    // The `- 1`s below (and the `matches[selected]` indexing) rest on this.
+    // Every caller gates on `slash_popup_matches(..)` being non-empty, so a
+    // violation is a caller bug worth surfacing in dev rather than a release
+    // panic inside the key handler.
+    debug_assert!(
+        !matches.is_empty(),
+        "handle_slash_popup_key called with no matches — the popup is inactive"
+    );
+    if matches.is_empty() {
+        return None;
+    }
     let selected = (*slash_selected).min(matches.len() - 1);
     match key.code {
         KeyCode::Up => {

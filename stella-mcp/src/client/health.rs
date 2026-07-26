@@ -51,6 +51,12 @@ pub enum HealthState {
     /// `tools/call`).
     Live,
     /// A reconnect attempt is in flight right now.
+    ///
+    /// Not observable through [`crate::McpClient::health`] today: a snapshot
+    /// takes the same connection mutex the reconnect holds for its whole
+    /// duration, so it blocks until the attempt finishes and then reports its
+    /// outcome (`Live` or `Down`). Surfacing it live would need the health
+    /// fields to move out from behind that mutex.
     Reconnecting,
     /// The last request failed and the server has not answered one since —
     /// either the transport is gone (a reconnect is pending; see

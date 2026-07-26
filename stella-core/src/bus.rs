@@ -1166,33 +1166,52 @@ const CONTENT_FIELDS: &[&str] = &["content", "new_string", "old_string"];
 
 /// A copy of a tool input safe for observable payloads: content-bearing
 /// string fields are replaced with `"<omitted: N bytes, M lines>"`.
-/// Non-object inputs pass through unchanged (they carry no known
-/// content fields).
+/// Scalars pass through unchanged (they carry no known content fields).
+///
+/// The walk is **recursive** through objects and arrays. A top-level-only pass
+/// was a real hygiene hole: batch tools nest their content one level down
+/// (`apply_edits` takes `{"edits": [{"path", "old_string", "new_string"}, …]}`),
+/// so every observable `tool.call.started` for a multi-file edit republished the
+/// full before/after text of every file it touched — exactly what the module's
+/// payload-hygiene contract says must never leave the privileged blocking path.
+/// Depth is bounded by `serde_json`'s own parse-recursion limit, so a deeply
+/// nested input cannot drive this past the stack.
 pub fn sanitize_tool_input(input: &Value) -> Value {
-    let Some(map) = input.as_object() else {
-        return input.clone();
-    };
-    let mut sanitized = map.clone();
-    for field in CONTENT_FIELDS {
-        if let Some(Value::String(text)) = map.get(*field) {
-            sanitized.insert(
-                (*field).to_string(),
-                Value::String(format!(
-                    "<omitted: {} bytes, {} lines>",
-                    text.len(),
-                    text.lines().count()
-                )),
-            );
+    match input {
+        Value::Object(map) => {
+            let mut sanitized = serde_json::Map::new();
+            for (key, value) in map {
+                let cleaned = match value {
+                    Value::String(text) if CONTENT_FIELDS.contains(&key.as_str()) => {
+                        Value::String(format!(
+                            "<omitted: {} bytes, {} lines>",
+                            text.len(),
+                            text.lines().count()
+                        ))
+                    }
+                    other => sanitize_tool_input(other),
+                };
+                sanitized.insert(key.clone(), cleaned);
+            }
+            Value::Object(sanitized)
         }
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_tool_input).collect()),
+        scalar => scalar.clone(),
     }
-    Value::Object(sanitized)
 }
 
 /// Filename shapes that conventionally hold credentials or private keys —
 /// touching one fires `sensitive_operation.detected` (path only, never
 /// contents).
 pub fn is_sensitive_path(path: &str) -> bool {
-    let base = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    // Both separators: a `\`-delimited Windows path used to yield the whole
+    // string as the "basename", so `C:\Users\me\.env` never matched the
+    // `.env` prefix test and the detector silently failed open there.
+    let base = path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase();
     base.starts_with(".env")
         || base.contains("credential")
         || base.contains("secret")
@@ -2004,6 +2023,34 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_reaches_content_nested_in_arrays_and_objects() {
+        // `apply_edits`' shape: the content-bearing fields live one level down,
+        // inside an array of edit objects. A top-level-only pass leaked them.
+        let input = serde_json::json!({
+            "dry_run": false,
+            "edits": [
+                {"path": "a.rs", "old_string": "one\ntwo\n", "new_string": "three\n"},
+                {"path": "b.rs", "old_string": "x", "new_string": "y"},
+            ]
+        });
+        let sanitized = sanitize_tool_input(&input);
+        assert_eq!(sanitized["dry_run"], false);
+        assert_eq!(sanitized["edits"][0]["path"], "a.rs");
+        assert_eq!(
+            sanitized["edits"][0]["old_string"],
+            "<omitted: 8 bytes, 2 lines>"
+        );
+        assert_eq!(
+            sanitized["edits"][0]["new_string"],
+            "<omitted: 6 bytes, 1 lines>"
+        );
+        assert_eq!(
+            sanitized["edits"][1]["old_string"],
+            "<omitted: 1 bytes, 1 lines>"
+        );
+    }
+
+    #[test]
     fn secret_scanner_matches_known_shapes_and_nothing_mundane() {
         let hits = scan_for_secrets(concat!(
             "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n",
@@ -2036,6 +2083,8 @@ mod tests {
             "~/.ssh/id_rsa",
             "certs/server.pem",
             "keys/signing.key",
+            r"C:\Users\me\.env",
+            r"C:\Users\me\.ssh\id_rsa",
         ] {
             assert!(is_sensitive_path(sensitive), "`{sensitive}` should flag");
         }

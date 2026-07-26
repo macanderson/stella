@@ -60,13 +60,29 @@ Exit `2` means the task list resolved to nothing.
 - A trial whose event stream is missing or unreadable is **reported**, not
   skipped: it lands as `zero_work` with a `no event stream` error. Skipping it
   made a launch failure look like a clean run with fewer rows, gate still green.
+  A stream that exists but holds no parseable event (stella's plain-text
+  startup complaint, a truncated upload) says so on its row rather than looking
+  like an unexplained silent death.
 - `reward` is `Option<f64>`, and `None` is not zero — a trial that never reached
-  the verifier must not read as a verifier failure.
-- A non-positive or non-finite `--budget` denies the very first model call, so
-  every task reports as a loop failure: the harness manufacturing the signal it
-  gates on. It warns rather than proceeding silently.
-- `$STELLA_BINARY` must be a **Linux** build; the task containers are amd64.
-  Unset, it warns and falls back to `target/release/stella`.
+  the verifier must not read as a verifier failure. Only harbor's
+  `verifier/reward.txt` is read, not its `reward.json` alternative; a
+  `--dataset` whose verifier writes the JSON form under-credits every trial.
+- A `--budget` that is non-finite, non-positive, **or smaller than the `0.0001`
+  the cap is transmitted at** denies the very first model call, so every task
+  reports as a loop failure: the harness manufacturing the signal it gates on.
+  It warns rather than proceeding silently.
+- `$STELLA_BINARY` must be a **Linux amd64** build; that is what the task
+  containers run. Unset, it warns, and the adapter then resolves `stella` on
+  `PATH` before `target/release/stella` — on a dev machine the `PATH` hit is a
+  host build the container cannot execute.
+- Requested tasks are **not reconciled** against reported rows. Harbor globs
+  `-i` names and only errors when *nothing* matched, so a run that asked for
+  eight tasks and matched six shows six healthy rows and exits `0`. Check the
+  row count against `--n`. Multi-step datasets are likewise unsupported: their
+  logs move to `steps/<name>/agent/` and every trial reads as "no event stream".
+- A crash *mid*-work is not a verdict of its own: `SILENT-DEATH` requires zero
+  tool calls, so a turn that did work and then vanished reports as
+  `ran (unsolved)`.
 
 ## Testing
 
@@ -74,11 +90,12 @@ Exit `2` means the task list resolved to nothing.
 cargo test -p loop-bench        # no make target; `make test` covers it via --workspace
 ```
 
-Seven pure unit tests at the bottom of [`src/main.rs`](src/main.rs) feed JSONL to
+Eight pure unit tests at the bottom of [`src/main.rs`](src/main.rs) feed JSONL to
 `distill_events` and assert the verdict — no Docker, no harbor, no key. Each
 pins a real defect: batched `apply_edits` reporting zero writes, an ellipsis
 past the column budget that shifted a whole row, a retryable warning read as
-terminal, a 177-tool *solved* run called silent. A new signal means a
+terminal, a 177-tool *solved* run called silent, a stream of non-JSON stella
+output passing for an unexplained silent death. A new signal means a
 `TrialReport` field, an arm in `distill_events`, a `print_table` column
 (`TABLE_WIDTH`), and a test.
 

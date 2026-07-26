@@ -444,11 +444,18 @@ impl Router {
     }
 
     /// Judge resolution (§1, §5, L-E11 "always on a different model than
-    /// the worker"): never the same model as Worker's *actual* current
-    /// resolution; prefer a healthy provider from a different `family`;
-    /// degrade — with a caveat, never an error — to the same
-    /// provider/family when it's the only healthy option (L-M8: a single
-    /// configured provider must still yield a working judge).
+    /// the worker"): prefer a healthy provider whose `family` differs from the
+    /// family Worker *actually* resolves to right now; degrade — with a
+    /// caveat, never an error — to the same provider/family when it's the only
+    /// healthy option (L-M8: a single configured provider must still yield a
+    /// working judge).
+    ///
+    /// Selection is by **family**, not by slug: this returns the chosen
+    /// profile's `judge_model`, which a single-provider setup may deliberately
+    /// point at the same slug as `worker_model` (see [`ProviderProfile`]) — a
+    /// separate call, not a separate model. When that happens the `caveat` says
+    /// so, so "different model than the worker" is a preference the router
+    /// reports on, never a guarantee it can make from one key.
     fn resolve_judge(&self) -> Result<RouterDecision, RouterError> {
         if self.profiles.is_empty() {
             return Err(RouterError::NoProvidersConfigured { role: Role::Judge });

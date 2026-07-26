@@ -71,10 +71,12 @@ submission idempotent: `claim` returns `New`, `Existing(state)` to replay, or
 `Expired`. No bundled adapter exposes remote idempotency
 ([`src/provider.rs:17`](src/provider.rs)), so the local claim is all that
 stands between a retry and a second charge. Relatedly, neither image adapter
-forwards `req.n` — a caller passing `n > 1` gets one image, priced exactly as
-the gate approved
-([`src/adapters/openai_image.rs:100`](src/adapters/openai_image.rs)). That is a
-recorded follow-up, not a supported flag.
+forwards `req.n` — a caller passing `n > 1` gets one image, billed for one
+([`src/adapters/openai_image.rs:100`](src/adapters/openai_image.rs)), even
+though `stella-tools` quotes the gate `estimate_image(n, …)` and so asks the
+user to approve an n× charge. The charge can never exceed the approval, but the
+approval overstates the charge; multi-candidate generation is a recorded
+follow-up, not a supported flag.
 
 **A persisted job handle is never reported from cache (L-V3).** `jobs::resume`
 loads the handle and polls the provider; a `404` on the poll endpoint comes
@@ -130,6 +132,20 @@ planted symlink), and the manifest row for a path is *replaced*, not appended.
   just repeats the memory exhaustion the cap prevents.
 - **Both Z.ai adapters report `id() == "zai"`.** A job's `provider_id` alone
   does not say whether the image or the video adapter owns it.
+- **`with_base_url` exists but nothing wires it.** All three adapters take a
+  base-URL override, and only the tests call it: `detect_media_backend` builds
+  each adapter on its vendor default, so there is no flag, setting, or env var
+  that points the media family at a gateway or a compatible proxy. The seam is
+  there; the escape hatch is not.
+- **`preview` and `emit` have no callers.** Both are complete, tested ports
+  that nothing in the workspace drives — the media tools return a text
+  `ToolOutput` naming the saved path. Treat them as unshipped surface area, not
+  as behaviour a user sees.
+- **The poll URL interpolates `provider_job_id` verbatim.** It arrives from the
+  vendor's submit response and then from `jobs.json`, which sits in the
+  model-writable workspace, so a crafted id is a path fragment inside the
+  vendor base URL on a request that carries the user's API key. The host is
+  pinned by `base_url` and cannot be changed this way; the path can.
 - **Two SVG holes are recorded, not fixed.** Rule 6 keys on `//` and
   `javascript:`, so a `data:` URI in a non-`href` attribute survives, and a
   `style="…"` *attribute* has no rule of its own (only the `<style>` element

@@ -10,7 +10,7 @@
 //! ([`append_meaning`]) instead of re-serializing, so human comments and
 //! formatting in the file are never destroyed by an agent write.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -227,21 +227,28 @@ pub fn merge_snapshot(
                 }
             }
         }
-        let stub_addresses: Vec<String> = relations.iter().map(|r| r.address.clone()).collect();
+        // Membership by hash, not by scan. The pre-write gate assembles a
+        // snapshot on *every* write an agent proposes, and both checks below
+        // used to walk the whole relation list — the orphan check re-building a
+        // `format!` address for every field of every relation, once per manifest
+        // key, which is quadratic (and allocating) in the size of the storage
+        // map. Building each address set once keeps both passes linear.
+        let stub_addresses: HashSet<String> = relations.iter().map(|r| r.address.clone()).collect();
         for stub in manifest.stub_relations() {
             if !stub_addresses.contains(&stub.address) {
                 relations.push(stub);
             }
         }
+        let mut known: HashSet<String> = HashSet::with_capacity(relations.len());
+        for rel in &relations {
+            known.insert(rel.address.clone());
+            for field in &rel.fields {
+                known.insert(format!("{}/{}", rel.address, normalize_name(&field.name)));
+            }
+        }
         for key in manifest.relations.keys().chain(manifest.fields.keys()) {
             let address = normalize_address(key);
-            let known = relations.iter().any(|r| {
-                r.address == address
-                    || r.fields
-                        .iter()
-                        .any(|f| format!("{}/{}", r.address, normalize_name(&f.name)) == address)
-            });
-            if !known {
+            if !known.contains(&address) {
                 orphaned.push(address);
             }
         }
@@ -331,11 +338,27 @@ pub fn append_meaning(
     write_atomic_preserving_mode(&path, text.as_bytes(), MODE_SHARED).map_err(std::io::Error::other)
 }
 
+/// Escape a sentence for a TOML basic string. Backslash and quote escape,
+/// newlines fold to a space, and every *other* control character becomes a
+/// `\uXXXX` escape: TOML rejects raw control characters, so a single stray one
+/// in an agent-supplied intent sentence would make the whole manifest
+/// unparseable — taking every hand-written meaning in the file with it, which
+/// is exactly the loss §5b exists to prevent.
 fn toml_escape(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', " ")
-        .replace('\r', "")
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push(' '),
+            '\r' => {}
+            // A raw tab is legal inside a basic string; leave it alone.
+            '\t' => out.push('\t'),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Minimal glob: `**` spans any number of path segments, `*` spans within a

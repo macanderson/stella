@@ -49,7 +49,10 @@ pub(crate) fn spawn_forwarder(
                 }
                 seq += 1;
             }
-            // Sent AFTER StepUsage below so the lane is already registered.
+            // Derived BEFORE the event is moved into the send below, but
+            // emitted AFTER it: the insight annotates the usage the event
+            // carries, so the deck must fold the event first or the annotation
+            // lands on a lane state that does not yet know about it.
             let cache_insight = cache_insight_for(&provider_id, &lane, &event);
             let _ = inbound.send(Inbound::Event {
                 agent: lane.clone(),

@@ -52,6 +52,10 @@ impl ZaiVideoProvider {
         }
     }
 
+    /// Override the base URL — used by fixtures and private proxies (Z.ai's
+    /// `open.bigmodel.cn` is the same wire shape). No configuration path
+    /// reaches this yet: `detect_media_backend` in `stella-tools` constructs
+    /// the adapter on the vendor `DEFAULT_BASE_URL` and never calls this.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
@@ -161,6 +165,13 @@ impl MediaProvider for ZaiVideoProvider {
     }
 
     async fn poll_video(&self, job: &MediaJob) -> Result<MediaJobStatus, MediaError> {
+        // Recorded, not fixed: `provider_job_id` is interpolated into the path
+        // verbatim. It originates in the vendor's submit response, but a
+        // resume reads it back from `jobs.json`, which lives in the
+        // model-writable workspace — so a crafted id is a path fragment on a
+        // request that carries the API key. `base_url` pins the host, so this
+        // cannot redirect the key off-vendor; percent-encoding the segment
+        // (or rejecting ids outside `[A-Za-z0-9._-]`) closes the rest.
         let response = self
             .client
             .get(format!(
@@ -256,13 +267,20 @@ impl MediaProvider for ZaiVideoProvider {
 /// Deterministically derive our artifact id from the provider's job id, so a
 /// resume after a restart reconstructs the same identity for events and the
 /// final file.
+///
+/// The hex is spelled out rather than `format!("{byte:02x}")` per byte for the
+/// same reason `artifact::push_hex` is: the per-byte form allocates and drops
+/// a `String` for every byte of the digest.
 fn artifact_id_for(provider_job_id: &str) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let digest = Sha256::digest(provider_job_id.as_bytes());
-    let mut hex = String::with_capacity(12);
-    for byte in &digest[..6] {
-        hex.push_str(&format!("{byte:02x}"));
+    let mut id = String::with_capacity("med_".len() + 12);
+    id.push_str("med_");
+    for &byte in &digest[..6] {
+        id.push(DIGITS[usize::from(byte >> 4)] as char);
+        id.push(DIGITS[usize::from(byte & 0x0f)] as char);
     }
-    format!("med_{hex}")
+    id
 }
 
 fn now_unix_secs() -> u64 {

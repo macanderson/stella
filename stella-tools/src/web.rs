@@ -58,6 +58,13 @@ const DOWNLOAD_CAP_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_MAX_LENGTH: usize = 30_000;
 /// Stylesheets fetched per `web_extract_assets` call by default.
 const DEFAULT_MAX_STYLESHEETS: usize = 8;
+/// Per-stylesheet and per-`<meta>` lines rendered by `web_extract_assets`.
+/// The manifest lists EVERY sheet and meta tag the page declares, and the
+/// page chooses how many it declares — every other section here is already
+/// capped, so these two were the remaining unbounded paths from a fetched
+/// document into the transcript.
+const MAX_RENDERED_STYLESHEETS: usize = 40;
+const MAX_RENDERED_META: usize = 12;
 
 const DEFAULT_USER_AGENT: &str = concat!("stella/", env!("CARGO_PKG_VERSION"));
 
@@ -790,8 +797,14 @@ impl Tool for WebExtractAssets {
             fetched.bytes.len(),
             auth_note(&fetched)
         ));
-        for (name, value) in &manifest.meta {
+        for (name, value) in manifest.meta.iter().take(MAX_RENDERED_META) {
             out.push_str(&format!("{name}: {value}\n"));
+        }
+        if manifest.meta.len() > MAX_RENDERED_META {
+            out.push_str(&format!(
+                "… {} more meta values\n",
+                manifest.meta.len() - MAX_RENDERED_META
+            ));
         }
 
         out.push_str(&format!(
@@ -799,9 +812,15 @@ impl Tool for WebExtractAssets {
             manifest.stylesheets.len(),
             manifest.inline_css.len()
         ));
-        for note in &sheet_notes {
+        for note in sheet_notes.iter().take(MAX_RENDERED_STYLESHEETS) {
             out.push_str(note);
             out.push('\n');
+        }
+        if sheet_notes.len() > MAX_RENDERED_STYLESHEETS {
+            out.push_str(&format!(
+                "- … {} more (raise `max_stylesheets` to analyze them)\n",
+                sheet_notes.len() - MAX_RENDERED_STYLESHEETS
+            ));
         }
 
         out.push_str("\n## Design tokens\n");
@@ -915,7 +934,7 @@ impl Tool for WebDownload {
                 message: format!("path `{path}` escapes the workspace root"),
             };
         };
-        let fetched = match fetch_raw(url, auth, DOWNLOAD_CAP_BYTES, None).await {
+        let mut fetched = match fetch_raw(url, auth, DOWNLOAD_CAP_BYTES, None).await {
             Ok(f) => f,
             Err(message) => return ToolOutput::Error { message },
         };
@@ -941,16 +960,25 @@ impl Tool for WebDownload {
         if let Err(message) = parent_ready {
             return ToolOutput::Error { message };
         }
-        if let Err(e) = tokio::fs::write(&full, &fetched.bytes).await {
+        // The same durable replacement `write_file`/`edit_file` use, for the
+        // same reason ([`crate::atomic_write`]): a download lands on the same
+        // workspace paths they do, and `tokio::fs::write` opens with
+        // `O_TRUNC` — a re-download that fails mid-write would leave the
+        // existing artifact truncated with the replacement nowhere on disk.
+        // `mem::take` hands the body over without a second 64 MB copy; the
+        // rest of `fetched` (final URL, content type, auth provenance) is
+        // still needed for the report below.
+        let bytes = std::mem::take(&mut fetched.bytes);
+        let byte_count = bytes.len();
+        if let Err(e) = crate::durable_write::write_file_durably(full.clone(), bytes).await {
             return ToolOutput::Error {
                 message: format!("cannot write {}: {e}", full.display()),
             };
         }
         ToolOutput::Ok {
             content: format!(
-                "downloaded {} → {path} ({} bytes, {}{})",
+                "downloaded {} → {path} ({byte_count} bytes, {}{})",
                 fetched.final_url,
-                fetched.bytes.len(),
                 if fetched.content_type.is_empty() {
                     "unknown type"
                 } else {

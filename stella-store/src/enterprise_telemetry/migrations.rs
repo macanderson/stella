@@ -1,5 +1,34 @@
+//! In-place schema convergence for the two enterprise-telemetry databases.
+//!
+//! Deliberately NOT the versioned `PRAGMA user_version` machinery
+//! `crate::migrations` drives for `store.db`'s own tables: these tables are
+//! owned by an optional, separately-enrolled feature, so their shape must
+//! converge whether or not the host store is at the current schema version, and
+//! a store that never enrolls must never be blocked by them. The pattern here
+//! is therefore per-column/per-table probing (`pragma_table_info`,
+//! `sqlite_master`) plus an idempotent `ALTER`/rebuild, run on every open.
+//!
+//! Two upgrades are not simple `ALTER`s and are worth knowing about:
+//!
+//! - **Legacy export nonces.** `enterprise_export_ledger` gained
+//!   `export_nonce` after rows already existed, and each pre-existing row needs
+//!   its own random value — a backfill proportional to the ledger. It runs
+//!   **incrementally**: `enterprise_export_migration` carries a rowid cursor
+//!   and a completion flag, and each open does at most
+//!   `LEGACY_EXPORT_MIGRATION_BATCHES_PER_OPEN` bounded batches, so opening a
+//!   store never stalls behind an unbounded rewrite and an interrupted
+//!   backfill resumes exactly where it stopped.
+//! - **Sink-scoped spool rows.** `operational_spool` predates sinks; adding
+//!   `sink_fingerprint` to its UNIQUE key is a table rebuild (SQLite cannot
+//!   `ALTER` a key). Existing rows are re-homed under `LEGACY_UNBOUND_SINK`
+//!   rather than dropped or silently attributed to the active sink — an event
+//!   spooled before enrollment belongs to no sink, and `discard_stranded` is
+//!   the explicit way to reclaim it.
+
 use super::*;
 
+/// Converge the export-ledger tables inside `store.db`, then advance the
+/// bounded legacy-nonce backfill by a few batches (see the module docs).
 pub(super) fn migrate_store_export_schema(conn: &mut Connection) -> Result<()> {
     let has_compaction_boundary: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('enterprise_export_enrollment')
@@ -143,6 +172,10 @@ pub(super) fn migrate_store_export_schema(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
+/// Converge the spool database: rebuild `operational_spool` onto the
+/// sink-scoped key when it predates sinks, then add the meta/clock columns
+/// later revisions introduced. Every step is probe-guarded, so this is a no-op
+/// on a spool already at the current shape.
 pub(super) fn migrate_spool_schema(conn: &mut Connection) -> Result<()> {
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master

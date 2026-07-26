@@ -416,10 +416,14 @@ fn render_table(rows: &[StatsRow]) -> String {
     let body: Vec<[String; 16]> = rows.iter().map(table_cells).collect();
     let total = table_cells(&totals(rows));
 
-    let mut widths: Vec<usize> = TABLE_HEADERS.iter().map(|h| h.len()).collect();
+    // Widths are measured in CHARACTERS, not bytes: `format!("{cell:<width$}")`
+    // pads by character count, so a byte-length measurement would over-pad any
+    // non-ASCII provider/model id (a custom or locally-named model) and skew
+    // every column to its right.
+    let mut widths: Vec<usize> = TABLE_HEADERS.iter().map(|h| h.chars().count()).collect();
     for cells in body.iter().chain(std::iter::once(&total)) {
         for (w, cell) in widths.iter_mut().zip(cells.iter()) {
-            *w = (*w).max(cell.len());
+            *w = (*w).max(cell.chars().count());
         }
     }
 
@@ -514,8 +518,11 @@ fn csv_header() -> &'static str {
 }
 
 /// Quote a CSV field when it contains a comma, quote, or line break;
-/// embedded quotes are doubled (RFC 4180).
-fn csv_escape(field: &str) -> String {
+/// embedded quotes are doubled (RFC 4180). Shared with `stella usage report
+/// --format csv` (`crate::usage_cmd`): provider/model/org ids come from
+/// config and from provider catalogs, so every CSV surface must escape them
+/// the same way or one of them silently emits a corrupt row.
+pub(crate) fn csv_escape(field: &str) -> String {
     if field.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", field.replace('"', "\"\""))
     } else {

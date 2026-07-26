@@ -128,6 +128,16 @@ the engine's backoff.
 - **Chunked request bodies are not decoded.** A chunked POST parses as an empty
   body and fails validation with a 400. That is safe rather than a smuggling hole
   only because this layer serves one request per connection and then closes.
+- **Every request is capped at 1 MiB, head and body together, and going over it
+  gets no response at all** — `read_request` returns `None` and the connection
+  closes ([`src/http.rs`](src/http.rs)). Two consequences worth sizing for: a
+  turn whose assembled conversation exceeds 1 MiB cannot be created, and a
+  `tool-result` carrying an oversized tool output is dropped silently, leaving
+  the engine step it would have answered parked until the turn is torn down.
+- **The SSE stream must not be buffered by anything in front of it.** The
+  response carries `X-Accel-Buffering: no` for nginx-family proxies; a proxy that
+  buffers anyway deadlocks the protocol rather than merely delaying it, because
+  the host cannot answer a `provider_request` it has not received.
 - **The token comparison must stay constant-time.** `constant_time_eq` in
   [`src/server.rs`](src/server.rs) exists because `==` on `&str` stops at the first
   differing byte and leaks the shared secret to a caller timing its own 401s. A

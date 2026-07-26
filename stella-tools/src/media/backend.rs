@@ -1,3 +1,10 @@
+//! BYOK provider detection for the media family: which `MediaProvider`
+//! implementations the environment's keys unlock, if any.
+//!
+//! `None` is the normal, load-bearing answer — the registry then omits the
+//! media tools entirely rather than advertising a schema that would error on
+//! use, the same conditional registration the issue tools use.
+
 use std::sync::Arc;
 
 use stella_media::MediaProvider;

@@ -16,11 +16,25 @@
 //! [`AgentEvent::Unknown`]: an older binary meets an unrecognized `"type"` by
 //! preserving the event whole and moving on, instead of failing the stream.
 //!
+//! What travels backwards is the *variant*, not the field. An unrecognized key
+//! on a tag this build already knows parses (serde ignores it) and is then
+//! dropped on re-serialization — so relaying a newer stream keeps its new
+//! events whole while quietly narrowing its new fields. See the `event`
+//! module docs.
+//!
 //! The tolerance is scoped to the tag alone. A `"type"` this build *does*
 //! know, carrying a body that does not fit its variant, is still a hard
 //! error — that is corruption or an encoder bug, not a version skew, and it
 //! must not be laundered into [`AgentEvent::Unknown`]. [`KNOWN_TYPE_TAGS`] is
 //! the exact boundary between the two cases.
+//!
+//! Read "tag alone" literally: the *nested* enums a variant carries
+//! ([`ModelCallRole`], [`StageKind`], [`PolicyKind`], [`CiStatus`], and
+//! their peers) are closed, so a value from a newer vocabulary lands on the
+//! hard-error side and costs the reader the whole event. [`BlockKind`] and
+//! [`CacheZone`] are the two exceptions, and even they degrade lossily —
+//! the future token is not preserved across a round trip. Growing one of
+//! those vocabularies is still a one-directional change.
 //!
 //! [`context_event::LifecycleEventEnvelope`] remains the right home for
 //! internal lifecycle events: it adds an explicit `schema_version` and keeps

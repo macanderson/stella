@@ -133,6 +133,7 @@ pub struct CompletionMessage {
 impl CompletionMessage {
     /// The system message — message index 0, the byte-stable prompt prefix
     /// every provider's cache breakpoint sits behind (L-E8).
+    #[must_use]
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::System,
@@ -145,6 +146,7 @@ impl CompletionMessage {
 
     /// A text-only user message. Serializes byte-for-byte as it did before
     /// attachments existed, so it never perturbs a cached prefix.
+    #[must_use]
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::User,
@@ -156,6 +158,7 @@ impl CompletionMessage {
     }
 
     /// A user message carrying multimodal attachments alongside its text.
+    #[must_use]
     pub fn user_with_attachments(content: impl Into<String>, attachments: Vec<Attachment>) -> Self {
         Self {
             attachments,
@@ -165,6 +168,7 @@ impl CompletionMessage {
 
     /// An assistant text message with no tool calls — e.g. a final answer
     /// replayed into a transcript for post-turn reflection.
+    #[must_use]
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::Assistant,

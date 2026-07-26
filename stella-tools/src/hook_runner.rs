@@ -5,9 +5,12 @@
 //!
 //! Each hook action runs as `bash -c <command>` in the workspace root, with
 //! the event payload piped in as JSON on stdin, bounded by the action's
-//! clamped timeout. `kill_on_drop` guarantees a timed-out hook's process is
-//! reaped when its future is dropped — a hung hook can stall its own
-//! timeout window, never the session.
+//! clamped timeout. The spawn is `setsid`'d into its own process group, so a
+//! timeout — or a dropped future — kills the whole tree
+//! ([`crate::exec::GroupKillGuard`]), not just the `bash` that fronts it;
+//! `kill_on_drop` backs that up for the direct child and is what covers the
+//! non-unix build. A hung hook can stall its own timeout window, never the
+//! session, and nothing it spawned outlives that window.
 
 use std::process::Stdio;
 
@@ -35,10 +38,28 @@ impl HookRunner for ShellHookRunner {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         crate::subprocess_env::scrub_sensitive_env(&mut command);
+        // Own process group, exactly like every other spawn in this crate: a
+        // hook that backgrounds work (`some-watcher &`) leaves grandchildren
+        // that `kill_on_drop` cannot reach, and a timed-out hook must not
+        // leak them into the rest of the session.
+        #[cfg(unix)]
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
         let mut child = command.spawn().map_err(|e| HookExecError::SpawnFailed {
             command: action.command.clone(),
             message: e.to_string(),
         })?;
+        // Capture the pid before `wait_with_output` takes ownership.
+        #[cfg(unix)]
+        let pid = child.id().unwrap_or(0) as i32;
+        // Cancellation backstop: a dropped future (the session ending mid-hook)
+        // must not leave the setsid'd group running.
+        #[cfg(unix)]
+        let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         // Feed the payload on a DETACHED task and let the timeout-bounded
         // `wait_with_output` below drain stdout concurrently. Writing inline
@@ -64,21 +85,38 @@ impl HookRunner for ShellHookRunner {
         )
         .await;
         match waited {
-            // Timeout elapsed: dropping the in-flight `wait_with_output`
-            // future drops the child handle, and `kill_on_drop` reaps it.
-            Err(_) => Err(HookExecError::TimedOut {
-                command: action.command.clone(),
-                timeout_ms,
-            }),
+            // Timeout elapsed: kill the whole group, then let dropping the
+            // in-flight `wait_with_output` future reap the direct child via
+            // `kill_on_drop`.
+            Err(_) => {
+                #[cfg(unix)]
+                {
+                    // Disarms and SIGKILLs the group in one step, guarding on
+                    // a real pid: kill(-0, …) would hit Stella's OWN group.
+                    guard.kill_now();
+                }
+                Err(HookExecError::TimedOut {
+                    command: action.command.clone(),
+                    timeout_ms,
+                })
+            }
+            // Wait failure leaves the child's state unknown — the still-armed
+            // guard kills the group on return rather than leak it.
             Ok(Err(e)) => Err(HookExecError::SpawnFailed {
                 command: action.command.clone(),
                 message: format!("could not collect hook output: {e}"),
             }),
-            Ok(Ok(output)) => Ok(HookExecResult {
-                exit_code: output.status.code().unwrap_or(-1),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            }),
+            Ok(Ok(output)) => {
+                #[cfg(unix)]
+                {
+                    guard.disarm();
+                }
+                Ok(HookExecResult {
+                    exit_code: output.status.code().unwrap_or(-1),
+                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                })
+            }
         }
     }
 }

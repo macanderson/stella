@@ -20,6 +20,16 @@
 //! order carries no meaning (RFC 8259 §4), so nothing downstream may depend
 //! on it — but a consumer diffing raw lines should compare parsed values.
 //!
+//! The backwards direction is variant-shaped, not field-shaped, and the
+//! difference is easy to over-read. A *known* tag carrying a field this build
+//! has never heard of parses fine — serde ignores unrecognized keys — but that
+//! field is gone the moment the event is re-serialized, because nothing
+//! captured it. A proxy or `replay::to_jsonl` relaying a newer stream
+//! therefore passes new *events* through whole and silently narrows new
+//! *fields* on events it already knows. Only [`AgentEvent::Unknown`] preserves
+//! an object verbatim; capturing stray keys on the typed variants would take a
+//! `serde(flatten)` overflow map on each one, and no variant carries one.
+//!
 //! The tolerance is deliberately narrow, and the line matters: the fallback
 //! fires **only for an unrecognized tag**. A *recognized* tag whose body does
 //! not match its variant is still a hard error, because that is a real
@@ -30,7 +40,40 @@
 //! self-describing formats (it buffers through [`serde_json::Value`] to read
 //! the tag before dispatching). That is the format this type has always been
 //! defined against — `--output-format stream-json` *is* `serde_json` — so the
-//! constraint costs nothing in practice.
+//! constraint costs nothing in portability. It does cost work: every decode
+//! materializes the whole event as a [`serde_json::Value`] first, so a body's
+//! strings are allocated twice on the way in. That is paid on the journal
+//! replay path, not on the live emit path (serialization is unaffected), and
+//! it is the price of reading the tag before dispatching without hand-writing
+//! a visitor per variant.
+//!
+//! ## Money is `f64`, and that carries one hard edge
+//!
+//! Every dollar field on this stream — `cost_usd`, `spent_usd`, `limit_usd`,
+//! `estimated_cost_usd` — is an `f64`, because JSON has no decimal type and a
+//! string-encoded decimal would be a breaking wire change for every existing
+//! consumer. At the magnitudes involved (fractions of a cent, summed over
+//! thousands of steps) binary rounding is far below a billable unit, so the
+//! representation is not the problem.
+//!
+//! The **non-finite** case is. `serde_json` writes `NaN` and `±Infinity` as
+//! JSON `null`, so an emitter that lets a division by a zero estimate reach one
+//! of these fields — `calibration_factor` is the realistic path, see
+//! [`AgentEvent::Compaction`] — produces a line that this crate then refuses to
+//! read back: `null` is not an `f64`, the tag is known, and by the rule above
+//! that is a hard error rather than an [`AgentEvent::Unknown`]. For a bare
+//! `f64` the whole event is lost, and for an `Option<f64>` it is worse — `null`
+//! parses as `None`, so an infinite `limit_usd` comes back as "no limit set".
+//! Emitters must keep these fields finite; the wire cannot express the
+//! difference.
+//!
+//! The tolerance stops at `AgentEvent`'s own tag. The enums *nested* inside a
+//! variant — [`ModelCallRole`], [`StageKind`], [`PolicyKind`], [`CiStatus`],
+//! and their peers — are closed, so a value one of them does not know is a
+//! body that does not fit a known tag, i.e. a hard error. Only [`BlockKind`]
+//! and [`CacheZone`] carry a `serde(other)` catch-all today. Adding a variant
+//! to a nested vocabulary is therefore still a one-directional change, and
+//! the reader that meets it drops the whole event, not just the field.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -43,9 +86,15 @@ use crate::tool::{ToolCall, ToolOutput};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StageKind {
+    /// Prompt classification and routing: how hard is this turn, and which
+    /// tier should serve it.
     Triage,
+    /// Context recall: the frames the context plane put in front of the model
+    /// before it planned anything.
     ContextRecall,
+    /// Planning: the ordered steps the worker is about to attempt.
     Plan,
+    /// The interactive approval gate a large plan passes through (L-E5).
     ScopeReview,
     /// Witness authoring: before the worker executes, an independent model
     /// (the judge's resolution, never the worker's transcript) writes the
@@ -55,15 +104,24 @@ pub enum StageKind {
     /// test is where convergence comes from); integrity comes from tamper
     /// exclusion at verify time, not from hiding the test.
     Witness,
+    /// The worker's own tool-calling loop — the steps that actually change
+    /// the workspace.
     Execute,
+    /// The deterministic verification ladder: the flip oracle, the touched
+    /// tests, the diff budget.
     Verify,
+    /// The model judge, reached only when the deterministic ladder came back
+    /// inconclusive (L-E11).
     Judge,
     /// Post-turn self-reflection: the agent reviews its own performance on
     /// the completed turn and records improvement memories into the context
     /// plane, tagged with the workspace's inferred domains, for recall on
     /// future relevant turns.
     Reflect,
+    /// Context write-back: episode summaries and fact upserts landing in the
+    /// context plane (close-not-delete, L-C3).
     ContextWrite,
+    /// The turn is done. The last stage boundary a turn emits.
     Complete,
 }
 
@@ -73,8 +131,11 @@ pub enum StageKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetMode {
+    /// No metering at all — spend is neither tracked nor reported.
     Off,
+    /// Spend is metered and a breach warns, but nothing is ever denied.
     Observed,
+    /// A breach aborts the turn at the next clean boundary.
     Enforced,
 }
 
@@ -84,7 +145,9 @@ pub enum BudgetMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetScope {
+    /// The per-turn limit — reset at every `run_turn`.
     Turn,
+    /// The per-session limit — accumulated across every turn of the session.
     Session,
 }
 
@@ -106,24 +169,47 @@ pub enum PolicyKind {
 /// Concrete purpose of one provider call. This is more precise than the
 /// router's tier role: repair and guidance calls must remain distinguishable
 /// in the paid-call ledger even when they share a provider/model.
+///
+/// This vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]
+/// is the `serde(default)` for an *absent* `role`, not a `serde(other)`
+/// catch-all for an unrecognized one. A role token this build has never seen
+/// fails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —
+/// because a known `"type"` with a body that does not fit stays a hard error by
+/// design (see the module docs). Adding a variant here is therefore a
+/// one-directional change in a way adding an [`AgentEvent`] variant no longer
+/// is.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelCallRole {
-    /// Legacy events written before call-role attribution existed.
+    /// Legacy events written before call-role attribution existed. The default
+    /// for an absent `role` field only — an unrecognized one is an error.
     #[default]
     Unknown,
+    /// Prompt classification and tier routing.
     Triage,
+    /// Authoring the ordered plan.
     Plan,
+    /// Re-authoring a plan the parser or the scope gate rejected.
     PlanRepair,
+    /// Writing the witness test that arms the flip oracle.
     WitnessAuthor,
+    /// Fixing a witness that did not fail on the current code.
     WitnessRepair,
+    /// The tool-calling loop that actually changes the workspace.
     Worker,
+    /// Course-correction handed to a worker that is looping or stuck.
     DistressGuidance,
+    /// The model judge, reached only on inconclusive deterministic evidence.
     Judge,
+    /// Generating an agent definition.
     AgentAuthor,
+    /// Generating a skill definition.
     SkillAuthor,
+    /// Inferring the workspace's domains, for memory tagging and recall.
     DomainInference,
+    /// Post-turn self-reflection writing improvement memories.
     Reflection,
+    /// The overflow summarizer that replaces a history span with a summary.
     Summarization,
 }
 
@@ -132,7 +218,11 @@ pub enum ModelCallRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageIncompleteReason {
+    /// The provider returned a failure after dispatch, so the request was
+    /// received and may have been billed even though no usage frame arrived.
     ProviderError,
+    /// The client-side deadline elapsed with the call still in flight. The
+    /// server may have completed the work regardless.
     Timeout,
     /// The caller dropped the turn (hard cancel) while a paid provider
     /// attempt was still in flight — the call may have real server-side
@@ -171,6 +261,13 @@ pub enum BlockKind {
     /// A multimodal attachment (image/doc/audio/video).
     Attachment,
     /// A kind this reader does not recognize (written by a newer emitter).
+    ///
+    /// Tolerant on the way in, **lossy on the way out**: the original token is
+    /// not preserved, so re-serializing an event that arrived with a future
+    /// kind writes `"other"`. Unlike [`AgentEvent::Unknown`], which keeps the
+    /// whole original object, a proxy or `replay::to_jsonl` that round-trips a
+    /// newer emitter's `block_registered` rewrites the kind. Widen this enum
+    /// before relaying a stream whose kinds matter downstream.
     #[default]
     #[serde(other)]
     Other,
@@ -192,6 +289,9 @@ pub enum CacheZone {
     /// After the last breakpoint — recomputed every step by construction.
     Volatile,
     /// A zone this reader does not recognize (written by a newer emitter).
+    /// Lossy on re-serialization for the same reason [`BlockKind::Other`] is:
+    /// the original token is not kept, so a relayed manifest entry comes back
+    /// out as `"other"`.
     #[serde(other)]
     Other,
 }
@@ -210,17 +310,13 @@ pub enum CacheZone {
 pub enum AgentEvent {
     /// The turn entered a new pipeline stage. Every stage boundary emits one,
     /// in the order the pipeline walks them.
-    Stage {
-        name: StageKind,
-    },
+    Stage { name: StageKind },
     /// The step's answer text, in full — the authoritative, durable record.
     /// The field name `delta` is wire-frozen legacy and does NOT mean a
     /// fragment: the live fragments are [`AgentEvent::TextDelta`], which the
     /// journal deliberately drops. Consumers must REPLACE any accumulated
     /// preview with this value, never append it to one.
-    Text {
-        delta: String,
-    },
+    Text { delta: String },
     /// One in-order fragment of the answer text, emitted live while the
     /// model call streams. Strictly a best-effort preview: the step's
     /// following `Text` event carries the full text and is authoritative —
@@ -230,21 +326,15 @@ pub enum AgentEvent {
     /// the stream-json wire contract: consumers must tolerate `text_delta`
     /// lines appearing between events, and persistence layers may drop them
     /// (the `Text` event is the durable record).
-    TextDelta {
-        text: String,
-    },
+    TextDelta { text: String },
     /// One in-order fragment of the model's thinking/extended-reasoning
     /// stream, for the providers that expose it. Unlike [`AgentEvent::Text`]
     /// this really is a fragment — consumers accumulate, and the journal
     /// coalesces a consecutive run into one record.
-    Reasoning {
-        delta: String,
-    },
+    Reasoning { delta: String },
     /// The model requested a tool call and the engine is about to run it. The
     /// matching [`AgentEvent::ToolResult`] correlates by `call.call_id`.
-    ToolStart {
-        call: ToolCall,
-    },
+    ToolStart { call: ToolCall },
     /// A tool call finished, successfully or not — `output` is the typed
     /// [`ToolOutput`], never a bare string, so a failure is inspectable
     /// without sniffing prose. Correlates to its [`AgentEvent::ToolStart`] by
@@ -288,9 +378,7 @@ pub enum AgentEvent {
     /// A user message queued mid-turn was injected at a step boundary
     /// (`stella-core` steering) — the transcript's record that the model
     /// was steered, and when.
-    Steered {
-        text: String,
-    },
+    Steered { text: String },
     /// Loop detection fired (receipts spec §6.3, #364 gap 3): the typed
     /// twin of the prose steer/abort, so receipts can parse the decision
     /// instead of string-matching an `Error` prefix. Emitted on BOTH
@@ -407,6 +495,14 @@ pub enum AgentEvent {
         /// lines up with the decision (#364 item 1). `0` on pre-receipt journals.
         #[serde(default)]
         effective_budget_tokens: u64,
+        /// The per-model calibration factor the pass divided by. `serde(default)`
+        /// makes this `0.0` on a pre-receipt journal, which is a sentinel, NOT a
+        /// factor: recovering the raw budget as `effective * factor` yields 0 and
+        /// dividing by it yields infinity. A consumer must read `0.0` as "this
+        /// journal predates calibration" and skip the derivation, exactly as it
+        /// reads `effective_budget_tokens == 0`. (The identity factor is `1.0`;
+        /// the default cannot be changed to it without rewriting how every
+        /// already-written journal decodes.)
         #[serde(default)]
         calibration_factor: f64,
     },
@@ -553,11 +649,14 @@ pub enum AgentEvent {
     /// are resolved from the originating event at reconstruction time, never
     /// re-stored. For the two kinds the fold does NOT carry — the system prefix
     /// and the assembled user/recall message — `content` carries the bytes so
-    /// the step is reconstructable (spec §5.3). That content is **local-only**:
-    /// it is stripped by the content-free enterprise export projection and never
-    /// leaves the local journal. So "content-free" means content-free *on
-    /// export*, and content-free *on the wire for journal-resolvable kinds* —
-    /// gap-kind blocks deliberately carry their bytes locally. Additive:
+    /// the step is reconstructable (spec §5.3). "Content-free" is therefore a
+    /// claim about two specific things and no others: the *export* projection,
+    /// which strips `content`, and the *wire shape of journal-resolvable
+    /// kinds*, which never carry bytes at all. It is **not** a claim about this
+    /// event stream, which gap-kind blocks do put prompt bytes on: everything
+    /// emitted here also reaches `--output-format stream-json` on stdout and
+    /// any durable stream file configured behind it. Treat a raw event stream
+    /// as carrying prompt content and redirect it accordingly. Additive:
     /// consumers recorded before receipts existed simply never see this event.
     BlockRegistered {
         /// `blk_<24 hex of sha256(kind \0 content)>`. Byte-identical blocks
@@ -572,10 +671,14 @@ pub enum AgentEvent {
         /// Human label for recall frames / memory nodes, when the block has one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         citation_label: Option<String>,
-        /// Local-only preimage for gap kinds the journal cannot resolve (the
-        /// system prefix, the assembled user/recall message). `None` for
+        /// The preimage for gap kinds the journal cannot resolve (the system
+        /// prefix, the assembled user/recall message). `None` for
         /// journal-resolvable kinds (tool I/O, assistant text) — those never
-        /// carry bytes here. Redacted by the content-free export projection.
+        /// carry bytes here. Redacted by the content-free export projection,
+        /// but present on the live event stream, so it reaches stream-json
+        /// stdout: this is the one field on `AgentEvent` that can carry raw
+        /// prompt text, and the only thing keeping it off a remote sink is
+        /// where the operator points the stream.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<String>,
     },
@@ -624,9 +727,7 @@ pub enum AgentEvent {
     /// Interactive gate before large plans execute (L-E5): the pipeline
     /// pauses on this event and waits for approval above configured
     /// thresholds; headless requires a flag to bypass.
-    ScopeReview {
-        proposal: ScopeProposal,
-    },
+    ScopeReview { proposal: ScopeProposal },
     /// The agent asked the user a multiple-choice question (the `ask_user`
     /// tool). BINDING renderer contract: present the structured `options`
     /// AND always exactly one additional free-text option — the user can
@@ -652,14 +753,9 @@ pub enum AgentEvent {
     },
     /// A media artifact landed under `.stella/artifacts/` with a manifest
     /// row.
-    MediaComplete {
-        artifact: MediaArtifactRef,
-    },
+    MediaComplete { artifact: MediaArtifactRef },
     /// A commit landed (fleet ledger / pipeline execute stage).
-    Commit {
-        sha: String,
-        message: String,
-    },
+    Commit { sha: String, message: String },
     /// A pull request was opened or changed status (fleet PR/CI monitor).
     /// `number` and `ci` ride `serde(default)` so streams recorded before
     /// they existed still parse (additive-only wire contract).
@@ -680,20 +776,18 @@ pub enum AgentEvent {
     /// tools). Carries the FULL board snapshot, not a delta — the render
     /// fold stays pure and any single event reconstructs the checklist,
     /// which is what makes dead-session replay show the board as it was.
-    TaskUpdate {
-        tasks: Vec<TaskItem>,
-    },
+    TaskUpdate { tasks: Vec<TaskItem> },
     /// The turn failed. `retryable` is the source's own classification (see
     /// [`crate::error::ProviderError::is_retryable`]), never re-derived from
     /// `message` by a consumer.
-    Error {
-        message: String,
-        retryable: bool,
-    },
-    Complete {
-        model: String,
-        cost_usd: f64,
-    },
+    Error { message: String, retryable: bool },
+    /// The turn finished — the stream's terminator, and the only event a
+    /// consumer may treat as "nothing more is coming". `cost_usd` is the
+    /// turn's total spend and `model` the model that served its last committed
+    /// call; both are summaries of the `StepUsage` events that preceded it, not
+    /// a separate source of truth. A turn that fails ends on
+    /// [`AgentEvent::Error`] instead, never on both.
+    Complete { model: String, cost_usd: f64 },
     /// An event whose `"type"` this binary does not recognize — almost always
     /// one emitted by a NEWER stella than the one reading. The whole original
     /// JSON object is preserved in `payload` (tag included), so a proxy,
@@ -709,6 +803,17 @@ pub enum AgentEvent {
     /// wire tag of its own and can never be produced by a literal
     /// `{"type":"unknown"}` — that input is an unknown tag like any other and
     /// round-trips as `event_type: "unknown"`.
+    ///
+    /// Producer contract for anyone *constructing* this variant by hand
+    /// (synthesizing a passthrough event, rewriting a recorded stream):
+    /// `payload` must be a JSON **object** carrying a `"type"` key equal to
+    /// `event_type`, and `event_type` must not be one of [`KNOWN_TYPE_TAGS`].
+    /// Serialization emits `payload` verbatim, so a non-object payload, or one
+    /// whose tag disagrees, produces a stream-json line this crate cannot read
+    /// back; a known tag here makes [`AgentEvent::type_tag`] name a variant
+    /// this value is not, so a consumer dispatching on the tag rather than the
+    /// variant is misrouted. The decode side is only ever fed objects with an
+    /// unrecognized tag, so nothing checks either invariant for you.
     #[serde(skip)]
     Unknown {
         /// The unrecognized `"type"` value, lifted out for cheap matching.
@@ -741,6 +846,13 @@ macro_rules! agent_event_tags {
             /// For [`AgentEvent::Unknown`] this returns the *preserved
             /// original* tag, not a placeholder — an unrecognized event still
             /// reports truthfully what it was on the wire.
+            ///
+            /// Which means the return value is no longer drawn from a closed
+            /// set: an `Unknown` tag is arbitrary, unbounded, externally
+            /// authored text. Grouping, indexing, or labelling a metric by
+            /// this string is safe only against [`KNOWN_TYPE_TAGS`] — bucket
+            /// anything outside it as one `unknown` cohort rather than letting
+            /// a foreign stream drive cardinality.
             #[must_use]
             pub fn type_tag(&self) -> &str {
                 match self {
@@ -862,14 +974,32 @@ impl<'de> Deserialize<'de> for AgentEvent {
     ///
     /// An unrecognized tag becomes [`AgentEvent::Unknown`] with the whole
     /// original object preserved. Everything else — including an object with
-    /// no `"type"` at all, or a non-string one — goes to the derived codec and
-    /// keeps its original error behaviour.
+    /// no `"type"` at all, or a non-string one — goes to the derived codec,
+    /// which still rejects a body that does not fit its variant.
     ///
     /// The asymmetry is the point. A tag we have never seen is a newer stella
     /// talking to an older reader, which is normal and must not break the
     /// stream. A tag we *do* know carrying a body that does not fit is an
     /// encoder bug or a corrupt record, and laundering that into `Unknown`
     /// would convert a loud failure into silent data loss.
+    ///
+    /// Two things the [`Value`] hop costs, both invisible until you look for
+    /// them (#672):
+    ///
+    ///  - **Duplicate keys stop being an error.** Deserializing a struct
+    ///    directly rejects `{"type":"text","delta":"a","delta":"b"}` as a
+    ///    duplicate field; a [`Value`] is a map, so the second key overwrites
+    ///    the first and the derived codec only ever sees the last one. A
+    ///    duplicated field is therefore last-wins rather than corruption
+    ///    the reader refuses — narrower than the "a known tag with a bad body
+    ///    is loud" doctrine above claims. Producers must not rely on it either
+    ///    way: a stream with duplicate keys is malformed input this decoder
+    ///    happens to survive, not a supported shape.
+    ///  - **Errors lose their position.** The inner failure is a
+    ///    `serde_json::Error` re-wrapped through `D::Error::custom`, so
+    ///    "missing field `delta` at line 1 column 15" arrives as
+    ///    "missing field `delta`". The *reason* survives; the offset into the
+    ///    offending journal line does not.
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -895,8 +1025,11 @@ pub enum FileChangeKind {
     /// same event so the files-touched panel sees reads without a second
     /// data path.
     Read,
+    /// The file did not exist before this change.
     Created,
+    /// An existing file's contents changed.
     Modified,
+    /// The file was removed.
     Deleted,
 }
 
@@ -916,8 +1049,12 @@ impl FileChangeKind {
 /// the primary identifier (L-C4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextFrameRef {
+    /// The provider's own frame id, when the frame was materialized at all.
+    /// A detail-view identifier only — never the primary one a surface shows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// The human-readable citation every surface renders, e.g.
+    /// `engine step-driver (driver.rs)`. Mandatory by design (L-C4).
     pub citation_label: String,
     /// The CGP provider leg that returned the frame. Empty only when reading
     /// a stream recorded before provider provenance was added.
@@ -936,6 +1073,7 @@ pub struct ContextFrameRef {
     /// The most-derived provenance method, when declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
+    /// The engine's estimate of what injecting this frame cost the prompt.
     pub token_cost: u32,
     /// The registry id (`blk_…`) of this frame as a context block, when
     /// receipts are enabled. Joins the frame to its manifest membership and,
@@ -979,7 +1117,10 @@ pub struct BlockOrigin {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestEntry {
     pub block_id: String,
-    /// Cache position class relative to the last stable breakpoint.
+    /// Cache position class relative to the last stable breakpoint. Defaults to
+    /// [`CacheZone::Cacheable`] on a manifest recorded before the field existed
+    /// — an assumption, not an observation, so a cache-attribution pass over
+    /// pre-field manifests is reading the default rather than a measured zone.
     #[serde(default)]
     pub cache_zone: CacheZone,
     pub token_cost: u32,
@@ -1009,7 +1150,10 @@ pub struct ManifestEntry {
 /// One provider's share of a recall's frame mix.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderShare {
+    /// The CGP provider leg the frames came from.
     pub provider: String,
+    /// How many of the recall's frames this provider contributed — the ones
+    /// that won fusion and reached the prompt, not the ones it served.
     pub frames: u32,
 }
 
@@ -1096,9 +1240,14 @@ impl ContextUsage {
     /// by; this is the check a metering pipeline runs beside
     /// [`Self::is_consistent`] before trusting the accounting clock.
     ///
-    /// Grammar only, never calendar arithmetic — `2026-02-31T00:00:00Z`
-    /// passes here and is rejected by whatever eventually parses it. The
-    /// crate carries no date dependency and this predicate adds none.
+    /// Shape only, never calendar arithmetic — and "shape" is looser than the
+    /// grammar. `2026-02-31T00:00:00Z` passes (no month has 31 February days),
+    /// and so does `2026-07-24T99:99:99Z`, because the digit groups are checked
+    /// for being digits, not for RFC 3339's `00-23`/`00-59` ranges. The point
+    /// is to catch a receipt stamped with junk (an empty string, a locale date,
+    /// a missing offset) before it reaches a tool that sorts by it; a real
+    /// parser still has to reject the impossible values, and this crate carries
+    /// no date dependency to become one.
     #[must_use]
     pub fn as_of_is_wellformed(&self) -> bool {
         is_rfc3339_shaped(&self.as_of)
@@ -1157,11 +1306,15 @@ fn is_rfc3339_shaped(value: &str) -> bool {
 /// never conflated (L-E11).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JudgeEvidence {
+    /// One line naming what was checked and what it showed.
     pub summary: String,
     /// `true` when the verdict came from the deterministic ladder (a
     /// fail→pass flip of the same normalized test command, touched-tests
     /// green, diff budget) rather than a model judge.
     pub deterministic: bool,
+    /// Pointers to the underlying artifacts (`trace:t1#verify`, a test
+    /// command, a diff), so a reader can go check the summary rather than
+    /// take it on faith.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_refs: Vec<String>,
 }
@@ -1170,9 +1323,14 @@ pub struct JudgeEvidence {
 /// executes (L-E5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScopeProposal {
+    /// One line describing the work, for the approval prompt's headline.
     pub summary: String,
+    /// The plan's steps, in the order the worker will attempt them.
     pub steps: Vec<String>,
+    /// How many files the plan expects to touch — the magnitude the gate's
+    /// thresholds are compared against.
     pub estimated_files: u32,
+    /// Projected spend, when the planner could estimate one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_cost_usd: Option<f64>,
 }
@@ -1181,8 +1339,11 @@ pub struct ScopeProposal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaKind {
+    /// A raster image.
     Image,
+    /// Vector artwork emitted as SVG source.
     Svg,
+    /// A video clip — the only kind whose job is asynchronous and long-lived.
     Video,
 }
 
@@ -1192,16 +1353,27 @@ pub enum MediaKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum MediaJobState {
+    /// Accepted by the provider, not yet started.
     Queued,
+    /// Generation is under way.
     Running,
+    /// The artifact landed; a [`AgentEvent::MediaComplete`] follows.
     Succeeded,
-    Failed { reason: String },
+    /// Generation failed terminally.
+    Failed {
+        /// Why it failed, inline — a failed job is never signalled only by
+        /// the absence of a success event.
+        reason: String,
+    },
 }
 
 /// A completed media artifact: id + kind + where it landed on disk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaArtifactRef {
+    /// The artifact id, matching the `artifact_id` its
+    /// [`AgentEvent::MediaProgress`] events carried.
     pub id: String,
+    /// What was produced.
     pub kind: MediaKind,
     /// Path under `.stella/artifacts/` (the generation tools may never
     /// write outside it).
@@ -1216,9 +1388,13 @@ pub struct MediaArtifactRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrStatus {
+    /// Opened as a draft — not yet asking for review.
     Draft,
+    /// Open and reviewable.
     Open,
+    /// Merged into its base branch.
     Merged,
+    /// Closed without merging.
     Closed,
 }
 
@@ -1232,7 +1408,9 @@ pub enum CiStatus {
     Pending,
     /// At least one check is still running and none have failed.
     Running,
+    /// Every check reported and all of them succeeded.
     Passing,
+    /// At least one check failed — terminal for this head commit.
     Failing,
 }
 
@@ -1249,6 +1427,7 @@ pub struct TaskItem {
     /// What needs to be done, if the creator elaborated beyond the subject.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Where the task is in its lifecycle ([`TaskStatus`]).
     pub status: TaskStatus,
     /// Which agent lane owns the task: `None` until claimed, `Some("lead")`
     /// for the lead, or the sub-agent lane id once `task_assign` spawned a
@@ -1263,9 +1442,14 @@ pub struct TaskItem {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
+    /// Created and not yet started.
     Pending,
+    /// Claimed by a lane and being worked.
     InProgress,
+    /// Finished successfully. Terminal.
     Completed,
+    /// Abandoned. Terminal, and the row is kept — the board is an audit
+    /// surface, not just a scheduler.
     Cancelled,
 }
 
@@ -2141,6 +2325,25 @@ mod tests {
     }
 
     #[test]
+    fn a_manifest_entry_from_a_pre_occurrence_stream_still_parses() {
+        // #684 added per-occurrence `call_id`, and #389 `message_index`, to the
+        // manifest entry. Every `serde(default)` in this crate owes a
+        // hand-written pre-field literal that proves the default — these two
+        // landed without one.
+        let legacy = r#"{"block_id":"blk_a","token_cost":12,"resident_since_step":0}"#;
+        let entry: ManifestEntry = serde_json::from_str(legacy).unwrap();
+        assert_eq!(entry.cache_zone, CacheZone::Cacheable);
+        assert_eq!(entry.message_index, 0);
+        assert_eq!(entry.call_id, None);
+
+        // A non-tool entry keeps the id off the wire entirely rather than
+        // serializing a null — the manifest is the widest event in the stream
+        // and every omitted key is real tokens on a receipt.
+        let wire = serde_json::to_value(&entry).unwrap();
+        assert!(wire.get("call_id").is_none(), "{wire}");
+    }
+
+    #[test]
     fn context_frame_ref_without_receipt_fields_still_parses() {
         // A recall frame recorded before receipts existed carries no block_id
         // or content_digest — it must still deserialize (additive contract).
@@ -2356,20 +2559,29 @@ mod tests {
         // match is exhaustive (so every variant is listed) and duplicate arms
         // would be unreachable (so each is listed once) — meaning
         // `KNOWN_TYPE_TAGS.len()` equals the variant count. If every listed tag
-        // is additionally a *real* serde name, as asserted here, the mapping is
+        // is additionally a *real* serde name, as asserted below, the mapping is
         // a bijection and no real tag can be missing from the list. A missing
         // one would silently demote all of its events to `Unknown`.
+        //
+        // The probe is a bare `{"type": tag}`, and today every variant has at
+        // least one required field, so it always errors. That is expected — the
+        // assertion is on WHICH error. `missing field ...` proves serde routed
+        // the tag to a variant; `unknown variant ...` proves it did not, which
+        // is exactly the typo this test exists to catch. Asserting only on the
+        // `Ok` arm would assert nothing at all.
         for tag in KNOWN_TYPE_TAGS {
             let probe = serde_json::json!({ "type": tag });
-            // Most variants have required fields, so this usually errors —
-            // that is fine and expected. What must never happen is the tag
-            // being treated as unrecognized.
-            if let Ok(event) = serde_json::from_value::<AgentEvent>(probe) {
-                assert!(
+            match serde_json::from_value::<AgentEvent>(probe) {
+                Ok(event) => assert!(
                     !event.is_unknown(),
                     "`{tag}` is in KNOWN_TYPE_TAGS but deserialized as Unknown — \
                      the tag string does not match any serde variant name"
-                );
+                ),
+                Err(err) => assert!(
+                    !err.to_string().contains("unknown variant"),
+                    "`{tag}` is in KNOWN_TYPE_TAGS but serde has no variant by \
+                     that name, so every event carrying it decodes as Unknown: {err}"
+                ),
             }
         }
 

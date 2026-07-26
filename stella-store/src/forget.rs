@@ -169,18 +169,26 @@ fn tokens(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// Jaccard similarity of two already-tokenized texts. Split out so
+/// [`is_suppressed`] can tokenize the candidate ONCE and reuse it across every
+/// tombstone, instead of re-splitting and re-lowercasing it per comparison —
+/// the miner asks this question for every candidate lesson against the whole
+/// tombstone set, on the path that finishes a turn.
+fn jaccard(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let intersection = a.intersection(b).count() as f64;
+    let union = a.union(b).count() as f64;
+    intersection / union
+}
+
 /// Jaccard similarity of two texts' token sets, in `0.0..=1.0`. Two empty
 /// texts are 0.0, not 1.0 — an empty lesson is not a restatement of
 /// anything, and returning 1.0 would let one empty tombstone suppress every
 /// future empty-ish candidate.
 pub fn similarity(a: &str, b: &str) -> f64 {
-    let (a, b) = (tokens(a), tokens(b));
-    if a.is_empty() || b.is_empty() {
-        return 0.0;
-    }
-    let intersection = a.intersection(&b).count() as f64;
-    let union = a.union(&b).count() as f64;
-    intersection / union
+    jaccard(&tokens(a), &tokens(b))
 }
 
 /// Is `candidate` close enough to `forgotten` to be the same lesson wearing
@@ -192,7 +200,10 @@ pub fn is_restatement(candidate: &str, forgotten: &str) -> bool {
 /// Does `candidate` restate anything in `forgotten`? The question the
 /// reflection recorder and the skill miner both ask before persisting.
 pub fn is_suppressed<'a>(candidate: &str, forgotten: impl IntoIterator<Item = &'a str>) -> bool {
-    forgotten.into_iter().any(|f| is_restatement(candidate, f))
+    let candidate = tokens(candidate);
+    forgotten
+        .into_iter()
+        .any(|f| jaccard(&candidate, &tokens(f)) >= SIMILARITY_THRESHOLD)
 }
 
 #[cfg(test)]

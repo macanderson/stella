@@ -323,8 +323,10 @@ pub(crate) async fn run_and_report(
 /// The crate's ONE implementation of this security primitive: it lives here
 /// because this module owns the `bash -c` runner every composed command line
 /// eventually reaches (`run`, [`run_github`]). `scripts::shell_quote`,
-/// `ci::shell_quote`, `screenshot::shell_quote` and `issue_ops::quote` were
-/// four independent copies — the shape that lets one of them drift.
+/// `ci::shell_quote`, `screenshot::shell_quote`, `project::shell_quote` and
+/// `issue_ops::quote` were five independent copies — the shape that lets one
+/// of them drift. They are all thin aliases for this function now; a new one
+/// must be too.
 pub(crate) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }

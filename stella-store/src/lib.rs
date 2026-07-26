@@ -71,6 +71,12 @@
 //! version stamped inside that same transaction — a crash mid-migration
 //! rolls the file back to the old version and old shape, never a mix.
 //!
+//! One deliberate exception shares the file without sharing the counter: the
+//! optional enterprise export-ledger tables ([`enterprise_telemetry`]) converge
+//! by per-column probing on every open instead of by `user_version`, because
+//! they belong to a feature a store may never enroll in and must not gate the
+//! host schema. Everything the store itself owns goes through `MIGRATIONS`.
+//!
 //! # Graceful degradation
 //!
 //! Every method returns `Result`; the CLI treats a failed store as
@@ -97,11 +103,28 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //   content_free the content-free egress guard (#466): the reviewed hub-column
 //               allowlist plus the sentinel harness every egress encoder
 //               registers with
+//   drain       the versioned cloud-drain wire contract + the bisecting,
+//               poison-row-isolating drain loop (#467)
+//   enterprise_telemetry
+//               the closed operational event schema, its bounded at-least-once
+//               spool, and the per-store export ledger
+//   forget      tombstone policy: surfaces, and the lexical restatement check
+//               that keeps a re-mined paraphrase from walking back in
+//   home        `~/.stella` resolution + the one-time legacy-layout migration
+//   identity    org/workspace/repo telemetry scoping and cloud registration
 //   integrity   `PRAGMA quick_check`/`integrity_check` verdicts plus the
 //               opt-in, never-deleting quarantine behind `stella doctor`
 //   journal     append-only per-session sidecar journal (crash-safe resume)
 //   notify      persist-until-read cross-session notifications
+//   private     (crate-private) the owner-only, no-follow filesystem
+//               primitives every other module writes through
+//   receipts    (crate-private impl) the context-block registry and per-step
+//               request manifest — the receipts plane's write/read surface
+//   reconstruct (crate-private impl) byte-exact step reconstruction from a
+//               receipt plus the event journal, digest-verified
 //   sessions    cross-process session registry (one JSON file per session)
+//   telemetry   (crate-private impl) per-call telemetry rows and the
+//               execution-level paid-call accounting gate
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
 mod ddl;
 #[cfg(test)]
@@ -282,16 +305,6 @@ pub const PROMOTION_CITATIONS_REQUIRED: i64 = 10;
 /// (or deleting the stale memory) does.
 pub const QUARANTINE_NEGATIVES_THRESHOLD: i64 = 2;
 
-/// Per-memory citation aggregate — the data behind `stella memory` and the
-/// rule-promotion eligibility gate.
-///
-/// Eligibility semantics (deliberately strict, per spec): a memory is
-/// eligible once its **positive streak** — consecutive positive citations
-/// since (and not counting) its most recent negative one, in citation order —
-/// strictly exceeds [`PROMOTION_CITATIONS_REQUIRED`]. One negative remark
-/// resets the streak to zero, disqualifying the memory until it re-earns
-/// MORE THAN 10 fresh all-positive citations. A memory that was never cited
-/// negatively has `positive_streak == citations`.
 /// One tombstone as stored — what a person chose to forget, the text it
 /// carried at the time, and when.
 ///
@@ -315,6 +328,16 @@ pub struct ForgottenRow {
     pub forgotten_at: String,
 }
 
+/// Per-memory citation aggregate — the data behind `stella memory` and the
+/// rule-promotion eligibility gate.
+///
+/// Eligibility semantics (deliberately strict, per spec): a memory is
+/// eligible once its **positive streak** — consecutive positive citations
+/// since (and not counting) its most recent negative one, in citation order —
+/// strictly exceeds [`PROMOTION_CITATIONS_REQUIRED`]. One negative remark
+/// resets the streak to zero, disqualifying the memory until it re-earns
+/// MORE THAN 10 fresh all-positive citations. A memory that was never cited
+/// negatively has `positive_streak == citations`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryCitationStats {
     pub memory_id: String,
@@ -330,10 +353,14 @@ pub struct MemoryCitationStats {
     pub positive_streak: i64,
     /// `positive_streak > PROMOTION_CITATIONS_REQUIRED` — the promotion gate.
     pub eligible: bool,
-    /// Whether this memory is quarantined from recall: `negatives >=
-    /// QUARANTINE_NEGATIVES_THRESHOLD`. A quarantined memory is excluded
-    /// from recall entirely — it is active harm to surface a memory multiple
-    /// agents verified as wrong. Only `stella memory unquarantine` clears it.
+    /// Whether this memory is quarantined from recall: at least
+    /// [`QUARANTINE_NEGATIVES_THRESHOLD`] of its citations were UNTRUTHFUL.
+    /// Deliberately not driven by [`Self::negatives`], which also counts
+    /// truthful-but-low-scoring citations: "this memory is still correct, it
+    /// just did not help today" is a promotion signal, not a reason to hide it.
+    /// A quarantined memory is excluded from recall entirely — it is active
+    /// harm to surface a memory multiple agents verified as wrong. Only
+    /// `stella memory unquarantine` clears it.
     pub quarantined: bool,
 }
 
@@ -1507,6 +1534,12 @@ impl Store {
     /// NOTE: with `session_id` `None` the UNIQUE key never conflicts (SQL
     /// NULLs are pairwise distinct), so session-less rows append rather than
     /// replace — dedup is a per-session guarantee.
+    ///
+    /// One transaction, like every sibling fan-out writer here (see
+    /// [`Self::record_files_touched`]): a snapshot is a whole board, so an item
+    /// that fails partway must not leave the table holding half of one — and
+    /// the batch costs one WAL commit instead of one per task on a path that
+    /// runs at every `TaskUpdate`.
     pub fn record_task_board(
         &self,
         execution_id: i64,
@@ -1514,10 +1547,11 @@ impl Store {
         tasks: &[TaskItem],
         now_ms: u64,
     ) -> Result<()> {
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
         for item in tasks {
             let status = task_status_to_string(item.status)?;
-            conn.execute(
+            tx.execute(
                 "INSERT INTO tasks \
                  (execution_id, session_id, task_id, subject, description, status, owner, \
                   updated_at) \
@@ -1538,6 +1572,7 @@ impl Store {
                 ],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1757,12 +1792,12 @@ impl Store {
     /// a run id that no longer exists — with no way to clear it.
     ///
     /// Liveness is exact where the age sweep ([`Store::prune_stale_file_locks`])
-    /// is only a heuristic, because every holder identity ends its owner
-    /// prefix in the minting process's pid (`fleet-<ms>-<pid>/<task>`,
-    /// `ses-<ms>-<lane>`). It is also the safer default: the age sweep
-    /// cannot tell a long-running healthy run from a dead one, and
-    /// `acquire_file_lock` never refreshes `acquired_at`, so a long run's
-    /// own live claims eventually look stale to it.
+    /// is only a heuristic, because every holder identity is
+    /// `<owner>/<lane-or-task>` and the owner ends in the minting process's pid
+    /// (`ses-<ms>-<pid>/<lane>`, `fleet-<ms>-<pid>/<task>`). It is also the
+    /// safer default: the age sweep cannot tell a long-running healthy run from
+    /// a dead one, and `acquire_file_lock` never refreshes `acquired_at`, so a
+    /// long run's own live claims eventually look stale to it.
     ///
     /// An identity that does not parse is assumed **alive**: a stale refusal
     /// the user can wait out beats reaping a live rival's claims mid-edit.
@@ -1997,9 +2032,13 @@ impl Store {
             for r in rows {
                 arr.push(r?);
             }
+            // `[]`, not `""`, on the (unreachable) serialization failure: every
+            // entry of this vec is consumed as a JSON document, and an empty
+            // string is not one — it would turn an export hiccup into a parse
+            // error downstream. Matches `query_to_json`'s fallback.
             out.push((
                 "executions",
-                serde_json::to_string(&arr).unwrap_or_default(),
+                serde_json::to_string(&arr).unwrap_or_else(|_| "[]".into()),
             ));
         }
 

@@ -562,9 +562,15 @@ pub(crate) async fn classify_google_error(
     // API key as HTTP 400 with reason API_KEY_INVALID, not a 401 — surface
     // it as the auth failure it is so the user is told to fix the key rather
     // than shown a generic terminal error (and so the step-driver never
-    // retries it).
+    // retries it). The echoed body goes through the same bound the shared
+    // ladder applies: a Google 400 fronted by a proxy can be a multi-kilobyte
+    // page, and this message reaches the transcript, the log, and the user's
+    // terminal. Classification still reads the FULL body above.
     if status == reqwest::StatusCode::BAD_REQUEST && body.contains("API_KEY_INVALID") {
-        return ProviderError::Auth(format!("{label} rejected the API key: {body}"));
+        return ProviderError::Auth(format!(
+            "{label} rejected the API key: {}",
+            crate::http::body_snippet(&body)
+        ));
     }
     crate::http::classify_http_status(label, status, retry_after_ms, &body, model)
 }

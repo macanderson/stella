@@ -630,8 +630,20 @@ struct ZaiErrorBody {
 /// limit. Billing/quota text ⇒ [`ProviderError::Terminal`]; anything else ⇒
 /// retryable [`ProviderError::RateLimited`], honoring a `Retry-After` hint
 /// when the server sent one. The provider's own message is always carried
-/// through so the real reason is visible instead of a hard-coded string.
-fn classify_zai_429(body: &str, retry_after_ms: Option<u64>) -> ProviderError {
+/// through so the real reason is visible instead of a hard-coded string —
+/// bounded by [`http::body_snippet`], since the fallback when the body is not
+/// the documented envelope is the RAW body, and a gateway fronted by a CDN
+/// answers a 429 with a multi-kilobyte HTML page. Classification still reads
+/// the full text; only the surfaced message is cut.
+///
+/// The billing-vs-throttle split generalizes past Z.ai — OpenAI-compatible
+/// gateways answer an exhausted account with the same 429 and the same
+/// vocabulary ("exceeded your current quota") — so this pre-check runs for
+/// every identity on the shared adapter, and takes `label` for the same
+/// reason [`ZaiProvider::with_identity`] exists: an OpenRouter throttle that
+/// reported itself as "Z.ai HTTP 429" would point the user at a credential
+/// and an endpoint they never configured.
+fn classify_zai_429(label: &str, body: &str, retry_after_ms: Option<u64>) -> ProviderError {
     let detail = serde_json::from_str::<ZaiErrorEnvelope>(body)
         .ok()
         .map(|e| e.error.message)
@@ -639,9 +651,9 @@ fn classify_zai_429(body: &str, retry_after_ms: Option<u64>) -> ProviderError {
         .unwrap_or_else(|| body.trim().to_string());
     let haystack = detail.to_lowercase();
     let message = if detail.is_empty() {
-        "Z.ai HTTP 429".to_string()
+        format!("{label} HTTP 429")
     } else {
-        format!("Z.ai HTTP 429: {detail}")
+        format!("{label} HTTP 429: {}", http::body_snippet(&detail))
     };
     // Balance/quota exhaustion — never self-clears, so terminal not retryable.
     if haystack.contains("balance")
@@ -850,7 +862,9 @@ impl ZaiProvider {
     /// The one request/stream/aggregate body behind both `complete` and
     /// `complete_observed` — the observer is threaded down to the stream
     /// aggregator, which announces each tool call as soon as the next one
-    /// starts streaming (the OpenAI dialect's only completion boundary).
+    /// starts streaming. That is the only per-call boundary this dialect
+    /// emits mid-stream, and it leaves the turn's last call unannounced —
+    /// see [`ToolCallAccumulator::announced`] for what that costs.
     async fn complete_inner(
         &self,
         req: CompletionRequest,
@@ -963,11 +977,13 @@ impl ZaiProvider {
             // first call, which can't be a real throttle) AND burns three
             // pointless retries on a condition backoff will never clear.
             // Read the body and classify: a real throttle stays retryable, a
-            // billing/quota failure is terminal, and either way Z.ai's own
-            // message is surfaced instead of a hard-coded string.
+            // billing/quota failure is terminal, and either way the
+            // provider's own message is surfaced instead of a hard-coded
+            // string — under `self.label`, so a gateway on this shared
+            // adapter never reports its throttle as Z.ai's.
             let retry_after_ms = http::parse_retry_after_ms(response.headers());
             let body = response.text().await.unwrap_or_default();
-            return Err(classify_zai_429(&body, retry_after_ms));
+            return Err(classify_zai_429(&self.label, &body, retry_after_ms));
         }
         if !response.status().is_success() {
             let status = response.status();
@@ -1010,9 +1026,20 @@ struct ToolCallAccumulator {
     /// Whether this call was already announced to a [`ToolCallObserver`].
     /// OpenAI-style tool calls stream sequentially by index, so a call is
     /// complete the moment a HIGHER index appears — that boundary announces
-    /// it exactly once. The stream's last call has no such boundary and is
-    /// simply never announced (the completion returns immediately after, so
-    /// there is nothing to overlap with anyway).
+    /// it exactly once.
+    ///
+    /// The stream's LAST call has no higher index behind it and is therefore
+    /// never announced at all. That is a real gap, not a free one: a turn
+    /// that makes exactly one tool call — the common shape for this agent —
+    /// gets no announcement, so `stella-core`'s speculative execution never
+    /// fires for any single-call turn on this dialect. The dialects with a
+    /// per-call terminator (`response.function_call_arguments.done` on
+    /// `openai.rs`, `content_block_stop` on `anthropic.rs`, whole
+    /// `functionCall` parts on `gemini.rs`) do not have it. Closing it here
+    /// means announcing on the chunk that carries
+    /// `finish_reason: "tool_calls"`, which arrives before the final usage
+    /// frame and `[DONE]` — a smaller window than the sibling dialects get,
+    /// but not an empty one.
     announced: bool,
 }
 

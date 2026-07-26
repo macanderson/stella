@@ -272,18 +272,23 @@ fn file_stem(path: &str) -> String {
 }
 
 fn guard_from(data: &HashMap<String, String>) -> Option<RuleGuard> {
-    let tool = data
-        .get("guard_tool")
-        .or_else(|| data.get("guard-tool"))
-        .cloned();
-    let deny_path_glob = data
-        .get("guard_deny_path")
-        .or_else(|| data.get("guard-deny-path"))
-        .cloned();
-    let deny_command_glob = data
-        .get("guard_deny_command")
-        .or_else(|| data.get("guard-deny-command"))
-        .cloned();
+    // A key present with a blank value (`guard-tool:` and nothing after the
+    // colon) is not a guard condition. Keeping it as `Some("")` made the rule
+    // advertise Tier 2 — `tier()` said `Guarded`, `render_rules_section`
+    // stamped it "[enforced]" — while `guard_matches` could never fire (`""`
+    // equals no tool and matches no path), and `guards_to_deny` handed the
+    // external permission gate a nonsense empty deny entry. Blank ⇒ absent, so
+    // the tier a rule advertises is the tier it actually has.
+    let field = |snake: &str, kebab: &str| -> Option<String> {
+        data.get(snake)
+            .or_else(|| data.get(kebab))
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let tool = field("guard_tool", "guard-tool");
+    let deny_path_glob = field("guard_deny_path", "guard-deny-path");
+    let deny_command_glob = field("guard_deny_command", "guard-deny-command");
     if tool.is_none() && deny_path_glob.is_none() && deny_command_glob.is_none() {
         return None;
     }
@@ -955,6 +960,21 @@ mod tests {
         assert_eq!(r.tier(), RuleTier::Prompt);
         assert!(r.metadata.is_none());
         assert!(r.metadata_errors.is_empty());
+    }
+
+    #[test]
+    fn blank_guard_frontmatter_values_do_not_manufacture_a_guard() {
+        // `guard-tool:` with nothing after it used to parse as `Some("")`: the
+        // rule claimed Tier 2 and rendered as "[enforced]" while nothing could
+        // ever match it, and the external gate got an empty deny entry.
+        let r = rule_from_file(
+            ".stella/rules/blank.md",
+            "---\nguard-tool:\nguard-deny-path:\n---\nPrefer small diffs.",
+        )
+        .unwrap();
+        assert!(r.guard.is_none());
+        assert_eq!(r.tier(), RuleTier::Prompt);
+        assert!(guards_to_deny(std::slice::from_ref(&r)).deny.is_empty());
     }
 
     #[test]
