@@ -1,0 +1,122 @@
+name: docker-serve
+
+# Builds packaging/docker/Dockerfile.serve and runs the container far enough to
+# prove it serves. Until this workflow existed the image had never been built
+# by anything — not here, not in release.yml — so the first person to build it
+# would have been the first person to find out whether it worked (#635).
+#
+# It is deliberately its own workflow rather than a job in ci.yml:
+#
+#   - ci.yml's `check` job is a required context. A multi-minute image build
+#     hanging off it would slow every Rust PR to prove something only the
+#     packaging files can break.
+#   - ci.yml uses `paths-ignore` (run unless it's prose); this needs `paths`
+#     (run only when the packaging surface moves). The two cannot be mixed in
+#     one workflow, and combining them by hand is how a filter goes wrong.
+#
+# No `merge_group` trigger for the same reason: `paths` filters are ignored on
+# that event, so queuing any PR at all would build the image.
+#
+# The two path lists below are duplicated rather than shared through a YAML
+# anchor because the Actions workflow parser does not resolve anchors. Keep
+# them in step.
+
+on:
+  pull_request:
+    paths:
+      - "packaging/docker/**"
+      - ".dockerignore"
+      # The served binary itself. Its dependency graph (stella-core,
+      # stella-protocol) is deliberately not listed: ci.yml already compiles
+      # the whole workspace in release, so a source break reaches a red gate
+      # without this job. What is unique here is the *packaging* — the base
+      # image, the unprivileged uid, the port, the healthcheck — and those
+      # move with the files below.
+      - "stella-serve/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      # The builder base tag has to track this pin; the first step asserts it.
+      - "rust-toolchain.toml"
+      - "scripts/smoke-serve-image.sh"
+      - ".github/workflows/docker-serve.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packaging/docker/**"
+      - ".dockerignore"
+      - "stella-serve/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/smoke-serve-image.sh"
+      - ".github/workflows/docker-serve.yml"
+  workflow_dispatch:
+
+concurrency:
+  # Same shape as ci.yml: cancel superseded runs on a PR, but give every push
+  # to main its own group so a queued run is never silently dropped.
+  group: docker-serve-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Builds and runs an image; publishes nothing, writes nothing to the repo.
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: build image + smoke the container
+    runs-on: ubuntu-latest
+    # A cold build compiles the stella-serve dependency graph from scratch;
+    # the cache below makes the warm case minutes shorter, not the cold one.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Toolchain-free and instant, so it runs before the build. The builder
+      # base and rust-toolchain.toml must name the same compiler, and they can
+      # drift without anything going red: cargo reads the toolchain file and
+      # rustup just downloads the pinned toolchain inside the build, so a stale
+      # base tag still produces a working image — one that ships two compilers'
+      # worth of download in the critical path. `rust:1.97-bookworm` had
+      # already drifted this way to 1.97.1 against a 1.97.0 pin.
+      - name: builder base tracks rust-toolchain.toml
+        run: |
+          set -euo pipefail
+          dockerfile=packaging/docker/Dockerfile.serve
+          pinned="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' rust-toolchain.toml)"
+          base="$(sed -n 's/^FROM rust:\([^[:space:]]*\)-bookworm .*/\1/p' "$dockerfile")"
+          if [ -z "$pinned" ] || [ -z "$base" ]; then
+            echo "could not read the toolchain pin ('$pinned') or the builder base ('$base')" >&2
+            exit 1
+          fi
+          if [ "$pinned" != "$base" ]; then
+            echo "$dockerfile builds on rust:$base-bookworm but rust-toolchain.toml pins $pinned." >&2
+            echo "Bump the FROM line to rust:$pinned-bookworm in this same change." >&2
+            exit 1
+          fi
+          echo "OK — builder base and toolchain pin both say $pinned."
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: build stella-serve image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile.serve
+          tags: stella-serve:ci
+          # Into the runner's local image store, not a registry: this job
+          # proves the image runs, it does not publish it.
+          load: true
+          # The docker exporter cannot carry attestations, and `load: true`
+          # with the default provenance is the classic way to fail there.
+          provenance: false
+          # A cold cargo build of the dependency graph is the whole cost of
+          # this job; the layer cache is what keeps it affordable to run on
+          # every packaging change. `ignore-error` because a pull request from
+          # a fork gets a read-only cache — an export it cannot write must not
+          # be the reason the build fails.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+      - name: smoke the container
+        run: ./scripts/smoke-serve-image.sh stella-serve:ci
