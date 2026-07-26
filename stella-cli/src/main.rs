@@ -728,6 +728,30 @@ enum MemoryCmd {
     /// memory is one whose referenced path no longer exists — a strong signal
     /// the memory is about refactored-away code and may mislead.
     Validate,
+    /// Forget a memory: stop it steering the agent, and stop the reflection
+    /// loop re-learning it. Reversible with `stella memory restore <id>`.
+    ///
+    /// This is a tombstone, not a delete. The reflection loop re-mines
+    /// paraphrases of lessons it has already learned, so removing the row
+    /// alone does not hold — the tombstone also suppresses restatements at
+    /// the point new lessons are recorded and at the point the log is mined
+    /// into skills.
+    Forget {
+        /// The memory's stable id (nod_…) as shown by `stella memory list`
+        id: String,
+        /// Optional note on why, shown by `stella memory forgotten`
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+    /// Lift a tombstone written by `stella memory forget`, letting the memory
+    /// be recalled again and be re-learnable.
+    Restore {
+        /// The memory's stable id (nod_…) as shown by `stella memory forgotten`
+        id: String,
+    },
+    /// List the tombstones in this workspace — what was forgotten, when, and
+    /// why.
+    Forgotten,
 }
 
 /// NUL boundaries prevent LLVM's string pooling from adjoining identifier
@@ -1338,6 +1362,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 MemoryCmd::List { format } => memory_cmd::run_memory_list(*format),
                 MemoryCmd::Promote { id } => memory_cmd::run_memory_promote(id),
                 MemoryCmd::Validate => memory_cmd::run_memory_validate(),
+                MemoryCmd::Forget { id, reason } => memory_cmd::run_memory_forget(id, reason),
+                MemoryCmd::Restore { id } => memory_cmd::run_memory_restore(id),
+                MemoryCmd::Forgotten => memory_cmd::run_memory_forgotten(),
             };
         }
         Some(Command::Mcp { cmd }) => {

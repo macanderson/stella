@@ -501,6 +501,16 @@ impl SessionMemory {
             }
         };
         let (lessons, reflection_cost_usd, reflection_events) = lessons;
+
+        // Drop anything the user has already forgotten, BEFORE it reaches any
+        // of the three places this function persists to. Matching is by
+        // restatement, not equality: the loop re-learns paraphrases, so a
+        // lesson mined today can be the same lesson the user deleted last
+        // week wearing slightly different words. Suppressing here rather than
+        // at recall is what makes forgetting durable — an unsuppressed lesson
+        // would land in the log and stay re-mineable forever.
+        let lessons = self.retain_unforgotten(lessons);
+
         if lessons.is_empty() {
             return ReflectionReport {
                 cost_usd: reflection_cost_usd,
@@ -581,16 +591,60 @@ impl SessionMemory {
         }
     }
 
+    /// Drop lessons that restate something the user forgot.
+    ///
+    /// Best-effort in one direction only: if the tombstone table cannot be
+    /// read we keep every lesson rather than silently discarding the turn's
+    /// learning. That is the opposite posture from recall — there, an
+    /// unreadable suppression set means surface nothing; here it means
+    /// persist everything. Both choices fail toward the recoverable outcome:
+    /// a memory that should have been suppressed can be forgotten again,
+    /// whereas a lesson dropped on a transient read error is gone for good.
+    fn retain_unforgotten(&self, lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
+        let forgotten = match stella_store::Store::open(&self.workspace_root)
+            .and_then(|store| store.forgotten_texts(stella_store::ContextSurface::Memory))
+        {
+            Ok(texts) if !texts.is_empty() => texts,
+            _ => return lessons,
+        };
+        lessons
+            .into_iter()
+            .filter(|l| {
+                !stella_store::is_suppressed(&l.lesson, forgotten.iter().map(String::as_str))
+            })
+            .collect()
+    }
+
     /// Mine the whole reflection log for recurring lessons and auto-create
     /// skills for any that qualify (threshold + session cap + no-clobber
     /// enforced by `stella_core::skills`).
+    ///
+    /// The log is append-only and re-read in full every reflection turn, so
+    /// lines written before a tombstone existed are still in it. Filtering
+    /// the observations here is what stops a forgotten lesson from returning
+    /// as an auto-created skill — the second door that made a plain `DELETE`
+    /// insufficient.
     fn auto_create_skills(&mut self, log_path: &Path, quiet: bool) {
         let Ok(log) = std::fs::read_to_string(log_path) else {
             return;
         };
+        // Tombstones from BOTH surfaces: forgetting the memory should stop the
+        // lesson being promoted to a skill, and forgetting the skill should
+        // stop it being re-created from the same log lines it came from.
+        let forgotten: Vec<String> = stella_store::Store::open(&self.workspace_root)
+            .and_then(|store| {
+                let mut texts = store.forgotten_texts(stella_store::ContextSurface::Memory)?;
+                texts.extend(store.forgotten_texts(stella_store::ContextSurface::Skill)?);
+                Ok(texts)
+            })
+            .unwrap_or_default();
+
         let observations: Vec<SkillObservation> = log
             .lines()
             .filter_map(|line| serde_json::from_str::<ReflectionLesson>(line).ok())
+            .filter(|l| {
+                !stella_store::is_suppressed(&l.lesson, forgotten.iter().map(String::as_str))
+            })
             .map(|l| SkillObservation {
                 reference: format!("reflection:{}", l.occurred_at),
                 text: l.lesson,
@@ -674,13 +728,20 @@ impl SessionMemory {
             as_of: None,
             representation_preferences: vec![],
         };
-        let quarantined = match stella_store::Store::open(&self.workspace_root)
-            .and_then(|store| store.quarantined_memory_ids())
-        {
+        // Two independent suppression sets, read together and applied as one.
+        // Quarantine is *derived* — the model kept calling a memory untruthful;
+        // a tombstone is *stored* — a person read it and said remove it. Both
+        // are fail-closed for the same reason: if the state cannot be read,
+        // surfacing everything is the one outcome that is definitely wrong.
+        let quarantined = match stella_store::Store::open(&self.workspace_root).and_then(|store| {
+            let mut ids = store.quarantined_memory_ids()?;
+            ids.extend(store.forgotten_ids(stella_store::ContextSurface::Memory)?);
+            Ok(ids)
+        }) {
             Ok(ids) => ids,
             Err(error) => {
                 report(format!(
-                    "memory recall disabled: quarantine state unavailable: {error}"
+                    "memory recall disabled: suppression state unavailable: {error}"
                 ));
                 return Recall::default();
             }

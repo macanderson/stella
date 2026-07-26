@@ -20,8 +20,11 @@ async fn assert_no_prompt_or_pipeline_frames(memory: &SessionMemory, lesson: &st
         .await;
     assert!(reported_frames.is_empty());
     assert_eq!(diagnostics.len(), 1, "failure emits one diagnostic");
+    // Recall reads two suppression sets together — derived quarantine and
+    // stored tombstones — so the diagnostic names the combined state rather
+    // than either half.
     assert!(
-        diagnostics[0].contains("quarantine") && diagnostics[0].contains("disabled"),
+        diagnostics[0].contains("suppression") && diagnostics[0].contains("disabled"),
         "diagnostic explains the fail-closed recall decision: {}",
         diagnostics[0]
     );
@@ -29,11 +32,11 @@ async fn assert_no_prompt_or_pipeline_frames(memory: &SessionMemory, lesson: &st
     let pipeline_frames = ContextRecallPort::recall(memory, lesson).await;
     assert!(
         pipeline_frames.is_empty(),
-        "pipeline recall must fail closed when quarantine state is unknown: {pipeline_frames:?}"
+        "pipeline recall must fail closed when suppression state is unknown: {pipeline_frames:?}"
     );
     assert!(
         memory.recall_block(lesson).await.is_none(),
-        "prompt recall must fail closed when quarantine state is unknown"
+        "prompt recall must fail closed when suppression state is unknown"
     );
 }
 

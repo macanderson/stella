@@ -949,10 +949,11 @@ fn skill_usage_records_per_execution_version_rows() {
     // accounting for execution/telemetry rows, v11 adds the context-receipts
     // plane (context_blocks / step_manifest / step_receipt), v12 adds
     // reconstruction support (context_blocks.content / step_manifest.message_index),
-    // and v13 rekeys both receipt tables on call_seq so the auxiliary calls
+    // v13 rekeys both receipt tables on call_seq so the auxiliary calls
     // sharing a step (overflow summarizer, pipeline management roles) each keep
-    // their own receipt.
-    assert_eq!(SCHEMA_VERSION, 13);
+    // their own receipt, and v14 adds `forgotten` — explicit, reversible human
+    // tombstones over any context surface.
+    assert_eq!(SCHEMA_VERSION, 14);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

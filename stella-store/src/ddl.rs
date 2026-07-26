@@ -12,8 +12,9 @@
 
 /// Every table the store owns — the allowlist for [`Store::count`](crate::Store::count) and the
 /// fresh-file probe in [`Store::migrate`](crate::Store::migrate).
-pub(crate) const TABLES: [&str; 20] = [
+pub(crate) const TABLES: [&str; 21] = [
     "executions",
+    "forgotten",
     "events",
     "telemetry",
     "files_touched",
@@ -207,6 +208,46 @@ pub(crate) const MEMORY_CITATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS memory
      );
      CREATE INDEX IF NOT EXISTS memory_citations_by_memory
        ON memory_citations(memory_id, execution_id);";
+
+/// `forgotten` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — explicit human
+/// tombstones over anything that steers the agent
+/// ([`ContextSurface`](crate::ContextSurface)).
+///
+/// This is a *stored* judgment, unlike quarantine, which
+/// [`Store::quarantined_memory_ids`](crate::Store::quarantined_memory_ids)
+/// derives from citation counts. A derivation can express "the model kept
+/// calling this untruthful"; it cannot express "a person read this and said
+/// remove it", which is why the state needs a table of its own rather than
+/// another fold over `memory_citations`.
+///
+/// It lives in `store.db` beside `memory_citations` rather than in
+/// `context.db` next to the memories themselves, because context nodes are
+/// mutable current-state (`upsert_node` overwrites in place, so there is no
+/// point-in-time reader), and a tombstone must outlive edits to the thing it
+/// buries — including the row being deleted entirely.
+///
+/// PRIMARY KEY (surface, item_id): one verdict per item, and re-forgetting
+/// is an idempotent upsert rather than a duplicate.
+///
+/// `content` is the forgotten text, copied in at forget time. It is what
+/// makes the tombstone survive re-learning: the reflection recorder and the
+/// skill miner compare *candidates* against it
+/// ([`forget::is_suppressed`](crate::forget::is_suppressed)), so a
+/// re-mined paraphrase with a brand-new id is still caught. Without the copy
+/// the check would depend on the original row, which forgetting may remove.
+///
+/// Restoring is a plain `DELETE` — the row's absence is the "not forgotten"
+/// state, so there is no tri-state to keep consistent.
+pub(crate) const FORGOTTEN_DDL: &str = "CREATE TABLE IF NOT EXISTS forgotten (
+       surface TEXT NOT NULL,
+       item_id TEXT NOT NULL,
+       content TEXT NOT NULL DEFAULT '',
+       reason TEXT NOT NULL DEFAULT '',
+       forgotten_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       PRIMARY KEY (surface, item_id)
+     );
+     CREATE INDEX IF NOT EXISTS forgotten_by_surface
+       ON forgotten(surface, forgotten_at);";
 
 /// `agent_uses` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the agent-invocation log
 /// ([`AgentUseRow`](crate::AgentUseRow)): one row per invocation of an installed agent
