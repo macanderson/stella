@@ -41,6 +41,33 @@ pub(crate) const LEXICAL_FALLBACK_METHOD: &str = "stella-context/lexical-fallbac
 
 /// Reciprocal-rank-fusion constant (the standard 60).
 const RRF_K: f64 = 60.0;
+/// How much the recency list counts for, relative to vector similarity.
+///
+/// Recency used to be fused at full weight, as a peer of similarity. Because
+/// RRF is flat (see [`rrf_fuse`]), that made the N most recently written nodes
+/// structurally guaranteed a top-N slot no matter what the query asked: the
+/// newest node banked `1/61` from recency alone — the exact contribution of the
+/// single best semantic match — so with `max_frames: 5` the five newest rows
+/// could occupy every slot.
+///
+/// That is not hypothetical. A run asking to remove some test files wrote four
+/// reflections plus an episode; the very next run, on a completely unrelated
+/// TUI keybinding, recalled all five and handed them to the witness author,
+/// which then went looking for test files to delete.
+///
+/// A relevance floor was measured and rejected as the fix: under the default
+/// [`crate::embed::HashEmbedder`] (character-trigram hashing, not semantics)
+/// those five contaminants scored 0.38–0.50 against that prompt while
+/// genuinely relevant frames scored 0.45–0.63. The sets overlap, so no
+/// threshold separates them. Recency was the thing doing the damage, so
+/// recency is what changed.
+///
+/// At 0.15 the newest node banks `0.15/61 ≈ 0.0025`, which cannot outweigh
+/// even a mid-ranked semantic hit (`1/150 ≈ 0.0067`). Every embedded node is
+/// already in the vector list, so recency keeps its real job — ordering among
+/// comparably-relevant frames — and loses only its ability to inject a frame
+/// the query never asked for.
+const RECENCY_WEIGHT: f64 = 0.15;
 /// MMR relevance/diversity trade-off; 0.7 favors relevance while still
 /// breaking up near-duplicate clusters.
 const MMR_LAMBDA: f32 = 0.7;
@@ -299,8 +326,17 @@ impl ContextStore {
             let graph_ranked: Vec<i64> = graph_scored.iter().map(|(id, _)| *id).collect();
 
             // 4c. Fuse (RRF) → dedup by content hash → MMR diversity pass.
+            // Vector, graph, and domain are all grounded signals — they answer
+            // "does this relate to what was asked". Recency answers "was this
+            // written lately", which is a tiebreaker, not evidence, so it
+            // enters damped ([`RECENCY_WEIGHT`]).
             let fused = rrf_fuse(
-                &[vector_ranked, recency_ranked, graph_ranked, domain_ranked],
+                &[
+                    (vector_ranked, 1.0),
+                    (recency_ranked, RECENCY_WEIGHT),
+                    (graph_ranked, 1.0),
+                    (domain_ranked, 1.0),
+                ],
                 RRF_K,
             );
             let ordered = dedup_by_content_hash(&fused, &node_by_id);
@@ -472,12 +508,19 @@ fn coverage_score(cos_sorted: &[(i64, f32)]) -> f32 {
     sum / k as f32
 }
 
-/// Reciprocal-rank fusion over several ranked id lists.
-fn rrf_fuse(lists: &[Vec<i64>], k: f64) -> HashMap<i64, f64> {
+/// Reciprocal-rank fusion over several ranked id lists, each contributing
+/// `weight / (k + rank + 1)`.
+///
+/// The weights exist because RRF is deliberately *flat*: with `k = 60`, rank 1
+/// scores 1/61 and rank 100 scores 1/161 — barely a 2.6× spread across the
+/// whole corpus. A list added at weight 1.0 is therefore not a hint, it is a
+/// peer that can single-handedly decide the top of the result. See
+/// [`RECENCY_WEIGHT`].
+fn rrf_fuse(lists: &[(Vec<i64>, f64)], k: f64) -> HashMap<i64, f64> {
     let mut scores: HashMap<i64, f64> = HashMap::new();
-    for list in lists {
+    for (list, weight) in lists {
         for (rank, &id) in list.iter().enumerate() {
-            *scores.entry(id).or_insert(0.0) += 1.0 / (k + rank as f64 + 1.0);
+            *scores.entry(id).or_insert(0.0) += weight / (k + rank as f64 + 1.0);
         }
     }
     scores
@@ -738,10 +781,86 @@ mod tests {
 
     #[test]
     fn rrf_rewards_appearing_high_in_multiple_lists() {
-        let fused = rrf_fuse(&[vec![1, 2, 3], vec![1, 3, 2]], 60.0);
+        let fused = rrf_fuse(&[(vec![1, 2, 3], 1.0), (vec![1, 3, 2], 1.0)], 60.0);
         // id 1 is rank-0 in both lists → strictly highest.
         assert!(fused[&1] > fused[&2]);
         assert!(fused[&1] > fused[&3]);
+    }
+
+    /// Build a ranked list of `len` ids, placing specific ids at specific
+    /// ranks. Filler ids start at 1000 so they never collide with the ids
+    /// under test.
+    fn ranked_with(placements: &[(i64, usize)], len: usize) -> Vec<i64> {
+        let mut list: Vec<i64> = (0..len).map(|i| 1000 + i as i64).collect();
+        for &(id, rank) in placements {
+            list[rank] = id;
+        }
+        list
+    }
+
+    /// The contamination regression, reduced to its arithmetic.
+    ///
+    /// Faithful to the real failure rather than a symmetric reversal (which
+    /// scores identically and proves nothing): `STALE` is the best semantic
+    /// match but was written long ago, while `FRESH` is the newest row in the
+    /// store with only middling similarity — exactly the shape of a previous
+    /// run's leftover reflections meeting an unrelated new prompt. At equal
+    /// weight recency hands `FRESH` the win; damped, similarity decides.
+    #[test]
+    fn recency_cannot_outrank_similarity_on_its_own() {
+        const STALE: i64 = 1;
+        const FRESH: i64 = 2;
+        let vector_ranked = ranked_with(&[(STALE, 0), (FRESH, 50)], 200);
+        let recency_ranked = ranked_with(&[(FRESH, 0), (STALE, 150)], 200);
+
+        let equal_weight = rrf_fuse(
+            &[(vector_ranked.clone(), 1.0), (recency_ranked.clone(), 1.0)],
+            RRF_K,
+        );
+        assert!(
+            equal_weight[&FRESH] > equal_weight[&STALE],
+            "the pre-fix behavior this test exists to prevent: the newest row \
+             beats the best semantic match purely on recency"
+        );
+
+        let damped = rrf_fuse(
+            &[(vector_ranked, 1.0), (recency_ranked, RECENCY_WEIGHT)],
+            RRF_K,
+        );
+        assert!(
+            damped[&STALE] > damped[&FRESH],
+            "the best semantic match must outrank the newest unrelated node"
+        );
+    }
+
+    /// Damping must not *silence* recency — ordering comparably-relevant
+    /// frames is its legitimate job, and a weight of 0 would be a different
+    /// (also wrong) change. Adjacent similarity ranks, big recency gap: the
+    /// newer one still wins.
+    #[test]
+    fn recency_still_reorders_comparably_relevant_frames() {
+        const OLDER: i64 = 1;
+        const NEWER: i64 = 2;
+        // Effectively tied on similarity (ranks 10 and 11)...
+        let vector_ranked = ranked_with(&[(OLDER, 10), (NEWER, 11)], 200);
+        // ...and far apart in age.
+        let recency_ranked = ranked_with(&[(NEWER, 0), (OLDER, 100)], 200);
+
+        let damped = rrf_fuse(
+            &[
+                (vector_ranked.clone(), 1.0),
+                (recency_ranked, RECENCY_WEIGHT),
+            ],
+            RRF_K,
+        );
+        assert!(
+            damped[&NEWER] > damped[&OLDER],
+            "recency must still decide between frames similarity ranks alike"
+        );
+        // Without any recency signal the similarity order stands, which is
+        // what makes the assertion above attributable to recency.
+        let no_recency = rrf_fuse(&[(vector_ranked, 1.0)], RRF_K);
+        assert!(no_recency[&OLDER] > no_recency[&NEWER]);
     }
 
     #[test]

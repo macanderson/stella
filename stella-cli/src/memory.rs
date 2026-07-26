@@ -48,7 +48,7 @@ mod quarantine_tests;
 #[path = "memory/skills.rs"]
 mod skill_files;
 use private_state::resolve_context_db_path;
-use projection::{is_quarantined_local_memory, project_recalled_frame};
+use projection::{is_suppressed_local_frame, project_recalled_frame};
 #[cfg(test)]
 pub(crate) use skill_files::load_workspace_skills;
 pub(crate) use skill_files::{load_workspace_skills_with_authority, workspace_skills_dir};
@@ -757,7 +757,7 @@ impl SessionMemory {
                 .frames
                 .into_iter()
                 .filter_map(project_recalled_frame)
-                .filter(|frame| !is_quarantined_local_memory(frame, &quarantined))
+                .filter(|frame| !is_suppressed_local_frame(frame, &quarantined))
                 .collect(),
             usage: Some(recalled.usage),
         }
@@ -1225,19 +1225,54 @@ mod tests {
             "local",
             "local memory",
         );
-        assert!(is_quarantined_local_memory(&local, &quarantined));
+        assert!(is_suppressed_local_frame(&local, &quarantined));
 
         local.provider = "external-graph".into();
         assert!(
-            !is_quarantined_local_memory(&local, &quarantined),
+            !is_suppressed_local_frame(&local, &quarantined),
             "an external provider may reuse a local id"
         );
         local.provider = "workspace-memory".into();
         local.kind = "symbol".into();
         assert!(
-            !is_quarantined_local_memory(&local, &quarantined),
+            !is_suppressed_local_frame(&local, &quarantined),
             "only actual local memory frames participate in memory quarantine"
         );
+    }
+
+    /// An episode is a verbatim copy of a past user prompt, recalled and
+    /// injected exactly like a memory. It used to be unsuppressable: the
+    /// predicate required `kind == "memory"`, so `stella memory forget` on an
+    /// episode id silently did nothing and a stale instruction kept surfacing
+    /// in unrelated runs. This is the regression guard for that.
+    #[test]
+    fn a_forgotten_episode_is_suppressed_like_a_forgotten_memory() {
+        let forgotten = std::collections::HashSet::from(["ep-1".to_string()]);
+        let episode = frame(
+            "ep-1",
+            contextgraph_types::FrameKind::Episode,
+            "local",
+            "can you remove the witness tests please",
+        );
+        assert_eq!(
+            episode.kind, "episode",
+            "the fixture must actually be an episode-kind frame, or this \
+             proves nothing"
+        );
+        assert!(
+            is_suppressed_local_frame(&episode, &forgotten),
+            "forgetting an episode must stop it being recalled"
+        );
+
+        // Still scoped: a different id is untouched, so the predicate cannot
+        // be passing merely because it now accepts every episode.
+        let other = frame(
+            "ep-2",
+            contextgraph_types::FrameKind::Episode,
+            "local",
+            "unrelated prompt",
+        );
+        assert!(!is_suppressed_local_frame(&other, &forgotten));
     }
 
     #[tokio::test]
