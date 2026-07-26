@@ -305,6 +305,11 @@ pub fn append_meaning(
     origin: &str,
 ) -> std::io::Result<()> {
     let path = manifest_path(root);
+    // Held across the whole read-modify-write below. Without it two concurrent
+    // appends both read the pre-write text and the later rename silently drops
+    // the earlier entry — and this is the half of the storage map that cannot
+    // be rebuilt from source, so what is lost is a sentence a human wrote.
+    let _lock = ManifestLock::acquire(&path)?;
     // Only a *missing* manifest starts from empty text. A file that exists
     // but cannot be read (permissions, a transient I/O fault) must fail here
     // rather than be silently replaced by a one-entry file — this is the
@@ -341,14 +346,112 @@ pub fn append_meaning(
     // atomicity mean something after a power loss: without it the rename can
     // land while the temp file's bytes are still only in the page cache,
     // publishing an empty or half-written manifest under the real name.
-    let tmp = path.with_extension("toml.tmp");
-    {
+    //
+    // The temp name carries pid + counter and is created `O_EXCL`: a fixed
+    // `.toml.tmp` meant two writers racing this path opened and interleaved
+    // their writes into the SAME temp file, then renamed the resulting garbage
+    // over a manifest that had been valid. The lock above makes that race rare;
+    // the unique name is what makes it unrepresentable.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("toml.tmp.{}.{sequence}", std::process::id()));
+    let result = (|| {
         use std::io::Write as _;
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp)?;
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+        }
+        std::fs::rename(&tmp, &path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    std::fs::rename(&tmp, &path)
+    result
+}
+
+/// How long an append waits for a competing writer before giving up.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// A lock file older than this is assumed to be the residue of a writer that
+/// died, and is broken rather than honoured.
+const LOCK_STALE: std::time::Duration = std::time::Duration::from_secs(60);
+/// Poll interval while waiting.
+const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Cross-writer mutual exclusion for [`append_meaning`]'s read-modify-write,
+/// released on drop.
+///
+/// An `O_CREAT|O_EXCL` sibling file is the mechanism: exclusive creation is
+/// atomic on every filesystem this runs on, and unlike `flock` it needs no
+/// platform-specific dependency in this crate.
+///
+/// The cost of a lock file is a stale-lock failure mode, so it is bounded on
+/// both sides: a waiter gives up after [`LOCK_WAIT`] rather than blocking an
+/// indexing pass forever, and a lock left behind by a killed process is broken
+/// once it is [`LOCK_STALE`] old rather than wedging appends permanently.
+struct ManifestLock {
+    path: PathBuf,
+}
+
+impl ManifestLock {
+    fn acquire(manifest: &Path) -> std::io::Result<Self> {
+        let path = manifest.with_extension("toml.lock");
+        let deadline = std::time::Instant::now() + LOCK_WAIT;
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Self { path }),
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if lock_is_stale(&path) {
+                        // Best-effort: if another waiter breaks it first, the
+                        // next loop iteration simply races for it normally.
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::WouldBlock,
+                            format!(
+                                "another writer is holding {} — retry, or remove it if no \
+                                 stella process is running",
+                                path.display()
+                            ),
+                        ));
+                    }
+                    std::thread::sleep(LOCK_POLL);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+}
+
+/// Whether this lock file is old enough to be treated as abandoned. An
+/// unreadable or clock-skewed timestamp answers "not stale": honouring a lock
+/// we cannot age out costs one failed append, while breaking one we should not
+/// costs the lost update the lock exists to prevent.
+fn lock_is_stale(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .and_then(|modified| {
+            std::time::SystemTime::now()
+                .duration_since(modified)
+                .map_err(|_| std::io::Error::other("lock timestamp is in the future"))
+        })
+        .is_ok_and(|age| age > LOCK_STALE)
+}
+
+impl Drop for ManifestLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 fn toml_escape(text: &str) -> String {
@@ -651,5 +754,47 @@ intent = "Gross amount charged."
         assert!(text.contains("version = 1"));
         let parsed: StorageManifest = toml::from_str(&text).expect("valid TOML");
         assert!(parsed.relation_meaning("sql/default/orders").is_some());
+    }
+
+    /// Concurrent appends are a read-modify-write over one file: unserialized,
+    /// the later rename discards every entry written since the earlier writer
+    /// read. Nothing here is rebuildable from source, so every entry must
+    /// survive — and the file must still parse.
+    #[test]
+    fn concurrent_appends_all_survive() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        const WRITERS: usize = 8;
+        std::thread::scope(|scope| {
+            for i in 0..WRITERS {
+                let root = root.clone();
+                scope.spawn(move || {
+                    append_meaning(
+                        &root,
+                        "relations",
+                        &format!("sql/default/table_{i}"),
+                        "Concurrently declared.",
+                        "declared",
+                    )
+                    .expect("append succeeds under contention");
+                });
+            }
+        });
+        let text = std::fs::read_to_string(manifest_path(&root)).unwrap();
+        let parsed: StorageManifest =
+            toml::from_str(&text).expect("interleaved writers still leave valid TOML");
+        for i in 0..WRITERS {
+            assert!(
+                parsed
+                    .relation_meaning(&format!("sql/default/table_{i}"))
+                    .is_some(),
+                "writer {i}'s entry was lost to a concurrent append"
+            );
+        }
+        // The lock is released, not leaked, once the writers are done.
+        assert!(
+            !manifest_path(&root).with_extension("toml.lock").exists(),
+            "lock file outlived its writers"
+        );
     }
 }

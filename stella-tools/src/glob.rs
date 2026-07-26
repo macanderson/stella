@@ -97,8 +97,14 @@ impl Tool for Glob {
         fd.stdout(std::process::Stdio::piped());
         fd.stderr(std::process::Stdio::piped());
 
-        match fd.output().await {
-            Ok(output) => {
+        match crate::exec::run_captured(fd, crate::grep::SEARCH_TIMEOUT_SECS).await {
+            crate::exec::Captured::TimedOut => ToolOutput::Error {
+                message: format!(
+                    "fd timed out after {}s — narrow the search with a `path` filter",
+                    crate::grep::SEARCH_TIMEOUT_SECS
+                ),
+            },
+            crate::exec::Captured::Done(output) => {
                 let text = String::from_utf8_lossy(&output.stdout);
                 if text.is_empty() {
                     return ToolOutput::Ok {
@@ -115,7 +121,7 @@ impl Tool for Glob {
                     content: with_code_map(content, root, self.footer),
                 }
             }
-            Err(_) => {
+            crate::exec::Captured::Unavailable => {
                 // fd not installed — fall back to find (same pinned dir).
                 let mut find = Command::new("find");
                 find.arg(&search_dir);
@@ -125,8 +131,16 @@ impl Tool for Glob {
                 find.stdout(std::process::Stdio::piped());
                 find.stderr(std::process::Stdio::piped());
 
-                match find.output().await {
-                    Ok(output) => {
+                match crate::exec::run_captured(find, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
+                    .await
+                {
+                    crate::exec::Captured::TimedOut => ToolOutput::Error {
+                        message: format!(
+                            "find timed out after {}s — narrow the search with a `path` filter",
+                            crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS
+                        ),
+                    },
+                    crate::exec::Captured::Done(output) => {
                         let text = String::from_utf8_lossy(&output.stdout);
                         if text.is_empty() {
                             ToolOutput::Ok {
@@ -144,8 +158,8 @@ impl Tool for Glob {
                             }
                         }
                     }
-                    Err(e) => ToolOutput::Error {
-                        message: format!("find failed: {e}"),
+                    crate::exec::Captured::Unavailable => ToolOutput::Error {
+                        message: "find failed: neither `fd` nor `find` is available".into(),
                     },
                 }
             }

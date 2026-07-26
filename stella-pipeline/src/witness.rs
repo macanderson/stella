@@ -506,7 +506,13 @@ pub fn is_witness_test_path(path: &str) -> bool {
         .any(|part| matches!(part, "test" | "tests" | "__tests__" | "spec" | "specs"));
     let extension = name.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
     match extension {
-        "rs" => recognized_dir || name.contains("_test."),
+        // Rust has no in-place convention a witness can use: the only invocation
+        // shape `validate_witness_invocation` accepts is `cargo test --test <stem>`,
+        // which resolves integration-test targets only — a `tests/` directory, or a
+        // `[[test]]` entry in a Cargo.toml the witness turn is forbidden to touch.
+        // A `src/foo_test.rs` would therefore be adopted into the user's tree and
+        // then never flip the oracle, burning the whole revision budget.
+        "rs" => recognized_dir,
         "py" => recognized_dir || name.starts_with("test_") || name.contains("_test."),
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => {
             recognized_dir || name.contains(".test.") || name.contains(".spec.")
@@ -811,6 +817,29 @@ mod tests {
             accepted,
             fps(&[("tests/authority_witness.rs", "sha256:whole-file")])
         );
+    }
+
+    #[test]
+    fn witness_test_shapes_only_accept_paths_the_runner_can_reach() {
+        for path in [
+            "tests/authority_witness.rs",
+            "crates/x/tests/authority_witness.rs",
+            "tests/witness_test.py",
+            "spec/witness_spec.rb.test.ts",
+            "internal/thing_test.go",
+        ] {
+            assert!(is_witness_test_path(path), "must be accepted: {path}");
+        }
+        // A Rust file outside a test directory has no runnable target: `cargo test
+        // --test <stem>` cannot reach it, so accepting it strands the file in the
+        // user's tree behind an oracle that can never flip.
+        for path in [
+            "src/backdoor_test.rs",
+            "src/lib_test.rs",
+            "stella-pipeline/src/witness_test.rs",
+        ] {
+            assert!(!is_witness_test_path(path), "must be rejected: {path}");
+        }
     }
 
     #[test]

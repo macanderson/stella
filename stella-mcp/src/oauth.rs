@@ -39,7 +39,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
@@ -700,7 +700,7 @@ async fn discover_protected_resource(
     // metadata URL to belong to the protected resource, so anything
     // cross-origin is ignored and discovery falls back to the well-known
     // paths under the server's OWN origin.
-    if let Ok(response) = http.get(server_url).send().await
+    if let Ok(response) = http.get(server_url).timeout(HTTP_TIMEOUT).send().await
         && response.status() == StatusCode::UNAUTHORIZED
         && let Some(value) = response
             .headers()
@@ -794,7 +794,7 @@ fn canonical_resource(server_url: &str) -> Result<String, McpError> {
 }
 
 async fn fetch_json<T: serde::de::DeserializeOwned>(http: &Client, url: &str) -> Option<T> {
-    let response = http.get(url).send().await.ok()?;
+    let response = http.get(url).timeout(HTTP_TIMEOUT).send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -827,10 +827,13 @@ async fn register_client(
     if let Some(scope) = scope {
         body["scope"] = serde_json::Value::String(scope.to_string());
     }
-    let response =
-        http.post(endpoint).json(&body).send().await.map_err(|e| {
-            McpError::Auth(format!("client registration at `{endpoint}` failed: {e}"))
-        })?;
+    let response = http
+        .post(endpoint)
+        .json(&body)
+        .timeout(HTTP_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| McpError::Auth(format!("client registration at `{endpoint}` failed: {e}")))?;
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
@@ -866,7 +869,7 @@ async fn token_request(
     form: &[(&str, String)],
     basic: Option<(&str, &str)>,
 ) -> Result<TokenResponse, McpError> {
-    let mut builder = http.post(endpoint).form(form);
+    let mut builder = http.post(endpoint).form(form).timeout(HTTP_TIMEOUT);
     if let Some((user, secret)) = basic {
         builder = builder.basic_auth(user, Some(secret));
     }
@@ -983,11 +986,28 @@ async fn wait_for_code(listener: TcpListener, expected_state: &str) -> Result<St
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 
+/// The one HTTP client every OAuth exchange shares.
+///
+/// Built once, for two reasons. Each `Client` owns a connection pool and a TLS
+/// configuration, so building one per call discarded connection reuse and
+/// repaid TLS setup on every discovery, token grant and refresh.
+///
+/// And `build()` is fallible — a TLS backend that will not initialize returns
+/// `Err`, where `unwrap_or_default()` used to hand back a `Client` with **no**
+/// timeout at all, silently converting the 30s bound into an unbounded wait on
+/// exactly the runs already in trouble. Every request site therefore carries
+/// its own `.timeout(HTTP_TIMEOUT)`: reqwest honours a per-request deadline
+/// whatever the client default is, so the bound holds even on that fallback.
 fn http_client() -> Client {
-    Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .unwrap_or_default()
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            Client::builder()
+                .timeout(HTTP_TIMEOUT)
+                .build()
+                .unwrap_or_default()
+        })
+        .clone()
 }
 
 fn random_bytes<const N: usize>() -> [u8; N] {

@@ -68,7 +68,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -2809,11 +2809,22 @@ fn ci_status_token(ci: CiStatus) -> &'static str {
     }
 }
 
+/// Wall-clock ceiling on one `gh` invocation. `gh` talks to the network and
+/// can wedge (captive portal, hung TLS handshake, a proxy that never answers);
+/// without a deadline the deck's PR reconciliation waits forever on it.
+const GH_CALL_TIMEOUT: Duration = Duration::from_secs(20);
+
 async fn gh_json(root: &std::path::Path, args: &[&str]) -> Option<Value> {
     let mut command = tokio::process::Command::new("gh");
     command.args(args).current_dir(root).kill_on_drop(true);
     scrub_gh_command(&mut command);
-    let output = command.output().await.ok()?;
+    // Timing out is indistinguishable from every other failure here by design:
+    // the signature already folds "no gh", "not authenticated" and "no PR" into
+    // `None`, and `kill_on_drop` reaps the child when the timeout drops it.
+    let output = tokio::time::timeout(GH_CALL_TIMEOUT, command.output())
+        .await
+        .ok()?
+        .ok()?;
     serde_json::from_slice(&output.stdout).ok()
 }
 

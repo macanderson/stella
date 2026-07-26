@@ -22,7 +22,52 @@ pub(super) fn write_settings(path: &Path, bytes: &[u8], user_private: bool) -> R
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
-    std::fs::write(path, bytes).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    write_atomic(path, bytes)
+}
+
+/// Replace `path` with `bytes` through a temp file and a rename, so a reader
+/// sees either the whole old file or the whole new one and never a torn
+/// prefix.
+///
+/// `std::fs::write` truncates in place: a crash, a full disk, or a killed
+/// process partway through left project settings half-written, and settings
+/// that no longer parse take every configured provider, tool toggle and
+/// permission rule down with them until someone hand-repairs the file.
+///
+/// This is deliberately NOT [`write_user_settings`], which additionally
+/// enforces 0600 on the file, 0700 on its parent, and `O_NOFOLLOW`, because it
+/// holds API keys and is Unix-only for exactly that reason. Project settings
+/// are shared, version-controlled, non-secret files: they need durability, not
+/// confinement, and they must keep working on every platform — so this path
+/// uses only portable std calls.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    // Same directory as the target: `rename` is only atomic within one
+    // filesystem, and a temp dir may well be on another.
+    let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("tmp.{}.{}", std::process::id(), sequence));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    let result = (|| {
+        file.write_all(bytes)
+            .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+        // Durability before visibility: without the fsync the rename can be
+        // ordered ahead of the data, leaving a file that exists but is empty.
+        file.sync_data()
+            .map_err(|e| format!("cannot fsync {}: {e}", tmp.display()))?;
+        drop(file);
+        std::fs::rename(&tmp, path).map_err(|e| format!("cannot replace {}: {e}", path.display()))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(unix)]

@@ -326,7 +326,12 @@ pub struct PipelineOutcome {
     pub verdict: Option<Verdict>,
     /// How many revision turns the selected candidate took.
     pub revisions: u32,
-    /// How many candidates were generated (1 for single-shot).
+    /// How many candidates actually reached the worker (1 for single-shot).
+    ///
+    /// This is what RAN, not what was configured: a candidate that aborted in
+    /// setup — no isolation port, a tree that could not be snapshotted, no
+    /// independent witness author — never dispatched a model call, and is not
+    /// counted. A `--candidates 4` run where three failed isolation reports 1.
     pub candidates_run: u32,
 }
 
@@ -361,6 +366,16 @@ struct CandidateResult {
 }
 
 impl CandidateResult {
+    /// Whether this candidate got as far as dispatching worker work.
+    ///
+    /// Only a degradable **setup** abort answers `false`: by construction it is
+    /// the arm taken before any model call, so it is exactly the "generated
+    /// nothing" case. An execution abort (budget, loop, step-cap) and a
+    /// fail-closed witness rejection both ran real turns and count.
+    fn executed(&self) -> bool {
+        !(self.aborted.is_some() && self.degradable)
+    }
+
     /// A candidate that aborted for a reason that is NOT a degradable
     /// infrastructure setup failure: an execution abort (budget, loop,
     /// step-cap — the worker ran) or a fail-closed security rejection (a
@@ -676,7 +691,7 @@ impl<'a> Pipeline<'a> {
         // N=1, so authoring can never mutate the session tree.
         // Best-of-N runs every candidate in an isolated snapshot of the
         // current tree state and adopts only the winner's changes (L-E7).
-        let (best, worker_model_label) = if n == 1 && !authored_witness {
+        let (best, worker_model_label, candidates_run) = if n == 1 && !authored_witness {
             let worker = match self.resolve_provider(Role::Worker) {
                 Ok(worker) => worker,
                 Err(error) => {
@@ -703,10 +718,11 @@ impl<'a> Pipeline<'a> {
                     &mut total_cost,
                 )
                 .await;
+            let ran = executed_count(&single);
             let best = single
                 .pop()
                 .expect("run_shared_candidates returns one result per requested candidate");
-            (best, Some(worker_model_label))
+            (best, Some(worker_model_label), ran)
         } else {
             match self
                 .run_best_of_n(
@@ -735,7 +751,7 @@ impl<'a> Pipeline<'a> {
         // degrade to a bare worker run on the working tree. Execution aborts
         // (budget, loop, step-cap) and true resource limits keep their stop —
         // there the worker DID run, so the abort is honest.
-        let best = if best.aborted.is_some() && best.degradable {
+        let (best, candidates_run) = if best.aborted.is_some() && best.degradable {
             match self
                 .degrade_to_bare_execution(
                     goal,
@@ -747,13 +763,14 @@ impl<'a> Pipeline<'a> {
                 )
                 .await
             {
-                Some(executed) => executed,
+                // The bare run is the one candidate that actually executed.
+                Some(executed) => (executed, candidates_run + 1),
                 // Even the bare run could not start (no resolvable worker) —
                 // that is a genuine impossibility, so keep the setup abort.
-                None => best,
+                None => (best, candidates_run),
             }
         } else {
-            best
+            (best, candidates_run)
         };
 
         // Adopt the winning candidate's trajectory.
@@ -772,7 +789,7 @@ impl<'a> Pipeline<'a> {
                 total_cost_usd: total_cost,
                 verdict: best.verdict,
                 revisions: best.revisions,
-                candidates_run: n,
+                candidates_run,
             });
         }
 
@@ -819,7 +836,7 @@ impl<'a> Pipeline<'a> {
             total_cost_usd: total_cost,
             verdict: best.verdict,
             revisions: best.revisions,
-            candidates_run: n,
+            candidates_run,
         })
     }
 
@@ -1280,7 +1297,7 @@ impl<'a> Pipeline<'a> {
         author_witness: bool,
         budget: &mut BudgetGuard,
         total: &mut f64,
-    ) -> Result<(CandidateResult, Option<String>), PipelineError> {
+    ) -> Result<(CandidateResult, Option<String>, u32), PipelineError> {
         // Orchestrator pre-fetch (issue #248) — see `crate::mcp_prefetch::fold`.
         let prefetched = crate::mcp_prefetch::fold(self.mcp_prefetch, goal, n, base_messages).await;
         let base_messages: &[CompletionMessage] = prefetched.as_deref().unwrap_or(base_messages);
@@ -1294,6 +1311,9 @@ impl<'a> Pipeline<'a> {
                             .to_string(),
                     ),
                     None,
+                    // Nothing was dispatched: the isolation port is missing, so
+                    // no candidate ever reached a model.
+                    0,
                 ));
             }
             // No isolation port (non-git workspace, or a caller that never
@@ -1326,12 +1346,14 @@ impl<'a> Pipeline<'a> {
                 )
                 .await;
             let best_idx = best_index(&candidates);
+            let ran = executed_count(&candidates);
             return Ok((
                 candidates
                     .into_iter()
                     .nth(best_idx)
                     .expect("best_index returns an in-range index"),
                 Some(label),
+                ran,
             ));
         };
 
@@ -1486,6 +1508,9 @@ impl<'a> Pipeline<'a> {
         }
 
         let best_idx = best_index(&candidates);
+        // Counted before the winner is moved out — the report is about the
+        // whole fan-out, not the one result that survives it.
+        let ran = executed_count(&candidates);
         // Winner adoption + cleanup. An aborted winner adopts nothing — an
         // aborted best-of-N run leaves the real tree untouched.
         let mut adopt_failure: Option<WorkspaceError> = None;
@@ -1540,7 +1565,7 @@ impl<'a> Pipeline<'a> {
         if let Some(e) = adopt_failure {
             best.aborted = Some(e.to_string());
         }
-        Ok((best, Some(worker_label)))
+        Ok((best, Some(worker_label), ran))
     }
 
     // Stages: execute + verify + revise (one candidate)
@@ -2379,6 +2404,14 @@ impl<'a> Pipeline<'a> {
     fn emit(&self, event: AgentEvent) {
         let _ = self.events.send(event);
     }
+}
+
+/// How many of a fan-out's candidates actually reached the worker — the honest
+/// value for [`PipelineOutcome::candidates_run`], as opposed to the configured
+/// `n`, which overstates both the work done and the spend it implies whenever
+/// isolation setup fails for some of the slots.
+fn executed_count(candidates: &[CandidateResult]) -> u32 {
+    candidates.iter().filter(|c| c.executed()).count() as u32
 }
 
 /// The winning candidate's index: strongest verification evidence first,
