@@ -334,27 +334,32 @@ const ANTHROPIC_CAPS: crate::attachment::DialectCaps = crate::attachment::Dialec
 fn attachment_blocks(message: &CompletionMessage) -> Vec<AnthropicContentBlock> {
     crate::attachment::wire_parts(&message.attachments, ANTHROPIC_CAPS)
         .into_iter()
-        .map(|part| match part {
-            crate::attachment::WirePart::Image { media_type, base64 } => {
-                AnthropicContentBlock::Image {
-                    source: AnthropicMediaSource::base64(media_type, base64),
-                }
-            }
-            crate::attachment::WirePart::Pdf { base64, .. } => AnthropicContentBlock::Document {
-                source: AnthropicMediaSource::base64("application/pdf", base64),
-            },
-            crate::attachment::WirePart::Text { text } => AnthropicContentBlock::Text {
-                text,
-                cache_control: None,
-            },
-            // Audio/video are switched off in ANTHROPIC_CAPS, so wire_parts
-            // has already degraded them to Text notes.
-            crate::attachment::WirePart::Audio { .. }
-            | crate::attachment::WirePart::Video { .. } => {
-                unreachable!("caps exclude audio/video")
-            }
-        })
+        .map(attachment_block)
         .collect()
+}
+
+/// One resolved part as a Messages content block.
+fn attachment_block(part: crate::attachment::WirePart) -> AnthropicContentBlock {
+    match part {
+        crate::attachment::WirePart::Image { media_type, base64 } => AnthropicContentBlock::Image {
+            source: AnthropicMediaSource::base64(media_type, base64),
+        },
+        crate::attachment::WirePart::Pdf { base64, .. } => AnthropicContentBlock::Document {
+            source: AnthropicMediaSource::base64("application/pdf", base64),
+        },
+        crate::attachment::WirePart::Text { text } => AnthropicContentBlock::Text {
+            text,
+            cache_control: None,
+        },
+        // Audio/video are switched off in ANTHROPIC_CAPS, so wire_parts has
+        // already degraded them to Text notes. Turning either cap on without
+        // adding a block arm lands here — degrade, never abort the turn.
+        part @ (crate::attachment::WirePart::Audio { .. }
+        | crate::attachment::WirePart::Video { .. }) => AnthropicContentBlock::Text {
+            text: crate::attachment::unsupported_part_note(&part, "Anthropic Messages API"),
+            cache_control: None,
+        },
+    }
 }
 
 /// Streamed SSE payloads from the Messages API's `content_block_delta`
