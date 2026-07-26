@@ -58,37 +58,16 @@ pub struct NodeMeta {
     pub recorded_at: String,
 }
 
-// Counts content BYTES pulled across the SQLite boundary, so a test can pin
-// recall's I/O class rather than its wall clock — the companion to
-// `retrieval::COSINE_CALLS`. Recall's candidate ranking is corpus-wide by
-// nature; what must stay bounded by the query's budget is how much *body* it
-// moves to answer it. Test-only: no counter exists in a release build.
-//
-// Thread-local, deliberately. A process-global counter is shared with every
-// other test in the binary, and `cargo test` runs them concurrently — so a
-// budget assertion over one would measure whatever else happened to be loading
-// nodes at the time, and could only be made to pass by loosening it until it
-// proved nothing. Recall's loading all happens on the thread that polled it
-// (`retrieval::without_blocking_the_worker` keeps the work on-thread), so a
-// thread-local count is both exact and immune to its neighbours.
-#[cfg(test)]
-thread_local! {
-    static CONTENT_BYTES_LOADED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Record body bytes crossing the boundary (test builds only).
+/// Record body bytes crossing the SQLite boundary (test builds only). Counted
+/// here rather than in `store::map_node_row` so the tally covers exactly the
+/// loaders recall can reach — `nodes_by_ids` and `scan_lexical` are the only two
+/// that move a body — and not the store's unrelated single-row readers.
 #[inline]
 fn count_content_bytes(len: usize) {
     #[cfg(test)]
-    CONTENT_BYTES_LOADED.with(|c| c.set(c.get() + len as u64));
+    crate::cost_counters::add_content_bytes(len);
     #[cfg(not(test))]
     let _ = len;
-}
-
-/// Zero this thread's content-byte counter and return the previous value.
-#[cfg(test)]
-pub(crate) fn take_content_bytes_loaded() -> u64 {
-    CONTENT_BYTES_LOADED.with(|c| c.replace(0))
 }
 
 /// Every live node's ranking metadata, **without its content body**. Recall's
@@ -192,6 +171,7 @@ pub(crate) fn nodes_by_ids(
     let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), map_node_row)?;
     for r in rows {
         let node = r?;
+        count_content_bytes(node.content.len());
         out.insert(node.id, node);
     }
     Ok(out)
@@ -428,5 +408,113 @@ mod tests {
             plan.contains("idx_embedding_fingerprint"),
             "recall's per-turn vector scan must use the fingerprint index; plan was: {plan}"
         );
+    }
+
+    /// End-to-end on a REAL on-disk store that predates this change: a v3
+    /// `context.db` must migrate to v4 and then answer a recall with the frame
+    /// bodies still attached.
+    ///
+    /// The unit tests above build their stores at the current version, so none of
+    /// them exercises the thing an existing workspace actually does on first
+    /// open. Two ways this could break in the field and not in a unit test: the
+    /// v4 index could fail to apply over a populated `embedding` table, and the
+    /// two-phase load could return metadata for a node whose body it then fails
+    /// to fetch — leaving a frame with no content, which is the one outcome worse
+    /// than a slow recall.
+    #[tokio::test]
+    async fn a_v3_store_on_disk_migrates_and_still_recalls_with_bodies() {
+        use crate::embed::HashEmbedder;
+        use crate::writeback::ContextDelta;
+        use contextgraph_types::ContextQuery;
+        use std::sync::Arc;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+
+        // A v3 store with real content and a real embedding, written by the v3
+        // schema and stamped v3 — what an existing workspace has on disk.
+        {
+            let store = ContextStore::open(&path).unwrap();
+            store
+                .upsert(
+                    ContextDelta::new()
+                        .with_node(
+                            NodeInput::new(NodeKind::File, "src/store.rs")
+                                .with_content("open the sqlite connection in wal mode"),
+                        )
+                        .with_node(
+                            NodeInput::new(NodeKind::Memory, "wal mode note").with_content(
+                                "the store opens sqlite in wal mode with foreign keys",
+                            ),
+                        ),
+                )
+                .await
+                .unwrap();
+            let conn = store.conn();
+            conn.execute("DROP INDEX IF EXISTS idx_embedding_fingerprint", [])
+                .unwrap();
+            conn.pragma_update(None, "user_version", 3i64).unwrap();
+        }
+
+        // Reopening runs the real migration.
+        let store = ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            crate::clock::FixedClock::shared(2_000),
+        )
+        .unwrap();
+        {
+            let conn = store.conn();
+            let version: i64 = conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(version, 4, "a v3 store must migrate to v4 on open");
+            let indexed: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master \
+                     WHERE type = 'index' AND name = 'idx_embedding_fingerprint'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(indexed, 1, "the v4 index must exist over populated rows");
+        }
+        // Outside the guard: the connection mutex is not reentrant, and
+        // `integrity_check` takes it itself.
+        store
+            .integrity_check()
+            .expect("still consistent after migrating");
+
+        let result = store
+            .recall(&ContextQuery {
+                goal: "how does the store open sqlite".into(),
+                query_text: Some("open sqlite in wal mode".into()),
+                embedding: None,
+                kinds: vec![],
+                anchors: vec![],
+                max_frames: 5,
+                max_tokens: 4000,
+                as_of: None,
+                representation_preferences: vec![],
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            !result.frames.is_empty(),
+            "a migrated store must still recall"
+        );
+        for frame in &result.frames {
+            let content = frame.content.as_deref().unwrap_or_default();
+            assert!(
+                !content.is_empty(),
+                "every frame must carry the body the two-phase load fetched: {frame:?}"
+            );
+            assert_eq!(
+                frame.token_cost,
+                contextgraph_types::budget_tokens(content),
+                "declared cost must match the body actually attached"
+            );
+        }
     }
 }

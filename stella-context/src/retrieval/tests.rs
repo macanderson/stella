@@ -404,9 +404,9 @@ async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
     let mut q = base_query("open the database", "packing frames to a budget");
     q.max_frames = 5;
 
-    let _ = take_cosine_calls();
+    let _ = crate::cost_counters::take_cosine_calls();
     let result = store.recall(&q).await.unwrap();
-    let calls = take_cosine_calls();
+    let calls = crate::cost_counters::take_cosine_calls();
 
     assert!(
         result.frames.len() <= 5,
@@ -456,9 +456,11 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
     const NODES: usize = 120;
     let mut delta = ContextDelta::new();
     let mut corpus_bytes = 0usize;
+    let mut longest_body = 0usize;
     for i in 0..NODES {
         let content = format!("note number {i} about packing frames to a budget");
         corpus_bytes += content.len();
+        longest_body = longest_body.max(content.len());
         delta = delta.with_node(
             NodeInput::new(NodeKind::Artifact, format!("note-{i}")).with_content(content),
         );
@@ -468,9 +470,9 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
     let mut q = base_query("open the database", "packing frames to a budget");
     q.max_frames = 5;
 
-    let _ = crate::candidates::take_content_bytes_loaded();
+    let _ = crate::cost_counters::take_content_bytes_loaded();
     let result = store.recall(&q).await.unwrap();
-    let loaded = crate::candidates::take_content_bytes_loaded() as usize;
+    let loaded = crate::cost_counters::take_content_bytes_loaded() as usize;
 
     // Measuring the graph/vector arm: the lexical fallback scan is
     // corpus-wide by definition, so it would make this assertion meaningless.
@@ -478,10 +480,12 @@ async fn recall_reads_only_the_candidates_bodies_not_the_whole_corpus() {
         !result.used_lexical_fallback,
         "this guard measures the fused arm; coverage unexpectedly fell back"
     );
-    // 5 frames x MMR_CANDIDATE_MULTIPLE = 20 candidates. Their bodies are
-    // all recall is entitled to read.
+    // 5 frames x MMR_CANDIDATE_MULTIPLE = 20 candidates. Their bodies are all
+    // recall is entitled to read. Budgeted against the LONGEST body rather than
+    // the mean: which 20 nodes win is a ranking outcome, and a mean-based bound
+    // would flake whenever the winners ran slightly above average.
     let candidates = 5 * MMR_CANDIDATE_MULTIPLE;
-    let budgeted = corpus_bytes * candidates / NODES;
+    let budgeted = candidates * longest_body;
     assert!(
         loaded <= budgeted,
         "recall read {loaded} content bytes of a {corpus_bytes}-byte corpus for \

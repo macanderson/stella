@@ -53,6 +53,8 @@
 
 mod candidates;
 mod clock;
+#[cfg(test)]
+mod cost_counters;
 mod embed;
 mod error;
 mod provider;

@@ -411,8 +411,10 @@ pub struct NodeRow {
 ///
 /// What remains linear in live rows is one metadata scan, one indexed vector
 /// scan (`idx_embedding_fingerprint`), and — only on a weak-coverage turn — the
-/// lexical scan, which streams instead of materializing the corpus. That is fine
-/// at CLI-local scale and is the plane's next scaling wall; an ANN index over the
+/// lexical scan, which streams instead of materializing the corpus. All of it
+/// runs on the blocking pool rather than on the worker that awaited it, so the
+/// timeouts callers wrap around recall can actually fire. That is fine at
+/// CLI-local scale and is the plane's next scaling wall; an ANN index over the
 /// vector scan and a forget/compaction path are the tracked follow-ups, not
 /// oversights.
 ///
@@ -607,6 +609,16 @@ impl ContextStore {
         lock(&self.conn)
     }
 
+    /// An owned handle to the same connection, for a `'static` unit of work.
+    ///
+    /// [`Self::conn`] borrows from `&self`, which cannot cross a
+    /// `spawn_blocking` boundary — and recall's whole pipeline is blocking SQLite
+    /// on the first-token path, so it must. Cloning the `Arc` shares the one
+    /// connection; it does not open a second.
+    pub(crate) fn conn_handle(&self) -> Arc<Mutex<Connection>> {
+        Arc::clone(&self.conn)
+    }
+
     /// Count of currently-live nodes (`superseded_at IS NULL`).
     pub fn node_count(&self) -> Result<usize, ContextError> {
         let conn = lock(&self.conn);
@@ -678,6 +690,12 @@ impl ContextStore {
             .optional()?;
         Ok(row)
     }
+}
+
+/// [`lock`] over a connection reached through [`ContextStore::conn_handle`], with
+/// the same poison tolerance as [`ContextStore::conn`].
+pub(crate) fn lock_conn(m: &Mutex<Connection>) -> MutexGuard<'_, Connection> {
+    lock(m)
 }
 
 /// Lock a mutex, recovering the guard even if a previous holder panicked. This
