@@ -74,7 +74,7 @@ fn cloud_json_path() -> PathBuf {
 
 /// Load the registration, `Default` (all `None`) when absent or unreadable.
 ///
-/// On Unix the read goes through [`crate::read_sensitive_file_to_string`]
+/// The read goes through [`crate::read_sensitive_file_to_string`]
 /// (O_NOFOLLOW, uid + single-link checks, an owner-controlled parent), which
 /// also means an unreadable-*because-untrustworthy* file degrades to the
 /// unregistered state rather than being believed. That is the correct
@@ -87,8 +87,9 @@ pub fn cloud_registration() -> CloudRegistration {
 }
 
 fn cloud_registration_at(path: &Path) -> CloudRegistration {
-    read_cloud_json(path)
-        .and_then(|raw| serde_json::from_str(&raw).ok())
+    crate::read_sensitive_file_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<CloudRegistration>(&raw).ok())
         .unwrap_or_default()
 }
 
