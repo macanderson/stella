@@ -82,11 +82,23 @@ no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
 doc-citations: ## Assert every docs/*.md cited from Rust source resolves (#652)
 	@./scripts/check-doc-citations.sh
 
+.PHONY: file-size
+file-size: ## Assert no new .rs file exceeds the 1500-line ratchet (#629)
+	@./scripts/check-file-size.sh
+
+.PHONY: file-size-update
+file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitting a file)
+	@./scripts/check-file-size.sh --update
+
+.PHONY: doc-warnings
+doc-warnings: ## Assert rustdoc is clean workspace-wide (#634)
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
 .PHONY: gate
-gate: no-scratch doc-citations format-check lint test ## Full CI gate: no-scratch + doc-citations + fmt-check + clippy + test
+gate: no-scratch doc-citations file-size doc-warnings format-check lint test ## Full CI gate: no-scratch + doc-citations + file-size + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch action-pins format-check lint ## Fast pre-push check (scratch + pins + fmt + clippy, no tests)
+check: no-scratch action-pins file-size format-check lint ## Fast pre-push check (scratch + pins + file-size + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
