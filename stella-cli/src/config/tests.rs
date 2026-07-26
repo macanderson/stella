@@ -858,9 +858,7 @@ fn parse_provider_cards(source: &str) -> Vec<ProviderCard> {
         // end. Bounding the field search this way keeps a missing field in one
         // record from silently picking up the next record's value.
         let rest = &body[offset..];
-        let end = rest[1..]
-            .find("id: \"")
-            .map_or(rest.len(), |next| next + 1);
+        let end = rest[1..].find("id: \"").map_or(rest.len(), |next| next + 1);
         let record = &rest[..end];
 
         let Some(id) = tsx_field(record, "id") else {
