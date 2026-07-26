@@ -484,9 +484,10 @@ which is why the default is `off`. Fail-closed: an unknown value, a missing
 running unsandboxed.
 
 **Conditional tools:** issue tools need `LINEAR_API_KEY` or a `gh auth login`;
-`graph_query` needs the code-graph index (auto-built at session start);
 `generate_image` needs `ZAI_API_KEY` or `OPENAI_API_KEY`. Without their
-prerequisites, these tools are not registered.
+prerequisites, these tools are not registered. `graph_query` is **not**
+conditional despite needing an index — it builds one on first use, and gating
+it on the index existing would hide exactly the tool meant to create it.
 
 **The web tools are opt-in too.** `web_fetch`, `web_extract_assets`, and
 `web_download` register only with `"tools": {"web": "on"}` in a `settings.json`

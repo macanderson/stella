@@ -13,7 +13,7 @@
 4465 stella-cli/src/command_deck.rs
 1790 stella-cli/src/main.rs
 2095 stella-core/src/bus.rs
-2252 stella-core/src/driver.rs
+2254 stella-core/src/driver.rs
 2818 stella-core/src/driver/tests.rs
 1666 stella-core/src/rules.rs
 1502 stella-core/src/skills.rs
