@@ -31,20 +31,30 @@ pub(crate) fn blob_to_vector(blob: &[u8]) -> Result<Vec<f32>, ContextError> {
         .collect())
 }
 
-/// (node_id, vector) for every live node with an embedding under `fingerprint`.
-/// The join on `content_hash` is what enforces "never mix fingerprints"
-/// structurally — a vector under any other fingerprint is simply not selected.
+/// (node_id, vector) for every node with an embedding under `fingerprint` that
+/// is live at `as_of`. The join on `content_hash` is what enforces "never mix
+/// fingerprints" structurally — a vector under any other fingerprint is simply
+/// not selected.
+///
+/// The cutoff is applied to the **node**, never to the embedding's own
+/// `recorded_at`. A vector is a derived index over content, not a record with
+/// its own history (ADR 0010, decision point 6): asking what was believed at T
+/// must not depend on when the index happened to catch up, and a warm that ran
+/// this morning must not make yesterday's content invisible to a query about
+/// yesterday.
 pub(crate) fn vectors_for_fingerprint(
     conn: &Connection,
     fingerprint: &str,
+    as_of: Option<&str>,
 ) -> Result<Vec<(i64, Vec<f32>)>, ContextError> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT n.id, e.vector
          FROM embedding e
          JOIN node n ON n.content_hash = e.content_hash
-         WHERE e.fingerprint = ?1 AND n.superseded_at IS NULL",
-    )?;
-    let rows = stmt.query_map(params![fingerprint], |r| {
+         WHERE e.fingerprint = ?2 AND {}",
+        super::candidate::NODE_AS_OF
+    ))?;
+    let rows = stmt.query_map(params![as_of, fingerprint], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
     })?;
     let mut out = Vec::new();

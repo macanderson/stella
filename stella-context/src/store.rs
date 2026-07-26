@@ -10,6 +10,7 @@
 //! kicks embedding catch-up as a background task at mount instead of paying it
 //! lazily on the first real query.
 
+mod candidate;
 mod domain;
 mod edge;
 mod embedding;
@@ -36,16 +37,23 @@ use schema::{migrate, register_fingerprint};
 // The module was one 2,224-line file until #712 split it along the seams it
 // already had. Everything below stays reachable as `crate::store::X`, which is
 // the path every consumer uses, so the split is invisible outside this file.
+#[cfg(test)]
+pub(crate) use candidate::{CONTENT_BYTES_READ, CONTENT_ROWS_READ};
+pub(crate) use candidate::{
+    NodeMeta, domain_ranked_ids, domains_for_nodes, lexical_node_meta, node_meta_for_ids,
+    nodes_by_ids, recent_node_meta,
+};
 pub(crate) use domain::{
-    domains_by_node, list_domains, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains,
-    upsert_domain,
+    list_domains, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains, upsert_domain,
 };
 pub(crate) use edge::{close_edge, edges_as_of, insert_edge, neighbors};
 pub(crate) use embedding::{
     embedding_exists, nodes_missing_embedding, store_embedding, vectors_for_fingerprint,
 };
 pub use node::{NodeInput, NodeKind, NodeRow};
-pub(crate) use node::{live_nodes, node_by_id, node_ids_for_uris, upsert_node};
+pub(crate) use node::{
+    node_by_id, node_exists_any_state, node_ids_for_uris, restore_node, supersede_node, upsert_node,
+};
 pub(crate) use record::{insert_episode, insert_memory};
 pub(crate) use schema::open_connection;
 
@@ -57,22 +65,28 @@ pub(crate) use schema::open_connection;
 ///
 /// # Retention
 ///
-/// Nothing here forgets. `node.superseded_at` is never written (only edges are
-/// versioned), there is no delete or tombstone path, and a node whose uri
-/// changed — a renamed or deleted file — is orphaned live forever, still
-/// serving its last-known content. Recall still *reads* every live node and
-/// every vector under the active fingerprint on each query, so the store's size
-/// and the bytes crossing the SQLite boundary per recall grow monotonically
-/// with the workspace's lifetime.
+/// This plane forgets. `node.superseded_at` is written by
+/// [`Self::supersede_node`] — for a memory that was edited into a new revision,
+/// and for one a person forgot — and every candidate reader filters on it, so
+/// suppression takes effect at the SQL boundary rather than after a budget has
+/// already been spent on the suppressed row. Supersession never deletes
+/// (`L-C3`): the row survives, so [`Self::restore_node`] is an exact inverse
+/// and a point-in-time query can still see what was believed before.
 ///
-/// What no longer grows quadratically is the work done on those rows: the
-/// fused candidate list is cut to a multiple of the query's `max_frames`
-/// before the MMR pass and before any frame is built
-/// (`retrieval::MMR_CANDIDATE_MULTIPLE`), so the diversity fold and the content
-/// clones are bounded by the budget rather than by lifetime memory size. The
-/// remaining linear scan is fine at CLI-local scale and is the plane's first
-/// scaling wall; a `LIMIT`-bounded candidate query, a decoded-vector cache, and
-/// a forget/compaction path are the tracked follow-ups, not oversights.
+/// What is *not* retention-managed: a node whose uri changed — a renamed or
+/// deleted file — is still orphaned live, serving its last-known content until
+/// something supersedes it. Compaction of superseded rows is a later phase;
+/// nothing here reclaims space.
+///
+/// # What a recall costs
+///
+/// Every signal is `LIMIT`-bounded at the SQL boundary and every bound derives
+/// from the query's `max_frames`, so per-turn cost is set by what the caller
+/// asked for rather than by how long the workspace has been alive. Node bodies
+/// are read for packed survivors only — the ranking runs over metadata. The one
+/// remaining full-corpus pass is the cosine scan over the vector index, which
+/// reads ids and vectors and never content; an ANN accelerator is the tracked
+/// follow-up that would bound it too.
 ///
 /// # Drop
 ///
@@ -99,6 +113,10 @@ pub struct ContextStore {
     warm: Mutex<Option<tokio::task::JoinHandle<Result<usize, ContextError>>>>,
     /// Raised by `Drop`, checked between warm batches.
     warm_cancel: crate::warm::WarmCancel,
+    /// The retrieval knobs this store recalls with. Defaults to exactly the
+    /// values that shipped as `const`s, so a host that configures nothing
+    /// behaves identically (#712 deliverable 8).
+    tuning: crate::retrieval::RecallTuning,
 }
 
 impl Drop for ContextStore {
@@ -155,7 +173,26 @@ impl ContextStore {
             clock,
             warm: Mutex::new(None),
             warm_cancel: crate::warm::WarmCancel::default(),
+            tuning: crate::retrieval::RecallTuning::default(),
         })
+    }
+
+    /// Apply retrieval tuning, replacing the defaults.
+    ///
+    /// A builder rather than a constructor argument because every existing
+    /// caller wants the defaults, and because the values reach here from a
+    /// settings file — a surface that must not be able to make a store
+    /// unopenable. Out-of-range knobs are clamped, never rejected: failing a
+    /// turn over a typo in a tuning value is a worse answer than ignoring it.
+    #[must_use]
+    pub fn with_tuning(mut self, tuning: crate::retrieval::RecallTuning) -> Self {
+        self.tuning = tuning.sanitized();
+        self
+    }
+
+    /// The retrieval knobs in force for this store.
+    pub(crate) fn tuning(&self) -> crate::retrieval::RecallTuning {
+        self.tuning
     }
 
     /// Open and immediately kick embedding catch-up as a background tokio task
@@ -320,6 +357,44 @@ impl ContextStore {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    /// Suppress a node in the plane that owns it: mark it superseded so every
+    /// candidate reader stops offering it, immediately and before any budget is
+    /// spent (#712 deliverable 4).
+    ///
+    /// Returns whether a live row changed — `false` means it was already
+    /// suppressed, which is a success, not a failure.
+    ///
+    /// This is the write that makes `node.superseded_at` mean something. The
+    /// column has been in the v1 DDL since the beginning and was never written,
+    /// so every reader's `superseded_at IS NULL` filter was vacuously true and
+    /// suppression had to happen at the CLI, on frames a budget had already
+    /// paid for. A quarantined memory therefore won a slot against `max_frames`
+    /// and was then discarded, silently giving that turn four frames instead of
+    /// five.
+    ///
+    /// Nothing is deleted (`L-C3`): [`Self::restore_node`] is an exact inverse.
+    pub fn supersede_node(&self, public_id: &str) -> Result<bool, ContextError> {
+        let now = self.clock.now_rfc3339();
+        supersede_node(&self.conn(), public_id, &now)
+    }
+
+    /// Lift a suppression, making the node a candidate again. The exact
+    /// inverse of [`Self::supersede_node`]; returns whether anything was
+    /// lifted.
+    pub fn restore_node(&self, public_id: &str) -> Result<bool, ContextError> {
+        restore_node(&self.conn(), public_id)
+    }
+
+    /// Whether any node carries this public id, superseded or not.
+    ///
+    /// Every other lookup here hides superseded rows, which is right for recall
+    /// and wrong for a restore: the row a restore targets is exactly the one
+    /// they hide. This lets a caller tell "no such memory" from "that memory is
+    /// currently suppressed".
+    pub fn node_exists(&self, public_id: &str) -> Result<bool, ContextError> {
+        node_exists_any_state(&self.conn(), public_id)
     }
 
     /// A live node by its stable public id (`nod_…`) — how `stella memory

@@ -79,32 +79,6 @@ pub(crate) fn tag_edge_domains(
     Ok(added)
 }
 
-/// Every LIVE node's domain names in one scan, sorted per node for stable
-/// citation display — the batched form of the old per-node query. Recall
-/// runs this once per prompt; one statement per live node was an N+1 whose
-/// cost grew with lifetime memory size. Superseded nodes are filtered in
-/// SQL (same liveness predicate as [`live_nodes`]): recall only looks up
-/// live candidates, so loading dead nodes' tags made the scan grow with
-/// historical store size for no reader.
-pub(crate) fn domains_by_node(
-    conn: &Connection,
-) -> Result<std::collections::HashMap<i64, Vec<String>>, ContextError> {
-    let mut stmt = conn.prepare(
-        "SELECT nd.node_id, d.name FROM node_domains nd
-         JOIN domain d ON d.id = nd.domain_id
-         JOIN node n ON n.id = nd.node_id
-         WHERE n.superseded_at IS NULL
-         ORDER BY nd.node_id, d.name",
-    )?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
-    let mut out: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
-    for r in rows {
-        let (id, name) = r?;
-        out.entry(id).or_default().push(name);
-    }
-    Ok(out)
-}
-
 /// Live node ids that carry a domain tag but NONE in `scope` — exactly the
 /// set a scoped recall must exclude. Untagged nodes are never returned (they
 /// stay candidates): most memories — reflections whose lessons name no domain,
@@ -120,26 +94,35 @@ pub(crate) fn domains_by_node(
 pub(crate) fn node_ids_excluded_by_scope(
     conn: &Connection,
     scope: &[String],
+    as_of: Option<&str>,
 ) -> Result<std::collections::HashSet<i64>, ContextError> {
     if scope.is_empty() {
         return Ok(std::collections::HashSet::new());
     }
-    let placeholders = std::iter::repeat_n("?", scope.len())
+    // Numbered explicitly: `?1` is `as_of`, the scope names bind from `?2` on.
+    let placeholders = (0..scope.len())
+        .map(|i| format!("?{}", i + 2))
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
         "SELECT DISTINCT nd.node_id FROM node_domains nd
          JOIN node n ON n.id = nd.node_id
-         WHERE n.superseded_at IS NULL
+         WHERE {}
            AND nd.node_id NOT IN (
              SELECT nd2.node_id FROM node_domains nd2
              JOIN domain d ON d.id = nd2.domain_id
              WHERE d.name IN ({placeholders})
-           )"
+           )",
+        super::candidate::NODE_AS_OF
     );
     let mut stmt = conn.prepare(&sql)?;
+    let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(scope.len() + 1);
+    binds.push(Box::new(as_of.map(str::to_string)));
+    for name in scope {
+        binds.push(Box::new(name.clone()));
+    }
     let mut set = std::collections::HashSet::new();
-    for r in stmt.query_map(rusqlite::params_from_iter(scope.iter()), |r| {
+    for r in stmt.query_map(rusqlite::params_from_iter(binds.iter()), |r| {
         r.get::<_, i64>(0)
     })? {
         set.insert(r?);

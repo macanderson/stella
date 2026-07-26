@@ -290,29 +290,20 @@ pub(crate) fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow>
     })
 }
 
-/// Every live node (for recency scoring, lexical fallback, and warm scanning).
-pub(crate) fn live_nodes(conn: &Connection) -> Result<Vec<NodeRow>, ContextError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
-         FROM node WHERE superseded_at IS NULL",
-    )?;
-    let rows = stmt.query_map([], map_node_row)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
-}
-
-/// Live node ids whose uri matches one of `uris` (anchor resolution).
+/// Node ids whose uri matches one of `uris` and that are live at `as_of`
+/// (anchor resolution).
 pub(crate) fn node_ids_for_uris(
     conn: &Connection,
     uris: &[String],
+    as_of: Option<&str>,
 ) -> Result<Vec<i64>, ContextError> {
     let mut out = Vec::new();
-    let mut stmt = conn.prepare("SELECT id FROM node WHERE uri = ?1 AND superseded_at IS NULL")?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT n.id FROM node n WHERE n.uri = ?2 AND {}",
+        super::candidate::NODE_AS_OF
+    ))?;
     for uri in uris {
-        let ids = stmt.query_map(params![uri], |r| r.get::<_, i64>(0))?;
+        let ids = stmt.query_map(params![as_of, uri], |r| r.get::<_, i64>(0))?;
         for id in ids {
             out.push(id?);
         }
@@ -331,4 +322,58 @@ pub(crate) fn node_by_id(conn: &Connection, id: i64) -> Result<Option<NodeRow>, 
         )
         .optional()?;
     Ok(row)
+}
+
+/// Mark a node superseded at `now` — the context plane's tombstone. Returns
+/// whether a live row actually changed, so an idempotent caller can tell
+/// "suppressed it" from "it was already suppressed".
+///
+/// **Never deletes** (`L-C3`). The row survives with its content and its
+/// history intact, which is what makes [`restore_node`] an exact inverse and
+/// what lets a point-in-time query still see what was believed before the
+/// suppression. Every candidate reader filters on this column, so the effect is
+/// immediate and applies before any budget is spent.
+///
+/// The `superseded_at IS NULL` guard makes a second call a no-op rather than a
+/// rewrite: re-forgetting must not move the tombstone's timestamp forward, or
+/// a point-in-time query would start seeing a row it had already stopped
+/// seeing.
+pub(crate) fn supersede_node(
+    conn: &Connection,
+    public_id: &str,
+    now: &str,
+) -> Result<bool, ContextError> {
+    let changed = conn.execute(
+        "UPDATE node SET superseded_at = ?2 WHERE public_id = ?1 AND superseded_at IS NULL",
+        params![public_id, now],
+    )?;
+    Ok(changed > 0)
+}
+
+/// Lift a node's supersession, making it a candidate again. The exact inverse
+/// of [`supersede_node`]; returns whether anything was lifted.
+///
+/// Deliberately resolves by `public_id` without a liveness filter — a
+/// superseded node is invisible to every other reader, so a restore that went
+/// through one of them could never find the row it exists to bring back.
+pub(crate) fn restore_node(conn: &Connection, public_id: &str) -> Result<bool, ContextError> {
+    let changed = conn.execute(
+        "UPDATE node SET superseded_at = NULL WHERE public_id = ?1 AND superseded_at IS NOT NULL",
+        params![public_id],
+    )?;
+    Ok(changed > 0)
+}
+
+/// Whether a node exists at all under this id, superseded or not — the lookup
+/// a restore needs, since every other reader hides exactly the rows it targets.
+pub(crate) fn node_exists_any_state(
+    conn: &Connection,
+    public_id: &str,
+) -> Result<bool, ContextError> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM node WHERE public_id = ?1",
+        params![public_id],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
 }
