@@ -25,7 +25,7 @@ Tool names are their exact identifiers — the agent dispatches by name, and the
 
 ### Always available
 
-These 42 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
+These 46 tools register in every session — no configuration, no prerequisites. Grouped by what they touch:
 
 #### Files
 
@@ -79,6 +79,22 @@ These 42 tools register in every session — no configuration, no prerequisites.
 | `send_stdin` | Write text to a started process's stdin (e.g. a REPL command). | Mutating |
 | `stop_process` | Stop a started process: SIGTERM to its process group, then SIGKILL; remaining output stays readable. | Mutating |
 
+#### Shell
+
+| Tool | Description | Access |
+| --- | --- | --- |
+| `bash` | Run a shell command in the workspace root, with a timeout backstop. | Mutating |
+
+#### Web
+
+| Tool | Description | Access |
+| --- | --- | --- |
+| `web_fetch` | Fetch a URL and read it as markdown, plain text, or raw HTML — links absolutized so the agent can follow them. | Read-only |
+| `web_extract_assets` | Fetch a page and mine its design assets — stylesheets, scripts, images, fonts, plus design tokens (colors, font families, custom properties, `@font-face`) distilled from the CSS. | Read-only |
+| `web_download` | Download a URL to a file inside the workspace (images, fonts, stylesheets, archives). | Mutating |
+
+`web_search` is the one web tool with a prerequisite — a BYOK search key — so it sits in the next section.
+
 #### Git
 
 | Tool | Description | Access |
@@ -117,15 +133,11 @@ The read-only partition is exactly: `read_file`, `read_symbol`, `grep`, `glob`, 
 
 ### Conditionally registered
 
-These appear only when their prerequisite is met:
+These appear only when their prerequisite is met. A prerequisite is something the **environment** supplies — a key, a backend — never a default someone has to discover. Turning an available tool *off* is a separate thing, covered under [Switching tools off](#switching-tools-off).
 
 | Tool | Description | Access | Appears when |
 | --- | --- | --- | --- |
-| `bash` | Run a shell command in the workspace root, with a timeout backstop. | Mutating | Your [settings](/docs/configuration/settings) opt in with `"tools": {"bash": "on"}` (any scope). **Off by default everywhere**, including interactive sessions — see below. |
-| `web_fetch` | Fetch a URL and read it as markdown, plain text, or raw HTML — links absolutized so the agent can follow them. | Read-only | Your settings opt in with `"tools": {"web": "on"}` (any scope). **Off by default** — see [Web tools](#web-opt-in). |
-| `web_extract_assets` | Fetch a page and mine its design assets — stylesheets, scripts, images, fonts, plus design tokens (colors, font families, custom properties, `@font-face`) distilled from the CSS. | Read-only | The `web` opt-in (as above). |
-| `web_download` | Download a URL to a file inside the workspace (images, fonts, stylesheets, archives). | Mutating | The `web` opt-in (as above). |
-| `web_search` | Search the web and get ranked results (title, URL, snippet). | Read-only | The `web` opt-in **and** a BYOK search key (`BRAVE_API_KEY` or `TAVILY_API_KEY`) — the other three web tools need no key. |
+| `web_search` | Search the web and get ranked results (title, URL, snippet). | Read-only | A BYOK search key is present (`BRAVE_API_KEY` or `TAVILY_API_KEY`) — the other three web tools need no key. |
 | `generate_image` | Generate an image from a text prompt into `.stella/artifacts/`. | Mutating | An image-capable BYOK provider key is configured. |
 | `generate_video` | Submit an asynchronous text-to-video job. Video costs real money: any job with a positive estimated cost is denied unless `confirm_spend` is true. | Mutating | The configured media provider has a **video** adapter — an image-only key registers `generate_image` without the video pair. |
 | `poll_video` | Poll a video job, reconciling its state live against the provider. | Mutating | Same video-adapter condition as `generate_video`. |
@@ -138,27 +150,35 @@ These appear only when their prerequisite is met:
 | `list_members` | Search assignable people by login, name, or email substring. | Read-only | An issue backend is configured. |
 | `start_work_on_issue` | Move an issue to in-progress and create or check out its branch. | Mutating | An issue backend is configured. |
 
-<Callout type="warn">
-**There is no shell by default.** `bash` is opt-in via `"tools": {"bash": "on"}` in [`settings.json`](/docs/configuration/settings) — in any scope, in every kind of session. When it's off, the model never sees the schema, and calling `bash` anyway returns the standard unknown-tool error: the policy is enforced at the tool boundary, not by prompt discipline. The structured tools above (`run_script`, `build_project`, the process group, the `repo_*` family) cover most of what a shell would do, with an auditable surface.
-</Callout>
-
 <Callout type="info">
 The issue backend resolves in precedence order: `LINEAR_API_KEY` env → a stored **Linear** connection (`stella connect linear`) → a stored **GitHub** connection (`stella connect github`, runs over REST with no `gh` CLI needed) → ambient `gh` CLI auth. If none is available, no issue tools are registered at all. See [stella connect](/docs/commands/connect).
 </Callout>
 
-### Web (opt-in)
+### Switching tools off
 
-The web family gives the agent the open internet: search, fetch-and-read, asset extraction, and download. It powers things like *"build me a design system based on this site"* or *"read this article and summarize it."* Like `bash`, it is **off by default in every scope** — a fetched page is both untrusted input and an uncontrolled egress channel, so you turn it on deliberately:
+Every tool ships **on**, `bash` and the web family included. The one way to turn something off is a `"tools"` entry in [`settings.json`](/docs/configuration/settings), and it reads the same whether the name is a built-in, an MCP server's tool, or one you registered yourself:
 
 ```json title="settings.json"
 {
   "tools": {
-    "web": "on"
+    "bash": "off",
+    "process": "off",
+    "mcp__github__create_issue": "off"
   }
 }
 ```
 
-With the opt-in, three tools register with **no key required**:
+A key is a **tool name**, a **group name** (the family headings above — `file`, `search`, `process`, `repo`, `web`, `bash`, `task`, …, plus `mcp` and `custom` for tools the built-in catalog has never heard of), or `"*"` for everything. Most specific wins: name beats group beats `"*"`, and anything unmentioned is on. So `{"*": "off", "read_file": "on"}` is a read-only agent in two lines, and `{"process": "off", "read_output": "on"}` keeps exactly one of the four process tools.
+
+A switched-off tool is **withheld from the schema list and refused if called anyway** — the refusal reads like the unknown-tool error, so a disabled tool is indistinguishable from one that was never built. Enforcement is at the tool boundary, not by prompt discipline.
+
+Scopes merge per key (project beats user), with one asymmetry: an **org-managed** `settings.json` that turns a tool off is a ceiling. A user or project scope may narrow further but can never turn it back on — see [settings](/docs/configuration/settings).
+
+### Web access
+
+The web family gives the agent the open internet: search, fetch-and-read, asset extraction, and download. It powers things like *"build me a design system based on this site"* or *"read this article and summarize it."*
+
+Three tools register with **no key required**:
 
 | Tool | What it does | Access |
 | --- | --- | --- |
@@ -193,7 +213,7 @@ X-Tenant = "acme"
 </Callout>
 
 <Callout type="warn">
-**No network allowlist.** With the opt-in on, the agent can fetch any `http(s)` URL the host can reach — including `localhost`, private ranges, and cloud metadata endpoints. This is deliberate: it matches the `bash` opt-in and is what makes *"read my internal tool"* or *"scrape my localhost dev server"* work. The gate is the settings opt-in itself, not a per-URL filter — so enable `web` where you'd be comfortable enabling `bash`, and be aware that a page the agent fetches could try to steer it toward an internal URL (prompt injection). Combine with [`PreToolUse` hooks or `guard-tool` rules](/docs/agent-tools/permissions) if you need to constrain destinations.
+**No network allowlist.** The agent can fetch any `http(s)` URL the host can reach — including `localhost`, private ranges, and cloud metadata endpoints. This is deliberate: it is what makes *"read my internal tool"* or *"scrape my localhost dev server"* work. There is no per-URL filter, so be aware that a page the agent fetches could try to steer it toward an internal URL (prompt injection). Turn the family off with `"tools": {"web": "off"}`, or constrain destinations with [`PreToolUse` hooks or `guard-tool` rules](/docs/agent-tools/permissions).
 </Callout>
 
 ### Session tools
@@ -218,9 +238,9 @@ The other three session tools are read-only **discovery** tools layered over the
 
 #### Lean frontloading (experimental)
 
-Set `STELLA_LEAN_TOOLS=1` to advertise only a lean core toolset (file CRUD, search, build/test/verify, `ask_user`, and `bash` when the opt-in has enabled it) plus the discovery tools; everything else stays out of the prompt until a `tool_search` surfaces it. Matched tools are *activated* — advertised for the rest of the session. Set the variable to a comma-separated list of tool names to choose your own core. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
+Set `STELLA_LEAN_TOOLS=1` to advertise only a lean core toolset (file CRUD, search, build/test/verify, `ask_user`, and `bash`) plus the discovery tools; everything else stays out of the prompt until a `tool_search` surfaces it. Matched tools are *activated* — advertised for the rest of the session. Set the variable to a comma-separated list of tool names to choose your own core. A hidden tool called by name still executes, so lean mode trims prompt weight without ever gating a capability.
 
-All told: 42 always-on tools, up to 58 native tools with the `bash` and `web` opt-ins, the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
+All told: 46 always-on tools, up to 58 native tools with the code graph, media keys, a search key, and an issue backend, plus the six session tools — before any custom script tools or MCP servers merge in.
 
 ## Where to go next
 

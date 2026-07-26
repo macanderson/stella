@@ -2,7 +2,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::authority::{apply_tool_ceiling, restore_project_prompts, restore_project_tools};
+use super::authority::{
+    apply_tool_ceiling, managed_tool_ceiling, restore_project_prompts, restore_project_tools,
+};
 use super::managed::managed_settings_path;
 use super::*;
 
@@ -61,13 +63,14 @@ impl Settings {
                 target.registry_url = Some(url.clone());
             }
         }
+        // Tool switches merge PER KEY, later scope wins — the same shape the
+        // two hardcoded fields had, now over an open map. A scope that does
+        // not mention a key leaves the lower scope's value alone, so a
+        // project narrowing `bash` never resets a user's `{"mcp": "off"}`.
         if let Some(tools) = &scope.tools {
             let target = self.tools.get_or_insert_with(ToolsSettings::default);
-            if let Some(bash) = tools.bash {
-                target.bash = Some(bash);
-            }
-            if let Some(web) = tools.web {
-                target.web = Some(web);
+            for (key, &toggle) in &tools.entries {
+                target.entries.insert(key.clone(), toggle);
             }
         }
         if let Some(engine) = &scope.agent_engine_config {
@@ -115,9 +118,14 @@ impl Settings {
     ) -> Self {
         let trusted_only = Self::merge_snapshots(&[user, managed]);
         let mut merged = Self::merge_snapshots(&[user, managed, project]);
+        // Captured from the managed snapshot only: the ceiling is what the ORG
+        // said, and no later fold can grow it or shrink it. `AuthorityPolicy`
+        // reads it rather than re-deriving, so the two can never disagree.
+        let ceiling =
+            managed_tool_ceiling(managed.managed_authority.as_ref(), managed.tools.as_ref());
         let authority = AuthorityPolicy::compute(
             managed.managed_authority.as_ref(),
-            managed.tools.as_ref(),
+            &ceiling,
             trust.credentials,
         );
 
@@ -170,7 +178,7 @@ impl Settings {
         if !authority.project_prompts_allowed {
             restore_project_prompts(&mut merged, &trusted_only, project);
         }
-        apply_tool_ceiling(&mut merged, authority);
+        apply_tool_ceiling(&mut merged, &ceiling);
         merged.managed_authority = managed.managed_authority;
         merged.enterprise_telemetry = managed.enterprise_telemetry.clone();
         merged.authority_policy = authority;

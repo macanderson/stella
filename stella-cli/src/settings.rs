@@ -549,22 +549,53 @@ pub fn project_settings_path(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".stella").join("settings.json")
 }
 
-/// The `tools` section of settings.json — switches for the built-in tool
-/// surface. Every field is optional, and every default is the SECURE
-/// posture: an absent key never enables anything.
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
+/// The `tools` section of settings.json — the one place a tool is switched
+/// off, whether it is a built-in, an MCP server's, or one the customer wrote.
+///
+/// An **open map**, not a fixed set of fields. It used to be
+/// `{ bash: Option<Toggle>, web: Option<Toggle> }`, which made every new
+/// "should this be on?" question cost another field here, another
+/// `RegistryOptions` boolean, and another hand-written branch — and could
+/// never address an MCP or custom tool at all, because those names are not
+/// known at compile time. A key is a tool name, a group name, or `"*"`; see
+/// [`stella_tools::policy::ToolPolicy`] for the precedence rules.
+///
+/// Values stay [`Toggle`] rather than `bool` so a typo'd value is a loud
+/// parse error, not a silent state. Absent means **on**: Stella ships with
+/// every tool available, and this section is a deny list.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct ToolsSettings {
-    /// The `bash` shell tool. **Absent or `"off"` = not registered** — the
-    /// model never sees a shell; enabling it requires a literal
-    /// `"tools": {"bash": "on"}` in some scope. [`Toggle`] rather than a
-    /// bool so a typo'd value is a loud parse error, not a silent state.
-    #[serde(default)]
-    pub bash: Option<Toggle>,
-    /// The web family (`web_search`, `web_fetch`, `web_extract_assets`,
-    /// `web_download`). **Absent or `"off"` = not registered** — network
-    /// egress is opt-in exactly like the shell: `"tools": {"web": "on"}`.
-    #[serde(default)]
-    pub web: Option<Toggle>,
+    /// Every `"<key>": "on"|"off"` pair in the section, verbatim. Flattened,
+    /// so the JSON is just the pairs — `{"bash": "off", "process": "off"}` —
+    /// exactly as the two-field version read.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entries: BTreeMap<String, Toggle>,
+}
+
+impl ToolsSettings {
+    /// Resolve this section into the policy the runtime enforces.
+    pub fn policy(&self) -> stella_tools::policy::ToolPolicy {
+        stella_tools::policy::ToolPolicy::from_switches(
+            self.entries
+                .iter()
+                .map(|(key, toggle)| (key.clone(), toggle.is_on())),
+        )
+    }
+
+    /// The inverse of [`ToolsSettings::policy`] — how a computed policy (the
+    /// managed ceiling folded in, say) is written back into the settings
+    /// shape that scopes merge and the TUI round-trips.
+    pub fn from_policy(policy: &stella_tools::policy::ToolPolicy) -> Self {
+        Self {
+            entries: policy
+                .switches()
+                .iter()
+                .map(|(key, &enabled)| {
+                    (key.clone(), if enabled { Toggle::On } else { Toggle::Off })
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The `mcp` section of settings.json. All fields optional so an absent
@@ -579,15 +610,14 @@ pub struct McpSettings {
 }
 
 impl Settings {
-    /// Whether the `bash` tool is enabled for this workspace. Default OFF
-    /// in every scope and configuration — only an explicit
-    /// `"tools": {"bash": "on"}` somewhere in the chain turns it on (and a
-    /// later scope's `"off"` turns it back off; project wins per field).
-    pub fn bash_tool_enabled(&self) -> bool {
+    /// The merged `tools` section as the policy the runtime enforces. The
+    /// managed ceiling is already folded in by [`Settings::load`], so this is
+    /// the whole answer — no caller needs to re-apply authority.
+    pub fn tool_policy(&self) -> stella_tools::policy::ToolPolicy {
         self.tools
             .as_ref()
-            .and_then(|t| t.bash)
-            .is_some_and(Toggle::is_on)
+            .map(ToolsSettings::policy)
+            .unwrap_or_default()
     }
 
     /// Whether the end-of-run recap is enabled for this workspace. Default
@@ -595,16 +625,6 @@ impl Settings {
     /// it on (a later `"off"` turns it back off — project wins per field).
     pub fn recap_enabled(&self) -> bool {
         self.enable_recap.is_some_and(Toggle::is_on)
-    }
-
-    /// Whether the web tool family is enabled for this workspace. Same
-    /// posture as [`Settings::bash_tool_enabled`]: default OFF everywhere,
-    /// only an explicit `"tools": {"web": "on"}` in the chain turns it on.
-    pub fn web_tools_enabled(&self) -> bool {
-        self.tools
-            .as_ref()
-            .and_then(|t| t.web)
-            .is_some_and(Toggle::is_on)
     }
 
     /// The configured MCP registry URL, or the official default. Applied at the
@@ -998,15 +1018,40 @@ mod tests {
         assert_eq!(merged.agent_engine_config, Some(engine));
     }
 
-    /// Witness for the bash-off-by-default posture: an absent `tools` key
-    /// (or an absent `bash` field) parses to DISABLED, and the scope merge
-    /// is per-field with the later (project) scope winning in both
-    /// directions.
+    /// **Witness for the default flip.** With no settings at all — no file,
+    /// no `tools` key, an empty `tools` object — every tool is on, `bash`
+    /// included. This fails on the old code, where an absent key meant OFF.
     #[test]
-    fn bash_tool_defaults_off_and_the_project_scope_wins_per_field() {
-        // Absent everywhere → off.
-        assert!(!Settings::default().bash_tool_enabled());
-        // Recap mirrors the same on/off-string switch discipline.
+    fn every_tool_is_on_with_no_settings_at_all() {
+        let policy = Settings::default().tool_policy();
+        assert!(policy.is_default(), "no settings means no switches");
+        for name in ["bash", "web_fetch", "web_download", "read_file", "grep"] {
+            assert!(policy.allows(name), "`{name}` must be on by default");
+        }
+        // An unknown name — an MCP tool, a customer's own — is on too: the
+        // section is a deny list, not an allow list.
+        assert!(policy.allows("mcp__github__create_issue"));
+        assert!(policy.allows("deploy_to_staging"));
+
+        let dir = tempfile::tempdir().unwrap();
+        for (name, json) in [
+            ("silent.json", r#"{"providers": {}}"#),
+            ("empty.json", r#"{"tools": {}}"#),
+        ] {
+            let path = write(dir.path(), name, json);
+            let merged = Settings::load_from(std::slice::from_ref(&path)).unwrap();
+            assert!(
+                merged.tool_policy().allows("bash"),
+                "{name}: an absent switch must mean ON"
+            );
+        }
+    }
+
+    /// The recap keeps the older on/off-string discipline, and it is the
+    /// nearest neighbour to the tool switches — worth pinning beside them so
+    /// a change to `Toggle` can't quietly loosen either.
+    #[test]
+    fn recap_defaults_off_and_takes_the_toggle_vocabulary_only() {
         assert!(!Settings::default().recap_enabled(), "recap defaults off");
         assert!(
             serde_json::from_str::<Settings>(r#"{"enable_recap":"on"}"#)
@@ -1022,21 +1067,28 @@ mod tests {
         // A typo'd value is a loud parse error, not a silent false (the whole
         // point of the Toggle enum over a bool).
         assert!(serde_json::from_str::<Settings>(r#"{"enable_recap":true}"#).is_err());
+    }
+
+    /// **Witness: `{"bash": "off"}` is the only thing that withholds the
+    /// shell**, and scopes merge per key with the later (project) scope
+    /// winning in both directions.
+    #[test]
+    fn a_tools_entry_switches_a_tool_off_and_the_project_scope_wins_per_key() {
         let dir = tempfile::tempdir().unwrap();
-        let silent = write(dir.path(), "silent.json", r#"{"providers": {}}"#);
-        let merged = Settings::load_from(std::slice::from_ref(&silent)).unwrap();
-        assert!(!merged.bash_tool_enabled(), "absent key must mean off");
-        let empty_tools = write(dir.path(), "empty.json", r#"{"tools": {}}"#);
-        let merged = Settings::load_from(&[empty_tools]).unwrap();
-        assert!(!merged.bash_tool_enabled(), "empty tools section is off");
-
-        // user off + project on → on (the opt-in can live in any scope).
         let user_off = write(dir.path(), "user.json", r#"{"tools": {"bash": "off"}}"#);
-        let project_on = write(dir.path(), "project.json", r#"{"tools": {"bash": "on"}}"#);
-        let merged = Settings::load_from(&[user_off.clone(), project_on.clone()]).unwrap();
-        assert!(merged.bash_tool_enabled(), "project-scope on wins");
+        let merged = Settings::load_from(std::slice::from_ref(&user_off)).unwrap();
+        assert!(!merged.tool_policy().allows("bash"), "an off key withholds");
+        assert!(
+            merged.tool_policy().allows("read_file"),
+            "and withholds only what it names"
+        );
 
-        // user on + project off → off (project wins per field both ways).
+        // user off + project on → on (a switch can live in any scope).
+        let project_on = write(dir.path(), "project.json", r#"{"tools": {"bash": "on"}}"#);
+        let merged = Settings::load_from(&[user_off.clone(), project_on]).unwrap();
+        assert!(merged.tool_policy().allows("bash"), "project-scope on wins");
+
+        // user on + project off → off (project wins per key both ways).
         let user_on = write(dir.path(), "user_on.json", r#"{"tools": {"bash": "on"}}"#);
         let project_off = write(
             dir.path(),
@@ -1044,51 +1096,102 @@ mod tests {
             r#"{"tools": {"bash": "off"}}"#,
         );
         let merged = Settings::load_from(&[user_on.clone(), project_off]).unwrap();
-        assert!(!merged.bash_tool_enabled(), "project-scope off wins");
+        assert!(
+            !merged.tool_policy().allows("bash"),
+            "project-scope off wins"
+        );
 
         // A scope that doesn't speak `tools` leaves the earlier value.
-        let merged = Settings::load_from(&[user_on, silent]).unwrap();
-        assert!(merged.bash_tool_enabled(), "silent scope must not reset");
-    }
-
-    /// The web family shares the bash posture — absent = off, per-field
-    /// scope merge with the project winning — and the two switches are
-    /// independent fields of the one `tools` section.
-    #[test]
-    fn web_tools_default_off_and_merge_per_field() {
-        assert!(!Settings::default().web_tools_enabled());
-        let dir = tempfile::tempdir().unwrap();
-        let user_on = write(dir.path(), "user.json", r#"{"tools": {"web": "on"}}"#);
-        let merged = Settings::load_from(std::slice::from_ref(&user_on)).unwrap();
-        assert!(merged.web_tools_enabled());
-        assert!(!merged.bash_tool_enabled(), "web on must not enable bash");
-
-        let project = write(
-            dir.path(),
-            "project.json",
-            r#"{"tools": {"web": "off", "bash": "on"}}"#,
-        );
-        let merged = Settings::load_from(&[user_on, project]).unwrap();
-        assert!(!merged.web_tools_enabled(), "project-scope off wins");
+        let silent = write(dir.path(), "silent.json", r#"{"providers": {}}"#);
+        let merged = Settings::load_from(&[user_off, silent]).unwrap();
         assert!(
-            merged.bash_tool_enabled(),
-            "sibling field merges independently"
+            !merged.tool_policy().allows("bash"),
+            "silent scope must not reset"
         );
     }
 
-    /// `tools.bash` takes the Toggle vocabulary only — a bool (or any
-    /// typo) is a loud parse error, never a silently-guessed state.
+    /// **Witness: a group key covers its whole family in one line.**
+    /// `{"process": "off"}` disables all four process tools — the case the
+    /// two-field `ToolsSettings` could not express at all.
     #[test]
-    fn a_non_toggle_bash_value_is_a_loud_parse_error() {
+    fn a_group_key_switches_off_the_whole_family() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(dir.path(), "group.json", r#"{"tools": {"process": "off"}}"#);
+        let merged = Settings::load_from(&[path]).unwrap();
+        let policy = merged.tool_policy();
+
+        let family = stella_tools::catalog::names_in_group("process");
+        assert_eq!(family.len(), 4, "the process group is the four of them");
+        for name in family {
+            assert!(!policy.allows(name), "`{name}` must be off");
+        }
+        assert!(policy.allows("bash"), "other groups are untouched");
+    }
+
+    /// **Witness: the policy addresses MCP and customer-registered tools.**
+    /// Neither is in any compile-time table, which is precisely why the old
+    /// two-field section could never reach them.
+    #[test]
+    fn mcp_and_custom_tool_names_are_addressable_from_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(
+            dir.path(),
+            "external.json",
+            r#"{"tools": {
+                "mcp": "off",
+                "mcp__github__create_issue": "on",
+                "deploy_to_staging": "off"
+            }}"#,
+        );
+        let policy = Settings::load_from(&[path]).unwrap().tool_policy();
+
+        assert!(!policy.allows("mcp__linear__save_issue"), "group off");
+        assert!(
+            policy.allows("mcp__github__create_issue"),
+            "an exact name beats its group"
+        );
+        assert!(!policy.allows("deploy_to_staging"), "a custom tool by name");
+        assert!(policy.allows("read_file"), "built-ins untouched");
+    }
+
+    /// A `tools` value takes the Toggle vocabulary only — a bool (or any
+    /// typo) is a loud parse error, never a silently-guessed state. The open
+    /// map must not have loosened this: an arbitrary KEY is now accepted, an
+    /// arbitrary VALUE still is not.
+    #[test]
+    fn a_non_toggle_tools_value_is_a_loud_parse_error() {
         let dir = tempfile::tempdir().unwrap();
         for (name, json) in [
             ("bool.json", r#"{"tools": {"bash": true}}"#),
             ("typo.json", r#"{"tools": {"bash": "enabled"}}"#),
+            ("nested.json", r#"{"tools": {"mcp": {"enabled": false}}}"#),
         ] {
             let bad = write(dir.path(), name, json);
             let err = Settings::load_from(std::slice::from_ref(&bad)).unwrap_err();
-            assert!(err.contains("invalid settings file"), "{err}");
+            assert!(err.contains("invalid settings file"), "{name}: {err}");
         }
+    }
+
+    /// The TUI edits this section and writes it back, so it has to survive a
+    /// round trip — and the serialized shape must stay the flat pairs an
+    /// operator hand-writes, not a nested `{"entries": …}` wrapper.
+    #[test]
+    fn the_tools_section_round_trips_as_flat_pairs() {
+        let parsed: Settings =
+            serde_json::from_str(r#"{"tools": {"bash": "off", "process": "on"}}"#).unwrap();
+        let rendered = serde_json::to_value(parsed.tools.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            rendered,
+            serde_json::json!({"bash": "off", "process": "on"}),
+            "the section must serialize as the pairs themselves"
+        );
+        let back: ToolsSettings = serde_json::from_value(rendered).unwrap();
+        assert_eq!(back, parsed.tools.unwrap());
+        // An empty section renders as `{}`, not as a stray key.
+        assert_eq!(
+            serde_json::to_value(ToolsSettings::default()).unwrap(),
+            serde_json::json!({})
+        );
     }
 
     #[test]
@@ -1321,11 +1424,9 @@ mod tests {
             std::env::remove_var("HOME");
             std::env::remove_var("STELLA_MANAGED_SETTINGS");
         }
-        assert!(
-            !merged.bash_tool_enabled(),
-            "untrusted project enabled bash"
-        );
-        assert!(!merged.web_tools_enabled(), "untrusted project enabled web");
+        let policy = merged.tool_policy();
+        assert!(!policy.allows("bash"), "untrusted project enabled bash");
+        assert!(!policy.allows("web_fetch"), "untrusted project enabled web");
         assert_eq!(
             merged
                 .agent_engine_config
@@ -1374,8 +1475,9 @@ mod tests {
             std::env::remove_var("HOME");
             std::env::remove_var("STELLA_MANAGED_SETTINGS");
         }
-        assert!(!merged.bash_tool_enabled(), "project off must narrow bash");
-        assert!(!merged.web_tools_enabled(), "project off must narrow web");
+        let policy = merged.tool_policy();
+        assert!(!policy.allows("bash"), "project off must narrow bash");
+        assert!(!policy.allows("web_fetch"), "project off must narrow web");
     }
 
     #[test]
@@ -1423,12 +1525,13 @@ mod tests {
             std::env::remove_var("STELLA_MANAGED_SETTINGS");
             std::env::remove_var("STELLA_TRUST_PROJECT");
         }
+        let policy = merged.tool_policy();
         assert!(
-            !merged.bash_tool_enabled(),
+            !policy.allows("bash"),
             "project overrode managed bash denial"
         );
         assert!(
-            !merged.web_tools_enabled(),
+            !policy.allows("web_fetch"),
             "project overrode managed web denial"
         );
         assert!(!merged.authority_policy.bash_allowed);
@@ -1444,6 +1547,64 @@ mod tests {
                 .is_none(),
             "managed denial must remove the trusted project's prompt"
         );
+    }
+
+    /// **Witness: the managed ceiling is general, not a bash/web special
+    /// case.** An org denies the `process` group and a customer's own
+    /// `deploy_to_staging`; a *trusted* project scope tries to grant both
+    /// back. Union-of-denials means it cannot. On the old code the managed
+    /// scope could only ever pin `bash` and `web` — any other key was
+    /// silently ignored and the project's grant simply stood.
+    #[test]
+    fn a_managed_denial_of_any_key_survives_a_project_grant() {
+        let _env = crate::test_env::lock();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let managed = dir.path().join("managed.json");
+        let workspace = dir.path().join("repo");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        std::fs::write(
+            &managed,
+            r#"{"tools": {"process": "off", "deploy_to_staging": "off"}}"#,
+        )
+        .unwrap();
+        write(
+            &workspace.join(".stella"),
+            "settings.json",
+            r#"{"tools": {
+                "process": "on",
+                "start_process": "on",
+                "deploy_to_staging": "on"
+            }}"#,
+        );
+        // SAFETY: serialized behind the binary-wide env lock.
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
+            std::env::set_var("STELLA_TRUST_PROJECT", "1");
+            std::env::remove_var("STELLA_PROJECT_HOOKS");
+        }
+
+        let merged = Settings::load(&workspace);
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("STELLA_MANAGED_SETTINGS");
+            std::env::remove_var("STELLA_TRUST_PROJECT");
+        }
+        let policy = merged.unwrap().tool_policy();
+        for name in stella_tools::catalog::names_in_group("process") {
+            assert!(
+                !policy.allows(name),
+                "project re-enabled `{name}` over a managed group denial"
+            );
+        }
+        assert!(
+            !policy.allows("deploy_to_staging"),
+            "project re-enabled a managed denial of a custom tool"
+        );
+        assert!(policy.allows("read_file"), "and nothing else was narrowed");
     }
 
     #[test]

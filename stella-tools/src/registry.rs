@@ -155,10 +155,14 @@ pub struct StorageIndex {
     session: Vec<stella_graph::storage::RelationEntry>,
 }
 
+/// Prerequisites and host attestations the registry needs to decide what it
+/// *can* build. Deliberately NOT a policy surface: the `bash`/`web` booleans
+/// that used to live here were operator policy welded into construction, and
+/// they only ever covered built-ins — an MCP or custom tool never passed
+/// through them. That job belongs to [`crate::policy::ToolPolicy`], enforced
+/// once above the whole session tool stack.
 #[derive(Clone, Default)]
 pub struct RegistryOptions {
-    pub bash: bool,
-    pub web: bool,
     pub media_spend_gate: Option<Arc<dyn stella_media::MediaSpendGate>>,
     pub media_operation_ids: Option<Arc<dyn crate::media::MediaOperationIdSource>>,
     pub media_operation_journal: Option<Arc<dyn stella_media::MediaOperationJournal>>,
@@ -286,17 +290,18 @@ impl ToolRegistry {
             entries.push(Arc::new(crate::exploration::Explorations));
             entries.push(Arc::new(crate::exploration::SaveExploration));
             entries.extend(process_tools::builtins(
-                options.bash,
                 task_board.clone(),
                 spawn_queue.clone(),
             ));
-        }
-        // The web family is OPT-IN like bash (`tools.web: "on"`): a fetched
-        // page is untrusted input AND an uncontrolled egress channel, so
-        // network access is never ambient. `web_search` additionally needs a
-        // BYOK search key — no key, no dead schema, mirroring the media
-        // tools' conditional registration.
-        if options.web {
+            // The web family registers by default, like every other built-in.
+            // A fetched page is untrusted input and an egress channel, which is
+            // a reason to be able to switch it off (`"tools": {"web": "off"}`),
+            // not a reason to ship it dark — an agent that cannot read a doc
+            // page is worse at the job for every operator who never found the
+            // opt-in. It sits inside the process-free branch because the
+            // isolation mode omits the whole host-reaching authority class.
+            // `web_search` additionally needs a BYOK search key — no key, no
+            // dead schema, mirroring the media tools' conditional registration.
             let auth: Arc<crate::web::WebAuthState> =
                 Arc::new(crate::web::WebAuthConfig::load_default());
             entries.push(Arc::new(crate::web::WebFetch(auth.clone())));
@@ -1508,6 +1513,19 @@ mod tests {
         (root, reg)
     }
 
+    /// `names` with `web_search` folded in when the *host running the tests*
+    /// happens to export a BYOK search key. `web_search` is the one remaining
+    /// environment-dependent row in the default surface — the other three web
+    /// tools need no key — so an exact-set pin has to account for it rather
+    /// than fail on a developer's machine.
+    fn with_ambient_search(mut names: Vec<&'static str>) -> Vec<&'static str> {
+        if crate::web::detect_search_backend().is_some() {
+            names.push("web_search");
+            names.sort_unstable();
+        }
+        names
+    }
+
     /// A coverage hint must fire only on whole path tokens — a substring hit
     /// (`lib.rs` inside `mylib.rs`) would permanently burn the map's
     /// once-per-session hint on a file it doesn't cover.
@@ -1644,9 +1662,9 @@ mod tests {
             );
         }
 
-        // Conditionally-registered tools never show up in a bare registry's
-        // schemas (the media tools need a capable key, the web tools an
-        // opt-in), so the registry-driven loop above can't reach them. The
+        // Conditionally-registered tools may not show up in a bare registry's
+        // schemas (the media tools need a capable key, `web_search` a search
+        // key), so the registry-driven loop above can't reach them. The
         // catalog declares them, and the alias reserves them — assert the
         // conditional half of the table is genuinely covered.
         for name in crate::catalog::names_where(|a| {
@@ -1675,12 +1693,13 @@ mod tests {
         let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,
-            crate::catalog::always_on_with_issues(),
+            with_ambient_search(crate::catalog::always_on_with_issues()),
             "registry disagrees with catalog::CATALOG — register the tool, or \
              add/remove its line in stella-tools/src/catalog.rs"
         );
-        // `bash` is NOT in the default surface — it is the settings opt-in.
-        assert!(!names.contains(&"bash"), "{names:?}");
+        // `bash` IS in the default surface. Switching it off is settings work,
+        // and it happens above this registry (crate::policy::ToolPolicy).
+        assert!(names.contains(&"bash"), "{names:?}");
     }
 
     /// Witness for #450: a tool that registers but was never declared in the
@@ -1691,7 +1710,7 @@ mod tests {
         let (_root, reg) = bare_registry(Some(IssueBackend::GitHub));
         let schemas = reg.schemas();
         let live: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
-        let mut catalog_missing_one = crate::catalog::always_on_with_issues();
+        let mut catalog_missing_one = with_ambient_search(crate::catalog::always_on_with_issues());
         let dropped = catalog_missing_one.pop().expect("catalog is non-empty");
         assert_ne!(
             live, catalog_missing_one,
@@ -1703,30 +1722,32 @@ mod tests {
         assert!(live.contains(&dropped));
     }
 
-    // bash opt-in (default OFF everywhere)
+    // bash and the web family ship ON (the default flip)
 
-    /// Witness: the default registry has NO `bash` — not in the schemas
-    /// the model sees, and executing it anyway is the standard
-    /// unknown-tool error. Shell execution is settings opt-in.
+    /// **Witness for the default flip.** With no options at all — no
+    /// settings, no opt-in, nothing — `bash` is advertised AND dispatchable.
+    /// This test fails on the old code, where `RegistryOptions::bash`
+    /// defaulted to `false` and the shell was absent until a settings key
+    /// said otherwise.
     #[tokio::test]
-    async fn bash_is_absent_by_default_and_calling_it_is_unknown() {
+    async fn bash_is_registered_with_no_options_at_all() {
         let (_root, reg) = bare_registry(None);
         assert!(
-            !reg.schemas().iter().any(|s| s.name == "bash"),
-            "bash must not be advertised by default"
+            reg.schemas().iter().any(|s| s.name == "bash"),
+            "bash must be advertised with no configuration"
         );
         let out = reg
-            .execute("bash", &serde_json::json!({"command": "echo hi"}))
+            .execute(
+                "bash",
+                &serde_json::json!({"command": "echo bash_default_on"}),
+            )
             .await;
         match out {
-            ToolOutput::Error { message } => {
-                assert!(message.contains("unknown tool `bash`"), "{message}")
-            }
-            other => panic!("disabled bash must be an unknown tool: {other:?}"),
+            ToolOutput::Ok { content } => assert!(content.contains("bash_default_on")),
+            ToolOutput::Error { message } => panic!("default bash must run: {message}"),
         }
-        // And the default options value IS the off posture.
-        assert!(!RegistryOptions::default().bash);
-        assert!(!RegistryOptions::default().web);
+        // The default options carry no policy at all any more — the only
+        // switch left is the host attestation.
         assert!(
             RegistryOptions::default()
                 .media_host_data_isolation
@@ -1734,67 +1755,12 @@ mod tests {
         );
     }
 
-    /// Witness: the explicit opt-in registers `bash` — schema advertised
-    /// and dispatchable.
-    #[tokio::test]
-    async fn bash_registers_and_dispatches_with_the_opt_in_flag() {
-        let root = tempfile::tempdir().unwrap();
-        let reg = ToolRegistry::with_backends_and_options(
-            root.path().to_path_buf(),
-            None,
-            None,
-            RegistryOptions {
-                bash: true,
-                web: false,
-                ..Default::default()
-            },
-        );
-        assert!(reg.schemas().iter().any(|s| s.name == "bash"));
-        let out = reg
-            .execute(
-                "bash",
-                &serde_json::json!({"command": "echo bash_enabled_ok"}),
-            )
-            .await;
-        match out {
-            ToolOutput::Ok { content } => assert!(content.contains("bash_enabled_ok")),
-            ToolOutput::Error { message } => panic!("enabled bash must run: {message}"),
-        }
-    }
-
-    // web opt-in (default OFF everywhere)
-
-    /// Witness: the web family is settings opt-in exactly like bash —
-    /// absent by default, registered (fetch/extract/download, all
-    /// key-free) with the flag. `web_search` additionally needs a search
-    /// key, so its presence is environment-dependent and not pinned here.
+    /// **Witness for the default flip, web half.** The three key-free web
+    /// tools register with no options; `web_search` still needs a search key,
+    /// so its presence is environment-dependent and not pinned here.
     #[test]
-    fn web_family_registers_only_with_the_opt_in_flag() {
+    fn the_key_free_web_family_is_registered_with_no_options_at_all() {
         let (_root, reg) = bare_registry(None);
-        let names: Vec<String> = reg.schemas().iter().map(|s| s.name.clone()).collect();
-        for absent in [
-            "web_fetch",
-            "web_extract_assets",
-            "web_download",
-            "web_search",
-        ] {
-            assert!(
-                !names.contains(&absent.to_string()),
-                "{absent} must be absent by default"
-            );
-        }
-
-        let root = tempfile::tempdir().unwrap();
-        let reg = ToolRegistry::with_backends_and_options(
-            root.path().to_path_buf(),
-            None,
-            None,
-            RegistryOptions {
-                bash: false,
-                web: true,
-                ..Default::default()
-            },
-        );
         let schemas = reg.schemas();
         for (expected, read_only) in [
             ("web_fetch", true),
@@ -1804,7 +1770,7 @@ mod tests {
             let schema = schemas
                 .iter()
                 .find(|s| s.name == expected)
-                .unwrap_or_else(|| panic!("{expected} must register with the web opt-in"));
+                .unwrap_or_else(|| panic!("{expected} must register with no configuration"));
             assert_eq!(schema.read_only, read_only, "{expected}");
         }
     }
@@ -1830,7 +1796,7 @@ mod tests {
         // table, not a second count to keep in sync (#450).
         assert_eq!(
             names,
-            crate::catalog::always_on(),
+            with_ambient_search(crate::catalog::always_on()),
             "the no-backend registry must be exactly the always-on catalog"
         );
         for absent in crate::catalog::names_where(|a| a == crate::catalog::Availability::Issue) {
@@ -2791,17 +2757,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_command_never_runs_and_a_bus_less_registry_is_unchanged() {
-        // Command guards apply to `bash`, so this fixture opts it in.
+        // Command guards apply to `bash`, which ships registered.
         let dir = tempfile::tempdir().unwrap();
         let reg = ToolRegistry::with_backends_and_options(
             dir.path().to_path_buf(),
             None,
             None,
-            RegistryOptions {
-                bash: true,
-                web: false,
-                ..Default::default()
-            },
+            RegistryOptions::default(),
         );
         let bus = HookBus::new("sess");
         bus.on_blocking(hook_names::COMMAND_STARTED, |_| HookDecision::Deny {

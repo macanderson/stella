@@ -54,6 +54,13 @@ mod outcome;
 mod output;
 mod persistence;
 mod prompt;
+// FOLLOW-UP: `src/tool_policy.rs` is a top-level module and belongs beside the
+// others in `main.rs` (`mod tool_policy;`). It is declared from here with an
+// explicit `#[path]` only because this change could not edit `main.rs`; when
+// that declaration lands, delete these two lines and re-point the
+// `crate::agent::PolicyToolSet` re-export below at `crate::tool_policy`.
+#[path = "tool_policy.rs"]
+mod tool_policy;
 mod tools;
 
 pub(crate) use engine::*;
@@ -72,6 +79,7 @@ pub(crate) use persistence::{
     persist_event, record_execution_end, spawn_renderer, warn_store_write_failed,
 };
 pub(crate) use prompt::*;
+pub(crate) use tool_policy::PolicyToolSet;
 pub(crate) use tools::*;
 
 /// Construct the native tool registry without consulting optional host/user backends when the
@@ -316,11 +324,14 @@ async fn run_pipeline_one_shot(
             Some(skills) => interactive.with_skill_registry(skills),
             None => interactive,
         };
+        // The operator's switches, applied over the complete surface — MCP and
+        // custom tools included — and BELOW discovery, so `tool_search` cannot
+        // advertise something the policy withholds.
+        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         // Outermost: the discovery layer (tool_search/skill_search/mcp_search)
         // must see the complete advertised catalog below it.
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed);
 
         let ws_ports = workspace_ports(
             cfg.workspace_root.clone(),
@@ -1555,23 +1566,29 @@ pub(crate) async fn discover_custom_tools(
 /// any discovery diagnostics for broken manifests. MCP-server tools
 /// (.stella/mcp.toml) are merged in at session build time and are not
 /// enumerated here — connecting to the servers is out of scope for a listing.
+/// Why a tool is off, phrased as the settings entry that did it — nothing is
+/// "disabled (default)" any more, so the only honest answer names a key.
+fn policy_reason(policy: &stella_tools::policy::ToolPolicy, name: &str) -> String {
+    match tool_policy::disabled_by(policy, name) {
+        Some(key) => format!("\"tools\": {{\"{key}\": \"off\"}} in settings"),
+        // Unreachable for a name the caller already found denied; a plain
+        // sentence beats an unwrap if the two ever disagree.
+        None => "a settings entry".to_string(),
+    }
+}
+
 pub fn run_tools_listing() -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     tui::section_header("Stella tools");
 
-    // The listing mirrors a real session's settings-driven tool switches
-    // (bash/web opt-ins).
+    // The listing mirrors a real session: the registry builds the full
+    // surface, and the operator's `"tools"` switches decide what survives.
     let settings = crate::settings::Settings::load(&workspace_root)?;
-    let bash_enabled = settings.bash_tool_enabled();
-    let web_enabled = settings.web_tools_enabled();
+    let policy = settings.tool_policy();
     let registry = ToolRegistry::new(
         workspace_root.clone(),
-        stella_tools::RegistryOptions {
-            bash: bash_enabled,
-            web: web_enabled,
-            ..Default::default()
-        },
+        stella_tools::RegistryOptions::default(),
     );
     println!("  {}", "built-in:".dimmed());
     let mut native: Vec<String> = stella_core::ports::ToolExecutor::schemas(&registry)
@@ -1580,22 +1597,37 @@ pub fn run_tools_listing() -> Result<(), String> {
         .collect();
     native.sort();
     for name in &native {
-        println!("    {} {}", "·".dimmed(), name);
+        if policy.allows(name) {
+            println!("    {} {}", "·".dimmed(), name);
+        } else {
+            println!(
+                "    {} {}",
+                "·".dimmed(),
+                format!("{name} — off ({})", policy_reason(&policy, name)).dimmed()
+            );
+        }
     }
-    if !bash_enabled {
+    // A tool the catalog declares but this environment cannot register is a
+    // missing prerequisite, not a switch — and a tool switched off in settings
+    // that also has an unmet prerequisite would otherwise vanish silently.
+    let mut withheld: Vec<&str> = policy
+        .denied_builtins()
+        .into_iter()
+        .filter(|name| !native.iter().any(|live| live == name))
+        .collect();
+    withheld.sort_unstable();
+    for name in withheld {
         println!(
             "    {} {}",
             "·".dimmed(),
-            "bash — disabled (default); enable with \"tools\": {\"bash\": \"on\"} in settings"
-                .dimmed()
+            format!("{name} — off ({})", policy_reason(&policy, name)).dimmed()
         );
     }
-    if !web_enabled {
+    if policy.is_default() {
         println!(
-            "    {} {}",
-            "·".dimmed(),
-            "web_search/web_fetch/web_extract_assets/web_download — disabled (default); \
-             enable with \"tools\": {\"web\": \"on\"} in settings"
+            "    {}",
+            "every tool is on — switch one off with \"tools\": {\"<name|group|*>\": \"off\"} \
+             in settings"
                 .dimmed()
         );
     }
@@ -2043,12 +2075,12 @@ async fn run_turn(
             Some(skills) => interactive.with_skill_registry(skills),
             None => interactive,
         };
+        let permitted = PolicyToolSet::new(&interactive, session_tool_policy(cfg));
         // Outermost discovery layer; the session-scoped `activated` handle
         // keeps lean-mode activations across the per-turn stack rebuild.
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-                .with_activation(activated.clone());
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
+            .with_activation(activated.clone());
         let hook_runner = ShellHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)

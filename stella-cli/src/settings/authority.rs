@@ -1,6 +1,7 @@
 //! Managed authority schema and the effective monotonic runtime policy.
 
 use serde::{Deserialize, Serialize};
+use stella_tools::policy::ToolPolicy;
 
 use super::{
     AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, EngineAgentKind, Settings, Toggle,
@@ -18,6 +19,12 @@ impl Settings {
 ///
 /// `off` denies the corresponding capability. An `on` value permits a later
 /// explicit grant (such as repository trust), but never grants by itself.
+///
+/// The `bash` and `web` keys predate the general per-tool policy and are kept
+/// because org-managed files in the field carry them; they are folded into the
+/// same ceiling as `"tools": {"bash": "off"}` in the managed scope, which is
+/// the general way to pin ANY tool or group off. The block is
+/// `deny_unknown_fields`, so it cannot itself grow into a second tool table.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedAuthoritySettings {
@@ -56,9 +63,16 @@ impl Default for AuthorityPolicy {
 }
 
 impl AuthorityPolicy {
+    /// `ceiling` is [`managed_tool_ceiling`]'s output — the SAME value that is
+    /// folded into the merged settings by [`apply_tool_ceiling`]. Passing it in
+    /// rather than recomputing from `managed.tools` is what keeps
+    /// `bash_allowed`/`web_allowed` from becoming a second, drifting opinion
+    /// about what the org denied: they are now a *reading* of the ceiling, and
+    /// a managed `{"*": "off"}` narrows them exactly as a literal
+    /// `{"bash": "off"}` does.
     pub(super) fn compute(
         managed: Option<&ManagedAuthoritySettings>,
-        managed_tools: Option<&ToolsSettings>,
+        ceiling: &ToolPolicy,
         project_trusted: bool,
     ) -> Self {
         let permits = |toggle: Option<Toggle>| toggle != Some(Toggle::Off);
@@ -67,10 +81,10 @@ impl AuthorityPolicy {
                 && permits(managed.and_then(|policy| policy.project_prompts)),
             project_custom_tools_allowed: project_trusted
                 && permits(managed.and_then(|policy| policy.project_custom_tools)),
-            bash_allowed: permits(managed.and_then(|policy| policy.bash))
-                && permits(managed_tools.and_then(|tools| tools.bash)),
-            web_allowed: permits(managed.and_then(|policy| policy.web))
-                && permits(managed_tools.and_then(|tools| tools.web)),
+            bash_allowed: ceiling.allows("bash"),
+            web_allowed: stella_tools::catalog::names_in_group("web")
+                .into_iter()
+                .any(|name| ceiling.allows(name)),
             media_requires_host_approval: managed
                 .and_then(|policy| policy.media_requires_host_approval)
                 .is_none_or(Toggle::is_on),
@@ -78,18 +92,76 @@ impl AuthorityPolicy {
     }
 }
 
-/// Remove project capability grants while retaining trusted scope values.
-/// Project `off` remains effective because lower authority may narrow.
+/// What the org-managed scope says about tools, as a policy in its own right.
+///
+/// Two sources, one map: the managed scope's own `tools` (any key — a tool
+/// name, a group, `"*"`) and the legacy `authority.bash` / `authority.web`
+/// toggles, which are appended last so an `authority` denial outranks a
+/// `tools` grant in the same file.
+///
+/// Grants are **kept**, not filtered out, and that is load-bearing: a managed
+/// `{"*": "off", "read_file": "on"}` has to resolve `read_file` as permitted
+/// when [`apply_tool_ceiling`] asks whether a merged grant may stand. A
+/// deny-only view would answer "no" and delete the org's own exception.
+pub(super) fn managed_tool_ceiling(
+    managed: Option<&ManagedAuthoritySettings>,
+    managed_tools: Option<&ToolsSettings>,
+) -> ToolPolicy {
+    let mut switches: Vec<(String, bool)> = managed_tools
+        .map(|tools| {
+            tools
+                .entries
+                .iter()
+                .map(|(key, toggle)| (key.clone(), toggle.is_on()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if managed.and_then(|policy| policy.bash) == Some(Toggle::Off) {
+        switches.push(("bash".to_string(), false));
+    }
+    if managed.and_then(|policy| policy.web) == Some(Toggle::Off) {
+        switches.push(("web".to_string(), false));
+    }
+    ToolPolicy::from_switches(switches)
+}
+
+/// Remove project tool GRANTS while retaining trusted scope values.
+///
+/// An untrusted repository may narrow the tool surface but never widen it, so
+/// every key the project turned **on** reverts to whatever the user/managed
+/// scopes said about that key (absent = the shipped default), while every key
+/// it turned **off** stands. Generic over the key set: a project cannot grant
+/// `bash`, `mcp`, `"*"`, or a custom tool by name any more than it could grant
+/// the two fields this used to hardcode.
 pub(super) fn restore_project_tools(merged: &mut Settings, trusted: &Settings, project: &Settings) {
-    let Some(project_tools) = project.tools else {
+    let Some(project_tools) = project.tools.as_ref() else {
         return;
     };
-    let target = merged.tools.get_or_insert_with(ToolsSettings::default);
-    if project_tools.bash == Some(Toggle::On) {
-        target.bash = trusted.tools.as_ref().and_then(|tools| tools.bash);
+    let granted: Vec<&String> = project_tools
+        .entries
+        .iter()
+        .filter(|(_, toggle)| toggle.is_on())
+        .map(|(key, _)| key)
+        .collect();
+    if granted.is_empty() {
+        return;
     }
-    if project_tools.web == Some(Toggle::On) {
-        target.web = trusted.tools.as_ref().and_then(|tools| tools.web);
+    let target = merged.tools.get_or_insert_with(ToolsSettings::default);
+    for key in granted {
+        match trusted
+            .tools
+            .as_ref()
+            .and_then(|tools| tools.entries.get(key))
+        {
+            Some(&toggle) => {
+                target.entries.insert(key.clone(), toggle);
+            }
+            // No trusted scope spoke about this key at all — drop it, which
+            // restores the shipped default rather than the project's grant.
+            None => {
+                target.entries.remove(key);
+            }
+        }
     }
 }
 
@@ -131,16 +203,40 @@ pub(super) fn restore_project_prompts(
     }
 }
 
-pub(super) fn apply_tool_ceiling(settings: &mut Settings, authority: AuthorityPolicy) {
-    if !authority.bash_allowed || !authority.web_allowed {
-        let tools = settings.tools.get_or_insert_with(ToolsSettings::default);
-        if !authority.bash_allowed {
-            tools.bash = Some(Toggle::Off);
-        }
-        if !authority.web_allowed {
-            tools.web = Some(Toggle::Off);
-        }
+/// Force the org-managed denials onto the merged settings, last.
+///
+/// Two moves, and the second is the one that is easy to miss:
+///
+/// 1. [`ToolPolicy::deny_all_from`] copies every key the ceiling turns off
+///    into the merged map. A key the ceiling grants (or never mentions) is
+///    left exactly as the lower scopes left it.
+/// 2. Every merged **grant** the ceiling would deny is dropped. Without this,
+///    precedence defeats the ceiling: a managed `{"process": "off"}` is a
+///    *group* key, and a project naming `{"start_process": "on"}` is more
+///    specific, so step 1 alone would leave the org's denial standing while
+///    the tool it was meant to withhold ran anyway. Dropping the grant (rather
+///    than pinning it off) lets it fall back through the ceiling's own key, so
+///    the merged map reads as the one denial the org actually wrote.
+///
+/// Together they are the whole enforcement story for managed settings — no
+/// "locked" or "pinned" syntax to get wrong, and no way for a later scope to
+/// re-grant at any level of specificity.
+pub(super) fn apply_tool_ceiling(settings: &mut Settings, ceiling: &ToolPolicy) {
+    if ceiling.is_default() {
+        return;
     }
+    let mut policy = settings
+        .tools
+        .as_ref()
+        .map(ToolsSettings::policy)
+        .unwrap_or_default();
+    policy.deny_all_from(ceiling);
+
+    let mut section = ToolsSettings::from_policy(&policy);
+    section
+        .entries
+        .retain(|key, toggle| !toggle.is_on() || ceiling.allows(key));
+    settings.tools = Some(section);
 }
 
 #[cfg(test)]
@@ -188,8 +284,9 @@ mod tests {
                 credentials: false,
             },
         );
-        assert!(!untrusted.bash_tool_enabled(), "managed bash ceiling");
-        assert!(!untrusted.web_tools_enabled(), "project web grant restored");
+        let policy = untrusted.tool_policy();
+        assert!(!policy.allows("bash"), "managed bash ceiling");
+        assert!(!policy.allows("web_fetch"), "project web grant restored");
         assert_eq!(
             untrusted
                 .agent_engine_config
@@ -208,11 +305,9 @@ mod tests {
                 credentials: true,
             },
         );
-        assert!(
-            !trusted.bash_tool_enabled(),
-            "managed denial survives trust"
-        );
-        assert!(trusted.web_tools_enabled(), "trusted project may grant web");
+        let policy = trusted.tool_policy();
+        assert!(!policy.allows("bash"), "managed denial survives trust");
+        assert!(policy.allows("web_fetch"), "trusted project may grant web");
         assert_eq!(
             trusted
                 .agent_engine_config

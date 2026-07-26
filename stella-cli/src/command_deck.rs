@@ -3962,12 +3962,13 @@ async fn run_lead_turn(
         let (stub_tx, _) = mpsc::unbounded_channel();
         let interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        // Discovery layer above the interactive set (it must see the full
-        // catalog), below the taps (searches are read-only; taps watch writes).
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-                .with_activation(activated.clone());
+        let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
+        // Discovery layer above the policy filter (it must see the full
+        // *permitted* catalog), below the taps (searches are read-only; taps
+        // watch writes).
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
+            .with_activation(activated.clone());
         let tapped = FileChangeTap {
             inner: &tools,
             events: tx.clone(),
@@ -4105,10 +4106,10 @@ async fn run_lead_pipeline_turn(
         let (stub_tx, _) = mpsc::unbounded_channel();
         let interactive = InteractiveToolSet::new(&customs, stub_tx, Box::new(ask_io.clone()))
             .with_skill_registry(SkillRegistry::from_env(cfg.workspace_root.clone()));
-        let tools =
-            crate::discovery::DiscoveryToolSet::new(&interactive, cfg.workspace_root.clone())
-                .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
-                .with_activation(activated.clone());
+        let permitted = agent::PolicyToolSet::new(&interactive, agent::session_tool_policy(cfg));
+        let tools = crate::discovery::DiscoveryToolSet::new(&permitted, cfg.workspace_root.clone())
+            .with_project_prompts_allowed(cfg.authority.project_prompts_allowed)
+            .with_activation(activated.clone());
         let tapped = FileChangeTap {
             inner: &tools,
             events: tx.clone(),
