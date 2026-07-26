@@ -27,7 +27,7 @@
 //! teardown is now split along the one line that matters — whether the
 //! syscall is synchronous:
 //!
-//! - the `/tmp` directory is removed by [`ShadowDirGuard`], a synchronous
+//! - the `/tmp` directory is removed by `ShadowDirGuard`, a synchronous
 //!   `Drop` guard, which is the only kind that still runs during runtime
 //!   shutdown;
 //! - the git registration is reclaimed by a `git worktree prune` at the start

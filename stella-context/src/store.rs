@@ -392,7 +392,8 @@ pub struct NodeRow {
 /// transaction) and the remainder is caught up at the next mount, so the only
 /// difference is that work for a store nobody holds stops. A caller that already
 /// joined sees nothing: `await_warm` took the handle, so `Drop` finds none. See
-/// [`crate::warm`] for why this is a flag plus an abort, never a spawn.
+/// the crate-private `warm` module for why this is a flag plus an abort, never
+/// a spawn.
 pub struct ContextStore {
     /// The DB path, kept so warming can open its own WAL connection.
     path: PathBuf,

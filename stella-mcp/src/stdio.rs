@@ -19,7 +19,7 @@
 //!    call, so calls to one server are serialized a layer above this one.
 //!    Dropping a `request` future (a caller-side timeout, Ctrl-C, a `select!`
 //!    losing the race) reclaims its slot immediately: the slot is owned by a
-//!    [`PendingSlot`] RAII guard on the request future's own stack, which is
+//!    `PendingSlot` RAII guard on the request future's own stack, which is
 //!    why the map is behind a `std::sync::Mutex` and not tokio's — `Drop`
 //!    cannot await. Before #613 the entry and its `oneshot` sender leaked
 //!    until the matching response arrived or the connection was drained by
