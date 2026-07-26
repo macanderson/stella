@@ -20,19 +20,46 @@ export AWS_SESSION_TOKEN="..."          # optional — for STS / SSO sessions
 export AWS_REGION="us-east-1"           # or AWS_DEFAULT_REGION; us-east-1 is the default
 ```
 
-`AWS_REGION` wins over `AWS_DEFAULT_REGION` when both are set; with neither, Stella uses
-`us-east-1`. Short-lived STS or SSO credentials work as long as `AWS_SESSION_TOKEN`
-accompanies them. Your IAM principal needs Bedrock invoke permissions for the models you
-call, and the models must be enabled in your account's Bedrock console.
+Short-lived STS or SSO credentials work as long as `AWS_SESSION_TOKEN` accompanies them.
+Your IAM principal needs Bedrock invoke permissions for the models you call, and the
+models must be enabled in your account's Bedrock console.
 
 <Callout type="warn">
-  Stella reads **only these explicit env vars** — it does not consult the AWS credential
-  chain. `AWS_PROFILE`, `~/.aws/credentials`, the SSO token cache, and IMDS/instance
-  roles are never read. If your setup is profile- or SSO-based, materialize static keys
-  into the environment first — e.g. `eval "$(aws configure export-credentials --format
-  env)"` after `aws sso login` — or a run fails with missing credentials even though
-  `aws` CLI calls succeed in the same shell.
+  Stella does not consult the **AWS** credential chain. `AWS_PROFILE`, `~/.aws/credentials`,
+  the SSO token cache, and IMDS/instance roles are never read. If your setup is profile- or
+  SSO-based, materialize static keys into the environment first — e.g.
+  `eval "$(aws configure export-credentials --format env)"` after `aws sso login` — or a
+  run fails with missing credentials even though `aws` CLI calls succeed in the same shell.
 </Callout>
+
+The two halves of the AWS credential are resolved by different machinery, and the
+difference matters when you want the keys out of your shell:
+
+<CardGrid size="md">
+  <OptionCard name="AWS_ACCESS_KEY_ID" required>
+    Bedrock's **primary credential**, so it rides Stella's own
+    [credential chain](/docs/api-providers#the-credential-chain) in full — `--api-key`,
+    the env var, `settings.json` `providers.bedrock.api_key`,
+    `~/.stella/credentials.toml`, and the interactive prompt all work, exactly as they
+    do for an ordinary API key.
+  </OptionCard>
+  <OptionCard name="AWS_SECRET_ACCESS_KEY" required>
+    **Environment only.** Read straight from the process environment — no
+    `credentials.toml` entry, no `settings.json` field, no prompt. Missing, it is a named
+    error rather than a doomed unsigned request.
+  </OptionCard>
+  <OptionCard name="AWS_SESSION_TOKEN">
+    **Environment only.** Optional; supply it for short-lived STS or SSO credentials.
+  </OptionCard>
+  <OptionCard name="AWS_REGION" defaultValue="us-east-1">
+    **Environment only.** `AWS_REGION` wins over `AWS_DEFAULT_REGION` when both are set;
+    with neither, Stella uses `us-east-1`.
+  </OptionCard>
+</CardGrid>
+
+So storing `AWS_ACCESS_KEY_ID` in `credentials.toml` and leaving the rest in the
+environment is a supported — if lopsided — arrangement. Putting the secret there is not:
+it will not be read.
 
 ## Selecting models
 
@@ -40,6 +67,10 @@ The provider id is `bedrock`; the default model is the **cross-region inference 
 `us.anthropic.claude-sonnet-4-5-20250929-v1:0`.
 
 ```bash
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+
 stella --model bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0 run "harden the S3 policy module"
 ```
 
@@ -71,6 +102,28 @@ cloud credential must never hijack provider selection — if you want Bedrock, p
 The pin sits between the `--model` flag and auto-detection — an explicit flag still
 wins, but with the pin in place Bedrock no longer loses to whichever direct-vendor key
 happens to be in the shell.
+
+## Reasoning is dropped on this provider
+
+<Callout type="warn">
+  Bedrock's reasoning posture is **unsupported**. Claude-on-Bedrock does expose extended
+  thinking through `additionalModelRequestFields.reasoning_config`, but Stella's Converse
+  adapter has no passthrough for it — so a pinned `effort` is **discarded**, surfaced as a
+  boot notice rather than sent. The model reasons at its own default depth. If per-agent
+  effort control is what you are after, the direct
+  [Anthropic provider](/docs/api-providers/anthropic) is where it lives.
+</Callout>
+
+## `base_url` in settings.json does not reach the wire
+
+<Callout type="warn">
+  This provider builds its own region-scoped endpoint from `AWS_REGION`, and it consumes
+  only the raw `--base-url` flag. A `providers.bedrock.base_url` in `settings.json` is
+  **silently inert on the wire**: it changes the endpoint `stella models` displays for
+  Bedrock and nothing else — requests still go to the region-derived host. To route
+  Bedrock through a proxy for a run, pass `--base-url` (or export `STELLA_BASE_URL`)
+  explicitly.
+</Callout>
 
 ## In the pipeline
 

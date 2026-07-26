@@ -23,10 +23,15 @@ A key stored here persists across sessions and shells, so you don't re-export an
 
 Store (or replace) a provider's key. With no flag, Stella shows an interactive masked prompt — the recommended path, since nothing lands in your shell history.
 
-| Flag | Meaning |
-| --- | --- |
-| `--key <key>` | Pass the key inline. **Visible in shell history and `ps` output** — prefer `--stdin` or the interactive prompt. Conflicts with `--stdin`. |
-| `--stdin` | Read the key from stdin (one trimmed line) — for scripts and secret managers. |
+<CardGrid size="md">
+  <OptionCard name="--key <key>">
+    Pass the key inline. **Visible in shell history and in `ps` output** — prefer
+    `--stdin` or the interactive prompt. Conflicts with `--stdin`.
+  </OptionCard>
+  <OptionCard name="--stdin">
+    Read the key from stdin, one trimmed line — for scripts and secret managers.
+  </OptionCard>
+</CardGrid>
 
 ```bash
 # Interactive, masked (recommended)

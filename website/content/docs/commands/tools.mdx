@@ -26,9 +26,14 @@ Custom tools come from a `<name>.toml` manifest dropped in `<workspace>/.stella/
 
 ## Flags
 
-| Flag | Meaning |
-| --- | --- |
-| `--validate [DIR]` | Strict pre-flight check of custom-tool manifests instead of listing. Parses every `<name>.toml` in `.stella/tools/` and `~/.stella/tools/` (or the given `DIR`), reports errors, warnings, and info per manifest, and exits non-zero if any manifest has errors. |
+<CardGrid size="md">
+  <OptionCard name="--validate [DIR]">
+    Strict pre-flight check of custom-tool manifests instead of listing. Parses every
+    `<name>.toml` in `.stella/tools/` and `~/.stella/tools/` — or in the given `DIR` —
+    reports errors, warnings, and info per manifest, and exits non-zero if any manifest
+    has errors.
+  </OptionCard>
+</CardGrid>
 
 `stella tools` otherwise takes the [global flags](/docs/commands); model selection rarely matters for this diagnostic command.
 
@@ -44,4 +49,10 @@ Validate custom-tool manifests in CI (non-zero exit on any error):
 
 ```bash
 stella tools --validate
+```
+
+Validate one directory of manifests before installing them:
+
+```bash
+stella tools --validate ./contrib/stella-tools
 ```

@@ -117,6 +117,238 @@
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
+ * Docs cards — the mobile-first replacement for reference tables.
+ * Namespaced `sc-*` (stella card); see src/components/cards.tsx.
+ *
+ * A wide reference table is a desktop-only artifact: on a phone it either
+ * overflows the viewport or crushes every column to two words, and the header
+ * row scrolls out of sight exactly when you need it. A card carries its own
+ * labels, so it reads identically at 380px and 1400px.
+ *
+ * The grid is `auto-fill` over a min column width rather than a breakpoint
+ * ladder, so the column count falls out of the available width — including
+ * inside the narrower `/docs` content column — with no media queries to keep
+ * in sync.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+.sc-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+/* Below the min width the track collapses to one stacked column — the phone
+ * case — because `minmax()`'s floor would otherwise force a sideways scroll. */
+.sc-grid-sm {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+}
+.sc-grid-md {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+}
+.sc-grid-lg {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr));
+}
+
+.sc-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.75rem;
+  background: var(--color-fd-card);
+  /* Cards sit in a prose column; MDX would otherwise inherit paragraph rhythm. */
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.sc-card-link {
+  text-decoration: none;
+  color: inherit;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.15s ease;
+}
+.sc-card-link:hover {
+  border-color: color-mix(in oklch, var(--color-fd-foreground) 28%, transparent);
+  background: var(--color-fd-accent);
+}
+/* Keyboard parity with hover — the whole card is one tab stop. */
+.sc-card-link:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.sc-card-logo {
+  display: flex;
+  align-items: center;
+  min-height: 2rem;
+  margin-bottom: 0.15rem;
+  color: var(--color-fd-foreground);
+}
+
+.sc-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sc-card-title {
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+  /* Long provider names wrap rather than pushing the badge off the card. */
+  min-width: 0;
+}
+
+.sc-card-body {
+  color: var(--color-fd-muted-foreground);
+  /* MDX wraps card children in <p>; strip the block margins it brings. */
+  margin: 0;
+}
+.sc-card-body > :first-child {
+  margin-top: 0;
+}
+.sc-card-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* ── label/value list ──────────────────────────────────────────────────────
+ * Two columns on anything wide enough for the labels to stay on one line,
+ * stacked below that. This is the part a table gets wrong on a phone: here the
+ * label rides *with* its value instead of living in a scrolled-away header. */
+
+.sc-meta {
+  display: grid;
+  gap: 0.3rem 0.75rem;
+  margin: 0.15rem 0 0;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--color-fd-border);
+  font-size: 0.8125rem;
+}
+
+.sc-meta-row {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, auto) 1fr;
+  gap: 0.15rem 0.75rem;
+  align-items: baseline;
+}
+
+@container (max-width: 20rem) {
+  .sc-meta-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sc-meta-label {
+  color: var(--color-fd-muted-foreground);
+  font-weight: 500;
+}
+
+.sc-meta-value {
+  margin: 0;
+  color: var(--color-fd-foreground);
+  /* Identifiers (env vars, model ids) are long and unbreakable at spaces —
+   * let them break anywhere rather than widening the whole grid track. */
+  overflow-wrap: anywhere;
+}
+
+.sc-mono {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 0.9em;
+}
+
+/* ── badges ───────────────────────────────────────────────────────────────
+ * Neutral by default. `mutating`/`caution` spend the same functional amber the
+ * callouts use, because "this can change your files" is a warning rather than
+ * decoration — the one exception the neutral brand already makes. */
+
+.sc-badge {
+  flex: none;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 9999px;
+  background: var(--color-fd-muted);
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.sc-badge[data-tone="mutating"],
+.sc-badge[data-tone="caution"] {
+  border-color: color-mix(in oklch, var(--stella-warning-ink) 35%, transparent);
+  color: var(--stella-warning-ink);
+  background: color-mix(in oklch, var(--stella-warning-ink) 8%, transparent);
+}
+
+.dark .sc-badge[data-tone="mutating"],
+.dark .sc-badge[data-tone="caution"] {
+  border-color: color-mix(in oklch, var(--stella-warning) 35%, transparent);
+  color: var(--stella-warning);
+  background: color-mix(in oklch, var(--stella-warning) 10%, transparent);
+}
+
+/* ── tool cards ───────────────────────────────────────────────────────────
+ * The left rule repeats the badge as shape rather than text, so the
+ * read-only/mutating partition survives a squint. Color is never the sole
+ * cue — the badge always spells it out. */
+
+.sc-option {
+  container-type: inline-size;
+}
+
+.sc-tool {
+  border-left-width: 3px;
+  container-type: inline-size;
+}
+.sc-tool[data-access="read"] {
+  border-left-color: var(--color-fd-border);
+}
+.sc-tool[data-access="mutating"] {
+  border-left-color: color-mix(in oklch, var(--stella-warning-ink) 55%, transparent);
+}
+.dark .sc-tool[data-access="mutating"] {
+  border-left-color: color-mix(in oklch, var(--stella-warning) 55%, transparent);
+}
+
+.sc-tool-name {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+  overflow-wrap: anywhere;
+  /* Fumadocs styles bare <code>; this is a card heading, not inline code. */
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.sc-tool-when {
+  margin: 0;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--color-fd-border);
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+}
+
+.sc-tool-when-label {
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+}
+
+/* Not every table should become a card: a genuine numeric matrix (the pricing
+ * catalog) is read *down* its columns, which cards destroy. Those stay tables.
+ * Fumadocs already wraps every MDX table in an `overflow-auto` div, so the page
+ * body never scrolls sideways on its own — nothing to add here. */
+
+/* ───────────────────────────────────────────────────────────────────────────
  * Landing page (the (home) route only). Pure-CSS, namespaced `lp-*`.
  * ─────────────────────────────────────────────────────────────────────────── */
 

@@ -57,12 +57,14 @@ mod memory_index;
 mod model_catalog;
 mod rules;
 mod runtime;
+mod scripts_cmd;
 mod session_persist;
 mod settings;
 mod settings_check;
 mod signals;
 mod skill_manager;
 mod stats;
+mod storage_cmd;
 mod subsession;
 mod tool_policy;
 mod tool_switches;
@@ -471,7 +473,7 @@ enum Command {
     Graph {
         /// What to ask the graph
         #[arg(value_enum)]
-        op: GraphOp,
+        op: contextgraph::GraphOp,
 
         /// Symbol name (definitions/references) or workspace-relative file
         /// path (imports/importers/neighbors)
@@ -484,7 +486,7 @@ enum Command {
     /// parsing plus a local subprocess, needs no API key.
     Scripts {
         #[command(subcommand)]
-        cmd: ScriptsCmd,
+        cmd: scripts_cmd::ScriptsCmd,
     },
 
     /// Inspect the storage map — every storage layer, namespace, relation,
@@ -492,7 +494,7 @@ enum Command {
     /// reads .stella/private/codegraph.db + the manifest, needs no API key.
     Storage {
         #[command(subcommand)]
-        cmd: StorageCmd,
+        cmd: storage_cmd::StorageCmd,
     },
 
     /// List configured providers and available models
@@ -591,7 +593,7 @@ enum Command {
     /// only; needs no API key.
     Memory {
         #[command(subcommand)]
-        cmd: MemoryCmd,
+        cmd: memory_cmd::MemoryCmd,
     },
 
     /// Manage MCP servers: search a registry, install into .stella/mcp.toml,
@@ -947,403 +949,6 @@ fn run_resume_list() -> Result<(), String> {
     Ok(())
 }
 
-/// The five code-graph queries, mirroring the `graph_query` agent tool's ops
-/// one-for-one so a human at the CLI and the model inside a turn see the
-/// same frames for the same question.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum GraphOp {
-    /// Where a symbol is defined
-    Definitions,
-    /// Best-effort textual references to a symbol
-    References,
-    /// What a file imports
-    Imports,
-    /// Which files import a file
-    Importers,
-    /// A file's immediate graph neighborhood (symbols + edges)
-    Neighbors,
-}
-
-impl GraphOp {
-    fn as_str(self) -> &'static str {
-        match self {
-            GraphOp::Definitions => "definitions",
-            GraphOp::References => "references",
-            GraphOp::Imports => "imports",
-            GraphOp::Importers => "importers",
-            GraphOp::Neighbors => "neighbors",
-        }
-    }
-}
-
-#[derive(Subcommand)]
-enum StorageCmd {
-    /// The full map: layer → namespace → relation tree with intents
-    Tree,
-    /// One relation's card: fields, constraints, meaning, provenance.
-    /// Accepts a store:// address, a bare address, or a relation name.
-    Show { address: String },
-    /// Find relations and fields whose (normalized) name contains the query
-    Grep { name: String },
-    /// Drift report: near-duplicate relations, orphaned manifest meanings,
-    /// and intent coverage. Report-only — nothing is changed.
-    Drift,
-    /// Bound `store.db`'s growth: drop whole executions and every row keyed to
-    /// them, by age and/or a ceiling. Alias for `stella stats prune` — same
-    /// flags, same engine. Start with `--dry-run`.
-    Prune(crate::stats::PruneArgs),
-}
-
-/// `stella observe` — serve the Observatory dashboard for this workspace on
-/// `127.0.0.1` until interrupted. Telemetry stores are opened read-only; the
-/// page and its assets are embedded, so nothing is fetched from anywhere.
-fn preflight_observatory_stores(root: &std::path::Path) -> Result<(), String> {
-    for name in ["store.db", "fleet.db", "context.db", "codegraph.db"] {
-        stella_store::existing_workspace_private_sqlite_path(root, name)
-            .map_err(|e| format!("cannot resolve private Observatory state `{name}`: {e}"))?;
-    }
-    Ok(())
-}
-
-fn run_observe(port: u16, open: bool) -> Result<(), String> {
-    let root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    preflight_observatory_stores(&root)?;
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("failed to start runtime: {e}"))?;
-    rt.block_on(stella_observatory::serve(root, port, move |addr| {
-        let url = format!("http://{addr}/");
-        println!();
-        println!("  {} {}", "◆".bright_magenta(), "Stella Observatory".bold());
-        println!("  {} {}", "→".bright_cyan(), url);
-        println!(
-            "  {}",
-            "reads .stella (read-only) · binds 127.0.0.1 only · Ctrl+C to stop".dimmed()
-        );
-        if open {
-            // Best-effort convenience; the printed URL is the contract.
-            let opener = if cfg!(target_os = "macos") {
-                "open"
-            } else {
-                "xdg-open"
-            };
-            let mut command = std::process::Command::new(opener);
-            command.arg(&url);
-            stella_tools::subprocess_env::scrub_sensitive_std_env(&mut command);
-            let _ = command.spawn();
-        }
-    }))
-    .map_err(|e| e.to_string())
-}
-
-/// The `stella scripts` surface, mirroring the `list_scripts`/`run_script`
-/// tools one-for-one so a human at the CLI and the model inside a turn see
-/// the same frames (docs/design/scripts-index.md).
-#[derive(Subcommand)]
-enum ScriptsCmd {
-    /// List detected scripts and their canonical verb bindings
-    List {
-        /// Emit the index as JSON (schema_version 1)
-        #[arg(long)]
-        json: bool,
-
-        /// Narrow to one workspace package dir
-        #[arg(long)]
-        dir: Option<String>,
-    },
-    /// Run a script by canonical verb or qualified id (e.g. test, pnpm:build)
-    Run {
-        /// install|build|check|start|test|lint|format, or a qualified id
-        script: String,
-
-        /// Package dir when the id exists in several packages
-        #[arg(long)]
-        dir: Option<String>,
-
-        /// Timeout in seconds
-        #[arg(long, default_value_t = 600)]
-        timeout_secs: u64,
-
-        /// Extra args appended runner-natively (after `--` for npm-family)
-        #[arg(last = true)]
-        args: Vec<String>,
-    },
-}
-
-/// `stella scripts …` — the human door to the project scripts index.
-/// Detection is static manifest parsing; `run` executes one indexed entry.
-fn run_scripts(cmd: &ScriptsCmd) -> Result<(), String> {
-    let root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    match cmd {
-        ScriptsCmd::List { json, dir } => {
-            let index = stella_tools::scripts::ScriptIndex::detect_blocking(&root);
-            if *json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&index.to_json())
-                        .map_err(|e| format!("serialize index: {e}"))?
-                );
-            } else {
-                println!("{}", index.render_list(dir.as_deref()));
-            }
-            Ok(())
-        }
-        ScriptsCmd::Run {
-            script,
-            dir,
-            timeout_secs,
-            args,
-        } => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| format!("failed to start runtime: {e}"))?;
-            let output = rt.block_on(stella_tools::scripts::run_by_name(
-                &root,
-                script,
-                dir.as_deref(),
-                args,
-                *timeout_secs,
-            ));
-            match output {
-                stella_protocol::tool::ToolOutput::Ok { content } => {
-                    println!("{content}");
-                    Ok(())
-                }
-                stella_protocol::tool::ToolOutput::Error { message } => Err(message),
-            }
-        }
-    }
-}
-
-/// `stella graph <op> <target>` — the human door to the same query surface
-/// the `graph_query` tool gives the agent. Frames print exactly as the model
-/// would receive them.
-fn run_graph(op: GraphOp, target: &str) -> Result<(), String> {
-    let root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    match stella_tools::graph::run_query(&root, op.as_str(), target) {
-        stella_protocol::tool::ToolOutput::Ok { content } => {
-            println!("{content}");
-            Ok(())
-        }
-        stella_protocol::tool::ToolOutput::Error { message } => Err(message),
-    }
-}
-
-/// `stella storage <cmd>` — the human door to the storage map the pre-write
-/// gate enforces (docs/design/storage-map.md). Reads the persisted index +
-/// stella.storage.toml; empty output means `stella init` hasn't indexed any
-/// storage yet.
-fn load_storage_snapshot_checked(
-    root: &std::path::Path,
-) -> Result<stella_graph::StorageSnapshot, String> {
-    stella_tools::graph::load_storage_snapshot(root)
-        .map_err(|e| format!("cannot resolve private storage-map index: {e}"))
-}
-
-fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
-    use stella_graph::storage::{dedup_key, display_address, embed_card, normalize_name};
-    // Retention operates on store.db itself, not on the storage *map*, so it
-    // runs ahead of the snapshot load below — a workspace with no
-    // stella.storage.toml still has a store.db worth bounding.
-    if let StorageCmd::Prune(args) = cmd {
-        return crate::stats::run_stats_prune(args);
-    }
-    let root =
-        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
-    let snapshot = load_storage_snapshot_checked(&root)?;
-    // A manifest that will not parse contributes nothing — no layers, no
-    // boundaries, no intent — so without this the map simply looks emptier
-    // than the repo declared it to be, and the pre-write gate is quietly
-    // enforcing less than the user believes.
-    if let Some(error) = &snapshot.manifest_error {
-        eprintln!(
-            "{} stella.storage.toml did not parse, so its layers, boundaries and \
-             intent are NOT in this map (and the pre-write gate is not enforcing \
-             them): {error}",
-            "warning:".yellow().bold()
-        );
-    }
-    if snapshot.relations.is_empty() && snapshot.layers.is_empty() {
-        println!(
-            "{}",
-            "storage map is empty — run `stella init` to index the workspace, and/or \
-             declare layers in stella.storage.toml"
-                .dimmed()
-        );
-        return Ok(());
-    }
-    match cmd {
-        // Returned above, before the storage map is even loaded — retention
-        // operates on `store.db`, not on the map. Exhaustiveness is not
-        // flow-sensitive, so the arm has to exist; it is genuinely unreachable.
-        StorageCmd::Prune(_) => {
-            unreachable!("`stella storage prune` returns before the map loads")
-        }
-        StorageCmd::Tree => {
-            for layer in &snapshot.layers {
-                println!(
-                    "{} {} {}",
-                    "◆".bright_magenta(),
-                    layer.key.bold(),
-                    format!("({}, {}, {})", layer.engine, layer.class, layer.durability).dimmed()
-                );
-                if let Some(boundary) = &layer.boundary {
-                    println!("  {}", boundary.dimmed());
-                }
-                let mut namespaces: Vec<&str> = snapshot
-                    .relations
-                    .iter()
-                    .filter(|r| r.layer == layer.key)
-                    .map(|r| r.namespace.as_str())
-                    .collect();
-                namespaces.sort_unstable();
-                namespaces.dedup();
-                for ns in namespaces {
-                    println!("  {}", ns.bright_cyan());
-                    for rel in snapshot
-                        .relations
-                        .iter()
-                        .filter(|r| r.layer == layer.key && r.namespace == ns)
-                    {
-                        let meta = match &rel.intent {
-                            Some(intent) => format!(" — {intent}"),
-                            None => String::new(),
-                        };
-                        println!(
-                            "    {} {} ({} {}){}",
-                            "·".dimmed(),
-                            rel.name,
-                            rel.fields.len(),
-                            if rel.fields.len() == 1 {
-                                "field"
-                            } else {
-                                "fields"
-                            },
-                            meta.dimmed()
-                        );
-                    }
-                }
-            }
-        }
-        StorageCmd::Show { address } => {
-            let needle = address.trim_start_matches("store://");
-            let normalized = needle
-                .split('/')
-                .map(normalize_name)
-                .collect::<Vec<_>>()
-                .join("/");
-            let found = snapshot
-                .relations
-                .iter()
-                .find(|r| r.address == normalized)
-                .or_else(|| {
-                    // Fall back to a bare relation-name lookup.
-                    snapshot
-                        .relations
-                        .iter()
-                        .find(|r| dedup_key(&r.name) == dedup_key(needle))
-                })
-                .ok_or_else(|| format!("no relation at `{address}` in the storage map"))?;
-            let layer = snapshot.layers.iter().find(|l| l.key == found.layer);
-            print!("{}", embed_card(layer, found));
-        }
-        StorageCmd::Grep { name } => {
-            let needle = normalize_name(name);
-            let mut hits = 0usize;
-            for rel in &snapshot.relations {
-                if normalize_name(&rel.name).contains(&needle) {
-                    hits += 1;
-                    println!(
-                        "{} ({}){}",
-                        display_address(&rel.address).bold(),
-                        rel.kind,
-                        rel.source
-                            .as_deref()
-                            .map(|s| format!("  {s}"))
-                            .unwrap_or_default()
-                            .dimmed()
-                    );
-                }
-                for field in &rel.fields {
-                    if normalize_name(&field.name).contains(&needle) {
-                        hits += 1;
-                        println!(
-                            "{}/{} {}",
-                            display_address(&rel.address),
-                            field.name.bold(),
-                            field.data_type.as_deref().unwrap_or("").dimmed()
-                        );
-                    }
-                }
-            }
-            if hits == 0 {
-                println!("{}", format!("no storage object matches `{name}`").dimmed());
-            }
-        }
-        StorageCmd::Drift => {
-            let mut findings = 0usize;
-            // Near-duplicate relations: same layer, similar token sets.
-            for (i, a) in snapshot.relations.iter().enumerate() {
-                for b in snapshot.relations.iter().skip(i + 1) {
-                    if a.layer != b.layer || dedup_key(&a.name) == dedup_key(&b.name) {
-                        continue;
-                    }
-                    let key_a = dedup_key(&a.name);
-                    let key_b = dedup_key(&b.name);
-                    let set_a: std::collections::HashSet<&str> =
-                        key_a.split('_').filter(|t| !t.is_empty()).collect();
-                    let set_b: std::collections::HashSet<&str> =
-                        key_b.split('_').filter(|t| !t.is_empty()).collect();
-                    if set_a.is_empty() || set_b.is_empty() {
-                        continue;
-                    }
-                    let overlap = set_a.intersection(&set_b).count() as f64
-                        / set_a.union(&set_b).count() as f64;
-                    if overlap >= 0.5 {
-                        findings += 1;
-                        println!(
-                            "{} {} ≈ {}",
-                            "near-duplicate:".yellow().bold(),
-                            display_address(&a.address),
-                            display_address(&b.address)
-                        );
-                    }
-                }
-            }
-            for orphan in &snapshot.orphaned_meanings {
-                findings += 1;
-                println!(
-                    "{} {} {}",
-                    "orphaned meaning:".yellow().bold(),
-                    display_address(orphan),
-                    "(manifest entry with no parsed entity — entity deleted, or address typo)"
-                        .dimmed()
-                );
-            }
-            let with_intent = snapshot
-                .relations
-                .iter()
-                .filter(|r| r.intent.is_some())
-                .count();
-            println!(
-                "{} {}/{} relations carry an intent sentence",
-                "coverage:".bold(),
-                with_intent,
-                snapshot.relations.len()
-            );
-            if findings == 0 {
-                println!("{}", "no drift signals".dimmed());
-            }
-        }
-    }
-    Ok(())
-}
-
 /// `--budget` must be a positive, finite dollar amount — a NaN or negative
 /// limit would make every comparison silently false and turn the "hard
 /// cap" into a no-op, the worst failure mode for a money control.
@@ -1480,16 +1085,16 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         }
         Some(Command::Graph { op, target }) => {
             // Reads the local index only — works with zero API keys.
-            return run_graph(*op, target);
+            return contextgraph::run_graph(*op, target);
         }
         Some(Command::Scripts { cmd }) => {
             // Static manifest parsing plus a local subprocess — works with
             // zero API keys.
-            return run_scripts(cmd);
+            return scripts_cmd::run_scripts(cmd);
         }
         Some(Command::Storage { cmd }) => {
             // Reads the local index + manifest only — zero API keys.
-            return run_storage(cmd);
+            return storage_cmd::run_storage(cmd);
         }
         Some(Command::Inspect {
             execution_id,
@@ -1573,7 +1178,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Observe { port, open }) => {
             // Loopback-only dashboard over local telemetry — no provider or
             // API key required; the stores are opened strictly read-only.
-            return run_observe(*port, *open);
+            return storage_cmd::run_observe(*port, *open);
         }
         Some(Command::Doctor { repair }) => {
             // Reads local state only — and with --repair renames files inside

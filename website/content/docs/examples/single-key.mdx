@@ -8,12 +8,16 @@ means two or three API keys. If you have **one** key, everything here works with
 is the setup most people should run first; graduate to a cross-family judge later if the
 data says so.
 
+<ProviderGrid only={["anthropic", "openai", "zai", "deepseek"]} />
+
 ## The zero-config baseline
 
 One env var is a working setup — auto-detection does the rest:
 
 ```bash
-export ANTHROPIC_API_KEY="..."   # or OPENAI_API_KEY, ZAI_API_KEY, …
+export ANTHROPIC_API_KEY="sk-ant-..."   # or OPENAI_API_KEY, ZAI_API_KEY, DEEPSEEK_API_KEY
+
+stella config                            # confirm: provider, model, redacted key preview
 stella run "fix the flaky retry test"
 ```
 
@@ -35,30 +39,95 @@ stella --budget 2.00 goal "the linter passes and the snapshot tests are green"
 ## A tuned one-key profile
 
 When every role is the same family, make the judge *behave* differently: strict prompt,
-high effort. Same shape for any provider — swap the model line:
+high effort. Paste this whole file — it is a complete `settings.json`, not a fragment:
 
-```json title="~/.stella/settings.json (Anthropic)"
+```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "default_model": "anthropic/claude-fable-5",
+    "pipeline_worker_model": "anthropic/claude-fable-5",
     "pipeline_judge_model": "anthropic/claude-fable-5",
+    "pipeline_triage_model": "anthropic/claude-fable-5",
+
+    "allowed_models": ["anthropic/claude-fable-5"],
+
+    "auto_mode": "off",
+    "effort_auto": "off",
+    "reasoning_auto": "on",
+
     "agents": {
+      "worker": { "effort": "high" },
       "judge": {
-        "prompt": "You are a strict, evidence-first code judge. Demand proof over plausibility.",
-        "effort": "high"
-      }
-    },
-    "reasoning_auto": "on"
+        "effort": "high",
+        "prompt": "You are a strict, evidence-first code judge. Claimed success without deterministic evidence is a FAIL."
+      },
+      "triage": { "effort": "low" }
+    }
   }
 }
 ```
 
-| One key for… | Worker &amp; judge model | Notes |
-| --- | --- | --- |
-| Anthropic | `anthropic/claude-fable-5` | Flagship quality; the priciest single-key option |
-| OpenAI | `openai/gpt-5.5` | 400k window; `service_tier: "priority"` available for the judge |
-| Z.ai | `zai/glm-5.2` | The budget pick — and on a [coding plan](/docs/examples/zai-coding-plan), flat-rate |
-| DeepSeek | `deepseek/deepseek-chat` | Cheapest metered option; see [dirt cheap](/docs/examples/dirt-cheap) |
+`reasoning_auto: "on"` puts thinking on for the worker, judge, and default agents and
+off for triage, so the per-agent `reasoning` field is left out on purpose — the auto
+would override it anyway. `effort_auto` stays off, which is what lets the per-agent
+`effort` values above apply.
+
+Then run it and read back what it cost:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+stella config                                    # verify the file resolved as you expect
+stella --budget 2.00 run "add cursor pagination to /orders" \
+  --test-command "cargo test -p api"
+stella stats                                     # tokens, cost, and resolve rate per model
+```
+
+### The same file for the other providers
+
+Swap the four model strings and the `allowed_models` entry. Only OpenAI takes the extra
+`params` block — `service_tier` is forwarded by the OpenAI dialect and silently dropped
+by every other adapter:
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "default_model": "openai/gpt-5.5",
+    "pipeline_worker_model": "openai/gpt-5.5",
+    "pipeline_judge_model": "openai/gpt-5.5",
+    "pipeline_triage_model": "openai/gpt-5.5",
+
+    "allowed_models": ["openai/gpt-5.5"],
+
+    "auto_mode": "off",
+    "effort_auto": "off",
+    "reasoning_auto": "on",
+
+    "agents": {
+      "worker": { "effort": "high" },
+      "judge": {
+        "effort": "high",
+        "prompt": "You are a strict, evidence-first code judge. Claimed success without deterministic evidence is a FAIL.",
+        "params": { "service_tier": "priority" }
+      },
+      "triage": { "effort": "low" }
+    }
+  }
+}
+```
+
+Which one to hold the key for:
+
+- **Anthropic** — `anthropic/claude-fable-5`, a 200k window at $3.00/$15.00 per Mtok.
+  Flagship quality, and the priciest single-key option.
+- **OpenAI** — `openai/gpt-5.5`, the largest window of these four at 400k, $1.25/$10.00,
+  and the only provider where `service_tier: "priority"` reaches the wire.
+- **Z.ai** — `zai/glm-5.2`, 200k at $0.60/$2.20. The budget pick, and on a
+  [coding plan](/docs/examples/zai-coding-plan) it is flat-rate rather than metered.
+- **DeepSeek** — `deepseek/deepseek-chat`, 128k at $0.27/$1.10. The cheapest metered
+  option; see [dirt cheap](/docs/examples/dirt-cheap). Note that `effort` is silently
+  dropped on DeepSeek, so the per-agent `effort` lines above are inert there — vary the
+  judge with its `prompt` instead.
 
 <Callout type="warn">
   A same-family judge shares the worker's blind spots — it is real review, not

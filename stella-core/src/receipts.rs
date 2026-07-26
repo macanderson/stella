@@ -14,6 +14,7 @@
 //! message into per-frame `RecalledFrame` blocks (with `memory_id`) is the
 //! memory-join increment (spec §9), where the pipeline participates.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
@@ -55,6 +56,26 @@ pub const RECEIPT_SEQ_SUMMARIZER: u64 = 1;
 /// and summarizer seats.
 pub const RECEIPT_SEQ_ALLOCATED_BASE: u64 = 2;
 
+// Counts SHA-256 passes over block content. Every hash this module performs
+// funnels through `sha256_hex_parts` — `block_id`, `content_digest` and
+// `tool_result_block_id` all reach it — so this is the one choke point that can
+// witness the per-step hashing cost.
+//
+// Each pass is Θ(content), so on a long turn the difference between hashing a
+// block once and re-hashing it on every step is the difference between linear
+// and quadratic work in the turn's length. Test-only; thread-local so it measures
+// one turn's own work rather than whatever else the test binary is doing.
+#[cfg(test)]
+thread_local! {
+    static HASH_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Zero this thread's hash-pass counter and return the previous value.
+#[cfg(test)]
+pub(crate) fn take_hash_passes() -> usize {
+    HASH_PASSES.with(|c| c.replace(0))
+}
+
 /// `sha256` hex over the concatenation of `parts`, hashed as a stream. Feeding
 /// the parts one `update` at a time is byte-identical to hashing their joined
 /// bytes, so a caller with a multi-part preimage gets the same digest without
@@ -64,6 +85,8 @@ pub const RECEIPT_SEQ_ALLOCATED_BASE: u64 = 2;
 /// `to_hex`.
 fn sha256_hex_parts(parts: &[&[u8]]) -> String {
     use std::fmt::Write as _;
+    #[cfg(test)]
+    HASH_PASSES.with(|c| c.set(c.get() + 1));
     let mut h = Sha256::new();
     for part in parts {
         h.update(part);
@@ -157,8 +180,92 @@ fn is_gap_kind(kind: BlockKind) -> bool {
     )
 }
 
+/// Counts in-place rewrites of the transcript, as distinct from appends.
+///
+/// Two per-step memos — the driver's result identities and this module's block
+/// digests — are keyed by a message's POSITION. A position is a stable name for a
+/// message's bytes only as long as nothing rewrites what is already there.
+/// Appends never invalidate one; compaction (which stubs and ages tool results in
+/// place) and the overflow summarizer (which splices a span down to a single
+/// message) both do.
+///
+/// It is bumped at the mutation sites themselves, and every consumer takes it as
+/// an argument rather than reading it from shared state, so a future pass that
+/// rewrites the transcript cannot quietly skip invalidation and leave a memo
+/// serving digests for bytes that no longer exist.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TranscriptRevision(u64);
+
+impl TranscriptRevision {
+    /// Record that the transcript was rewritten in place.
+    pub fn rewritten(&mut self) {
+        self.0 = self.0.wrapping_add(1);
+    }
+}
+
+/// The per-block work that is expensive and position-stable: two SHA-256 passes
+/// over the block's content plus a full character count of it.
+#[derive(Clone)]
+struct BlockDigests {
+    block_id: String,
+    content_digest: String,
+    token_cost: u32,
+}
+
+/// Position-keyed memo over [`BlockDigests`], valid for one transcript revision.
+///
+/// `block_id` and `content_digest` hash overlapping preimages (`kind_tag ‖ NUL ‖
+/// content` and `content`) and cannot share one hash state, so a block costs two
+/// full passes over its bytes plus a third to count characters — and `decompose`
+/// recomputed all three for every block in the transcript on every step, plus a
+/// `serde_json` re-serialization of every tool call and tool result to obtain the
+/// preimage in the first place. The manifest has to *name* every block each step,
+/// but the bytes behind an unchanged block do not change, so naming it again is
+/// the only part that has to happen twice.
+#[derive(Default)]
+struct BlockDigestCache {
+    entries: HashMap<(usize, usize), BlockDigests>,
+    revision: TranscriptRevision,
+}
+
+impl BlockDigestCache {
+    /// Drop everything if the transcript was rewritten since the last emission.
+    fn sync_to(&mut self, revision: TranscriptRevision) {
+        if self.revision != revision {
+            self.entries.clear();
+            self.revision = revision;
+        }
+    }
+
+    /// The digests for the block at `key`, computing them only on a miss.
+    ///
+    /// `content` is a closure so a hit skips producing the preimage as well as
+    /// hashing it — for tool calls and tool results that preimage is a fresh
+    /// `serde_json::to_string` of the whole payload. It yields a `Cow` so a miss
+    /// costs nothing extra either: the kinds whose preimage is already a field on
+    /// the message borrow it, and only the serialized kinds allocate.
+    fn digests<'c>(
+        &mut self,
+        key: (usize, usize),
+        kind: BlockKind,
+        content: impl FnOnce() -> Cow<'c, str>,
+    ) -> BlockDigests {
+        if let Some(hit) = self.entries.get(&key) {
+            return hit.clone();
+        }
+        let content = content();
+        let computed = BlockDigests {
+            block_id: block_id(kind, &content),
+            content_digest: format!("sha256:{}", sha256_hex(&content)),
+            token_cost: estimate_tokens(&content),
+        };
+        self.entries.insert(key, computed.clone());
+        computed
+    }
+}
+
 /// One decomposed context block, before it becomes a manifest entry.
-struct BlockDraft {
+struct BlockDraft<'a> {
     block_id: String,
     kind: BlockKind,
     content_digest: String,
@@ -169,22 +276,13 @@ struct BlockDraft {
     /// the message vector — so reconstruction regroups exactly (spec §5.1).
     message_index: usize,
     /// Local-only preimage for gap kinds; `None` for journal-resolvable kinds.
-    content: Option<String>,
-}
-
-impl BlockDraft {
-    fn new(kind: BlockKind, content: &str, call_id: Option<String>, message_index: usize) -> Self {
-        BlockDraft {
-            block_id: block_id(kind, content),
-            kind,
-            content_digest: format!("sha256:{}", sha256_hex(content)),
-            token_cost: estimate_tokens(content),
-            call_id,
-            cache_zone: CacheZone::Cacheable,
-            message_index,
-            content: is_gap_kind(kind).then(|| content.to_string()),
-        }
-    }
+    ///
+    /// **Borrowed**, and copied only at the one site that needs it: a block's
+    /// bytes ride `BlockRegistered`, which fires once per block for the whole
+    /// turn. Owning it here meant re-cloning the system prefix — the largest gap
+    /// block there is — on every step for the rest of the turn, to hand it to a
+    /// registration that had already happened.
+    content: Option<&'a str>,
 }
 
 /// Decompose the live message vector into event-granular blocks, in wire order,
@@ -211,56 +309,90 @@ impl BlockDraft {
 ///   a multimodal turn the manifest's summed `token_cost` reads materially
 ///   below the same event's `estimated_input_tokens`. [`BlockKind::Attachment`]
 ///   is the seat reserved for it.
-fn decompose(messages: &[CompletionMessage]) -> Vec<BlockDraft> {
+fn decompose<'a>(
+    messages: &'a [CompletionMessage],
+    cache: &mut BlockDigestCache,
+) -> Vec<BlockDraft<'a>> {
     let mut drafts = Vec::new();
     for (message_index, message) in messages.iter().enumerate() {
+        // Ordinal within this message, counted over every block it yields
+        // regardless of kind, so `(message_index, ordinal)` names one block
+        // uniquely and identically on every step of a revision.
+        let mut ordinal = 0usize;
+        let mut push = |drafts: &mut Vec<BlockDraft<'a>>,
+                        cache: &mut BlockDigestCache,
+                        kind: BlockKind,
+                        content: &dyn Fn() -> Cow<'a, str>,
+                        borrowed: Option<&'a str>,
+                        call_id: Option<String>| {
+            let digests = cache.digests((message_index, ordinal), kind, content);
+            ordinal += 1;
+            drafts.push(BlockDraft {
+                block_id: digests.block_id,
+                kind,
+                content_digest: digests.content_digest,
+                token_cost: digests.token_cost,
+                call_id,
+                cache_zone: CacheZone::Cacheable,
+                message_index,
+                content: is_gap_kind(kind).then_some(borrowed).flatten(),
+            });
+        };
         match message.role {
             MessageRole::System => {
-                drafts.push(BlockDraft::new(
+                push(
+                    &mut drafts,
+                    cache,
                     BlockKind::SystemPrefix,
-                    &message.content,
+                    &|| Cow::Borrowed(message.content.as_str()),
+                    Some(message.content.as_str()),
                     None,
-                    message_index,
-                ));
+                );
             }
             MessageRole::User => {
                 // The recalled frames live inside this message; splitting them
                 // into per-frame blocks is the memory-join increment (§9).
-                drafts.push(BlockDraft::new(
+                push(
+                    &mut drafts,
+                    cache,
                     BlockKind::UserGoal,
-                    &message.content,
+                    &|| Cow::Borrowed(message.content.as_str()),
+                    Some(message.content.as_str()),
                     None,
-                    message_index,
-                ));
+                );
             }
             MessageRole::Assistant => {
                 if !message.content.is_empty() {
-                    drafts.push(BlockDraft::new(
+                    push(
+                        &mut drafts,
+                        cache,
                         BlockKind::AssistantText,
-                        &message.content,
+                        &|| Cow::Borrowed(message.content.as_str()),
+                        Some(message.content.as_str()),
                         None,
-                        message_index,
-                    ));
+                    );
                 }
                 for call in &message.tool_calls {
-                    let content = serde_json::to_string(call).unwrap_or_default();
-                    drafts.push(BlockDraft::new(
+                    push(
+                        &mut drafts,
+                        cache,
                         BlockKind::ToolCall,
-                        &content,
+                        &|| Cow::Owned(serde_json::to_string(call).unwrap_or_default()),
+                        None,
                         Some(call.call_id.clone()),
-                        message_index,
-                    ));
+                    );
                 }
             }
             MessageRole::Tool => {
                 for result in &message.tool_results {
-                    let content = serde_json::to_string(&result.output).unwrap_or_default();
-                    drafts.push(BlockDraft::new(
+                    push(
+                        &mut drafts,
+                        cache,
                         BlockKind::ToolResult,
-                        &content,
+                        &|| Cow::Owned(serde_json::to_string(&result.output).unwrap_or_default()),
+                        None,
                         Some(result.call_id.clone()),
-                        message_index,
-                    ));
+                    );
                 }
             }
         }
@@ -292,6 +424,12 @@ pub struct ReceiptLedger {
     first_seen_step: HashMap<String, usize>,
     effective_budget_tokens: u64,
     calibration_factor: f64,
+    /// Memo of the per-block hashing, invalidated whenever the transcript is
+    /// rewritten rather than appended to.
+    digests: BlockDigestCache,
+    /// The revision the next receipt describes; see
+    /// [`Self::set_transcript_revision`].
+    revision: TranscriptRevision,
 }
 
 impl ReceiptLedger {
@@ -311,6 +449,8 @@ impl ReceiptLedger {
             first_seen_step: HashMap::new(),
             effective_budget_tokens: 0,
             calibration_factor: 1.0,
+            digests: BlockDigestCache::default(),
+            revision: TranscriptRevision::default(),
         }
     }
 
@@ -321,6 +461,21 @@ impl ReceiptLedger {
     pub fn set_effective_budget(&mut self, budget_tokens: u64, factor: f64) {
         self.effective_budget_tokens = budget_tokens;
         self.calibration_factor = factor;
+    }
+
+    /// Tell the ledger which revision of the transcript the next receipt
+    /// describes, so its block-digest memo can drop keys that no longer name the
+    /// bytes they were computed over.
+    ///
+    /// Pushed per step alongside [`Self::set_effective_budget`] rather than passed
+    /// to [`Self::emit_step_receipt`]: that call is reached through
+    /// `run_model_call`, which is already at the argument limit. A ledger that is
+    /// never told keeps `TranscriptRevision::default()` and therefore memoizes
+    /// across rewrites — which is why the driver sets it in the same breath as
+    /// the compaction pass that can cause one, and why
+    /// `a_rewritten_block_is_never_served_from_the_digest_memo` exists.
+    pub fn set_transcript_revision(&mut self, revision: TranscriptRevision) {
+        self.revision = revision;
     }
 
     /// Emit the receipt for one committed step: a `BlockRegistered` for every
@@ -347,7 +502,8 @@ impl ReceiptLedger {
             provider,
             model,
         } = served;
-        let drafts = decompose(messages);
+        self.digests.sync_to(self.revision);
+        let drafts = decompose(messages, &mut self.digests);
         let mut blocks = Vec::with_capacity(drafts.len());
         for draft in &drafts {
             let resident_since_step = match self.first_seen_step.get(&draft.block_id) {
@@ -369,7 +525,9 @@ impl ReceiptLedger {
                         token_cost: draft.token_cost,
                         content_digest: draft.content_digest.clone(),
                         citation_label: None,
-                        content: draft.content.clone(),
+                        // The only place a gap block's bytes are copied, and
+                        // only on the step it first appears.
+                        content: draft.content.map(str::to_string),
                     });
                     step
                 }
@@ -412,6 +570,8 @@ impl ReceiptLedger {
         events: &EventSender,
     ) {
         let estimated_input_tokens = estimate_conversation_tokens(messages);
+        // A fresh ledger per call, so its digest memo is empty and the default
+        // revision is correct; the step loop sets its real one.
         self.emit_step_receipt(messages, estimated_input_tokens, step, served, events);
     }
 }

@@ -1,19 +1,91 @@
 ---
 title: settings.json
-description: Configure providers, agents, tools, and managed authority across project, org-managed, and user scopes.
+description: Configure providers, agents, tools, context, and managed authority across project, org-managed, and user scopes.
 ---
 
-`settings.json` is Stella's configuration file. It has six top-level sections, each with
+`settings.json` is Stella's configuration file. It has ten top-level sections, each with
 its own merge rule across the [scope hierarchy](#the-scope-hierarchy):
 
-| Section | Configures | Merge across scopes |
-| --- | --- | --- |
-| [`providers`](#the-providers-map) | Override any built-in provider — or define new ones | per field |
-| [`agent_engine_config`](/docs/configuration/agent-engine-config) | Per-agent models, gateways, prompts, effort, params | per field, per agent |
-| [`hooks`](#lifecycle-hooks) | Shell commands on lifecycle events | concatenate |
-| [`tools`](#the-tools-section) | Per-tool switches — any tool name, group, or `"*"` | last scope wins per key |
-| [`mcp`](#the-mcp-section) | MCP registry override | last scope wins |
-| [`authority`](#managed-authority-ceilings) | Managed ceilings for project prompts, custom tools, bash, web, and media approval | org-managed only; denial cannot be overridden |
+<CardGrid size="md">
+  <SpecCard
+    title={<code>providers</code>}
+    href="#the-providers-map"
+    meta={[{ label: "Merges", value: "per field", mono: false }]}
+  >
+    Override any built-in provider — or define a new one.
+  </SpecCard>
+  <SpecCard
+    title={<code>agent_engine_config</code>}
+    href="/docs/configuration/agent-engine-config"
+    meta={[{ label: "Merges", value: "per field, per agent", mono: false }]}
+  >
+    Per-agent models, gateways, prompts, effort, and sampling params.
+  </SpecCard>
+  <SpecCard
+    title={<code>hooks</code>}
+    href="#lifecycle-hooks"
+    meta={[{ label: "Merges", value: "concatenate", mono: false }]}
+  >
+    Shell commands on lifecycle events. Every scope may add matchers; none replaces
+    another's.
+  </SpecCard>
+  <SpecCard
+    title={<code>tools</code>}
+    href="#the-tools-section"
+    meta={[{ label: "Merges", value: "last scope wins, per key", mono: false }]}
+  >
+    Per-tool switches — any tool name, group, or `"*"`.
+  </SpecCard>
+  <SpecCard
+    title={<code>mcp</code>}
+    href="#the-mcp-section"
+    meta={[{ label: "Merges", value: "last scope wins, per field", mono: false }]}
+  >
+    MCP registry override.
+  </SpecCard>
+  <SpecCard
+    title={<code>enable_recap</code>}
+    href="#the-end-of-run-recap"
+    meta={[{ label: "Values", value: '"on" | "off"' }]}
+  >
+    Print a deterministic end-of-run recap in text mode. Off unless set.
+  </SpecCard>
+  <SpecCard
+    title={<code>context</code>}
+    href="#the-context-block"
+    meta={[{ label: "Merges", value: "whole block, last scope wins", mono: false }]}
+  >
+    The adaptive-context lifecycle: learning, governance, promotion, efficacy, retention.
+  </SpecCard>
+  <SpecCard
+    title={<code>context_providers</code>}
+    href="#external-context-providers"
+    meta={[{ label: "Merges", value: "per entry, last scope wins", mono: false }]}
+  >
+    Third-party Context Graph Protocol sources reached over stdio or HTTP.
+  </SpecCard>
+  <SpecCard
+    title={<code>authority</code>}
+    href="#managed-authority-ceilings"
+    meta={[{ label: "Scope", value: "org-managed only", mono: false }]}
+  >
+    Managed ceilings for project prompts, custom tools, bash, web, and media approval. A
+    denial cannot be overridden.
+  </SpecCard>
+  <SpecCard
+    title={<code>enterprise_telemetry</code>}
+    href="#enterprise-telemetry-enrollment"
+    meta={[{ label: "Scope", value: "org-managed only", mono: false }]}
+  >
+    The signed managed-enrollment document that authorizes operational export.
+  </SpecCard>
+</CardGrid>
+
+<Callout type="info">
+  `authority_policy` is **not** a file key. It is the effective authority Stella computes
+  while loading the scope chain, and it is skipped during parsing precisely so repository
+  text cannot supply it.
+</Callout>
 
 The `providers` map lets you override the built-in defaults for any provider — **without
 reaching for a provider-specific environment variable**. In **user scope**
@@ -26,7 +98,7 @@ coding-plan subscription through its dedicated endpoint — see the
 Keyed by provider id. Every field is optional — supply only what differs from the built-in
 default:
 
-```json
+```json title="~/.stella/settings.json"
 {
   "providers": {
     "zai": {
@@ -39,15 +111,33 @@ default:
 }
 ```
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `id` | string | Optional restatement of the map key; if present it **must equal the key** — a mismatch is a hard, named load error (guards against copy-pasting the wrong provider) |
-| `name` | string | Display name shown by `stella config` / `stella models` |
-| `base_url` | string | Base URL requests go to (a coding-plan endpoint, a proxy, a gateway) |
-| `api_key` | string | API key for this provider (slots into the [credential chain](/docs/getting-started/providers#the-credential-chain)) |
-| `api_key_env` | string | Name of an environment variable to read the key from — safer than an inline `api_key` in a committed project file |
-| `default_model` | string | Model used when none is pinned with `--model` |
-| `dialect` | string | Wire adapter for a **new** provider: `openai-compatible` (default) \| `openai-responses` \| `anthropic` \| `gemini` (`vertex`/`bedrock` are reserved to built-ins) |
+<CardGrid size="md">
+  <OptionCard name="id">
+    Optional restatement of the map key; if present it **must equal the key** — a mismatch
+    is a hard, named load error, which guards against copy-pasting the wrong provider.
+  </OptionCard>
+  <OptionCard name="name">
+    Display name shown by `stella config` / `stella models`.
+  </OptionCard>
+  <OptionCard name="base_url">
+    Base URL requests go to — a coding-plan endpoint, a proxy, a gateway.
+  </OptionCard>
+  <OptionCard name="api_key">
+    API key for this provider. It slots into the
+    [credential chain](/docs/getting-started/providers#the-credential-chain).
+  </OptionCard>
+  <OptionCard name="api_key_env">
+    Name of an environment variable to read the key from — safer than an inline `api_key`
+    in a committed project file.
+  </OptionCard>
+  <OptionCard name="default_model">
+    Model used when none is pinned with `--model`.
+  </OptionCard>
+  <OptionCard name="dialect" defaultValue="openai-compatible">
+    Wire adapter for a **new** provider: `openai-compatible`, `openai-responses`,
+    `anthropic`, or `gemini`. `vertex` and `bedrock` are reserved to built-ins.
+  </OptionCard>
+</CardGrid>
 
 The map key **is** the provider id (`zai` above). Leave a field out entirely to inherit the
 built-in default — note that an **empty string** for `base_url`, `name`, or
@@ -69,11 +159,38 @@ more specific scope wins. The merge is **field by field** for `providers` and
 merging), **last-scope-wins** for `mcp` and `tools`, and `hooks` are the exception — they
 **concatenate** across scopes (see [Lifecycle hooks](#lifecycle-hooks)).
 
-| Preference | Scope | Path |
-| --- | --- | --- |
-| Highest | **project** | `<workspace>/.stella/settings.json` |
-| Middle | **org-managed** | `STELLA_MANAGED_SETTINGS`, else the platform default (below) |
-| Lowest | **user** | `~/.stella/settings.json` |
+<SettingsCascadeDiagram />
+
+<CardGrid size="sm">
+  <SpecCard
+    title="project"
+    meta={[
+      { label: "Preference", value: "highest", mono: false },
+      { label: "Path", value: <code>{"<workspace>/.stella/settings.json"}</code> },
+    ]}
+  >
+    The repository's own file — and a [trust boundary](#the-project-trust-boundary).
+  </SpecCard>
+  <SpecCard
+    title="org-managed"
+    meta={[
+      { label: "Preference", value: "middle", mono: false },
+      { label: "Path", value: <code>STELLA_MANAGED_SETTINGS</code> },
+    ]}
+  >
+    Or the platform default, resolved below. The only scope that may carry `authority` or
+    `enterprise_telemetry`.
+  </SpecCard>
+  <SpecCard
+    title="user"
+    meta={[
+      { label: "Preference", value: "lowest", mono: false },
+      { label: "Path", value: <code>~/.stella/settings.json</code> },
+    ]}
+  >
+    Your personal defaults — the right home for a subscription endpoint or a personal key.
+  </SpecCard>
+</CardGrid>
 
 The org-managed path is resolved as:
 
@@ -83,9 +200,10 @@ The org-managed path is resolved as:
 
 Ordinary fields merge project over org-managed over user. Authority-sensitive fields are
 stricter: a project may narrow a grant with `"off"`, but it may not enable tools, replace
-an agent prompt, redirect credentials, or load executable custom tools until the user sets
-`STELLA_TRUST_PROJECT=1`. An org-managed denial is a ceiling even after that explicit
-trust. The legacy `STELLA_PROJECT_HOOKS=1` flag grants hooks only.
+an agent prompt, redirect credentials, register a context provider, or load executable
+custom tools until the user sets `STELLA_TRUST_PROJECT=1`. An org-managed denial is a
+ceiling even after that explicit trust. The legacy `STELLA_PROJECT_HOOKS=1` flag grants
+hooks only.
 
 <Callout type="info">
   A missing file at any scope is fine — it is simply skipped. A file that is present but
@@ -200,7 +318,7 @@ the MCP Server Registry that `stella mcp search` and the deck's MCP tab query; w
 falls back to the official registry. Like `providers`, it merges last-scope-wins per field,
 so a project can point at a different registry than the user default.
 
-```json
+```json title="~/.stella/settings.json"
 {
   "mcp": {
     "registry_url": "https://registry.example.internal/mcp"
@@ -250,6 +368,265 @@ scope winning. A project `"off"` always narrows an earlier grant; project `"on"`
 at any level of specificity: a managed `{"process": "off"}` cannot be defeated by a
 project naming `{"start_process": "on"}`.
 
+## The end-of-run recap
+
+`enable_recap` is a single top-level toggle using the same strict `"on"`/`"off"`
+vocabulary as the `tools` switches — a bare `true` is a hard parse error, and an absent
+key means off.
+
+```json title="~/.stella/settings.json"
+{
+  "enable_recap": "on"
+}
+```
+
+With it on, a text-mode run prints a **recap panel** after the files and cost panels: a
+deterministic synthesis of the outcome (`completed`, `completed — verified`,
+`verification failed`, `aborted`) plus a created/modified/deleted tally. It reads the
+run's own facts and costs **no model call** — it is the "so what" line that the file list
+alone does not give you.
+
+## The `context` block
+
+The `context` block configures the **adaptive-context lifecycle**: mining observations
+from your sessions, inducing directive proposals from them, governing which of those get
+promoted, and measuring whether the context selected actually helped.
+
+<Callout type="info">
+  The block is currently **inert**. Every field parses, round-trips, and merges, but no
+  code reads it yet — `context.lifecycle.enabled` defaults to `false`, which is what
+  preserves today's behavior. The schema ships ahead of the loop so a later release can
+  turn it on without a settings migration, and so the vocabulary below is pinned by
+  round-trip tests rather than invented later. Read the values here as the committed
+  vocabulary and defaults, not as a description of a running mechanism.
+</Callout>
+
+Two dimensions are kept deliberately separate: **learning mode** (how much of the loop
+runs) and **governance mode** (who signs off on a promotion). Every mode enum is *loud* —
+an unrecognized value such as `"advisary"` is a hard parse error, never a silent fallback.
+Omitted fields fall back to the defaults below, so `"context": {}` and an absent block are
+equivalent in effect.
+
+Unlike `providers`, the block merges **whole**: a higher-precedence scope that declares
+`context` replaces the lower scope's block outright rather than overlaying field by field.
+
+### Lifecycle and modes
+
+<CardGrid size="md">
+  <OptionCard name="context.lifecycle.enabled" defaultValue="false">
+    The master switch for the whole lifecycle. While it is off, every other field in the
+    `context` block is ignored.
+  </OptionCard>
+  <OptionCard name="context.learning.mode" defaultValue="off">
+    How much of the learning loop runs. `off` disables mining, proposal induction, and
+    efficacy learning. `record_only` captures observations, proposals, uses, and outcomes
+    without selecting or promoting inferred records. `advisory` enables governed inferred
+    *advisory* use.
+  </OptionCard>
+  <OptionCard name="context.governance.mode" defaultValue="solo">
+    Who governs promotions: `solo`, `team`, or `regulated`. Orthogonal to the learning
+    mode — the two dimensions do not collapse into one another.
+  </OptionCard>
+</CardGrid>
+
+### Promotion
+
+Thresholds gating when a set of observations may become an inferred directive, and the
+confirmation a blocking directive requires. Confidence values are on a `0`–`100` scale.
+
+<CardGrid size="sm">
+  <OptionCard name="context.promotion.inferred_directive.min_observations" defaultValue="3">
+    The minimum observation count. A whole number.
+  </OptionCard>
+  <OptionCard name="context.promotion.inferred_directive.min_distinct_tasks" defaultValue="3">
+    The minimum number of *distinct* tasks those observations must span — the guard against
+    one repetitive task promoting itself into a rule.
+  </OptionCard>
+  <OptionCard name="context.promotion.inferred_directive.auto_activate_at_confidence" defaultValue="85">
+    The confidence, `0`–`100`, at which an inferred directive activates without being asked.
+  </OptionCard>
+  <OptionCard name="context.promotion.inferred_directive.initial_enforcement" defaultValue="advisory">
+    The enforcement a newly inferred directive carries. Only two states exist — `advisory`
+    and `blocking` — and an inferred directive may only ever *start* advisory.
+  </OptionCard>
+  <OptionCard
+    name="context.promotion.blocking_directive.requires_explicit_confirmation"
+    defaultValue="true"
+  >
+    A blocking directive always requires an explicit human confirmation. Not a field to
+    turn off lightly.
+  </OptionCard>
+</CardGrid>
+
+### Efficacy
+
+Efficacy-attribution thresholds. Confidence values are on a `0`–`100` scale;
+`not_helpful_ratio_threshold` is a `0.0`–`1.0` ratio.
+
+<CardGrid size="sm">
+  <OptionCard name="context.efficacy.min_attributable_uses" defaultValue="5">
+    The minimum number of attributable uses. A whole number.
+  </OptionCard>
+  <OptionCard name="context.efficacy.not_helpful_ratio_threshold" defaultValue="0.8">
+    The not-helpful ratio threshold, between `0.0` and `1.0`.
+  </OptionCard>
+  <OptionCard name="context.efficacy.min_attribution_confidence" defaultValue="80">
+    The minimum attribution confidence, `0`–`100`.
+  </OptionCard>
+  <OptionCard
+    name="context.efficacy.receipt_display_min_attribution_confidence"
+    defaultValue="80"
+  >
+    The minimum attribution confidence a use needs before it is *displayed* on a receipt —
+    a knob of its own, separate from the attribution threshold above.
+  </OptionCard>
+</CardGrid>
+
+### Retention
+
+How long raw observations, proposals, and inferred directives are kept before review or
+expiry, in days.
+
+<CardGrid size="sm">
+  <OptionCard name="context.retention.raw_observation_days" defaultValue="30">
+    Retention for raw observations.
+  </OptionCard>
+  <OptionCard name="context.retention.proposal_days" defaultValue="30">
+    Retention for proposals.
+  </OptionCard>
+  <OptionCard name="context.retention.inferred_directive_review_days" defaultValue="180">
+    How long an inferred directive runs before it comes back up for review.
+  </OptionCard>
+</CardGrid>
+
+### A fully written-out `context` block
+
+Every value below is the shipped default, so this file changes nothing — it is the
+copy-paste starting point you edit down to the two or three keys you actually want:
+
+```json title="~/.stella/settings.json"
+{
+  "enable_recap": "on",
+  "context": {
+    "lifecycle": { "enabled": false },
+    "learning": { "mode": "off" },
+    "governance": { "mode": "solo" },
+    "promotion": {
+      "inferred_directive": {
+        "min_observations": 3,
+        "min_distinct_tasks": 3,
+        "auto_activate_at_confidence": 85,
+        "initial_enforcement": "advisory"
+      },
+      "blocking_directive": { "requires_explicit_confirmation": true }
+    },
+    "efficacy": {
+      "min_attributable_uses": 5,
+      "not_helpful_ratio_threshold": 0.8,
+      "min_attribution_confidence": 80,
+      "receipt_display_min_attribution_confidence": 80
+    },
+    "retention": {
+      "raw_observation_days": 30,
+      "proposal_days": 30,
+      "inferred_directive_review_days": 180
+    }
+  }
+}
+```
+
+## External context providers
+
+`context_providers.<id>` registers a third-party
+[Context Graph Protocol](/docs/context-engine#the-context-graph-protocol) source — a
+company wiki, an issue tracker, a vector store — so it can feed the recall block alongside
+the built-in workspace-memory and code-graph providers. Until this section exists, every
+provider is in-process; with it, a third-party source is a config entry rather than a fork.
+
+The block is **empty by default**, which registers nothing and leaves recall exactly as it
+is today.
+
+```json title="~/.stella/settings.json"
+{
+  "context_providers": {
+    "acme-wiki": {
+      "transport": "http",
+      "url": "https://ctx.acme.example/cgp",
+      "enabled": true,
+      "egress_consent": ["org_tenant"],
+      "consent_grantor": "policy:security-review"
+    },
+    "local-notes": {
+      "transport": "stdio",
+      "command": "acme-cgp",
+      "args": ["--serve"],
+      "enabled": true
+    }
+  }
+}
+```
+
+<CardGrid size="md">
+  <OptionCard name="transport" defaultValue="stdio">
+    How the host reaches the provider: `stdio` (a child process speaking the protocol) or
+    `http` (a remote endpoint). An unrecognized transport is a hard parse error.
+  </OptionCard>
+  <OptionCard name="command">
+    The program to spawn. Required, and non-empty, when `transport` is `stdio` — a missing
+    one is reported as a configuration error naming the field, not as a process that would
+    not start.
+  </OptionCard>
+  <OptionCard name="args">
+    Arguments for `command`.
+  </OptionCard>
+  <OptionCard name="url">
+    The endpoint to connect to. Required, and non-empty, when `transport` is `http`.
+  </OptionCard>
+  <OptionCard name="enabled" defaultValue="false">
+    Whether the entry is live. Declaring a provider is not turning it on: that is a
+    separate, deliberate act, so an org-managed entry merged in from a lower scope never
+    starts serving a turn just because someone defined it.
+  </OptionCard>
+  <OptionCard name="egress_consent">
+    The off-machine egress scopes you have consented to for this provider, as CGP scope
+    strings — `org_tenant`, `third_party_index`, `third_party_model`, or a namespaced one
+    like `acme:vector-store`.
+  </OptionCard>
+  <OptionCard name="consent_grantor">
+    Who granted that consent, for the audit ledger. Free text — a user id, an email, a
+    policy name. Absent means the local operator.
+  </OptionCard>
+</CardGrid>
+
+Two properties are load-bearing and deliberately not optional:
+
+- **Conformance is an admission gate, not a badge.** A provider is run through the
+  protocol's own conformance suite *before* it is registered on the session host, so a
+  source that lies about token cost, serves frames with no citation label, or cannot shut
+  down cleanly never serves a turn. Register-first-discover-later would mean the first
+  evidence of non-conformance is a corrupted prompt.
+- **Egress is consented, never assumed.** Every built-in provider is non-egressing, so the
+  consent store has never had occasion to prompt. An external provider is the first thing
+  that can send workspace content off the machine, and it stays gated until the config
+  records consent for every off-machine scope it declares — the host refuses to transmit,
+  and the query payload, which carries workspace content, never leaves.
+
+Entries merge **per entry** across scopes, so a project can enable a provider the user
+scope declared without restating its transport. A higher scope's entry replaces the lower
+one's *wholesale*: field-level merging would let a project file inherit a user's
+`egress_consent` while swapping the `url`, silently reusing consent granted for a
+different endpoint.
+
+The map key is the routing **and** consent key, so renaming an entry creates a new
+provider whose consent must be granted afresh. That is the point, not an inconvenience.
+
+<Callout type="warn">
+  `context_providers` sits on the same code-execution boundary as `hooks` and
+  `.stella/mcp.toml`. An untrusted project scope's entries are dropped in favour of the
+  user and org-managed scopes', with a stderr notice — see
+  [the project trust boundary](#the-project-trust-boundary).
+</Callout>
+
 ## Managed authority ceilings
 
 Only the org-managed settings file may define the top-level `authority` section. User and
@@ -275,6 +652,18 @@ still requires `STELLA_TRUST_PROJECT=1`, while `project_custom_tools: "off"` kee
 workspace manifests disabled even when that trust flag is present. Media host approval
 defaults to required when the field is absent.
 
+## Enterprise telemetry enrollment
+
+`enterprise_telemetry` is the other org-managed-only section: the signed enrollment
+document that authorizes Oxagen Enterprise operational export. It is captured from the
+managed snapshot alone — a project or user file carrying the key contributes nothing —
+and is validated by its adapter, so an invalid, missing, expired, or unsupported
+enrollment simply leaves export inactive rather than failing the run.
+
+Community and default mode construct no spool and no HTTP client at all. The full
+schema, the sink-authorization rules, and the closed event envelope are documented on
+[Telemetry &amp; budget](/docs/telemetry#oxagen-enterprise-managed-export).
+
 ## The project trust boundary
 
 A repository you just cloned can carry a `<workspace>/.stella/settings.json` — and an
@@ -284,6 +673,11 @@ file until you opt in with **`STELLA_TRUST_PROJECT=1`**:
 
 - **Hooks.** Project-scope `hooks` load only when the project is trusted. (The legacy
   `STELLA_PROJECT_HOOKS=1` flag still unlocks hooks — and only hooks.)
+- **Context providers.** Project-scope `context_providers` entries are dropped in favour
+  of whatever the user and org-managed scopes declared. An enabled `stdio` entry spawns
+  its `command` at admission time — the same `git clone && stella` exposure that gates
+  `.stella/mcp.toml` — and an `http` entry is no safer, because the same untrusted file
+  would be supplying the `egress_consent` that lets workspace content leave the machine.
 - **Credential routing.** Project-scope values for `providers.<id>.base_url`,
   `providers.<id>.api_key`, `providers.<id>.api_key_env`, and `mcp.registry_url` are
   **silently dropped** (the trusted-scope values win) — otherwise a malicious repo could
@@ -299,8 +693,8 @@ file until you opt in with **`STELLA_TRUST_PROJECT=1`**:
   unless full project trust is present and managed policy permits them. User-global
   manifests under `~/.stella/tools/` remain available.
 
-A stderr notice names skipped hooks and credential-routing fields, so a
-trusted-but-forgotten flag is diagnosable. Cosmetic project fields (`name`,
+A stderr notice names skipped hooks, skipped context providers, and credential-routing
+fields, so a trusted-but-forgotten flag is diagnosable. Cosmetic project fields (`name`,
 `default_model`, `dialect`) apply regardless of trust. Managed denials from the captured
 org settings snapshot always win; changing the file takes effect on the next settings load.
 
@@ -315,6 +709,64 @@ declared in a repository's project-scope file load **only** behind the
 [project trust boundary](#the-project-trust-boundary) (`STELLA_TRUST_PROJECT=1`, or the
 legacy hooks-only `STELLA_PROJECT_HOOKS=1`); a stderr notice names any skipped project
 hooks.
+
+## A complete example file
+
+Everything above, in one user-scope file — a routed provider, a narrowed tool surface, a
+guard hook, the recap on, and a `context` block with only the keys that differ from the
+defaults. Copy it, delete what you don't want:
+
+```json title="~/.stella/settings.json"
+{
+  "providers": {
+    "zai": {
+      "base_url": "https://api.z.ai/api/coding/paas/v4",
+      "api_key_env": "ZAI_API_KEY",
+      "default_model": "n-5.2"
+    }
+  },
+  "tools": {
+    "process": "off",
+    "read_output": "on"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "bash",
+        "hooks": [
+          { "type": "command", "command": "./scripts/guard.sh", "timeoutMs": 5000 }
+        ]
+      }
+    ]
+  },
+  "mcp": {
+    "registry_url": "https://registry.example.internal/mcp"
+  },
+  "enable_recap": "on",
+  "context": {
+    "lifecycle": { "enabled": false },
+    "learning": { "mode": "record_only" },
+    "governance": { "mode": "team" },
+    "retention": { "raw_observation_days": 14 }
+  },
+  "context_providers": {
+    "acme-wiki": {
+      "transport": "http",
+      "url": "https://ctx.acme.example/cgp",
+      "enabled": true,
+      "egress_consent": ["org_tenant"],
+      "consent_grantor": "policy:security-review"
+    }
+  }
+}
+```
+
+Check what actually resolved:
+
+```bash
+stella config    # provider, model, key preview, base URL
+stella models    # every provider with its effective base URL and key status
+```
 
 ## Security
 

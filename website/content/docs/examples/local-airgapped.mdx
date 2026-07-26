@@ -10,6 +10,8 @@ telemetry, memories, and code graph stay on your machine. The sole exception is 
 whose current signed policy authorizes a minimal content-free operational rollup to one
 exact HTTPS sink; do not enroll that mode on a fully air-gapped host.
 
+<ProviderGrid only={["local"]} />
+
 ## Quick: the `local` pseudo-provider
 
 ```bash
@@ -18,6 +20,10 @@ stella --model local/llama3.3 --base-url http://localhost:11434/v1 chat
 
 # vLLM / LM Studio / llama.cpp server — same shape, different port
 stella --model local/qwen2.5-coder --base-url http://localhost:8000/v1 run "…"
+
+# Stop retyping the endpoint, then confirm what resolved
+export STELLA_BASE_URL=http://localhost:11434/v1
+stella --model local/llama3.3 config
 ```
 
 `local` is never auto-detected and requires `--base-url` every time — export
@@ -45,6 +51,9 @@ default-model'd, even auto-detected:
 ```
 
 ```bash
+stella models    # ollama appears as a configured provider, after the built-ins
+stella config    # the resolved provider, base URL, and default model
+
 stella --model ollama/llama3.3 run "add unit tests for the parser"
 stella run "…"   # auto-detects ollama if no other provider key is present
 ```
@@ -85,9 +94,17 @@ like in the cloud — a big worker and a fast judge:
 }
 ```
 
+```bash
+stella config
+stella run "add cursor pagination to /orders" --test-command "pnpm test orders"
+```
+
 Local judges are same-family by definition — lean on
 [`--test-command`](/docs/inference-pipeline) for deterministic verification, exactly as
-in the [single-key setup](/docs/examples/single-key).
+in the [single-key setup](/docs/examples/single-key). Note also that `effort` is
+silently dropped on local endpoints, so the judge's `effort: "high"` above records
+intent rather than reaching the wire; its `prompt` is what actually differentiates it
+from the worker.
 
 ## Fully air-gapped
 
@@ -97,6 +114,9 @@ from `models.dev` (at most once per 24h). Turn it off for an air-gapped deployme
 
 ```bash
 export STELLA_CATALOG_AUTO_REFRESH=0
+
+stella config    # every resolved value, computed from local files alone
+stella doctor    # checks the local session store's integrity; reads local state only
 ```
 
 Community/default telemetry remains local in `.stella/private/store.db`, the

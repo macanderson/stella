@@ -11,11 +11,21 @@ an environment-variable equivalent for CI.
 
 `--output-format` (env `STELLA_OUTPUT_FORMAT`) takes one of three values:
 
-| Value | Shape | Use |
-| --- | --- | --- |
-| `text` | Interactive human rendering (default) | Local, interactive use |
-| `json` | One final JSON object summarizing the turn | Capture a result in a script |
-| `stream-json` | One JSON line per agent event, as it happens | Live progress in a pipeline |
+<CardGrid size="md">
+  <OptionCard name="text">
+    The default. Interactive human rendering, for local use — and the only
+    format that keeps stdout clean on failure, routing the diagnostic to
+    stderr instead.
+  </OptionCard>
+  <OptionCard name="json">
+    One final JSON object summarizing the turn, pretty-printed. Capture a result
+    in a script.
+  </OptionCard>
+  <OptionCard name="stream-json">
+    One compact JSON line per agent event, as it happens. Live progress in a
+    pipeline.
+  </OptionCard>
+</CardGrid>
 
 `stream-json` is a line-per-event serialization of Stella's internal event enum — a stable
 machine interface you can parse incrementally. Each line is one event object tagged
@@ -47,9 +57,33 @@ declares `schema_version` (see [The envelope contract](#the-envelope-contract) b
 summary's other keys depend on the execution path: a default run goes through the staged
 pipeline and summarizes as `status`, `text`, `cost_usd`, `reason`, `task_class`, `verdict`,
 `revisions`, `candidates_run`, `model`, `events`, and `reflection`; a `--no-pipeline` (raw step-loop)
-run summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus the
-top-level [`files_touched`](/docs/telemetry/files-touched) telemetry payload — which the
-pipeline summary does **not** carry.
+run summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus a
+top-level `files_touched` key holding the
+[files-touched](/docs/telemetry/files-touched) telemetry payload — which the pipeline
+summary does **not** carry. That payload is the serialized telemetry object, so the array
+of records sits one level in, at `.files_touched.files_touched`.
+
+The `status` value is the first thing most scripts branch on. A pipeline run
+reports one of four; a `--no-pipeline` run reports three, since no verification
+ladder ran:
+
+<CardGrid size="sm">
+  <OptionCard name="completed">
+    The turn finished. On the pipeline path this also means verification
+    passed — check `verdict.deterministic` to see whether a judge was spent.
+  </OptionCard>
+  <OptionCard name="verification_failed">
+    Pipeline only. The work happened but did not verify; `reason` carries the
+    verdict summary. Exits non-zero.
+  </OptionCard>
+  <OptionCard name="aborted">
+    A backstop ended the run — the budget cap, a scope gate with nobody to ask,
+    a signal. `reason` says which. Exits non-zero.
+  </OptionCard>
+  <OptionCard name="error">
+    The run failed outright, including every pre-flight failure. Exits non-zero.
+  </OptionCard>
+</CardGrid>
 
 **Failures keep the same key set.** A pipeline run that errors emits every key above, with
 `text` and the pipeline-only keys (`task_class`, `verdict`, `revisions`, `candidates_run`)
@@ -109,15 +143,42 @@ Key order is not part of the contract — read by key, never by position.
 
 ## Configure via environment
 
-Every core flag has an environment variable, so a CI job can be configured without editing
-the command line:
+Every core global flag has an environment variable, so a CI job can be configured without
+editing the command line:
 
-| Flag | Environment variable |
-| --- | --- |
-| `--model` | `STELLA_MODEL` |
-| `--base-url` | `STELLA_BASE_URL` |
-| `--output-format` | `STELLA_OUTPUT_FORMAT` |
-| `--budget` | `STELLA_BUDGET` |
+<CardGrid size="md">
+  <OptionCard name="STELLA_MODEL">
+    Equivalent to `--model`. The worker model for this invocation:
+    `provider/model_id`, e.g. `anthropic/claude-fable-5`.
+  </OptionCard>
+  <OptionCard name="STELLA_BASE_URL">
+    Equivalent to `--base-url`. Required alongside `--model local/<model>` to
+    point at a local OpenAI-compatible server; optional elsewhere to route
+    through a proxy.
+  </OptionCard>
+  <OptionCard name="STELLA_OUTPUT_FORMAT" defaultValue="text">
+    Equivalent to `--output-format`: `text`, `json`, or `stream-json`.
+  </OptionCard>
+  <OptionCard name="STELLA_BUDGET">
+    Equivalent to `--budget`. Hard USD cap for the whole run. Unset means
+    spend is metered but never blocked.
+  </OptionCard>
+  <OptionCard name="STELLA_PLAIN">
+    Set to `1` for the plain line-based REPL instead of the Command Deck. Rarely
+    needed in CI — the deck already steps aside when stdout is not a terminal.
+  </OptionCard>
+  <OptionCard name="STELLA_NO_ANIM">
+    Freeze all deck animation to a static frame, for CI logs and
+    asciinema-style recordings. `NO_COLOR` forces the same.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="warn">
+  `--api-key` deliberately has **no** `STELLA_*` equivalent. Supply the key
+  through the provider's own variable (`ANTHROPIC_API_KEY`, `ZAI_API_KEY`, …),
+  which is step 2 of the [credential chain](/docs/configuration/credentials)
+  and never lands in a process argument list.
+</Callout>
 
 ```bash
 export STELLA_MODEL=anthropic/claude-fable-5
@@ -125,6 +186,13 @@ export STELLA_OUTPUT_FORMAT=stream-json
 export STELLA_BUDGET=5
 stella run "update the changelog for the pending release"
 ```
+
+Stella also loads project dotenv files into the environment before any of this
+resolves — `.env.<mode>.local`, then `.env.local`, then `.env`, most-specific
+first, confined to the enclosing git repository. An exported shell value always
+beats a file value, `.env.example` and committed `.env.<mode>` files are never
+read, and `STELLA_NO_ENV_FILE=1` disables the mechanism entirely. In CI, prefer
+the runner's secret store over a checked-in file.
 
 ## Headless credentials
 
@@ -153,9 +221,147 @@ stella --budget 3 --output-format json run "port the utils module to the new cli
 ```
 
 Work aborts cleanly once the cap is reached — never mid-tool — so the workspace is left in
-a consistent state.
+a consistent state, and the summary comes back `"status": "aborted"` with the cap named in
+`reason`. A fleet divides the same cap across its concurrency width, so the number you set
+is the number you spend:
+
+```bash
+stella --budget 10 fleet --plan cleanup.toml --max-concurrency 4
+```
 
 ## Exit codes
 
-`stella` exits `0` on success and non-zero on failure (an unresolved credential, an
-invalid flag, or an aborted run), so you can gate a pipeline on its result.
+<CardGrid size="sm">
+  <OptionCard name="0">
+    Success. On the pipeline path that means verification passed, not merely
+    that the model stopped talking.
+  </OptionCard>
+  <OptionCard name="1">
+    Failure — an unresolved credential, an invalid flag, a failed verification,
+    or an aborted run.
+  </OptionCard>
+  <OptionCard name="128 + signal">
+    The run was interrupted: `130` for `SIGINT` (Ctrl-C), `143` for `SIGTERM`
+    (a CI job cancellation or timeout kill). The shell convention, so a wrapper
+    script can tell "someone stopped this" from "this failed".
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella --budget 3 --output-format json run \
+  --test-command "cargo test -p stella-store" \
+  "make the store migration idempotent on an already-v2 file" > result.json
+case $? in
+  0)   echo "verified" ;;
+  130) echo "cancelled by the operator"; exit 0 ;;
+  143) echo "the runner killed us — probably a job timeout"; exit 0 ;;
+  *)   echo "failed"; exit 1 ;;
+esac
+```
+
+## A complete CI job
+
+The whole contract in one GitHub Actions step: a budget cap that cannot be
+exceeded, a deterministic oracle so most runs never spend a judge call, JSON on
+stdout, and the summary parsed for the job log.
+
+```yaml title=".github/workflows/autofix.yml"
+name: autofix
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: What Stella should do
+        required: true
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Stella
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run the task
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          STELLA_MODEL: anthropic/claude-fable-5
+          STELLA_OUTPUT_FORMAT: json
+          STELLA_BUDGET: "3"
+        run: stella run --test-command "cargo test --workspace" "${{ inputs.task }}" > result.json
+
+      - name: Summarize
+        if: always()
+        run: |
+          jq -r '
+            "status:        \(.status)",
+            "cost:          $\(.cost_usd)",
+            "task class:    \(.task_class // "n/a")",
+            "revisions:     \(.revisions // 0)",
+            "deterministic: \(.verdict.deterministic // false)",
+            "evidence:      \(.verdict.summary // .reason // "—")"
+          ' result.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open a PR with the result
+        if: success()
+        run: |
+          git switch -c "stella/${{ github.run_id }}"
+          git commit -am "${{ inputs.task }}"
+          git push -u origin HEAD
+          gh pr create --fill
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+<Callout type="warn">
+  One headless-only gate to know about: a plan whose blast radius crosses the
+  [scope-review thresholds](/docs/inference-pipeline) has nobody to ask in CI,
+  so the run ends rather than auto-approving. If the checkout is disposable and
+  the budget cap is your real guard, opt in explicitly with
+  `agent_engine_config.headless_scope_bypass: "on"` — never as a default.
+</Callout>
+
+## Parsing the output with jq
+
+The summary object and the event stream answer different questions. A few
+pipelines worth keeping:
+
+```bash
+# Gate a script on deterministic evidence only — refuse a judge-only pass.
+stella --output-format json run --test-command "make test" "$TASK" \
+  | jq -e '.status == "completed" and .verdict.deterministic == true' >/dev/null \
+  || { echo "no deterministic proof — not merging" >&2; exit 1; }
+```
+
+```bash
+# Every file the raw step loop touched, with its line delta. Note the nesting:
+# the summary's `files_touched` key holds the telemetry payload object, whose
+# own `files_touched` key holds the array.
+stella --output-format json run --no-pipeline "tidy up the error types in stella-store" \
+  | jq -r '.files_touched.files_touched[] | "\(.path)\t+\(.lines_added)/-\(.lines_removed)"'
+```
+
+```bash
+# Watch the stages go by, live, without parsing anything else. Stage names are
+# snake_case: triage, context_recall, plan, scope_review, witness, execute,
+# verify, judge.
+stella --output-format stream-json run "$TASK" \
+  | jq -r --unbuffered 'select(.type == "stage") | "→ \(.name)"'
+```
+
+```bash
+# Which tools the run actually reached for, most-used first. A tool_start event
+# carries its call under `call`, so the name is `.call.name`.
+stella --output-format json run "$TASK" \
+  | jq -r '.events[] | select(.type == "tool_start") | .call.name' \
+  | sort | uniq -c | sort -rn
+```
+
+<Callout type="info">
+  Skip lines and keys you do not recognize — that is what makes these pipelines
+  survive an upgrade. See
+  [Event stream compatibility](/docs/event-stream-compatibility) for the event
+  vocabulary's own guarantee.
+</Callout>

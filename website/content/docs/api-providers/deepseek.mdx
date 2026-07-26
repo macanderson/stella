@@ -29,9 +29,34 @@ The provider id is `deepseek`; the default model is `deepseek-chat` (the V3 line
 through 2025).
 
 ```bash
+export DEEPSEEK_API_KEY="sk-..."
+
 stella --model deepseek/deepseek-chat run "fix the flaky date test"
 export STELLA_MODEL=deepseek/deepseek-chat
 ```
+
+## Reasoning is dropped on this provider
+
+<Callout type="warn">
+  DeepSeek's reasoning posture is **unsupported**. Its chat-completions API exposes no
+  request-level effort control, so a pinned `effort` is **discarded** — surfaced as a boot
+  notice rather than sent — and the model reasons at its own fixed depth.
+</Callout>
+
+There is a second layer on the default model specifically. `deepseek-chat` is the seed
+catalog's one entry that declares `supports_reasoning: false` — it is the non-thinking
+chat model — and a confirmed "no" makes the effort picker offer **no levels at all** for
+it, rather than showing a dial that does nothing. That is the intended behavior, not a
+missing capability: an unknown capability keeps a provider's full vocabulary, and only a
+confirmed "no" is allowed to empty it.
+
+DeepSeek does publish a reasoning model, `deepseek-reasoner`, which reasons
+unconditionally. It is **not** in Stella's seed catalog — the seed carries `deepseek-chat`
+only — so it arrives with the catalog sync that pulls DeepSeek's own `/models` listing
+(that listing syncs from the first run with a key present; see
+[the live model catalog](/docs/api-providers/models#the-live-model-catalog-stella-models-refresh)).
+Effort stays unsent either way: the posture above is a property of the provider's API, not
+of the model you pick.
 
 ## The triage model
 

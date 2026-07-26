@@ -12,21 +12,66 @@ full price every call.
 
 Everything is on your disk, under `.stella/`:
 
-| Path | What it holds |
-| --- | --- |
-| `.stella/memories/*.md` | Workspace memories — one Markdown lesson per file, written by `save_memory` |
-| `.stella/private/context.db` | The **bi-temporal** context store: episodes, reflection memories, domain facts |
-| `.stella/private/reflections.jsonl` | The reflection mining log — one JSON lesson per line |
-| `.stella/private/codegraph.db` | The tree-sitter code-graph index |
-| `.stella/explorations/*` | Saved **exploration maps** — reusable codebase-slice notes with per-file staleness |
-| `.stella/rules/*.md` | Rules — promoted memories and guard rules |
-| `.stella/skills/` | Project [skills](/docs/agent-tools/skills) |
-| `.stella/domains.toml` | The domain taxonomy — the shared tagging vocabulary |
-| `.stella/private/store.db` | The citation ledger and [telemetry](/docs/telemetry) |
+<CardGrid size="md">
+  <OptionCard name=".stella/memories/*.md">
+    Workspace memories — one Markdown lesson per file, written by `save_memory`.
+  </OptionCard>
+  <OptionCard name=".stella/private/context.db">
+    The **bi-temporal** context store: episodes, reflection memories, domain facts.
+  </OptionCard>
+  <OptionCard name=".stella/private/reflections.jsonl">
+    The reflection mining log — one JSON lesson per line.
+  </OptionCard>
+  <OptionCard name=".stella/private/codegraph.db">
+    The tree-sitter code-graph index.
+  </OptionCard>
+  <OptionCard name=".stella/explorations/*">
+    Saved **exploration maps** — reusable codebase-slice notes with per-file staleness.
+  </OptionCard>
+  <OptionCard name=".stella/rules/*.md">
+    Rules — promoted memories and guard rules. Also read from `.claude/rules/` and
+    `~/.stella/rules/`.
+  </OptionCard>
+  <OptionCard name=".stella/skills/">
+    Project [skills](/docs/agent-tools/skills).
+  </OptionCard>
+  <OptionCard name=".stella/domains.toml">
+    The domain taxonomy — the shared tagging vocabulary.
+  </OptionCard>
+  <OptionCard name=".stella/private/store.db">
+    The citation ledger and [telemetry](/docs/telemetry).
+  </OptionCard>
+</CardGrid>
 
 *Bi-temporal* means the context store keeps both when a fact was true and
 when Stella believed it: re-running `stella init` **supersedes** stale facts
 rather than deleting them, so "what did we believe then?" stays answerable.
+
+### Where rules come from
+
+Rules are read from **three** directories, in precedence order — a later one overrides an
+earlier one *by rule id*, so a repository can replace a personal rule that shares its name:
+
+<CardGrid size="sm">
+  <OptionCard name="~/.stella/rules/">
+    Your own rules, applied in every workspace. Lowest precedence, and the only directory
+    that survives when project prompts are not permitted.
+  </OptionCard>
+  <OptionCard name=".claude/rules/">
+    Claude Code interop — an existing rules directory works unchanged.
+  </OptionCard>
+  <OptionCard name=".stella/rules/">
+    The workspace's own rules, and where `stella memory promote` writes. Highest
+    precedence.
+  </OptionCard>
+</CardGrid>
+
+Both project directories are skipped entirely when the effective
+[managed authority](/docs/configuration/settings#managed-authority-ceilings) does not
+permit project prompts, leaving your user rules armed. Prompt-only (Tier-1) rules follow
+that plain latest-wins precedence; user-global **hard guards** are monotonic instead — a
+project rule with the same id can never disarm one, and a distinct project guard is added
+under a provenance-qualified id so both constraints stay in force.
 
 ## Local-first today; share rules through Git
 

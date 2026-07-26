@@ -8,6 +8,8 @@ VPC routing, enterprise data terms — Stella speaks both native dialects. Both 
 sit **last** in auto-detection on purpose (their credentials are often present for
 unrelated reasons), so pin them explicitly.
 
+<ProviderGrid only={["vertex", "bedrock"]} />
+
 ## Vertex AI
 
 ```bash
@@ -15,18 +17,55 @@ export VERTEX_ACCESS_TOKEN=$(gcloud auth print-access-token)
 export VERTEX_PROJECT_ID=my-gcp-project        # or GOOGLE_CLOUD_PROJECT
 export VERTEX_LOCATION=global                  # optional; default "global"
 
+stella models    # vertex reads configured
 stella --model vertex/gemini-3-pro run "…"
 ```
 
+<CardGrid size="md">
+  <OptionCard name="VERTEX_ACCESS_TOKEN" required>
+    The credential Stella keys Vertex on — deliberately Vertex-specific rather
+    than a generic Google variable, so auto-detection is an explicit opt-in.
+  </OptionCard>
+  <OptionCard name="VERTEX_PROJECT_ID" required>
+    Your GCP project. `GOOGLE_CLOUD_PROJECT` is accepted as the alternative
+    name.
+  </OptionCard>
+  <OptionCard name="VERTEX_LOCATION" defaultValue="global">
+    The region the adapter builds its per-request endpoint from.
+  </OptionCard>
+</CardGrid>
+
 Access tokens expire hourly — wrap the export in a shell function so a fresh token is a
 keystroke away (the [Vertex page](/docs/api-providers/vertex) has the snippet). Pin it
-as your default so `--model` isn't needed every run:
+as your default so `--model` isn't needed every run — this is the whole file:
 
 ```json title="~/.stella/settings.json"
 {
-  "agent_engine_config": { "default_model": "vertex/gemini-3-pro" }
+  "agent_engine_config": {
+    "default_model": "vertex/gemini-3-pro",
+    "pipeline_worker_model": "vertex/gemini-3-pro",
+    "pipeline_judge_model": "vertex/gemini-3-pro",
+    "pipeline_triage_model": "vertex/gemini-3-pro",
+
+    "allowed_models": ["vertex/gemini-3-pro"],
+
+    "auto_mode": "off",
+    "effort_auto": "off",
+    "reasoning_auto": "on",
+
+    "agents": {
+      "judge": {
+        "effort": "high",
+        "prompt": "You are a strict, evidence-first code judge. Claimed success without deterministic evidence is a FAIL."
+      }
+    }
+  }
 }
 ```
+
+`gemini-3-pro` on Vertex is the same model — and the same list price, $1.25/$10.00 per
+Mtok on a 1M-token window — as the Gemini-direct row; only the billing relationship and
+the wire path differ.
 
 ## Amazon Bedrock
 
@@ -36,8 +75,40 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_SESSION_TOKEN=...                   # when using STS/SSO-derived creds
 export AWS_REGION=us-east-1                    # or AWS_DEFAULT_REGION; default us-east-1
 
+stella models    # bedrock reads configured
 stella --model bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0 run "…"
 ```
+
+<CardGrid size="md">
+  <OptionCard name="AWS_ACCESS_KEY_ID" required>
+    The variable Bedrock's row is keyed on. Because it is commonly exported for
+    unrelated reasons, Bedrock sits **last** in auto-detection.
+  </OptionCard>
+  <OptionCard name="AWS_SECRET_ACCESS_KEY" required>
+    Resolved alongside the key id when the adapter is built.
+  </OptionCard>
+  <OptionCard name="AWS_SESSION_TOKEN">
+    Required only for STS- or SSO-derived temporary credentials.
+  </OptionCard>
+  <OptionCard name="AWS_REGION" defaultValue="us-east-1">
+    Also read from `AWS_DEFAULT_REGION`. The real host is region-scoped —
+    `bedrock-runtime.<AWS_REGION>.amazonaws.com` — and built per request.
+  </OptionCard>
+</CardGrid>
+
+The default Bedrock model is a **cross-region inference profile**
+(`us.anthropic.claude-sonnet-4-5-20250929-v1:0`), not a bare model id: Bedrock rejects
+on-demand invocation of newer Anthropic models without one. It is priced as Claude
+Sonnet 4.5 at $3.00/$15.00 per Mtok on a 200k window.
+
+<Callout type="info">
+  Bedrock's Converse `inferenceConfig` has slots for only `max_tokens`, `temperature`,
+  and `top_p` — so `effort`, the `reasoning` switch, and every other generation param
+  are silently dropped there. Shape a Bedrock judge with its **`prompt`** (and, if you
+  want, `max_tokens`); an `effort: "xhigh"` line will not change anything. This is the
+  never-fail contract, not a bug: a param the provider cannot express must never fail
+  the request.
+</Callout>
 
 <Callout type="warn">
   Stella reads **only these environment variables** — it does not walk the AWS
@@ -65,29 +136,61 @@ inherits — users keep their own keys, projects keep their own overrides:
       "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     ]
   },
+  "tools": {
+    "web": "off"
+  },
+  "authority": {
+    "project_prompts": "off",
+    "project_custom_tools": "off"
+  },
   "hooks": {
     "PreToolUse": [
       { "matcher": "repo_push",
-        "hooks": [ { "command": "/usr/local/bin/acme-push-policy" } ] }
+        "hooks": [ { "command": "/usr/local/bin/acme-push-policy", "timeoutMs": 10000 } ] }
     ]
   }
 }
 ```
 
-- `STELLA_MANAGED_SETTINGS=/path/to/settings.json` overrides the platform path — the CI
-  and container route.
-- `allowed_models` constrains the deck's model pickers and `auto_mode`'s choices to the
-  approved list — and it **replaces wholesale** across scopes, so the org list is the
-  list unless a more specific scope replaces it entirely.
-- Org-managed hooks always load (no trust flag needed) — they are your machine's
-  policy, unlike a cloned repo's. Projects can still add their own behind
-  [`STELLA_TRUST_PROJECT=1`](/docs/configuration/settings#the-project-trust-boundary).
+<CardGrid size="md">
+  <OptionCard name="STELLA_MANAGED_SETTINGS">
+    Overrides the platform path with an explicit file — the CI and container
+    route.
+  </OptionCard>
+  <OptionCard name="allowed_models">
+    Constrains the deck's model pickers and `auto_mode`'s choices to the
+    approved list. It **replaces wholesale** across scopes, so the org list is
+    the list unless a more specific scope replaces it entirely.
+  </OptionCard>
+  <OptionCard name="hooks">
+    Org-managed hooks always load — no trust flag needed, because they are your
+    machine's policy rather than a cloned repo's. `matcher` is a glob over the
+    tool name. Hooks concatenate across scopes, so projects can still add their
+    own behind
+    [`STELLA_TRUST_PROJECT=1`](/docs/configuration/settings#the-project-trust-boundary);
+    none of them can remove yours.
+  </OptionCard>
+  <OptionCard name="tools">
+    A managed `off` is a **ceiling**, not a preference: a lower scope cannot
+    grant back a tool the org denied, even a trusted project. Keys are tool
+    names, group names (`web`, `bash`, `repo`, …), or `"*"`.
+  </OptionCard>
+  <OptionCard name="authority.project_prompts" defaultValue="on">
+    `off` keeps a repo from replacing an agent's system prompt even when the
+    user has trusted it. Honored only from this file.
+  </OptionCard>
+  <OptionCard name="authority.project_custom_tools" defaultValue="on">
+    `off` keeps `.stella/tools/` manifests from loading even on a trusted repo;
+    only `~/.stella/tools/` is scanned.
+  </OptionCard>
+</CardGrid>
 
 ## Verify a seat
 
 ```bash
 stella models    # ✓ configured rows for vertex/bedrock, org gateway URLs visible
 stella config    # the resolved provider, model, and a redacted key preview
+stella stats     # after a first run: cost and resolve rate per provider and model
 ```
 
 ## Optional managed operational telemetry

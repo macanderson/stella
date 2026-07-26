@@ -25,11 +25,19 @@ For the full explanation of judged rounds, the cross-family judge, and the defin
 
 `stella goal` takes the [global flags](/docs/commands), plus one of its own:
 
-| Flag | Why it matters here |
-| --- | --- |
-| `--no-pipeline` | Each working round runs the raw step loop instead of the staged pipeline (triage, plan, witness, execute, verify). The pipeline is the default. |
-| `--model <provider/model_id>` | Pin the worker model. The judge is routed to a different family automatically when one is available. |
-| `--budget <usd>` | Cap total spend across all rounds; work aborts cleanly once the cap is exceeded. |
+<CardGrid size="md">
+  <OptionCard name="--no-pipeline">
+    Each working round runs the raw step loop instead of the staged pipeline (triage,
+    plan, witness, execute, verify). The pipeline is the default.
+  </OptionCard>
+  <OptionCard name="--model <provider/model_id>">
+    Pin the worker model. The judge is routed to a different family automatically when one
+    is available.
+  </OptionCard>
+  <OptionCard name="--budget <usd>">
+    Cap total spend across all rounds; work aborts cleanly once the cap is exceeded.
+  </OptionCard>
+</CardGrid>
 
 <Callout type="info">
 `stella goal` is an interactive mode: it always renders human-readable text and does **not** honor `--output-format`. Use [`stella run`](/docs/commands/run) for headless `json` / `stream-json` output.
@@ -47,7 +55,7 @@ Work toward a goal until the judge confirms it is met:
 stella goal "Migrate the config loader to use serde and add tests"
 ```
 
-Pin the worker model and cap spend across all rounds (global flags go before the subcommand):
+Pin the worker model and cap spend across all rounds:
 
 ```bash
 stella --model anthropic/claude-fable-5 --budget 10.00 \

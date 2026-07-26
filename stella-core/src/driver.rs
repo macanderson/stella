@@ -67,8 +67,7 @@
 //! ("malformed-call repair tuned to the failure shapes GLM actually
 //! produces") is a documented follow-up, not faked here.
 
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -81,15 +80,19 @@ use stella_protocol::{
 
 use crate::budget::{BudgetAxis, BudgetGuard, BudgetOutcome};
 use crate::compaction::compact_measured;
+use crate::receipts::TranscriptRevision;
+
+mod loop_evidence;
 use crate::estimator::{CalibrationMap, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 use crate::hooks::{HookEvent, HookPayload, HookRunner, Hooks, any_matcher_matches, run_hooks};
-use crate::loop_detect::{CallRecord, LoopDetectionConfig, LoopVerdict, detect_loop};
+use crate::loop_detect::{LoopDetectionConfig, LoopVerdict, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::receipts::ReceiptLedger;
 use crate::retry::{RetryOutcome, RetryPolicy, Sleeper, retry_with_backoff_observed};
 use crate::speculation::{SpeculationGate, SpeculationPool, SpeculativeResult};
 use crate::{AccountedCall, AccountedCallError, run_accounted_call};
+use loop_evidence::{ResultIdentities, recent_call_records, snapshot_result_identities};
 use tokio::sync::mpsc::UnboundedSender;
 
 mod settlement;
@@ -474,7 +477,12 @@ impl<'a> Engine<'a> {
         // Per-turn pre-compaction tool-result identities
         // ([`snapshot_result_identities`]). Stack-local like the two above —
         // the engine holds no state of its own.
-        let mut result_identities = ResultIdentities::new();
+        let mut result_identities = ResultIdentities::default();
+        // Bumped by every pass that rewrites the transcript in place rather than
+        // appending to it, which is what tells the two position-keyed memos —
+        // `result_identities`' positional half and the receipt ledger's block
+        // digests — that their keys no longer name the bytes behind them.
+        let mut revision = TranscriptRevision::default();
 
         for step in 0..self.config.max_steps {
             // Pause parks HERE — after the previous step fully settled and
@@ -512,8 +520,8 @@ impl<'a> Engine<'a> {
             // BEFORE compaction, never after: the pass rewrites tool results
             // in place, and loop detection runs on the rewritten history in
             // this very step (#554).
-            snapshot_result_identities(messages, &mut result_identities);
-            total_cost_usd += self
+            snapshot_result_identities(messages, &mut result_identities, revision);
+            let pass = self
                 .run_compaction_pass(
                     messages,
                     calibration_model.as_deref(),
@@ -523,10 +531,17 @@ impl<'a> Engine<'a> {
                     events,
                 )
                 .await;
+            total_cost_usd += pass.cost_usd;
+            if pass.rewrote {
+                revision.rewritten();
+            }
             // The manifest reports the budget compaction just compared against.
             let (effective_budget, calibration_factor) =
                 self.effective_compaction_budget(calibration_model.as_deref());
             receipts.set_effective_budget(effective_budget, calibration_factor);
+            // Set immediately after the pass that may have rewritten the
+            // transcript, so the ledger's digest memo cannot serve a stale block.
+            receipts.set_transcript_revision(revision);
 
             if let Some(aborted) = self.check_loop_detection(
                 messages,
@@ -655,14 +670,20 @@ impl<'a> Engine<'a> {
         health: &mut SummarizerHealth,
         step: usize,
         events: &EventSender,
-    ) -> f64 {
+    ) -> CompactionPass {
         let (compaction_budget, factor) = self.effective_compaction_budget(calibration_model);
+        // Whether anything was rewritten IN PLACE, decided at the mutation sites
+        // below and reported through a `#[must_use]` return.
+        let mut rewrote = false;
         // Post-pass size, for the overflow decision below. `compact_measured`
         // returns the count it already computed on every path — including both
         // `None` paths, the common case — so this walks the transcript once per
         // step rather than eagerly re-deriving a number the callee just discarded.
         let (after_tokens, report) = compact_measured(messages, compaction_budget);
         if let Some(report) = report {
+            // `Some` means a pass actually stubbed, aged or superseded something,
+            // so positions at or after the first rewrite name different bytes now.
+            rewrote = true;
             let _ = events.send(AgentEvent::Compaction {
                 before_tokens: report.before_tokens,
                 after_tokens,
@@ -689,7 +710,12 @@ impl<'a> Engine<'a> {
         // latest tool result) — without this, the next provider call
         // eventually hard-fails on context overflow.
         if self.config.summarize_overflow && after_tokens > compaction_budget {
-            return self
+            // The summarizer splices a span down to one message, shifting every
+            // position after it. Reported unconditionally when it RUNS rather than
+            // only when it splices: over-invalidating costs one turn's memo on a
+            // rare path, under-invalidating serves a digest for bytes that moved.
+            // That asymmetry is why this is a revision counter, not a heuristic.
+            let cost_usd = self
                 .summarize_overflow_span(
                     messages,
                     budget,
@@ -700,8 +726,15 @@ impl<'a> Engine<'a> {
                     events,
                 )
                 .await;
+            return CompactionPass {
+                cost_usd,
+                rewrote: true,
+            };
         }
-        0.0
+        CompactionPass {
+            cost_usd: 0.0,
+            rewrote,
+        }
     }
 
     /// Replace the oldest viable span with a model-written summary. Failures
@@ -2019,235 +2052,24 @@ impl SummarizerHealth {
 /// window boundary would erase the very evidence that triggered it, and
 /// the abort-on-re-detection would need a whole fresh threshold's worth of
 /// looping instead of one more no-progress call.
+/// What one compaction pass did: what it cost, and whether it rewrote the
+/// transcript in place.
+///
+/// `#[must_use]` is load-bearing. `rewrote` is the only signal that the two
+/// position-keyed memos — the loop detector's result identities and the receipt
+/// ledger's block digests — must drop their keys, and a caller that ignored it
+/// would leave both serving digests for bytes that no longer exist. Making the
+/// return value impossible to discard silently turns "remember to invalidate"
+/// from a convention into a compile error.
+#[must_use]
+struct CompactionPass {
+    /// The summarizer's spend, if the overflow fallback ran; zero otherwise.
+    cost_usd: f64,
+    /// True when a pass stubbed, aged, superseded or spliced anything.
+    rewrote: bool,
+}
+
 const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
-
-/// Pair the tool calls of the CURRENT turn — assistant messages after the
-/// last user message — with the outputs they produced, in chronological
-/// order, for `crate::loop_detect::detect_loop`. Windowing at the user
-/// boundary matters: identical calls across turns are the user re-asking a
-/// question, not a stuck loop (a REPL session asking the same thing three
-/// times would otherwise trip the exact-repeat detector), and it keeps
-/// this per-step scan O(turn) instead of O(entire history). The overflow
-/// summary and the stuck-loop warning are also User-role but are not real
-/// user turns — treating either as a boundary would truncate the loop
-/// window (on every summarization pass, or right when re-detection needs
-/// the evidence), so both are skipped when locating the boundary.
-///
-/// Results attach to the most recent still-unresolved call with a matching
-/// `call_id` — providers only guarantee ids unique within one step, and a
-/// scripted or misbehaving backend may reuse them across steps. A call
-/// whose result is missing keeps `output: None`, which the detector treats
-/// as unprovable progress, never loop evidence.
-///
-/// `identities` is the turn's snapshot from [`snapshot_result_identities`],
-/// attached to each resolved record so the detector can compare what a call
-/// really produced rather than what compaction left of it (#554). It is
-/// keyed by [`CallIdentityKey`], so the lookup here must derive the key from
-/// the record's own call. A key that is absent — or poisoned because that
-/// same call produced two different outputs — leaves `identity: None` and
-/// the detector falls back to the output bytes.
-fn recent_call_records<'a>(
-    messages: &'a [CompletionMessage],
-    identities: &ResultIdentities,
-) -> Vec<CallRecord<'a>> {
-    let turn_start = messages
-        .iter()
-        .rposition(|m| {
-            m.role == MessageRole::User
-                && !m.content.starts_with(SUMMARY_MARKER_PREFIX)
-                && !m.content.starts_with(LOOP_STEER_PREFIX)
-        })
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    let mut records: Vec<CallRecord> = Vec::new();
-    for message in &messages[turn_start..] {
-        match message.role {
-            MessageRole::Assistant => {
-                records.extend(message.tool_calls.iter().map(|call| CallRecord {
-                    call: call.clone(),
-                    output: None,
-                    identity: None,
-                }));
-            }
-            MessageRole::Tool => {
-                for result in &message.tool_results {
-                    if let Some(record) = records
-                        .iter_mut()
-                        .rev()
-                        .find(|r| r.output.is_none() && r.call.call_id == result.call_id)
-                    {
-                        // Kept as the `Cow` it comes back as: with no volatile
-                        // footer (the common path) this borrows, not copies.
-                        record.output = Some(comparable_output(&result.output));
-                        let key = call_identity_key(&record.call);
-                        record.identity = identities.get(&key).cloned().flatten();
-                    }
-                }
-            }
-            MessageRole::System | MessageRole::User => {}
-        }
-    }
-    records
-}
-
-/// Identifies a tool call for the purpose of [`ResultIdentities`]: the
-/// provider's `call_id` PLUS the call's name and input.
-///
-/// `call_id` alone is not enough. Providers only guarantee ids unique within
-/// one response, and Gemini and Vertex mint them as `call_{ordinal}` where
-/// the ordinal is local to a single assistant step (`stella-model/src/
-/// gemini.rs`; `vertex.rs` reuses the same aggregation path). So `call_0`
-/// restarts on EVERY step, and a bare-`call_id` key collides across steps by
-/// construction on two real providers — poisoning the id on the first step
-/// whose first call differs, and keeping it poisoned for the rest of the turn.
-///
-/// Name and input are exactly the fields [`loop_detect::same_record`] already
-/// requires to match before two records are "the same", so widening the key
-/// with them cannot merge two calls the detector would have distinguished. It
-/// only stops two UNRELATED calls that happened to share an ordinal from being
-/// treated as one.
-///
-/// Deliberately not positional: [`Engine::apply_overflow_summary`] splices a
-/// span of messages down to a single summary, so any index-derived key would
-/// silently re-point surviving results at another call's evidence after the
-/// first overflow — a WRONG identity, which is far worse than none.
-type CallIdentityKey = (String, String, String);
-
-/// Build the [`CallIdentityKey`] for one tool call. `input` is serialized
-/// rather than hashed so the key stays debuggable; both producers derive it
-/// from the same `ToolCall`, so they always agree.
-fn call_identity_key(call: &ToolCall) -> CallIdentityKey {
-    (
-        call.call_id.clone(),
-        call.name.clone(),
-        call.input.to_string(),
-    )
-}
-
-/// A turn's snapshot of what each tool call really produced, keyed by
-/// [`CallIdentityKey`] ([`snapshot_result_identities`]). `None` marks a
-/// POISONED key: that same call was observed carrying two different
-/// uncompacted outputs, so nothing about it can be trusted.
-type ResultIdentities = HashMap<CallIdentityKey, Option<String>>;
-
-/// Record every tool result's identity into `identities`, keyed by
-/// [`CallIdentityKey`] — the driver's answer to #554. (Keyed by the call's
-/// id AND its name and input, never the id alone: see that type's docs for
-/// the providers that recycle ids across steps.)
-///
-/// Compaction rewrites tool results IN PLACE (dedup/supersession stubs,
-/// middle-out aging, the eviction stub) and runs immediately before loop
-/// detection in the same step, so a three-call identical streak reaches the
-/// detector as `[stub, stub, real]` and the byte-identical-output
-/// requirement can never be met. Snapshotting each result's identity while
-/// its real content is still present preserves exactly the evidence the
-/// detector needs, without teaching either pure module about the other.
-/// Called once per step BEFORE the compaction pass; the map accumulates
-/// across the turn, because a result's real content is only on hand for the
-/// one step between producing it and the pass that stubs it.
-///
-/// Two rules make accumulation safe:
-///
-/// - **A compacted output is never recorded.** Its identity is the stub's,
-///   not the call's; recording it would overwrite the real one and lose the
-///   evidence permanently, and every evicted result shares one stub.
-/// - **A call seen with two different real outputs is poisoned** (`None`),
-///   never overwritten. Keeping either identity would attach one call's
-///   evidence to a different call, and a WRONG identity is far worse than
-///   none: it can make two genuinely different outputs compare equal and
-///   abort a healthy turn. Poisoned keys fall back to comparing the live
-///   outputs, i.e. the behavior before this fix. With a
-///   [`CallIdentityKey`] a conflict now means what it says — the same tool,
-///   same arguments, different result, which IS progress — rather than
-///   firing on two unrelated calls that shared a recycled ordinal.
-///
-/// The identity is computed over [`comparable_output`], the same
-/// normalization the detector compares, so `read_file`'s volatile
-/// session-tally footer does not make every reread a distinct identity.
-///
-/// # The invariant that keeps a poisoned key from manufacturing a loop
-///
-/// A poisoned key degrades to comparing the live outputs, and compaction
-/// rewrites older results to ONE shared stub — so if every record in the
-/// detector's window could be a stub, three unrelated calls would compare
-/// byte-equal and abort a healthy turn. They cannot, and the reason is a
-/// cross-module invariant worth naming: `crate::compaction::compact` never
-/// touches the LAST `MessageRole::Tool` message (its `last_tool_idx` guard),
-/// and `detect_loop` only ever reports a verdict anchored on the trailing
-/// record. The anchor therefore always carries its real, freshly-produced
-/// output, and a stub can never match it. Relaxing that guard in
-/// `compaction.rs` would silently turn every over-budget turn into a
-/// false-positive loop abort here.
-fn snapshot_result_identities(messages: &[CompletionMessage], identities: &mut ResultIdentities) {
-    // Calls seen so far that nothing has answered yet, oldest first. The map
-    // is keyed by the CALL, so a result has to be paired back to the call it
-    // answers before its identity can be filed — using the same attachment
-    // rule as [`recent_call_records`], or the two would key differently and
-    // the lookup would silently miss.
-    let mut unanswered: Vec<&ToolCall> = Vec::new();
-    for message in messages {
-        match message.role {
-            MessageRole::Assistant => unanswered.extend(message.tool_calls.iter()),
-            MessageRole::Tool => {
-                for result in &message.tool_results {
-                    let Some(position) = unanswered
-                        .iter()
-                        .rposition(|call| call.call_id == result.call_id)
-                    else {
-                        continue;
-                    };
-                    let call = unanswered.remove(position);
-                    if crate::compaction::is_compacted_output(&result.output) {
-                        continue;
-                    }
-                    let key = call_identity_key(call);
-                    // A poisoned key can never be un-poisoned: any later
-                    // observation conflicts with `None`, so the verdict is
-                    // already final. Hashing this result's content only to
-                    // re-derive it is pure waste, and this scan re-walks the
-                    // WHOLE transcript on every step (#554).
-                    if matches!(identities.get(&key), Some(None)) {
-                        continue;
-                    }
-                    let identity =
-                        crate::receipts::tool_result_block_id(&comparable_output(&result.output));
-                    let conflicts = matches!(
-                        identities.get(&key),
-                        Some(seen) if seen.as_deref() != Some(identity.as_str())
-                    );
-                    identities.insert(key, if conflicts { None } else { Some(identity) });
-                }
-            }
-            MessageRole::System | MessageRole::User => {}
-        }
-    }
-}
-
-/// Normalize one tool output for loop comparison: strip `read_file`'s
-/// volatile session-tally footer (`\n\n(N/M lines shown · read K× this
-/// session)`). The footer changes on EVERY read by design — it is the
-/// model-facing "you already read this" nudge — but the loop detector
-/// requires byte-identical outputs, so the footer made every reread unique
-/// and blinded detection to the exact thrash it exists to catch (the
-/// read → failing-edit → read cycle the `loop_detect` module doc names).
-/// Comparison-only: the transcript and history keep the footer untouched.
-///
-/// Borrowed on the overwhelmingly common path (no footer): both callers run
-/// over the WHOLE transcript on every step, so returning an owned copy meant a
-/// full heap copy of every tool result — a step's worth of garbage proportional
-/// to the entire history, for a normalization that usually changes nothing.
-fn comparable_output(output: &ToolOutput) -> Cow<'_, ToolOutput> {
-    if let ToolOutput::Ok { content } = output
-        && content.ends_with("\u{d7} this session)")
-        && let Some(idx) = content.rfind("\n\n(")
-        && content[idx..].contains(" lines shown \u{b7} read ")
-    {
-        return Cow::Owned(ToolOutput::Ok {
-            content: content[..idx].to_string(),
-        });
-    }
-    Cow::Borrowed(output)
-}
 
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
 /// callers match on this to render "stopped" rather than "failed", and to

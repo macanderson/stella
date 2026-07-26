@@ -50,16 +50,135 @@ came through:
 
 ## The map
 
-| Path | Command | Turn shape | Verification | Execution kind | Headless? |
-| --- | --- | --- | --- | --- | --- |
-| One-shot, pipeline | `stella run "…"` | One staged pipeline run | Pipeline stages + judge; `--test-command` arms the deterministic fail→pass oracle | `pipeline` | Yes (`--output-format json\|stream-json`) |
-| One-shot, raw | `stella run --no-pipeline "…"` | One step-loop turn | The model stops when done | `run` | Yes |
-| Plain REPL | `stella --plain` (or non-TTY) | One raw turn per prompt, shared conversation | You, live | `chat` | Interactive only |
-| Command Deck lead | `stella` | One turn per prompt; `/pipeline` toggles staged (default) vs raw | Pipeline stages, or you | `deck-pipeline` / `deck` | Interactive only |
-| Deck sub-agents | `task_assign` (agent-initiated) | One raw turn per delegated task, own context | The lead reviews results | `deck-sub` | Follows the deck |
-| Goal mode | `stella goal "…"` | Judged **rounds** until the goal is met; pipeline rounds by default, `--no-pipeline` for raw | An independent judge, from evidence, over read-only tools | `goal` | Yes |
-| CI monitor | `stella monitor [target]` | Goal mode with a fixed objective | The judge reads `ci_status`; ends only on a fully green latest run | `goal` | Yes |
-| Fleet workers | `stella fleet …` | One worker per task, wave-scheduled by dependency | Per task (pipeline when available, else raw); attempts recorded in `.stella/private/fleet.db` | fleet ledger | Yes |
+<CardGrid size="lg">
+  <SpecCard
+    title="One-shot, pipeline"
+    meta={[
+      { label: "Command", value: "stella run \"…\"" },
+      { label: "Turn shape", value: "One staged pipeline run", mono: false },
+      { label: "Execution kind", value: "pipeline" },
+      { label: "Headless", value: "Yes — json / stream-json", mono: false },
+    ]}
+  >
+    Verified by the pipeline stages plus the judge. `--test-command` arms the
+    deterministic fail→pass oracle, and a clean flip can submit without a judge
+    call at all.
+  </SpecCard>
+  <SpecCard
+    title="One-shot, raw"
+    meta={[
+      { label: "Command", value: "stella run --no-pipeline \"…\"" },
+      { label: "Turn shape", value: "One step-loop turn", mono: false },
+      { label: "Execution kind", value: "run" },
+      { label: "Headless", value: "Yes", mono: false },
+    ]}
+  >
+    No stages, no judge — the model works until it decides it is done. You are
+    the verification.
+  </SpecCard>
+  <SpecCard
+    title="Plain REPL"
+    meta={[
+      { label: "Command", value: "stella --plain" },
+      { label: "Turn shape", value: "One raw turn per prompt, shared conversation", mono: false },
+      { label: "Execution kind", value: "chat" },
+      { label: "Headless", value: "Interactive only", mono: false },
+    ]}
+  >
+    Also what you get on a non-TTY stdin/stdout, or with `STELLA_PLAIN=1`. You
+    verify, live, between prompts.
+  </SpecCard>
+  <SpecCard
+    title="Command Deck lead"
+    meta={[
+      { label: "Command", value: "stella" },
+      { label: "Turn shape", value: "One turn per prompt; /pipeline toggles staged (default) vs raw", mono: false },
+      { label: "Execution kind", value: "deck-pipeline / deck" },
+      { label: "Headless", value: "Interactive only", mono: false },
+    ]}
+  >
+    Pipeline stages when `/pipeline` is on — which it is by default — otherwise
+    you, watching the FILES and DIFF tabs fill in.
+  </SpecCard>
+  <SpecCard
+    title="Deck sub-agents"
+    meta={[
+      { label: "Command", value: "task_assign (agent-initiated)" },
+      { label: "Turn shape", value: "One raw turn per delegated task, own context", mono: false },
+      { label: "Execution kind", value: "deck-sub" },
+      { label: "Headless", value: "Follows the deck", mono: false },
+    ]}
+  >
+    The lead reviews each result. You never invoke this path directly — you ask
+    for work that warrants it.
+  </SpecCard>
+  <SpecCard
+    title="Goal mode"
+    meta={[
+      { label: "Command", value: "stella goal \"…\"" },
+      { label: "Turn shape", value: "Judged rounds until the goal is met — pipeline rounds by default", mono: false },
+      { label: "Execution kind", value: "goal" },
+      { label: "Headless", value: "Yes", mono: false },
+    ]}
+  >
+    An independent judge assesses the goal from evidence, over a **read-only**
+    view of the tool stack. `--no-pipeline` makes each round a raw step-loop
+    turn.
+  </SpecCard>
+  <SpecCard
+    title="CI monitor"
+    meta={[
+      { label: "Command", value: "stella monitor [target]" },
+      { label: "Turn shape", value: "Goal mode with a fixed objective", mono: false },
+      { label: "Execution kind", value: "goal" },
+      { label: "Headless", value: "Yes", mono: false },
+    ]}
+  >
+    The judge reads `ci_status` itself; only a fully green *latest* run for the
+    target ends the loop. `target` defaults to `main`.
+  </SpecCard>
+  <SpecCard
+    title="Fleet workers"
+    meta={[
+      { label: "Command", value: "stella fleet …" },
+      { label: "Turn shape", value: "One worker per task, wave-scheduled by dependency", mono: false },
+      { label: "Execution kind", value: "fleet ledger" },
+      { label: "Headless", value: "Yes", mono: false },
+    ]}
+  >
+    Verified per task — the staged pipeline when available, the raw step loop
+    otherwise. Every attempt is recorded in `.stella/private/fleet.db`.
+  </SpecCard>
+</CardGrid>
+
+One command per door, to paste and compare:
+
+```bash
+# One-shot, pipeline — the strongest verification a single command can buy.
+stella run --test-command "cargo test -p stella-pipeline" \
+  "make the witness tamper check reject a renamed test file"
+
+# One-shot, raw — a question, not a change.
+stella run --no-pipeline "what does resolve_engine_wiring do with an uncredentialed judge?"
+
+# Interactive, tabbed.
+stella
+
+# Interactive, line-based — SSH, a minimal terminal, a recording.
+stella --plain
+
+# A defined outcome, unknown steps.
+stella goal "cargo clippy --all-targets -- -D warnings is clean and the suite passes"
+
+# CI must be green — target defaults to main.
+stella monitor fix/pager-off-by-one
+
+# A backlog, not a task.
+stella fleet "Add unit tests for the parser module" "Fix the clippy warnings in the store crate"
+
+# Continue yesterday's session.
+stella resume
+```
 
 ## One-shot: `stella run`
 
@@ -184,12 +303,23 @@ modules, a list of independent fixes, wide refactors.
 The [tool catalog](/docs/agent-tools) is shared, but each path decorates it
 differently:
 
-| Path | On top of the shared stack |
-| --- | --- |
-| One-shot / REPL / goal worker | Nothing extra — the shared stack as-is |
-| Command Deck lead | File-change tap + task tap (live tabs, sub-agent spawning), claim-on-first-write |
-| Goal / pipeline judge | A **read-only** view — only `read_only: true` tools are visible or executable |
-| Fleet workers | Claim coordination in the shared tree; a private worktree when isolated |
+<CardGrid size="md">
+  <OptionCard name="One-shot / REPL / goal worker">
+    Nothing extra — the shared stack as-is.
+  </OptionCard>
+  <OptionCard name="Command Deck lead">
+    A file-change tap and a task tap on top: live FILES/DIFF tabs, the task
+    board, sub-agent spawning — plus claim-on-first-write.
+  </OptionCard>
+  <OptionCard name="Goal / pipeline judge">
+    A **read-only** view. Only tools marked `read_only: true` are visible or
+    executable, so a judge structurally cannot edit its way to a verdict.
+  </OptionCard>
+  <OptionCard name="Fleet workers">
+    Claim coordination in the shared tree; a private worktree when the task is
+    marked `isolation = "isolated"`.
+  </OptionCard>
+</CardGrid>
 
 Every path can also opt into the lean toolset — `STELLA_LEAN_TOOLS`
 advertises only a lean core plus the discovery tools; see
@@ -217,22 +347,81 @@ discovery tools are read-only, even the judge can run `tool_search`,
 Every path is a thin `stella-cli` entry point over `stella_core::Engine`.
 If you're changing engine behavior, these are the seams:
 
-| Path | Entry (stella-cli) | Engine call |
-| --- | --- | --- |
-| One-shot pipeline | `agent::run_one_shot` → `run_pipeline_one_shot` | staged pipeline over the engine |
-| One-shot raw | `agent::run_one_shot` → `run_raw_one_shot` → `run_turn` | `Engine::run_turn` |
-| Plain REPL | `agent::run_interactive` → `run_turn` per prompt | `Engine::run_turn` |
-| Deck lead | `command_deck::run_lead_turn` / `run_lead_pipeline_turn` | `Engine::run_turn` / pipeline |
-| Deck sub-agent | `subsession::run_worker` | `Engine::run_turn` |
-| Goal (raw rounds) | `agent::run_goal_cmd` → `run_goal_turn` | `Engine::run_goal` with a judge |
-| Goal (pipeline rounds) | `agent::run_goal_cmd` → `run_goal_pipeline_turn` | pipeline rounds + a judge engine over `ReadOnlyTools` |
-| Fleet worker | `fleet_cmd` per-task worker | pipeline when available, else `Engine::run_turn` |
+<CardGrid size="md">
+  <SpecCard
+    title="One-shot pipeline"
+    meta={[
+      { label: "Entry", value: "agent::run_one_shot → run_pipeline_one_shot" },
+      { label: "Engine call", value: "staged pipeline over the engine", mono: false },
+    ]}
+  />
+  <SpecCard
+    title="One-shot raw"
+    meta={[
+      { label: "Entry", value: "agent::run_one_shot → agent::goal::run_raw_one_shot" },
+      { label: "Engine call", value: "Engine::run_turn" },
+    ]}
+  />
+  <SpecCard
+    title="Plain REPL"
+    meta={[
+      { label: "Entry", value: "agent::run_interactive" },
+      { label: "Engine call", value: "Engine::run_turn per prompt", mono: false },
+    ]}
+  />
+  <SpecCard
+    title="Deck lead"
+    meta={[
+      { label: "Entry", value: "command_deck::run_lead_turn / run_lead_pipeline_turn" },
+      { label: "Engine call", value: "Engine::run_turn, or the pipeline", mono: false },
+    ]}
+  />
+  <SpecCard
+    title="Deck sub-agent"
+    meta={[
+      { label: "Entry", value: "subsession::run_worker" },
+      { label: "Engine call", value: "Engine::run_turn" },
+    ]}
+  />
+  <SpecCard
+    title="Goal — raw rounds"
+    meta={[
+      { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_turn" },
+      { label: "Engine call", value: "Engine::run_goal with a judge", mono: false },
+    ]}
+  />
+  <SpecCard
+    title="Goal — pipeline rounds"
+    meta={[
+      { label: "Entry", value: "agent::goal::run_goal_cmd → run_goal_pipeline_turn" },
+      { label: "Engine call", value: "pipeline rounds + a judge engine over ReadOnlyTools", mono: false },
+    ]}
+  />
+  <SpecCard
+    title="Fleet worker"
+    meta={[
+      { label: "Entry", value: "fleet_cmd::run_fleet, per task" },
+      { label: "Engine call", value: "pipeline when available, else Engine::run_turn", mono: false },
+    ]}
+  />
+</CardGrid>
 
 The execution-kind strings in [the map](#the-map) are what these paths stamp
 on their execution records — the same strings you'll see in
 `stella stats`, the exported [dashboard](/docs/telemetry/dashboard), and the
 deck's AGENTS tab, so a telemetry row always traces back to the door
 the work came through.
+
+The store is ordinary SQLite, so you can ask that question directly — which
+doors your spend actually went through:
+
+```bash
+sqlite3 .stella/private/store.db \
+  "SELECT kind, COUNT(*) AS runs, ROUND(SUM(cost_usd), 4) AS usd
+     FROM executions
+    GROUP BY kind
+    ORDER BY usd DESC;"
+```
 
 ## Where to go next
 

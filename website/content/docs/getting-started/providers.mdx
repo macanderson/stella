@@ -13,24 +13,23 @@ and for choosing between models (pricing, release dates, what each is best at) s
 
 ## Supported providers
 
-| Provider | id | Primary env var | Default model | Base URL | Dialect |
-| --- | --- | --- | --- | --- | --- |
-| Anthropic (Claude) | `anthropic` | `ANTHROPIC_API_KEY` | `claude-fable-5` | `https://api.anthropic.com` | Anthropic Messages |
-| OpenAI (GPT) | `openai` | `OPENAI_API_KEY` | `gpt-5.5` | `https://api.openai.com/v1` | OpenAI Responses |
-| Google Gemini | `gemini` | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `gemini-3-pro` | `https://generativelanguage.googleapis.com/v1beta` | Gemini generateContent |
-| Google Vertex AI | `vertex` | `VERTEX_ACCESS_TOKEN` | `gemini-3-pro` | project/region-scoped | Gemini generateContent |
-| Amazon Bedrock | `bedrock` | `AWS_ACCESS_KEY_ID` | Claude via Converse | region-scoped | Bedrock Converse |
-| xAI (Grok) | `xai` | `XAI_API_KEY` | `grok-4` | `https://api.x.ai/v1` | OpenAI-compatible |
-| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | `https://api.deepseek.com/v1` | OpenAI-compatible |
-| Z.ai (GLM) | `zai` | `ZAI_API_KEY` | `glm-5.2` | `https://api.z.ai/api/paas/v4` | OpenAI-compatible |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openrouter/auto` | `https://openrouter.ai/api/v1` | OpenAI-compatible |
-| Local | `local` | *none* (optional `LOCAL_API_KEY`) | *you choose* | pass `--base-url` | OpenAI-compatible |
+Each card carries what you need to start: the provider id you put before the `/` in
+`--model`, the env var Stella reads, the model you get if you name none, and the wire
+dialect it speaks. Click through for setup and provider-specific configuration.
 
-List them at any time — with live key status and effective base URLs:
+<ProviderGrid />
+
+List them at any time — with live key status and the effective base URL each one resolves
+to:
 
 ```bash
 stella models
 ```
+
+That listing is the authority on your machine — it is the only view that knows which keys
+you actually have. The cards above are rendered from one typed record shared with the
+[API Providers](/docs/api-providers) index, so the two pages cannot disagree with each
+other.
 
 ## Selecting a model
 
@@ -87,9 +86,32 @@ details.
 and optionally `VERTEX_LOCATION` (defaults to `global`). The access token is typically
 `export VERTEX_ACCESS_TOKEN=$(gcloud auth print-access-token)`.
 
+```bash
+export VERTEX_ACCESS_TOKEN=$(gcloud auth print-access-token)
+export VERTEX_PROJECT_ID="my-gcp-project"
+
+stella --model vertex/gemini-3-pro run "audit the IAM bindings module"
+```
+
 **Amazon Bedrock** needs `AWS_SECRET_ACCESS_KEY` alongside `AWS_ACCESS_KEY_ID`, plus an
 optional `AWS_SESSION_TOKEN` and `AWS_REGION` / `AWS_DEFAULT_REGION` (defaults to
 `us-east-1`).
+
+```bash
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+
+stella --model bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0 run "harden the S3 policy module"
+```
+
+<Callout type="info">
+  Only `AWS_ACCESS_KEY_ID` — Bedrock's primary credential — rides the credential chain
+  above. The secondary variables (`AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+  `AWS_REGION`) are read from the environment and **nowhere else**: no
+  `credentials.toml` entry, no `settings.json` field, no prompt. See
+  [Amazon Bedrock](/docs/api-providers/bedrock) for the full split.
+</Callout>
 
 ## Local / any OpenAI-compatible server
 

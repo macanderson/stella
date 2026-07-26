@@ -9,24 +9,22 @@ dialect directly — Anthropic Messages, OpenAI Responses, Gemini generateConten
 Converse, and the OpenAI-compatible dialect the rest of the field converged on. Switching
 vendors is a `--model` flag, not a migration.
 
-## The provider matrix
+## Every provider Stella speaks
 
-| Provider | id | Primary env var | Default model | Dialect |
-| --- | --- | --- | --- | --- |
-| <ProviderMark id="anthropic" /> [Anthropic](/docs/api-providers/anthropic) | `anthropic` | `ANTHROPIC_API_KEY` | `claude-fable-5` | Anthropic Messages |
-| <ProviderMark id="openai" /> [OpenAI](/docs/api-providers/openai) | `openai` | `OPENAI_API_KEY` | `gpt-5.5` | OpenAI Responses |
-| <ProviderMark id="gemini" /> [Google Gemini](/docs/api-providers/gemini) | `gemini` | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `gemini-3-pro` | Gemini generateContent |
-| <ProviderMark id="vertex" /> [Google Vertex AI](/docs/api-providers/vertex) | `vertex` | `VERTEX_ACCESS_TOKEN` | `gemini-3-pro` | Gemini via Vertex |
-| <ProviderMark id="bedrock" /> [Amazon Bedrock](/docs/api-providers/bedrock) | `bedrock` | `AWS_ACCESS_KEY_ID` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | Bedrock Converse |
-| <ProviderMark id="xai" /> [xAI](/docs/api-providers/xai) | `xai` | `XAI_API_KEY` | `grok-4` | OpenAI-compatible |
-| <ProviderMark id="deepseek" /> [DeepSeek](/docs/api-providers/deepseek) | `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | OpenAI-compatible |
-| <ProviderMark id="zai" /> [Z.ai](/docs/api-providers/zai) | `zai` | `ZAI_API_KEY` | `glm-5.2` | OpenAI-compatible |
-| <ProviderMark id="openrouter" /> [OpenRouter](/docs/api-providers/openrouter) | `openrouter` | `OPENROUTER_API_KEY` | `openrouter/auto` | OpenAI-compatible |
-| <ProviderMark id="local" /> [Local](/docs/api-providers/local) | `local` | none (optional `LOCAL_API_KEY`) | you choose | OpenAI-compatible |
+<ProviderGrid />
 
-Each provider name links to its dedicated page — setup, model selection,
-provider-specific configuration, and catalog pricing. For a quick first-run walkthrough,
-see [Providers &amp; models](/docs/getting-started/providers).
+Each card links to that provider's page — setup, model selection, provider-specific
+configuration, and catalog pricing. For a first-run walkthrough instead, see
+[Providers &amp; models](/docs/getting-started/providers).
+
+Switching between any two of them is one flag:
+
+```bash
+# The same task, three vendors — no config change, no restart.
+stella --model anthropic/claude-fable-5 run "add a retry to the upload path"
+stella --model openai/gpt-5.5        run "add a retry to the upload path"
+stella --model deepseek/deepseek-chat run "add a retry to the upload path"
+```
 
 ## Auto-detection
 
@@ -67,12 +65,24 @@ but a settings-configured default beats "first provider with a key":
 
 For the selected provider, Stella resolves the API key in this order — **first hit wins**:
 
+<CredentialChainDiagram />
+
 1. The `--api-key` flag (requires an explicit `--model provider/...`)
 2. The provider's env var, plus aliases — e.g. `GOOGLE_API_KEY` for Gemini
 3. [`settings.json`](/docs/configuration/settings) `providers.<id>.api_key`
 4. `~/.stella/credentials.toml`
 5. An interactive prompt (on a TTY) — the entered key is saved to `credentials.toml`, so
    you are only prompted once
+
+To see which link in the chain actually answered for each provider, ask:
+
+```bash
+stella models
+```
+
+Every configured row carries its credential source in parentheses — `env:ANTHROPIC_API_KEY`,
+a dotenv filename, `credentials.toml`, or `settings.json` — so a key you thought was coming
+from one place and is really coming from another shows up immediately.
 
 See [Credentials](/docs/configuration/credentials) for the file format and the fine print.
 

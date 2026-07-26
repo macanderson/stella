@@ -63,15 +63,51 @@ gpt-5 and o-series families, `temperature` and `top_p` are **omitted** from the 
 the API rejects them outright, and Stella drops them rather than letting your run die on a
 400. What you control instead:
 
-| Stella setting | Wire field |
-| --- | --- |
-| `effort` (low → max) | `reasoning.effort` |
-| `verbosity` (low / medium / high) | `text.verbosity` |
-| `service_tier` | `service_tier` — `auto`, `default`, `flex`, or `priority` |
+<CardGrid size="md">
+  <OptionCard name="effort" defaultValue="medium when reasoning is on and no effort is pinned">
+    Sent as `reasoning.effort`. Stella's five tiers do **not** map 1:1 here: `low`,
+    `medium`, and `high` go through as themselves, and `xhigh` and `max` both **collapse
+    down to `high`**. The Responses API's finer tiers are model-dependent, and sending one
+    the routed model does not accept is a 400 — so the adapter stops at the value every
+    current gpt-5 and o-series model takes. Pinning `max` on this provider gets you
+    `high`.
+  </OptionCard>
+  <OptionCard name="verbosity">
+    Sent as `text.verbosity` — `low`, `medium`, or `high`.
+  </OptionCard>
+  <OptionCard name="service_tier">
+    Sent as `service_tier` — `auto`, `default`, `flex`, or `priority`. `flex` trades
+    latency for a cheaper rate on tolerant workloads; `priority` does the reverse.
+  </OptionCard>
+</CardGrid>
 
-`service_tier: "flex"` trades latency for a cheaper rate on tolerant workloads;
-`"priority"` does the reverse. Set any of these per agent in
-[`agent_engine_config`](/docs/configuration/agent-engine-config).
+Set any of these per agent in
+[`agent_engine_config`](/docs/configuration/agent-engine-config):
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "agents": {
+      "judge": {
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "reasoning": "on",
+        "effort": "high",
+        "params": {
+          "verbosity": "low",
+          "service_tier": "priority"
+        }
+      }
+    }
+  }
+}
+```
+
+```bash
+export OPENAI_API_KEY="sk-..."
+
+stella --model openai/gpt-5.5 run "judge the caching rewrite against the original spec"
+```
 
 ## In the pipeline
 

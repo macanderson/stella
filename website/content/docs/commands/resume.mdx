@@ -43,10 +43,15 @@ The deck's **SESSIONS** overlay (`←` on an empty prompt, or `/sessions`) is th
 
 ## Flags
 
-| Flag | Meaning |
-| --- | --- |
-| `[id]` | Registry id (`ses-…`) of the session to reopen. Omitted: the most recently active resumable session of this workspace. |
-| `--list` | List this machine's sessions (resumable ones marked) and exit. |
+<CardGrid size="md">
+  <OptionCard name="[id]">
+    Registry id (`ses-…`) of the session to reopen. Omitted, the most recently active
+    resumable session of this workspace.
+  </OptionCard>
+  <OptionCard name="--list">
+    List this machine's sessions, resumable ones marked, and exit.
+  </OptionCard>
+</CardGrid>
 
 The [global flags](/docs/commands) apply — `--budget` is re-seeded with the session's prior spend, and `--no-anim` freezes deck animation as usual.
 

@@ -47,7 +47,7 @@ fn legacy_codegraph_workspace(mode: u32) -> tempfile::TempDir {
 #[test]
 fn storage_snapshot_preflight_migrates_safe_legacy_codegraph() {
     let dir = legacy_codegraph_workspace(0o700);
-    super::load_storage_snapshot_checked(dir.path()).unwrap();
+    crate::storage_cmd::load_storage_snapshot_checked(dir.path()).unwrap();
     assert!(!dir.path().join(".stella/codegraph.db").exists());
     assert!(dir.path().join(".stella/private/codegraph.db").exists());
 }
@@ -56,7 +56,7 @@ fn storage_snapshot_preflight_migrates_safe_legacy_codegraph() {
 #[test]
 fn storage_snapshot_preflight_reports_unsafe_legacy_codegraph() {
     let dir = legacy_codegraph_workspace(0o777);
-    let error = super::load_storage_snapshot_checked(dir.path())
+    let error = crate::storage_cmd::load_storage_snapshot_checked(dir.path())
         .unwrap_err()
         .to_string();
     assert!(
@@ -79,7 +79,7 @@ fn observatory_preflight_migrates_safe_legacy_sqlite_stores() {
         std::fs::write(dot.join(name), b"closed legacy sqlite file").unwrap();
     }
 
-    super::preflight_observatory_stores(dir.path()).unwrap();
+    crate::storage_cmd::preflight_observatory_stores(dir.path()).unwrap();
     for name in ["store.db", "fleet.db", "context.db", "codegraph.db"] {
         assert!(!dot.join(name).exists());
         assert!(dot.join("private").join(name).exists());
@@ -97,7 +97,7 @@ fn observatory_preflight_reports_unsafe_legacy_store() {
     std::fs::set_permissions(&dot, std::fs::Permissions::from_mode(0o777)).unwrap();
     std::fs::write(dot.join("store.db"), b"unsafe legacy sqlite file").unwrap();
 
-    let error = super::preflight_observatory_stores(dir.path()).unwrap_err();
+    let error = crate::storage_cmd::preflight_observatory_stores(dir.path()).unwrap_err();
     assert!(
         error.contains("legacy") && error.contains("private"),
         "{error}"

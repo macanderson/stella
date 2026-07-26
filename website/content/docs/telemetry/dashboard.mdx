@@ -1,6 +1,6 @@
 ---
 title: The Observatory dashboard
-description: stella observe opens a local, loopback-only dashboard over your workspace telemetry — runs, spend, models, tools, files, memory, MCP traffic, and the fleet ledger.
+description: stella observe opens a local, loopback-only dashboard over your workspace telemetry — runs, spend, models, tools, files, memory, MCP traffic, the fleet ledger, and cross-project spend from the hub.
 ---
 
 `stella observe` opens the **Observatory** — a local web dashboard over the
@@ -30,25 +30,103 @@ Stella — not as a policy, as a construction:
 
 ## What you can see
 
-The nav has eight tabs, plus a **window** selector — `24h` / `7d` / `30d` /
+The nav has nine tabs, plus a **window** selector — `24h` / `7d` / `30d` /
 `all` (the default). The Overview KPIs, the tokens-per-run timeline, the
 Executions table, and every Activity chart honor the window; the leaderboard
 panels labeled *all-time* ignore it.
 
-| Tab | Answers |
-| --- | --- |
-| **Overview** | KPI tiles (runs, resolve rate, total spend, tokens in/out, cache hits, model time), a tokens-per-run timeline, the **Models** breakdown (**$/resolved task** per provider/model), the tool leaderboard (calls, errors, p50/max latency, bytes returned), the most-touched files, the **fleet ledger** (per fleet run: tasks, attempts, successes, commits) with MCP traffic, a memory/reflections/skills digest — and the **Executions** table: every run's kind, prompt, model, outcome, steps, tool calls, files touched, tokens, and cost. Clicking a row opens a drill-down drawer with per-step tokens and latency, every tool call, the files touched, and the post-turn self-reflection |
-| **Activity** | Per-day time series over the window: cost, tokens (input vs output), runs (resolved vs other outcomes), and tool calls (calls vs errors) |
-| **Code graph** | The tree-sitter code-graph index of the workspace — a searchable force-directed canvas of files (with per-file symbol counts) and their resolved import edges, plus a selection detail panel |
-| **Skills** | Installed and learned skills, with per-skill usage |
-| **MCP** | Configured servers (`.stella/mcp.toml`) and observed per-server / per-tool traffic |
-| **Memory & rules** | The memory plane: memories on disk (`.stella/memories`), citation receipts (were they useful and truthful?), promoted rules, and the exploration maps sessions share (`.stella/explorations`) — each re-hashed against the working tree so you can see which are still fresh, which have drifted, and which a session is claiming right now |
-| **Self-improve** | The self-improvement loop, receipted from `.stella`: self-rating per reflection, owned shortcomings, distilled lessons, and auto-extracted learned skills |
-| **Config** | The merged engine config (user → org → project), where every store and database lives, and the per-scope config files |
+<CardGrid size="md">
+  <OptionCard name="overview">
+    KPI tiles (runs, resolve rate, total spend, tokens in/out, cache hits, model time), a
+    tokens-per-run timeline, the **Models** breakdown (**$/resolved task** per
+    provider/model), the tool leaderboard (calls, errors, p50/max latency, bytes returned),
+    the most-touched files, the **fleet ledger** (per fleet run: tasks, attempts,
+    successes, commits) with MCP traffic, and a memory/reflections/skills digest — plus the
+    **Executions** table: every run's kind, prompt, model, outcome, steps, tool calls,
+    files touched, tokens, and cost. Clicking a row opens a drill-down drawer with per-step
+    tokens and latency, every tool call, the files touched, and the post-turn
+    self-reflection.
+  </OptionCard>
+  <OptionCard name="activity">
+    Per-day time series over the window: cost, tokens (input vs output), runs (resolved vs
+    other outcomes), and tool calls (calls vs errors).
+  </OptionCard>
+  <OptionCard name="code graph">
+    The tree-sitter code-graph index of the workspace — a searchable force-directed canvas
+    of files (with per-file symbol counts) and their resolved import edges, plus a
+    selection detail panel.
+  </OptionCard>
+  <OptionCard name="skills">
+    Installed and learned skills, with per-skill usage.
+  </OptionCard>
+  <OptionCard name="mcp">
+    Configured servers (`.stella/mcp.toml`) and observed per-server / per-tool traffic.
+  </OptionCard>
+  <OptionCard name="memory & rules">
+    The memory plane: memories on disk (`.stella/memories`), citation receipts (were they
+    useful and truthful?), promoted rules, and the exploration maps sessions share
+    (`.stella/explorations`) — each re-hashed against the working tree so you can see which
+    are still fresh, which have drifted, and which a session is claiming right now.
+  </OptionCard>
+  <OptionCard name="self-improve">
+    The self-improvement loop, receipted from `.stella`: self-rating per reflection, owned
+    shortcomings, distilled lessons, and auto-extracted learned skills.
+  </OptionCard>
+  <OptionCard name="org / hub">
+    Spend across **every project on this machine**, not just this workspace — read from the
+    cross-project hub at `~/.stella/usage.db`. See below.
+  </OptionCard>
+  <OptionCard name="config">
+    The merged engine config (user → org → project), where every store and database lives,
+    and the per-scope config files.
+  </OptionCard>
+</CardGrid>
 
-Everything is served from `<workspace>/.stella/private/store.db` (and
-`.stella/private/fleet.db` for the fleet view) — the same SQLite files you can query
-directly with any SQLite client.
+Everything except **org / hub** is served from
+`<workspace>/.stella/private/store.db` (and `.stella/private/fleet.db` for the
+fleet view) — the same SQLite files you can query directly with any SQLite
+client.
+
+## The `org / hub` tab: spend beyond this workspace
+
+Every other tab answers "what did *this* repo cost". The **org / hub** tab
+answers "what did all of them cost", reading the cross-project telemetry hub at
+`~/.stella/usage.db` — which finished turns replicate into, and which
+`stella usage sync --all` repairs if a best-effort replication was missed.
+
+It opens on a KPI row (calls, cost, input/output tokens, cache-read rate,
+projects, orgs) over everything the hub has ever seen, and a breadcrumb reading
+**all orgs**. From there it is a drill-down: click a row in the breakdown panel
+to descend **org → workspace → repo → project**, with the breadcrumb popping you
+back to any level. Clicking a *project* row leaves the hub entirely and reopens
+the Overview tab scoped to that project.
+
+Three panels re-scope as you drill:
+
+<CardGrid size="sm">
+  <OptionCard name="Breakdown">
+    One level in from the current scope, with calls, cost, cache rate, tokens in/out, and
+    a contributing-projects count per row.
+  </OptionCard>
+  <OptionCard name="Models">
+    Per provider/model spend across every project in scope — the same aggregation
+    `stella usage report` prints, plus a cache-read rate.
+  </OptionCard>
+  <OptionCard name="Spend per day / By repo">
+    Daily spend bars, and a per-repository table for the current scope.
+  </OptionCard>
+</CardGrid>
+
+Rows whose org, workspace, or repo id is unset render as `(local)` — that is
+what you see before `stella cloud register` mints the durable ids. An empty hub
+says so and points you at `stella usage sync --all`, rather than rendering a
+blank panel. The tab is deliberately never cached: its payload depends on the live
+drill scope, so each entry and each drill re-queries.
+
+<Callout type="info">
+  The hub is local like everything else — `~/.stella/usage.db` is a file on your machine,
+  and nothing about the org/hub view involves a network call.
+</Callout>
 
 ## `$/resolved` — the metric that matters
 

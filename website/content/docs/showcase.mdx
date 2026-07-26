@@ -36,19 +36,122 @@ is the open configuration cookbook for Stella itself: a working example for
 Stella actually parses, each directory README saying where the file goes on
 disk. Clone it, copy a file into place, and it works.
 
-| Surface | Examples |
-| --- | --- |
-| [Settings profiles](https://github.com/macanderson/stella-examples/tree/main/settings) | [minimal](https://github.com/macanderson/stella-examples/blob/main/settings/minimal.settings.json), [balanced](https://github.com/macanderson/stella-examples/blob/main/settings/balanced.settings.json), [max-quality](https://github.com/macanderson/stella-examples/blob/main/settings/max-quality.settings.json), [dirt-cheap](https://github.com/macanderson/stella-examples/blob/main/settings/dirt-cheap.settings.json), [local-ollama](https://github.com/macanderson/stella-examples/blob/main/settings/local-ollama.settings.json), and [team](https://github.com/macanderson/stella-examples/blob/main/settings/team.settings.json) `settings.json` profiles, plus the [`credentials.toml`](https://github.com/macanderson/stella-examples/blob/main/settings/credentials.example.toml) shape — the model lineups from the [examples](/docs/examples) as ready-to-copy files |
-| [Lifecycle hooks](https://github.com/macanderson/stella-examples/tree/main/hooks) | A [`SessionStart` context injector](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/session-context.sh), a [`PreToolUse` bash guard](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/guard-bash.sh) that vetoes destructive commands, and a [`PostToolUse` JSONL audit log](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/log-tool-use.sh) — wired together in one [`hooks` block](https://github.com/macanderson/stella-examples/blob/main/hooks/settings.json) ([docs](/docs/agent-tools/hooks)) |
-| [Custom commands](https://github.com/macanderson/stella-examples/tree/main/commands) | [`/fix-issue`](https://github.com/macanderson/stella-examples/blob/main/commands/fix-issue.md) (with `$ARGUMENTS`), [`/changelog`](https://github.com/macanderson/stella-examples/blob/main/commands/changelog.md), [`/pr-description`](https://github.com/macanderson/stella-examples/blob/main/commands/pr-description.md) ([docs](/docs/agent-tools/commands)) |
-| [Custom agents](https://github.com/macanderson/stella-examples/tree/main/agents) | [`code-reviewer`](https://github.com/macanderson/stella-examples/blob/main/agents/code-reviewer.md) (read-only toolbelt), [`test-writer`](https://github.com/macanderson/stella-examples/blob/main/agents/test-writer.md) (witness tests + `verify_done`), [`docs-writer`](https://github.com/macanderson/stella-examples/blob/main/agents/docs-writer.md) (no shell) ([docs](/docs/agent-tools/custom-agents)) |
-| [Skills](https://github.com/macanderson/stella-examples/tree/main/skills) | [`conventional-commits`](https://github.com/macanderson/stella-examples/blob/main/skills/conventional-commits/SKILL.md) and [`release-checklist`](https://github.com/macanderson/stella-examples/blob/main/skills/release-checklist/SKILL.md) ([docs](/docs/agent-tools/skills)) |
-| [Rules & guards](https://github.com/macanderson/stella-examples/tree/main/rules) | Hard guards — [`no-force-push`](https://github.com/macanderson/stella-examples/blob/main/rules/no-force-push.md), [`protect-migrations`](https://github.com/macanderson/stella-examples/blob/main/rules/protect-migrations.md), [`no-shell`](https://github.com/macanderson/stella-examples/blob/main/rules/no-shell.md) — and a soft [`code-conventions`](https://github.com/macanderson/stella-examples/blob/main/rules/code-conventions.md) rule ([docs](/docs/agent-tools/permissions)) |
-| [Custom tools](https://github.com/macanderson/stella-examples/tree/main/tools) | [`todo_scan`](https://github.com/macanderson/stella-examples/blob/main/tools/todo-scan.toml) (input schema + `STELLA_INPUT_*` env) and [`loc_report`](https://github.com/macanderson/stella-examples/blob/main/tools/loc-report.toml) (minimal manifest) ([docs](/docs/agent-tools/custom-tools)) |
-| [MCP servers](https://github.com/macanderson/stella-examples/tree/main/mcp) | An [`mcp.toml`](https://github.com/macanderson/stella-examples/blob/main/mcp/mcp.toml) with both stdio and HTTP transports ([docs](/docs/agent-tools/mcp)) |
-| [Fleet plans](https://github.com/macanderson/stella-examples/tree/main/fleet) | A feature build-out DAG in [TOML](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.toml) and a parallel cleanup sweep in [JSON](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.json), with claims and worktree isolation ([docs](/docs/agent-fleets)) |
-| [Memory & domains](https://github.com/macanderson/stella-examples/tree/main/memory) | A hand-tuned [`domains.toml`](https://github.com/macanderson/stella-examples/blob/main/memory/domains.toml) and the lesson → skill → rule promotion loop ([docs](/docs/commands/memory)) |
-| [Scripting & CI](https://github.com/macanderson/stella-examples/tree/main/scripting) | [`ci-autofix.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/ci-autofix.sh) (budget-capped, oracle-armed) and [`nightly-goal.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/nightly-goal.sh) (cron-able goal runs) |
+<CardGrid size="md">
+  <SpecCard title="Settings profiles">
+    [minimal](https://github.com/macanderson/stella-examples/blob/main/settings/minimal.settings.json),
+    [balanced](https://github.com/macanderson/stella-examples/blob/main/settings/balanced.settings.json),
+    [max-quality](https://github.com/macanderson/stella-examples/blob/main/settings/max-quality.settings.json),
+    [dirt-cheap](https://github.com/macanderson/stella-examples/blob/main/settings/dirt-cheap.settings.json),
+    [local-ollama](https://github.com/macanderson/stella-examples/blob/main/settings/local-ollama.settings.json),
+    and [team](https://github.com/macanderson/stella-examples/blob/main/settings/team.settings.json)
+    `settings.json` profiles, plus the
+    [`credentials.toml`](https://github.com/macanderson/stella-examples/blob/main/settings/credentials.example.toml)
+    shape — the model lineups from the docs as ready-to-copy files.
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/settings) · [Examples docs](/docs/examples)
+  </SpecCard>
+  <SpecCard title="Lifecycle hooks">
+    A [`SessionStart` context injector](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/session-context.sh),
+    a [`PreToolUse` bash guard](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/guard-bash.sh)
+    that vetoes destructive commands, and a
+    [`PostToolUse` JSONL audit log](https://github.com/macanderson/stella-examples/blob/main/hooks/scripts/log-tool-use.sh)
+    — wired together in one
+    [`hooks` block](https://github.com/macanderson/stella-examples/blob/main/hooks/settings.json).
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/hooks) · [Hooks docs](/docs/agent-tools/hooks)
+  </SpecCard>
+  <SpecCard title="Custom commands">
+    [`/fix-issue`](https://github.com/macanderson/stella-examples/blob/main/commands/fix-issue.md)
+    (with `$ARGUMENTS`),
+    [`/changelog`](https://github.com/macanderson/stella-examples/blob/main/commands/changelog.md),
+    and [`/pr-description`](https://github.com/macanderson/stella-examples/blob/main/commands/pr-description.md).
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/commands) · [Commands docs](/docs/agent-tools/commands)
+  </SpecCard>
+  <SpecCard title="Custom agents">
+    [`code-reviewer`](https://github.com/macanderson/stella-examples/blob/main/agents/code-reviewer.md)
+    (read-only toolbelt),
+    [`test-writer`](https://github.com/macanderson/stella-examples/blob/main/agents/test-writer.md)
+    (witness tests + `verify_done`), and
+    [`docs-writer`](https://github.com/macanderson/stella-examples/blob/main/agents/docs-writer.md)
+    (no shell).
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/agents) · [Custom agents docs](/docs/agent-tools/custom-agents)
+  </SpecCard>
+  <SpecCard title="Skills">
+    [`conventional-commits`](https://github.com/macanderson/stella-examples/blob/main/skills/conventional-commits/SKILL.md)
+    and [`release-checklist`](https://github.com/macanderson/stella-examples/blob/main/skills/release-checklist/SKILL.md).
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/skills) · [Skills docs](/docs/agent-tools/skills)
+  </SpecCard>
+  <SpecCard title="Rules &amp; guards">
+    Hard guards —
+    [`no-force-push`](https://github.com/macanderson/stella-examples/blob/main/rules/no-force-push.md),
+    [`protect-migrations`](https://github.com/macanderson/stella-examples/blob/main/rules/protect-migrations.md),
+    [`no-shell`](https://github.com/macanderson/stella-examples/blob/main/rules/no-shell.md)
+    — and a soft
+    [`code-conventions`](https://github.com/macanderson/stella-examples/blob/main/rules/code-conventions.md)
+    rule.
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/rules) · [Permissions docs](/docs/agent-tools/permissions)
+  </SpecCard>
+  <SpecCard title="Custom tools">
+    [`todo_scan`](https://github.com/macanderson/stella-examples/blob/main/tools/todo-scan.toml)
+    (input schema + `STELLA_INPUT_*` env) and
+    [`loc_report`](https://github.com/macanderson/stella-examples/blob/main/tools/loc-report.toml)
+    (minimal manifest).
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/tools) · [Custom tools docs](/docs/agent-tools/custom-tools)
+  </SpecCard>
+  <SpecCard title="MCP servers">
+    An [`mcp.toml`](https://github.com/macanderson/stella-examples/blob/main/mcp/mcp.toml)
+    with both stdio and HTTP transports.
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/mcp) · [MCP servers docs](/docs/agent-tools/mcp)
+  </SpecCard>
+  <SpecCard title="Fleet plans">
+    A feature build-out DAG in
+    [TOML](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.toml)
+    and a parallel cleanup sweep in
+    [JSON](https://github.com/macanderson/stella-examples/blob/main/fleet/plan.json),
+    with claims and worktree isolation.
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/fleet) · [Agent fleets docs](/docs/agent-fleets)
+  </SpecCard>
+  <SpecCard title="Memory &amp; domains">
+    A hand-tuned
+    [`domains.toml`](https://github.com/macanderson/stella-examples/blob/main/memory/domains.toml)
+    and the lesson → skill → rule promotion loop.
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/memory) · [Memory docs](/docs/commands/memory)
+  </SpecCard>
+  <SpecCard title="Scripting &amp; CI">
+    [`ci-autofix.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/ci-autofix.sh)
+    (budget-capped, oracle-armed) and
+    [`nightly-goal.sh`](https://github.com/macanderson/stella-examples/blob/main/scripting/nightly-goal.sh)
+    (cron-able goal runs).
+
+    [Browse the directory](https://github.com/macanderson/stella-examples/tree/main/scripting) · [Scripting docs](/docs/scripting)
+  </SpecCard>
+</CardGrid>
+
+Clone it once and the whole cookbook is a `cp` away:
+
+```bash
+git clone https://github.com/macanderson/stella-examples.git
+cd your-project
+
+# A settings profile — user scope, so every project inherits it.
+mkdir -p ~/.stella && cp ../stella-examples/settings/balanced.settings.json ~/.stella/settings.json
+
+# A guard rule and a custom tool — project scope, committed with the repo.
+mkdir -p .stella/rules .stella/tools
+cp ../stella-examples/rules/no-force-push.md .stella/rules/
+cp ../stella-examples/tools/todo-scan.toml .stella/tools/
+
+# Validate the manifest before a session ever loads it.
+stella tools --validate
+```
 
 <Callout type="info">
 Everything in stella-examples respects the trust boundary: project-scope
