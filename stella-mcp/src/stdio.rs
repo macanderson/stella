@@ -17,9 +17,14 @@
 //!    requests can be outstanding at once — though today
 //!    [`crate::client::McpClient`] holds its connection mutex for the whole
 //!    call, so calls to one server are serialized a layer above this one.
-//!    Dropping a `request` future (a caller-side timeout) leaves its slot in
-//!    the map until the matching response arrives or the connection is drained
-//!    by EOF/`close`; the sender is then discarded harmlessly.
+//!    Dropping a `request` future (a caller-side timeout, Ctrl-C, a `select!`
+//!    losing the race) reclaims its slot immediately: the slot is owned by a
+//!    [`PendingSlot`] RAII guard on the request future's own stack, which is
+//!    why the map is behind a `std::sync::Mutex` and not tokio's — `Drop`
+//!    cannot await. Before #613 the entry and its `oneshot` sender leaked
+//!    until the matching response arrived or the connection was drained by
+//!    EOF/`close`, so a server that timed out N times held N dead slots for
+//!    the life of the session.
 //!
 //! Server stderr is kept on its **own pipe**, never merged into stdout, so a
 //! server that logs to stderr cannot corrupt the JSON-RPC framing — but it is
@@ -105,7 +110,56 @@ const STDERR_SETTLE: Duration = Duration::from_millis(150);
 /// unterminated event.
 const MAX_LINE_BYTES: u64 = 8 * 1024 * 1024;
 
-type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>;
+/// The in-flight request table: response id → the waiter's `oneshot` sender.
+///
+/// The lock is a **`std::sync::Mutex`**, not tokio's, and that is load-bearing
+/// (#613). A dropped `request` future — a caller-side timeout, Ctrl-C, a
+/// `select!` losing the race — must reclaim its slot, and reclamation can only
+/// happen in `Drop`, which cannot `await`. The two shapes that a tokio mutex
+/// leaves are both wrong: leak the entry (what this file did until #613 — one
+/// map entry plus its sender per timed-out call, held until EOF or `close()`),
+/// or `tokio::spawn` the removal from `Drop`, which silently does nothing
+/// during runtime shutdown, precisely the case being fixed.
+///
+/// The one hazard of a sync mutex in async code is holding the guard across an
+/// `.await`, which would block the executor thread. It never happens here:
+/// every critical section is a single `insert`/`remove`/`take` on a `HashMap`
+/// and the guard is dropped before the statement ends — see [`lock_pending`],
+/// [`PendingSlot`], and the `std::mem::take` drains in [`read_loop`] and
+/// `close`. Keep it that way.
+type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>;
+
+/// Lock the pending map, recovering from a poisoned mutex — a panicking
+/// waiter must not wedge every later request on this connection.
+///
+/// **Never hold the returned guard across an `.await`.**
+fn lock_pending(
+    pending: &Pending,
+) -> std::sync::MutexGuard<'_, HashMap<u64, oneshot::Sender<Result<Value, McpError>>>> {
+    pending
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Owns one row of the pending map for the lifetime of a `request` call, and
+/// removes it on drop (#613).
+///
+/// Always armed: on the happy path the reader task has already taken the entry
+/// by the time this drops, so the removal is a no-op — ids are monotonic and
+/// never reused, so it can never reclaim someone else's slot. That makes the
+/// cancelled path (the future dropped mid-`await`) and the success path the
+/// same code, with no flag to forget to set.
+struct PendingSlot {
+    pending: Pending,
+    id: u64,
+}
+
+impl Drop for PendingSlot {
+    fn drop(&mut self) {
+        // Synchronous by construction — see the note on [`Pending`].
+        lock_pending(&self.pending).remove(&self.id);
+    }
+}
 
 /// The last few lines a child wrote to stderr, kept so a dead server can say
 /// *why* it died (#638).
@@ -226,7 +280,7 @@ impl StdioTransport {
             .take()
             .ok_or_else(|| McpError::Transport("child process has no stderr".into()))?;
 
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending: Pending = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
         // Drain stderr continuously into the ring: an unread pipe would
         // eventually block a chatty child mid-write, so this task keeps
@@ -254,6 +308,13 @@ impl StdioTransport {
         })
     }
 
+    /// How many requests are currently outstanding. The observable that makes
+    /// the #613 slot leak testable at all.
+    #[cfg(test)]
+    fn pending_len(&self) -> usize {
+        lock_pending(&self.pending).len()
+    }
+
     /// The "not connected" error, carrying whatever the child last wrote to
     /// stderr — for a server that died on startup that tail is the only
     /// explanation the operator will ever get.
@@ -274,17 +335,20 @@ impl Transport for StdioTransport {
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(id, tx);
+        lock_pending(&self.pending).insert(id, tx);
+        // From here the slot belongs to this future's stack: every exit —
+        // the write failing, the response arriving, or the CALLER DROPPING
+        // this future mid-`await` — reclaims it. No `.await` is held under
+        // the lock above; the guard dies with the statement.
+        let _slot = PendingSlot {
+            pending: self.pending.clone(),
+            id,
+        };
 
         let request = JsonRpcRequest::new(id, method, params);
         let line = encode_line(&request)?;
 
-        // Write under the stdin lock; on any write failure, reclaim the
-        // pending slot so it never leaks.
-        if let Err(e) = self.write_line(&line).await {
-            self.pending.lock().await.remove(&id);
-            return Err(e);
-        }
+        self.write_line(&line).await?;
 
         // The reader task fulfills this via the oneshot. A dropped sender
         // (reader exited on EOF) surfaces as a closed connection.
@@ -335,8 +399,13 @@ impl Transport for StdioTransport {
         // so without this drain a concurrent `request` awaiting its response
         // would hang until its own caller-side timeout (forever, for a caller
         // that has none). Same shape as the reader's EOF drain.
-        let mut pending = self.pending.lock().await;
-        for (_id, tx) in pending.drain() {
+        //
+        // The whole map is moved out under the lock and the sends happen
+        // outside it: `oneshot::Sender::send` never awaits, but taking first
+        // keeps the critical section a single statement, which is the
+        // invariant [`Pending`] depends on.
+        let orphaned = std::mem::take(&mut *lock_pending(&self.pending));
+        for (_id, tx) in orphaned {
             let _ = tx.send(Err(McpError::Closed(self.stderr_tail.annotate(format!(
                 "server `{}` connection was closed before the response arrived",
                 self.server_name
@@ -446,9 +515,13 @@ async fn read_loop<R: AsyncRead + Unpin>(
         // server->client surface.
         if message.is_response()
             && let Some(id) = message.correlated_id()
-            && let Some(tx) = pending.lock().await.remove(&id)
         {
-            let _ = tx.send(message.into_result());
+            // Take the waiter out under the lock, then release it before the
+            // send — no `.await` under the sync mutex ([`Pending`]).
+            let waiter = lock_pending(&pending).remove(&id);
+            if let Some(tx) = waiter {
+                let _ = tx.send(message.into_result());
+            }
         }
     }
 
@@ -460,8 +533,8 @@ async fn read_loop<R: AsyncRead + Unpin>(
     if let Some(drain) = stderr_drain {
         let _ = tokio::time::timeout(STDERR_SETTLE, drain).await;
     }
-    let mut map = pending.lock().await;
-    for (_id, tx) in map.drain() {
+    let orphaned = std::mem::take(&mut *lock_pending(&pending));
+    for (_id, tx) in orphaned {
         let _ = tx.send(Err(McpError::Closed(stderr.annotate(format!(
             "server `{server_name}` closed the connection before responding"
         )))));
@@ -552,14 +625,74 @@ mod tests {
         let _ = transport.close().await;
     }
 
+    /// #613: a caller-side timeout drops the `request` future, and the slot it
+    /// registered in the pending map must go with it. `cat` is a server that
+    /// never answers — it echoes the request line back, and an echoed
+    /// *request* (it carries a `method`) is never routed to a waiter — so the
+    /// call can only end by being dropped.
+    ///
+    /// Before the [`PendingSlot`] guard every such call left one map entry
+    /// plus its `oneshot` sender behind until EOF or `close()`; a session that
+    /// timed out repeatedly against one server grew the map monotonically.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dropped_request_reclaims_its_pending_slot() {
+        let env = BTreeMap::new();
+        let transport = StdioTransport::spawn("cat-server", "cat", &[], &env)
+            .await
+            .expect("cat must spawn");
+
+        for expected_id in 1..=3u64 {
+            let call = transport.request("tools/list", serde_json::json!({}));
+            let timed_out = tokio::time::timeout(Duration::from_millis(150), call).await;
+            assert!(timed_out.is_err(), "cat must never answer a request");
+            assert_eq!(
+                transport.pending_len(),
+                0,
+                "request {expected_id} leaked its pending slot"
+            );
+        }
+
+        let _ = transport.close().await;
+    }
+
+    /// The guard in isolation: the row is gone the moment it drops, with no
+    /// runtime, no `await`, and no spawn — the property that makes it correct
+    /// during runtime shutdown.
+    #[test]
+    fn the_pending_slot_guard_reclaims_synchronously_on_drop() {
+        let pending: Pending = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let (tx, _rx) = oneshot::channel();
+        lock_pending(&pending).insert(7, tx);
+
+        let slot = PendingSlot {
+            pending: pending.clone(),
+            id: 7,
+        };
+        assert_eq!(lock_pending(&pending).len(), 1);
+        drop(slot);
+        assert!(lock_pending(&pending).is_empty());
+
+        // Reclaiming a row the reader already took is a harmless no-op — ids
+        // are monotonic, so it can never evict a later request's slot.
+        let slot = PendingSlot {
+            pending: pending.clone(),
+            id: 7,
+        };
+        let (other, _other_rx) = oneshot::channel();
+        lock_pending(&pending).insert(8, other);
+        drop(slot);
+        assert_eq!(lock_pending(&pending).len(), 1);
+    }
+
     /// Drive `read_loop` over an in-memory pipe with one pending waiter, feed
     /// it `lines`, and return what (if anything) the waiter for `id` received.
     async fn route_lines(id: u64, lines: Vec<Vec<u8>>) -> Option<Result<Value, McpError>> {
         let (reader_side, mut writer_side) = tokio::io::duplex(64 * 1024);
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending: Pending = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
         let (tx, rx) = oneshot::channel();
-        pending.lock().await.insert(id, tx);
+        lock_pending(&pending).insert(id, tx);
 
         let reader = tokio::spawn(read_loop(
             reader_side,
@@ -697,10 +830,10 @@ mod tests {
             .expect("write stderr");
         drop(stderr_writer); // the child's stderr pipe closes with it
 
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending: Pending = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
         let (tx, rx) = oneshot::channel();
-        pending.lock().await.insert(1, tx);
+        lock_pending(&pending).insert(1, tx);
 
         drop(stdout_writer); // …and so does its stdout: EOF, connection dead
         let reader = tokio::spawn(read_loop(

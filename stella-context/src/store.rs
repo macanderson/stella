@@ -382,6 +382,17 @@ pub struct NodeRow {
 /// and a recall's latency grow monotonically with the workspace's lifetime.
 /// That is fine at CLI-local scale and is the plane's first scaling wall; a
 /// forget/compaction path is the tracked follow-up, not an oversight.
+///
+/// # Drop
+///
+/// Dropping the store **stops its background warm task** (#613): `Drop` raises
+/// the cancel flag the batch loop checks and aborts the join handle. Warming is
+/// no longer detached-until-done — if you need it finished, call
+/// [`Self::await_warm`] first. Committed batches are unaffected (each is its own
+/// transaction) and the remainder is caught up at the next mount, so the only
+/// difference is that work for a store nobody holds stops. A caller that already
+/// joined sees nothing: `await_warm` took the handle, so `Drop` finds none. See
+/// [`crate::warm`] for why this is a flag plus an abort, never a spawn.
 pub struct ContextStore {
     /// The DB path, kept so warming can open its own WAL connection.
     path: PathBuf,
@@ -394,6 +405,24 @@ pub struct ContextStore {
     clock: Arc<dyn Clock>,
     /// The background warm task, joinable via `await_warm`.
     warm: Mutex<Option<tokio::task::JoinHandle<Result<usize, ContextError>>>>,
+    /// Raised by `Drop`, checked between warm batches.
+    warm_cancel: crate::warm::WarmCancel,
+}
+
+impl Drop for ContextStore {
+    fn drop(&mut self) {
+        self.warm_cancel.cancel();
+        // `get_mut` rather than `lock`: `&mut self` already proves exclusive
+        // access, so there is no lock to contend or poison here.
+        if let Some(handle) = self
+            .warm
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            handle.abort();
+        }
+    }
 }
 
 impl ContextStore {
@@ -427,6 +456,7 @@ impl ContextStore {
             fingerprint,
             clock,
             warm: Mutex::new(None),
+            warm_cancel: crate::warm::WarmCancel::default(),
         })
     }
 
@@ -446,8 +476,10 @@ impl ContextStore {
             let embedder = store.embedder.clone();
             let fingerprint = store.fingerprint.id();
             let clock = store.clock.clone();
-            let task =
-                handle.spawn(async move { warm_index(path, embedder, fingerprint, clock).await });
+            let cancel = store.warm_cancel.clone();
+            let task = handle.spawn(async move {
+                crate::warm::warm_index(path, embedder, fingerprint, clock, cancel).await
+            });
             *lock(&store.warm) = Some(task);
         }
         Ok(store)
@@ -469,6 +501,11 @@ impl ContextStore {
     /// — the same answer as "warming never started" (no runtime at
     /// [`Self::open_and_warm`], or an in-memory store). Read `Ok(0)` as "there
     /// is no warm left to wait for", never as "the index was already complete".
+    ///
+    /// Unchanged by the `Drop` added in #613 — taking the handle is exactly
+    /// what makes `Drop` a no-op for a caller who already joined. But a caller
+    /// who never joins no longer gets a detached warm that finishes on its
+    /// own: see the type's `# Drop` section.
     pub async fn await_warm(&self) -> Result<usize, ContextError> {
         let handle = lock(&self.warm).take();
         match handle {
@@ -482,12 +519,16 @@ impl ContextStore {
     /// Drive embedding catch-up to completion synchronously (awaitable).
     /// Reused by the background warm task; exposed for callers/tests that want
     /// a deterministic, joined warm without a spawn.
+    ///
+    /// It shares the store's cancel flag, which is inert here: only `Drop`
+    /// raises it, and `&self` keeps the store alive for the whole call.
     pub async fn warm_now(&self) -> Result<usize, ContextError> {
-        warm_index(
+        crate::warm::warm_index(
             self.path.clone(),
             self.embedder.clone(),
             self.fingerprint.id(),
             self.clock.clone(),
+            self.warm_cancel.clone(),
         )
         .await
     }
@@ -610,7 +651,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
 /// races the main connection into `SQLITE_BUSY`.
-fn open_connection(path: &Path) -> Result<Connection, ContextError> {
+pub(crate) fn open_connection(path: &Path) -> Result<Connection, ContextError> {
     let conn = Connection::open(path)?;
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;\
@@ -683,48 +724,6 @@ fn register_fingerprint(
         ],
     )?;
     Ok(())
-}
-
-/// Background embedding catch-up: embed every live node whose content lacks a
-/// vector under the active fingerprint. Opens its own WAL connection (so it
-/// never contends with the store's lock) and writes each batch as one
-/// transaction (`L-L1` crash consistency). Returns the count embedded.
-async fn warm_index(
-    path: PathBuf,
-    embedder: Arc<dyn Embedder>,
-    fingerprint: String,
-    clock: Arc<dyn Clock>,
-) -> Result<usize, ContextError> {
-    // An in-memory store's second connection would be a different empty DB;
-    // warming only makes sense for a file-backed store.
-    if path.as_os_str() == ":memory:" {
-        return Ok(0);
-    }
-    let conn = open_connection(&path)?;
-    let pending = nodes_missing_embedding(&conn, &fingerprint)?;
-    if pending.is_empty() {
-        return Ok(0);
-    }
-
-    let mut embedded = 0usize;
-    // Batch the *embedder* calls and the transactions, so a kill mid-index
-    // loses at most one chunk (`L-L1`) and a backend with a request-size limit
-    // is never handed the whole corpus at once. Note this does NOT bound peak
-    // memory: `pending` above already materialized every un-embedded node's
-    // content. Streaming that query is the fix for very large first indexes.
-    const BATCH: usize = 64;
-    for chunk in pending.chunks(BATCH) {
-        let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
-        let vectors = embedder.embed(&texts).await?;
-        let now = clock.now_rfc3339();
-        let tx = conn.unchecked_transaction()?;
-        for ((content_hash, _), emb) in chunk.iter().zip(vectors.iter()) {
-            store_embedding(&tx, content_hash, &fingerprint, &emb.vector, &now)?;
-            embedded += 1;
-        }
-        tx.commit()?;
-    }
-    Ok(embedded)
 }
 
 // Low-level accessors (pub(crate)) shared by retrieval.rs and writeback.rs.
@@ -1335,7 +1334,7 @@ pub(crate) fn list_domains(
 
 /// Live nodes lacking a vector under `fingerprint`, as `(content_hash, content)`.
 /// Deduplicated by content hash so identical content is embedded once.
-fn nodes_missing_embedding(
+pub(crate) fn nodes_missing_embedding(
     conn: &Connection,
     fingerprint: &str,
 ) -> Result<Vec<(String, String)>, ContextError> {

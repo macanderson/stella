@@ -489,10 +489,25 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
     };
     #[cfg(unix)]
     let pid = child.id().unwrap_or(0) as i32;
+    // Cancellation backstop, the same guard every other `pre_exec(setsid)`
+    // spawn site in the workspace uses (`stella_tools::exec::GroupKillGuard`)
+    // rather than a second copy of the shape. The child is in its OWN session,
+    // so Ctrl-C's SIGINT never reaches it: without this, dropping the pipeline
+    // future mid-test (Esc, a signal, a `select!` losing the race) left a
+    // whole `cargo test`/`git diff` tree running against the workspace after
+    // the user believed the run had stopped.
+    #[cfg(unix)]
+    let mut guard = stella_tools::exec::GroupKillGuard::arm(pid);
 
     let timeout = Duration::from_secs(300);
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
+        Ok(Ok(output)) => {
+            #[cfg(unix)]
+            guard.disarm();
+            output
+        }
+        // Wait failure leaves the child's state unknown — the still-armed
+        // guard kills the group on return rather than leak it.
         Ok(Err(e)) => {
             return CmdOutcome {
                 exit_code: -1,
@@ -502,11 +517,7 @@ async fn run_command(mut cmd: tokio::process::Command) -> CmdOutcome {
         }
         Err(_) => {
             #[cfg(unix)]
-            unsafe {
-                if pid > 0 {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            }
+            guard.kill_now();
             return CmdOutcome {
                 exit_code: -1,
                 stdout_tail: String::new(),
@@ -1156,5 +1167,49 @@ mod diff_baseline_tests {
         let dir = tempfile::tempdir().unwrap();
         let runner = GitDiagnosticRunner::new(dir.path().to_path_buf());
         assert!(runner.baseline_commit().is_none());
+    }
+
+    /// #613: this crate's `pre_exec(setsid)` spawn site had no
+    /// `GroupKillGuard`, so dropping the future mid-run orphaned the whole
+    /// process group — the exact leak #582 fixed in stella-tools and skipped
+    /// here. The grandchild's pid is recorded because an orphaned direct
+    /// child is reaped by init anyway; a surviving grandchild is the leak.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dropped_run_command_kills_the_whole_process_group() {
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let script = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-c").arg(script);
+
+        let handle = tokio::spawn(async move { run_command(cmd).await });
+        let mut pid = None;
+        for _ in 0..250 {
+            if let Some(p) = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+            {
+                pid = Some(p);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let pid = pid.expect("the child never started");
+
+        handle.abort();
+        let _ = handle.await;
+
+        let mut dead = false;
+        for _ in 0..250 {
+            if unsafe { libc::kill(pid, 0) } == -1 {
+                dead = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(dead, "cancelled run_command left subprocess {pid} running");
     }
 }
