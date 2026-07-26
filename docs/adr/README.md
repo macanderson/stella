@@ -18,7 +18,9 @@ with the shipped code — 0003 (the point-in-time cutoff reached adjacency only,
 one layer below `recall`) and 0006 (the compiled frame is now reached by
 extending the step manifest, not by building a parallel aggregate). Read those
 notes alongside the ADRs. 0003's gap was **closed on 2026-07-26** by Phase 1
-(#712); 0006's amendment is still owed, before Phase 2 ships.
+(#712); 0006's amendment **landed the same day** (#713 deliverable 6), in the
+ADR's own body — the original text is left as written, per the rule above, with
+the amendment recorded beside it.
 
 ADRs 0002 and 0007 originally FLAGGED open questions for human sign-off; the
 repository owner **ratified both on 2026-07-23**, so all Phase 0 ADRs are now
@@ -47,7 +49,7 @@ open; nothing before Phase 3 forces it.
 | [0003](0003-bitemporal-semantics.md) | Bitemporal Semantics | Accepted (Phase 0) — recall-layer gap closed 2026-07-26 (#712) |
 | [0004](0004-record-revision-identity.md) | Record Revision Identity | Accepted (Phase 0) |
 | [0005](0005-storage-authority.md) | Storage Authority | Accepted (Phase 0) |
-| [0006](0006-contextframe-vs-compiledcontextframe.md) | ContextFrame vs. CompiledContextFrame | Accepted (Phase 0) |
+| [0006](0006-contextframe-vs-compiledcontextframe.md) | ContextFrame vs. CompiledContextFrame | Accepted (Phase 0) — amended 2026-07-26 (extends the step manifest) |
 | [0007](0007-immutable-promotion-history.md) | Immutable Promotion History | Accepted — ratified 2026-07-23 (enforcement 4→2); amended 2026-07-24 (`informational`→advisory) |
 | [0008](0008-markdown-canonical-rules.md) | Markdown Repository Rules Remain Canonical | Accepted (Phase 0) |
 | [0009](0009-enum-freeze-resolutions.md) | Enum-Freeze Resolutions (issue #483) | Accepted — ratified 2026-07-24 |
