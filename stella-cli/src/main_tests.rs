@@ -356,6 +356,13 @@ fn pre_flight_failures_emit_a_machine_readable_error_envelope() {
     assert_eq!(parsed["status"], "error");
     assert!(parsed["text"].is_null());
     assert_eq!(parsed["reason"], msg);
+    // #644: the pre-flight envelope is a summary like any other, so it declares
+    // the same contract version. A consumer that branches on `schema_version`
+    // must not have to special-case the earliest failure it can hit.
+    assert_eq!(
+        parsed["schema_version"],
+        serde_json::json!(crate::SUMMARY_SCHEMA_VERSION)
+    );
 
     // stream-json is line-delimited: the envelope must be exactly one line.
     let line =

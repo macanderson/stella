@@ -112,6 +112,48 @@ pub(crate) fn note_json_summary_emitted() {
     JSON_SUMMARY_EMITTED.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// The version of the `--output-format json|stream-json` summary envelope this
+/// build emits. Every summary object carries it — the pipeline summary, the raw
+/// step-loop summary, and the pre-flight error envelope — so a consumer can
+/// branch on the shape it was handed instead of sniffing for keys. A version
+/// stamped on only some summaries would be worse than none: a script could not
+/// rely on reading it. Consumers read it by key: key order is outside the
+/// contract, and in fact varies by construction site — the derived `Serialize`
+/// on `PipelineRunSummary` emits declaration order, while the `json!`-built
+/// envelopes here and in the raw step loop emit their keys sorted.
+///
+/// # Why version at all
+///
+/// The envelope's key set is a contract with every script that parses it, and
+/// the cost of adding the stamp rises with the number of consumers. Today it is
+/// additive and harmless; after the first external script pins the current
+/// shape, it is a compatibility negotiation (#644). This is the same reasoning
+/// that versioned the drain wire format ahead of its transport — see
+/// `DRAIN_SCHEMA_VERSION` in `stella-store`.
+///
+/// # When to bump
+///
+/// Increment when a consumer written against the previous version could break:
+///
+/// - a key is removed or renamed,
+/// - a key's value type changes (`string` → `object`, scalar → array),
+/// - a key's *meaning* changes while its name and type stay the same.
+///
+/// Do **not** increment for purely additive change — a new key appended to the
+/// envelope. Consumers are required to ignore keys they do not recognize (the
+/// same discipline rule 1 of the event-stream contract imposes), so an addition
+/// cannot break a correct client, and bumping for one would burn the signal.
+///
+/// The `events` array is deliberately **out of scope**: the event vocabulary
+/// carries its own forward-compatibility contract
+/// (`website/content/docs/event-stream-compatibility.mdx`), and a new event type
+/// never bumps this number. Everything else the envelope owns — including the
+/// nested `verdict`, `reflection`, and `files_touched` payloads — is covered.
+///
+/// The consumer-facing statement of this rule lives in
+/// `website/content/docs/scripting.mdx`; keep the two in step.
+pub(crate) const SUMMARY_SCHEMA_VERSION: u32 = 1;
+
 /// The stdout envelope for a failure under `--output-format json|stream-json`,
 /// or `None` when the caller asked for human output (a text run must keep
 /// stdout clean; its diagnostic is the stderr line).
@@ -119,11 +161,17 @@ pub(crate) fn note_json_summary_emitted() {
 /// Pre-configuration failures — no API key, unknown provider, unknown model, a
 /// malformed settings file — are returned by `run()` before an agent exists,
 /// so they never reach `agent.rs`'s summary. Emitting the same
-/// `{"status":"error","text":null,"reason":…}` shape here means the single
-/// most likely headless failure is no longer answered with empty stdout.
-/// `stream-json` gets it compact, so the line-delimited contract holds.
+/// `{"schema_version":…,"status":"error","text":null,"reason":…}` shape here
+/// means the single most likely headless failure is no longer answered with
+/// empty stdout. `stream-json` gets it compact, so the line-delimited contract
+/// holds.
 pub(crate) fn error_summary_json(format: OutputFormat, msg: &str) -> Option<String> {
-    let value = serde_json::json!({ "status": "error", "text": null, "reason": msg });
+    let value = serde_json::json!({
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "status": "error",
+        "text": null,
+        "reason": msg,
+    });
     match format {
         OutputFormat::Text => None,
         OutputFormat::Json => {

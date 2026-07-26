@@ -136,8 +136,16 @@ pub async fn run_one_shot(
 /// deserializers (serde non-`Option` fields, `jq -e`, Pydantic) written
 /// against the success shape. `Option` fields are serialized as `null`, never
 /// skipped — the key set is the contract.
+///
+/// That contract is versioned: [`schema_version`](Self::schema_version) is
+/// declared first and governed by the bump rule on
+/// [`crate::SUMMARY_SCHEMA_VERSION`]. Declaration order is wire order for a
+/// derived `Serialize`, so keeping the version at the top is a convention worth
+/// holding — though consumers read it by key, not position.
 #[derive(serde::Serialize)]
 struct PipelineRunSummary {
+    /// The envelope contract version — always [`crate::SUMMARY_SCHEMA_VERSION`].
+    schema_version: u32,
     status: &'static str,
     text: Option<String>,
     cost_usd: f64,
@@ -515,6 +523,7 @@ async fn run_pipeline_one_shot(
         Ok(outcome) => {
             if format == OutputFormat::Json {
                 let summary = PipelineRunSummary {
+                    schema_version: crate::SUMMARY_SCHEMA_VERSION,
                     status: pipeline_status_label(&outcome.status),
                     text: Some(outcome.final_text.clone()),
                     cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
@@ -562,6 +571,7 @@ async fn run_pipeline_one_shot(
             // failing).
             if format == OutputFormat::Json {
                 let summary = PipelineRunSummary {
+                    schema_version: crate::SUMMARY_SCHEMA_VERSION,
                     status: "error",
                     text: None,
                     cost_usd: budget.session_spent_usd(),
@@ -2061,6 +2071,13 @@ async fn run_turn(
             }
         };
         let summary = serde_json::json!({
+            // Governed by the same bump rule as the pipeline summary
+            // (`crate::SUMMARY_SCHEMA_VERSION`) — the two paths are one
+            // contract surface with different key sets, so they must never
+            // carry different version numbers. Written first here for the
+            // reader's benefit only: `json!` emits its keys sorted, so this
+            // lands mid-object on the wire. Consumers read it by key.
+            "schema_version": crate::SUMMARY_SCHEMA_VERSION,
             "status": status,
             "text": text,
             "cost_usd": cost_usd,
