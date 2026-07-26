@@ -735,6 +735,7 @@ fn cfg_for(provider_id: &str) -> Config {
         enable_recap: false,
         tools_web: false,
         authority: crate::settings::AuthorityPolicy::default(),
+        credential_advisories: Vec::new(),
     }
 }
 

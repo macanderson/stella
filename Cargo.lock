@@ -3248,6 +3248,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "wiremock",
+ "zeroize",
 ]
 
 [[package]]
@@ -3269,6 +3270,7 @@ dependencies = [
  "tokio",
  "toml",
  "wiremock",
+ "zeroize",
 ]
 
 [[package]]
@@ -3385,6 +3387,7 @@ dependencies = [
  "tokio",
  "tui-big-text",
  "unicode-width",
+ "zeroize",
 ]
 
 [[package]]

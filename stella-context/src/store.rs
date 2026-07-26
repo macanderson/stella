@@ -382,6 +382,18 @@ pub struct NodeRow {
 /// and a recall's latency grow monotonically with the workspace's lifetime.
 /// That is fine at CLI-local scale and is the plane's first scaling wall; a
 /// forget/compaction path is the tracked follow-up, not an oversight.
+///
+/// # Drop
+///
+/// Dropping the store **stops its background warm task** (#613): `Drop` raises
+/// the cancel flag the batch loop checks and aborts the join handle. Warming is
+/// no longer detached-until-done — if you need it finished, call
+/// [`Self::await_warm`] first. Committed batches are unaffected (each is its own
+/// transaction) and the remainder is caught up at the next mount, so the only
+/// difference is that work for a store nobody holds stops. A caller that already
+/// joined sees nothing: `await_warm` took the handle, so `Drop` finds none. See
+/// the crate-private `warm` module for why this is a flag plus an abort, never
+/// a spawn.
 pub struct ContextStore {
     /// The DB path, kept so warming can open its own WAL connection.
     path: PathBuf,
@@ -394,6 +406,24 @@ pub struct ContextStore {
     clock: Arc<dyn Clock>,
     /// The background warm task, joinable via `await_warm`.
     warm: Mutex<Option<tokio::task::JoinHandle<Result<usize, ContextError>>>>,
+    /// Raised by `Drop`, checked between warm batches.
+    warm_cancel: crate::warm::WarmCancel,
+}
+
+impl Drop for ContextStore {
+    fn drop(&mut self) {
+        self.warm_cancel.cancel();
+        // `get_mut` rather than `lock`: `&mut self` already proves exclusive
+        // access, so there is no lock to contend or poison here.
+        if let Some(handle) = self
+            .warm
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            handle.abort();
+        }
+    }
 }
 
 impl ContextStore {
@@ -427,6 +457,7 @@ impl ContextStore {
             fingerprint,
             clock,
             warm: Mutex::new(None),
+            warm_cancel: crate::warm::WarmCancel::default(),
         })
     }
 
@@ -446,8 +477,10 @@ impl ContextStore {
             let embedder = store.embedder.clone();
             let fingerprint = store.fingerprint.id();
             let clock = store.clock.clone();
-            let task =
-                handle.spawn(async move { warm_index(path, embedder, fingerprint, clock).await });
+            let cancel = store.warm_cancel.clone();
+            let task = handle.spawn(async move {
+                crate::warm::warm_index(path, embedder, fingerprint, clock, cancel).await
+            });
             *lock(&store.warm) = Some(task);
         }
         Ok(store)
@@ -469,6 +502,11 @@ impl ContextStore {
     /// — the same answer as "warming never started" (no runtime at
     /// [`Self::open_and_warm`], or an in-memory store). Read `Ok(0)` as "there
     /// is no warm left to wait for", never as "the index was already complete".
+    ///
+    /// Unchanged by the `Drop` added in #613 — taking the handle is exactly
+    /// what makes `Drop` a no-op for a caller who already joined. But a caller
+    /// who never joins no longer gets a detached warm that finishes on its
+    /// own: see the type's `# Drop` section.
     pub async fn await_warm(&self) -> Result<usize, ContextError> {
         let handle = lock(&self.warm).take();
         match handle {
@@ -482,12 +520,16 @@ impl ContextStore {
     /// Drive embedding catch-up to completion synchronously (awaitable).
     /// Reused by the background warm task; exposed for callers/tests that want
     /// a deterministic, joined warm without a spawn.
+    ///
+    /// It shares the store's cancel flag, which is inert here: only `Drop`
+    /// raises it, and `&self` keeps the store alive for the whole call.
     pub async fn warm_now(&self) -> Result<usize, ContextError> {
-        warm_index(
+        crate::warm::warm_index(
             self.path.clone(),
             self.embedder.clone(),
             self.fingerprint.id(),
             self.clock.clone(),
+            self.warm_cancel.clone(),
         )
         .await
     }
@@ -610,7 +652,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
 /// races the main connection into `SQLITE_BUSY`.
-fn open_connection(path: &Path) -> Result<Connection, ContextError> {
+pub(crate) fn open_connection(path: &Path) -> Result<Connection, ContextError> {
     let conn = Connection::open(path)?;
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;\
@@ -618,8 +660,49 @@ fn open_connection(path: &Path) -> Result<Connection, ContextError> {
          PRAGMA foreign_keys=ON;\
          PRAGMA busy_timeout=5000;",
     )?;
+    // After the WAL pragma, so the `-wal`/`-shm` siblings SQLite creates for
+    // this connection exist and get narrowed in the same pass.
+    restrict_to_owner(path);
     Ok(conn)
 }
+
+/// Narrow `context.db` and its WAL/SHM siblings to `0600`.
+///
+/// SQLite creates all three at the process umask, which on a default `0022`
+/// system means `0644` — world-readable. This file is not incidental state:
+/// it holds recalled memories, episodes (verbatim copies of past user
+/// prompts), and facts mined from workspace content, so whatever secrets the
+/// workspace contains can end up inside it. These are files *we* create, and
+/// the posture for those is owner-only from as early as we can manage.
+///
+/// Best-effort on purpose. A `chmod` failure does not fail the open: the
+/// alternative is a workspace that cannot be opened at all because of a
+/// filesystem that does not carry Unix modes (a `vfat`/`exfat` mount, some
+/// network shares), which would be a hard regression in exchange for a
+/// permission the filesystem was never enforcing anyway. Missing siblings are
+/// likewise skipped — `-wal` only exists once something is written.
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    for suffix in ["", "-wal", "-shm"] {
+        // SQLite names the siblings by appending to the WHOLE database
+        // filename (`context.db-wal`), not by replacing an extension.
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        let target = PathBuf::from(name);
+        if target.exists() {
+            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+}
+
+/// Non-Unix targets have no mode word to set; Windows expresses this through
+/// ACLs, which are a different mechanism entirely. A no-op, never an error —
+/// failing here would make the context plane unopenable on those platforms in
+/// exchange for nothing.
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &Path) {}
 
 /// Apply pending migrations inside a single transaction, bumping
 /// `user_version` atomically with the DDL.
@@ -683,48 +766,6 @@ fn register_fingerprint(
         ],
     )?;
     Ok(())
-}
-
-/// Background embedding catch-up: embed every live node whose content lacks a
-/// vector under the active fingerprint. Opens its own WAL connection (so it
-/// never contends with the store's lock) and writes each batch as one
-/// transaction (`L-L1` crash consistency). Returns the count embedded.
-async fn warm_index(
-    path: PathBuf,
-    embedder: Arc<dyn Embedder>,
-    fingerprint: String,
-    clock: Arc<dyn Clock>,
-) -> Result<usize, ContextError> {
-    // An in-memory store's second connection would be a different empty DB;
-    // warming only makes sense for a file-backed store.
-    if path.as_os_str() == ":memory:" {
-        return Ok(0);
-    }
-    let conn = open_connection(&path)?;
-    let pending = nodes_missing_embedding(&conn, &fingerprint)?;
-    if pending.is_empty() {
-        return Ok(0);
-    }
-
-    let mut embedded = 0usize;
-    // Batch the *embedder* calls and the transactions, so a kill mid-index
-    // loses at most one chunk (`L-L1`) and a backend with a request-size limit
-    // is never handed the whole corpus at once. Note this does NOT bound peak
-    // memory: `pending` above already materialized every un-embedded node's
-    // content. Streaming that query is the fix for very large first indexes.
-    const BATCH: usize = 64;
-    for chunk in pending.chunks(BATCH) {
-        let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
-        let vectors = embedder.embed(&texts).await?;
-        let now = clock.now_rfc3339();
-        let tx = conn.unchecked_transaction()?;
-        for ((content_hash, _), emb) in chunk.iter().zip(vectors.iter()) {
-            store_embedding(&tx, content_hash, &fingerprint, &emb.vector, &now)?;
-            embedded += 1;
-        }
-        tx.commit()?;
-    }
-    Ok(embedded)
 }
 
 // Low-level accessors (pub(crate)) shared by retrieval.rs and writeback.rs.
@@ -1315,7 +1356,7 @@ pub(crate) fn list_domains(
 
 /// Live nodes lacking a vector under `fingerprint`, as `(content_hash, content)`.
 /// Deduplicated by content hash so identical content is embedded once.
-fn nodes_missing_embedding(
+pub(crate) fn nodes_missing_embedding(
     conn: &Connection,
     fingerprint: &str,
 ) -> Result<Vec<(String, String)>, ContextError> {
@@ -1360,6 +1401,44 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    /// `context.db` carries recalled memories and verbatim past prompts, so
+    /// it must not land at the process umask (`0644` on a default system).
+    /// The WAL/SHM siblings hold the same bytes and are checked too — a
+    /// tightened database with a world-readable `-wal` beside it would be the
+    /// exact false assurance this change exists to remove.
+    #[cfg(unix)]
+    #[test]
+    fn opening_narrows_the_database_and_its_wal_siblings_to_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let store = ContextStore::open(&path).unwrap();
+        // Force a WAL write so `-wal` definitely exists alongside `-shm`.
+        upsert_node(
+            &store.conn(),
+            &NodeInput::new(NodeKind::Concept, "secret-bearing content"),
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(suffix);
+            let target = PathBuf::from(name);
+            if !target.exists() {
+                continue;
+            }
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode,
+                0o600,
+                "{} must be owner-only, found {mode:04o}",
+                target.display()
+            );
+        }
     }
 
     #[test]

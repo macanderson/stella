@@ -143,6 +143,19 @@ impl ContextSurface {
     pub fn suppresses_restatements(&self) -> bool {
         matches!(self, Self::Memory | Self::Skill)
     }
+
+    /// Every surface [`Self::suppresses_restatements`] answers `true` for.
+    ///
+    /// The enumeration lives next to the predicate so a tombstone sweep cannot
+    /// drift from it: callers used to name `Memory` and `Skill` inline, which
+    /// meant a newly regenerable surface would have been silently skipped by
+    /// the sweep while the predicate said it should not be.
+    pub fn restatement_suppressing() -> Vec<Self> {
+        Self::all()
+            .into_iter()
+            .filter(|s| s.suppresses_restatements())
+            .collect()
+    }
 }
 
 /// Comparison tokens: lowercased alphanumeric runs, keeping the characters

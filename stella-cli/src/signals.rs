@@ -26,6 +26,37 @@
 //! So the signal races the work future, and losing that race drops the work
 //! — on the thread that owns the `block_on`, inside a live runtime. That
 //! drop *is* the teardown.
+//!
+//! # The contract (#613)
+//!
+//! What a SIGINT or SIGTERM now **guarantees**:
+//!
+//! - every RAII guard on the interrupted work future's stack runs, inside a
+//!   live runtime — that is what reaps `setsid` child process groups
+//!   (`GroupKillGuard`), releases fleet claim locks (`ClaimGuard`), removes a
+//!   `verify_done` shadow worktree (`ShadowDirGuard`), and stops a detached
+//!   context warm;
+//! - the process exits `128 + signum` (130 for SIGINT, 143 for SIGTERM), so a
+//!   script wrapping `stella run` can tell "the user stopped this" from "this
+//!   failed";
+//! - shutdown is *bounded*: the runtime gets two seconds to retire blocking
+//!   tasks and then goes anyway, so one wedged `spawn_blocking` cannot make
+//!   Ctrl-C look ignored;
+//! - a **second** signal is a hard kill. The default disposition is restored
+//!   the moment the first one is caught, so a guard that wedges can never trap
+//!   the user in an uninterruptible process.
+//!
+//! What it does **not** guarantee:
+//!
+//! - nothing awaits during teardown. A cleanup that genuinely needs an `await`
+//!   — `verify_done`'s `git worktree` unregistration, `run_best_of_n`'s
+//!   candidate-workspace removal — does not run, by construction; those
+//!   resources are reclaimed by a prune on the next start instead;
+//! - it only covers work driven through [`block_on_interruptible`]. Short
+//!   local commands that build their own runtime (`stella models refresh`)
+//!   create no reapable resources and are deliberately not wrapped;
+//! - it is not a `kill -9` substitute for the child of a child that
+//!   `setsid`s itself out of the group Stella knows about.
 
 use std::future::Future;
 
@@ -86,13 +117,26 @@ async fn first_signal() -> Interrupt {
 /// on its stack. Nothing waits on those guards: none of them await, and one
 /// that needed to could not have run from `Drop` at all.
 pub(crate) async fn until_interrupted<F: Future>(work: F) -> Result<F::Output, Interrupt> {
+    race(work, first_signal()).await
+}
+
+/// The coordinator itself, over an arbitrary `signal` future.
+///
+/// Split out of [`until_interrupted`] purely so the state transition is
+/// testable: [`first_signal`] can only be driven by raising a real signal at
+/// the *process*, which in a test harness would take down every other test in
+/// the binary. Production has exactly one caller and it passes `first_signal`.
+async fn race<F: Future>(
+    work: F,
+    signal: impl Future<Output = Interrupt>,
+) -> Result<F::Output, Interrupt> {
     let mut work = Box::pin(work);
     tokio::select! {
         // A work future that has already completed wins the race — a signal
         // arriving in the same tick must not discard a finished turn.
         biased;
         output = &mut work => Ok(output),
-        signal = first_signal() => {
+        signal = signal => {
             // Restore the default disposition before running teardown, so a
             // second Ctrl-C is a hard kill. A guard that wedges must never
             // be able to trap the user in an uninterruptible process.
@@ -153,20 +197,23 @@ mod tests {
         assert_eq!(out, Ok(7));
     }
 
+    /// A guard that records its own drop — the synchronous shape every RAII
+    /// guard in this workspace has (`GroupKillGuard` is one `libc::kill`,
+    /// `ClaimGuard` one DELETE, `ShadowDirGuard` one `remove_dir_all`).
+    struct Guard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     /// The property the whole module exists for: when the work future is
-    /// dropped, its guards run. `GroupKillGuard` is synchronous, so a plain
-    /// `Drop` witness models it exactly.
+    /// dropped, its guards run.
     #[tokio::test]
     async fn dropping_the_work_future_runs_its_guards() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
-
-        struct Guard(Arc<AtomicBool>);
-        impl Drop for Guard {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
 
         let fired = Arc::new(AtomicBool::new(false));
         let flag = fired.clone();
@@ -190,6 +237,42 @@ mod tests {
             fired.load(Ordering::SeqCst),
             "dropping the work future must run the guards on its stack"
         );
+    }
+
+    /// The coordinator transition, end to end over a stand-in signal source
+    /// (#613): a signal must abandon the in-flight work, run its guards, and
+    /// report *which* signal it was so `main` can pick the exit code. The
+    /// signal itself is never raised at the process level — that would kill
+    /// the whole test binary — so `race` is driven with an explicit future.
+    #[tokio::test]
+    async fn a_signal_abandons_the_work_and_names_itself() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        for signal in [Interrupt::Int, Interrupt::Term] {
+            let fired = Arc::new(AtomicBool::new(false));
+            let flag = fired.clone();
+            let work = async move {
+                let _guard = Guard(flag);
+                std::future::pending::<u32>().await
+            };
+
+            let outcome = race(work, async move { signal }).await;
+
+            assert_eq!(outcome, Err(signal), "the signal must be reported as-is");
+            assert!(
+                fired.load(Ordering::SeqCst),
+                "{signal:?} must run the guards on the abandoned work's stack"
+            );
+        }
+    }
+
+    /// The `biased` arm ordering, which is not cosmetic: a signal landing in
+    /// the same tick as a completed turn must not discard the turn's result.
+    #[tokio::test]
+    async fn work_that_already_finished_beats_a_simultaneous_signal() {
+        let outcome = race(async { 7u32 }, async { Interrupt::Int }).await;
+        assert_eq!(outcome, Ok(7));
     }
 
     #[test]

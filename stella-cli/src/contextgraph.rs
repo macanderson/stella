@@ -880,7 +880,7 @@ mod tests {
         );
         assert_eq!(usage.budget_requested, 1_000, "the query's max_tokens");
         assert_eq!(usage.total_frames_served(), 3);
-        assert!(!usage.as_of.is_empty(), "an accounting snapshot is stamped");
+        assert!(usage.as_of_is_wellformed(), "as_of must be RFC 3339");
 
         let mem = usage
             .providers

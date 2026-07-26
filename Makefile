@@ -78,6 +78,10 @@ bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
 no-scratch: ## Assert no tracked file is gitignored (agent scratch guard, #448)
 	@./scripts/check-no-scratch.sh
 
+.PHONY: action-pins
+action-pins: ## Assert every workflow `uses:` is pinned to a commit SHA (#648)
+	@./scripts/check-action-pins.sh
+
 .PHONY: doc-citations
 doc-citations: ## Assert every docs/*.md cited from Rust source resolves (#652)
 	@./scripts/check-doc-citations.sh
@@ -93,6 +97,13 @@ file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitti
 .PHONY: doc-warnings
 doc-warnings: ## Assert rustdoc is clean workspace-wide (#634)
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+# Deliberately not part of `gate`: it needs a Docker daemon, which the gate
+# must not. CI runs the same two commands (.github/workflows/docker-serve.yml).
+.PHONY: serve-image
+serve-image: ## Build the stella-serve image and smoke the container (needs Docker, #635)
+	docker build -f packaging/docker/Dockerfile.serve -t stella-serve:ci .
+	@./scripts/smoke-serve-image.sh stella-serve:ci
 
 .PHONY: gate
 gate: no-scratch doc-citations file-size doc-warnings format-check lint test ## Full CI gate: no-scratch + doc-citations + file-size + rustdoc + fmt-check + clippy + test

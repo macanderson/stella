@@ -51,6 +51,16 @@ toml = "1.1"
 # never overrides the live shell. See stella-cli/src/env_files.rs.
 dotenvy = "0.15"
 rpassword = "7"
+# Compiler-resistant zeroing of secret plaintext on drop. Apache-2.0 OR MIT
+# (both already on deny.toml's allow-list), zero dependencies, no C code, and
+# already resident in the tree transitively via rustls — so this promotes a
+# vetted crate to a direct dependency rather than widening the supply chain.
+# Without it an API key, a masked prompt's buffer, or an `Authorization` header
+# built from one stays legible in freed heap for the rest of the process.
+# The `derive`/`zeroize_derive` feature is deliberately NOT enabled: every
+# impl in this workspace is a hand-written `Drop` over a newtype's one secret
+# field, so the extra proc-macro dependency would buy nothing.
+zeroize = "1"
 base64 = "0.23"
 arboard = { version = "3", default-features = false, features = ["image-data"] }
 png = "0.18"

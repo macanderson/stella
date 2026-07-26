@@ -77,7 +77,10 @@ pub enum GitError {
 /// The production [`GitCli`]: spawns the real `git` binary via
 /// `tokio::process`. Never inherits an interactive prompt
 /// (`GIT_TERMINAL_PROMPT=0`) so a credential-needing command fails fast
-/// instead of hanging a fleet worker.
+/// instead of hanging a fleet worker. Environment policy — credentials,
+/// git's config/command-injection family, and the ssh-agent socket — is
+/// `stella_tools::subprocess_env`'s single shared list, not a second one
+/// maintained here.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemGitCli;
 
@@ -94,12 +97,22 @@ impl GitCli for SystemGitCli {
         // init, config, commit, worktree add — at the OUTER repo. That is
         // not hypothetical: it once rewrote the host repo's user identity
         // and committed test fixtures onto a real branch.
+        //
+        // This list is *repo targeting* only. The git config- and
+        // command-injection family (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/
+        // `GIT_CONFIG_VALUE_n`, `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM`,
+        // `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`, `GIT_PROXY_COMMAND`,
+        // `GIT_ALTERNATE_OBJECT_DIRECTORIES`) is deliberately NOT duplicated
+        // here: it lives in the shared scrub below so `stella-tools`' and
+        // `stella-cli`'s own git invocations get identical treatment from one
+        // list, with one documented re-admission hatch
+        // (`STELLA_SUBPROCESS_ENV_ALLOW`) for a deploy-key setup that
+        // legitimately drives git through `GIT_SSH_COMMAND`.
         for var in [
             "GIT_DIR",
             "GIT_WORK_TREE",
             "GIT_INDEX_FILE",
             "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
             "GIT_COMMON_DIR",
             "GIT_NAMESPACE",
             "GIT_PREFIX",

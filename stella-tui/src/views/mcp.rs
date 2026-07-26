@@ -40,13 +40,27 @@ pub enum AuthStep {
 }
 
 /// The in-progress auth prompt. `value`'s `Debug` is redacted so it never
-/// appears in a log even though `DeckUi` derives `Debug`.
+/// appears in a log even though `DeckUi` derives `Debug`, and it is wiped on
+/// drop so an abandoned prompt (Esc, or a completed one being replaced by
+/// `AuthPrompt::default()`) does not leave the typed credential legible in
+/// freed heap.
+///
+/// One honest limit: `value` is built a keystroke at a time with `String::push`,
+/// so each reallocation abandons a buffer this `Drop` can never see. Zeroizing
+/// here shortens the plaintext's life; it does not claim to erase every copy.
 #[derive(Clone, Default)]
 pub struct AuthPrompt {
     pub server: String,
     pub field: String,
     pub value: String,
     pub step: AuthStep,
+}
+
+impl Drop for AuthPrompt {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.value.zeroize();
+    }
 }
 
 impl std::fmt::Debug for AuthPrompt {

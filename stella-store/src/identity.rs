@@ -73,9 +73,21 @@ fn cloud_json_path() -> PathBuf {
 }
 
 /// Load the registration, `Default` (all `None`) when absent or unreadable.
+///
+/// On Unix the read goes through [`crate::read_sensitive_file_to_string`]
+/// (O_NOFOLLOW, uid + single-link checks, an owner-controlled parent), which
+/// also means an unreadable-*because-untrustworthy* file degrades to the
+/// unregistered state rather than being believed. That is the correct
+/// direction for a file whose [`CloudRegistration::oauth_token`] slot is
+/// reserved for a real credential: a `cloud.json` sitting under a
+/// group-writable home, or replaced by a symlink, is exactly the file we
+/// should not be taking an `org_id` from.
 pub fn cloud_registration() -> CloudRegistration {
-    std::fs::read_to_string(cloud_json_path())
-        .ok()
+    cloud_registration_at(&cloud_json_path())
+}
+
+fn cloud_registration_at(path: &Path) -> CloudRegistration {
+    read_cloud_json(path)
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
 }
@@ -92,7 +104,10 @@ pub fn cloud_registration() -> CloudRegistration {
 /// [`CloudRegistration::oauth_token`] slot is reserved for a real credential
 /// that was thin cover, and #617's contract made the fix a one-liner.
 pub fn save_cloud_registration(reg: &CloudRegistration) -> Result<()> {
-    let path = cloud_json_path();
+    save_cloud_registration_at(&cloud_json_path(), reg)
+}
+
+fn save_cloud_registration_at(path: &Path, reg: &CloudRegistration) -> Result<()> {
     if let Some(parent) = path.parent() {
         crate::ensure_private_dir(parent)?;
     }
@@ -343,6 +358,45 @@ mod tests {
             error.contains("stella cloud register"),
             "the error must name the remedy: {error}"
         );
+    }
+
+    /// `cloud.json` holds a reserved OAuth-credential slot, so the write must
+    /// land owner-only and still round-trip. Exercised through the
+    /// path-taking helpers rather than the `~/.stella` ones: the public
+    /// wrappers resolve a real home directory, and a test has no business
+    /// writing there.
+    #[cfg(unix)]
+    #[test]
+    fn cloud_registration_round_trips_through_the_sensitive_write_at_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("private").join("cloud.json");
+        let reg = CloudRegistration {
+            org_id: Some("org-abc".into()),
+            oauth_token: Some("tok-secret".into()),
+        };
+        save_cloud_registration_at(&path, &reg).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "cloud.json must be owner-only, found {mode:04o}"
+        );
+        assert_eq!(
+            cloud_registration_at(&path),
+            reg,
+            "the read path must agree"
+        );
+    }
+
+    /// A missing file stays the unregistered default rather than an error —
+    /// telemetry scoping is infallible by contract.
+    #[test]
+    fn an_absent_cloud_json_reads_as_the_unregistered_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cloud.json");
+        assert_eq!(cloud_registration_at(&path), CloudRegistration::default());
     }
 
     #[test]
