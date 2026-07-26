@@ -101,7 +101,7 @@ fn enable_lifecycle(root: &Path) {
 
 /// Open a session on `root` running `path`'s loop.
 fn session(root: &Path, path: Loop) -> SessionMemory {
-    session_with_workspace_skills(root, path, false)
+    session_with_workspace_skills(root, path, true)
 }
 
 fn session_with_workspace_skills(
@@ -333,9 +333,10 @@ fn a_hand_edited_skill_file_is_never_clobbered() {
     each_path(|path| {
         let dir = workspace_with_log(&three_occurrences_of(RECURRING));
         // Workspace skills trusted — the normal configuration, and the only one
-        // in which the loop reads the directory it writes to. See
-        // `finding_mining_clobbers_hand_edited_skills_when_workspace_skills_are_untrusted`
-        // for what happens when it does not.
+        // in which the loop reads the directory it writes to. The untrusted
+        // case no longer reaches this code at all: #742 skips auto-creation
+        // outright when workspace skills are not trusted, so there is no write
+        // to clobber anything with.
         let mut first = session_with_workspace_skills(dir.path(), path, true);
         first.auto_create_skills(&log_path(dir.path()), true);
         let created = dir
@@ -374,54 +375,13 @@ fn a_hand_edited_skill_file_is_never_clobbered() {
     });
 }
 
-/// **FINDING — a pre-existing defect in the shipped lexical loop, pinned as
-/// current behavior rather than fixed here.**
-///
-/// `SessionMemory::open_with_authority` passes `authority.project_prompts_allowed`
-/// through as `include_workspace_skills`. That flag governs *reading*
-/// `.stella/skills` — and only reading. Mining still *writes* there
-/// unconditionally.
-///
-/// So in a workspace where project prompts are not trusted, `load_skills()`
-/// returns nothing from the workspace directory, `existing_paths` is empty, and
-/// the no-clobber guard is handed an empty list to check against. It duly
-/// decides `Create` for a path that already holds a file, and the write
-/// destroys whatever the user had there. The two text guards that might
-/// otherwise have caught it (`already_captured` against existing skills, and
-/// the `FileExists` check) are both blinded by the same empty list.
-///
-/// Spec §8 names "never clobbering a hand-edited file" as a guarantee to
-/// preserve. It does not hold on this path today. Fixing it is a one-line
-/// change — enumerate the skills directory for the no-clobber check regardless
-/// of whether its contents are trusted as *context* — but it is a behavior
-/// change to the shipped loop and does not belong buried inside a migration
-/// commit. Pinned here so the migration cannot silently make it worse, and so
-/// the fix, whenever it lands, has to delete this test on purpose.
-#[test]
-fn finding_mining_clobbers_hand_edited_skills_when_workspace_skills_are_untrusted() {
-    let dir = workspace_with_log(&three_occurrences_of(RECURRING));
-    // `include_workspace_skills: false` — what `open_with_authority` passes for
-    // a workspace whose project prompts are not trusted.
-    let mut first =
-        SessionMemory::open_with_workspace_skills(dir.path(), false, false).expect("memory");
-    first.auto_create_skills(&log_path(dir.path()), true);
-    let created = dir
-        .path()
-        .join(".stella/skills/prefer-updating-witness-test-assertions-e2010443.md");
-
-    let hand_edited = "---\nname: mine\ndescription: my own\n---\n\nmy own content\n";
-    std::fs::write(&created, hand_edited).expect("hand edit");
-
-    let mut second =
-        SessionMemory::open_with_workspace_skills(dir.path(), false, false).expect("memory");
-    second.auto_create_skills(&log_path(dir.path()), true);
-
-    assert_ne!(
-        std::fs::read_to_string(&created).expect("read back"),
-        hand_edited,
-        "the defect is fixed — delete this test and the finding it documents"
-    );
-}
+// The #737 clobbering defect this file previously pinned is FIXED on main
+// (#742): the no-clobber guard now tests the filesystem rather than the
+// loaded-skill list, and auto-creation is skipped outright when workspace
+// skills are untrusted. The pin asserted the buggy behavior, so it is deleted
+// here rather than inverted — its own note said the fix would have to delete it
+// on purpose. The guarantee is covered by
+// `memory::tests::a_disabled_hand_edited_skill_is_never_overwritten_by_auto_creation`.
 
 // ---- guarantee: failure isolation ----
 
