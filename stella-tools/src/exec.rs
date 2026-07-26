@@ -160,16 +160,57 @@ pub(crate) async fn run_argv_untruncated(
 }
 
 /// SIGKILLs `pid`'s process group on drop unless disarmed — the
-/// cancellation backstop for [`drive`] and for the tools that spawn their
-/// own child instead of coming through it ([`crate::bash`],
+/// cancellation backstop for this module's shared runner and for the tools
+/// that spawn their own child instead of coming through it ([`crate::bash`],
 /// [`crate::custom`]): when the future driving a tool call is dropped
 /// mid-wait (Esc cancels the turn), the detached process group must not keep
 /// running — and mutating the tree — after the user believes the turn
 /// stopped. Normal exit and the timeout path disarm it.
+///
+/// It is deliberately `pub`: every `pre_exec(setsid)` spawn site in the
+/// workspace must use *this* guard rather than grow a second one. A `setsid`
+/// child is in its own session, so Ctrl-C's SIGINT — delivered only to the
+/// tty's foreground process group — never reaches it; this guard is the only
+/// thing that reaps the tree, and it fires because the CLI drops the work
+/// future on a signal instead of calling `exit` (`stella-cli/src/signals.rs`).
+///
+/// Never `tokio::spawn` teardown from a `Drop` instead: during runtime
+/// shutdown the spawn silently does nothing, which is precisely the case
+/// being handled. `kill(2)` is synchronous, so this guard needs no runtime.
 #[cfg(unix)]
-pub(crate) struct GroupKillGuard {
-    pub(crate) pid: i32,
-    pub(crate) armed: bool,
+pub struct GroupKillGuard {
+    pid: i32,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl GroupKillGuard {
+    /// Arm a guard over the process group led by `pid` (a child spawned with
+    /// `pre_exec(setsid)`, so its pid *is* its process-group id). A pid of 0
+    /// — `Child::id` after the child was already reaped — is inert.
+    pub fn arm(pid: i32) -> Self {
+        Self { pid, armed: true }
+    }
+
+    /// Stop the guard from killing on drop. Call it once the group is known
+    /// to be gone: the child exited normally, or the caller already killed
+    /// the group itself on its timeout path.
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    /// SIGKILL the group now, and disarm. The timeout path: the child is
+    /// still running and must die *before* the caller returns an error,
+    /// rather than at some later scope exit.
+    pub fn kill_now(&mut self) {
+        self.armed = false;
+        // Same real-pid guard as `Drop`.
+        if self.pid > 0 {
+            unsafe {
+                libc::kill(-self.pid, libc::SIGKILL);
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -224,7 +265,7 @@ async fn drive(
     #[cfg(unix)]
     let pid = child.id().unwrap_or(0) as i32;
     #[cfg(unix)]
-    let mut guard = GroupKillGuard { pid, armed: true };
+    let mut guard = GroupKillGuard::arm(pid);
 
     let output =
         match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
@@ -232,9 +273,7 @@ async fn drive(
         {
             Ok(Ok(output)) => {
                 #[cfg(unix)]
-                {
-                    guard.armed = false;
-                }
+                guard.disarm();
                 output
             }
             // Wait failure leaves the child's state unknown — the still-armed
@@ -242,15 +281,7 @@ async fn drive(
             Ok(Err(e)) => return Err(format!("command failed: {e}")),
             Err(_) => {
                 #[cfg(unix)]
-                {
-                    guard.armed = false;
-                    unsafe {
-                        // Same real-pid guard as `GroupKillGuard`.
-                        if pid > 0 {
-                            libc::kill(-pid, libc::SIGKILL);
-                        }
-                    }
-                }
+                guard.kill_now();
                 return Err(format!("`{command}` timed out after {timeout_secs}s"));
             }
         };

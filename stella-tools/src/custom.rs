@@ -462,7 +462,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     // Cancellation backstop: a dropped future (Esc, the engine's tool
     // timeout, a fleet stop) must not leave the setsid'd group running.
     #[cfg(unix)]
-    let mut guard = crate::exec::GroupKillGuard { pid, armed: true };
+    let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
     // Deliver the input as one JSON document on stdin, concurrently with
     // draining stdout/stderr, so a chatty child cannot deadlock the write.
@@ -479,9 +479,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(output)) => {
             #[cfg(unix)]
-            {
-                guard.armed = false;
-            }
+            guard.disarm();
             output
         }
         // Wait failure leaves the child's state unknown — the still-armed
@@ -493,16 +491,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         }
         Err(_) => {
             #[cfg(unix)]
-            {
-                guard.armed = false;
-                unsafe {
-                    // Guard on a real pid: kill(-0, …) would SIGKILL Stella's
-                    // OWN process group.
-                    if pid > 0 {
-                        libc::kill(-pid, libc::SIGKILL);
-                    }
-                }
-            }
+            guard.kill_now();
             return ToolOutput::Error {
                 message: format!(
                     "custom tool `{}` timed out after {}ms",
