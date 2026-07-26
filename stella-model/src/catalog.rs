@@ -27,6 +27,13 @@ pub struct Pricing {
     pub input_usd_per_mtok: f64,
     pub output_usd_per_mtok: f64,
     pub cached_input_usd_per_mtok: f64,
+    /// What a cache *write* costs per million tokens. Unlike cached reads,
+    /// `cache_write_tokens` is reported OUTSIDE `input_tokens`, so this rate is
+    /// billed on its own line rather than carved out of the input total.
+    /// Providers charge a premium over input for writes (Anthropic-family
+    /// 5-minute writes are 1.25x); the implicit-cache providers report zero
+    /// writes, so their rate is never exercised and equals their input rate.
+    pub cache_write_usd_per_mtok: f64,
 }
 
 impl Pricing {
@@ -37,12 +44,15 @@ impl Pricing {
     /// reports more cached than total input (shouldn't happen, but is not
     /// worth aborting a turn over) saturates to zero non-cached input.
     ///
-    /// `cache_write_tokens` is deliberately NOT priced: the catalog carries
-    /// no cache-write rate yet (providers bill writes at a premium over
-    /// input — e.g. Anthropic 1.25x), and those tokens are reported outside
-    /// `input_tokens`, so today they contribute $0 here. Adding a
-    /// `cache_write_usd_per_mtok` column is the staged follow-up to
-    /// issue #97 (the on-disk model-card versions already record the rate).
+    /// `cache_write_tokens` is billed on its own line at
+    /// `cache_write_usd_per_mtok`. It is NOT carved out of `input_tokens` the
+    /// way cached reads are — both adapters that report writes
+    /// (`anthropic`, `bedrock`) count them outside the input total — so adding
+    /// it here double-charges nothing. Leaving it unpriced is what issue #97
+    /// tracked: it silently under-reported every cache-writing turn by the
+    /// full write rate, and made this function disagree by construction with
+    /// [`Pricing::cache_savings_usd`], which charges only the *premium* on the
+    /// assumption the base rate is billed here.
     pub fn cost_usd(&self, usage: &CompletionUsage) -> f64 {
         let cached = usage.cached_input_tokens.min(usage.input_tokens);
         let uncached_input = usage.input_tokens - cached;
@@ -50,6 +60,7 @@ impl Pricing {
         (uncached_input as f64 / PER_MTOK) * self.input_usd_per_mtok
             + (cached as f64 / PER_MTOK) * self.cached_input_usd_per_mtok
             + (usage.output_tokens as f64 / PER_MTOK) * self.output_usd_per_mtok
+            + (usage.cache_write_tokens as f64 / PER_MTOK) * self.cache_write_usd_per_mtok
     }
 }
 
@@ -188,6 +199,7 @@ impl Catalog {
                         input_usd_per_mtok: 0.60,
                         output_usd_per_mtok: 2.20,
                         cached_input_usd_per_mtok: 0.11,
+                        cache_write_usd_per_mtok: 0.60,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -201,6 +213,7 @@ impl Catalog {
                         input_usd_per_mtok: 3.00,
                         output_usd_per_mtok: 15.00,
                         cached_input_usd_per_mtok: 0.30,
+                        cache_write_usd_per_mtok: 3.75,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -214,6 +227,7 @@ impl Catalog {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
                         cached_input_usd_per_mtok: 0.125,
+                        cache_write_usd_per_mtok: 1.25,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -227,6 +241,7 @@ impl Catalog {
                         input_usd_per_mtok: 3.00,
                         output_usd_per_mtok: 15.00,
                         cached_input_usd_per_mtok: 0.75,
+                        cache_write_usd_per_mtok: 3.00,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -242,6 +257,7 @@ impl Catalog {
                         input_usd_per_mtok: 0.27,
                         output_usd_per_mtok: 1.10,
                         cached_input_usd_per_mtok: 0.07,
+                        cache_write_usd_per_mtok: 0.27,
                     },
                 )
                 .with_reasoning(Some(false)),
@@ -255,6 +271,7 @@ impl Catalog {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
                         cached_input_usd_per_mtok: 0.31,
+                        cache_write_usd_per_mtok: 1.25,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -273,6 +290,7 @@ impl Catalog {
                         input_usd_per_mtok: 1.25,
                         output_usd_per_mtok: 10.00,
                         cached_input_usd_per_mtok: 0.31,
+                        cache_write_usd_per_mtok: 1.25,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -290,6 +308,7 @@ impl Catalog {
                         input_usd_per_mtok: 3.00,
                         output_usd_per_mtok: 15.00,
                         cached_input_usd_per_mtok: 0.30,
+                        cache_write_usd_per_mtok: 3.75,
                     },
                 )
                 .with_reasoning(Some(true)),
@@ -321,6 +340,7 @@ impl Catalog {
                         input_usd_per_mtok: 0.0,
                         output_usd_per_mtok: 0.0,
                         cached_input_usd_per_mtok: 0.0,
+                        cache_write_usd_per_mtok: 0.0,
                     },
                 ),
             ],
@@ -469,6 +489,7 @@ mod tests {
                 input_usd_per_mtok: 1.0,
                 output_usd_per_mtok: 2.0,
                 cached_input_usd_per_mtok: 0.1,
+                cache_write_usd_per_mtok: 1.25,
             },
         ));
         Catalog::install_runtime(Catalog::with_entries(entries));
@@ -488,6 +509,7 @@ mod tests {
             input_usd_per_mtok: 3.00,
             output_usd_per_mtok: 15.00,
             cached_input_usd_per_mtok: 0.30,
+            cache_write_usd_per_mtok: 3.75,
         };
         // 1M input tokens of which 400k are cached, plus 200k output:
         //   uncached input = 600k @ $3/M    = 1.80
@@ -513,6 +535,7 @@ mod tests {
             input_usd_per_mtok: 3.00,
             output_usd_per_mtok: 15.00,
             cached_input_usd_per_mtok: 0.30,
+            cache_write_usd_per_mtok: 3.75,
         };
         let usage = CompletionUsage {
             reported: true,
@@ -542,7 +565,43 @@ mod tests {
                 "model `{}` has zero pricing — budget metering would be a no-op",
                 entry.id
             );
+            // A zero write rate is the #97 defect in miniature: the counter is
+            // reported, the meter charges nothing, and the receipt understates
+            // real spend on every cache-writing turn.
+            assert!(
+                entry.pricing.cache_write_usd_per_mtok >= entry.pricing.input_usd_per_mtok,
+                "model `{}` bills cache writes at {} but input at {} — writes are \
+                 never cheaper than input, so this under-reports spend",
+                entry.id,
+                entry.pricing.cache_write_usd_per_mtok,
+                entry.pricing.input_usd_per_mtok
+            );
         }
+    }
+
+    /// Witness for #97: a turn that only writes the cache must cost more than
+    /// $0. Before the `cache_write_usd_per_mtok` column, `cost_usd` read three
+    /// of the four usage counters and this returned exactly zero.
+    #[test]
+    fn cache_write_tokens_are_billed_not_free() {
+        let pricing = Catalog::seed()
+            .resolve_for("anthropic", "claude-fable-5")
+            .unwrap()
+            .pricing;
+        // 100k tokens written, nothing read, nothing generated.
+        let write_only = CompletionUsage {
+            reported: true,
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+            cache_write_tokens: 100_000,
+        };
+        // 100_000 / 1e6 * 3.75 = 0.375 — the figure that went unreported.
+        let cost = pricing.cost_usd(&write_only);
+        assert!(
+            (cost - 0.375).abs() < 1e-12,
+            "expected a 100k-token cache write to cost $0.375, got {cost}"
+        );
     }
 
     #[test]

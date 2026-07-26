@@ -38,9 +38,13 @@ const PER_MTOK: f64 = 1_000_000.0;
 /// 5-minute cache writes are 1.25x input (the 1-hour TTL is 2x, a per-request
 /// choice not visible in the usage envelope, so it is not modeled here).
 ///
-/// Local const table, deliberately: the authoritative home for this factor is
-/// the catalog's not-yet-added cache-write rate column (issue #97). Merge this
-/// into that column / the `provider_parity` matrix when it lands.
+/// This is now only the *seed-time* derivation: since issue #97 landed
+/// [`Pricing::cache_write_usd_per_mtok`], the authoritative per-model rate is
+/// the catalog column, and [`Pricing::cache_savings_usd_for`] reads the row
+/// rather than consulting this table — so a refreshed row whose real write rate
+/// differs from `input x mult` can no longer disagree with what
+/// [`Pricing::cost_usd`] actually billed. Kept public because it is the factor
+/// the seed rows are derived from and the one a provider-parity row cites.
 pub fn cache_write_premium_multiplier(provider: &str) -> f64 {
     match provider {
         "anthropic" | "bedrock" | "openrouter" => 1.25,
@@ -78,13 +82,25 @@ impl Pricing {
         read_saved - write_cost
     }
 
-    /// [`Pricing::cache_savings_usd`] with the write premium resolved from the
-    /// provider's [`cache_write_premium_multiplier`] against this row's own
-    /// input rate — the form the CLI receipt and the deck producer use, since
-    /// they already know the provider id.
+    /// [`Pricing::cache_savings_usd`] with the write premium resolved from this
+    /// row's own two rates — the form the CLI receipt and the deck producer use.
+    ///
+    /// The premium is `cache_write_usd_per_mtok - input_usd_per_mtok`, i.e. read
+    /// off the same column [`Pricing::cost_usd`] bills the write at, so the
+    /// receipt's "saved" figure and the charged cost are two views of one
+    /// number. Deriving it from [`cache_write_premium_multiplier`] instead —
+    /// which is what this did before issue #97 — meant a refreshed row carrying
+    /// a real write rate could report a premium the cost line never charged.
+    ///
+    /// `provider` is retained for API stability and is used only as the
+    /// fallback factor when a row carries no write rate at all (the
+    /// `openrouter/auto` gateway-priced case, where every rate is zero).
     pub fn cache_savings_usd_for(&self, provider: &str, usage: &CompletionUsage) -> f64 {
-        let premium =
-            self.input_usd_per_mtok * (cache_write_premium_multiplier(provider) - 1.0).max(0.0);
+        let premium = if self.cache_write_usd_per_mtok > 0.0 {
+            (self.cache_write_usd_per_mtok - self.input_usd_per_mtok).max(0.0)
+        } else {
+            self.input_usd_per_mtok * (cache_write_premium_multiplier(provider) - 1.0).max(0.0)
+        };
         self.cache_savings_usd(usage, premium)
     }
 }
@@ -228,6 +244,7 @@ mod tests {
             input_usd_per_mtok: 3.00,
             output_usd_per_mtok: 15.00,
             cached_input_usd_per_mtok: 0.30,
+            cache_write_usd_per_mtok: 3.75,
         };
         let premium = 3.00 * (1.25 - 1.0); // 0.75/M
         let got = pricing.cache_savings_usd(&usage(1_000_000, 400_000, 100_000), premium);
@@ -243,6 +260,7 @@ mod tests {
             input_usd_per_mtok: 3.00,
             output_usd_per_mtok: 15.00,
             cached_input_usd_per_mtok: 0.30,
+            cache_write_usd_per_mtok: 3.75,
         };
         let premium = 3.00 * 0.25;
         let got = pricing.cache_savings_usd(&usage(500_000, 0, 500_000), premium);
@@ -255,22 +273,72 @@ mod tests {
     }
 
     #[test]
-    fn savings_for_resolves_the_premium_from_provider_and_input_rate() {
+    fn savings_for_resolves_the_premium_from_the_rows_own_write_rate() {
         let pricing = Pricing {
             input_usd_per_mtok: 3.00,
             output_usd_per_mtok: 15.00,
-            cached_input_usd_per_mtok: 0.30,
+            cached_input_usd_per_mtok: 3.00 * 0.10,
+            cache_write_usd_per_mtok: 3.75,
         };
-        // anthropic → 1.25x, so the convenience form equals the explicit one.
-        let explicit = pricing.cache_savings_usd(&usage(1_000_000, 400_000, 100_000), 3.00 * 0.25);
+        // The premium is read off the row (3.75 - 3.00), not looked up by
+        // provider, so it equals the explicit form.
+        let explicit = pricing.cache_savings_usd(&usage(1_000_000, 400_000, 100_000), 0.75);
         let convenient =
             pricing.cache_savings_usd_for("anthropic", &usage(1_000_000, 400_000, 100_000));
         assert!((explicit - convenient).abs() < 1e-12);
 
-        // An implicit-cache provider bills writes at input rate → premium 0;
-        // since it reports no writes anyway the reads stand alone.
-        let implicit = pricing.cache_savings_usd_for("zai", &usage(1_000_000, 400_000, 0));
+        // A row whose write rate equals its input rate carries no premium, so
+        // the reads stand alone whatever the provider id says.
+        let flat = Pricing {
+            cache_write_usd_per_mtok: 3.00,
+            ..pricing
+        };
+        let implicit = flat.cache_savings_usd_for("anthropic", &usage(1_000_000, 400_000, 500_000));
         assert!((implicit - (400_000.0 / 1e6 * 2.70)).abs() < 1e-12);
+
+        // A gateway-priced row (every rate zero) still falls back to the
+        // provider multiplier rather than silently reporting a free write.
+        let gateway = Pricing {
+            input_usd_per_mtok: 0.0,
+            output_usd_per_mtok: 0.0,
+            cached_input_usd_per_mtok: 0.0,
+            cache_write_usd_per_mtok: 0.0,
+        };
+        assert_eq!(
+            gateway.cache_savings_usd_for("openrouter", &usage(1_000, 500, 500)),
+            0.0
+        );
+    }
+
+    /// The accounting identity issue #97 was about: what the receipt calls a
+    /// "saving" and what the budget meter actually charged must be two views of
+    /// one number. Caching a prefix and reading it back N times must cost
+    /// exactly the uncached bill minus the reported saving.
+    #[test]
+    fn charged_cost_plus_reported_saving_reconstructs_the_uncached_bill() {
+        let pricing = Pricing {
+            input_usd_per_mtok: 3.00,
+            output_usd_per_mtok: 15.00,
+            cached_input_usd_per_mtok: 0.30,
+            cache_write_usd_per_mtok: 3.75,
+        };
+        // A turn reporting 1M input (400k of it served from cache) that also
+        // writes 100k new tokens into the cache.
+        let cached_turn = usage(1_000_000, 400_000, 100_000);
+
+        // The same prompt with caching switched off. Cache *reads* are a subset
+        // of `input_tokens`, but cache *writes* are reported outside it — so
+        // the uncached prompt is 1M + 100k tokens, all at the full input rate.
+        let uncached_equivalent = usage(1_000_000 + 100_000, 0, 0);
+
+        let charged = pricing.cost_usd(&cached_turn);
+        let saved = pricing.cache_savings_usd_for("anthropic", &cached_turn);
+        let counterfactual = pricing.cost_usd(&uncached_equivalent);
+
+        assert!(
+            (charged + saved - counterfactual).abs() < 1e-9,
+            "charged {charged} + saved {saved} != uncached {counterfactual}"
+        );
     }
 
     #[test]

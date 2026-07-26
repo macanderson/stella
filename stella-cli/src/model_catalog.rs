@@ -685,6 +685,21 @@ fn install_runtime_catalog(store: &CatalogStore) {
                             .pricing
                             .cached_input_usd_per_mtok
                             .unwrap_or(0.0),
+                        // The master list carries the real per-model write rate
+                        // (`input_cache_write`); before #97 it was parsed, stored
+                        // on the model card, and then dropped right here, so every
+                        // refreshed row billed cache writes at $0. Falling back to
+                        // `input x premium` rather than 0.0 keeps a listing that
+                        // omits the field from silently re-opening that hole.
+                        cache_write_usd_per_mtok: listing
+                            .pricing
+                            .cache_write_usd_per_mtok
+                            .unwrap_or_else(|| {
+                                listing.pricing.input_usd_per_mtok.unwrap_or(0.0)
+                                    * stella_model::cache_write_premium_multiplier(
+                                        &listing.api_provider,
+                                    )
+                            }),
                     },
                 )
                 .with_reasoning(listing.pricing.supports_reasoning),
