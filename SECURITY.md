@@ -45,6 +45,16 @@ Out of scope: vulnerabilities in the model providers themselves, and the
 inherent risk of running an agent with `bash` access on code you don't trust —
 that's the user's judgment call, not a boundary Stella claims to enforce.
 
+## Threat model
+
+`docs/design/threat-model.md` enumerates the assets, the adversaries, the
+trust boundaries, and the attack paths that cross them — including the risks
+Stella knowingly does not defend against, and why. Read it before deciding
+whether a behavior you found is a vulnerability or a documented choice: several
+of the sharper edges (no SSRF guard on `web` tools, the sandbox covering
+`bash` only, materially weaker guarantees off Unix) are deliberate and recorded
+there.
+
 ## Supported versions
 
 Pre-1.0, only the latest release (and `main`) receive security fixes.
