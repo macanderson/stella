@@ -65,7 +65,9 @@ pub use recall::inject_recall_block;
 use recall::{ab_control_turn, goal_path_anchors, render_context_section};
 #[cfg(test)]
 pub(crate) use skill_files::load_workspace_skills;
-pub(crate) use skill_files::{load_workspace_skills_with_authority, workspace_skills_dir};
+pub(crate) use skill_files::{
+    load_workspace_skills_with_authority, skill_paths_on_disk, workspace_skills_dir,
+};
 
 /// Marker prefixing a recalled-context message so [`inject_recall_block`]
 /// can find the newest one for dedup. Blocks land at the conversation

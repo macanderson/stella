@@ -15,7 +15,9 @@ use stella_core::skills::{
 };
 use stella_protocol::{CompletionMessage, Provider};
 
-use super::{ReflectionLesson, ReflectionReport, SessionMemory, reflect_on_turn};
+use super::{
+    ReflectionLesson, ReflectionReport, SessionMemory, reflect_on_turn, skill_paths_on_disk,
+};
 
 impl SessionMemory {
     /// Post-turn self-reflection: one cheap model call producing 0-3
@@ -189,7 +191,19 @@ impl SessionMemory {
     /// the observations here is what stops a forgotten lesson from returning
     /// as an auto-created skill — the second door that made a plain `DELETE`
     /// insufficient.
-    fn auto_create_skills(&mut self, log_path: &Path, quiet: bool) {
+    pub(super) fn auto_create_skills(&mut self, log_path: &Path, quiet: bool) {
+        // Reading and writing the workspace skills directory are one authority.
+        // Without `include_workspace_skills` the loader is handed an empty
+        // workspace dir, so a skill written there would never be read back —
+        // and creating it anyway used to compute the target from
+        // `workspace_skills_dir()` unconditionally, writing into a directory
+        // the session had just been told it may not read (#737). The narrower
+        // alternative — redirect creation to the user-global dir — is worse:
+        // it would escalate prose mined under an untrusted workspace into the
+        // scope that applies to every other workspace.
+        if !self.include_workspace_skills {
+            return;
+        }
         let Ok(log) = std::fs::read_to_string(log_path) else {
             return;
         };
@@ -227,13 +241,24 @@ impl SessionMemory {
             skills::mine_skill_candidates(observations, &existing, &SkillMineConfig::default());
 
         let skills_dir = self.workspace_skills_dir();
-        let existing_paths: Vec<String> = existing.iter().map(|s| s.source_path.clone()).collect();
+        // What the no-clobber guard needs is the set of paths that are
+        // OCCUPIED, which is a filesystem question — not the set that loaded,
+        // which is what this used to pass. A skill disabled from the SKILLS tab
+        // keeps its file by design and drops out of `load_skills()`, so a
+        // re-mined candidate (identity is a stable `{slug}-{hash8}`, so it
+        // re-targets the very same path) sailed past the guard and
+        // `std::fs::write` destroyed the user's edits (#737). The loaded paths
+        // are still unioned in: they cost nothing, they carry the "known skill"
+        // signal, and they keep the guard armed for already-loaded skills if
+        // the directory read ever fails.
+        let mut occupied_paths = skill_paths_on_disk(&skills_dir);
+        occupied_paths.extend(existing.iter().map(|s| s.source_path.clone()));
         let config = AutoCreateConfig::default();
         for candidate in candidates {
             match skills::decide_auto_creation(
                 &candidate,
                 &skills_dir,
-                &existing_paths,
+                &occupied_paths,
                 self.skills_created,
                 &config,
             ) {

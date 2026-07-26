@@ -748,7 +748,7 @@ pub enum AutoCreateSkip {
     /// The per-session cap ([`AutoCreateConfig::max_per_session`]) was already
     /// reached.
     SessionCapReached { cap: usize },
-    /// A file already exists at the target path — never clobber a hand-edited
+    /// The target path is already occupied — never clobber a hand-edited
     /// (or previously auto-created) skill.
     FileExists { path: String },
 }
@@ -762,14 +762,14 @@ pub enum AutoCreateDecision {
     Skip { reason: AutoCreateSkip },
 }
 
-/// Decide whether to auto-create `candidate` as `<target_dir>/<name>.md`,
-/// given how many skills were already created this session and which paths
-/// already exist. The session cap is checked first (a capped session skips
-/// regardless), then the no-clobber guard. Pure: writing is the caller's job.
+/// Decide whether to auto-create `candidate` as `<target_dir>/<name>.md`.
+/// `occupied_paths` MUST be the paths present on disk, not the paths that
+/// loaded successfully — a file absent from the loaded set is still a file
+/// (#737). Cap first, then no-clobber. Pure: writing is the caller's job.
 pub fn decide_auto_creation(
     candidate: &SkillCandidate,
     target_dir: &str,
-    existing_paths: &[String],
+    occupied_paths: &[String],
     created_this_session: usize,
     config: &AutoCreateConfig,
 ) -> AutoCreateDecision {
@@ -781,7 +781,7 @@ pub fn decide_auto_creation(
         };
     }
     let path = format!("{}/{}.md", target_dir.trim_end_matches('/'), candidate.name);
-    if existing_paths.iter().any(|p| p == &path) {
+    if occupied_paths.iter().any(|p| p == &path) {
         return AutoCreateDecision::Skip {
             reason: AutoCreateSkip::FileExists { path },
         };
