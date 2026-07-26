@@ -158,6 +158,11 @@ async fn a_failed_snapshot_scores_an_aborted_candidate_and_the_run_continues() {
     let outcome = outcome.expect("run succeeds");
     assert_eq!(outcome.status, PipelineStatus::Completed);
     assert_eq!(outcome.final_text, "cand1 done");
+    assert_eq!(
+        outcome.candidates_run, 1,
+        "two candidates were configured but only one reached the worker — the \
+         report is what ran, not what was asked for"
+    );
     assert!(
         events.iter().any(|e| matches!(
             e,

@@ -376,10 +376,16 @@ impl CodeGraph {
     /// never an error, matching [`CodeGraph::schema_names`]' posture.
     pub fn storage_snapshot(&self) -> crate::storage::StorageSnapshot {
         let rows = store::storage_rows(&self.inner.read_guard()).unwrap_or_default();
-        let manifest = crate::manifest::StorageManifest::load(&self.inner.root)
-            .ok()
-            .flatten();
-        crate::manifest::merge_snapshot(rows, manifest.as_ref())
+        // Still best-effort, but the reason a malformed manifest contributed
+        // nothing rides along in `manifest_error` rather than being dropped.
+        let (manifest, manifest_error) =
+            match crate::manifest::StorageManifest::load(&self.inner.root) {
+                Ok(manifest) => (manifest, None),
+                Err(error) => (None, Some(error)),
+            };
+        let mut snapshot = crate::manifest::merge_snapshot(rows, manifest.as_ref());
+        snapshot.manifest_error = manifest_error;
+        snapshot
     }
 
     /// All known table, type, and view names (lowercased) from the index.

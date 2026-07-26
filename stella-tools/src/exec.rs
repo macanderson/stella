@@ -159,6 +159,41 @@ pub(crate) async fn run_argv_untruncated(
     drive(cmd, &display, dir, timeout_secs, &[]).await
 }
 
+/// Outcome of [`run_captured`].
+///
+/// The three arms exist because the search tools must tell them apart:
+/// "not installed" selects a fallback program, "timed out" must NOT — retrying
+/// a walk that just hung under a slower, non-gitignore-aware tool doubles the
+/// stall instead of recovering from it.
+pub(crate) enum Captured {
+    /// Ran to completion inside the deadline.
+    Done(std::process::Output),
+    /// Could not be spawned at all — in practice, the program is absent.
+    Unavailable,
+    /// Still running at the deadline; the child has been killed.
+    TimedOut,
+}
+
+/// Run `cmd` under a wall-clock deadline, keeping stdout and stderr SEPARATE.
+///
+/// [`drive`] is the richer runner, but it merges the two streams — which the
+/// search tools cannot accept, because they discriminate a real pattern error
+/// from a benign unreadable-directory warning by pairing exit code 2 with the
+/// content of stderr alone. This keeps that discrimination and adds the two
+/// things every ad-hoc `.output().await` was missing: a deadline, and
+/// `kill_on_drop` so a cancelled turn does not leave the child walking the
+/// tree.
+pub(crate) async fn run_captured(mut cmd: Command, timeout_secs: u64) -> Captured {
+    cmd.kill_on_drop(true);
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output()).await {
+        Ok(Ok(output)) => Captured::Done(output),
+        Ok(Err(_)) => Captured::Unavailable,
+        // Dropping the `output()` future closes the child handle, and
+        // `kill_on_drop` reaps the process.
+        Err(_) => Captured::TimedOut,
+    }
+}
+
 /// SIGKILLs `pid`'s process group on drop unless disarmed — the
 /// cancellation backstop for this module's shared runner and for the tools
 /// that spawn their own child instead of coming through it ([`crate::bash`],

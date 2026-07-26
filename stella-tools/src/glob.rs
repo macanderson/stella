@@ -96,13 +96,16 @@ impl Tool for Glob {
         crate::subprocess_env::scrub_sensitive_env(&mut fd);
         fd.stdout(std::process::Stdio::piped());
         fd.stderr(std::process::Stdio::piped());
-        // A cancelled turn (Esc) drops this future mid-`output()`; tokio keeps
-        // the child running by default, and a full-tree walk must not keep
-        // burning IO after the user stopped asking.
-        fd.kill_on_drop(true);
-
-        match fd.output().await {
-            Ok(output) => {
+        // `run_captured` sets `kill_on_drop` (a cancelled turn must not leave a
+        // full-tree walk burning IO) and bounds the wait.
+        match crate::exec::run_captured(fd, crate::grep::SEARCH_TIMEOUT_SECS).await {
+            crate::exec::Captured::TimedOut => ToolOutput::Error {
+                message: format!(
+                    "fd timed out after {}s — narrow the search with a `path` filter",
+                    crate::grep::SEARCH_TIMEOUT_SECS
+                ),
+            },
+            crate::exec::Captured::Done(output) => {
                 let text = String::from_utf8_lossy(&output.stdout);
                 if text.is_empty() {
                     return ToolOutput::Ok {
@@ -114,7 +117,7 @@ impl Tool for Glob {
                     content: with_code_map(content, root, self.footer),
                 }
             }
-            Err(_) => {
+            crate::exec::Captured::Unavailable => {
                 // fd not installed — fall back to find (same pinned dir).
                 let mut find = Command::new("find");
                 find.arg(&search_dir);
@@ -124,10 +127,17 @@ impl Tool for Glob {
                 find.stdout(std::process::Stdio::piped());
                 find.stderr(std::process::Stdio::piped());
                 // Same cancellation backstop as the fd arm above.
-                find.kill_on_drop(true);
 
-                match find.output().await {
-                    Ok(output) => {
+                match crate::exec::run_captured(find, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
+                    .await
+                {
+                    crate::exec::Captured::TimedOut => ToolOutput::Error {
+                        message: format!(
+                            "find timed out after {}s — narrow the search with a `path` filter",
+                            crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS
+                        ),
+                    },
+                    crate::exec::Captured::Done(output) => {
                         let text = String::from_utf8_lossy(&output.stdout);
                         if text.is_empty() {
                             ToolOutput::Ok {
@@ -140,8 +150,8 @@ impl Tool for Glob {
                             }
                         }
                     }
-                    Err(e) => ToolOutput::Error {
-                        message: format!("find failed: {e}"),
+                    crate::exec::Captured::Unavailable => ToolOutput::Error {
+                        message: "find failed: neither `fd` nor `find` is available".into(),
                     },
                 }
             }

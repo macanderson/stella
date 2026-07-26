@@ -2048,7 +2048,7 @@ mod tests {
                     source: Some("migrations/001.sql:1".into()),
                 })
                 .collect(),
-            orphaned_meanings: vec![],
+            ..Default::default()
         }
     }
 

@@ -37,7 +37,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -155,14 +155,31 @@ impl WebAuthConfig {
     }
 }
 
-fn build_client(user_agent: &str) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .user_agent(user_agent)
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .build()
-        .map_err(|e| format!("http client: {e}"))
+/// The one HTTP client every web fetch shares.
+///
+/// A `reqwest::Client` owns a connection pool and a TLS configuration, and
+/// this used to be rebuilt per request — so `web_extract_assets`, which pulls
+/// up to `max_stylesheets` sub-resources from a single origin inside one call,
+/// paid a fresh pool and a fresh TLS handshake for each one instead of reusing
+/// the connection it had just opened to that very host.
+///
+/// The per-domain user agent was the only thing that varied between them, and
+/// it does not need to be baked into the client: [`fetch_url`] sends it as a
+/// per-request header, which overrides this default and, like the default,
+/// carries across redirects.
+fn shared_client() -> Result<reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(60))
+                .user_agent(DEFAULT_USER_AGENT)
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .build()
+                .map_err(|e| format!("http client: {e}"))
+        })
+        .clone()
 }
 
 /// A fetched response body, capped and annotated.
@@ -223,8 +240,12 @@ async fn fetch_raw(
         .and_then(|(_, a)| a.user_agent.as_deref())
         .or(auth.defaults.user_agent.as_deref())
         .unwrap_or(DEFAULT_USER_AGENT);
-    let client = build_client(user_agent)?;
-    let mut request = client.get(url.clone());
+    let client = shared_client()?;
+    // The user agent rides per-request rather than per-client so every fetch can
+    // share one connection pool regardless of which domain's UA it needs.
+    let mut request = client
+        .get(url.clone())
+        .header(reqwest::header::USER_AGENT, user_agent);
     let mut authed_domain = None;
     if let Some((domain, entry)) = domain_auth {
         if let Some(cookie) = &entry.cookie {
@@ -478,7 +499,7 @@ async fn brave_search(
     query: &str,
     count: u64,
 ) -> Result<Vec<SearchHit>, String> {
-    let client = build_client(DEFAULT_USER_AGENT)?;
+    let client = shared_client()?;
     let response = client
         .get(&backend.endpoint)
         .query(&[("q", query), ("count", &count.to_string())])
@@ -519,7 +540,7 @@ async fn tavily_search(
     query: &str,
     count: u64,
 ) -> Result<Vec<SearchHit>, String> {
-    let client = build_client(DEFAULT_USER_AGENT)?;
+    let client = shared_client()?;
     let response = client
         .post(&backend.endpoint)
         .header(

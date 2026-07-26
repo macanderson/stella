@@ -376,6 +376,17 @@ pub struct StorageSnapshot {
     /// flagged for the drift report, never deleted (spec §5b).
     #[serde(default)]
     pub orphaned_meanings: Vec<String>,
+    /// Why `stella.storage.toml` did not parse, when it exists but is
+    /// malformed.
+    ///
+    /// Assembly stays best-effort — a broken manifest must not take the whole
+    /// map down — but it must not be SILENT either. Everything the manifest
+    /// contributes (layers, boundaries, intent, redirects) vanishes on a parse
+    /// error, so the pre-write gate quietly stops enforcing boundaries the
+    /// repo believes it configured. Carrying the reason lets the surfaces that
+    /// have a user in front of them say so.
+    #[serde(default)]
+    pub manifest_error: Option<String>,
 }
 
 impl StorageSnapshot {

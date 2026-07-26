@@ -88,9 +88,13 @@ pub use watch::WatchInjector;
 /// migrated yet has no tables to read and yields the same empty snapshot a
 /// missing store does.
 pub fn load_storage_snapshot(workspace_root: &std::path::Path) -> StorageSnapshot {
-    let manifest = manifest::StorageManifest::load(workspace_root)
-        .ok()
-        .flatten();
+    // A parse error is carried, not discarded: it is the difference between
+    // "this repo declares no boundaries" and "this repo's boundaries are not
+    // being enforced because of a typo", and those must not look identical.
+    let (manifest, manifest_error) = match manifest::StorageManifest::load(workspace_root) {
+        Ok(manifest) => (manifest, None),
+        Err(error) => (None, Some(error)),
+    };
     let db_path = workspace_root
         .join(".stella")
         .join("private")
@@ -102,7 +106,9 @@ pub fn load_storage_snapshot(workspace_root: &std::path::Path) -> StorageSnapsho
     } else {
         Vec::new()
     };
-    manifest::merge_snapshot(rows, manifest.as_ref())
+    let mut snapshot = manifest::merge_snapshot(rows, manifest.as_ref());
+    snapshot.manifest_error = manifest_error;
+    snapshot
 }
 
 // Re-export the CGP wire types this provider produces so downstream callers

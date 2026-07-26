@@ -1292,7 +1292,18 @@ pub(crate) fn populate_schema_index(
     registry: &ToolRegistry,
     workspace_root: &std::path::Path,
 ) -> Result<(), String> {
-    registry.update_storage_index(stella_tools::graph::load_storage_snapshot(workspace_root)?);
+    let snapshot = stella_tools::graph::load_storage_snapshot(workspace_root)?;
+    // Seeding an empty gate because of a TOML typo is the one failure here
+    // that looks exactly like success: every configured boundary silently
+    // stops being enforced for the whole session. Say it once, at seed time.
+    if let Some(error) = &snapshot.manifest_error {
+        eprintln!(
+            "  {} stella.storage.toml did not parse — its layers and boundaries are \
+             NOT being enforced this session: {error}",
+            "warning:".yellow()
+        );
+    }
+    registry.update_storage_index(snapshot);
     Ok(())
 }
 

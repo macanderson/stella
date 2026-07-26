@@ -579,6 +579,11 @@ fn master_list_auto_due(store: &CatalogStore) -> bool {
 /// `STELLA_CATALOG_AUTO_REFRESH=0` disables all implicit fetching. Best-
 /// effort throughout: offline just means the catalog stays as of the last
 /// sync.
+/// Wall-clock ceiling on one implicit catalog fetch. Startup blocks on these,
+/// so the bound is what keeps an unreachable-but-accepting endpoint from
+/// hanging the CLI rather than merely leaving the catalog stale.
+const AUTO_REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 fn maybe_auto_refresh(store: &Arc<CatalogStore>) {
     if std::env::var("STELLA_CATALOG_AUTO_REFRESH").as_deref() == Ok("0") {
         return;
@@ -618,11 +623,24 @@ fn maybe_auto_refresh(store: &Arc<CatalogStore>) {
         return;
     };
     rt.block_on(async {
+        // Every fetch here is best-effort, but it runs on the caller's thread
+        // before the command it precedes: a provider endpoint that accepts the
+        // connection and then never answers would hold CLI startup open for as
+        // long as it likes. Bound each fetch independently — a slow provider
+        // costs its own deadline, not the whole budget, and a timeout leaves
+        // the sync watermark untouched so the next run simply retries.
         if master_due {
-            let _ = refresh_with_store(store, false).await;
+            let _ = tokio::time::timeout(AUTO_REFRESH_TIMEOUT, refresh_with_store(store, false))
+                .await
+                .ok();
         }
         for provider in native_due {
-            let _ = refresh_native_provider(store, provider).await;
+            let _ = tokio::time::timeout(
+                AUTO_REFRESH_TIMEOUT,
+                refresh_native_provider(store, provider),
+            )
+            .await
+            .ok();
         }
     });
 }

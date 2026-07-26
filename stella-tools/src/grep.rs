@@ -20,6 +20,18 @@ use crate::registry::Tool;
 
 const MAX_RESULTS: usize = 200;
 
+/// Wall-clock ceiling on the ripgrep pass. rg prunes with .gitignore and is
+/// I/O-bound, so a whole-workspace search that has not answered in a minute is
+/// wedged (a stalled network mount, a pathological backtracking pattern), not
+/// merely busy — and every second past that is a turn the user cannot cancel
+/// out of any faster.
+pub(crate) const SEARCH_TIMEOUT_SECS: u64 = 60;
+
+/// The `grep`/`find` fallbacks get a longer leash: they do no ignore-file
+/// pruning, so a legitimately slow-but-progressing walk of a large tree is
+/// plausible where it would not be for rg/fd.
+pub(crate) const FALLBACK_SEARCH_TIMEOUT_SECS: u64 = 120;
+
 /// Per-line column cap for a match line. The issue proposed 300 and 400 in
 /// two different places; 400 is the choice — wide enough for a real source
 /// line with indentation, narrow enough that 200 of them cannot be more than
@@ -217,14 +229,19 @@ impl Tool for Grep {
         crate::subprocess_env::scrub_sensitive_env(&mut rg);
         rg.stdout(std::process::Stdio::piped());
         rg.stderr(std::process::Stdio::piped());
-        // A cancelled turn (Esc) drops this future mid-`output()`; tokio keeps
-        // the child running by default, and a recursive walk of a large tree
-        // is exactly the thing that must not keep burning IO after the user
-        // stopped asking.
-        rg.kill_on_drop(true);
-
-        match rg.output().await {
-            Ok(output) => {
+        // `run_captured` sets `kill_on_drop`: a cancelled turn (Esc) drops this
+        // future mid-`output()`, tokio keeps the child running by default, and
+        // a recursive walk of a large tree is exactly the thing that must not
+        // keep burning IO after the user stopped asking. It also bounds the
+        // wait, so a walk that wedges cannot hold the turn open either.
+        match crate::exec::run_captured(rg, SEARCH_TIMEOUT_SECS).await {
+            crate::exec::Captured::TimedOut => ToolOutput::Error {
+                message: format!(
+                    "rg timed out after {SEARCH_TIMEOUT_SECS}s — narrow the search with a \
+                     `path` or `glob` filter"
+                ),
+            },
+            crate::exec::Captured::Done(output) => {
                 // Byte cap BEFORE the line cap: truncating after `take` would
                 // make the "showing first 200 matches" note below a lie, and
                 // rg's per-file `--max-count` means the buffer can hold far
@@ -262,7 +279,7 @@ impl Tool for Grep {
                     content: "(no matches)".into(),
                 }
             }
-            Err(_) => {
+            crate::exec::Captured::Unavailable => {
                 // rg not installed — fall back to grep
                 let mut grep = Command::new("grep");
                 grep.arg("-rn").arg("--color=never");
@@ -275,10 +292,15 @@ impl Tool for Grep {
                 grep.stdout(std::process::Stdio::piped());
                 grep.stderr(std::process::Stdio::piped());
                 // Same cancellation backstop as the rg arm above.
-                grep.kill_on_drop(true);
 
-                match grep.output().await {
-                    Ok(output) => {
+                match crate::exec::run_captured(grep, FALLBACK_SEARCH_TIMEOUT_SECS).await {
+                    crate::exec::Captured::TimedOut => ToolOutput::Error {
+                        message: format!(
+                            "grep timed out after {FALLBACK_SEARCH_TIMEOUT_SECS}s — narrow the \
+                             search with a `path` or `glob` filter"
+                        ),
+                    },
+                    crate::exec::Captured::Done(output) => {
                         // `grep` has no `--max-columns`, so the column cap is
                         // applied here; then the same byte-then-line order as
                         // the rg arm.
@@ -313,8 +335,8 @@ impl Tool for Grep {
                             content: "(no matches)".into(),
                         }
                     }
-                    Err(e) => ToolOutput::Error {
-                        message: format!("grep failed: {e}"),
+                    crate::exec::Captured::Unavailable => ToolOutput::Error {
+                        message: "grep failed: neither `rg` nor `grep` is available".into(),
                     },
                 }
             }
