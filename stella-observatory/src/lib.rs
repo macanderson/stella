@@ -656,6 +656,34 @@ mod tests {
         }
     }
 
+    /// The route table and the embedded page must not drift apart. A route
+    /// nothing fetches is dead weight that still drags in its dependencies —
+    /// `/api/explorations` sat unconsumed for exactly that long (#640).
+    #[test]
+    fn every_served_route_is_fetched_by_the_embedded_page() {
+        // Route-table arms are `"/api/<name>" => …`; the same literal
+        // appearing as a call argument (tests, 404 fixtures) has no `=>`.
+        let routes: Vec<&str> = include_str!("lib.rs")
+            .lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("\"/api/")?;
+                let (route, tail) = rest.split_once('"')?;
+                tail.trim_start().starts_with("=>").then_some(route)
+            })
+            .collect();
+        assert!(
+            routes.len() >= 19,
+            "route table not recognised, only found {routes:?}"
+        );
+        for route in routes {
+            assert!(
+                INDEX_HTML.contains(&format!("/api/{route}")),
+                "/api/{route} is served but nothing in the dashboard fetches it: \
+                 give it a consumer or delete the route"
+            );
+        }
+    }
+
     #[test]
     fn activity_rolls_up_runs_tokens_and_tool_calls_by_day() {
         let ws = seeded_workspace();
@@ -669,6 +697,38 @@ mod tests {
         assert_eq!(d["input_tokens"], 3000);
         assert_eq!(d["tool_calls"], 3);
         assert_eq!(d["tool_errors"], 1);
+    }
+
+    /// A timestamp `date()` can't parse used to NULL out the group key and
+    /// fail the whole rollup — one bad row blanked the dashboard. The work
+    /// is real, so it lands in a named bucket that sorts last.
+    #[test]
+    fn activity_buckets_unparseable_timestamps_instead_of_failing() {
+        let ws = seeded_workspace();
+        let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+        conn.execute_batch(
+            "INSERT INTO executions
+               (kind, prompt, provider, model, started_at, outcome, cost_usd)
+             VALUES ('run', 'clock skew', 'zai', 'glm-5.2', 'sometime', 'completed', 0.5);
+             INSERT INTO telemetry VALUES
+               (3, 1, 'sometime', 'zai', 'glm-5.2', 7, 0, 9, 0, 0, 0, 0.5, 11, 0, 1);
+             INSERT INTO tool_calls
+               (execution_id, seq, name, ok, error, bytes_out, duration_ms, ts)
+             VALUES (3, 1, 'bash', 0, 'boom', 0, 4, 'sometime');",
+        )
+        .unwrap();
+        let response = respond(ws.path(), "/api/activity");
+        assert_eq!(response.status, "200 OK");
+        let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let days = v.as_array().unwrap();
+        assert_eq!(days.len(), 2, "today plus the undated bucket");
+        let undated = days.last().unwrap();
+        assert_eq!(undated["day"], crate::db::UNDATED);
+        assert_eq!(undated["runs"], 1);
+        assert_eq!(undated["resolved"], 1);
+        assert_eq!(undated["input_tokens"], 7);
+        assert_eq!(undated["tool_calls"], 1);
+        assert_eq!(undated["tool_errors"], 1);
     }
 
     #[test]
