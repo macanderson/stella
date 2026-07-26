@@ -23,18 +23,35 @@ For anything beyond a handful of independent prompts, use a plan file (`--plan`)
 
 ## Flags
 
-| Flag | Meaning |
-| --- | --- |
-| `<task>...` | One or more task prompts, each an independent shared-tree task. Required unless `--plan` is given. |
-| `--plan <FILE>` | A `.json` or `.toml` plan file with `[[tasks]]` entries (`id`, `title`, `prompt`, optional `depends_on`, `isolation`, and `claims`) instead of inline prompts. |
-| `--max-concurrency <N>` | Maximum tasks dispatched concurrently within one wave. Default `4`. |
-| `--base-ref <ref>` | Git ref the isolated worktrees branch from. Default: the current `HEAD`, pinned to a SHA at start so mid-run commits can't drift the base. |
-| `--watch` | After the fan-out, watch each successful branch's CI to completion and reconcile its PR status via `gh` (30s polls, 10m startup grace, 20m stall limit, 2h wall cap). Exits non-zero if any watched branch ends red. |
-| `--no-pipeline` | Workers run the raw step loop instead of the staged pipeline. |
+<CardGrid size="md">
+  <OptionCard name="<task>...">
+    One or more task prompts, each an independent shared-tree task. Required unless
+    `--plan` is given.
+  </OptionCard>
+  <OptionCard name="--plan <FILE>">
+    A `.json` or `.toml` plan file with `[[tasks]]` entries — `id`, `title`, `prompt`, and
+    optional `depends_on`, `isolation`, and `claims` — instead of inline prompts.
+  </OptionCard>
+  <OptionCard name="--max-concurrency <N>" defaultValue="4">
+    Maximum tasks dispatched concurrently within one wave.
+  </OptionCard>
+  <OptionCard name="--base-ref <ref>" defaultValue="current HEAD">
+    Git ref the isolated worktrees branch from. The default is pinned to a SHA at start,
+    so mid-run commits cannot drift the base.
+  </OptionCard>
+  <OptionCard name="--watch">
+    After the fan-out, watch each successful branch's CI to completion and reconcile its
+    PR status via `gh` — 30s polls, 10m startup grace, 20m stall limit, 2h wall cap. Exits
+    non-zero if any watched branch ends red.
+  </OptionCard>
+  <OptionCard name="--no-pipeline">
+    Workers run the raw step loop instead of the staged pipeline.
+  </OptionCard>
+</CardGrid>
 
 ## Budget
 
-The budget cap is the **global** `--budget` flag (or `STELLA_BUDGET`), so it goes before the subcommand. Each child is guarded by the aggregate cap divided across the concurrency width (`budget ÷ max-concurrency`), and the fleet stops launching new waves once total metered spend crosses the cap.
+The budget cap is the **global** `--budget` flag (or `STELLA_BUDGET`) rather than one of `fleet`'s own; it reads most clearly before the subcommand, though [either position parses](/docs/commands#global-flags). Each child is guarded by the aggregate cap divided across the concurrency width (`budget ÷ max-concurrency`), and the fleet stops launching new waves once total metered spend crosses the cap.
 
 ```bash
 stella --budget 5 fleet --plan release-prep.toml

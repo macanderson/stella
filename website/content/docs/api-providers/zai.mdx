@@ -28,8 +28,20 @@ env var Stella reads with `providers.zai.api_key_env` — see
 The provider id is `zai`; the default model is `glm-5.2`.
 
 ```bash
+export ZAI_API_KEY="..."
+
 stella --model zai/glm-5.2 run "implement the pagination endpoint"
 export STELLA_MODEL=zai/glm-5.2
+```
+
+On a coding plan, the same run costs the same whatever it consumes — which is the setup
+worth copying:
+
+```bash
+export ZAI_API_KEY="..."
+export ZAI_GLM_CODING_PLAN=1
+
+stella --model zai/glm-5.2 run "migrate the remaining callers off the deprecated client"
 ```
 
 ## The coding-plan endpoint

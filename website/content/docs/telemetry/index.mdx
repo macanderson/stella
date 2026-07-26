@@ -6,6 +6,8 @@ description: Local-first metering, the opt-in Oxagen Enterprise operational expo
 Stella meters every run **locally**. Token usage, cost, per-step accounting, and the
 full execution record land in SQLite on your disk.
 
+<TelemetryFlowDiagram />
+
 **Community/default mode has zero telemetry egress.** It constructs no enterprise
 spool or HTTP client. The model provider you selected remains Stella's normal BYOK
 network path; the local Observatory remains loopback-only.
@@ -28,28 +30,146 @@ can only derive the closed rollup described below.
 
 ### What's in the store
 
-Metering is only part of it. The store owns **17 tables** — a full record of what each run
+Metering is only part of it. The store owns **21 tables** — a full record of what each run
 *did*, not just what it cost — and the [Observatory](/docs/telemetry/dashboard) reads these
-same tables:
+same tables.
 
-| Table | What it records |
-| --- | --- |
-| `executions` | One row per run / goal / chat turn — kind, prompt, provider/model, outcome, cost. The spine every other table keys off |
-| `events` | The full, ordered event stream of each execution — replayable, reasoning deltas included |
-| `telemetry` | One row per model call: input/output tokens, cache read/write/miss, cost, latency, retries |
-| `files_touched` | The per-execution file-touch ledger — CRUD letters, line deltas, JSON audit log ([details](/docs/telemetry/files-touched)) |
-| `tool_calls` | One row per tool call (native, MCP, skill, or agent) — shape, timing, success, bytes returned |
-| `mcp_usage` | Per-call MCP log: server, tool, reason, call time |
-| `skill_usage` | One row per skill applied in a turn, with the skill's pinned version |
-| `agent_uses` | One row per invocation of an installed agent definition, with its pinned version |
-| `memory_citations` | Recall receipts: per memory cited in a turn, its usefulness score and truthfulness verdict |
-| `rules` | Promoted workspace rules — the full rule markdown, one row per rule |
-| `reflections` | Durable lessons and self-critiques, tagged by domain |
-| `execution_reflection` | The post-turn self-review, tied 1:1 to its execution |
-| `tasks` | The latest task-board snapshot, one row per task per session |
-| `pull_requests` | Tracked pull requests — status and CI verdict, keyed by URL |
-| `file_locks` | Cooperative file claims for multi-agent work |
-| `graph_nodes` / `graph_edges` | Reserved schema for a future context-plane seam — the code graph itself lives in `.stella/private/codegraph.db` |
+<CardGrid size="md">
+  <OptionCard name="executions">
+    One row per run / goal / chat turn — kind, prompt, provider/model, outcome, cost. The
+    spine every other table keys off.
+  </OptionCard>
+  <OptionCard name="events">
+    The full, ordered event stream of each execution — replayable, reasoning deltas
+    included.
+  </OptionCard>
+  <OptionCard name="telemetry">
+    One row per model call: input/output tokens, cache read/write/miss, cost, latency,
+    retries.
+  </OptionCard>
+  <OptionCard name="files_touched">
+    The per-execution file-touch ledger — CRUD letters, line deltas, JSON audit log
+    ([details](/docs/telemetry/files-touched)).
+  </OptionCard>
+  <OptionCard name="tool_calls">
+    One row per tool call (native, MCP, skill, or agent) — shape, timing, success, bytes
+    returned. Large outputs are never stored, only their size.
+  </OptionCard>
+  <OptionCard name="mcp_usage">
+    Per-call MCP log: server, tool, reason, call time.
+  </OptionCard>
+  <OptionCard name="skill_usage">
+    One row per skill applied in a turn, with the skill's pinned version.
+  </OptionCard>
+  <OptionCard name="agent_uses">
+    One row per invocation of an installed agent definition, with its pinned version.
+  </OptionCard>
+  <OptionCard name="memory_citations">
+    Recall receipts: per memory cited in a turn, its usefulness score and truthfulness
+    verdict.
+  </OptionCard>
+  <OptionCard name="forgotten">
+    Explicit human tombstones over anything that steers the agent — one verdict per item,
+    with the forgotten text copied in at forget time. That copy is what makes the tombstone
+    survive re-learning: the reflection recorder and the skill miner compare *candidates*
+    against it, so a re-mined paraphrase with a brand-new id is still caught. Unlike
+    quarantine, which is derived from citation counts, this is a stored judgment — a
+    person read it and said remove it. Restoring is a plain delete.
+  </OptionCard>
+  <OptionCard name="rules">
+    Promoted workspace rules — the full rule markdown, one row per rule.
+  </OptionCard>
+  <OptionCard name="reflections">
+    Durable lessons and self-critiques, tagged by domain.
+  </OptionCard>
+  <OptionCard name="execution_reflection">
+    The post-turn self-review, tied 1:1 to its execution — the model's self-rating beside
+    the objective companions (did it produce output, did it write files, was it truncated),
+    so a silent zero-output turn is visibly a failure even if the model rated itself kindly.
+  </OptionCard>
+  <OptionCard name="tasks">
+    The latest task-board snapshot, one row per task per session.
+  </OptionCard>
+  <OptionCard name="pull_requests">
+    Tracked pull requests — status and CI verdict, keyed by URL.
+  </OptionCard>
+  <OptionCard name="file_locks">
+    Cooperative file claims for multi-agent work.
+  </OptionCard>
+  <OptionCard name="graph_nodes / graph_edges">
+    Two tables: reserved schema for a future context-plane seam — the code graph itself
+    lives in `.stella/private/codegraph.db`.
+  </OptionCard>
+</CardGrid>
+
+#### The receipts plane: what made a past step
+
+Three of the twenty-one exist for one question — *what exactly did the model see on step
+N, and why was it allowed to see that much?* Together they make a past step
+reconstructable without keeping a copy of the prompt: replay the ordering and the numbers
+line up with the decision that was actually made.
+
+<CardGrid size="md">
+  <OptionCard name="context_blocks">
+    One row per durable, individually attributable unit that entered a step's prompt, born
+    once and keyed by its content-addressed `block_id`. Carries `kind`, `token_cost`,
+    `content_digest`, and `citation_label` — and is deliberately **content-free**: the
+    digest, never the payload bytes, whose preimage lives in the originating event in the
+    journal. `call_id` / `memory_id` join back to the tool call or memory node that
+    produced the block. A byte-identical block re-entering context resolves to the same id,
+    so the second registration is an idempotent no-op rather than data.
+  </OptionCard>
+  <OptionCard name="step_manifest">
+    One row per (step, block) in **wire order** — the receipt that makes a past step
+    reconstructable, because replaying the fold plus this ordering yields exactly what the
+    model saw. `call_seq` separates the several model calls that can share one step (the
+    worker, an overflow summarizer, allocated management roles), `cache_zone` and
+    `resident_since_step` record where a block sat and how long it had been carried, and
+    `call_id` gives per-occurrence attribution that content-addressed block ids cannot.
+    Its reverse index — every step a given block was resident for — is what cost-of-carry
+    and eviction analysis read.
+  </OptionCard>
+  <OptionCard name="step_receipt">
+    The manifest header: one row per **model call**, not per step. Records `provider`,
+    `model`, `call_role`, `effective_budget_tokens`, `calibration_factor`, and
+    `estimated_input_tokens` — the budget the compaction pass actually compared against,
+    so a receipt's numbers reconcile with the decision it documents rather than with a
+    figure recomputed later.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="info">
+  Those twenty-one are the tables the store *owns* — the ones versioned by the migration
+  chain. `store.db` additionally carries the optional `enterprise_export_*` tables, which
+  converge by column probing **outside** that chain and are created after the fresh-file
+  probe runs. They exist only where a managed enrollment does.
+</Callout>
+
+### Querying it yourself
+
+It is an ordinary SQLite file, so anything that speaks SQLite speaks to it. The five most
+expensive runs in this workspace:
+
+```bash
+sqlite3 -json .stella/private/store.db \
+  "SELECT id, kind, model, outcome, cost_usd
+     FROM executions
+    ORDER BY cost_usd DESC
+    LIMIT 5" \
+  | jq -r '.[] | "\(.cost_usd)\t\(.model)\t\(.outcome // "—")\t\(.kind)"'
+```
+
+And the receipts for one run — every model call, what it estimated it was sending, and the
+budget it was measured against:
+
+```bash
+sqlite3 -json .stella/private/store.db \
+  "SELECT step, call_seq, call_role, model, estimated_input_tokens, effective_budget_tokens
+     FROM step_receipt
+    WHERE execution_id = 42
+    ORDER BY step, call_seq" \
+  | jq -r '.[] | "step \(.step).\(.call_seq)\t\(.call_role)\t\(.estimated_input_tokens)/\(.effective_budget_tokens)"'
+```
 
 ## Oxagen Enterprise managed export
 

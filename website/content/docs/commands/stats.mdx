@@ -9,6 +9,7 @@ Read back what your runs actually cost. `stella stats` summarizes cost, tokens, 
 
 ```bash
 stella stats [--format <table|json|csv>] [--provider <id>]
+stella stats prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [--dry-run]
 ```
 
 ## What it does
@@ -17,20 +18,40 @@ stella stats [--format <table|json|csv>] [--provider <id>]
 
 ## Flags
 
-| Flag | Meaning |
-| --- | --- |
-| `--format <table\|json\|csv>` | Output format. `table` (default) prints an aligned table with a `TOTAL` row; `json` and `csv` are for piping into other tools. |
-| `--provider <id>` | Only include executions for this provider id (e.g. `zai`, `anthropic`, `local`). |
+<CardGrid size="md">
+  <OptionCard name="--format <table|json|csv>" defaultValue="table">
+    Output format. `table` prints aligned columns with a `TOTAL` row; `json` and `csv`
+    are for piping into other tools.
+  </OptionCard>
+  <OptionCard name="--provider <id>">
+    Only include executions for this provider id — `zai`, `anthropic`, `local`, and so on.
+  </OptionCard>
+</CardGrid>
 
 ## Reading the cache columns
 
 Every row also carries three cache-economics columns, derived at display time from your local telemetry (they aren't stored — `stella stats` computes them fresh from the raw token counts each run):
 
-| Column | Meaning |
-| --- | --- |
-| `HIT%` | Cache-read tokens over total input tokens for that row — the same figure the deck's `CACHE` statline cell shows for the live session. |
-| `SAVED ($)` | Estimated USD saved by prompt caching, priced at **today's** catalog rates (not the price in effect when each call actually ran). Signed: negative means the provider's cache-write premium outran the reads it bought — the "cache never actually helped" incident worth investigating. `-` when the model isn't in the running catalog. |
-| `TTL REWRITES` | Calls whose cache prefix went cold — the gap since that session's previous call exceeded the provider's cache TTL — and got rewritten instead of read back. `0` for a provider with no documented TTL. This is the tax cache-TTL-aware fleet scheduling exists to cut: a session parked too long between turns pays the write premium again for no reason. |
+<CardGrid size="md">
+  <OptionCard name="HIT%">
+    Cache-read tokens over total input tokens for that row — the same figure the deck's
+    `CACHE` statline cell shows for the live session.
+  </OptionCard>
+  <OptionCard name="SAVED ($)">
+    Estimated USD saved by prompt caching, priced at **today's** catalog rates — not the
+    price in effect when each call actually ran. Signed: a negative value means the
+    provider's cache-write premium outran the reads it bought, which is the "the cache
+    never actually helped" incident worth investigating. Shows `-` when the model isn't
+    in the running catalog.
+  </OptionCard>
+  <OptionCard name="TTL REWRITES">
+    Calls whose cache prefix went cold — the gap since that session's previous call
+    exceeded the provider's cache TTL — and got rewritten instead of read back. `0` for
+    a provider with no documented TTL. This is the tax cache-TTL-aware fleet scheduling
+    exists to cut: a session parked too long between turns pays the write premium again
+    for nothing.
+  </OptionCard>
+</CardGrid>
 
 A `0%` `HIT%` across several turns on an opt-in provider (Anthropic, Bedrock, or Claude-via-OpenRouter) with `CACHE WR` also at `0` usually means the opt-in cache marker never reached the wire — check your adapter config before assuming the model just isn't cacheable. If `CACHE WR` is nonzero but `HIT%` stays low, the prompt prefix is likely being rewritten between turns instead of reused.
 
@@ -67,3 +88,54 @@ stella stats --format json | jq '.[] | select(.cache_hit_rate < 0.2) | {provider
 <Callout type="info">
 The store is a real SQLite file. Beyond `stella stats` you can query it directly with any SQLite client — see [Telemetry &amp; budget](/docs/telemetry).
 </Callout>
+
+## Bounding the store — `stella stats prune`
+
+`store.db` grows monotonically: every run appends executions and everything keyed to
+them — events, telemetry, tool calls, context blocks, receipts. `prune` is the retention
+control.
+
+```bash
+# What would go, without touching anything.
+stella stats prune --older-than 90d --dry-run
+
+# Keep a quarter of history, and hand the freed pages back to the filesystem.
+stella stats prune --older-than 90d --vacuum
+
+# Or bound it by row count instead of age.
+stella stats prune --max-rows 5000
+```
+
+<CardGrid size="md">
+  <OptionCard name="--older-than <AGE>">
+    Drop executions older than this window. `N` followed by `d`, `w`, `h`, `mo`, or `y` —
+    `90d`, `12w`, `720h`, `3mo`. A bare number means days.
+  </OptionCard>
+  <OptionCard name="--max-rows <N>">
+    Hard ceiling on retained executions; the oldest prunable ones are evicted until the
+    store is at or under it.
+  </OptionCard>
+  <OptionCard name="--dry-run">
+    Report what would be pruned and delete nothing. Worth running first — the deletion
+    cascades to every table keyed to an execution.
+  </OptionCard>
+  <OptionCard name="--vacuum">
+    `VACUUM` afterwards, handing freed pages back to the filesystem. Deleting rows alone
+    shrinks the *contents* but not the file. Also runs automatically after a large prune.
+  </OptionCard>
+  <OptionCard name="--force">
+    Also drop executions whose telemetry has not replicated into the usage hub. This
+    permanently loses that cost data — off by default.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="warn">
+Prune is **replication-safe by default**: an execution whose telemetry has not yet
+reached the usage hub is never dropped, so a prune run before a sync cannot silently
+destroy cost data you are still billing against. `--force` is the deliberate override,
+and it is irreversible.
+</Callout>
+
+The same flags are also mounted as [`stella storage prune`](/docs/commands/storage#stella-storage-prune) —
+one implementation with two entry points, so store retention is discoverable both from
+where you notice the store is too big and from where the rest of the store verbs live.

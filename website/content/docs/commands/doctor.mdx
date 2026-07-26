@@ -18,10 +18,16 @@ Today it runs exactly one check — **`store integrity`**, the soundness of this
 
 A verdict is deliberately binary. There is no "warn": a check that cannot say *this is fine* has failed, and a third maybe-state would only be an invitation to ignore it.
 
-| Verdict | When |
-| --- | --- |
-| ✓ pass | The store passed, **or** there is no store yet — `store.db` is created by your first session, and its absence is not a fault. |
-| ✗ fail | SQLite reported damage, **or** the check could not be performed at all (a locked file, a permissions problem). |
+<CardGrid size="md">
+  <OptionCard name="✓ pass">
+    The store passed, **or** there is no store yet — `store.db` is created by your first
+    session, and its absence is not a fault.
+  </OptionCard>
+  <OptionCard name="✗ fail">
+    SQLite reported damage, **or** the check could not be performed at all — a locked
+    file, a permissions problem.
+  </OptionCard>
+</CardGrid>
 
 Diagnosis never writes. The check opens the database immutably — no locks, no `-shm`, zero bytes written — and escalates to a read-write open only when a first verdict already looks bad and a `-wal` sibling exists. Being asked a question is not a reason to create a `.stella/` that wasn't there.
 
@@ -29,9 +35,13 @@ Diagnosis never writes. The check opens the database immutably — no locks, no 
 
 ## Flags
 
-| Flag | Meaning |
-| --- | --- |
-| `--repair` | Act on a store SQLite judged corrupt: move it aside to a timestamped name (renamed, **never** deleted) and copy out whatever is still readable. A healthy store and an inconclusive check are both left untouched. |
+<CardGrid size="md">
+  <OptionCard name="--repair">
+    Act on a store SQLite judged corrupt: move it aside to a timestamped name — renamed,
+    **never** deleted — and copy out whatever is still readable. A healthy store and an
+    inconclusive check are both left untouched.
+  </OptionCard>
+</CardGrid>
 
 ## Exit codes
 

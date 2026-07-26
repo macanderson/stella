@@ -62,10 +62,26 @@ blocks the work.
 
 ### 3. Scope review
 
-If the plan's blast radius crosses configured thresholds (estimated files
-touched), Stella pauses for an interactive **scope review** — you approve,
-trim, or abort the plan before any file changes. Headless runs must opt in to
-bypass this gate explicitly; there is no silent auto-approve.
+If the plan's blast radius crosses any of three configured thresholds, Stella
+pauses for an interactive **scope review** — you approve, trim, or abort the
+plan before any file changes:
+
+<CardGrid size="sm">
+  <OptionCard name="max_steps" defaultValue="5">
+    Fires when the plan has strictly more than this many steps.
+  </OptionCard>
+  <OptionCard name="max_files" defaultValue="8">
+    Fires when the plan's estimated files-touched count strictly exceeds this.
+  </OptionCard>
+  <OptionCard name="max_cost_usd" defaultValue="1.00">
+    Fires when the plan's estimated cost strictly exceeds this.
+  </OptionCard>
+</CardGrid>
+
+The comparison is strict `>` on every axis, so a plan sitting exactly at a
+threshold passes without a gate. Headless runs must opt in to bypass this gate
+explicitly — `agent_engine_config.headless_scope_bypass: "on"` — and there is
+no silent auto-approve: without it, a plan over the thresholds ends the run.
 
 ### 4. Witness
 
@@ -82,6 +98,15 @@ it lives and dies inside the candidate workspace and is **not** adopted into
 your tree: you never find an already-satisfied test sitting in `tests/` that
 nobody reviewed. Pass `--keep-witness` to promote it into your working tree
 when the test is worth keeping.
+
+```bash
+# No oracle armed — an independent model authors the witness, and it is
+# discarded with the candidate workspace.
+stella run "make Plan::validate reject a self-dependency by name"
+
+# Same run, but keep the authored test as a file you can review and commit.
+stella run --keep-witness "make Plan::validate reject a self-dependency by name"
+```
 
 ### 5. Execute
 
@@ -176,6 +201,24 @@ on the diff and evidence summary. Same destination, more model calls at
 risk — the deterministic path is why `--test-command` is the strongest flag
 you can pass.
 
+You can read that distinction back out of any headless run. `verdict.deterministic`
+is `true` exactly when the ladder answered without a judge call:
+
+```bash
+stella --output-format json run --test-command "cargo test -p pager" \
+  "fix the off-by-one in the pager" \
+  | jq '{status, deterministic: .verdict.deterministic, evidence: .verdict.summary, cost_usd}'
+```
+
+```json
+{
+  "status": "completed",
+  "deterministic": true,
+  "evidence": "flip oracle: fail→pass of 'cargo test -p pager'; touched tests green; diff 6 lines within budget",
+  "cost_usd": 0.0412
+}
+```
+
 ## Per-role model routing
 
 Each stage can run on its own model, provider, and gateway — see
@@ -198,17 +241,40 @@ that resolves each role also carries reliability machinery:
 
 `--budget <usd>` caps the whole run. The pipeline checks the meter **between**
 steps and stages and aborts cleanly — never mid-tool-call — so you are never
-left with a half-applied edit. See [Telemetry &amp; budget](/docs/telemetry).
+left with a half-applied edit. It is a **global** flag, so it goes before the
+subcommand:
+
+```bash
+stella --budget 1.50 run --test-command "cargo test -p stella-core" \
+  "make the loop detector treat a repeated no-op tool call as progress-free"
+```
+
+`STELLA_BUDGET` is the same knob without touching the command line. See
+[Telemetry &amp; budget](/docs/telemetry).
 
 ## Where each mode picks it up
 
-| Mode | Uses |
-| --- | --- |
-| `stella run` | The full staged pipeline (default) |
-| `stella run --no-pipeline` | The raw step loop |
-| Command Deck (`/pipeline` ON, the default) | The staged pipeline per turn |
-| [`stella goal`](/docs/agent-modes#outcome-driven-goal-mode) | Pipeline rounds + an independent goal judge (default; `--no-pipeline` for raw rounds) |
-| [`stella fleet`](/docs/agent-fleets) | The pipeline per worker, fanned out in one shared tree (worktrees on opt-in) |
+<CardGrid size="md">
+  <OptionCard name="stella run">
+    The full staged pipeline — the default.
+  </OptionCard>
+  <OptionCard name="stella run --no-pipeline">
+    The raw step loop, with none of the stages above.
+  </OptionCard>
+  <OptionCard name="Command Deck">
+    The staged pipeline per turn while `/pipeline` is ON, which it is by
+    default.
+  </OptionCard>
+  <OptionCard name="stella goal">
+    Pipeline rounds plus an independent goal judge by default;
+    `--no-pipeline` makes the rounds raw. See
+    [goal mode](/docs/agent-modes#outcome-driven-goal-mode).
+  </OptionCard>
+  <OptionCard name="stella fleet">
+    The pipeline per worker, fanned out in one shared tree — worktrees on
+    opt-in. See [fleets](/docs/agent-fleets).
+  </OptionCard>
+</CardGrid>
 
 Pipeline goal rounds mean **double verification**: the pipeline's own judge
 checks each round's work, and the outer goal judge checks the objective.

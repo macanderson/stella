@@ -1,0 +1,165 @@
+---
+title: stella cloud
+description: Show or set the org and workspace identity that scopes replicated telemetry — a deliberate stub today, with the OAuth login landing on the same file later.
+---
+
+Every row [`stella usage`](/docs/commands/usage) replicates into the hub carries an identity: which organization it reports into, which workspace it came from, and which repository that workspace maps to. `stella cloud` is where you read that identity and set it.
+
+It is a deliberate **stub**. `register` persists ids locally and mints a durable workspace id; the OAuth login that will attach a token lands later, on the same file. Nothing is uploaded today, and registering does not change what telemetry is collected — only which ids it is stamped with.
+
+## Synopsis
+
+```bash
+stella cloud status
+stella cloud register --org <ORG_ID> [--workspace-id <ID>]
+```
+
+A subcommand is required. Neither one needs a provider or an API key.
+
+## What it does
+
+Four ids describe an installation, and they answer different questions:
+
+<CardGrid size="md">
+  <OptionCard name="org_id">
+    The organization this installation reports into. `NULL` until you register.
+    `STELLA_ORG_ID` wins if set; otherwise it comes from the `org_id` in
+    `~/.stella/cloud.json`, written by `stella cloud register`.
+  </OptionCard>
+  <OptionCard name="workspace_id">
+    A durable UUID at `<root>/.stella/workspace.json`, written **only** by registration
+    and never minted implicitly — an unregistered workspace reports `NULL`. It lives
+    outside `.stella/private/` on purpose, so committing it gives every clone and every
+    machine one shared workspace identity.
+  </OptionCard>
+  <OptionCard name="repo_id">
+    A workspace is only *usually* a repository. `repo_id` hashes the normalized `origin`
+    remote URL — the SSH and HTTPS forms of the same repo agree — and falls back to the
+    path hash when there is no git remote. Rows carry it separately so a multi-repo
+    workspace still reports per repository.
+  </OptionCard>
+  <OptionCard name="project_id">
+    A hash of the canonical workspace path. Always present, registration or not, and it
+    is the key replication runs on. This is what makes `stella usage` work on a machine
+    that has never heard of a cloud org.
+  </OptionCard>
+</CardGrid>
+
+Resolution is infallible by design: telemetry scoping must never fail a turn, so unregistered ids resolve to `NULL` and a missing git remote degrades `repo_id` rather than erroring.
+
+### `stella cloud status`
+
+Print this installation's identity for the current workspace, and — once an org is set — any rows the cloud intake permanently rejected.
+
+```bash
+stella cloud status
+```
+
+Unregistered:
+
+```text
+org_id:   (not registered)
+workspace:   (not registered)
+repo_id:   9f2c1ad4e7b03518
+project:   4b81c0e2f39a77de
+
+register with `stella cloud register --org <org-id>` — telemetry replicates locally either way; org scoping gates what a future cloud sync would ship
+```
+
+Registered:
+
+```text
+org_id:   acme
+workspace:   6f1d8a20-4c3e-4a71-9a55-2d0be1c7f5aa
+repo_id:   9f2c1ad4e7b03518
+project:   4b81c0e2f39a77de
+```
+
+#### Quarantined rows
+
+When an org is registered, `status` also reports rows the cloud intake rejected *permanently*. This is the only place they surface, and that is the point: the drain dead-letters such a row and steps its cursor over it so newer rows keep flowing — after which everything downstream looks healthy while a silent casualty sits in the hub.
+
+```text
+quarantined:   3 row(s) the cloud intake permanently rejected
+              2 x HTTP 422: model slug not in the intake catalog
+              1 x HTTP 413: payload too large
+              retained in the hub for inspection; the cursor advanced past them
+```
+
+At most three reason groups are listed before the tail folds into a `+N more reason(s)` line. The rows themselves are retained, not deleted. The check is best-effort — `status` answers about identity first, so an unopenable hub degrades to a one-line note instead of failing the command.
+
+### `stella cloud register`
+
+Persist an org id and register this workspace.
+
+<CardGrid size="md">
+  <OptionCard name="--org <ORG_ID>" required>
+    The cloud organization id telemetry rolls up under. Written to `~/.stella/cloud.json`
+    — the same file the future OAuth login will keep its token in, so registration and
+    auth stay one file. Must not be empty.
+  </OptionCard>
+  <OptionCard name="--workspace-id <ID>">
+    Adopt a cloud-assigned workspace id instead of minting a UUID. Ignored if this
+    workspace is already registered — registration is idempotent and an existing id always
+    wins, because one workspace must never fork into two identities.
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella cloud register --org acme
+```
+
+```text
+registered to org acme (stub — OAuth login lands later)
+workspace id 6f1d8a20-4c3e-4a71-9a55-2d0be1c7f5aa written to .stella/workspace.json
+commit .stella/workspace.json so every clone reports as this workspace
+```
+
+<Callout type="info">
+Commit `.stella/workspace.json`. It sits outside `.stella/private/` for exactly that
+reason. Without it, a clone has no workspace id at all until someone registers there —
+and if they do, the same project ends up reporting under two identities.
+</Callout>
+
+The written file is small and readable:
+
+```json title=".stella/workspace.json"
+{"workspace_id": "6f1d8a20-4c3e-4a71-9a55-2d0be1c7f5aa"}
+```
+
+## What registration does not do
+
+- **It does not upload anything.** There is no cloud sync today; `register` writes two local files. Telemetry replicates into `~/.stella/usage.db` whether you register or not.
+- **It does not change what is collected.** Only the ids stamped onto each row change — from `NULL` org and workspace to yours.
+- **It does not re-stamp history.** Rows written before registration keep their `NULL` org, which is why `stella usage report --org <id>` excludes them.
+
+It does change one thing worth knowing about: once rows carry an org, [`stella usage prune`](/docs/commands/usage#stella-usage-prune) will not drop the ones a cloud drain has not acknowledged unless you pass `--force`.
+
+## Examples
+
+Check what identity this workspace reports under before wiring up CI:
+
+```bash
+stella cloud status
+```
+
+Register a machine to an org and adopt a workspace id issued elsewhere:
+
+```bash
+stella cloud register --org acme --workspace-id 6f1d8a20-4c3e-4a71-9a55-2d0be1c7f5aa
+```
+
+Scope an org to one shell session without touching `cloud.json` — the environment variable
+outranks the file:
+
+```bash
+STELLA_ORG_ID=acme-staging stella cloud status
+```
+
+Register, then confirm the hub is stamping rows the way you expect:
+
+```bash
+stella cloud register --org acme
+stella usage sync
+stella usage report --org acme
+```

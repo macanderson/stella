@@ -24,14 +24,49 @@ domains: [build, ci]
 ```
 
 Both layouts are accepted: nested `<slug>/SKILL.md` (the ecosystem layout)
-or a flat `<slug>.md`.
+or a flat `<slug>.md`. The frontmatter fields:
+
+<CardGrid size="md">
+  <OptionCard name="name" defaultValue="the filename stem, or the directory name">
+    The skill's slug — also the ⚡ slash command it registers.
+  </OptionCard>
+  <OptionCard name="description" required>
+    One line on what the skill is for. Unlike a command or an agent, a skill
+    has **no fallback** here: a `SKILL.md` without a description is skipped
+    with a diagnostic, because the description is what selection matches
+    against.
+  </OptionCard>
+  <OptionCard name="domains" defaultValue="[]">
+    Domain tags from `.stella/domains.toml`, used by selection alongside the
+    lexical match.
+  </OptionCard>
+  <OptionCard name="body" required>
+    The know-how itself. An empty body is skipped with a diagnostic.
+  </OptionCard>
+</CardGrid>
 
 ## Scopes and precedence
 
-| Scope | Path | Travels with |
-| --- | --- | --- |
-| Project | `<workspace>/.stella/skills/` | The repo — commit it, the team shares it |
-| User | `~/.stella/skills/` | You, across every workspace |
+<CardGrid size="md">
+  <SpecCard
+    title="Project"
+    meta={[
+      { label: "Path", value: "<workspace>/.stella/skills/" },
+      { label: "Travels with", value: "the repo", mono: false },
+    ]}
+  >
+    Commit it and the team shares the playbook.
+  </SpecCard>
+  <SpecCard
+    title="User"
+    meta={[
+      { label: "Path", value: "~/.stella/skills/" },
+      { label: "Travels with", value: "you, across every workspace", mono: false },
+    ]}
+  >
+    Your own conventions, in every repo you open.
+  </SpecCard>
+</CardGrid>
 
 When both scopes define the same name, **project wins** for recall; the
 SKILLS tab lists both.
@@ -51,10 +86,19 @@ SKILLS tab lists both.
 ## Versions and pinning
 
 Every edit bumps a version: history lives under `<slug>/versions/vN/SKILL.md`,
-and a state sidecar (`.stella-skills.json`) tracks which version is
-**pinned** (active) and which skills are **disabled** (kept on disk,
-excluded from recall). Pin an older version to roll back without losing the
-newer one.
+and a per-scope state sidecar tracks which version is **pinned** (active) and
+which skills are **disabled** (kept on disk, excluded from recall). Pin an
+older version to roll back without losing the newer one.
+
+```text
+<skills-dir>/<slug>/SKILL.md              ← the loaded definition
+<skills-dir>/<slug>/versions/v1/SKILL.md  ← immutable version snapshots
+<skills-dir>/<slug>/versions/v2/SKILL.md
+<skills-dir>/.stella-skills.json          ← { "disabled": [...], "pins": { "<slug>": 2 } }
+```
+
+No pin entry means the latest version. The sidecar is dot-prefixed so the
+recall walk — which reads only `*.md` and `<slug>/SKILL.md` — never sees it.
 
 ## Searching installed skills
 
@@ -82,14 +126,33 @@ The underlying commands are overridable (`STELLA_SKILLS_SEARCH_CMD`,
 
 `/skills` opens the SKILLS tab:
 
-| Key | Does |
-| --- | --- |
-| `space` | Enable / disable the selected skill |
-| `e` | Edit (saves as a new version and pins it) |
-| `p` | Pin a specific version |
-| `n` | Create a new skill (LLM-drafted from a description) |
-| `ctrl+x` ×2 | Uninstall |
-| `←` / `→` | Switch panes (installed ↔ search) |
+<CardGrid size="sm">
+  <OptionCard name="space">
+    Enable / disable the selected skill. A disabled skill stays on disk and
+    drops out of recall.
+  </OptionCard>
+  <OptionCard name="ctrl+o">
+    Preview the highlighted skill's body in a modal overlay — installed pane
+    and registry pane both.
+  </OptionCard>
+  <OptionCard name="e">
+    Edit. Saving always writes a new version and pins it; no prior version is
+    modified or deleted.
+  </OptionCard>
+  <OptionCard name="p">
+    Pin a specific version — the rollback control. Pinning never creates a
+    version.
+  </OptionCard>
+  <OptionCard name="n">
+    Create a new skill, LLM-drafted from a description.
+  </OptionCard>
+  <OptionCard name="ctrl+x ×2">
+    Uninstall — delete from disk. The first press arms it, the second commits.
+  </OptionCard>
+  <OptionCard name="← / →">
+    Switch panes: installed ↔ registry search.
+  </OptionCard>
+</CardGrid>
 
 `/context` shows which skills (and MCP servers) are active in the current
 session.

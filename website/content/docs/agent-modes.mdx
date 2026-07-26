@@ -8,14 +8,66 @@ autonomy you're delegating and how the work should be checked. (For the
 under-the-hood view — what each mode actually does differently inside the
 engine — see [Agent Engine Paths](/docs/agent-engine-paths).)
 
-| Mode | Command | Best for | Verification |
-| --- | --- | --- | --- |
-| Interactive chat | `stella` / `stella chat` | Exploring, iterating, supervising | You, live |
-| One-shot run | `stella run "…"` | Scripts, CI, a single well-defined task | The [staged pipeline](/docs/inference-pipeline) |
-| Raw step loop | `stella run --no-pipeline "…"` | Quick questions, cheap tasks | The model stops when done |
-| Goal mode | `stella goal "…"` | An outcome, not a task list | An independent [judge](/docs/agent-modes#outcome-driven-goal-mode) over staged-pipeline rounds (`--no-pipeline` for raw) |
-| CI monitor | `stella monitor` | "Make CI green and keep it green" | The latest CI run, all-green |
-| Fleet | `stella fleet …` | Many tasks in parallel | Per task, in one shared tree with cooperative [claims](/docs/agent-fleets) (worktrees on opt-in) |
+<CardGrid size="md">
+  <SpecCard
+    title="Interactive chat"
+    meta={[
+      { label: "Command", value: "stella" },
+      { label: "Verified by", value: "you, live", mono: false },
+    ]}
+  >
+    Exploring, iterating, supervising.
+  </SpecCard>
+  <SpecCard
+    title="One-shot run"
+    href="/docs/commands/run"
+    meta={[
+      { label: "Command", value: "stella run \"…\"" },
+      { label: "Verified by", value: "the staged pipeline", mono: false },
+    ]}
+  >
+    Scripts, CI, a single well-defined task.
+  </SpecCard>
+  <SpecCard
+    title="Raw step loop"
+    meta={[
+      { label: "Command", value: "stella run --no-pipeline \"…\"" },
+      { label: "Verified by", value: "nothing — the model stops when it decides it is done", mono: false },
+    ]}
+  >
+    Quick questions and cheap tasks, where a full pipeline costs more than the answer is worth.
+  </SpecCard>
+  <SpecCard
+    title="Goal mode"
+    href="/docs/agent-modes#outcome-driven-goal-mode"
+    meta={[
+      { label: "Command", value: "stella goal \"…\"" },
+      { label: "Verified by", value: "an independent judge, over staged-pipeline rounds", mono: false },
+    ]}
+  >
+    An outcome, not a task list. `--no-pipeline` makes each round a raw loop.
+  </SpecCard>
+  <SpecCard
+    title="CI monitor"
+    href="/docs/commands/monitor"
+    meta={[
+      { label: "Command", value: "stella monitor" },
+      { label: "Verified by", value: "the latest CI run, all green", mono: false },
+    ]}
+  >
+    "Make CI green and keep it green."
+  </SpecCard>
+  <SpecCard
+    title="Fleet"
+    href="/docs/agent-fleets"
+    meta={[
+      { label: "Command", value: "stella fleet …" },
+      { label: "Verified by", value: "per task, independently", mono: false },
+    ]}
+  >
+    Many tasks in parallel — one shared tree with cooperative claims, or a worktree each on opt-in.
+  </SpecCard>
+</CardGrid>
 
 ## Interactive: the Command Deck
 
@@ -23,18 +75,29 @@ Running `stella` with no subcommand opens the **Command Deck** — a tabbed
 terminal UI over the same engine. Type to send a prompt; slash commands open
 tabs and overlays:
 
-| Command | Does |
-| --- | --- |
-| `/help` | Show help |
-| `/models` | List providers and models |
-| `/files` · `/diff` | What this session changed, and the working diff |
-| `/graph` | The code-graph tab |
-| `/agents` · `/skills` · `/mcp` | The AGENTS tab (executions & installed agents), skills, MCP servers |
-| `/settings` | The SETTINGS tab — home of all config, incl. the [engine-config panel](/docs/configuration/agent-engine-config) |
-| `/pipeline` | Toggle staged-pipeline turns (ON by default) |
-| `/sessions` · `/inbox` | Every session on this machine; notifications |
-| `/export` | Export session telemetry to a ZIP + [HTML dashboard](/docs/telemetry/dashboard) |
-| `/clear` | Reset the conversation |
+<CardGrid size="sm">
+  <OptionCard name="/help">Show help.</OptionCard>
+  <OptionCard name="/models">List providers and models.</OptionCard>
+  <OptionCard name="/files · /diff">What this session changed, and the working diff.</OptionCard>
+  <OptionCard name="/graph">The code-graph tab.</OptionCard>
+  <OptionCard name="/agents · /skills · /mcp">
+    The AGENTS tab (executions and installed agents), skills, and MCP servers.
+  </OptionCard>
+  <OptionCard name="/settings">
+    The SETTINGS tab — home of all config, including the
+    [engine-config panel](/docs/configuration/agent-engine-config).
+  </OptionCard>
+  <OptionCard name="/pipeline">Toggle staged-pipeline turns. On by default.</OptionCard>
+  <OptionCard name="/sessions · /inbox">Every session on this machine; notifications.</OptionCard>
+  <OptionCard name="/export">
+    Export session telemetry to a ZIP plus an
+    [HTML dashboard](/docs/telemetry/dashboard).
+  </OptionCard>
+  <OptionCard name="/clear">Reset the conversation.</OptionCard>
+</CardGrid>
+
+The full deck command set — including `/inspect` and `/context` — is on
+[`stella chat`](/docs/commands/chat).
 
 **⏎** inserts a line break; **⌘⏎ / ⌃⏎** submits. Prompts queue while a turn
 runs — you never wait for the agent to finish before typing the next thing

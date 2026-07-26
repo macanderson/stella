@@ -4,7 +4,9 @@ description: Install the Stella CLI via the install script, Homebrew, cargo, or 
 ---
 
 Stella ships as a single self-contained binary named `stella`. There is no runtime to
-install alongside it.
+install alongside it. Installing is the first of four steps:
+
+<QuickstartDiagram />
 
 ## Prerequisites
 
@@ -31,9 +33,20 @@ curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh 
 stella --version
 ```
 
-The binary lands in `~/.local/bin` by default — if `stella` isn't found afterwards, add
-that directory to your `PATH`. Two env vars tune the script: `STELLA_INSTALL_DIR`
-overrides the destination, `STELLA_VERSION` pins a specific release tag:
+The binary lands in `~/.local/bin` by default — if `stella` isn't found afterwards, the
+script says so and prints the `export` line to add. Two env vars tune it:
+
+<CardGrid size="md">
+  <OptionCard name="STELLA_INSTALL_DIR" defaultValue="$HOME/.local/bin">
+    Where the binary lands. On the `cargo install` fallback path, a value
+    ending in `/bin` is honored as the cargo root's `bin` directory, so the
+    same variable works either way.
+  </OptionCard>
+  <OptionCard name="STELLA_VERSION" defaultValue="the latest release">
+    Pin a specific release tag. With or without the leading `v` — both forms
+    normalize to the same tag.
+  </OptionCard>
+</CardGrid>
 
 ```bash
 STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.5.0 \
@@ -41,8 +54,7 @@ STELLA_INSTALL_DIR=/usr/local/bin STELLA_VERSION=v0.5.0 \
 ```
 
 Pick the tag from the
-[releases page](https://github.com/macanderson/stella/releases) — with or
-without the leading `v`, both forms work.
+[releases page](https://github.com/macanderson/stella/releases).
 
 ### Homebrew
 
@@ -82,14 +94,35 @@ cargo build --release
 
 ## Verify
 
-```bash
-stella version
-```
-
-Then confirm a provider is configured:
+Three commands that work before you have configured anything at all — they
+resolve no provider and need no API key:
 
 ```bash
-stella models   # every provider, its default model, key status, and base URL
+stella version                  # the build you just installed
+stella models --all             # every provider, its slugs, pricing, and key status
+stella doctor                   # the integrity of this workspace's local state
 ```
 
-Next: the [Quickstart](/docs/getting-started).
+`stella models` on its own scopes to providers whose credential resolves —
+which makes it the fastest way to answer "did my key land?". `--all` lifts that
+scope so you can read the whole catalog before configuring anything.
+
+Once a key is in place, `stella config` reports what actually resolved — and it
+is the one verification command that does require a credential:
+
+```bash
+stella config
+```
+
+Then run something. With one key exported, this is the whole install-to-first-change arc:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+cd your-project
+stella init                                     # index the repo, infer the domain taxonomy
+stella --budget 1 run "explain what this repo builds and how it is laid out"
+```
+
+Next: the [Quickstart](/docs/getting-started), or
+[repo initialization](/docs/getting-started/initialization) for what `stella init`
+leaves behind.

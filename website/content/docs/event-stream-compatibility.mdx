@@ -21,11 +21,36 @@ parser fail on a stream it used to handle.
 
 That holds in both directions:
 
-| Change | Older client, newer stream | Newer client, older stream |
-| --- | --- | --- |
-| A new field on an existing event | Ignored | Filled with its default |
-| A brand-new event type | Preserved, reported as unrecognized | Never appears |
-| A renamed or removed event type | **Does not happen** — the vocabulary is additive only | — |
+<CardGrid size="md">
+  <SpecCard
+    title="A new field on an existing event"
+    meta={[
+      { label: "Older client", value: "ignores it", mono: false },
+      { label: "Newer client", value: "filled with its default", mono: false },
+    ]}
+  >
+    Adding a field is always safe in both directions.
+  </SpecCard>
+  <SpecCard
+    title="A brand-new event type"
+    meta={[
+      { label: "Older client", value: "preserved, reported as unrecognized", mono: false },
+      { label: "Newer client", value: "never appears", mono: false },
+    ]}
+  >
+    An unknown event must survive the round trip, not abort the parse.
+  </SpecCard>
+  <SpecCard
+    title="A renamed or removed event type"
+    meta={[
+      { label: "Older client", value: "does not happen", mono: false },
+      { label: "Newer client", value: "does not happen", mono: false },
+    ]}
+  >
+    The vocabulary is **additive only** — this row exists to say the case is ruled out,
+    not handled.
+  </SpecCard>
+</CardGrid>
 
 Event type names and field names are never renamed or repurposed once shipped.
 Growth is by addition.
@@ -144,7 +169,7 @@ it next, which may be a newer client that would have understood them.
 The repository ships a fixture whose only purpose is to break clients that get
 rule 1 wrong:
 
-```
+```text
 stella-pipeline/tests/fixtures/from_a_newer_stella.jsonl
 ```
 

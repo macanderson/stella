@@ -32,9 +32,32 @@ or not Stella's catalog has ever heard of it. A typo fails with OpenRouter's own
 not a Stella error.
 
 ```bash
-stella --model openrouter/auto run "tidy the changelog"
+export OPENROUTER_API_KEY="sk-or-..."
+
+stella --model openrouter/openrouter/auto run "tidy the changelog"
 stella --model openrouter/openai/gpt-5.5 run "review this diff as a strict judge"
 stella --model openrouter/anthropic/claude-fable-5 run "refactor the scheduler"
+```
+
+<Callout type="warn">
+  The doubled prefix on the first line is correct, not a typo. `--model` splits on the
+  **first** `/` — everything before it is the provider id, everything after it is the wire
+  slug sent verbatim as the request's `model`. Every OpenRouter model id is `vendor/model`,
+  and the meta-router's own id is `openrouter/auto`, so the full spec is
+  `openrouter` + `/` + `openrouter/auto`. Write `--model openrouter/auto` and the wire
+  slug becomes the bare `auto`, which OpenRouter does not serve. Stella checks the
+  resolved wire slug at launch and warns on stderr that it is *missing the vendor
+  namespace* — advisory, not a gate, so the run still reaches the gateway and fails there.
+</Callout>
+
+The rule generalizes: whatever slug OpenRouter's own model list shows you, paste it whole
+after `openrouter/`. The doubling only looks odd for `openrouter/auto`, because that is
+the one model whose vendor half happens to be OpenRouter itself. Pin one for the shell
+the same way:
+
+```bash
+export STELLA_MODEL=openrouter/anthropic/claude-fable-5
+stella run "refactor the scheduler"
 ```
 
 ## Real prices, not catalog prices

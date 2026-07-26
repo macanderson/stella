@@ -21,13 +21,24 @@ It reads `<workspace>/.stella/private/store.db` only. Like `stella stats`, it re
 
 ## Flags
 
-| Flag | Meaning |
-| --- | --- |
-| `--turn <T>` | Turn instance within the execution. Default `0`. |
-| `--step <N>` | Step to reconstruct. Omit to list the execution's calls instead. |
-| `--call-seq <S>` | Which model call at that step. Default `0`. |
-| `--format <text\|json>` | `text` (default) prints a role-delimited transcript; `json` gives the messages plus the verification verdict. |
-| `--full` | Print message bodies in full instead of eliding long ones. |
+<CardGrid size="md">
+  <OptionCard name="--turn <T>" defaultValue="0">
+    Turn instance within the execution.
+  </OptionCard>
+  <OptionCard name="--step <N>">
+    Step to reconstruct. Omit it to list the execution's calls instead.
+  </OptionCard>
+  <OptionCard name="--call-seq <S>" defaultValue="0">
+    Which model call at that step — see below for why a step can have several.
+  </OptionCard>
+  <OptionCard name="--format <text|json>" defaultValue="text">
+    `text` prints a role-delimited transcript; `json` gives the messages plus the
+    verification verdict.
+  </OptionCard>
+  <OptionCard name="--full">
+    Print message bodies in full instead of eliding long ones.
+  </OptionCard>
+</CardGrid>
 
 ## Why `--call-seq` exists
 
@@ -37,7 +48,7 @@ These auxiliary calls assemble their own prompts — a role task prompt, an opti
 
 ## Reading the verification banner
 
-```
+```text
 execution 42 · turn 0 · step 3 · call-seq 0
 7 message(s)
 verified: every journal-resolved block re-hashed to its recorded digest
@@ -45,12 +56,51 @@ verified: every journal-resolved block re-hashed to its recorded digest
 
 Two failure modes are reported separately, because they mean very different things:
 
-| Line | Meaning |
-| --- | --- |
-| `! N block(s) could not be resolved` | A documented coverage gap — budget-abort synthetic tool results, discarded speculation, or attachments. The rest of the transcript is still faithful. |
-| `!! N block(s) did NOT re-hash to their recorded digest` | The journal is torn or was altered. Treat the reconstruction as untrustworthy. |
+<CardGrid size="md">
+  <OptionCard name="! N block(s) could not be resolved">
+    A documented coverage gap — budget-abort synthetic tool results, discarded
+    speculation, or attachments. The rest of the transcript is still faithful.
+  </OptionCard>
+  <OptionCard name="!! N block(s) did NOT re-hash">
+    The journal is torn or was altered. Treat the reconstruction as untrustworthy.
+  </OptionCard>
+</CardGrid>
 
 The system prefix and the assembled user message are stored as local bytes rather than resolved from the journal, so their digest check is tautological and is deliberately **not** counted as evidence. The proof lives in the journal-resolved kinds.
+
+## Examples
+
+Start from the index — which executions have receipts at all:
+
+```bash
+stella inspect
+```
+
+Then list one execution's recorded calls, with their roles and sequence numbers:
+
+```bash
+stella inspect 42
+```
+
+Reconstruct the worker call at step 3 and read it as a transcript:
+
+```bash
+stella inspect 42 --step 3
+```
+
+Read the judge's prompt instead of the worker's — the auxiliary calls at that step:
+
+```bash
+stella inspect 42 --step 3 --call-seq 2 --full
+```
+
+Check the verdict from a script without reading the transcript — `verified`, plus the two
+failure lists behind it:
+
+```bash
+stella inspect 42 --step 3 --format json |
+  jq '{verified, unresolved, digest_mismatches}'
+```
 
 ## What it can't show you
 

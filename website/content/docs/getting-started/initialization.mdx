@@ -42,24 +42,67 @@ hard-fails: you can initialize before configuring any provider key.
 Everything Stella knows about a workspace lives under `.stella/` — plain
 files and SQLite databases you can inspect, version, or delete at will:
 
-| Path | What it holds |
-| --- | --- |
-| `.stella/domains.toml` | The domain taxonomy (tagging vocabulary) |
-| `.stella/private/codegraph.db` | The tree-sitter code-graph index |
-| `.stella/private/context.db` | The context plane — memory nodes, reflections, episodes, bi-temporal facts |
-| `.stella/private/store.db` | Executions, events, token/cost telemetry, the files-touched ledger |
-| `.stella/memories/*.md` | Workspace [memories](/docs/context-engine) (plain Markdown) |
-| `.stella/rules/*.md` | Workspace rules — promoted memories and guard rules |
-| `.stella/skills/` | Project-scope [skills](/docs/agent-tools/skills) |
-| `.stella/settings.json` | Project-scope [settings](/docs/configuration/settings) |
-| `.stella/mcp.toml` | [MCP servers](/docs/agent-tools/mcp) to connect at session start |
-| `.stella/tools/*.toml` | [Custom script tools](/docs/agent-tools/custom-tools) |
-| `.stella/commands/` · `.stella/agents/` | [Custom commands](/docs/agent-tools/commands) and [custom agents](/docs/agent-tools/custom-agents) |
-| `.stella/private/fleet.db` | The [fleet](/docs/agent-fleets) ledger — runs, attempts, commits |
-| `.stella/worktrees/` | Dedicated worktrees for fleet tasks marked `isolation = "isolated"` |
-| `.stella/exports/` | Session telemetry [exports](/docs/telemetry/dashboard) (ZIP + HTML) |
-| `.stella/private/reflections.jsonl` | Post-turn reflection log (lessons the [context engine](/docs/context-engine) distills) |
-| `.stella/private/mcp_oauth.json` | **OAuth tokens** for MCP servers you've logged into — a secret, never commit it |
+### Shared — commit these
+
+<CardGrid size="md">
+  <OptionCard name=".stella/domains.toml">
+    The domain taxonomy — the tagging vocabulary `stella init` infers.
+  </OptionCard>
+  <OptionCard name=".stella/memories/*.md">
+    Workspace [memories](/docs/context-engine), as plain Markdown.
+  </OptionCard>
+  <OptionCard name=".stella/rules/*.md">
+    Workspace rules — promoted memories and guard rules.
+  </OptionCard>
+  <OptionCard name=".stella/skills/">
+    Project-scope [skills](/docs/agent-tools/skills).
+  </OptionCard>
+  <OptionCard name=".stella/settings.json">
+    Project-scope [settings](/docs/configuration/settings).
+  </OptionCard>
+  <OptionCard name=".stella/mcp.toml">
+    [MCP servers](/docs/agent-tools/mcp) to connect at session start.
+  </OptionCard>
+  <OptionCard name=".stella/tools/*.toml">
+    [Custom script tools](/docs/agent-tools/custom-tools).
+  </OptionCard>
+  <OptionCard name=".stella/commands/ · .stella/agents/">
+    [Custom commands](/docs/agent-tools/commands) and
+    [custom agents](/docs/agent-tools/custom-agents).
+  </OptionCard>
+</CardGrid>
+
+### Local state — never commit these
+
+<CardGrid size="md">
+  <OptionCard name=".stella/private/codegraph.db">
+    The tree-sitter code-graph index.
+  </OptionCard>
+  <OptionCard name=".stella/private/context.db">
+    The context plane — memory nodes, reflections, episodes, bi-temporal facts.
+  </OptionCard>
+  <OptionCard name=".stella/private/store.db">
+    Executions, events, token/cost telemetry, the files-touched ledger, and the
+    `file_locks` table fleets coordinate through.
+  </OptionCard>
+  <OptionCard name=".stella/private/fleet.db">
+    The [fleet](/docs/agent-fleets) ledger — runs, tasks, attempts, commits.
+  </OptionCard>
+  <OptionCard name=".stella/private/reflections.jsonl">
+    Post-turn reflection log — lessons the
+    [context engine](/docs/context-engine) distills.
+  </OptionCard>
+  <OptionCard name=".stella/private/mcp_oauth.json">
+    **OAuth tokens** for MCP servers you have logged into. A secret — never
+    commit it.
+  </OptionCard>
+  <OptionCard name=".stella/worktrees/">
+    Dedicated worktrees for fleet tasks marked `isolation = "isolated"`.
+  </OptionCard>
+  <OptionCard name=".stella/exports/">
+    Session telemetry [exports](/docs/telemetry/dashboard) — ZIP + HTML.
+  </OptionCard>
+</CardGrid>
 
 When upgrading from a release that wrote private files directly under
 `.stella/`, Stella migrates safe, closed legacy files into `.stella/private/`
@@ -71,14 +114,25 @@ agents, credentials).
 
 ### What to commit
 
-`.stella/domains.toml`, `.stella/memories/`, `.stella/rules/`,
-`.stella/skills/`, `.stella/settings.json`, `.stella/mcp.toml`, and
-`.stella/tools/` are team-shareable and version-control-friendly — with one caveat:
-if `.stella/settings.json` carries an inline `api_key`, keep it out of version control
-(prefer [`api_key_env` or `credentials.toml`](/docs/configuration/credentials)).
-Everything under `.stella/private/` is local state, including MCP OAuth
-tokens. `stella` generates `.stella/.gitignore` with `private/`; if the
-repository uses a root ignore file, exclude the whole private directory:
+The shared group above is team-shareable and version-control-friendly — with one
+caveat: if `.stella/settings.json` carries an inline `api_key`, keep it out of
+version control (prefer
+[`api_key_env` or `credentials.toml`](/docs/configuration/credentials)).
+
+Everything under `.stella/private/` is local state, including MCP OAuth tokens.
+Stella generates `.stella/.gitignore` for you, covering the private directory
+and any stray database or reflection log left by an older layout:
+
+```text title=".stella/.gitignore"
+*.db
+*.db-wal
+*.db-shm
+reflections.jsonl
+private/
+```
+
+If your repository uses a root ignore file instead, exclude the whole private
+directory plus the two derived directories that ride outside it:
 
 ```text title=".gitignore"
 .stella/private/
@@ -89,9 +143,26 @@ repository uses a root ignore file, exclude the whole private directory:
 ## Verify the result
 
 ```bash
-stella graph definitions <SomeSymbol>   # the index answers structural questions
-stella config                            # the resolved provider/model/workspace
+# The index answers structural questions — offline, no API key.
+stella graph definitions Config
+stella graph importers src/main.rs
+stella graph neighbors src/main.rs
+
+# The taxonomy it inferred.
+cat .stella/domains.toml
+
+# The store it will write telemetry into.
+stella doctor
 ```
+
+```bash
+# And the resolved provider, model, credential source, and workspace root.
+stella config
+```
+
+Re-run `stella init` after a large refactor to rebuild the index and re-infer
+the taxonomy. It is idempotent and works offline — the code graph is built with
+no provider at all, and only the taxonomy degrades to a directory heuristic.
 
 Next: [configure your provider keys](/docs/getting-started/providers), then
 run your first task from the [quickstart](/docs/getting-started).

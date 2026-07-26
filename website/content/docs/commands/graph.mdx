@@ -17,13 +17,24 @@ stella graph <op> <target>
 
 `<op>` is one of five operations, and `<target>` is interpreted according to the operation:
 
-| `<op>` | `<target>` is | Answers |
-| --- | --- | --- |
-| `definitions` | a symbol name | Where is this symbol defined? |
-| `references` | a symbol name | Where is this symbol used? |
-| `imports` | a workspace-relative file path | What does this file import? |
-| `importers` | a workspace-relative file path | Which files import this file? |
-| `neighbors` | a workspace-relative file path | What is this file's immediate graph neighborhood? |
+<CardGrid size="md">
+  <OptionCard name="definitions <symbol>">
+    Where is this symbol defined? `<target>` is a symbol name.
+  </OptionCard>
+  <OptionCard name="references <symbol>">
+    Where is this symbol used? `<target>` is a symbol name.
+  </OptionCard>
+  <OptionCard name="imports <path>">
+    What does this file import? `<target>` is a workspace-relative file path.
+  </OptionCard>
+  <OptionCard name="importers <path>">
+    Which files import this file? `<target>` is a workspace-relative file path.
+  </OptionCard>
+  <OptionCard name="neighbors <path>">
+    What is this file's immediate graph neighborhood? `<target>` is a workspace-relative
+    file path.
+  </OptionCard>
+</CardGrid>
 
 <Callout type="info">
 Run [`stella init`](/docs/commands/init) first. The graph is only as current as the last `init` — if you have moved or renamed a lot of code since, re-run `init` to rebuild `.stella/private/codegraph.db`.
@@ -44,4 +55,16 @@ Inspect a file's imports, its importers, and its neighborhood:
 stella graph imports    stella-cli/src/config.rs
 stella graph importers  stella-cli/src/config.rs
 stella graph neighbors  stella-cli/src/config.rs
+```
+
+Check the blast radius of a file before you change it — who would you break:
+
+```bash
+stella graph importers src/db/schema.ts
+```
+
+Confirm a symbol you are about to rename is defined exactly once:
+
+```bash
+stella graph definitions parse_age_window
 ```

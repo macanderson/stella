@@ -1,0 +1,217 @@
+---
+title: stella usage
+description: Report, replicate, and prune the cross-project telemetry hub at ~/.stella/usage.db — the same cost numbers as stella stats, across every project on this machine.
+---
+
+`stella stats` answers "what did *this* workspace cost." `stella usage` answers the same question across every project on this machine, by reading the **usage hub** — one SQLite database per developer at `~/.stella/usage.db`. It needs no provider and no API key, and nothing it does sends anything anywhere.
+
+## Synopsis
+
+```bash
+stella usage
+stella usage report [--format <table|json|csv>] [--org <id>]
+stella usage sync [--all]
+stella usage prune [--older-than <AGE>] [--max-rows <N>] [--gc-deleted] [--force] [--vacuum] [--dry-run]
+```
+
+A bare `stella usage` is `stella usage report` with the defaults. The flags belong to the subcommand, so name `report` explicitly when you pass one.
+
+## What it does
+
+Every project keeps its own source of truth at `<workspace>/.stella/private/store.db` — that is the store [`stella stats`](/docs/commands/stats) and [`stella inspect`](/docs/commands/inspect) read. The hub is **derived** from those stores: each finished turn rolls its telemetry up into `~/.stella/usage.db` so a cross-project question can be answered without opening every project database in turn.
+
+Two properties fall out of that design, and they are the reason the command exists:
+
+- **It reads even when the project stores are busy.** A report from the hub does not contend with a live session holding `store.db`.
+- **It outlives the checkout.** A project you deleted six months ago still contributes to the totals, because its rows were replicated before the directory went away.
+
+Flow is strictly one way — `store.db` → `usage.db`. Nothing here writes back into a project store, and a hub that is missing or briefly unopenable never fails a turn; replication is best-effort by design.
+
+<Callout type="info">
+The hub stores **metadata and rollups**, never source code or tool output. Prompts are reduced to a digest plus a short preview. Registration with [`stella cloud`](/docs/commands/cloud) changes which ids the rows carry, not what is in them, and does not upload anything today.
+</Callout>
+
+## Subcommands
+
+<CardGrid size="md">
+  <OptionCard name="report">
+    Per (org, provider, model) totals across every replicated project: calls, tokens,
+    cache reads, cost, and how many distinct projects contributed. The default.
+  </OptionCard>
+  <OptionCard name="sync">
+    Replicate this workspace's telemetry into the hub from a cursor. Safe to re-run;
+    `--all` heals every project the hub has ever seen.
+  </OptionCard>
+  <OptionCard name="prune">
+    Bound the hub's growth — by age, by a row ceiling, and by GC of projects whose
+    checkout is gone.
+  </OptionCard>
+</CardGrid>
+
+### `stella usage report`
+
+Group every hub row by org, provider, and model, and total it. Rows are ordered by cost, descending.
+
+<CardGrid size="md">
+  <OptionCard name="--format <table|json|csv>" defaultValue="table">
+    `table` prints aligned columns with a `TOTAL` row; `json` and `csv` are for piping
+    into other tools. The three text columns in CSV are RFC-4180 escaped, so an org id or
+    a model slug containing a comma cannot shift the following columns.
+  </OptionCard>
+  <OptionCard name="--org <id>">
+    Only rows replicated under this org id. Rows written before you registered carry no
+    org and are excluded by any `--org` filter.
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella usage
+stella usage report --format json
+stella usage report --org acme --format csv > acme-spend.csv
+```
+
+Representative table output (illustrative):
+
+```text
+ORG            PROVIDER   MODEL                           CALLS        INPUT       OUTPUT   CACHE-READ       COST  PROJECTS
+(local)        anthropic  claude-fable-5                    412      8214003       411220      6120884    31.4188         7
+(local)        zai        glm-5.2                           268      3901556       288104      1902330     4.9071         4
+TOTAL                                                       680     12115559       699324      8023214    36.3259
+```
+
+An unregistered installation reports its rows under `(local)` — the display for a `NULL` org id. An empty hub says so and points you at `stella usage sync`.
+
+### `stella usage sync`
+
+Replication normally happens on its own: each finished turn ships its telemetry into the hub best-effort. `sync` is the explicit and the repair path — it walks the hub's per-project cursor forward, so re-running it is safe and only ever ships rows the hub does not already have.
+
+<CardGrid size="md">
+  <OptionCard name="--all">
+    Walk every project in the hub's registry instead of just the current directory. This
+    is the repair path: a project whose best-effort sync failed mid-turn has a cursor that
+    fell behind, and `--all` heals all of them in one pass. A registered project with no
+    local `store.db` is reported as skipped rather than treated as an error.
+  </OptionCard>
+</CardGrid>
+
+```bash
+# This workspace only.
+stella usage sync
+
+# Every project the hub knows about — the repair pass.
+stella usage sync --all
+```
+
+The single-workspace form reports one number; `--all` reports per project first:
+
+```text
+acme-api                 128 row(s)
+acme-web                 0 row(s)
+old-prototype            skipped (no local store)
+replicated 128 telemetry row(s) across 3 project(s)
+```
+
+### `stella usage prune`
+
+The hub keeps one telemetry row per model call, across every project, forever — including rows from checkouts that no longer exist. `prune` is the retention control. It refuses to run with none of `--older-than`, `--max-rows`, or `--gc-deleted` set, so a bare `stella usage prune` can never mean "delete something."
+
+<CardGrid size="md">
+  <OptionCard name="--older-than <AGE>">
+    Drop rows older than this window. `N` followed by `d`, `w`, `h`, `mo`, or `y` — `90d`,
+    `12w`, `720h`, `3mo`, `1y`. A bare number means days. The window must be positive: `0`
+    would prune everything older than now, which is almost always a typo.
+  </OptionCard>
+  <OptionCard name="--max-rows <N>">
+    Hard ceiling on retained telemetry rows; the oldest prunable ones are evicted until
+    the hub is at or under it.
+  </OptionCard>
+  <OptionCard name="--gc-deleted">
+    Also drop everything the hub holds for a project whose checkout is gone *and* that was
+    never org-registered — its telemetry, its rollups, its sync cursor, and its registry
+    row. "Gone" means the project root is missing while its parent directory still exists,
+    which is a deletion. A whole volume being absent — an unplugged drive, a down network
+    share — is deliberately **not** a deletion, so an unmounted disk never GCs your local
+    history. A project that does come back re-replicates on its next sync.
+  </OptionCard>
+  <OptionCard name="--dry-run">
+    Compute the report and delete nothing. Worth running first.
+  </OptionCard>
+  <OptionCard name="--vacuum">
+    `VACUUM` afterwards, handing freed pages back to the filesystem, and re-anchor the
+    cloud cursors across it. Also runs automatically after a large prune.
+  </OptionCard>
+  <OptionCard name="--force">
+    Also drop un-acked cloud rows, breaking a pending drain. Off by default.
+  </OptionCard>
+</CardGrid>
+
+```bash
+# What would go, without touching anything.
+stella usage prune --older-than 1y --dry-run
+
+# A year of history, plus everything held for repos you have since deleted.
+stella usage prune --older-than 1y --gc-deleted --vacuum
+
+# Or bound it by row count instead of age.
+stella usage prune --max-rows 100000
+```
+
+<Callout type="warn">
+Prune is **cloud-safe by default**: a row belonging to a registered org that the cloud
+drain has not yet acknowledged is never dropped, even when it falls inside the age window.
+Those rows are reported back to you as kept — `--force` is the deliberate override, and it
+breaks the pending drain permanently. Rollup rows never drain, so they age out
+unconditionally.
+</Callout>
+
+If the ceiling could not be met because the excess rows were un-acked, `prune` says so rather than silently leaving the hub over budget: drain them, or re-run with `--force`.
+
+## Relationship to `stella stats`
+
+<CardGrid size="md">
+  <OptionCard name="stella stats">
+    One workspace. Reads `<workspace>/.stella/private/store.db`, the source of truth, with
+    the per-run cache-economics columns. Its `prune` bounds *that* store.
+  </OptionCard>
+  <OptionCard name="stella usage">
+    Every workspace. Reads `~/.stella/usage.db`, derived from the above. Its `prune` bounds
+    *the hub*, and the two retention commands are independent — pruning one never touches
+    the other.
+  </OptionCard>
+</CardGrid>
+
+The two `--older-than` vocabularies are shared code precisely so `--older-than 3mo` cannot work on one command and fail on the other.
+
+## Examples
+
+Your five most expensive models across every project — the rows already arrive sorted by
+cost:
+
+```bash
+stella usage report --format json | jq '.[0:5] | .[] | {provider, model, cost_usd}'
+```
+
+Find the models you use across the most projects:
+
+```bash
+stella usage report --format json | jq '.[] | select(.projects > 2) | {provider, model, projects, cost_usd}'
+```
+
+Heal every stale cursor after a stretch of interrupted sessions, then report:
+
+```bash
+stella usage sync --all
+stella usage report
+```
+
+Keep the hub bounded on a schedule, safely:
+
+```bash
+stella usage prune --older-than 6mo --gc-deleted --vacuum
+```
+
+<Callout type="info">
+The hub is a real SQLite file at `~/.stella/usage.db` (`STELLA_DATA_DIR` overrides the
+directory). Beyond this command you can query it with any SQLite client — see
+[Telemetry &amp; budget](/docs/telemetry).
+</Callout>

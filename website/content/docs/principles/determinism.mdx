@@ -54,6 +54,32 @@ independent single-thread engines over one shared tree, coordinated only by
 cooperative file claims (dedicated git worktrees per task on opt-in) — parallel
 work, no swarm coordination, no inter-agent messages to degrade.
 
+The coordination is a lock table, not a conversation. Two workers that declare
+overlapping `claims` do not negotiate; the second dispatch fails by name,
+before it starts:
+
+```toml title="parallel.toml"
+[[tasks]]
+id = "a"
+title = "Rename the error type"
+prompt = "Rename StoreError to StoreFailure across the crate"
+claims = ["src/store/error.rs"]
+
+[[tasks]]
+id = "b"
+title = "Add a variant"
+prompt = "Add a StoreError::Corrupt variant carrying the failing pragma"
+claims = ["src/store/error.rs"]   # same path — one of these two will not run
+```
+
+```bash
+stella fleet --plan parallel.toml --max-concurrency 2
+```
+
+That is the whole coordination protocol. There is no message for the two agents
+to misread, and no summary between them to lose information — the third MAST
+failure class has nowhere to occur.
+
 ## The principle generalized
 
 "Prefer determinism over intelligence" is not anti-model — Stella exists to
@@ -77,6 +103,23 @@ The payoff compounds: deterministic mechanisms cost nothing per run, never
 rate-limit, never hallucinate, and give the *same answer twice* — which is
 exactly what you want from the parts of an agent that decide whether to
 trust it.
+
+And because the distinction is structural rather than rhetorical, it is
+machine-readable. Every verified run says which kind of evidence it stood on:
+
+```bash
+stella --output-format json run --test-command "cargo test -p stella-core" \
+  "make the loop detector count identical no-op calls as progress-free" \
+  | jq '{deterministic: .verdict.deterministic, evidence: .verdict.summary}'
+```
+
+A CI gate can therefore insist on the mechanism and refuse the opinion:
+
+```bash
+stella --output-format json run --test-command "make test" "$TASK" \
+  | jq -e '.verdict.deterministic == true' >/dev/null \
+  || { echo "verified only by a model judge — holding this one for review" >&2; exit 1; }
+```
 
 <Callout type="info">
   Read the full papers in the repo:

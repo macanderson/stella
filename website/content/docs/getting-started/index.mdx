@@ -9,6 +9,24 @@ key, **[initialize](/docs/getting-started/initialization)** the repo, and run.
 The full provider matrix (OpenRouter, local servers, Vertex, Bedrock, custom
 gateways) lives in **[Providers & models](/docs/getting-started/providers)**.
 
+<QuickstartDiagram />
+
+If you would rather paste one block and read afterwards, this is the whole path:
+
+```bash
+# 1. Install.
+curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh
+
+# 2. Bring your own key — any one provider will do.
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# 3. From inside a git repository: learn the codebase.
+stella init
+
+# 4. Ship something.
+stella run "explain what this repository does, then list the riskiest files"
+```
+
 ## 1. Set an API key
 
 Stella is bring-your-own-key. Export a key for any one provider — Stella auto-detects it:
@@ -58,22 +76,23 @@ Running `stella` with no subcommand opens the **Command Deck**, a tabbed termina
 stella
 ```
 
-Inside the deck, type a message to send it, or use a slash command to open a tab:
+Inside the deck, type a message to send it, or use a slash command to open a tab. The ones
+worth knowing on day one:
 
-| Command     | Does                                     |
-| ----------- | ---------------------------------------- |
-| `/help`     | Show help                                |
-| `/models`   | List providers and models                |
-| `/files`    | Files changed this session               |
-| `/diff`     | Review the working diff                  |
-| `/pipeline` | Toggle the staged pipeline on/off        |
-| `/graph`    | The code-graph tab                       |
-| `/skills`   | The skills tab                           |
-| `/mcp`      | The MCP tab (enable/disable servers)     |
-| `/clear`    | Clear the session                        |
+<CardGrid size="sm">
+  <OptionCard name="/help">Show help.</OptionCard>
+  <OptionCard name="/models">List providers and models.</OptionCard>
+  <OptionCard name="/files">Files changed this session.</OptionCard>
+  <OptionCard name="/diff">Review the working diff.</OptionCard>
+  <OptionCard name="/pipeline">Toggle the staged pipeline on or off.</OptionCard>
+  <OptionCard name="/graph">The code-graph tab.</OptionCard>
+  <OptionCard name="/skills">The skills tab.</OptionCard>
+  <OptionCard name="/mcp">The MCP tab — enable and disable servers.</OptionCard>
+  <OptionCard name="/clear">Clear the session.</OptionCard>
+</CardGrid>
 
-Press **Ctrl-C** to quit. (The plain REPL has a different, smaller set — including `/config`
-and `/goal` — see [`stella chat`](/docs/commands/chat).)
+Press **Ctrl-C** to quit. That is a partial list — see [`stella chat`](/docs/commands/chat)
+for the full deck command set, and for the plain REPL's separate, smaller one.
 
 ## 5. Give it a goal
 

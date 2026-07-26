@@ -27,12 +27,26 @@ You are a technical writer. Prefer working examples over abstractions.
 Never document a flag you haven't verified against --help output.
 ```
 
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `name` | No | The agent's slug. Falls back to the filename stem (flat layout) or the directory name (nested layout). |
-| `description` | No | One-line summary for the `/agents` listing. Falls back to the body's first non-empty line, truncated to 72 characters. |
-| `tools` | No | The agent's toolbelt — the tool names granted to this persona. Omitted means **all** tools. |
-| *body* | **Yes** | The persona's instructions — everything after the frontmatter. A file with an empty body is skipped with a diagnostic, never a fatal error. |
+Every field, in the shape the loader accepts:
+
+<CardGrid size="md">
+  <OptionCard name="name" defaultValue="the filename stem, or the directory name">
+    The agent's slug — what `/name` invokes. Falls back to the filename stem
+    (flat layout) or the directory name (nested layout).
+  </OptionCard>
+  <OptionCard name="description" defaultValue="the body's first non-empty line">
+    One-line summary for the `/agents` listing. The fallback strips leading
+    markdown heading markers and truncates to 72 characters with an ellipsis.
+  </OptionCard>
+  <OptionCard name="tools" defaultValue="all tools">
+    The agent's toolbelt — the tool names granted to this persona. Omitted
+    means **all** tools.
+  </OptionCard>
+  <OptionCard name="body" required>
+    The persona's instructions — everything after the frontmatter. A file with
+    an empty body is skipped with a diagnostic, never a fatal error.
+  </OptionCard>
+</CardGrid>
 
 The `tools:` field is parsed tolerantly, accepting every shape the
 ecosystem has taught authors: a bare comma list (`Read, Grep`), a JSON/YAML
@@ -43,10 +57,26 @@ duplicates collapsed. An empty list or the explicit wildcard forms (`*`,
 
 ## Where agents live
 
-| Scope | Path | Travels with |
-| --- | --- | --- |
-| Project | `<workspace>/.stella/agents/` | The repo — commit it, the team shares it |
-| User | `~/.stella/agents/` | You, across every workspace |
+<CardGrid size="md">
+  <SpecCard
+    title="Project"
+    meta={[
+      { label: "Path", value: "<workspace>/.stella/agents/" },
+      { label: "Travels with", value: "the repo", mono: false },
+    ]}
+  >
+    Commit it and the whole team gets the persona on their next session.
+  </SpecCard>
+  <SpecCard
+    title="User"
+    meta={[
+      { label: "Path", value: "~/.stella/agents/" },
+      { label: "Travels with", value: "you, across every workspace", mono: false },
+    ]}
+  >
+    Your own personas, available in every repo you open.
+  </SpecCard>
+</CardGrid>
 
 Definitions load user-global first, then workspace — **workspace wins** on
 a name collision.
@@ -84,10 +114,26 @@ definitions found there are **symlinked** into the matching Stella
 directory — adopted, not copied, so edits stay in one place and your
 existing setup carries over instead of being rewritten:
 
-| Source | Destination |
-| --- | --- |
-| `<workspace>/.claude/agents/` · `<workspace>/.agents/agents/` | `<workspace>/.stella/agents/` |
-| `~/.claude/agents/` · `~/.agents/agents/` | `~/.stella/agents/` |
+<CardGrid size="md">
+  <SpecCard
+    title="Workspace scope"
+    meta={[
+      { label: "Sources", value: "<workspace>/.claude/agents/ · <workspace>/.agents/agents/" },
+      { label: "Destination", value: "<workspace>/.stella/agents/" },
+    ]}
+  >
+    Adopted when you run `stella init` inside the repo.
+  </SpecCard>
+  <SpecCard
+    title="User scope"
+    meta={[
+      { label: "Sources", value: "~/.claude/agents/ · ~/.agents/agents/" },
+      { label: "Destination", value: "~/.stella/agents/" },
+    ]}
+  >
+    Adopted by the same run — your global personas carry over once.
+  </SpecCard>
+</CardGrid>
 
 (The same sync adopts `commands/` and `skills/` into their matching
 directories.) Three rules keep the adoption sane:

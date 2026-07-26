@@ -6,12 +6,30 @@ description: Give each engine agent — default, worker, judge, triage — its o
 The `agent_engine_config` object in [`settings.json`](/docs/configuration/settings)
 configures the four engine agents individually:
 
-| Agent | Runs |
-| --- | --- |
-| `default` | The interactive / step-loop agent (`stella chat`, the Command Deck, `--no-pipeline`) — and the **model source for the pipeline's execute turns** (see [Model precedence](#model-precedence)) |
-| `worker` | The [pipeline](/docs/inference-pipeline)'s execute-turn **tuning** — prompt, effort, reasoning, params (plan rides it too) |
-| `judge` | The pipeline's verify judge and [goal mode](/docs/agent-modes#outcome-driven-goal-mode)'s round judge — the witness author also rides the judge's model, falling back to the worker when no judge resolves |
-| `triage` | The pipeline's fast task classifier |
+<CardGrid size="md">
+  <OptionCard name="default">
+    The interactive / step-loop agent — `stella chat`, the Command Deck,
+    `stella run --no-pipeline`. Its model is also the **session default** every
+    other role falls back to.
+  </OptionCard>
+  <OptionCard name="worker">
+    The [pipeline](/docs/inference-pipeline)'s execute turns — both the model
+    they route to and their tuning (prompt, effort, reasoning, params). Plan
+    and witness turns share the worker's tier, so they follow it.
+  </OptionCard>
+  <OptionCard name="judge">
+    The pipeline's verify judge and
+    [goal mode](/docs/agent-modes#outcome-driven-goal-mode)'s round judge. The
+    witness author rides the judge's resolution too — the test that defines
+    "done" is written by the same independent role that enforces it — falling
+    back to the worker when no judge resolves.
+  </OptionCard>
+  <OptionCard name="triage">
+    The pipeline's fast task classifier. One call, roughly one token out, under
+    a hard 10-second latency ceiling — route it to the cheapest, fastest model
+    you have.
+  </OptionCard>
+</CardGrid>
 
 Every field is optional, and it merges across the same user → org-managed →
 project scope chain as the rest of `settings.json`, per field — a project can
@@ -19,13 +37,14 @@ pin just the judge model while your user scope keeps everything else.
 
 ## The full schema
 
-```jsonc title="settings.json"
+```jsonc title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     // Flat per-role models ("provider/slug", or a bare catalog slug).
-    // default_model doubles as the WORKER route — the pipeline's execute
-    // turns run the worker/default chain (see Model precedence below).
+    // default_model is the session default AND the fallback every other
+    // role lands on when it sets nothing (see Model precedence below).
     "default_model": "zai/glm-5.2",
+    "pipeline_worker_model": "zai/glm-5.2",
     "pipeline_judge_model": "openrouter/openai/gpt-5.5",
     "pipeline_triage_model": "deepseek/deepseek-chat",
 
@@ -71,37 +90,66 @@ pin just the judge model while your user scope keeps everything else.
 
 ## Model precedence
 
-The chain differs by role — `--model` governs the **worker**, while an explicitly
-configured judge or triage keeps its own model even under a `--model` flag.
+Every role resolves on its own chain. `--model` sets the **session default** —
+the model the interactive agent runs on and the one every unconfigured role
+falls back to — while an explicitly configured role keeps its own model even
+under a `--model` flag.
 
-**Worker &amp; default agent** (one model, shared by the interactive agent and the
-pipeline's execute turns) — first hit wins:
+**Default agent** (interactive / step-loop) — first hit wins:
 
 1. The `--model` CLI flag
 2. `agents.default.model`
 3. `default_model`
 4. Auto-detection / the provider's own default
 
+**Worker** (the pipeline's execute turns, and the plan and witness turns that
+share its tier) — first hit wins:
+
+1. `agents.worker.model`, sent verbatim to `agents.worker.provider` when that is set
+2. `pipeline_worker_model`
+3. `default_model`
+4. No configuration — the role rides the session default resolved above
+
 **Judge and triage** — first hit wins:
 
 1. `agents.judge.model` / `agents.triage.model`
 2. `pipeline_judge_model` / `pipeline_triage_model`
 3. `default_model`
-4. No configuration — the role rides the worker's model
+4. No configuration — the role rides the session default
 
 `auto_mode: "on"` replaces the judge spec with the cross-family pick from
-`allowed_models` (below). A `--model` flag does **not** override an explicitly
-configured judge or triage — `stella --model anthropic/claude-fable-5 goal "…"` with
-`pipeline_judge_model: openrouter/openai/gpt-5.5` runs a Fable worker under a GPT judge,
-which is usually exactly what you want from a cross-family setup.
+`allowed_models` (below), compared against the model the worker **actually**
+resolves to, not the session default. A `--model` flag does **not** override an
+explicitly configured judge or triage — `stella --model anthropic/claude-fable-5 goal "…"`
+with `pipeline_judge_model: openrouter/openai/gpt-5.5` runs a Fable worker under
+a GPT judge, which is usually exactly what you want from a cross-family setup.
 
-<Callout type="warn">
-  `pipeline_worker_model` and `agents.worker.model` are accepted, saved, and shown in the
-  deck's engine panel, but the **executing** worker model follows the worker/default chain
-  above — route the worker with `default_model` (or `--model`), not the worker-specific
-  model fields. The `worker` agent's tuning fields (`prompt`, `effort`, `reasoning`,
-  `params`) do apply to execute turns.
+<Callout type="info">
+  Because the worker's chain falls through to `default_model`, a configured
+  `default_model` pins the execute turns even when you pass `--model` for the
+  session. If you want a one-off `--model` to change what the pipeline executes
+  on, either leave `default_model` unset or set `pipeline_worker_model`
+  deliberately.
 </Callout>
+
+Every override here is **soft**. A worker, judge, or triage model whose provider
+has no resolvable credential — or whose adapter fails to build — is skipped with
+a notice on stderr, and that role rides the session default exactly as it would
+with no config at all:
+
+```text
+  ! engine config: judge model `openrouter/openai/gpt-5.5` skipped — no resolvable
+    credential for provider `openrouter`; judge rides the session default (`zai/glm-5.2`)
+```
+
+`stella config` prints the resolved provider, session-default model, credential
+source, base URL, and dialect — the inputs those chains start from — and
+`stella models --all` shows which slugs each provider will accept:
+
+```bash
+stella config
+stella models --all
+```
 
 ## One gateway per agent (BYOK per agent)
 
@@ -109,7 +157,7 @@ An agent's `provider` field routes its model slug through **that** provider
 verbatim — no prefix splitting. That is how you mix billing relationships in
 one pipeline:
 
-```jsonc
+```jsonc title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "default_model": "anthropic/claude-fable-5",             // worker — your Anthropic key
@@ -121,6 +169,15 @@ one pipeline:
 }
 ```
 
+Three keys, three bills, one pipeline:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENROUTER_API_KEY=sk-or-...
+export ZAI_API_KEY=...
+stella run --test-command "cargo test -p stella-router" "add a per-provider breaker cooldown"
+```
+
 Without a `provider` field, model strings use `--model` semantics:
 `provider/slug` splits on the first `/` when the prefix names a known
 provider (so `openrouter/openai/gpt-5.5` routes `openai/gpt-5.5` through
@@ -130,18 +187,59 @@ OpenRouter), and a bare slug resolves through the model catalog.
 
 Set any of the three autos to `"on"` and stop thinking about it:
 
-- **`auto_mode`** — the judge model is picked automatically from
-  `allowed_models`: prefer a candidate from a **different model family** than
-  the worker (an independent second opinion), then the highest catalog price
-  tier as a capability proxy, then list order. Candidates whose provider has
-  no resolvable credential are skipped.
-- **`effort_auto`** — reasoning effort per agent: judge `high`, worker and
-  default `medium`, triage `low`.
-- **`reasoning_auto`** — thinking mode on for judge/worker/default, off for
-  triage (a latency-bound, one-token classification).
+<CardGrid size="md">
+  <OptionCard name="auto_mode" defaultValue="off">
+    The judge model is picked automatically from `allowed_models`: prefer a
+    candidate from a **different model family** than the worker (an independent
+    second opinion), then the highest catalog price tier as a capability proxy,
+    then list order. Candidates whose provider has no resolvable credential are
+    skipped. The family comparison uses the model the worker *actually*
+    resolves to.
+  </OptionCard>
+  <OptionCard name="effort_auto" defaultValue="off">
+    Reasoning effort per agent: judge `high`, worker and default `medium`,
+    triage `low`.
+  </OptionCard>
+  <OptionCard name="reasoning_auto" defaultValue="off">
+    Thinking mode on for judge, worker, and default; off for triage — a
+    latency-bound, one-token classification that gains nothing from it.
+  </OptionCard>
+  <OptionCard name="headless_scope_bypass" defaultValue="off">
+    A headless run may proceed past [scope review](/docs/inference-pipeline)
+    instead of stopping at the gate that has nobody to ask. Off deliberately:
+    turn it on only where the working tree is disposable and the budget cap is
+    the real guard — a benchmark container, CI on a scratch checkout.
+  </OptionCard>
+</CardGrid>
 
 When an auto is `"on"` it overrides the corresponding per-agent setting —
 that is its contract.
+
+The smallest useful config is three lines: a cheap worker, a flagship judge
+from a different family, and the autos left alone.
+
+```json title=".stella/settings.json"
+{
+  "agent_engine_config": {
+    "default_model": "zai/glm-5.2",
+    "pipeline_judge_model": "anthropic/claude-fable-5",
+    "pipeline_triage_model": "deepseek/deepseek-chat"
+  }
+}
+```
+
+Or hand the judge choice over entirely, and let `auto_mode` keep it
+cross-family as your lineup changes:
+
+```json title=".stella/settings.json"
+{
+  "agent_engine_config": {
+    "default_model": "zai/glm-5.2",
+    "auto_mode": "on",
+    "allowed_models": ["zai/glm-5.2", "anthropic/claude-fable-5", "openrouter/openai/gpt-5.5"]
+  }
+}
+```
 
 ## Generation parameters
 
@@ -153,13 +251,66 @@ intact), and a set field goes on the wire.
 Each provider adapter forwards only the parameters its wire supports, and
 maps reasoning to the provider's native mechanism:
 
-| Provider | Reasoning maps to | Notes |
-| --- | --- | --- |
-| Z.ai (GLM) | `thinking: {"type": "enabled"\|"disabled"}` | |
-| OpenRouter | `reasoning` object (`effort` / `enabled`) | also accepts `top_k` and `repetition_penalty` |
-| Anthropic | extended thinking with an effort-tiered token budget | temperature is omitted while thinking is on (API rule) |
-| OpenAI | `reasoning.effort`, plus `text.verbosity` and `service_tier` | `temperature`/`top_p` are omitted for reasoning models (API rule) |
-| Gemini / Vertex | `thinkingLevel` | Gemini 3 cannot fully disable thinking; `"off"` maps to the lowest level |
+<CardGrid size="md">
+  <SpecCard
+    title="Z.ai (GLM)"
+    meta={[{ label: "Reasoning", value: "thinking: {\"type\": \"enabled\"|\"disabled\"}" }]}
+  >
+    GLM's own request-level thinking object. Also forwards `top_p`, `top_k`,
+    `frequency_penalty`, `presence_penalty`, `repetition_penalty`, and `seed`.
+  </SpecCard>
+  <SpecCard
+    title="OpenRouter"
+    meta={[{ label: "Reasoning", value: "reasoning object (effort / enabled)" }]}
+  >
+    The normalized reasoning object. Some upstreams OpenRouter fronts make
+    reasoning mandatory and answer `reasoning: {enabled: false}` with a hard
+    400 — Stella resends once without the object rather than losing the call,
+    since "off" is an economy preference, not a correctness requirement.
+  </SpecCard>
+  <SpecCard
+    title="xAI (Grok)"
+    meta={[{ label: "Reasoning", value: "top-level reasoning_effort" }]}
+  >
+    Sent only for Grok models that accept the parameter — the original `grok-4`
+    400s on it, so it is gated by model, not just by provider.
+  </SpecCard>
+  <SpecCard
+    title="Anthropic"
+    meta={[{ label: "Reasoning", value: "extended thinking, two dialects" }]}
+  >
+    Current models (Claude 4.6+ and the 5-family) take
+    `thinking: {"type": "adaptive"}` plus `output_config.effort`, and **reject**
+    `budget_tokens` and the sampling parameters. Legacy models (≤ 4.5) keep
+    `{"type": "enabled", "budget_tokens": N}` with an effort-tiered budget, and
+    do accept sampling — though `temperature` is omitted whenever thinking is
+    on, because the Messages API rejects any value but 1 alongside it.
+  </SpecCard>
+  <SpecCard
+    title="OpenAI"
+    meta={[{ label: "Reasoning", value: "reasoning.effort" }]}
+  >
+    Plus `text.verbosity` and `service_tier` from `params`. `temperature` and
+    `top_p` are omitted for reasoning models — an API rule, not a Stella
+    choice.
+  </SpecCard>
+  <SpecCard
+    title="Gemini / Vertex"
+    meta={[{ label: "Reasoning", value: "thinkingConfig.thinkingLevel" }]}
+  >
+    Gemini 3 cannot fully disable thinking, so `"off"` maps to the lowest level
+    the model documents — the closest honest expression of "suppress thinking".
+    `verbosity`, `service_tier`, and `repetition_penalty` are dropped.
+  </SpecCard>
+  <SpecCard
+    title="DeepSeek, local, and settings-defined providers"
+    meta={[{ label: "Reasoning", value: "not sent" }]}
+  >
+    There is no portable Chat Completions reasoning field, and an unknown key
+    risks a hard 400 on a server you never opted into experimenting with — so
+    these identities send neither shape. Sampling parameters still go through.
+  </SpecCard>
+</CardGrid>
 
 Parameters a provider cannot express are silently dropped — an unsupported
 knob never fails a request.

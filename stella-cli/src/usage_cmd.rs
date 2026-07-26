@@ -57,8 +57,8 @@ pub enum UsageCmd {
         max_rows: Option<i64>,
 
         /// GC rollup for projects whose checkout is gone and were never
-        /// org-registered. A project on an unmounted volume reads as "gone"
-        /// (its rollup re-replicates on next sync, so this is recoverable)
+        /// org-registered. A project on an unmounted volume is NOT treated as
+        /// gone — an absent parent reads as a missing volume, not a deletion
         #[arg(long)]
         gc_deleted: bool,
 

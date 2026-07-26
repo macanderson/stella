@@ -60,6 +60,18 @@ stella --model vertex/gemini-3-pro run "audit the IAM bindings module"
 
 Pinning with `--model vertex/…` matters here, because of detection order.
 
+## `base_url` in settings.json does not reach the wire
+
+<Callout type="warn">
+  This provider builds its own project- and location-scoped endpoint from
+  `VERTEX_PROJECT_ID` and `VERTEX_LOCATION`, and it consumes only the raw `--base-url`
+  flag. A `providers.vertex.base_url` in `settings.json` is **silently inert on the
+  wire**: it changes the endpoint `stella models` displays for Vertex and nothing else —
+  requests still go to the address derived from your project and location. To route
+  Vertex through a proxy for a run, pass `--base-url` (or export `STELLA_BASE_URL`)
+  explicitly.
+</Callout>
+
 ## Last in auto-detection — on purpose
 
 Vertex sits **last** in [auto-detection](/docs/api-providers#auto-detection) (alongside

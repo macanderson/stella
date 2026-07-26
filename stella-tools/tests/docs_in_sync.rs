@@ -87,36 +87,64 @@ fn count_between(text: &str, before: &str, after: &str) -> usize {
     panic!("the docs no longer contain the phrase {before:?}<number>{after:?}")
 }
 
-/// Every markdown table row whose first cell is a single backticked name,
-/// paired with that row's access marker. Splitting on `|` is safe because the
-/// helper demands the access cell be *exactly* `Read-only` or `Mutating`, so a
-/// pipe inside a description can only ever cause a loud miss, never a false
-/// pass.
+/// The opening tag starting at the front of `text`, i.e. everything before the
+/// first `>` that is not inside a double-quoted attribute value.
+///
+/// The quote tracking is not pedantry: a card's `when=` prose is free text and
+/// may legitimately contain a `>`. Stopping at the first raw `>` would truncate
+/// the tag mid-attribute and lose the marker that follows it.
+fn opening_tag(text: &str) -> &str {
+    let mut in_quotes = false;
+    for (i, ch) in text.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            '>' if !in_quotes => return &text[..i],
+            _ => {}
+        }
+    }
+    panic!("a <ToolCard element is never closed with `>`: {text:.80}")
+}
+
+/// The value of a double-quoted JSX attribute in an opening tag.
+fn attr(tag: &str, key: &str) -> Option<String> {
+    let needle = format!("{key}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let rest = &tag[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// Every `<ToolCard name="…" access="…">` in `text`, paired with whether its
+/// access marker says read-only.
+///
+/// The catalog used to be a stack of markdown tables and this parser split on
+/// `|`. A five-column table is a desktop-only artifact — on a phone it either
+/// overflows the viewport or crushes every cell to two words — so the catalog
+/// is now a grid of `<ToolCard>` elements. The gate is unchanged in substance:
+/// the tool *name* and its *access marker* still come out of the doc and still
+/// get compared against `catalog.rs`. Only the syntax being read moved.
+///
+/// Every failure mode here is a panic rather than a skip. A silently-ignored
+/// card would drop a tool out of the set-equality checks below, turning real
+/// drift into a vacuous pass — which is the exact class of bug this file
+/// exists to prevent.
 fn documented_tools(text: &str) -> Vec<(String, bool)> {
     let mut out = vec![];
-    for line in text.lines() {
-        let line = line.trim();
-        if !line.starts_with('|') {
-            continue;
-        }
-        let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
-        let Some(first) = cells.first() else { continue };
-        // The name cell is exactly one backticked identifier.
-        let names = backticked(first);
-        if names.len() != 1 || first.trim_matches('`') != names[0] {
-            continue;
-        }
-        let reads = cells.iter().filter(|c| **c == "Read-only").count();
-        let mutates = cells.iter().filter(|c| **c == "Mutating").count();
-        let read_only = match reads + mutates {
-            1 => reads == 1,
-            n => panic!(
-                "row for `{}` has {n} access cells — expected exactly one \
-                 `Read-only` or `Mutating`",
-                names[0]
+    for (offset, _) in text.match_indices("<ToolCard") {
+        let tag = opening_tag(&text[offset..]);
+        let name = attr(tag, "name")
+            .unwrap_or_else(|| panic!("a <ToolCard is missing its `name` attribute: {tag}"));
+        let access = attr(tag, "access")
+            .unwrap_or_else(|| panic!("<ToolCard name=\"{name}\"> is missing `access`"));
+        let read_only = match access.as_str() {
+            "read" => true,
+            "mutating" => false,
+            other => panic!(
+                "<ToolCard name=\"{name}\"> has access=\"{other}\" — expected \
+                 exactly `read` or `mutating`"
             ),
         };
-        out.push((names[0].clone(), read_only));
+        out.push((name, read_only));
     }
     out
 }
@@ -274,19 +302,29 @@ fn session_tool_count_prose_matches_the_catalog() {
 /// The parser is what makes the rest of this file meaningful: if it silently
 /// matched nothing, every set-equality above would pass vacuously.
 #[test]
-fn the_table_parser_actually_finds_rows() {
+fn the_card_parser_actually_finds_tools() {
     let sample = "\
-| Tool | Description | Access |
-| --- | --- | --- |
-| `read_file` | Read a file. | Read-only |
-| `write_file` | Write a file. | Mutating |
-| not a tool | filler | Read-only |
+Some prose about `read_file` that must not be mistaken for a card.
+
+<CardGrid size=\"md\">
+  <ToolCard name=\"read_file\" access=\"read\">
+    Read a file, with 1-based line numbers.
+  </ToolCard>
+  <ToolCard name=\"write_file\" access=\"mutating\">
+    Create a file or overwrite an existing one.
+  </ToolCard>
+  <ToolCard name=\"web_search\" access=\"read\" when=\"a search key is set (limit > 0)\">
+    Search the web.
+  </ToolCard>
+</CardGrid>
 ";
     assert_eq!(
         documented_tools(sample),
         vec![
             ("read_file".to_string(), true),
             ("write_file".to_string(), false),
+            // The `>` inside `when=` must not truncate the tag before `access`.
+            ("web_search".to_string(), true),
         ]
     );
     assert_eq!(backticked("a `b` c `d`"), vec!["b", "d"]);
@@ -294,4 +332,12 @@ fn the_table_parser_actually_finds_rows() {
     let prose = "up to 9 native things. All told: 42 always-on tools, up to 58 native tools.";
     assert_eq!(count_between(prose, "up to ", " native tools"), 58);
     assert_eq!(count_between(prose, "All told: ", " always-on tools"), 42);
+}
+
+/// An access marker the component itself would reject must fail loudly here
+/// rather than silently dropping the tool from the set-equality checks.
+#[test]
+#[should_panic(expected = "expected exactly `read` or `mutating`")]
+fn an_unknown_access_marker_is_a_hard_failure() {
+    documented_tools("<ToolCard name=\"read_file\" access=\"Read-only\">x</ToolCard>");
 }

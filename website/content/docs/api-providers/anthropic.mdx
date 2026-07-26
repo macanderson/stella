@@ -1,6 +1,6 @@
 ---
 title: Anthropic
-description: Claude over the native Anthropic Messages API — extended thinking mapped from Stella's effort tiers, first-class prompt caching, and claude-fable-5 as the default model.
+description: Claude over the native Anthropic Messages API — adaptive thinking, effort as a first-class control, no sampling parameters, first-class prompt caching, and claude-fable-5 as the default model.
 icon: anthropic
 ---
 
@@ -30,6 +30,8 @@ env var Stella reads with `providers.anthropic.api_key_env` — see
 The provider id is `anthropic`; the default model is `claude-fable-5`.
 
 ```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+
 stella --model anthropic/claude-fable-5 run "refactor the session store"
 export STELLA_MODEL=anthropic/claude-fable-5   # pin for the whole shell
 ```
@@ -56,12 +58,60 @@ the settings value. User scope shown deliberately: in a project's
 
 ## Reasoning and sampling
 
-Stella's reasoning setting maps to Anthropic **extended thinking**, with a thinking-token
-budget tiered by [effort](/docs/configuration/agent-engine-config) — a higher effort buys
-a larger budget. One API rule to know: while thinking is enabled, `temperature` is
-**omitted** from the request — the Messages API does not accept both, and Stella complies
-rather than erroring. Set `reasoning: "off"` for an agent if you need temperature control
-back.
+`claude-fable-5` speaks Anthropic's **adaptive** thinking shape, and Stella sends it that
+way. There is no budget to tier and no budget to tune:
+
+<CardGrid size="md">
+  <OptionCard name="reasoning">
+    `on` sends `thinking: {"type": "adaptive"}` — the model decides its own depth per
+    turn, with no budget field. `off` omits the `thinking` block entirely.
+  </OptionCard>
+  <OptionCard name="effort" defaultValue="the API's own default (high)">
+    Sent as `output_config.effort`, one of `low`, `medium`, `high`, `xhigh`, `max` —
+    all five map 1:1, no collapsing. Effort is an independent control: it is forwarded
+    whenever you pin one, whether or not thinking is on.
+  </OptionCard>
+  <OptionCard name="params.max_tokens" defaultValue="32000 with thinking on, 4096 with it off">
+    Adaptive thinking spends from the **same** output allowance as the answer, so the
+    ceiling rises when thinking is on — a max-effort judge would otherwise truncate
+    mid-verdict and return empty text. A value you set is honored as-is.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="warn">
+  `temperature`, `top_p`, and `top_k` are **never** sent to this model family —
+  regardless of your reasoning setting. Claude 4.6 and the 5-line answer any sampling
+  parameter with an HTTP 400, so Stella omits them unconditionally rather than letting a
+  run die on the wire. Turning `reasoning` off does not buy temperature control back;
+  there is no setting on this provider that does.
+</Callout>
+
+Older generations — Claude 4.5 and below — still use the legacy
+`thinking: {"type": "enabled", "budget_tokens": N}` shape and do accept sampling
+parameters. Stella classifies by model id and sends whichever shape that generation
+requires, so pinning an older snapshot needs no configuration change.
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Maximum depth for a judging pass over a large diff.
+stella --model anthropic/claude-fable-5 run "review the auth refactor as a strict judge"
+```
+
+```json title="~/.stella/settings.json"
+{
+  "agent_engine_config": {
+    "agents": {
+      "judge": {
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "reasoning": "on",
+        "effort": "max"
+      }
+    }
+  }
+}
+```
 
 ## Prompt caching
 

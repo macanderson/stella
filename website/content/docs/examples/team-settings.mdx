@@ -46,18 +46,25 @@ A committed project `settings.json` that works for every teammate:
 
 - **`api_key_env`** points every teammate at the same variable name
   (`ACME_ZAI_KEY`) while each supplies their own value — key rotation becomes a
-  vault/CI change, not a settings edit.
-- **`agent_engine_config`** is deliberately *outside* the trust boundary — model
-  routing suggestions from a repo are safe and apply immediately for everyone.
+  vault/CI change, not a settings edit. It is also a credential-routing field, so it
+  only takes effect once the teammate trusts the repo (see below).
+- **`agent_engine_config`** is *mostly* outside the trust boundary — model routing,
+  effort, reasoning, and sampling params from a repo are safe and apply immediately for
+  everyone. The one exception is a per-agent **`prompt`**: a replacement system prompt
+  is privileged, so an untrusted repo's is dropped and the user/org scope's value is
+  restored in its place. An org can keep it that way even for trusted repos with
+  `authority.project_prompts: "off"` in the managed scope.
 - **`tools`** and the guard hook travel with the repo that needs them: this repo
-  handles customer data, so it switches the whole `web` family off for everyone who
-  clones it. Narrowing needs no trust flag — only *granting* does.
+  handles customer data, so it switches the whole `web` group off for everyone who
+  clones it. Narrowing needs no trust flag — only *granting* does. (`web` is a group
+  name; a key here can equally be one tool's name or `"*"`.)
 
 ## The flag that makes it real
 
 <Callout type="warn">
-  A fresh clone's `hooks`, `providers.*.base_url`/`api_key`/`api_key_env`, and
-  `mcp.registry_url` are **held back** until the user opts in — otherwise any repo you
+  A fresh clone's `hooks`, `providers.*.base_url`/`api_key`/`api_key_env`,
+  `mcp.registry_url`, `context_providers`, per-agent `prompt`s, and the whole of
+  `.stella/mcp.toml` are **held back** until the user opts in — otherwise any repo you
   clone could run commands on your machine or route your keys through its server. Each
   teammate enables their own trusted repos:
 
@@ -66,15 +73,21 @@ A committed project `settings.json` that works for every teammate:
   ```
 
   A stderr notice names anything skipped, so "why isn't the team config applying?" is
-  diagnosable in one glance. Details: the
-  [trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+  diagnosable in one glance. `STELLA_PROJECT_HOOKS=1` is the narrower, legacy form: it
+  trusts hooks, MCP, and context providers but leaves credential routing gated.
+  Details: the [trust boundary](/docs/configuration/settings#the-project-trust-boundary).
 </Callout>
+
+So a committed `.stella/mcp.toml` is real team configuration — it just does nothing on a
+teammate's machine until they set the flag, which is the intended shape: the repo
+proposes, each seat consents.
 
 ## Each user: keys and taste
 
-```json title="~/.stella/settings.json (per teammate)"
+```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
+    "effort_auto": "off",
     "agents": {
       "judge": { "effort": "high" }
     }
@@ -82,9 +95,17 @@ A committed project `settings.json` that works for every teammate:
 }
 ```
 
+`effort_auto` is spelled out because it is the setting that decides whether the
+per-agent `effort` above means anything: with the auto on, it overwrites every
+per-agent value.
+
 ```bash
 export ACME_ZAI_KEY="sk-..."          # the value behind the repo's api_key_env
 export ANTHROPIC_API_KEY="sk-ant-..." # the judge's key
+export STELLA_TRUST_PROJECT=1         # per-repo; makes the committed config actually load
+
+stella config                          # verify: provider, model, redacted key preview
+stella models                          # every provider with its key status
 ```
 
 Keys can equally live in [`credentials.toml`](/docs/configuration/credentials) (0600,
@@ -93,15 +114,40 @@ written once via the interactive prompt). Personal endpoint routing — like a
 
 ## Merge semantics you'll actually rely on
 
-- `providers` and `agent_engine_config` merge **per field** — the repo pins the judge
-  model, a user's `effort: "high"` still applies.
-- `hooks` **concatenate** — org policy hooks, repo guard hooks, and personal hooks all
-  fire; none replaces another.
-- `tools` and `mcp` are **last scope wins, per key** — the repo's `web: "off"` beats a
-  user's `"on"`. The reverse needs `STELLA_TRUST_PROJECT=1`: a repo may narrow the tool
-  surface on its own, never widen it.
-- `allowed_models` **replaces wholesale** — whichever scope sets it owns the whole
-  list.
+<CardGrid size="md">
+  <SpecCard
+    title="providers · agent_engine_config"
+    meta={[{ label: "Rule", value: "merge per field", mono: false }]}
+  >
+    The repo pins the judge model, a user's `effort: "high"` still applies. Even
+    `agents.<role>.params` composes per knob, so one scope can set `temperature`
+    without clobbering another's `max_tokens`.
+  </SpecCard>
+  <SpecCard title="hooks" meta={[{ label: "Rule", value: "concatenate", mono: false }]}>
+    Org policy hooks, repo guard hooks, and personal hooks all fire. None
+    replaces another — no scope can remove another's gate.
+  </SpecCard>
+  <SpecCard
+    title="tools · mcp"
+    meta={[{ label: "Rule", value: "last scope wins, per key", mono: false }]}
+  >
+    The repo's `web: "off"` beats a user's `"on"`. The reverse needs
+    `STELLA_TRUST_PROJECT=1`: untrusted, every key the repo turned **on** reverts
+    to the trusted scopes' value, while every key it turned **off** stands — a
+    repo may narrow the tool surface on its own, never widen it.
+  </SpecCard>
+  <SpecCard
+    title="allowed_models"
+    meta={[{ label: "Rule", value: "replaces wholesale", mono: false }]}
+  >
+    It is one vocabulary, not a set of independent knobs — whichever scope sets
+    it owns the entire list.
+  </SpecCard>
+</CardGrid>
+
+Scope precedence for everything that merges is **user → org-managed → project**, later
+winning. The exception runs the other way: an org-managed `tools` denial is a ceiling
+applied last, so no lower scope can grant back a tool the org switched off.
 
 ## Shared spend visibility
 

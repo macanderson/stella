@@ -8,17 +8,41 @@ key; teams and power users reach for `settings.json`.
 
 ## What lives where
 
-| Path | Purpose |
-| --- | --- |
-| `~/.stella/settings.json` | User-scope [settings](/docs/configuration/settings): provider overrides, hooks |
-| `<workspace>/.stella/settings.json` | Project-scope settings (highest precedence) |
-| org-managed `settings.json` | Organization defaults ([see below](#the-settings-hierarchy)) |
-| `~/.stella/credentials.toml` | Stored [API keys](/docs/configuration/credentials) |
-| `<workspace>/.stella/mcp.toml` | [MCP servers](/docs/agent-tools/mcp) to connect at session start |
-| `<workspace>/.stella/tools/*.toml` | [Custom script tools](/docs/agent-tools/custom-tools) |
-| `<workspace>/.stella/domains.toml` | Domain taxonomy (from `stella init`) |
-| `<workspace>/.stella/memories/*.md` | Saved [workspace memories](/docs/context-engine) |
-| `<workspace>/.stella/private/store.db` | Local [telemetry &amp; store](/docs/telemetry) — embedded SQLite |
+<CardGrid size="md">
+  <OptionCard name="~/.stella/settings.json">
+    User-scope [settings](/docs/configuration/settings): provider overrides, hooks, tools,
+    the `context` block.
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/settings.json">
+    Project-scope settings — highest precedence, and a
+    [trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+  </OptionCard>
+  <OptionCard name="org-managed settings.json">
+    Organization defaults ([see below](#the-settings-hierarchy)). The only scope that may
+    carry `authority` or `enterprise_telemetry`.
+  </OptionCard>
+  <OptionCard name="~/.stella/credentials.toml">
+    Stored [API keys](/docs/configuration/credentials), written with owner-only permissions.
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/mcp.toml">
+    [MCP servers](/docs/agent-tools/mcp) to connect at session start.
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/tools/*.toml">
+    [Custom script tools](/docs/agent-tools/custom-tools).
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/domains.toml">
+    Domain taxonomy, inferred by `stella init`.
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/memories/*.md">
+    Saved [workspace memories](/docs/context-engine).
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/rules/*.md">
+    Promoted rules and guard rules. Also read from `.claude/rules/` and `~/.stella/rules/`.
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/private/store.db">
+    Local [telemetry &amp; store](/docs/telemetry) — embedded SQLite.
+  </OptionCard>
+</CardGrid>
 
 ## The settings hierarchy
 
@@ -33,8 +57,10 @@ A project entry overrides an org-managed one, which overrides a user one — per
 project can change just a base URL while inheriting an API key from a higher scope. This is
 the same layering the rest of Stella's settings use.
 
-See **[settings.json](/docs/configuration/settings)** for the full schema, the org-managed
-path, and worked examples.
+<SettingsCascadeDiagram />
+
+See **[settings.json](/docs/configuration/settings)** for the full schema — all ten
+top-level sections — the org-managed path, and worked examples.
 
 ## Configuration vs. credentials
 
@@ -51,30 +77,216 @@ Both feed the [credential chain](/docs/getting-started/providers#the-credential-
 ## Everything you can configure
 
 Stella is configured through three kinds of surface — **files**, **environment variables**,
-and **command-line flags** — with flags winning over env vars winning over files. This table
-is the complete map; each row links to its detail page.
+and **command-line flags** — with flags winning over env vars winning over files. What
+follows is the complete map; each card links to its detail page.
 
-| What you want to set | Surface | Example |
-| --- | --- | --- |
-| Which provider/model runs | `--model` flag · `STELLA_MODEL` · `providers.<id>.default_model` | `stella --model anthropic/claude-fable-5 run "…"` |
-| A provider's API key | `--api-key` flag · provider env var · `settings.json` `api_key` · `credentials.toml` | `export ANTHROPIC_API_KEY=…` |
-| A provider's base URL | `--base-url` flag · `STELLA_BASE_URL` · `providers.<id>.base_url` | `providers.zai.base_url` → coding endpoint |
-| A provider's display name | `settings.json` `providers.<id>.name` | see [settings.json](/docs/configuration/settings) |
-| Output format (text/json/stream-json) | `--output-format` flag · `STELLA_OUTPUT_FORMAT` | `stella --output-format json run "…"` |
-| A hard USD spend cap | `--budget` flag · `STELLA_BUDGET` | `stella --budget 2.00 goal "…"` |
-| Shell commands on lifecycle events | `settings.json` `hooks` key | [Hooks](/docs/agent-tools/hooks) |
-| Per-agent engine models (worker/judge/triage) | `settings.json` `agent_engine_config` | [Agent engine config](/docs/configuration/agent-engine-config) |
-| Switch off the raw `bash` tool (on by default) | `settings.json` `tools.bash: "off"` | [settings.json](/docs/configuration/settings#the-tools-section) |
-| Switch off a whole family — e.g. the `web` tools, or the `process` group | `settings.json` `tools.web: "off"` | [settings.json](/docs/configuration/settings#the-tools-section) |
-| Org-managed defaults for a fleet | `STELLA_MANAGED_SETTINGS` → a `settings.json` | [settings hierarchy](#the-settings-hierarchy) |
-| Trust a repo's project-scope hooks &amp; routing | `STELLA_TRUST_PROJECT=1` | [trust boundary](/docs/configuration/settings#the-project-trust-boundary) |
-| MCP servers to connect | `<workspace>/.stella/mcp.toml` | [MCP](/docs/agent-tools/mcp) |
-| Custom script tools | `<workspace>/.stella/tools/*.toml` | [Custom tools](/docs/agent-tools/custom-tools) |
-| Per-tool permission gates | `hooks` `PreToolUse` matchers + the `tools` switches | [Permissions](/docs/agent-tools/permissions) |
-| Force the plain REPL (no TUI) | `--plain` flag · `STELLA_PLAIN=1` | `stella --plain chat` |
-| Freeze TUI animation (CI/recordings) | `--no-anim` flag · `STELLA_NO_ANIM` · `NO_COLOR` | `stella --no-anim chat` |
-| Write the Command Deck's structured debug log | `STELLA_DEBUG=1` → `~/.local/state/stella/logs/deck-&lt;pid&gt;.jsonl` (owner-only) | `STELLA_DEBUG=1 stella chat` |
-| Arm the paid media live smokes (contributors) | `STELLA_MEDIA_LIVE=1` + the provider key | `STELLA_MEDIA_LIVE=1 cargo test -p stella-media` |
+### Providers, models, and keys
+
+<CardGrid size="md">
+  <SpecCard
+    title="Which provider/model runs"
+    href="/docs/api-providers"
+    meta={[
+      { label: "Surface", value: "--model · STELLA_MODEL · providers.<id>.default_model" },
+      { label: "Example", value: "stella --model anthropic/claude-fable-5 run …" },
+    ]}
+  >
+    Flags beat the environment, which beats the file.
+  </SpecCard>
+  <SpecCard
+    title="A provider's API key"
+    href="/docs/getting-started/providers#the-credential-chain"
+    meta={[
+      { label: "Surface", value: "--api-key · provider env var · api_key · credentials.toml" },
+      { label: "Example", value: "export ANTHROPIC_API_KEY=…" },
+    ]}
+  >
+    The first hit in the credential chain wins; nothing below it is read.
+  </SpecCard>
+  <SpecCard
+    title="A provider's base URL"
+    href="/docs/configuration/settings#the-providers-map"
+    meta={[
+      { label: "Surface", value: "--base-url · STELLA_BASE_URL · providers.<id>.base_url" },
+      { label: "Example", value: "providers.zai.base_url" },
+    ]}
+  >
+    A coding-plan endpoint, a proxy, or a gateway.
+  </SpecCard>
+  <SpecCard
+    title="A provider's display name"
+    href="/docs/configuration/settings#the-providers-map"
+    meta={[{ label: "Surface", value: "providers.<id>.name" }]}
+  >
+    What `stella config` and `stella models` print.
+  </SpecCard>
+</CardGrid>
+
+### Output, budget, and the run itself
+
+<CardGrid size="md">
+  <SpecCard
+    title="Output format"
+    href="/docs/scripting"
+    meta={[
+      { label: "Surface", value: "--output-format · STELLA_OUTPUT_FORMAT" },
+      { label: "Example", value: "stella --output-format json run …" },
+    ]}
+  >
+    `text`, `json`, or `stream-json`.
+  </SpecCard>
+  <SpecCard
+    title="A hard USD spend cap"
+    href="/docs/telemetry#budget-observed-vs-enforced"
+    meta={[
+      { label: "Surface", value: "--budget · STELLA_BUDGET" },
+      { label: "Example", value: 'stella --budget 2.00 goal "…"' },
+    ]}
+  >
+    Enforced, not advisory: work aborts cleanly once spend passes the cap.
+  </SpecCard>
+  <SpecCard
+    title="An end-of-run recap"
+    href="/docs/configuration/settings#the-end-of-run-recap"
+    meta={[
+      { label: "Surface", value: "settings.json enable_recap" },
+      { label: "Example", value: '{ "enable_recap": "on" }' },
+    ]}
+  >
+    A deterministic outcome-and-changes panel in text mode. No model call.
+  </SpecCard>
+  <SpecCard
+    title="Force the plain REPL (no TUI)"
+    href="/docs/agent-modes"
+    meta={[
+      { label: "Surface", value: "--plain · STELLA_PLAIN=1" },
+      { label: "Example", value: "stella --plain chat" },
+    ]}
+  >
+    For pipes, dumb terminals, and recordings.
+  </SpecCard>
+  <SpecCard
+    title="Freeze TUI animation"
+    href="/docs/agent-modes"
+    meta={[
+      { label: "Surface", value: "--no-anim · STELLA_NO_ANIM · NO_COLOR" },
+      { label: "Example", value: "stella --no-anim chat" },
+    ]}
+  >
+    For CI logs and screen recordings.
+  </SpecCard>
+</CardGrid>
+
+### Tools, hooks, and context
+
+<CardGrid size="md">
+  <SpecCard
+    title="Shell commands on lifecycle events"
+    href="/docs/agent-tools/hooks"
+    meta={[{ label: "Surface", value: "settings.json hooks" }]}
+  >
+    `SessionStart`, `PreToolUse`, `PostToolUse`.
+  </SpecCard>
+  <SpecCard
+    title="Per-agent engine models"
+    href="/docs/configuration/agent-engine-config"
+    meta={[{ label: "Surface", value: "settings.json agent_engine_config" }]}
+  >
+    Worker, judge, and triage roles, each with its own model and sampling params.
+  </SpecCard>
+  <SpecCard
+    title="Switch off the raw bash tool"
+    href="/docs/configuration/settings#the-tools-section"
+    meta={[{ label: "Surface", value: 'settings.json tools.bash: "off"' }]}
+  >
+    It ships on. The `tools` section is the one way to turn it off.
+  </SpecCard>
+  <SpecCard
+    title="Switch off a whole family"
+    href="/docs/configuration/settings#the-tools-section"
+    meta={[{ label: "Surface", value: 'settings.json tools.web: "off"' }]}
+  >
+    Groups such as `web`, `process`, or `repo` — or `"*"` for everything.
+  </SpecCard>
+  <SpecCard
+    title="Per-tool permission gates"
+    href="/docs/agent-tools/permissions"
+    meta={[{ label: "Surface", value: "hooks PreToolUse matchers + tools switches" }]}
+  >
+    A programmable veto in front of any tool call.
+  </SpecCard>
+  <SpecCard
+    title="The adaptive-context lifecycle"
+    href="/docs/configuration/settings#the-context-block"
+    meta={[{ label: "Surface", value: "settings.json context" }]}
+  >
+    Learning, governance, promotion, efficacy, and retention knobs. Disabled by default.
+  </SpecCard>
+  <SpecCard
+    title="Third-party context sources"
+    href="/docs/configuration/settings#external-context-providers"
+    meta={[{ label: "Surface", value: "settings.json context_providers" }]}
+  >
+    CGP providers over stdio or HTTP, admitted only after conformance and consent.
+  </SpecCard>
+  <SpecCard
+    title="MCP servers to connect"
+    href="/docs/agent-tools/mcp"
+    meta={[{ label: "Surface", value: "<workspace>/.stella/mcp.toml" }]}
+  >
+    Connected at session start.
+  </SpecCard>
+  <SpecCard
+    title="Custom script tools"
+    href="/docs/agent-tools/custom-tools"
+    meta={[{ label: "Surface", value: "<workspace>/.stella/tools/*.toml" }]}
+  >
+    Your own executables, described as tool manifests.
+  </SpecCard>
+</CardGrid>
+
+### Fleet defaults, trust, and diagnostics
+
+<CardGrid size="md">
+  <SpecCard
+    title="Org-managed defaults for a fleet"
+    href="#the-settings-hierarchy"
+    meta={[
+      { label: "Surface", value: "STELLA_MANAGED_SETTINGS" },
+      { label: "Example", value: "/etc/stella/settings.json" },
+    ]}
+  >
+    One file every project on the machine inherits.
+  </SpecCard>
+  <SpecCard
+    title="Trust a repo's project-scope file"
+    href="/docs/configuration/settings#the-project-trust-boundary"
+    meta={[{ label: "Surface", value: "STELLA_TRUST_PROJECT=1" }]}
+  >
+    Unlocks project hooks, credential routing, context providers, tool grants, replacement
+    prompts, and workspace custom tools.
+  </SpecCard>
+  <SpecCard
+    title="The Command Deck's debug log"
+    href="/docs/agent-modes"
+    meta={[
+      { label: "Surface", value: "STELLA_DEBUG=1" },
+      { label: "Writes", value: "~/.local/state/stella/logs/deck-<pid>.jsonl" },
+    ]}
+  >
+    Structured, owner-only, and off unless asked for.
+  </SpecCard>
+  <SpecCard
+    title="Arm the paid media live smokes"
+    href="/docs/agent-tools"
+    meta={[
+      { label: "Surface", value: "STELLA_MEDIA_LIVE=1 + the provider key" },
+      { label: "Example", value: "STELLA_MEDIA_LIVE=1 cargo test -p stella-media" },
+    ]}
+  >
+    For contributors — these tests spend real money.
+  </SpecCard>
+</CardGrid>
 
 <Callout type="warn">
   `STELLA_DEBUG` and `STELLA_MEDIA_LIVE` were previously spelled `OXAGEN_DEBUG` and
@@ -121,7 +333,7 @@ stella --model local/llama3.1 --base-url http://localhost:11434/v1 run "…"
 
 **Gate every `bash` call through a guard script** (`settings.json`):
 
-```json
+```json title="~/.stella/settings.json"
 { "hooks": { "PreToolUse": [ { "matcher": "bash",
   "hooks": [ { "command": "./scripts/guard.sh", "timeoutMs": 5000 } ] } ] } }
 ```
