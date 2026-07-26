@@ -134,6 +134,14 @@ pub const DIFF_ADD_BG: Color = Color::Rgb(20, 44, 26);
 /// Subtle background tint behind removed diff lines (pair with [`BAD`]).
 pub const DIFF_DEL_BG: Color = Color::Rgb(52, 24, 26);
 
+/// Background behind the bytes of an added line that actually changed, when a
+/// `-`/`+` pair is close enough to word-diff. Two steps brighter than
+/// [`DIFF_ADD_BG`]: the whole line is already "added", so this has to read as
+/// a second level of emphasis *within* it rather than a different category.
+pub const DIFF_ADD_BG_EMPH: Color = Color::Rgb(26, 82, 44);
+/// The removed-line counterpart of [`DIFF_ADD_BG_EMPH`].
+pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(102, 34, 42);
+
 // ── Syntax highlighting (diff bodies) ───────────────────────────────────────
 //
 // A four-color code palette layered *under* the add/remove diff semantics:
@@ -341,6 +349,8 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (AGENT_ICE, 153, 12),
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
+    (DIFF_ADD_BG_EMPH, 28, 2),
+    (DIFF_DEL_BG_EMPH, 88, 1),
     (SYNTAX_STRING, 114, 10),
     (SYNTAX_COMMENT, 244, 8),
 ];
@@ -610,6 +620,8 @@ mod tests {
         AGENT_ICE,
         DIFF_ADD_BG,
         DIFF_DEL_BG,
+        DIFF_ADD_BG_EMPH,
+        DIFF_DEL_BG_EMPH,
         SYNTAX_STRING,
         SYNTAX_COMMENT,
     ];

@@ -22,6 +22,13 @@ use stella_protocol::{
     ScopeProposal, StageKind, TaskItem, TaskStatus, ToolOutput,
 };
 
+use std::collections::VecDeque;
+
+pub mod file_state;
+#[cfg(test)]
+pub use file_state::DIFF_HISTORY;
+pub use file_state::FileState;
+
 /// How many characters of a tool input / output summary we retain on a
 /// transcript line before eliding — the full payload is never needed on the
 /// one-line card (the diff panel and detail views carry the rest).
@@ -275,23 +282,6 @@ pub struct InlineDiffRef {
     pub path: String,
     /// [`FileState::changes`] at fold time — stale (hidden) once it differs.
     pub seq: u32,
-}
-
-/// The state of one file in the files-touched panel. `latest_diff` is
-/// literally the diff carried by the most recent *mutating* `FileChange` for
-/// this path — the single event-borne data path (L-T5). Reads never touch
-/// `kind`/`latest_diff`/`changes` (the latter doubles as the inline-diff
-/// freshness tag, so a read bumping it would hide a still-current diff);
-/// they only grow `reads`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FileState {
-    pub path: String,
-    pub kind: FileChangeKind,
-    pub latest_diff: Option<String>,
-    /// How many mutating `FileChange` events have touched this path.
-    pub changes: u32,
-    /// How many times this path has been read.
-    pub reads: u32,
 }
 
 /// Live HUD numbers, all folded from the event stream.
@@ -779,18 +769,24 @@ impl SessionModel {
                 existing.kind = kind;
                 existing.latest_diff = diff.clone();
                 existing.changes += 1;
+                existing.remember_diff(diff);
             } else {
                 existing.reads += 1;
             }
         } else {
             let mutation = kind.is_mutation();
-            self.files.push(FileState {
+            let mut state = FileState {
                 path: path.to_string(),
                 kind,
                 latest_diff: diff.clone(),
+                recent_diffs: VecDeque::new(),
                 changes: mutation as u32,
                 reads: !mutation as u32,
-            });
+            };
+            if mutation {
+                state.remember_diff(diff);
+            }
+            self.files.push(state);
         }
     }
 }
@@ -900,14 +896,11 @@ fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
     // Primary field per tool — the one the user cares about at a glance.
     if let Some(p) = str_field("path").or_else(|| str_field("file_path")) {
         return match name {
-            "edit_file" => {
-                let old = str_field("old_string").map(|s| truncate_field(&s, 40));
-                let new = str_field("new_string").map(|s| truncate_field(&s, 40));
-                match (old, new) {
-                    (Some(o), Some(n)) => format!("{p}  {o} → {n}"),
-                    _ => p,
-                }
-            }
+            // Just the path. The old/new strings used to ride along here,
+            // truncated to 40 characters each — long enough to fill the row,
+            // never long enough to read, and describing exactly the change the
+            // inline diff below renders properly.
+            "edit_file" => p,
             "write_file" => {
                 let lines = str_field("content").map(|c| c.lines().count()).unwrap_or(0);
                 format!("{p}  ({lines} lines)")

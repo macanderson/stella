@@ -581,14 +581,26 @@ mod tests {
     }
 
     #[test]
-    fn a_later_mutation_to_the_same_path_stales_the_settled_inline_diff() {
+    fn a_later_mutation_leaves_the_settled_inline_diff_showing_its_own_change() {
         use stella_protocol::{FileChangeKind, ToolCall, ToolOutput};
         // A successful edit_file: ToolStart → FileChange (the engine's tap
         // fires during execution) → ToolResult. The result's inline diff
-        // must render — and must vanish once a LATER mutation of the same
-        // path makes the recorded seq stale, even though nothing was
-        // appended to the transcript (the fold cache's only moving
-        // fingerprint is the file-mutation count).
+        // must render, and must go on rendering *the change that call made*
+        // when the same path is edited again.
+        //
+        // It used to vanish instead: `FileState` kept one `latest_diff` and
+        // the ref resolved only while `changes` still equalled the recorded
+        // seq, so the second edit to a file silently stripped the first
+        // edit's diff off its row. A session that touched one file five
+        // times showed four edits with nothing under them. The path now
+        // remembers its last `DIFF_HISTORY` diffs by seq, so each row
+        // resolves its own — attribution, which was always the point, now
+        // achieved by keeping the right diff rather than by dropping every
+        // diff that might be the wrong one.
+        //
+        // The fold cache still keys on the total mutation count, because
+        // eviction from that history *can* change how a settled entry
+        // renders while nothing is appended to the transcript.
         let mut model = SessionModel::new();
         model.apply(&AgentEvent::ToolStart {
             call: ToolCall {
@@ -633,13 +645,15 @@ mod tests {
             "the fresh inline diff renders:\n{text}"
         );
 
-        // The same path mutates again — no transcript append, but the
-        // settled result's diff no longer belongs to its call.
+        // The same path mutates again — no transcript append. The settled
+        // result keeps the diff it produced and never adopts the new one.
+        let len_before = model.transcript.len();
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
             kind: FileChangeKind::Modified,
             diff: Some("@@ -1,1 +1,1 @@\n+second_diff_line".into()),
         });
+        assert_eq!(model.transcript.len(), len_before, "no transcript append");
         fold.refresh(
             "lead",
             &model.transcript,
@@ -657,8 +671,49 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
             .collect();
         assert!(
-            !text.contains("first_diff_line") && !text.contains("second_diff_line"),
-            "a stale diff is hidden, never misattributed:\n{text}"
+            text.contains("first_diff_line"),
+            "the settled row still shows the change its own call made:\n{text}"
+        );
+        assert!(
+            !text.contains("second_diff_line"),
+            "and never adopts a later call's change:\n{text}"
+        );
+
+        // Past `DIFF_HISTORY` mutations the recorded seq falls off the end
+        // of the ring and there is no diff left that belongs to this call.
+        // The row degrades to naming its result — and the fold must refold
+        // to show that, with the transcript still untouched.
+        for i in 0..crate::model::DIFF_HISTORY {
+            model.apply(&AgentEvent::FileChange {
+                path: "src/x.rs".into(),
+                kind: FileChangeKind::Modified,
+                diff: Some(format!("@@ -1,1 +1,1 @@\n+evicting_edit_{i}")),
+            });
+        }
+        assert_eq!(model.transcript.len(), len_before, "still no append");
+        fold.refresh(
+            "lead",
+            &model.transcript,
+            &model.files,
+            "",
+            false,
+            &expanded,
+            false,
+            0,
+            120,
+        );
+        let text: String = fold
+            .window_lines(0..fold.total())
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
+            .collect();
+        assert!(
+            !text.contains("first_diff_line"),
+            "an evicted diff stops rendering:\n{text}"
+        );
+        assert!(
+            !text.contains("evicting_edit_"),
+            "and is not replaced by a change the call never made:\n{text}"
         );
 
         // And the incrementally-invalidated fold stays line-exact.
