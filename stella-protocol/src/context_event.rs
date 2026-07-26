@@ -1,9 +1,17 @@
 //! Internal, replay-safe adaptive-context events (Phase 1 installment 5).
 //!
 //! These are stella-internal lifecycle events — they do **not** change the
-//! Context Graph Exchange Protocol wire semantics. They carry only stable IDs
+//! Context Graph Protocol wire semantics. They carry only stable IDs
 //! (as strings), never the `stella-core` record structs: `stella-core` depends on
 //! `stella-protocol`, so importing core types here would be a dependency cycle.
+//!
+//! **Status: schema landed, channel not yet wired.** Nothing in this workspace
+//! constructs or reads a [`LifecycleEventEnvelope`] today — the types and their
+//! golden JCS vectors exist so the wire shape (and therefore the `record_hash`
+//! preimages built from it) is pinned before the first emitter lands. Treat the
+//! bodies below as a published contract regardless: the golden vectors are the
+//! thing that makes a later rename a test failure rather than a silent hash
+//! change across replays.
 //!
 //! ## Forward compatibility
 //!
@@ -85,9 +93,22 @@ impl LifecycleEventEnvelope {
     /// Decode the payload into a typed [`LifecycleEvent`]. An unrecognized
     /// `event_type`, or a payload that does not match a recognized type, is
     /// preserved as [`LifecycleEvent::Unknown`] — decoding never fails.
+    ///
+    /// Note what that costs: a recognized `event_type` whose payload is
+    /// *corrupt* is indistinguishable from one that is merely *newer*, because
+    /// both land on `Unknown`. That is the opposite of the line
+    /// [`crate::event::AgentEvent`] draws, where a known tag with a bad body is
+    /// a hard error. The trade is deliberate here — this channel's job is that
+    /// a replay never dies on an interior event — but a caller that needs to
+    /// tell skew from damage must compare `schema_version` itself.
+    #[must_use]
     pub fn decode(&self) -> LifecycleEvent {
+        // Borrows the payload rather than cloning it: `&Value` is itself a
+        // `Deserializer`, and every body below is owned scalars, so a clone
+        // would duplicate the whole tree only to throw it away on the
+        // unrecognized path.
         fn typed<T: for<'de> Deserialize<'de>>(payload: &Value) -> Option<T> {
-            serde_json::from_value(payload.clone()).ok()
+            T::deserialize(payload).ok()
         }
         let unknown = || LifecycleEvent::Unknown {
             event_type: self.event_type.clone(),

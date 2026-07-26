@@ -138,11 +138,12 @@ impl Drop for ClaimGuard<'_> {
 ///
 /// Same shape and same reason as [`ClaimGuard`]: an unguarded
 /// `remove(&task.id)` after the worker's `.await` is skipped by a panicking
-/// worker and by a dropped dispatch future, and the stale entry then makes
-/// [`Fleet::pause_task`]/[`Fleet::stop_task`] answer `true` for a task with no
-/// live worker (signalling into a dropped receiver is indistinguishable from
-/// success for `watch::Sender::send`), while the map grows without bound for a
-/// long-lived [`Fleet`].
+/// worker and by a dropped dispatch future, and the map then grows without
+/// bound for a long-lived [`Fleet`]. A stale entry is also still *addressable*
+/// whenever any receiver outlives the worker's own return — a worker that
+/// handed its pause watch to a background task keeps one alive — so
+/// [`Fleet::pause_task`]/[`Fleet::stop_task`] would answer `true` and signal
+/// into the settled attempt's lines instead of reporting "no live worker".
 struct ControlGuard<'a> {
     controls: &'a Mutex<HashMap<TaskId, TaskControlHandle>>,
     id: TaskId,
@@ -176,7 +177,20 @@ pub struct WorkerOutcome {
 /// Static configuration of a fleet run.
 #[derive(Debug, Clone)]
 pub struct FleetConfig {
-    /// This run's id — the ledger key and the lineage parent.
+    /// This run's id — the ledger key, the lineage parent, and the prefix of
+    /// every claim holder this fleet mints ([`Fleet::dispatch`] claims under
+    /// `<run_id>/<task_id>`).
+    ///
+    /// That last role carries an unenforced contract: `acquire_claims` reaps
+    /// **provably-dead** holders before treating a refusal as real (#613), and
+    /// `stella_store::holder_pid` decides liveness by parsing the trailing
+    /// `-<digits>` of the segment before the `/`. `fleet_cmd` therefore mints
+    /// `fleet-<start_ms>-<pid>`, and a run id that ends in some other number —
+    /// `release-2024`, `run-7` — is read as that *pid*. If it names a process
+    /// that is not running, a sibling losing a claim race reaps this run's own
+    /// live claims and both workers proceed to write the same path. A run id
+    /// should end in the minting process's pid, or in nothing numeric at all
+    /// (an unparsable holder is assumed alive, which is the safe direction).
     pub run_id: String,
     /// The git ref every isolated worktree is branched from.
     pub base_ref: String,
@@ -187,6 +201,10 @@ pub struct FleetConfig {
 }
 
 impl FleetConfig {
+    /// A config for `run_id`, branching isolated worktrees from `base_ref`,
+    /// with the default fan-out width of 4 (override with
+    /// [`with_max_concurrency`](Self::with_max_concurrency)).
+    #[must_use]
     pub fn new(run_id: impl Into<String>, base_ref: impl Into<String>) -> Self {
         Self {
             run_id: run_id.into(),
@@ -223,7 +241,10 @@ pub struct TaskHandle {
 /// The result of running a whole plan.
 #[derive(Debug, Default)]
 pub struct FleetRunReport {
-    /// Every dispatched task's handle, in a deterministic (task-id) order.
+    /// Every dispatched task's handle, in wave order and sorted by task id
+    /// **within** each wave — deterministic for a given plan regardless of
+    /// which worker finished first, but not globally id-sorted (a later
+    /// wave's `a` still follows an earlier wave's `z`).
     pub handles: Vec<TaskHandle>,
     /// Task ids whose worker reported success — the set that unblocked
     /// dependents.
@@ -242,12 +263,14 @@ pub struct FleetRunReport {
 
 impl FleetRunReport {
     /// Total spend across every dispatched child.
+    #[must_use]
     pub fn total_cost_usd(&self) -> f64 {
         self.handles.iter().map(|h| h.outcome.cost_usd).sum()
     }
 
     /// Whether every task ran and reported success — dispatch failures and
     /// dependency-skipped tasks count against this.
+    #[must_use]
     pub fn all_succeeded(&self) -> bool {
         self.dispatch_failures.is_empty()
             && self.skipped.is_empty()
@@ -268,6 +291,13 @@ pub enum FleetError {
     /// another run in the same workspace. The holder is named so the user
     /// can tell a live conflict from a crashed run's leftover claim (the
     /// holder embeds its run id).
+    ///
+    /// Terminal for that task within the run: [`Fleet::run_plan`] records it
+    /// as a dispatch failure and never re-offers the task, even though a
+    /// *sibling's* claim is released the moment that sibling settles. Two
+    /// independent tasks declaring the same path therefore cost one of them
+    /// its work — declare the overlap as a `depends_on` edge instead, so the
+    /// second claims in a later wave.
     #[error("task `{task}` claims `{path}`, already claimed by `{holder}`")]
     ClaimConflict {
         task: TaskId,
@@ -432,9 +462,9 @@ where
 
     /// THE one dispatch entry point (L-E9). Claims the task's declared
     /// paths, allocates the workspace per the task's isolation, records the
-    /// attempt, runs the worker, then stamps its commits + lineage + spend
-    /// into the ledger (one transaction) and meters its cost into the parent
-    /// budget — returning a [`TaskHandle`].
+    /// attempt, runs the worker, then meters its cost into the parent budget
+    /// and stamps its commits + lineage + spend into the ledger (one
+    /// transaction) — returning a [`TaskHandle`].
     pub async fn dispatch(&self, task: &Task) -> Result<TaskHandle, FleetError> {
         // 0a. Aggregate budget gate — enforced BEFORE the worker runs. The
         //     post-run `record_spend` alone only stopped launching the NEXT
@@ -513,9 +543,15 @@ where
         // 3. Run the worker — the slow part, concurrent across a wave. No
         //    lock is held across the await. Its control lines are registered
         //    first and deregistered the moment it settles, so the control
-        //    verbs address exactly the tasks with a live worker. (Task ids
-        //    are unique within a plan; an ad-hoc re-dispatch of a still-live
-        //    id would re-key the registration to the newer attempt.)
+        //    verbs address exactly the tasks with a live worker. The map is
+        //    keyed by task id alone, which is total within a plan —
+        //    `run_plan` never has two live attempts of one id. An ad-hoc
+        //    caller dispatching a still-live id concurrently gets the honest
+        //    limit of that key: the second registration displaces the first,
+        //    and whichever attempt settles first deregisters the other's
+        //    control lines, leaving a live worker unaddressable by
+        //    pause/stop. Re-dispatch a task after its previous attempt
+        //    settles, not alongside it.
         let (controls, control_guard) = self.register_controls(task);
         let outcome = self.worker.run(task, &workspace_root, controls).await;
         // The worker settled — drop its control handle so a later pause or
@@ -525,9 +561,23 @@ where
         // panicking or this future being cancelled mid-run.
         drop(control_guard);
 
-        // 4. Stamp the outcome (attempt close + commits + spend) atomically,
-        //    then meter the child's cost into the parent budget (L-E9).
+        // 4. Meter the child's cost into the parent budget (L-E9), then stamp
+        //    the outcome (attempt close + commits + spend) atomically.
+        //
+        //    The order matters only on the error path, and it matters a lot:
+        //    the worker has already spent real money by the time it returns,
+        //    so a ledger write that fails must not ALSO drop that spend from
+        //    the in-memory gate. Stamping first meant the `?` returned before
+        //    `record_spend` ran, and the parent guard then let the rest of the
+        //    fan-out run as if this child had cost nothing — a fleet spending
+        //    past `--budget` because a disk error, not because of its plan.
+        //    Over-counting a child whose ledger row was lost is the safe
+        //    direction; under-counting is not.
         let finished_at_ms = self.clock.now_ms();
+        let budget = {
+            let mut guard = self.lock_budget();
+            guard.record_spend(outcome.cost_usd)
+        };
         {
             let ledger = self.lock_ledger();
             ledger.finish_attempt(&AttemptFinish {
@@ -542,10 +592,6 @@ where
                 spend_at_ms: finished_at_ms,
             })?;
         }
-        let budget = {
-            let mut guard = self.lock_budget();
-            guard.record_spend(outcome.cost_usd)
-        };
 
         Ok(TaskHandle {
             task_id: task.id.clone(),
@@ -558,7 +604,9 @@ where
 
     /// The lock-table identity a task claims under: run-scoped, so a crashed
     /// run's leftover claim is distinguishable from this run's by eye (the
-    /// run id embeds its start time and pid).
+    /// run id embeds its start time and pid). That pid is also what makes the
+    /// dead-holder reap in [`acquire_claims`](Self::acquire_claims) decidable
+    /// — see the contract on [`FleetConfig::run_id`].
     fn claim_holder(&self, task: &Task) -> String {
         format!("{}/{}", self.config.run_id, task.id)
     }
@@ -585,6 +633,9 @@ where
             });
         };
         let holder = self.claim_holder(task);
+        // Every holder this run mints is `<run_id>/<task_id>`, so a refusal
+        // naming one of those is a live sibling of ours.
+        let own_prefix = format!("{}/", self.config.run_id);
         for (i, path) in task.claims.iter().enumerate() {
             let mut outcome = store.acquire_file_lock(path, &holder);
             // A refusal may be a ghost: a crashed run cannot release its own
@@ -594,7 +645,22 @@ where
             // treating the refusal as real. The deck's `ClaimTap` has done
             // this since it landed; the fleet never did, which is why the
             // stranded-claim reports came from fleet runs.
-            if matches!(outcome, Ok(false)) && store.release_file_locks_of_dead_holders().is_ok() {
+            //
+            // But never reap on a refusal we can already see is a sibling's:
+            // the reap is workspace-WIDE and judges liveness from the pid
+            // embedded in each holder id, so a run id whose trailing digits
+            // name a process that is not running (`release-2024`) makes it
+            // read THIS run as dead too and release the live claims of every
+            // sibling in it — after which two workers write the same path.
+            // See the contract on [`FleetConfig::run_id`].
+            let refused = matches!(outcome, Ok(false));
+            let blocker = if refused {
+                store.file_lock_holder(path).ok().flatten()
+            } else {
+                None
+            };
+            let sibling_conflict = blocker.is_some_and(|h| h.starts_with(&own_prefix));
+            if refused && !sibling_conflict && store.release_file_locks_of_dead_holders().is_ok() {
                 outcome = store.acquire_file_lock(path, &holder);
             }
             let failure = match outcome {
@@ -808,6 +874,7 @@ where
     // Read-through accessors (tests + real callers)
 
     /// The parent budget guard's current state (a `Copy` snapshot).
+    #[must_use]
     pub fn budget_snapshot(&self) -> BudgetGuard {
         *self.lock_budget()
     }

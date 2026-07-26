@@ -178,6 +178,24 @@ impl BlockDraft {
 /// prefix is the stable-cached head (L-E8) and the final message is the live
 /// tail that is recomputed each step; cache attribution (spec §7, A3) refines
 /// these against reported usage.
+///
+/// Two known gaps, named rather than papered over — closing either moves every
+/// stored manifest's numbers or ids, so both are fidelity increments, not
+/// comment fixes:
+///
+/// - **Every `User` message becomes [`BlockKind::UserGoal`].** The driver also
+///   injects User-role messages that are not the user's goal: the overflow
+///   summary (`driver::SUMMARY_MARKER_PREFIX`) and the stuck-loop steer
+///   (`driver::LOOP_STEER_PREFIX`), plus real mid-turn steers from
+///   `ports::TurnSteering`. [`BlockKind::Steered`] and [`BlockKind::Summary`]
+///   exist for exactly those and are never emitted from here, so a receipt
+///   attributes engine-generated text to the user. Reclassifying changes
+///   `kind_tag`, and with it the block id.
+/// - **Attachments are not decomposed.** `CompletionMessage::attachments`
+///   yields no block, while `crate::estimator` counts its base64 weight — so on
+///   a multimodal turn the manifest's summed `token_cost` reads materially
+///   below the same event's `estimated_input_tokens`. [`BlockKind::Attachment`]
+///   is the seat reserved for it.
 fn decompose(messages: &[CompletionMessage]) -> Vec<BlockDraft> {
     let mut drafts = Vec::new();
     for (message_index, message) in messages.iter().enumerate() {
@@ -501,7 +519,11 @@ mod tests {
             })
             .expect("manifest");
         let tool_entries: Vec<_> = manifest.iter().filter(|b| b.call_id.is_some()).collect();
-        assert_eq!(tool_entries.len(), 2, "both occurrences are on the manifest");
+        assert_eq!(
+            tool_entries.len(),
+            2,
+            "both occurrences are on the manifest"
+        );
         assert_eq!(
             tool_entries[0].block_id, tool_entries[1].block_id,
             "and they do share the one content-addressed id"

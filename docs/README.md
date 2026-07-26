@@ -18,17 +18,23 @@ round trip to the site.
 | [`design/`](design/) | Design specifications and RFCs: the context frame, directive schema, storage map, Context PR workflow, telemetry receipts, the serve surface, and the adaptive-context bundle under [`design/adaptive-context/`](design/adaptive-context/). |
 | [`adaptive-context/`](adaptive-context/phase-0-baseline.md) | The frozen Phase 0 baseline the adaptive-context lifecycle is built on, grounded in `file:line` references against a pinned commit. |
 | [`papers/`](papers/README.md) | The research notes behind Stella's design: [The Deterministic Engine](papers/deterministic-engine.md) and [Stella's Defensible Position](papers/stella-defensible-position.md). The live site links to these at their exact paths — don't move or rename them. |
-| [`brand/`](brand/) | Logo, mark, wordmark, and icon assets — current cuts at the top level, retired originals under `brand/legacy/`. |
+| [`brand/`](brand/README.md) | Logo, mark, wordmark, and icon assets, plus the `build.py` generator and `tokens.json` every downstream copy is derived from (`make brand`). |
+| [`context-reuse.md`](context-reuse.md) | **Vendored, do not edit.** The Context Graph Protocol's normative contract for context identity, usage reports, consent, and verification — the document 46 rustdoc citations point at. Re-sync from upstream rather than patching it. |
 | [`why-stella.md`](why-stella.md) | The technical overview, written for someone evaluating Stella rather than contributing to it. |
 | [`context-pr.md`](context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
 | [`replay-golden-trajectories.md`](replay-golden-trajectories.md) | How the golden-trajectory replay fixtures are recorded and refreshed. |
 
-Two design docs — [`design/context-frame-spec.md`](design/context-frame-spec.md)
-and [`design/directive-schema.md`](design/directive-schema.md) — carry a
-`NORMATIVE-HOME:` header pinning the Context Graph Protocol revision they defer
-to instead of restating its wire semantics. `scripts/check-normative-home.sh`
-fails CI if that pin drifts from the `contextgraph-*` git rev in
-`stella-cli/Cargo.toml`, so repin the docs and the dependency in the same PR.
+Three documents — [`design/context-frame-spec.md`](design/context-frame-spec.md),
+[`design/directive-schema.md`](design/directive-schema.md), and the vendored
+[`context-reuse.md`](context-reuse.md) — carry a `NORMATIVE-HOME:` header
+pinning the Context Graph Protocol revision they defer to instead of restating
+its wire semantics. `scripts/check-normative-home.sh` fails CI if that pin
+drifts from the `contextgraph-*` git rev in `stella-cli/Cargo.toml`, so repin
+the docs and the dependency in the same PR. The check discovers files by the
+marker written as an HTML comment, so prose that merely *names* the convention —
+this paragraph — is not itself treated as a pinned document. (Do not paste the
+comment form into prose: the guard matches the literal text and would then fail
+on a file that carries no pin.)
 
 A spec is **not** deleted just because its feature shipped. Several of the
 documents under `design/` are cited by `file §section` from Rust doc comments

@@ -10,6 +10,13 @@
 //! `main.rs`/`mod.rs` collapsing to their parent), and a specifier matches
 //! the longest registered prefix. `std`/`super`/`self` and external crates
 //! simply don't match — exactly right for a workspace graph.
+//!
+//! That registration assumes stella's own layout, `<crate>/src/**.rs` at the
+//! repo root. A crate nested one level down (`crates/foo/src/lib.rs`, the other
+//! common Cargo convention) registers no module at all, so its `use` edges are
+//! silently absent from the graph — the files still appear as nodes, which is
+//! why the omission reads as "this crate imports nothing" rather than as an
+//! error.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -129,7 +136,12 @@ pub fn snapshot(workspace_root: &Path) -> Value {
         }
     }
 
-    // Degrees, then (if oversized) keep the busiest nodes.
+    // Degrees over the *whole* index, then (if oversized) keep the busiest
+    // nodes. A kept node's `in`/`out` therefore still counts neighbours that
+    // were folded away, so on a truncated graph the sidebar's degree can
+    // exceed the edges it lists. That is deliberate: the number describes the
+    // file's real place in the index, not the sample the canvas draws — and
+    // the ranking below has to see full degrees to pick the right sample.
     let mut deg_in = vec![0_i64; files.len()];
     let mut deg_out = vec![0_i64; files.len()];
     for &(from, to) in edge_weight.keys() {

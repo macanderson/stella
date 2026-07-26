@@ -56,9 +56,15 @@ pub fn dissolve_out(ms: u32) -> Effect {
     fx::dissolve(EffectTimer::from_ms(ms, Interpolation::QuadIn)).with_rng(SimpleRng::new(FX_SEED))
 }
 
-/// A brisk amber sweep for tab / view switches in the deck shell: the new
+/// A brisk deep-gold sweep for tab / view switches in the deck shell: the new
 /// content sweeps in left-to-right out of the brand accent color and lands
 /// on its real style over `ms`.
+///
+/// Every cell it emits mid-sweep is an interpolated `Color::Rgb` with no
+/// [`crate::theme::FALLBACKS`] entry, so `degrade_buffer` passes it through
+/// untouched: on a 256- or 16-color terminal the sweep still emits 24-bit SGR.
+/// Callers that must degrade cleanly should gate the effect on
+/// [`crate::theme::ColorMode::is_truecolor`].
 pub fn tab_switch(ms: u32) -> Effect {
     fx::sweep_in(
         Motion::LeftToRight,

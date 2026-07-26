@@ -61,6 +61,12 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
     let block = Block::default().borders(Borders::ALL).title(" Graph ");
     let inner = block.inner(area);
     block.render(area, buf);
+    // A 1–2 row tab body leaves no interior at all, and `inner.y` is then one
+    // past the block — drawing the hint there would target a row outside the
+    // buffer. Same guard the Files tab's empty state carries.
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
 
     let line = Line::from(Span::styled(
         "no neighborhood loaded — the code graph appears here",

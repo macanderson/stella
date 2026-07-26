@@ -148,6 +148,45 @@ async fn non_2xx_is_a_transport_error() {
     assert!(matches!(err, McpError::Transport(_)));
 }
 
+/// Witness for the response-body cap. An MCP server is untrusted input and
+/// `reqwest`'s body readers are unbounded, so a server that answers with a
+/// gigabyte would be an out-of-memory kill of stella long before the per-call
+/// timeout noticed. The cap has to hold on the *success* path too — that is
+/// the one a hostile server actually uses.
+#[tokio::test]
+async fn an_oversized_response_body_is_refused_rather_than_buffered() {
+    let server = MockServer::start().await;
+    // 9 MiB — past the transport's 8 MiB body cap.
+    let flood = "x".repeat(9 * 1024 * 1024);
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(flood),
+        )
+        .mount(&server)
+        .await;
+
+    let transport = HttpTransport::new(
+        "h",
+        &server.uri(),
+        &BTreeMap::new(),
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    let err = transport
+        .request("tools/call", json!({}))
+        .await
+        .unwrap_err();
+    match err {
+        McpError::Transport(message) => assert!(
+            message.contains("cap"),
+            "the refusal names the budget: {message}"
+        ),
+        other => panic!("expected a transport error naming the cap, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn configured_headers_are_sent() {
     let server = MockServer::start().await;

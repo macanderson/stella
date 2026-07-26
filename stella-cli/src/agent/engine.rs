@@ -541,8 +541,24 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 /// catalog check — live in exactly one place. `effective_base_url` is the
 /// base URL requests go to (override-or-default); `base_url_override` is the
 /// raw `--base-url`, which only the Vertex/Bedrock arms consume (they build
-/// region/project-scoped URLs themselves). See [`build_provider`]'s note on
-/// the catalog check and the shared Chat Completions arm.
+/// region/project-scoped URLs themselves).
+///
+/// The catalog is consulted first (provider-scoped, since the same slug
+/// legitimately exists on several providers — `gemini-3-pro` on both `gemini`
+/// and `vertex`) so an unrecognized model slug is a hard, immediate, named
+/// error, never a silent construction of a provider that will simply fail its
+/// first live call (L-M1/L-M2). `local` and never-synced custom endpoints are
+/// exempt: their models are whatever the user pulled into them, and the
+/// anti-phantom-slug rule exists to catch drift in OUR seed data, not to veto
+/// the user's own endpoint.
+///
+/// Each wire dialect gets its own arm: OpenAI (Responses API), Anthropic
+/// (Messages), Gemini direct + Vertex (generateContent), Bedrock (Converse,
+/// SigV4). Everything else — Z.ai, xAI, DeepSeek, OpenRouter, local — is
+/// genuinely the same Chat Completions shape behind different base URLs,
+/// served by the shared adapter re-identified per provider so its
+/// `Provider::id()` and error messages name the surface actually being called
+/// (an xAI 401 must never read "Z.ai rejected the API key").
 fn build_provider_parts(
     provider_config: &crate::config::ProviderConfig,
     model_id: &str,

@@ -164,6 +164,18 @@ fn table_json<'a>(dumps: &'a [TableDump], table: &str) -> &'a str {
         .unwrap_or("[]")
 }
 
+/// Escape a value that is interpolated into HTML *markup* rather than into the
+/// `<script>` block that [`script_json`] covers. Only the watermark takes this
+/// path today — it is a store-supplied string, and a store column is not a
+/// place this module gets to assume markup-safety about.
+fn escape_html(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 /// Make a JSON document safe to embed inside an HTML `<script>` element.
 ///
 /// The dumps are interpolated straight into `<script>…</script>`, and HTML —
@@ -220,9 +232,10 @@ fn render_dashboard(
     let total_output_fmt = comma(total_output);
     let total_cache_read_fmt = comma(total_cache_read);
 
-    // Every dump below is interpolated into the page's `<script>` element, so
-    // each one goes through `script_json` first — see its doc for why raw JSON
-    // is not safe there.
+    // The watermark is the only value interpolated into markup rather than
+    // into the `<script>` block; every dump below goes through `script_json`
+    // instead — see its doc for why raw JSON is not safe there.
+    let watermark = escape_html(watermark);
 
     // Telemetry rows for the timeline chart.
     let telemetry_json = script_json(table_json(dumps, "telemetry"));
@@ -496,8 +509,15 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
 // We avoid a `zip` crate dependency by writing the simplest valid ZIP: stored
 // (uncompressed) entries with correct CRC-32, local file headers, central
 // directory, and end-of-central-directory record. This is fully compatible
-// with every unzip tool and OS file explorer. Store-only is fine here — the
-// raw JSON compresses poorly anyway relative to the simplicity cost.
+// with every unzip tool and OS file explorer.
+//
+// Store-only is a deliberate trade, not a claim about the data: pretty-printed
+// JSON compresses very well, so the archive is several times larger than a
+// deflated one would be. What it buys is zero dependencies and no compression
+// state machine to get wrong. A telemetry dump large enough for that size to
+// matter is the signal to reach for a real zip crate — and to stream entries
+// instead of assembling the whole archive in memory, which this writer also
+// does not do.
 
 /// CRC-32 lookup table (polynomial 0xEDB88320).
 fn crc32_table() -> [u32; 256] {
@@ -929,6 +949,21 @@ mod tests {
         assert!(
             result.unwrap_err().contains("no session telemetry"),
             "error message is helpful"
+        );
+    }
+
+    /// The watermark is the one store-supplied value that reaches markup
+    /// rather than the `<script>` block, so it gets the markup escape.
+    #[test]
+    fn escape_html_neutralizes_markup() {
+        assert_eq!(escape_html("2024-01-15 10:30:00"), "2024-01-15 10:30:00");
+        assert_eq!(
+            escape_html("<img src=x onerror=alert(1)>"),
+            "&lt;img src=x onerror=alert(1)&gt;"
+        );
+        assert_eq!(
+            escape_html("a & \"b\" 'c'"),
+            "a &amp; &quot;b&quot; &#39;c&#39;"
         );
     }
 }

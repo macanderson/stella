@@ -158,8 +158,11 @@ pub struct HookPayload {
     /// Present for `PreToolUse` / `PostToolUse`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<HookToolInfo>,
-    /// Present for `PostToolUse`: the (clipped) result string the tool
-    /// returned.
+    /// Present for `PostToolUse`: the result string the tool returned —
+    /// `ToolOutput::Ok`'s content or `ToolOutput::Error`'s message, whole.
+    /// Nothing clips it, so a hook matching a tool that returns a large body
+    /// receives that whole body on stdin; a hook author who only wants a
+    /// summary must truncate on their own side.
     #[serde(rename = "toolResult", skip_serializing_if = "Option::is_none")]
     pub tool_result: Option<String>,
 }

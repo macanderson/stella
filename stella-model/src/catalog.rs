@@ -43,6 +43,16 @@ impl Pricing {
     /// `input_tokens`, so today they contribute $0 here. Adding a
     /// `cache_write_usd_per_mtok` column is the staged follow-up to
     /// issue #97 (the on-disk model-card versions already record the rate).
+    ///
+    /// Be precise about which way that gap points, because real money rides
+    /// on it: this **understates** spend on the opt-in cache providers, by
+    /// the whole write cost (`write_tokens x input_rate x 1.25` on Anthropic
+    /// and Bedrock), not merely by the premium. A turn that writes a 100k
+    /// prompt into a $3/Mtok cache is reported $0.375 cheap, and the budget
+    /// meter reads this number. Note also that `Pricing::cache_savings_usd`
+    /// (in `crate::cache_economics`) *does* charge the write premium, so the
+    /// savings figure and the cost figure disagree about the same tokens
+    /// until the column lands.
     pub fn cost_usd(&self, usage: &CompletionUsage) -> f64 {
         let cached = usage.cached_input_tokens.min(usage.input_tokens);
         let uncached_input = usage.input_tokens - cached;

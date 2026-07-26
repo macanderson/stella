@@ -46,6 +46,7 @@ pub struct GitOutput {
 
 impl GitOutput {
     /// A successful invocation with the given stdout — test ergonomics.
+    #[must_use]
     pub fn ok(stdout: impl Into<String>) -> Self {
         Self {
             success: true,
@@ -56,6 +57,7 @@ impl GitOutput {
     }
 
     /// A failed invocation with an exit code and stderr — test ergonomics.
+    #[must_use]
     pub fn failed(code: i32, stderr: impl Into<String>) -> Self {
         Self {
             success: false,
@@ -229,12 +231,16 @@ fn slugify(task_id: &str) -> String {
 /// all map to `fix-the-thing`. `Plan::validate` guarantees unique task *ids*
 /// but not unique *slugs*, so two distinct tasks could otherwise collide on the
 /// same worktree directory and branch. Appending this hash of the full
-/// `run_scope`+task id makes the slug **collision-resistant** (a 64-bit digest,
-/// not truncated to 32 bits as before — the birthday bound at 16 hex chars is
-/// far past any realistic per-run task count). FNV-1a (not the stdlib's
-/// randomizable `Hasher`) so the result is identical across processes and Rust
-/// versions — a later wave must recompute the exact branch name for the same
-/// scope+task id.
+/// `run_scope`+task id separates them: against the *accidental* collisions this
+/// exists to prevent, a 64-bit digest (not truncated to 32 bits as before) puts
+/// the birthday bound far past any realistic per-run task count. It is not
+/// collision-resistant in the cryptographic sense — FNV-1a is cheap to invert,
+/// so two task ids that hash alike can be constructed on purpose. That degrades
+/// safely rather than silently: the second `git worktree add` fails on the
+/// directory the first created and is recorded as that task's dispatch failure.
+/// FNV-1a (not the stdlib's randomizable `Hasher`) so the result is identical
+/// across processes and Rust versions — a later wave must recompute the exact
+/// branch name for the same scope+task id.
 fn short_hash(s: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.as_bytes() {
@@ -244,6 +250,13 @@ fn short_hash(s: &str) -> String {
     format!("{hash:016x}")
 }
 
+/// How much of the human-readable stem a slug keeps before its hash suffix.
+/// The slug is a single filesystem name *and* a branch component, and one path
+/// component maxes out at 255 bytes on ext4/APFS — a plan free-texting its task
+/// ids (a whole prompt as the id) would otherwise fail `git worktree add` with
+/// ENAMETOOLONG and lose the task to a cryptic error at dispatch.
+const MAX_SLUG_STEM: usize = 64;
+
 /// The worktree directory + branch slug for `task_id` within `run_scope`: a
 /// human-readable [`slugify`] stem plus a [`short_hash`] suffix that keeps it
 /// collision-resistant even when two task ids slugify to the same stem. The run
@@ -251,9 +264,17 @@ fn short_hash(s: &str) -> String {
 /// `t2`, … — every positional invocation) gets fresh directories/branches
 /// instead of colliding with last run's kept-for-review worktrees.
 fn worktree_slug(run_scope: &str, task_id: &str) -> String {
+    let stem = slugify(task_id);
+    // Truncating the stem cannot introduce a collision: the hash is over the
+    // FULL scope + task id, never over what survived the cut. Take `chars` so
+    // the cut lands on a char boundary, and re-trim the tail — a cut can end
+    // the stem on `-`/`.`, which a git ref may not do. `slugify` guarantees a
+    // non-empty stem whose first char is neither, so the trim leaves at least
+    // that char.
+    let capped: String = stem.chars().take(MAX_SLUG_STEM).collect();
+    let capped = capped.trim_end_matches(['-', '.']);
     format!(
-        "{}-{}",
-        slugify(task_id),
+        "{capped}-{}",
         short_hash(&format!("{run_scope}\u{1f}{task_id}"))
     )
 }
@@ -269,8 +290,16 @@ pub struct WorktreeManager<G: GitCli> {
 
 impl<G: GitCli> WorktreeManager<G> {
     /// A manager rooted at `repo_root`, placing worktrees under
-    /// `<repo_root>/.stella/worktrees/` (alongside
-    /// the fleet ledger) with branches named `fleet/<task-slug>`.
+    /// `<repo_root>/.stella/worktrees/` (alongside the fleet ledger) with
+    /// branches named `fleet/<task-slug>-<hash>` — the hash is part of the
+    /// name, not a nicety: slugifying is lossy, so two distinct task ids can
+    /// share a stem and would otherwise collide on one directory and branch.
+    ///
+    /// The run scope defaults to empty; a caller running more than one fleet
+    /// against a workspace must add [`with_run_scope`](Self::with_run_scope),
+    /// or the second run's slugs repeat the first's and `git worktree add`
+    /// fails on directories the first run left for review.
+    #[must_use]
     pub fn new(git: G, repo_root: impl Into<PathBuf>) -> Self {
         let repo_root = repo_root.into();
         let worktrees_root = repo_root.join(".stella").join("worktrees");
@@ -296,6 +325,7 @@ impl<G: GitCli> WorktreeManager<G> {
     /// runs in directly.
     ///
     /// [`Isolation::SharedTree`]: crate::plan::Isolation::SharedTree
+    #[must_use]
     pub fn repo_root(&self) -> &Path {
         &self.repo_root
     }
@@ -304,6 +334,13 @@ impl<G: GitCli> WorktreeManager<G> {
     /// `git worktree add <dir> -b fleet/<slug> <base_ref>`. The slug is a
     /// human-readable stem plus a stable hash suffix so two task ids that
     /// slugify to the same stem never collide on the same directory/branch.
+    ///
+    /// `task_id` is sanitized by `slugify` — including the leading `-` a ref
+    /// may not carry — but `base_ref` is passed through verbatim as the
+    /// trailing positional. It comes from
+    /// [`FleetConfig::base_ref`](crate::fleet::FleetConfig::base_ref), which
+    /// the CLI resolves to a sha; a caller that forwards an untrusted value
+    /// there hands `git worktree add` whatever flag it starts with.
     pub async fn create(&self, task_id: &str, base_ref: &str) -> Result<Worktree, WorktreeError> {
         let slug = worktree_slug(&self.run_scope, task_id);
         let dir = self.worktrees_root.join(&slug);
@@ -585,6 +622,19 @@ mod tests {
         assert_ne!(a, c);
         // Deterministic across calls.
         assert_eq!(a, worktree_slug("run", "fix/the thing"));
+    }
+
+    #[test]
+    fn worktree_slug_stays_within_one_filesystem_name() {
+        // A plan is free to use a whole sentence as a task id; the slug is a
+        // single directory name, so an uncapped stem would fail
+        // `git worktree add` with ENAMETOOLONG.
+        let long_id = "refactor ".repeat(40);
+        let slug = worktree_slug("run", &long_id);
+        assert!(slug.len() <= MAX_SLUG_STEM + 1 + 16, "{slug}");
+        assert!(slug.starts_with("refactor-"), "{slug}");
+        // Still injective: two long ids sharing a truncated stem differ.
+        assert_ne!(slug, worktree_slug("run", &format!("{long_id}tail")));
     }
 
     #[test]

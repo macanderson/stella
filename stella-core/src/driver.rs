@@ -67,6 +67,7 @@
 //! ("malformed-call repair tuned to the failure shapes GLM actually
 //! produces") is a documented follow-up, not faked here.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -542,7 +543,6 @@ impl<'a> Engine<'a> {
             total_cost_usd += committed.result.cost_usd;
 
             if let Some(aborted) = self.handle_committed_result(
-                step,
                 &committed,
                 total_cost_usd,
                 messages,
@@ -587,9 +587,12 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Compaction, before every model call, per the running estimate
-    /// (L-E3 dedup+evict, stable system prefix — the system message is
-    /// index 0 and `compact()` never touches it).
+    /// The compaction budget this turn's next step will actually compare
+    /// against, and the calibration factor that produced it. Single source of
+    /// truth for both the compaction pass and the step manifest, so the
+    /// receipt's `effective_budget_tokens` is exactly the number the decision
+    /// used (#364 item 1). Returns the configured budget with factor `1.0`
+    /// when calibration is off.
     ///
     /// Drift correction enters here: `compact` compares the RAW estimate
     /// against the budget it is given, so dividing the configured budget
@@ -600,15 +603,6 @@ impl<'a> Engine<'a> {
     /// under-estimate this model's tokenizer) shrinks the effective budget
     /// and compacts earlier; the factor's clamp (`crate::estimator`)
     /// bounds how far either way a noisy sample can move this.
-    ///
-    /// Returns the summarizer's spend (0.0 on the overwhelmingly common
-    /// no-summarization path) so `run_turn` folds it into the turn total.
-    /// The compaction budget this turn's next step will actually compare
-    /// against, and the calibration factor that produced it. Single source of
-    /// truth for both the compaction pass and the step manifest, so the
-    /// receipt's `effective_budget_tokens` is exactly the number the decision
-    /// used (#364 item 1). Returns the configured budget with factor `1.0`
-    /// when calibration is off.
     fn effective_compaction_budget(&self, calibration_model: Option<&str>) -> (u64, f64) {
         match self.calibration {
             Some(calibration) => {
@@ -622,6 +616,14 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Compaction, before every model call, per the running estimate
+    /// (L-E3 dedup+evict, stable system prefix — the system message is
+    /// index 0 and `compact()` never touches it). The budget it compares
+    /// against is [`Self::effective_compaction_budget`]'s, so the pass and
+    /// the step manifest can never disagree about which number was used.
+    ///
+    /// Returns the summarizer's spend (0.0 on the overwhelmingly common
+    /// no-summarization path) so `run_turn` folds it into the turn total.
     async fn run_compaction_pass(
         &self,
         messages: &mut Vec<CompletionMessage>,
@@ -632,10 +634,16 @@ impl<'a> Engine<'a> {
         events: &EventSender,
     ) -> f64 {
         let (compaction_budget, factor) = self.effective_compaction_budget(calibration_model);
-        if let Some(report) = compact(messages, compaction_budget) {
+        // Post-pass size, for the overflow decision below. `compact` already
+        // re-estimates the conversation to fill `after_tokens`, so reusing it
+        // saves a second whole-transcript walk on every step a pass fires;
+        // `None` (under budget, or nothing compactable) has no report to read
+        // and must estimate.
+        let after_tokens = if let Some(report) = compact(messages, compaction_budget) {
+            let after_tokens = report.after_tokens;
             let _ = events.send(AgentEvent::Compaction {
                 before_tokens: report.before_tokens,
-                after_tokens: report.after_tokens,
+                after_tokens,
                 evicted: report.evicted,
                 deduped: report.deduped,
                 superseded: report.superseded,
@@ -653,14 +661,15 @@ impl<'a> Engine<'a> {
                 effective_budget_tokens: compaction_budget,
                 calibration_factor: factor,
             });
-        }
+            after_tokens
+        } else {
+            crate::estimator::estimate_conversation_tokens(messages)
+        };
         // Overflow fallback: still over budget after every pure pass means
         // the weight is in PROTECTED content (user/assistant text, the
         // latest tool result) — without this, the next provider call
         // eventually hard-fails on context overflow.
-        if self.config.summarize_overflow
-            && crate::estimator::estimate_conversation_tokens(messages) > compaction_budget
-        {
+        if self.config.summarize_overflow && after_tokens > compaction_budget {
             return self
                 .summarize_overflow_span(
                     messages,
@@ -1291,7 +1300,6 @@ impl<'a> Engine<'a> {
     /// what was already paid for (see body), never as a mid-tool kill.
     fn handle_committed_result(
         &self,
-        _step: usize,
         committed: &CommittedStep,
         total_cost_usd: f64,
         messages: &mut Vec<CompletionMessage>,
@@ -1562,6 +1570,20 @@ impl<'a> Engine<'a> {
     /// discarded. Harvested calls emit `ToolStart` immediately followed by
     /// `ToolResult { speculated: true }` carrying the real (overlapped)
     /// execution duration.
+    ///
+    /// # A hard cancel here leaves `messages` mid-pair
+    ///
+    /// [`Self::dispatch_completion`] appends the assistant `tool_use` message
+    /// BEFORE awaiting this, and the answering `Tool` message only after. A
+    /// caller-side hard cancel (dropping the turn future) in that window
+    /// therefore leaves an unpaired `tool_use` in the borrowed history — the
+    /// same broken shape [`Self::handle_committed_result`] explicitly repairs
+    /// on the budget-abort path, and the one the next provider call rejects
+    /// outright. It is deliberately not repaired here: the contract is that a
+    /// hard cancel truncates the whole turn out of history caller-side (see
+    /// [`crate::ports::TurnSteering`], which contrasts exactly this against the
+    /// soft stop). A caller that KEEPS a hard-cancelled turn's messages must
+    /// close the pairing itself.
     async fn execute_tool_calls(
         &self,
         calls: &[ToolCall],
@@ -1800,10 +1822,10 @@ impl<'a> Engine<'a> {
     }
 }
 
-/// The boxed-future shape `retry_with_backoff` needs from its `attempt_fn`
-/// — named here purely to keep the call site in `run_turn` readable. Each
-/// attempt yields the completion AND its still-live speculation future as
-/// one value. The caller settles the billed completion synchronously before
+/// The boxed-future shape [`retry_with_backoff_observed`] needs from its
+/// `attempt_fn` — named here purely to keep the call site in
+/// [`Engine::run_model_call`] readable. Each attempt yields the completion
+/// AND its still-live speculation future as one value. The caller settles the billed completion synchronously before
 /// awaiting that future, closing the cancellation window without moving the
 /// mutable budget ledger into concurrent work.
 type RetryAttemptFn<'a> = Box<
@@ -1996,7 +2018,7 @@ fn recent_call_records(
                         .rev()
                         .find(|r| r.output.is_none() && r.call.call_id == result.call_id)
                     {
-                        record.output = Some(comparable_output(&result.output));
+                        record.output = Some(comparable_output(&result.output).into_owned());
                         let key = call_identity_key(&record.call);
                         record.identity = identities.get(&key).cloned().flatten();
                     }
@@ -2049,7 +2071,9 @@ fn call_identity_key(call: &ToolCall) -> CallIdentityKey {
 type ResultIdentities = HashMap<CallIdentityKey, Option<String>>;
 
 /// Record every tool result's identity into `identities`, keyed by
-/// `call_id` — the driver's answer to #554.
+/// [`CallIdentityKey`] — the driver's answer to #554. (Keyed by the call's
+/// id AND its name and input, never the id alone: see that type's docs for
+/// the providers that recycle ids across steps.)
 ///
 /// Compaction rewrites tool results IN PLACE (dedup/supersession stubs,
 /// middle-out aging, the eviction stub) and runs immediately before loop
@@ -2080,6 +2104,20 @@ type ResultIdentities = HashMap<CallIdentityKey, Option<String>>;
 /// The identity is computed over [`comparable_output`], the same
 /// normalization the detector compares, so `read_file`'s volatile
 /// session-tally footer does not make every reread a distinct identity.
+///
+/// # The invariant that keeps a poisoned key from manufacturing a loop
+///
+/// A poisoned key degrades to comparing the live outputs, and compaction
+/// rewrites older results to ONE shared stub — so if every record in the
+/// detector's window could be a stub, three unrelated calls would compare
+/// byte-equal and abort a healthy turn. They cannot, and the reason is a
+/// cross-module invariant worth naming: `crate::compaction::compact` never
+/// touches the LAST `MessageRole::Tool` message (its `last_tool_idx` guard),
+/// and `detect_loop` only ever reports a verdict anchored on the trailing
+/// record. The anchor therefore always carries its real, freshly-produced
+/// output, and a stub can never match it. Relaxing that guard in
+/// `compaction.rs` would silently turn every over-budget turn into a
+/// false-positive loop abort here.
 fn snapshot_result_identities(messages: &[CompletionMessage], identities: &mut ResultIdentities) {
     // Calls seen so far that nothing has answered yet, oldest first. The map
     // is keyed by the CALL, so a result has to be paired back to the call it
@@ -2102,9 +2140,17 @@ fn snapshot_result_identities(messages: &[CompletionMessage], identities: &mut R
                     if crate::compaction::is_compacted_output(&result.output) {
                         continue;
                     }
+                    let key = call_identity_key(call);
+                    // A poisoned key can never be un-poisoned: any later
+                    // observation conflicts with `None`, so the verdict is
+                    // already final. Hashing this result's content only to
+                    // re-derive it is pure waste, and this scan re-walks the
+                    // WHOLE transcript on every step (#554).
+                    if matches!(identities.get(&key), Some(None)) {
+                        continue;
+                    }
                     let identity =
                         crate::receipts::tool_result_block_id(&comparable_output(&result.output));
-                    let key = call_identity_key(call);
                     let conflicts = matches!(
                         identities.get(&key),
                         Some(seen) if seen.as_deref() != Some(identity.as_str())
@@ -2125,17 +2171,22 @@ fn snapshot_result_identities(messages: &[CompletionMessage], identities: &mut R
 /// and blinded detection to the exact thrash it exists to catch (the
 /// read → failing-edit → read cycle the `loop_detect` module doc names).
 /// Comparison-only: the transcript and history keep the footer untouched.
-fn comparable_output(output: &ToolOutput) -> ToolOutput {
+///
+/// Borrowed on the overwhelmingly common path (no footer): both callers run
+/// over the WHOLE transcript on every step, so returning an owned copy meant a
+/// full heap copy of every tool result — a step's worth of garbage proportional
+/// to the entire history, for a normalization that usually changes nothing.
+fn comparable_output(output: &ToolOutput) -> Cow<'_, ToolOutput> {
     if let ToolOutput::Ok { content } = output
         && content.ends_with("\u{d7} this session)")
         && let Some(idx) = content.rfind("\n\n(")
         && content[idx..].contains(" lines shown \u{b7} read ")
     {
-        return ToolOutput::Ok {
+        return Cow::Owned(ToolOutput::Ok {
             content: content[..idx].to_string(),
-        };
+        });
     }
-    output.clone()
+    Cow::Borrowed(output)
 }
 
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —

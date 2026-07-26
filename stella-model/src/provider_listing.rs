@@ -58,8 +58,29 @@ pub struct ProviderModel {
 /// a non-success status. `headers` are (name, value) pairs — the auth
 /// vocabulary differs per provider and none of it may end up in the URL
 /// (query-string keys leak into logs and proxies).
-async fn get_json(label: &str, url: &str, headers: &[(&str, &str)]) -> Result<String, String> {
-    let client = http::client();
+///
+/// The `client` is passed in rather than built here so a paginated fetch
+/// reuses ONE connection pool across its rounds. Building a `reqwest::Client`
+/// per request compiles a fresh TLS config and starts an empty pool, so a
+/// ten-page sync paid ten full TLS handshakes to the same host — the reuse
+/// `reqwest::Client` documents itself as existing for.
+///
+/// Known bound this does NOT have: the response body is buffered whole, with
+/// no maximum and no total-request deadline (`http::client`'s bound is
+/// per-read). A listing endpoint that answers with an enormous or
+/// slow-but-never-silent body therefore grows the process until it is
+/// OOM-killed, or stalls the caller indefinitely — and one caller is the
+/// CLI's *blocking* startup auto-sync. The endpoint is the user's own
+/// configured provider, so this is a robustness gap rather than an untrusted
+/// input, but the fix (a `Content-Length` pre-check plus chunked accumulation
+/// under a cap, the shape `stella-media`'s `download_bytes` already uses) is
+/// the same one.
+async fn get_json(
+    client: &reqwest::Client,
+    label: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<String, String> {
     let mut request = client.get(url).header("Accept", "application/json");
     for (name, value) in headers {
         request = request.header(*name, *value);
@@ -202,7 +223,8 @@ pub fn parse_openrouter(body: &str) -> Result<Vec<ProviderModel>, String> {
 /// user isn't using.
 pub async fn fetch_openrouter(base_url: &str) -> Result<Vec<ProviderModel>, String> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let body = get_json("OpenRouter", &url, &[]).await?;
+    let client = http::client();
+    let body = get_json(&client, "OpenRouter", &url, &[]).await?;
     parse_openrouter(&body)
 }
 
@@ -232,13 +254,28 @@ fn parse_anthropic_page(body: &str) -> Result<(Vec<ProviderModel>, Option<String
             })
         })
         .collect();
-    let next = (root.get("has_more").and_then(|v| v.as_bool()) == Some(true))
-        .then(|| {
-            root.get("last_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        })
-        .flatten();
+    // `has_more` and `last_id` must agree. Folding a missing cursor into
+    // `None` reopened, in a second guise, exactly the hole [`page_cap_error`]
+    // closed: the caller reads `None` as "the listing finished", so a page
+    // that announces more rows but omits the cursor to reach them produced a
+    // truncated catalog reported as a clean sync. Refuse it by name instead.
+    let has_more = root.get("has_more").and_then(|v| v.as_bool()) == Some(true);
+    let last_id = root
+        .get("last_id")
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    let next = match (has_more, last_id) {
+        (true, None) => {
+            return Err(
+                "Anthropic model list set `has_more` without a usable `last_id` cursor \
+                        — refusing a silently truncated sync"
+                    .to_string(),
+            );
+        }
+        (true, cursor) => cursor,
+        (false, _) => None,
+    };
     Ok((models, next))
 }
 
@@ -250,6 +287,7 @@ pub async fn fetch_anthropic(
     api_key: &ApiKey,
 ) -> Result<Vec<ProviderModel>, String> {
     let base = base_url.trim_end_matches('/');
+    let client = http::client();
     let mut models = Vec::new();
     let mut after: Option<String> = None;
     let mut finished = false;
@@ -260,6 +298,7 @@ pub async fn fetch_anthropic(
         }
         let url = build_url(base, "/v1/models", &params)?;
         let body = get_json(
+            &client,
             "Anthropic",
             &url,
             &[
@@ -341,6 +380,7 @@ fn parse_gemini_page(body: &str) -> Result<(Vec<ProviderModel>, Option<String>),
 /// Fetch every chat-capable model the Gemini API serves this key.
 pub async fn fetch_gemini(base_url: &str, api_key: &ApiKey) -> Result<Vec<ProviderModel>, String> {
     let base = base_url.trim_end_matches('/');
+    let client = http::client();
     let mut models: Vec<ProviderModel> = Vec::new();
     let mut token: Option<String> = None;
     let mut finished = false;
@@ -350,7 +390,13 @@ pub async fn fetch_gemini(base_url: &str, api_key: &ApiKey) -> Result<Vec<Provid
             params.push(("pageToken", t.as_str()));
         }
         let url = build_url(base, "/models", &params)?;
-        let body = get_json("Gemini", &url, &[("x-goog-api-key", api_key.reveal())]).await?;
+        let body = get_json(
+            &client,
+            "Gemini",
+            &url,
+            &[("x-goog-api-key", api_key.reveal())],
+        )
+        .await?;
         let (mut page, next) = parse_gemini_page(&body)?;
         models.append(&mut page);
         match next {
@@ -415,7 +461,8 @@ pub async fn fetch_openai_compatible(
 ) -> Result<Vec<ProviderModel>, String> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     let auth = format!("Bearer {}", api_key.reveal());
-    let body = get_json(label, &url, &[("Authorization", auth.as_str())]).await?;
+    let client = http::client();
+    let body = get_json(&client, label, &url, &[("Authorization", auth.as_str())]).await?;
     parse_openai_compatible(label, &body)
 }
 

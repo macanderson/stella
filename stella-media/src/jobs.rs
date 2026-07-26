@@ -171,19 +171,29 @@ impl JobStore {
             std::process::id(),
             NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::write(&tmp, body).map_err(|e| {
-            MediaError::Artifact(format!(
-                "cannot write temp job store {}: {e}",
-                tmp.display()
-            ))
-        })?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| {
-            MediaError::Artifact(format!(
-                "cannot commit job store {}: {e}",
-                self.path.display()
-            ))
-        })?;
-        Ok(())
+        // Clean up after a failed commit, the way `upsert_manifest` does: the
+        // temp name carries pid + counter, so a store that keeps failing to
+        // rename (a full disk, a read-only root) would otherwise litter the
+        // artifacts directory with one stray file per attempt, and nothing
+        // ever collects them.
+        let commit = (|| {
+            std::fs::write(&tmp, body).map_err(|e| {
+                MediaError::Artifact(format!(
+                    "cannot write temp job store {}: {e}",
+                    tmp.display()
+                ))
+            })?;
+            std::fs::rename(&tmp, &self.path).map_err(|e| {
+                MediaError::Artifact(format!(
+                    "cannot commit job store {}: {e}",
+                    self.path.display()
+                ))
+            })
+        })();
+        if commit.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        commit
     }
 
     fn mutation_lock(&self) -> Result<std::fs::File, MediaError> {

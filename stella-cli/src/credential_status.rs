@@ -68,6 +68,12 @@ pub fn status_for(
 /// via `stella auth set` ahead of the provider being declared in
 /// settings.json) — a minimal synthesized one using the same
 /// `<ID>_API_KEY` convention `config::custom_provider` falls back to.
+///
+/// The synthesized row's `&'static str` fields go through `config::leak`, the
+/// interning allocator, rather than a bare `Box::leak`: `ProviderConfig` is
+/// `&'static str` throughout, and a raw leak here would grow the heap once per
+/// call instead of once per DISTINCT id — the same regression `config::leak`'s
+/// own doc records having fixed on the provider-synthesis path.
 pub fn provider_config_for(id: &str, settings: &Settings) -> ProviderConfig {
     if let Some(p) = config::PROVIDERS.iter().find(|p| p.id == id) {
         return config::effective_builtin(p, settings);
@@ -78,10 +84,10 @@ pub fn provider_config_for(id: &str, settings: &Settings) -> ProviderConfig {
         return p;
     }
     ProviderConfig {
-        id: Box::leak(id.to_string().into_boxed_str()),
-        env_var: Box::leak(config::derived_env_var(id).into_boxed_str()),
+        id: config::leak(id),
+        env_var: config::leak(&config::derived_env_var(id)),
         env_var_aliases: &[],
-        display_name: Box::leak(id.to_string().into_boxed_str()),
+        display_name: config::leak(id),
         default_model: "",
         base_url: "",
         dialect: config::Dialect::OpenaiCompatible,

@@ -375,13 +375,19 @@ pub struct NodeRow {
 /// # Retention
 ///
 /// Nothing here forgets. `node.superseded_at` is never written (only edges are
-/// versioned), there is no delete or tombstone path, and a node whose uri
-/// changed — a renamed or deleted file — is orphaned live forever, still
-/// serving its last-known content. Recall reads *every* live node and *every*
-/// vector under the active fingerprint on each query, so both the store's size
-/// and a recall's latency grow monotonically with the workspace's lifetime.
-/// That is fine at CLI-local scale and is the plane's first scaling wall; a
-/// forget/compaction path is the tracked follow-up, not an oversight.
+/// versioned), there is no delete or tombstone path in this crate, and a node
+/// whose uri changed — a renamed or deleted file — is orphaned live forever,
+/// still serving its last-known content. Recall reads *every* live node and
+/// *every* vector under the active fingerprint on each query, so both the
+/// store's size and a recall's latency grow monotonically with the workspace's
+/// lifetime. That is fine at CLI-local scale and is the plane's first scaling
+/// wall; a forget/compaction path is the tracked follow-up, not an oversight.
+///
+/// `stella memory forget` is **not** that path, and reading it as one is the
+/// mistake to avoid: its tombstone lives in `store.db`, and the CLI applies it
+/// to the frames [`ContextStore::recall`] already returned. A forgotten memory
+/// is still stored here, still embedded, still ranked, and still spends the
+/// query's frame and token budget before the caller drops it.
 pub struct ContextStore {
     /// The DB path, kept so warming can open its own WAL connection.
     path: PathBuf,
@@ -400,6 +406,12 @@ impl ContextStore {
     /// Open (creating if absent) the store at `path` with the default
     /// [`HashEmbedder`] and system clock. Runs migrations and registers the
     /// embedder fingerprint. Does **not** warm — see [`Self::open_and_warm`].
+    ///
+    /// **Opening is a write.** Creating the file, replaying migrations and
+    /// registering the fingerprint all happen here, so there is no read-only
+    /// open: an inspection-only surface (`stella stats`, the command deck)
+    /// still dirties the db, and a read-only mount fails at `open` rather than
+    /// degrading to "no hits".
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ContextError> {
         Self::open_with(
             path,
@@ -631,6 +643,15 @@ fn open_connection(path: &Path) -> Result<Connection, ContextError> {
 /// know would silently violate whatever invariants the newer schema added. The
 /// message mirrors the one `stella_store::Store::migrate` already writes — the
 /// fault is an out-of-date binary, not a broken workspace.
+///
+/// **The version read is outside the transaction.** `unchecked_transaction` is
+/// `DEFERRED`, so two processes opening the same fresh workspace at once (a
+/// fleet run, or a `stella` session next to a `stella stats`) can both read
+/// `user_version = 0` and both try to apply `MIGRATION_V1`; the loser reports
+/// SQLITE_BUSY or "table node already exists" instead of the "already migrated"
+/// no-op it should. Re-reading `user_version` inside a `BEGIN IMMEDIATE` closes
+/// the window — an audit note, not a fix, because the fix belongs with a test
+/// that opens the same fresh path from two threads.
 fn migrate(conn: &Connection) -> Result<(), ContextError> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version > SCHEMA_VERSION {

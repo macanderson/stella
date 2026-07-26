@@ -78,6 +78,12 @@ pub enum HealthState {
     /// The transport is connected and the last call succeeded.
     Live,
     /// A reconnect attempt is in flight right now.
+    ///
+    /// Not observable through [`McpClient::health`] today: a snapshot takes the
+    /// same connection mutex the reconnect holds for its whole duration, so it
+    /// blocks until the attempt finishes and then reports its outcome (`Live`
+    /// or `Down`). Surfacing it live would need the health fields to move out
+    /// from behind that mutex.
     Reconnecting,
     /// The connection is down; the next call will retry once the backoff
     /// window (see [`ServerHealth::retry_in`]) elapses.
@@ -160,11 +166,13 @@ pub struct McpToolInfo {
     /// The tool's name exactly as the server advertised it, before
     /// [`crate::toolset::McpToolSet`] prefixes it with the server namespace.
     pub name: String,
-    /// The server's human-readable description of the tool, forwarded to the
-    /// model verbatim.
+    /// The server's human-readable description of the tool, already bounded at
+    /// ingest (`MAX_TOOL_DESCRIPTION_CHARS`) and carrying an appended note when
+    /// this tool's schema was over budget and replaced.
     pub description: String,
     /// The tool's JSON Schema for its arguments (`inputSchema` on the wire),
-    /// passed through unmodified — the client never rewrites a server's schema.
+    /// passed through verbatim unless it was absent or over budget — see
+    /// `normalize_schema`, the only place this client substitutes a schema.
     pub input_schema: Value,
     /// The server advertised this tool as read-only or idempotent, so a
     /// duplicate delivery is harmless and the client may transparently

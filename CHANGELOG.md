@@ -47,6 +47,8 @@ record of *changes*, curated by the person who made them.
   meaning, never when a key is added, so consumers must keep ignoring
   unrecognized keys.
 
+## [0.5.31] — 2026-07-26
+
 ## [0.5.30] — 2026-07-26
 
 ## [0.5.29] — 2026-07-26

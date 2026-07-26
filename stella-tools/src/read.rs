@@ -206,10 +206,15 @@ impl Tool for ReadFile {
                 let end = start.saturating_add(limit).min(lines.len());
 
                 if start >= lines.len() {
+                    // Report the offset the CALLER passed (1-based, as the
+                    // schema documents), not the 0-based index derived from
+                    // it — "offset 4 is past end" for a call that said 5 sent
+                    // the model hunting for an off-by-one that wasn't there.
                     return ToolOutput::Ok {
                         content: format!(
-                            "(file has {} lines, offset {start} is past end)",
-                            lines.len()
+                            "(file has {} lines, offset {} is past end)",
+                            lines.len(),
+                            offset.unwrap_or(1)
                         ),
                     };
                 }

@@ -40,7 +40,9 @@ claims; `stella-tools` uses only the private-path helpers, to reach `codegraph.d
 | [`src/private.rs`](src/private.rs), [`src/home.rs`](src/home.rs), [`src/identity.rs`](src/identity.rs) | Where state is allowed to live (`.stella/private/`: 0700 dirs, 0600 files, atomic temp+fsync+rename; `~/.stella` resolution) and the `org_id`/`workspace_id`/`repo_id`/`project_id` scoping that is infallible by design. |
 | [`src/receipts.rs`](src/receipts.rs), [`src/reconstruct.rs`](src/reconstruct.rs) | Context-receipt writes (block registry, per-step manifest) and the byte-exact reconstruction of what a model actually saw. |
 | [`src/telemetry.rs`](src/telemetry.rs) | `TelemetryRow`, the per-call write path, and the execution-level accounting boundary. |
-| `src/tests.rs`, `src/private_state_tests.rs`, `src/quarantine_tests.rs`, `src/usage_completeness_tests.rs` | `#[cfg(test)]` modules; the last three are named witnesses for private-state permissions, quarantine behaviour, and fail-closed accounting. |
+| [`src/forget.rs`](src/forget.rs) | The tombstone surfaces (`ContextSurface`) and the token-set restatement check that keeps a re-mined paraphrase from walking back in. The `forgotten` table's write/read surface lives on `Store` in `lib.rs`. |
+| [`src/cache_gaps.rs`](src/cache_gaps.rs), [`src/cache_trend.rs`](src/cache_trend.rs) | Read-only folds over `telemetry` + `executions` — per-call cache gaps and per-session cache totals. Facts only; the TTL/pricing policy is the caller's. |
+| `src/tests.rs`, `src/forget_tests.rs`, `src/private_state_tests.rs`, `src/quarantine_tests.rs`, `src/usage_completeness_tests.rs` | `#[cfg(test)]` modules; the last four are named witnesses for tombstone behaviour, private-state permissions, quarantine behaviour, and fail-closed accounting. |
 
 ## Key concepts
 
@@ -48,7 +50,7 @@ claims; `stella-tools` uses only the private-path helpers, to reach `codegraph.d
 
 [`ddl.rs`](src/ddl.rs) says what the shape *is*; [`migrations.rs`](src/migrations.rs)
 says how an existing file *gets there*. A fresh database gets `create_latest_schema`
-in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`, 13 today);
+in one shot and is stamped at `SCHEMA_VERSION` (`= MIGRATIONS.len()`, 15 today);
 an existing one runs each pending step. `PRAGMA user_version` 0 is ambiguous — it
 is both "fresh empty file" and "legacy pre-versioning file" — so `Store::migrate`
 disambiguates by probing `TABLES` via `any_store_table_exists`. A file stamped

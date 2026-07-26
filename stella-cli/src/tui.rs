@@ -85,8 +85,15 @@ pub fn set_accent(name: &str) -> bool {
 
 /// Rename the terminal tab/window via the OSC 0 escape — running several
 /// stella windows side by side, each can carry its own title.
+///
+/// Control characters are dropped before interpolation: the title is free
+/// text, and an embedded `ESC`/`BEL` would terminate this OSC string early
+/// and let the remainder be read by the terminal as its own command sequence.
+/// Printable text is passed through unchanged, so a normal `/rename` is
+/// unaffected.
 pub fn rename_tab(title: &str) {
-    print!("\x1b]0;{title}\x07");
+    let safe: String = title.chars().filter(|c| !c.is_control()).collect();
+    print!("\x1b]0;{safe}\x07");
     let _ = io::stdout().flush();
 }
 

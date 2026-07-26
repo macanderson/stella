@@ -373,6 +373,18 @@ const SCHEMA_VERSION: i64 = 2;
 /// opened as-is. Rejecting it is arguably right, but it turns `open` into an
 /// error for anyone who downgrades and belongs in a deliberate change with a
 /// migration story, not here.
+///
+/// **The version is read before the transaction opens**, which two processes
+/// opening the same un-migrated `fleet.db` at once can both observe. The
+/// transaction is DEFERRED, so the second one takes its read snapshot first and
+/// then tries to write — in WAL that is `SQLITE_BUSY_SNAPSHOT`, which
+/// `busy_timeout` does not retry, so one `open` can fail outright on that race.
+/// It only bites on the first open of a file (an already-stamped ledger takes
+/// the early return above and never opens a transaction), and today's steps
+/// happen to be replay-safe. A step that is NOT replay-safe — an
+/// `ALTER TABLE … ADD COLUMN`, say — must not be added without first moving the
+/// version read inside an IMMEDIATE transaction, or the loser of the race
+/// applies it twice.
 fn migrate(conn: &Connection) -> Result<(), LedgerError> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version >= SCHEMA_VERSION {

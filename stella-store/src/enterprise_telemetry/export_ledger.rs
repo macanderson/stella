@@ -1,3 +1,40 @@
+//! The per-store **enterprise export ledger**: which finished executions this
+//! store still owes one sink, and the per-execution nonce that makes each
+//! delivery's event id unforgeable.
+//!
+//! It lives in `.stella/private/store.db` (tables in
+//! `enterprise_telemetry::STORE_EXPORT_TABLES_DDL`) rather than in
+//! the spool, because it answers a question only the source store can: "has
+//! execution N already been projected for sink S?". The spool answers the
+//! delivery question; this answers the *production* question, and the two must
+//! not share a failure domain — a discarded spool must never cause an execution
+//! to be exported twice.
+//!
+//! # Lifecycle of one execution, per sink
+//!
+//! 1. [`Store::begin_enterprise_enrollment`](crate::Store::begin_enterprise_enrollment)
+//!    records the high-water execution id at enrollment time, so enrolling
+//!    never back-exports a workspace's entire history.
+//! 2. [`Store::mark_enterprise_export_pending`](crate::Store::mark_enterprise_export_pending)
+//!    admits one *finished* execution above that watermark and mints its
+//!    nonce. Idempotent: a replay returns the stored nonce, never a fresh one,
+//!    because the nonce feeds the deterministic event id.
+//! 3. [`Store::pending_enterprise_export_page`](crate::Store::pending_enterprise_export_page)
+//!    pages what is still owed, in execution order.
+//! 4. Each row ends as either
+//!    [`spooled`](crate::Store::mark_enterprise_export_spooled) (handed to the
+//!    spool) or
+//!    [`skipped`](crate::Store::mark_enterprise_export_skipped) with a bounded,
+//!    content-free [`EnterpriseExportSkipReason`] — a permanent refusal that is
+//!    counted, never silently dropped.
+//! 5. [`Store::compact_enterprise_export_ledger`](crate::Store::compact_enterprise_export_ledger)
+//!    bounds the ledger's growth by retaining only the newest N settled rows
+//!    and raising `compacted_through_execution_id` so compacted ids can never
+//!    be re-admitted at step 2.
+//!
+//! Every mutation runs in an `IMMEDIATE` transaction: two processes sharing one
+//! workspace must not interleave "is it eligible?" with "mint its nonce".
+
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use super::{MAX_EXPORT_PAGE_ROWS, random_export_nonce, validate_sink_fingerprint};
@@ -39,6 +76,10 @@ pub struct EnterpriseExportLedgerStatus {
 }
 
 impl crate::Store {
+    /// This store's stable random identity, minted on first call and never
+    /// rewritten. It only ever feeds the event-id hash
+    /// ([`StellaOperationalEventV1`](super::StellaOperationalEventV1)), so two
+    /// workspaces cannot collide on an id — it is never itself exported.
     pub fn enterprise_store_uuid(&self) -> Result<String> {
         let conn = self.lock();
         if let Some(value) = conn
@@ -64,6 +105,12 @@ impl crate::Store {
         .map_err(Into::into)
     }
 
+    /// Enroll this store with one sink, stamping the current maximum execution
+    /// id as the enrollment watermark. Only executions ABOVE it are ever
+    /// exportable, so turning enterprise telemetry on never back-exports a
+    /// workspace's existing history. `INSERT OR IGNORE`, so re-enrolling an
+    /// already-known sink keeps the original watermark rather than skipping
+    /// everything recorded since.
     pub fn begin_enterprise_enrollment(&self, sink_fingerprint: &str) -> Result<()> {
         validate_sink_fingerprint(sink_fingerprint)?;
         self.lock().execute(
@@ -75,6 +122,19 @@ impl crate::Store {
         Ok(())
     }
 
+    /// Admit one finished execution to `sink_fingerprint`'s ledger and return
+    /// its export nonce, or `None` when the execution is not exportable.
+    ///
+    /// Not exportable means: unfinished (no `finished_at`/`outcome`), at or
+    /// below the enrollment watermark, already compacted away, or already
+    /// permanently skipped. Each of those is a deliberate refusal, not an
+    /// error — the caller drains every finished turn and lets this decide.
+    ///
+    /// **Idempotent by nonce.** A replay returns the STORED nonce rather than
+    /// minting a fresh one, because the nonce is hashed into the event id: a
+    /// second nonce would turn one execution into two distinct enterprise
+    /// events and double-count it downstream. (An empty stored nonce is the
+    /// legacy pre-nonce shape and is filled in once, in place.)
     pub fn mark_enterprise_export_pending(
         &self,
         sink_fingerprint: &str,
@@ -141,6 +201,16 @@ impl crate::Store {
         Ok(Some(persisted))
     }
 
+    /// One page of what this store still owes `sink_fingerprint`, in ascending
+    /// execution order — the keyset cursor is `after_execution_id`, so a drain
+    /// walks the backlog without an OFFSET scan.
+    ///
+    /// Only executions whose local accounting is complete (`usage_complete`)
+    /// are listed: the enterprise projection refuses an incomplete envelope
+    /// anyway, so surfacing one here would only manufacture a skip. `limit` is
+    /// bounded (1..=256) — an unbounded page would let one
+    /// call materialize an entire backlog. A legacy row with no nonce has one
+    /// minted and persisted as it is read, so callers never see an empty one.
     pub fn pending_enterprise_export_page(
         &self,
         sink_fingerprint: &str,
@@ -194,6 +264,10 @@ impl crate::Store {
         Ok(pending)
     }
 
+    /// Settle one ledger row as handed to the spool. Call it AFTER the enqueue
+    /// commits: the spool is the at-least-once boundary, so marking first would
+    /// let a crash in between lose the event entirely, while marking second can
+    /// only ever re-enqueue it — which the spool dedups on the event id.
     pub fn mark_enterprise_export_spooled(
         &self,
         sink_fingerprint: &str,
@@ -208,6 +282,18 @@ impl crate::Store {
         Ok(())
     }
 
+    /// Settle one ledger row as permanently un-exportable, recording a bounded,
+    /// content-free `reason` and bumping its durable counter.
+    ///
+    /// This is the ledger's analogue of the cloud drain's dead letter: a row
+    /// the projection can never accept (its rollup is gone, or is malformed)
+    /// would otherwise sit pending forever and be retried on every drain. The
+    /// tombstone is what keeps it out of
+    /// [`Self::mark_enterprise_export_pending`]'s eligibility check, and the
+    /// counters are what keep the skip VISIBLE in
+    /// [`Self::enterprise_export_ledger_status`] instead of silent. Consuming
+    /// the pending row and writing the tombstone happen in one transaction, so
+    /// a row can never be dropped without a record.
     pub fn mark_enterprise_export_skipped(
         &self,
         sink_fingerprint: &str,
@@ -252,6 +338,10 @@ impl crate::Store {
         Ok(())
     }
 
+    /// Durable skip counters for one sink — what `stella telemetry status`
+    /// surfaces so a silently-shrinking export is visible as a number rather
+    /// than inferred from a gap. An unknown sink reports all zeros: never
+    /// having enrolled is not an error.
     pub fn enterprise_export_ledger_status(
         &self,
         sink_fingerprint: &str,
@@ -285,6 +375,15 @@ impl crate::Store {
         })
     }
 
+    /// Bound the ledger's growth: keep the newest `retain_completed` SETTLED
+    /// rows (spooled or skipped) for one sink and delete everything at or below
+    /// that cutoff. Returns how many rows were reclaimed.
+    ///
+    /// Pending rows are never touched — they are the backlog. The cutoff is
+    /// also written to `compacted_through_execution_id`, which is what keeps
+    /// compaction from resurrecting work: without it a reclaimed execution id
+    /// would look un-exported to
+    /// [`Self::mark_enterprise_export_pending`] and be exported a second time.
     pub fn compact_enterprise_export_ledger(
         &self,
         sink_fingerprint: &str,
@@ -349,8 +448,12 @@ fn checked_ledger_counter(label: &str, value: i64) -> Result<u64> {
         .map_err(|_| StoreError(format!("enterprise export {label} counter is negative")))
 }
 
+/// One execution this store still owes a sink: which execution, and the nonce
+/// that makes its event id deterministic but unguessable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingEnterpriseExport {
     pub execution_id: i64,
+    /// 32 lowercase hex chars, minted once per (sink, execution) and stable
+    /// across replays — see [`Store::mark_enterprise_export_pending`](crate::Store::mark_enterprise_export_pending).
     pub export_nonce: String,
 }

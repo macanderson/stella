@@ -12,13 +12,24 @@
 //! impossible.
 //!
 //! The manifest is `manifest.json` (a JSON array). Writes are atomic against
-//! process death: the store reads the current array, appends, serializes to a
-//! sibling temp file, then `rename`s it over the manifest — so a crash
-//! mid-write never leaves a partially written or corrupt manifest. Neither
-//! the temp file nor the directory is `fsync`ed, so this is crash-atomicity
-//! for the single-process CLI, not power-loss durability, and the read →
-//! append → rename cycle assumes a single writer: two concurrent stores over
-//! one root can lose a row.
+//! process death: the store reads the current array, inserts or replaces the
+//! row for that path, serializes to a sibling temp file, `fsync`s it, then
+//! `rename`s it over the manifest — so a crash mid-write never leaves a
+//! partially written or corrupt manifest. That read → upsert → rename cycle
+//! runs under an advisory lock on `manifest.json.lock`, so two stores over one
+//! root (in one process or two) cannot each read the pre-image and lose a row.
+//! The *directory* is never `fsync`ed, so a rename the kernel has not yet
+//! flushed is still lost to power loss: this is crash atomicity, not power-loss
+//! durability.
+//!
+//! The artifact file itself is written *outside* that lock (`create_new` +
+//! `fsync`, then the manifest upsert), so two processes racing on one
+//! deterministic video id can still interleave — the loser may read the
+//! winner's not-yet-written file and report a spurious digest mismatch.
+//! Recorded rather than fixed: one CLI process per workspace is the shipped
+//! shape, and widening the lock to cover the file write needs a lock handle
+//! threaded through `save_with_id` (a second `File::lock` on the same path
+//! from one process would block on itself).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

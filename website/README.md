@@ -5,9 +5,12 @@ destined for **stella.oxagen.sh**.
 
 Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumadocs.dev)
 (`fumadocs-core` / `fumadocs-ui` / `fumadocs-mdx`) + Tailwind CSS v4. Branded with the
-Stella identity — the aurora chevron+cells mark on a navy-black/Ice palette (see
-`src/app/tokens.css` for the palette and `src/components/brand.tsx` for the marks
-the site renders inline).
+Stella identity — gold on deep navy, a star against night sky. `src/app/tokens.css`
+holds the raw palette (generated; nothing in it is mode-aware), `src/app/global.css`
+maps it onto the light/dark semantic layer, and `src/components/brand.tsx` carries the
+marks the site renders inline. The one rule that layer exists to enforce: `--stella-accent`
+is ink on paper and gold only in dark mode, because gold on white is 1.35:1. The retired
+aurora/Ice tokens survive as a single alias (`--stella-azure`) repointed at that accent.
 
 **Brand assets are generated, not hand-edited.** `../docs/brand/` is canonical:
 `docs/brand/build.py` (run it with `make brand` from the repo root) derives every

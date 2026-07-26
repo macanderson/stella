@@ -203,11 +203,18 @@ async fn load_pack(root: &Path, slug: &str) -> Option<ContextPack> {
 }
 
 /// Re-hash every manifest entry; returns the workspace-relative paths whose
-/// content changed or vanished since the pack was gathered.
+/// content changed or vanished since the pack was gathered. A pack is a JSON
+/// file shared through the tree, so its keys are confined like any other
+/// model- or repository-supplied path: one naming a location outside the
+/// workspace is never read, and counts as stale.
 async fn stale_paths(root: &Path, manifest: &BTreeMap<String, String>) -> Vec<String> {
     let mut stale = Vec::new();
     for (path, saved_hash) in manifest {
-        match tokio::fs::read(root.join(path)).await {
+        let Some(resolved) = crate::resolve_within_root(root, path) else {
+            stale.push(path.clone());
+            continue;
+        };
+        match tokio::fs::read(&resolved).await {
             Ok(bytes) if &hex_sha256(&bytes) == saved_hash => {}
             _ => stale.push(path.clone()),
         }
@@ -662,8 +669,12 @@ async fn gather(
             });
             break;
         }
+        // Confined like the excerpt loop above: these keys are derived from a
+        // sub-tool's rendered output, so they go through the same gate rather
+        // than a bare join.
         if !manifest.contains_key(path)
-            && let Ok(bytes) = tokio::fs::read(root.join(path)).await
+            && let Some(resolved) = crate::resolve_within_root(root, path)
+            && let Ok(bytes) = tokio::fs::read(&resolved).await
         {
             manifest.insert(path.clone(), hex_sha256(&bytes));
         }
@@ -690,7 +701,18 @@ async fn gather(
         ),
         Ok(()) => match serde_json::to_string_pretty(&pack) {
             Err(e) => format!("NOT saved (serialize: {e}) — findings below are this call only"),
-            Ok(json) => match tokio::fs::write(pack_path(root, &slug), json).await {
+            // Published by a synced temp-sibling rename, never truncated in
+            // place: packs are cross-session shared state and the readers
+            // skip a corrupt record silently, so a half-written file makes a
+            // pack disappear. Two agents racing the same slug is the exact
+            // scenario this store exists for, and a plain `write` lets their
+            // bytes interleave.
+            Ok(json) => match crate::atomic_write::replace_file_atomically(
+                pack_path(root, &slug),
+                json.into_bytes(),
+            )
+            .await
+            {
                 Err(e) => {
                     format!("NOT saved (write: {e}) — findings below are this call only")
                 }

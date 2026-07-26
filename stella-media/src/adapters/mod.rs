@@ -41,7 +41,8 @@ pub(crate) fn live_smoke_enabled() -> bool {
 }
 
 /// The pure half of [`live_smoke_enabled`]: does this reading of
-/// `OXAGEN_MEDIA_LIVE` arm the live smokes?
+/// `STELLA_MEDIA_LIVE` (or its deprecated `OXAGEN_MEDIA_LIVE` alias) arm the
+/// live smokes?
 ///
 /// Requires the LITERAL value `1` — `0`, `false`, `true` and the empty string
 /// all leave the smokes skipped. These tests submit real, billable provider
@@ -63,17 +64,17 @@ mod tests {
     fn only_the_literal_one_arms_the_paid_live_smokes() {
         assert!(
             live_smoke_armed_by(Some("1")),
-            "OXAGEN_MEDIA_LIVE=1 is the documented opt-in and must arm the smokes"
+            "STELLA_MEDIA_LIVE=1 is the documented opt-in and must arm the smokes"
         );
         for value in ["0", "false", "true", "yes", "", " 1", "1 ", "01"] {
             assert!(
                 !live_smoke_armed_by(Some(value)),
-                "OXAGEN_MEDIA_LIVE={value:?} must NOT arm the paid live smokes"
+                "STELLA_MEDIA_LIVE={value:?} must NOT arm the paid live smokes"
             );
         }
         assert!(
             !live_smoke_armed_by(None),
-            "an unset OXAGEN_MEDIA_LIVE must leave the paid live smokes skipped"
+            "an unset STELLA_MEDIA_LIVE must leave the paid live smokes skipped"
         );
     }
 }

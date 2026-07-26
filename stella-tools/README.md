@@ -119,10 +119,18 @@ got.
   is a byte-level prefix match, so an unsorted list means every process writes a divergent cache
   entry.
 - **`bash` is off by default in every scope** — user, org-managed, and project. It registers only
-  when settings say `tools.bash: "on"`; the default surface has no shell at all. The `web` family
-  has the same posture, because a fetched page is untrusted input *and* an uncontrolled egress
-  channel. Prefer the structured executors (`run_tests`, `run_script`, `repo_*`, the process
-  group), which spawn enumerable argv and never interpret a shell string.
+  when settings say `tools.bash: "on"`. The `web` family has the same posture, because a fetched
+  page is untrusted input *and* an uncontrolled egress channel. Prefer the genuinely
+  shell-free executors (`run_lint`, `format_code`, `diagnostics`, `repo_*`, the process group),
+  which spawn enumerable argv and never interpret a shell string.
+- **Turning `bash` off removes the shell *tool*, not the shell *capability*.** `build_project`
+  and `run_tests` take a `command` override, `verify_done` a `test_cmd`, and `run_script` composes
+  a line from the scripts index — all four are always-on and all four reach `bash -c` through
+  `exec::run`. `STELLA_BASH_SANDBOX` does not cover them either; only the `bash` tool spawns
+  through `src/sandbox.rs`. The one fence that spans the whole class is the registry's
+  `command.started` policy chain (`ToolRegistry::command_line_for` enumerates every member), so a
+  deployment that needs shell execution actually bounded must gate on that chain — not on the
+  `tools.bash` switch. Any new tool that can reach `bash -c` must be added to that enumeration.
 - **Don't reintroduce `tokio::fs::write` on a write path.** It opens with `O_TRUNC`, and a crash
   in that window left the user's own source file empty. `atomic_write` picks its strategy per
   target and deliberately rewrites in place for hard-linked or foreign-owned files, because

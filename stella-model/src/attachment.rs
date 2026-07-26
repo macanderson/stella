@@ -22,12 +22,23 @@
 //! today. A half-finished caps edit then degrades like any other unsupported
 //! attachment instead of aborting the process mid-turn.
 //!
-//! ## Size
+//! ## Size and cost
 //!
 //! Stella imposes no size cap of its own. Payloads are hydrated from disk at
 //! request-build time and handed to the provider as base64; a payload larger
 //! than the provider's own request limit surfaces as that provider's error.
 //! Text-like files are inlined in full for the same reason.
+//!
+//! Two consequences worth knowing before adding a caller. The read is
+//! `std::fs::read` — synchronous, on whatever runtime thread is building the
+//! request — so a large attachment blocks a tokio worker for the length of
+//! the read. And because the conversation replays every turn, a
+//! `AttachmentSource::Path` attachment is re-read AND re-base64-encoded on
+//! every model call for the rest of the session, not once. Neither is a
+//! problem at the sizes a pasted screenshot or a PDF hits; both scale badly
+//! with a video-sized payload on a long session, and the fix (hydrate once
+//! into a session-scoped cache keyed by path+mtime, off the runtime thread)
+//! belongs here rather than in any one adapter.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;

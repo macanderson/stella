@@ -12,13 +12,13 @@
 //! ## Interaction model (the "never blocks input" contract)
 //!
 //! There is one global composer. Printable keys type into it from **any** tab
-//! and it edits like a textarea: plain `⏎` inserts a line break (preserved
-//! verbatim in the submitted prompt) and the `⌘⏎`/`⌃⏎` chord **always**
-//! submits — enqueuing a new prompt without waiting on a busy agent — unless
-//! the focused agent has a pending gate (scope review / ask-user), in which
-//! case the chord/the gate keys answer it. (On legacy terminals that can't
-//! report a modified Enter, plain `⏎` submits and `⌥⏎` is the line break —
-//! see [`crate::composer::classify_enter`].) Tabs are navigated with `Tab` /
+//! and it edits like a textarea: a bare `⏎` **always** submits — enqueuing a
+//! new prompt without waiting on a busy agent — while a *modified* `⏎`
+//! (`⌘⏎`/`⌃⏎`/`⌥⏎`) inserts a line break, kept verbatim in the submitted
+//! prompt. (Only `⌥⏎` is reportable on a legacy terminal; an unreportable
+//! chord folds into a bare `⏎` — see [`crate::composer::classify_enter`].)
+//! The exception is a pending gate on the focused agent (scope review /
+//! ask-user), which the submit `⏎` answers. Tabs are navigated with `Tab` /
 //! `Shift-Tab` only — digits deliberately never switch tabs, because they
 //! quick-pick `ask_user` answers and must stay typeable as a prompt's first
 //! character. Agent controls (`p`/`s`/`r`) only fire when the composer is
@@ -787,7 +787,12 @@ impl DeckUi {
         if self.installed.mode != InstalledMode::Browse {
             match self.installed.mode {
                 InstalledMode::Edit => self.installed.editor.paste(text),
-                InstalledMode::CreateDescribe => self.installed.create_desc.push_str(text),
+                // The description is a one-line input (its ⏎ advances to the
+                // scope picker), so a multi-line blob must flatten rather than
+                // smuggle newlines past a field that can never show them.
+                InstalledMode::CreateDescribe => {
+                    push_single_line(&mut self.installed.create_desc, text);
+                }
                 // Scope / version pickers hold no text — swallow, never leak.
                 InstalledMode::CreateScope | InstalledMode::PickVersion | InstalledMode::Browse => {
                 }
@@ -848,8 +853,11 @@ impl DeckUi {
         //    claim keys ahead of the composer, so a paste must too.
         if self.tab == DeckTab::Skills {
             match &mut self.skills.prompt {
-                Some(SkillPrompt::CreateDescription { buffer })
-                | Some(SkillPrompt::Edit { buffer, .. }) => buffer.push_str(text),
+                // The create-description is one line (its ⏎ advances to the
+                // scope picker) — flatten, like every other one-line field.
+                Some(SkillPrompt::CreateDescription { buffer }) => push_single_line(buffer, text),
+                // The edit buffer is a genuine multi-line surface: verbatim.
+                Some(SkillPrompt::Edit { buffer, .. }) => buffer.push_str(text),
                 // Scope / pin pickers hold no text.
                 Some(SkillPrompt::Scope { .. } | SkillPrompt::Pin { .. }) => {}
                 None if self.skills.focus == SkillsFocus::Search => {
@@ -1225,7 +1233,13 @@ fn push_single_line(buf: &mut String, text: &str) {
 ///
 /// Esc already carries several meanings; the FIRST matching context wins,
 /// top to bottom (each rule is claimed at the corresponding point in this
-/// function's flow):
+/// function's flow). These are the *deck-global* contexts only — every modal
+/// surface claims Esc ahead of rules 3 onward, at the gate that hands it the
+/// keyboard: the INSTALLED AGENTS sub-modes, the ISSUES sub-modes, the Graph
+/// file picker, the ENGINE panel, the SESSIONS / INBOX / CONTEXT / INSPECT
+/// overlays, and the SKILLS preview/prompt overlays. (The SKILLS *panes* are
+/// the exception: they claim typing but not Esc, so it reaches the rules
+/// below.)
 ///
 /// 1. splash up — any key, Esc included, dismisses it
 /// 2. help overlay open — Esc/`q`/`?` close it; other keys scroll it

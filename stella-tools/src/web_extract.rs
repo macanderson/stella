@@ -484,6 +484,42 @@ pub struct CssAccumulator {
     font_faces: Vec<FontFace>,
 }
 
+/// How far past a declaration's `:` the scanners look for its terminator.
+///
+/// Real declarations are orders of magnitude shorter. The bound exists
+/// because this CSS is a FETCHED stylesheet that picks its own bytes: an
+/// unterminated declaration sent `find(';')` to the end of the sheet on every
+/// candidate, so `"--a:".repeat(1_000_000)` inside the 4 MB fetch cap cost a
+/// million full-buffer scans — quadratic work a hostile page dials up for
+/// free, inside one `web_extract_assets` call.
+const DECLARATION_SCAN_LIMIT: usize = 4096;
+
+/// The longest prefix of `s` within `max` BYTES that still ends on a char
+/// boundary — `&s[..max]` panics mid-codepoint, and a fetched stylesheet
+/// chooses where its multibyte characters land.
+fn char_bounded_prefix(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// The declaration value at `rest`, which must begin with optional
+/// whitespace then `:` — `None` when this is not a declaration site at all
+/// (a selector like `[data-font-family-x]`, a `--` inside a value). Only
+/// whitespace may separate a property from its colon, so the check reads the
+/// leading run rather than scanning the rest of the sheet for one.
+fn declaration_value(rest: &str) -> Option<&str> {
+    let ws = rest.len() - rest.trim_start().len();
+    rest[ws..]
+        .strip_prefix(':')
+        .map(|value| char_bounded_prefix(value, DECLARATION_SCAN_LIMIT))
+}
+
 /// CSS-wide generic/utility family keywords that aren't design tokens.
 const GENERIC_FAMILIES: &[&str] = &[
     "serif",
@@ -592,14 +628,9 @@ impl CssAccumulator {
         while let Some(off) = lower[from..].find("font-family") {
             let after = from + off + "font-family".len();
             from = after;
-            let rest = &css[after..];
-            let Some(colon) = rest.find(':') else {
-                continue;
-            };
-            if !rest[..colon].trim().is_empty() {
+            let Some(value) = declaration_value(&css[after..]) else {
                 continue; // e.g. a selector like `[data-font-family-x]`
-            }
-            let value = &rest[colon + 1..];
+            };
             let end = value.find([';', '}']).unwrap_or(value.len());
             for family in value[..end].split(',') {
                 let family = family.trim().trim_matches(['"', '\'']).trim();
@@ -635,16 +666,11 @@ impl CssAccumulator {
                 continue;
             }
             let name_end = start + 2 + name_len;
-            let rest = &css[name_end..];
-            let Some(colon) = rest.find(':') else {
+            let Some(value_src) = declaration_value(&css[name_end..]) else {
                 continue;
             };
-            if !rest[..colon].trim().is_empty() {
-                continue;
-            }
             // Value runs to the first top-level `;`/`}` — parens tracked so
             // `url(data:image/png;base64,…)` doesn't split early.
-            let value_src = &rest[colon + 1..];
             let mut depth = 0usize;
             let mut end = value_src.len();
             for (idx, b) in value_src.bytes().enumerate() {
@@ -949,6 +975,29 @@ mod tests {
         );
         assert_eq!(urls[0], "https://example.com/f/a.woff2");
         assert!(urls[1].starts_with("<inline data:font/woff2"), "{:?}", urls);
+    }
+
+    /// A fetched stylesheet chooses its own bytes, so every declaration scan
+    /// is bounded: without the bound these three shapes each sent a
+    /// full-buffer `find` down the rest of the sheet once per candidate, and
+    /// `web_extract_assets` spent minutes inside one tool call.
+    #[test]
+    fn declaration_scans_are_bounded_on_hostile_css() {
+        let mut acc = CssAccumulator::default();
+        // No colon anywhere after the `--`; no terminator after the colon;
+        // and a property-shaped prefix that is not a declaration at all.
+        acc.add_css(&"--".repeat(200_000), None);
+        acc.add_css(&format!("--a:{}", "x".repeat(400_000)), None);
+        acc.add_css(&"font-family".repeat(100_000), None);
+        let tokens = acc.finish();
+        assert!(
+            tokens.font_families.is_empty(),
+            "{:?}",
+            tokens.font_families
+        );
+        // The one real declaration is kept, clipped to the rendered cap.
+        assert_eq!(tokens.custom_props.len(), 1);
+        assert!(tokens.custom_props[0].1.ends_with('…'));
     }
 
     #[test]

@@ -13,6 +13,16 @@
 //!   quoting guarantee, not a power bound — argv[0] may itself be a shell —
 //!   so the registry gates the joined argv through the same
 //!   `command.started` policy chain as `bash` before the spawn.
+//!
+//!   **The gate covers the spawn, not the session it opens.** Only the argv
+//!   is gated; `send_stdin` is not in the registry's `command_line_for` and
+//!   therefore rides no `command.started` chain of its own. A model that
+//!   starts an interpreter with a bland argv (`["python3"]`, `["node"]`,
+//!   `["sh"]`) and then writes source to its stdin executes whatever it
+//!   likes with one gate evaluation on the interpreter's *name*. A policy
+//!   that means to bound shell execution must therefore deny the
+//!   interpreter argv itself — matching on command text alone will not see
+//!   what the REPL is later asked to run.
 //! - At most [`MAX_LIVE_PROCESSES`] processes may be LIVE at once; past
 //!   that `start_process` refuses with a named error rather than letting a
 //!   runaway loop spawn children without bound.

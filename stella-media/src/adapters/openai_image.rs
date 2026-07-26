@@ -44,6 +44,11 @@ impl OpenAiImageProvider {
         }
     }
 
+    /// Override the base URL — used by fixtures, private proxies, and
+    /// OpenAI-compatible gateways. No configuration path reaches this yet:
+    /// `detect_media_backend` in `stella-tools` constructs the adapter on the
+    /// vendor `DEFAULT_BASE_URL` and never calls this, so today it is a seam
+    /// for tests and embedders rather than a user-facing escape hatch.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self

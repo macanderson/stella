@@ -54,8 +54,8 @@ is ordered `SimpleLookup < SingleTask < MultiStep` and the derived `Ord` is load
 `deterministic_floor` takes the `max` of the model's class and a pattern floor, so the floor
 can only ever *add* planning. A misclassified task must still complete, just more slowly —
 that is why `SimpleLookup`'s judge-skip self-revokes through the zero-diff guard
-(`pipeline.rs:1529`: a lookup is verified after all if `file_changes > 0` or the diff is
-non-empty). `TaskAssessment` carries `conversational` on its own field rather than as a
+(the `files_touched` / `should_verify` pair in `Pipeline::run_candidate`: a lookup is
+verified after all if `file_changes > 0` or the diff is non-empty). `TaskAssessment` carries `conversational` on its own field rather than as a
 fourth class, because "is this even a task" is a different axis from "how big is it"; a bare
 `hi` takes one plain completion and skips plan → witness → execute → verify entirely.
 
@@ -79,7 +79,8 @@ because a pass of `cargo test -p a` must never be credited to a failure of `carg
 The witness is deliberately **visible** to the worker — iterating against a failing test is
 where convergence comes from — so integrity comes from tamper exclusion instead: at verify
 time every recorded `ArtifactIdentity` is re-read and compared on bytes, type, mode and link
-count (`pipeline.rs:1637`). A mismatch aborts the candidate *before* the ladder runs. It is
+count (the `witness_identity_matches` sweep at the top of `Pipeline::verify_candidate`'s
+loop). A mismatch aborts the candidate *before* the ladder runs. It is
 an authority boundary, not evidence for a model to weigh, and no judge can override it.
 
 **The evidence ladder decides before spending a judge call.** `ladder_decision` is a pure
@@ -106,8 +107,13 @@ ran. Execution aborts (budget, loop, step-cap) keep their stop — the worker di
   single-shot/best-of-N split, because isolation needs a git working tree and discovering
   that later would commit the run to machinery it cannot use. With `test_command` set (or
   `witness_writer` off), N=1 runs directly on the session ports — and an explicit
-  `--test-command` always wins over an authored one (`effective_test_command`,
-  `pipeline.rs:1862`).
+  `--test-command` always wins over an authored one (`Pipeline::effective_test_command`).
+- **An authored witness dies with its workspace unless `keep_witness` is set.** It is
+  scaffolding written to *fail* — a moment, not an invariant — so adoption withholds its
+  paths (`CandidateSlot::witness_paths` → `CandidateWorkspace::adopt`) rather than dropping
+  an already-satisfied test into the project's real suite. Withholding cannot move the
+  verdict: by adoption time the witness has already armed the oracle and the flip has been
+  observed. `keep_witness: true` (CLI `--keep-witness`) is the explicit promotion step.
 - **The flip baseline is re-run per candidate**, even though the witness stage already saw
   the command fail once — the observation must come from *that candidate's* surface, and a
   seeded one would be fabricated.

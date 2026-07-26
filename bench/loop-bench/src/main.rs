@@ -138,8 +138,12 @@ struct TrialReport {
     /// `verifier/reward.txt` (it never got that far, or is still running).
     /// `None` is NOT zero: an unfinished trial must not read as a failure.
     reward: Option<f64>,
-    /// `step_usage` events — one per model call, including the retried and
-    /// non-worker (triage/plan/judge) ones.
+    /// `step_usage` events — one per *committed* model call, including the
+    /// non-worker (triage/plan/judge) ones. Retries do not add records: a
+    /// retried call still emits a single `step_usage` carrying its own
+    /// `retries` count. A call that failed after dispatch emits
+    /// `usage_incomplete` instead and is NOT counted, so a turn whose every
+    /// call died reports zero model calls.
     model_calls: u32,
     /// `tool_start` events. Zero is the signal this harness exists for; see
     /// `zero_work` below.
@@ -155,8 +159,11 @@ struct TrialReport {
     /// looped yet, so the last entry is exactly where it died.
     stages: Vec<String>,
     /// A terminal event (`complete` or a non-retryable `error`) reached the
-    /// stream. Its absence is a *silent death* — the loop stopped with no
-    /// explanation, the worst failure mode.
+    /// stream. Its absence on a zero-work turn is a *silent death* — the loop
+    /// stopped with no explanation, the worst failure mode. Its absence on a
+    /// turn that DID work is deliberately not flagged (see `silent`), which
+    /// also means a crash *mid*-work is invisible to the verdict and reports
+    /// as an ordinary `ran (unsolved)`.
     terminal_event: bool,
     /// The turn ended without executing a single tool call. Paired with a
     /// non-pass, this is the "chose nothing" death the hardening work targets.
@@ -172,6 +179,7 @@ impl TrialReport {
     /// with no explanation. Only meaningful WITH `zero_work` — a run that did
     /// real work but lacks a clean `complete` (exited via budget/step-cap
     /// after the work landed) is not "silent", it just ended untidily.
+    #[must_use]
     fn silent(&self) -> bool {
         self.zero_work && !self.terminal_event
     }
@@ -180,6 +188,7 @@ impl TrialReport {
     /// wins (a solved task did the work, by definition); otherwise a run that
     /// executed no tool at all is the "chose nothing" death class, and a run
     /// that did work but did not pass simply ran.
+    #[must_use]
     fn loop_verdict(&self) -> &'static str {
         if self.reward == Some(1.0) {
             "solved"
@@ -197,6 +206,7 @@ impl TrialReport {
     /// The loop misbehaved: it did zero work and did not pass. Silent or
     /// stated, a zero-work non-pass is the failure this harness gates on —
     /// independent of the model and the reward.
+    #[must_use]
     fn loop_broken(&self) -> bool {
         self.zero_work && self.reward != Some(1.0)
     }
@@ -270,12 +280,17 @@ fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
     // A non-positive (or NaN) cap denies the very first model call, which
     // would report as a zero-work loop failure for every task — the harness
     // manufacturing the signal it gates on. Warn loudly rather than hand
-    // harbor a cap that cannot pass.
-    if args.budget <= 0.0 || !args.budget.is_finite() {
+    // harbor a cap that cannot pass. The threshold is not `<= 0.0` because the
+    // cap reaches stella at four decimals (see the `STELLA_BUDGET` env below),
+    // so a positive-but-tinier-than-that cap is rounded to `0.0000` and is
+    // exactly as unspendable — check the value that will actually be sent, not
+    // the one the operator typed.
+    if !args.budget.is_finite() || args.budget < 0.000_05 {
         eprintln!(
-            "warning: --budget {} is not a spendable cap; every trial will be denied \
-             before its first tool call and report as a loop failure",
-            args.budget
+            "warning: --budget {} reaches stella as {:.4}, which is not a spendable \
+             cap; every trial will be denied before its first tool call and report as \
+             a loop failure",
+            args.budget, args.budget
         );
     }
     // The adapter is imported by path, so it has to exist relative to the cwd.
@@ -307,10 +322,14 @@ fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
         Some(path) => {
             cmd.env("STELLA_BINARY", path);
         }
+        // The adapter resolves STELLA_BINARY → `stella` on PATH →
+        // ./target/release/stella. On a dev machine the PATH hit lands first
+        // and is a host (darwin/arm64) build, which the amd64 container cannot
+        // execute — so name that step, not just the last one.
         None => eprintln!(
-            "warning: no --stella-binary / $STELLA_BINARY set; the adapter will \
-             fall back to target/release/stella (must be a LINUX build for the \
-             amd64 task containers)"
+            "warning: no --stella-binary / $STELLA_BINARY set; the adapter will fall \
+             back to `stella` on PATH, then target/release/stella — both must be a \
+             LINUX amd64 build to run in the task containers"
         ),
     }
     // The adapter is loaded by import path; make it importable.
@@ -343,6 +362,18 @@ fn run_harbor(args: &Args, tasks: &[String]) -> Result<(), i32> {
 }
 
 /// Walk `<job_dir>/<task>__<id>/` trials and distill each into a report.
+///
+/// Two known blind spots, both of which under-report rather than invent a
+/// signal:
+///
+/// - The requested task list is NOT reconciled against what landed. Harbor
+///   filters `-i` names by glob and only errors when *nothing* matched, so a
+///   run that asked for eight tasks and matched six reports six healthy rows
+///   and exits `0`. Cross-check the row count against `--n` before trusting a
+///   green gate.
+/// - Only single-step trials are found. A multi-step dataset relocates its
+///   logs to `steps/<name>/agent/` and removes the trial-root `agent/`, so
+///   every trial reports as "no event stream".
 fn analyze(job_dir: &Path) -> Vec<TrialReport> {
     let Ok(entries) = std::fs::read_dir(job_dir) else {
         return Vec::new();
@@ -382,6 +413,14 @@ fn analyze(job_dir: &Path) -> Vec<TrialReport> {
     reports
 }
 
+/// Read the verifier's reward for one trial.
+///
+/// Harbor accepts EITHER `verifier/reward.txt` or `verifier/reward.json`
+/// (`harbor.models.trial.paths.TrialPaths`); only the text form is read here,
+/// because the terminal-bench mapper writes exactly that. A dataset passed via
+/// `--dataset` whose verifier emits the JSON form reports `None` for every
+/// trial, which reads as "never reached the verifier" — under-crediting, never
+/// over-crediting, so the loop gate stays honest.
 fn read_reward(trial_dir: &Path) -> Option<f64> {
     std::fs::read_to_string(trial_dir.join("verifier").join("reward.txt"))
         .ok()
@@ -395,10 +434,14 @@ fn distill_events(task: &str, raw: &str) -> TrialReport {
         ..Default::default()
     };
     let mut seen_stage = std::collections::BTreeSet::new();
+    let mut lines = 0usize;
+    let mut parsed = 0usize;
     for line in raw.lines() {
+        lines += 1;
         let Ok(ev) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        parsed += 1;
         match ev.get("type").and_then(Value::as_str) {
             Some("step_usage") => r.model_calls += 1,
             Some("tool_start") => {
@@ -443,6 +486,20 @@ fn distill_events(task: &str, raw: &str) -> TrialReport {
         }
     }
     r.zero_work = r.tool_calls == 0;
+    // Not one line of the file was an event. That is a different failure from
+    // a turn that stayed quiet — the file holds something else entirely (a
+    // stella startup error printed on stdout, a truncated upload, the wrong
+    // path) — and unnamed it renders as an unexplained silent death, sending
+    // the operator hunting the loop for a bug that is in the plumbing.
+    if parsed == 0 {
+        r.last_error = Some(truncate(
+            &format!(
+                "{lines} line(s), none a parseable event — an empty, non-JSON, or \
+                 truncated stream"
+            ),
+            90,
+        ));
+    }
     r
 }
 
@@ -649,6 +706,25 @@ mod tests {
         assert_eq!(truncate("abc", 0), "");
         // Multi-byte input must be split on characters, never bytes.
         assert_eq!(truncate("ααββ", 3), "αα…");
+    }
+
+    #[test]
+    fn a_stream_of_non_events_names_itself_instead_of_reading_as_a_silent_death() {
+        // stella failing before it opens the stream leaves its plain-text
+        // complaint in the file the adapter uploads. Every line is unparseable,
+        // so the counters are all zero and the verdict is SILENT-DEATH — true,
+        // but the cause is plumbing, not the loop, and the row has to say so.
+        let stream = ev(&[
+            "models: no credentials for provider `openrouter`",
+            "aborting",
+        ]);
+        let r = distill_events("garbled", &stream);
+        assert!(r.silent(), "no events at all is still a silent death");
+        let err = r.last_error.expect("an unparseable stream explains itself");
+        assert!(
+            err.starts_with("2 line(s), none a parseable event"),
+            "{err}"
+        );
     }
 
     #[test]

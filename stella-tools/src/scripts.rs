@@ -1117,15 +1117,28 @@ fn pnpm_workspace_globs(text: &str) -> Vec<String> {
 /// Expand one member pattern: a literal dir, or a `base/*` / `base/**`
 /// one-level glob. Anything fancier is skipped — deterministically, not
 /// approximately.
+///
+/// Every candidate is confined to the workspace root. The patterns come from
+/// repository manifests, which are untrusted content: a `package.json`
+/// declaring `"workspaces": ["../../elsewhere"]` — or a member dir that is a
+/// symlink pointing out of the tree — would otherwise make detection index a
+/// foreign tree AND make `run_script` execute its scripts with a cwd outside
+/// the session root. [`crate::resolve_within_root`] rejects both spellings
+/// (`..` traversal and symlink laundering), so the index can only ever name
+/// directories the session is actually rooted on.
 fn expand_member_pattern(root: &Path, pattern: &str, dirs: &mut BTreeSet<String>) {
     let pattern = pattern.trim().trim_end_matches('/');
     if pattern.is_empty() {
         return;
     }
+    let in_root = |rel: &str| crate::resolve_within_root(root, rel).is_some_and(|p| p.is_dir());
     let base = pattern
         .strip_suffix("/*")
         .or_else(|| pattern.strip_suffix("/**"));
     if let Some(base) = base {
+        if !in_root(base) {
+            return;
+        }
         let Ok(read) = std::fs::read_dir(root.join(base)) else {
             return;
         };
@@ -1134,11 +1147,12 @@ fn expand_member_pattern(root: &Path, pattern: &str, dirs: &mut BTreeSet<String>
             if name.starts_with('.') || name == "node_modules" || name == "target" {
                 continue;
             }
-            if child.path().is_dir() {
-                dirs.insert(format!("{base}/{name}"));
+            let member = format!("{base}/{name}");
+            if in_root(&member) {
+                dirs.insert(member);
             }
         }
-    } else if !pattern.contains('*') && root.join(pattern).is_dir() {
+    } else if !pattern.contains('*') && in_root(pattern) {
         dirs.insert(pattern.to_string());
     }
 }

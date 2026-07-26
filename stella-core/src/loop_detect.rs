@@ -87,6 +87,14 @@ pub struct LoopDetectionConfig {
     pub exact_repeat_threshold: usize,
     /// Full cycles (of any period `2..=`[`MAX_CYCLE_PERIOD`]) required to
     /// flag a short-cycle loop. `0` disables short-cycle detection.
+    ///
+    /// `1` is legal but degenerate and should not be configured: "one full
+    /// cycle" is satisfied by the trailing `period` records matching
+    /// *themselves*, so any two consecutive resolved calls that are not
+    /// identical (identical ones are caught by `detect_short_cycle`'s
+    /// all-same guard and left to exact-repeat) read as a period-2 loop. A
+    /// cycle is only evidence once it has actually recurred, so the lowest
+    /// meaningful value is `2`.
     pub short_cycle_repeats: usize,
 }
 

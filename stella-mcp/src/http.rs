@@ -32,6 +32,16 @@ use crate::transport::Transport;
 /// The MCP streamable-HTTP session header.
 const SESSION_HEADER: &str = "Mcp-Session-Id";
 
+/// The largest response body this transport will hold in memory. An MCP
+/// server is untrusted input, and `reqwest`'s own body readers are unbounded:
+/// a server that answers a `tools/call` — or a 500 whose error body we quote
+/// back — with a gigabyte of bytes would be an out-of-memory kill of *stella*
+/// long before the per-call timeout noticed. The stdio transport bounds a
+/// single frame at the same 8 MiB (`stdio::MAX_LINE_BYTES`) and `sse.rs`
+/// bounds an unterminated event there too, so this keeps the three framings on
+/// one budget: far past any plausible JSON-RPC message, still cheap to hold.
+const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+
 /// A streamable-HTTP connection to one MCP server.
 pub struct HttpTransport {
     client: Client,
@@ -91,7 +101,7 @@ impl HttpTransport {
     /// token rides as `Authorization` (refreshed ahead of expiry inside the
     /// source). A 401 answer triggers exactly one forced refresh + resend; a
     /// second 401 surfaces as a re-auth error.
-    async fn send(&self, body: String) -> Result<reqwest::Response, McpError> {
+    async fn send(&self, mut body: String) -> Result<reqwest::Response, McpError> {
         for attempt in 0..2u8 {
             let mut headers = self.base_headers.clone();
             let mut has_oauth = false;
@@ -110,13 +120,22 @@ impl HttpTransport {
                 }
             }
 
+            // Only the OAuth path can ever reach attempt 1 (a 401 forces one
+            // refresh + resend), so a server with no bearer source hands the
+            // body straight to `reqwest` instead of copying a `tools/call`
+            // payload that may be megabytes of file content on every request.
+            let payload = if self.bearer.is_some() {
+                body.clone()
+            } else {
+                std::mem::take(&mut body)
+            };
             let mut builder = self
                 .client
                 .post(&self.url)
                 .headers(headers)
                 .header(CONTENT_TYPE, "application/json")
                 .header(ACCEPT, "application/json, text/event-stream")
-                .body(body.clone());
+                .body(payload);
             if let Some(session) = self.session_id.lock().await.clone() {
                 builder = builder.header(SESSION_HEADER, session);
             }
@@ -146,7 +165,12 @@ impl HttpTransport {
                 continue;
             }
             if !status.is_success() {
-                let text = response.text().await.unwrap_or_default();
+                // An error body is server-chosen text we are about to quote
+                // back, so it is read under the same cap as a success body —
+                // otherwise the cheapest way to OOM the agent is a 500 with a
+                // gigabyte attached. A body that blows the cap (or is not
+                // UTF-8) simply contributes no detail to the diagnostic.
+                let text = self.read_body(response).await.unwrap_or_default();
                 let hint = if status == StatusCode::UNAUTHORIZED {
                     format!(
                         " — authorize with `stella mcp login {}` (or `o` on it in the deck's MCP tab)",
@@ -171,6 +195,53 @@ impl HttpTransport {
             "server `{}` did not answer within the allowed re-auth attempts",
             self.server_name
         )))
+    }
+
+    /// Read a whole response body into a `String`, refusing anything past
+    /// [`MAX_BODY_BYTES`].
+    ///
+    /// `reqwest`'s own `text()`/`bytes()` buffer whatever the server chooses to
+    /// send, which would let an untrusted MCP server decide how much of
+    /// stella's memory it occupies — so the body is streamed and abandoned the
+    /// moment the running total would cross the cap. A declared
+    /// `Content-Length` past the cap is refused before a single byte is read.
+    ///
+    /// A non-UTF-8 body is a protocol error rather than a lossy replacement:
+    /// JSON-RPC is UTF-8 by definition, and silently substituting U+FFFD would
+    /// only move the failure into the decoder with a worse message.
+    async fn read_body(&self, response: reqwest::Response) -> Result<String, McpError> {
+        if let Some(len) = response.content_length()
+            && len > MAX_BODY_BYTES as u64
+        {
+            return Err(McpError::Transport(format!(
+                "server `{}` declared a {len}-byte response body, past the \
+                 {MAX_BODY_BYTES}-byte cap",
+                self.server_name
+            )));
+        }
+        let mut buf: Vec<u8> = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                McpError::Transport(format!(
+                    "reading response body from `{}` failed: {e}",
+                    self.server_name
+                ))
+            })?;
+            if buf.len().saturating_add(chunk.len()) > MAX_BODY_BYTES {
+                return Err(McpError::Transport(format!(
+                    "server `{}` streamed a response body past the {MAX_BODY_BYTES}-byte cap",
+                    self.server_name
+                )));
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        String::from_utf8(buf).map_err(|_| {
+            McpError::Protocol(format!(
+                "response body from `{}` is not valid UTF-8",
+                self.server_name
+            ))
+        })
     }
 
     /// Read a `text/event-stream` body and return the JSON-RPC message that
@@ -239,12 +310,10 @@ impl Transport for HttpTransport {
         let message = if is_sse {
             self.read_sse_message(response, id).await?
         } else {
-            let text = response.text().await.map_err(|e| {
-                McpError::Transport(format!(
-                    "reading response body from `{}` failed: {e}",
-                    self.server_name
-                ))
-            })?;
+            // Under the same cap as the error path: a success body is exactly
+            // as server-chosen, and this is the seam that bounds it *before*
+            // the JSON decoder has to hold a second copy of it.
+            let text = self.read_body(response).await?;
             serde_json::from_str::<JsonRpcMessage>(text.trim()).map_err(|e| {
                 McpError::Protocol(format!("could not decode JSON-RPC response: {e}"))
             })?

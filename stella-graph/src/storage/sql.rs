@@ -499,10 +499,7 @@ fn extract_alter_additions(source: &str) -> Vec<FieldAddition> {
         }
         // Everything after the table name; each `ADD [COLUMN] …` clause
         // (comma-separated in Postgres) contributes one addition.
-        let after_table = rest
-            .find(table)
-            .map(|at| &rest[at + table.len()..])
-            .unwrap_or("");
+        let after_table = after_token(rest, table).map(|at| &rest[at..]).unwrap_or("");
         for clause in after_table.split(',') {
             let clause = clause.trim();
             let upper = clause.to_ascii_uppercase();
@@ -559,6 +556,23 @@ fn extract_alter_additions(source: &str) -> Vec<FieldAddition> {
         }
     }
     out
+}
+
+/// Byte offset just past `token` in `text`, matching it only as a whole
+/// whitespace-delimited word.
+///
+/// A bare `text.find(token)` matched the table name *inside* a keyword that
+/// preceded it — `ALTER TABLE IF EXISTS t ADD COLUMN …` found the `t` of
+/// `EXISTS`, so the scan resumed mid-keyword, no clause parsed as `ADD`, and
+/// every column the statement added was silently dropped from the storage map.
+fn after_token(text: &str, token: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    text.match_indices(token).find_map(|(at, _)| {
+        let end = at + token.len();
+        let before_ok = at == 0 || bytes[at - 1].is_ascii_whitespace();
+        let after_ok = end >= bytes.len() || bytes[end].is_ascii_whitespace();
+        (before_ok && after_ok).then_some(end)
+    })
 }
 
 // COMMENT ON harvesting
@@ -732,6 +746,27 @@ mod tests {
         assert_eq!(second.field.name, "paid");
         assert!(!second.field.nullable);
         assert_eq!(second.field.default_value.as_deref(), Some("false"));
+    }
+
+    /// `IF EXISTS` / `ONLY` sit between `ALTER TABLE` and the table name, and
+    /// the scan used to resume at the first *substring* occurrence of that
+    /// name — which for `IF EXISTS payments` is the `t` inside `EXISTS`. The
+    /// clause tail then no longer began with `ADD`, so the column vanished from
+    /// the storage map with no error anywhere: the gate would report a table
+    /// missing a column the migration really adds.
+    #[test]
+    fn alter_table_with_if_exists_or_only_still_yields_its_columns() {
+        let out = extract(
+            "ALTER TABLE IF EXISTS payments ADD COLUMN note TEXT;\n\
+             ALTER TABLE ONLY billing.invoices ADD COLUMN paid BOOLEAN;",
+        );
+        assert_eq!(out.additions.len(), 2, "{:?}", out.additions);
+        assert_eq!(out.additions[0].relation, "payments");
+        assert_eq!(out.additions[0].field.name, "note");
+        assert_eq!(out.additions[0].field.data_type.as_deref(), Some("TEXT"));
+        assert_eq!(out.additions[1].relation, "invoices");
+        assert_eq!(out.additions[1].namespace, "billing");
+        assert_eq!(out.additions[1].field.name, "paid");
     }
 
     #[test]

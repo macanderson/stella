@@ -38,7 +38,7 @@ stella-protocol ← stella-core ← stella-cli / stella-pipeline / stella-tui �
 | File | What it holds |
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's flat re-export surface, and the statement of the one-directional wire-compatibility rule. Read it first. |
-| [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary, 34 variants. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
+| [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary, 34 wire variants plus the tagless `Unknown` fallback. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
 | [`src/context_event.rs`](src/context_event.rs) | `LifecycleEventEnvelope` / `LifecycleEvent` — the *other* event channel, the one an older binary can still read. Open it when a new event must survive replay by an older reader. |
 | [`src/completion.rs`](src/completion.rs) | `CompletionRequest` / `CompletionResult` / `CompletionUsage`, `GenerationParams`, `FinishReason`. The one envelope every provider adapter translates to and from. |
 | [`src/provider.rs`](src/provider.rs) | The `Provider` port and `ToolCallObserver`, the seam speculative tool execution hangs on. |
@@ -57,12 +57,32 @@ backwards via `AgentEvent::Unknown { event_type, payload }`: an older binary
 meets an unrecognized `"type"` by preserving the event whole and moving on, and
 the JSONL replay reader keeps the line.
 
+What travels backwards is a **variant**, not a field. An unrecognized key on a
+tag this build already knows parses (serde ignores it) and is then dropped when
+the event is re-serialized, because nothing captured it — so a proxy or
+`replay::to_jsonl` relaying a newer stream passes new *events* through whole
+while quietly narrowing new *fields* on old ones. Only `AgentEvent::Unknown`
+preserves an object verbatim.
+
 The tolerance is scoped to the **tag alone**. A `"type"` this build knows,
 carrying a body that does not fit its variant, is still a hard error — that is
 corruption or an encoder bug, not a version skew, and laundering it into
 `Unknown` would convert a loud failure into silent data loss. `KNOWN_TYPE_TAGS`
 is the exact boundary, and it is generated from the same macro list as
 `type_tag()` so the two cannot drift.
+
+**The tolerance covers the tag, not the vocabularies underneath it.** The
+enums nested inside a variant — `ModelCallRole`, `StageKind`, `PolicyKind`,
+`CiStatus`, `FinishReason`, and their peers — are closed, so a token from a
+newer build is a body that does not fit a known tag, i.e. a hard error that
+costs the reader the whole event. `ModelCallRole` is the one to watch: it has
+grown from four values to fourteen, and its `Unknown` variant is the
+`serde(default)` for an *absent* `role`, not a `serde(other)` catch-all for an
+unrecognized one. `BlockKind` and `CacheZone` are the only two vocabularies
+that do degrade — and they degrade lossily, re-serializing a future token as
+`"other"` rather than preserving it the way `AgentEvent::Unknown` preserves an
+event. Adding a value to a nested vocabulary is therefore still a
+one-directional change; only `AgentEvent` variants travel backwards.
 
 `LifecycleEventEnvelope` remains the right channel for stella-*internal*
 lifecycle events — it adds an explicit `schema_version`, and it keeps internal
@@ -90,9 +110,12 @@ closed enum precisely so an error body cannot be represented;
 never a secret value; `ContextUsage` / `ContextProviderUsage` are a provider id
 and three numbers. `AgentEvent::BlockRegistered::content` is the one deliberate
 exception — bytes for the two block kinds the journal cannot otherwise resolve
-(the system prefix, the assembled user/recall message) — and it is local-only,
-stripped by the content-free export projection. See AGENTS.md's "Zero telemetry
-egress by default".
+(the system prefix, the assembled user/recall message). The export projection
+strips it, so content-freedom holds *on export*; it does not hold on the live
+event stream, which is the same stream `--output-format stream-json` writes to
+stdout. That is the one field on `AgentEvent` that can carry raw prompt text,
+and only where the operator points the stream keeps it off a remote sink. See
+AGENTS.md's "Zero telemetry egress by default".
 
 **Correctness predicates travel with the data.** A consumer never re-derives a
 classification a producer already made: `ProviderError::is_retryable` is the
@@ -146,6 +169,40 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
 - **`ContextUsage`'s sums saturate rather than wrap** — these predicates run
   over journal bytes the consumer did not write, and an audit check must answer
   `false` on a corrupt report, never panic on a debug-build overflow.
+- **`AgentEvent::Compaction::calibration_factor` defaults to `0.0`, which is a
+  sentinel, not a factor.** On a pre-receipt journal the field is absent, so
+  `serde(default)` supplies zero: recovering the raw budget as `effective *
+  factor` gives 0, and dividing by it gives infinity. Read `0.0` the way you
+  read `effective_budget_tokens == 0` — "this journal predates calibration" —
+  and skip the derivation. The identity factor is `1.0`, and the default cannot
+  be moved to it without changing how every already-written journal decodes.
+- **Dollar fields must be finite.** `cost_usd`, `spent_usd`, `limit_usd`, and
+  `estimated_cost_usd` are `f64` (JSON has no decimal type, and a string-encoded
+  decimal would break every existing consumer). Binary rounding is far below a
+  billable unit at these magnitudes, so that is fine — but `serde_json` writes
+  `NaN`/`±Infinity` as `null`, and `null` is not an `f64`. Because the tag is
+  known, the line is then a *hard* parse error, not an `Unknown`: a single
+  non-finite cost destroys the whole event. The `Option<f64>` case is quieter
+  and worse — `null` parses as `None`, so an infinite `BudgetTick::limit_usd`
+  comes back as "no limit set". Keep the arithmetic finite at the emitter;
+  the wire cannot tell you it wasn't.
+- **Duplicate JSON keys are last-wins, not an error.** `AgentEvent`'s decoder
+  buffers through `serde_json::Value` to read the tag, and a `Value` is a map —
+  so `{"type":"text","delta":"a","delta":"b"}` decodes as `"b"` where a direct
+  struct deserialize would have rejected it as a duplicate field. The same hop
+  drops line/column from the resulting error message. Both are the price of the
+  forward-compat fallback (#672), and both narrow the "a known tag with a bad
+  body stays loud" guarantee slightly.
+- **`context_event.rs` has no emitter yet.** Nothing in the workspace builds or
+  reads a `LifecycleEventEnvelope`; the types and their golden JCS vectors are
+  there to pin the wire shape (and the `record_hash` preimages taken from it)
+  ahead of the first producer. It is a published contract, not live traffic.
+- **`AgentEvent::UsageIncomplete::retries` serializes as `null` when absent.**
+  It is the one `Option` on the event vocabulary without
+  `skip_serializing_if`, so it costs a key on every incomplete-usage line while
+  its neighbours (`Pr::number`, `Pr::ci`, `ContextFrameRef::uri`, …) omit
+  theirs. Changing it now would be a wire change, so it is documented rather
+  than fixed; do not copy the pattern onto a new field.
 
 ## Testing
 

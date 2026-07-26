@@ -935,15 +935,21 @@ fn format_tool_input(name: &str, input: &serde_json::Value) -> String {
     summarize(&compact_json(input))
 }
 
-/// Truncate a field value to `max` chars with an ellipsis.
+/// Truncate a field value to `max` chars with an ellipsis. Cuts *before*
+/// flattening: the newline→space replacement is one char in, one char out, so
+/// slicing the raw text first yields the identical result without copying a
+/// multi-megabyte `content`/`old_string` argument in full (the same reason
+/// [`cap_middle_with`] walks `char_indices` instead of materializing chars).
 fn truncate_field(s: &str, max: usize) -> String {
-    let flat = s.replace(['\n', '\r'], " ");
-    let chars: Vec<char> = flat.chars().collect();
-    if chars.len() <= max {
-        return flat;
+    // `nth(max)` is `None` exactly when the text is `max` chars or shorter.
+    if s.char_indices().nth(max).is_none() {
+        return s.replace(['\n', '\r'], " ");
     }
-    let head: String = chars[..max.saturating_sub(1)].iter().collect();
-    format!("{head}…")
+    let head_end = s
+        .char_indices()
+        .nth(max.saturating_sub(1))
+        .map_or(s.len(), |(i, _)| i);
+    format!("{}…", s[..head_end].replace(['\n', '\r'], " "))
 }
 
 /// The workspace-relative path a file tool targets. Every built-in file tool
@@ -968,18 +974,13 @@ fn is_file_mutation(name: &str) -> bool {
 /// Truncate a summary to [`SUMMARY_BUDGET`] chars with a middle-out elision —
 /// the head and tail both matter for a failing tool result (L-S3), so we keep
 /// both rather than head-truncating away the error tail.
+///
+/// Caps *before* flattening. `text` here is a raw tool payload that can be
+/// megabytes (the caller also passes it to [`cap_middle`]); replacing newlines
+/// first would copy the whole thing just to throw all but 200 chars away, and
+/// the replacement is one char in / one char out, so the two orders agree.
 fn summarize(text: &str) -> String {
-    let flat = text.replace(['\n', '\r'], " ");
-    let chars: Vec<char> = flat.chars().collect();
-    if chars.len() <= SUMMARY_BUDGET {
-        return flat;
-    }
-    let keep = SUMMARY_BUDGET.saturating_sub(3);
-    let head = keep / 2;
-    let tail = keep - head;
-    let head_str: String = chars[..head].iter().collect();
-    let tail_str: String = chars[chars.len() - tail..].iter().collect();
-    format!("{head_str}...{tail_str}")
+    cap_middle_with(text, SUMMARY_BUDGET, "...").replace(['\n', '\r'], " ")
 }
 
 #[cfg(test)]

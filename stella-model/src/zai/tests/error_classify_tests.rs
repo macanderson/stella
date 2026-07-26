@@ -134,3 +134,31 @@ async fn complete_maps_openrouter_402_to_a_terminal_billing_error() {
     assert!(msg.contains("out of credits"), "{msg}");
     assert!(msg.contains("account balance depleted"), "{msg}");
 }
+
+/// The 429 pre-check runs ahead of the shared ladder, so it is the one arm
+/// that could still hard-code "Z.ai" while every other status reports under
+/// the re-identified provider's label. It did — an OpenRouter throttle read
+/// "Z.ai HTTP 429", the exact wrong-credential misdirection
+/// [`ZaiProvider::with_identity`] exists to prevent. Asserted on both
+/// branches of the split, since they format the message independently.
+#[test]
+fn a_429_reports_under_the_re_identified_provider_never_z_ai() {
+    let throttled = r#"{"error":{"message":"rate limit exceeded"}}"#;
+    let exhausted = r#"{"error":{"message":"insufficient balance"}}"#;
+
+    let throttle = classify_zai_429("OpenRouter", throttled, Some(1_000));
+    assert!(matches!(throttle, ProviderError::RateLimited { .. }));
+    let msg = throttle.to_string();
+    assert!(msg.contains("OpenRouter"), "{msg}");
+    assert!(!msg.contains("Z.ai"), "{msg}");
+
+    let billing = classify_zai_429("DeepSeek", exhausted, None);
+    assert!(matches!(billing, ProviderError::Terminal(_)));
+    let msg = billing.to_string();
+    assert!(msg.contains("DeepSeek"), "{msg}");
+    assert!(!msg.contains("Z.ai"), "{msg}");
+
+    // The default identity is unchanged: Z.ai still reports as Z.ai.
+    let native = classify_zai_429("Z.ai", "too many requests", None);
+    assert!(native.to_string().contains("Z.ai HTTP 429"), "{native}");
+}

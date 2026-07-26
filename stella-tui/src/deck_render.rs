@@ -623,7 +623,11 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             "  reconstructing the call's context from the recorded receipt…",
             theme::muted(),
         )));
-    } else if let Some(view) = ui.inspect_view.clone() {
+    } else if let Some(view) = ui.inspect_view.take() {
+        // Moved out rather than cloned: a reconstructed context is a whole
+        // prompt (up to a full window of messages) and the deck redraws on a
+        // ~30 fps tick, so cloning it here copied megabytes per second for a
+        // read-only walk. It goes straight back at the end of this arm.
         title = " inspect · context sent ";
         let call = &view.call;
         lines.push(Line::from(Span::styled(
@@ -693,6 +697,7 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
             " ↑/↓ pgup/pgdn scroll · esc/← back to calls · q close",
             theme::muted(),
         )));
+        ui.inspect_view = Some(view);
     } else {
         title = " inspect · recorded calls ";
         lines.push(Line::from(Span::styled(
@@ -1114,11 +1119,10 @@ fn render_composer_footer(
 /// hairlines, with the brand pinned left and the ethos chip pinned right.
 /// Two rows tall; the context/token meter is kept prominent.
 ///
-/// `pub(crate)`: the cache-panel integration tests in
-/// [`crate::cache_panel`] render a full statline to assert on the CACHE /
-/// SAVED / WARMTH cells, so they need to call this from outside the file
-/// (kept out of `deck_render.rs`'s own test module to respect its size
-/// ratchet — see that module's doc comment).
+/// `pub(crate)`: the cache-panel tests in [`crate::cache_panel`] render a full
+/// statline to assert on the CACHE / SAVED / WARMTH cells, so they call this
+/// from outside the file — the assertions live next to the formatters they
+/// exercise rather than in this module's own test file.
 pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if area.height == 0 {
         return;
@@ -1578,8 +1582,12 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
 /// Deck-wide shortcuts that work on every tab.
 const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     ("tab / ⇧tab", "switch tabs"),
-    ("⌘⏎ / ⌃⏎", "queue the prompt — never blocks a running turn"),
-    ("⏎", "insert a line break in the prompt"),
+    // Enter semantics are the inverse of the old chord-to-submit mapping (see
+    // `composer::classify_enter`): a bare ⏎ dispatches, a *modified* ⏎ breaks
+    // the line. The composer footer advertises the same pair — these rows must
+    // not drift from it.
+    ("⏎", "queue the prompt — never blocks a running turn"),
+    ("⌘⏎ / ⌃⏎ / ⌥⏎", "insert a line break in the prompt"),
     ("!cmd", "run a shell command NOW (skips the queue)"),
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),
     ("ctrl-v", "paste — a copied image is attached to the prompt"),

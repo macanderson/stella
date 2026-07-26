@@ -8,8 +8,9 @@
 //! NO I/O of its own: the engine drives through the `Provider` and
 //! `ToolExecutor` traits and emits `AgentEvent`s over a channel. All
 //! decision logic (compaction, eviction, loop detection, budget) is plain
-//! synchronous functions over owned data — easy to property-test
-//!
+//! synchronous functions over owned data — easy to property-test against
+//! fakes, with no runtime and no filesystem. See the crate README for the
+//! full module map and the port list.
 
 pub mod accounted_call;
 pub mod budget;

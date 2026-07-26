@@ -1,3 +1,13 @@
+//! `poll_video` — the read half of the asynchronous video pair.
+//!
+//! `generate_video` persists a job handle before it reports success, so the
+//! paid job outlives the session that submitted it; this tool reconciles that
+//! handle against the provider and, on success, saves the bytes under the
+//! artifact id assigned at submit time. The handle is only forgotten once the
+//! job reaches a terminal state AND its artifact is on disk — a cleanup that
+//! fails is `reconciliation_required`, never a reported success over a stale
+//! handle.
+
 use std::sync::Arc;
 
 use async_trait::async_trait;

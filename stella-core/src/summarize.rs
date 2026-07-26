@@ -22,7 +22,10 @@ const SUMMARY_RESULT_CAP: usize = 300;
 /// for the summarizer's own output.
 const SUMMARY_RENDER_CAP: usize = 60_000;
 
-/// Truncate `s` to `cap` chars on a char boundary with an elision marker.
+/// Truncate `s` to `cap` UTF-8 **bytes**, walked back to a char boundary, with
+/// an elision marker appended when it was cut. Bytes (not chars) because every
+/// cap in this module is a proxy for request size; the name is historical and
+/// the boundary walk is what keeps it safe on multi-byte input.
 pub(crate) fn cap_chars(s: &str, cap: usize) -> String {
     if s.len() <= cap {
         return s.to_string();

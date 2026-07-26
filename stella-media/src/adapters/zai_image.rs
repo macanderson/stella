@@ -51,7 +51,11 @@ impl ZaiImageProvider {
         }
     }
 
-    /// Override the base URL — used by fixtures and private proxies.
+    /// Override the base URL — used by fixtures and private proxies. No
+    /// configuration path reaches this yet: `detect_media_backend` in
+    /// `stella-tools` constructs the adapter on the vendor `DEFAULT_BASE_URL`
+    /// and never calls this, so a user cannot currently point the media family
+    /// at a gateway the way the chat family's `base_url` setting does.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self

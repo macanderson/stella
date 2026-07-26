@@ -4,8 +4,7 @@
 //! `stella-mcp` — an **MCP client**. It connects to external Model Context
 //! Protocol servers (stdio child processes and streamable-HTTP endpoints),
 //! discovers their tools, and merges them into the engine's tool registry so
-//! `stella-core::Engine` can call them exactly like a built-in tool
-//!
+//! `stella-core::Engine` can call them exactly like a built-in tool.
 //!
 //! The single integration point is [`McpToolSet`], which implements
 //! `stella_core::ports::ToolExecutor` — the same port `stella-tools`'

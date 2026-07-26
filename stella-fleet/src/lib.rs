@@ -20,7 +20,8 @@
 //!   no-I/O heuristic that orders equal-priority [`RunnableSession`]s by
 //!   soonest-to-expire prompt-cache prefix ([`warmest_first`]), so a session
 //!   about to lose its cached prefix is resumed before a colder one takes the
-//!   slot ([`Fleet::with_cache_warmth`] is the dispatch-side seam).
+//!   slot ([`Fleet::with_cache_warmth`] is the dispatch-side seam — API and
+//!   tests today, since no product surface installs a lookup yet).
 //!
 //! and [`fleet`] — **THE dispatch seam** ([`Fleet::dispatch`], L-E9): the one
 //! API subagent fan-out goes through, claiming a task's declared paths as
