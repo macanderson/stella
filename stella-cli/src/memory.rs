@@ -208,7 +208,7 @@ impl SessionMemory {
                     ab_suppressed: false,
                     ab_turn: 0,
                     // Phase 3 (#714)
-                    lifecycle_enabled: tuning::lifecycle_enabled(workspace_root),
+                    lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
                 })
             }
             Err(e) => {
