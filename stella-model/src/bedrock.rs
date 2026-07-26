@@ -673,7 +673,7 @@ impl Provider for BedrockProvider {
         let response = request
             .send()
             .await
-            .map_err(|e| ProviderError::Transport(e.to_string()))?;
+            .map_err(|e| http::classify_unary_dispatch_error("Bedrock", &e))?;
 
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {

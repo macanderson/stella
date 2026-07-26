@@ -116,12 +116,8 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //               opt-in, never-deleting quarantine behind `stella doctor`
 //   journal     append-only per-session sidecar journal (crash-safe resume)
 //   notify      persist-until-read cross-session notifications
-//   private     (crate-private) the owner-only, no-follow filesystem
-//               primitives every other module writes through
-//   receipts    (crate-private impl) the context-block registry and per-step
-//               request manifest — the receipts plane's write/read surface
-//   reconstruct (crate-private impl) byte-exact step reconstruction from a
-//               receipt plus the event journal, digest-verified
+//   prune       retention/deletion for `store.db`: the explicit
+//               execution-cascade delete `stella stats prune` drives (#616)
 //   sessions    cross-process session registry (one JSON file per session)
 //   telemetry   (crate-private impl) per-call telemetry rows and the
 //               execution-level paid-call accounting gate
@@ -158,7 +154,7 @@ pub mod identity;
 pub mod integrity;
 pub mod journal;
 pub mod notify;
-pub mod retention;
+pub mod prune;
 pub mod sessions;
 pub mod usage;
 
@@ -197,6 +193,7 @@ pub(crate) use private::{
     ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,
     open_private_file, open_private_sqlite, open_private_sqlite_read_only, read_private_to_string,
 };
+pub use prune::{DEPENDENT_TABLES, StorePrunePolicy, StorePruneReport};
 pub use receipts::{
     ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,
 };

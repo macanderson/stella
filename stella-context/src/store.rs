@@ -375,19 +375,21 @@ pub struct NodeRow {
 /// # Retention
 ///
 /// Nothing here forgets. `node.superseded_at` is never written (only edges are
-/// versioned), there is no delete or tombstone path in this crate, and a node
-/// whose uri changed — a renamed or deleted file — is orphaned live forever,
-/// still serving its last-known content. Recall reads *every* live node and
-/// *every* vector under the active fingerprint on each query, so both the
-/// store's size and a recall's latency grow monotonically with the workspace's
-/// lifetime. That is fine at CLI-local scale and is the plane's first scaling
-/// wall; a forget/compaction path is the tracked follow-up, not an oversight.
+/// versioned), there is no delete or tombstone path, and a node whose uri
+/// changed — a renamed or deleted file — is orphaned live forever, still
+/// serving its last-known content. Recall still *reads* every live node and
+/// every vector under the active fingerprint on each query, so the store's size
+/// and the bytes crossing the SQLite boundary per recall grow monotonically
+/// with the workspace's lifetime.
 ///
-/// `stella memory forget` is **not** that path, and reading it as one is the
-/// mistake to avoid: its tombstone lives in `store.db`, and the CLI applies it
-/// to the frames [`ContextStore::recall`] already returned. A forgotten memory
-/// is still stored here, still embedded, still ranked, and still spends the
-/// query's frame and token budget before the caller drops it.
+/// What no longer grows quadratically is the work done on those rows: the
+/// fused candidate list is cut to a multiple of the query's `max_frames`
+/// before the MMR pass and before any frame is built
+/// (`retrieval::MMR_CANDIDATE_MULTIPLE`), so the diversity fold and the content
+/// clones are bounded by the budget rather than by lifetime memory size. The
+/// remaining linear scan is fine at CLI-local scale and is the plane's first
+/// scaling wall; a `LIMIT`-bounded candidate query, a decoded-vector cache, and
+/// a forget/compaction path are the tracked follow-ups, not oversights.
 ///
 /// # Drop
 ///

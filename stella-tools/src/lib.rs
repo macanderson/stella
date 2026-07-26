@@ -35,6 +35,7 @@ pub mod issues;
 pub mod media;
 pub mod memory;
 pub mod overview;
+pub mod policy;
 pub mod process;
 pub mod project;
 pub mod read;

@@ -155,6 +155,28 @@ pub struct EngineConfig {
     /// never mid-tool) is unaffected, because a trip is surfaced as a tool
     /// *result*, not as a turn abort.
     pub tool_timeout: Option<Duration>,
+    /// Backstop on a **single generation** — one provider dispatch, excluding
+    /// the backoff sleeps between attempts. `None` restores the unbounded
+    /// await.
+    ///
+    /// Without it nothing above the transport bounds a model call: the only
+    /// limit is whichever reqwest deadline the adapter happens to carry, and
+    /// those are per-read stalls, not whole-response bounds. Bedrock is the
+    /// worst case — it is unary, so its 600s `UNARY_READ_TIMEOUT` covers the
+    /// entire generation, and its expiry used to classify as retryable
+    /// `Transport`, so one wedged request cost four full 600s attempts
+    /// (~40 minutes) before surfacing.
+    ///
+    /// A trip is reported as `ProviderError::Terminal`, never `Transport`,
+    /// following `stella-serve`'s reverse-RPC deadline: a provider that is
+    /// simply not answering must not be handed the same unbounded wait again
+    /// once per retry, which would multiply the very window the deadline
+    /// exists to close.
+    ///
+    /// 10 minutes: above any generation a caller would still want (it matches
+    /// `UNARY_READ_TIMEOUT`, the most generous transport bound in the
+    /// workspace) while staying finite.
+    pub model_timeout: Option<Duration>,
     /// Working directory reported to lifecycle hooks (`crate::hooks`) as the
     /// `cwd` of every [`HookPayload`]. Kept here — rather than sniffed via
     /// `std::env::current_dir()` inside the engine — so `stella-core`
@@ -192,6 +214,7 @@ impl Default for EngineConfig {
             summarize_keep_recent: 8,
             max_steps: 200,
             tool_timeout: Some(Duration::from_secs(15 * 60)),
+            model_timeout: Some(Duration::from_secs(10 * 60)),
             cwd: ".".to_string(),
             turn_instance: 0,
         }
@@ -1093,7 +1116,7 @@ impl<'a> Engine<'a> {
                     // first means the `unreachable!` cannot be reached by
                     // an unlucky randomized poll order (#560).
                     biased;
-                    result = &mut complete => result,
+                    result = bounded_generation(self.config.model_timeout, &mut complete) => result,
                     _ = &mut pump => unreachable!("the gate keeps the speculation channel open"),
                 };
                 drop(complete);
@@ -1842,6 +1865,37 @@ type RetryAttemptFn<'a> = Box<
 >;
 type CompletionResultAlias = stella_protocol::CompletionResult;
 type SpeculationFuture<'a> = Pin<Box<dyn Future<Output = SpeculationPool> + 'a>>;
+
+/// Bound one provider dispatch by [`EngineConfig::model_timeout`].
+///
+/// The trip is [`ProviderError::Terminal`] on purpose. `Transport` is
+/// retryable, so classifying it that way would hand a provider that is simply
+/// not answering the same unbounded wait again once per attempt — multiplying
+/// the very window the deadline exists to close. `stella-serve`'s reverse-RPC
+/// deadline made the same call for the same reason.
+///
+/// Wrapping the dispatch rather than the whole retry future means the bound is
+/// per *generation*: backoff sleeps between attempts are not charged against
+/// it, and a slow-but-progressing provider is never cut off by time another
+/// attempt already spent.
+async fn bounded_generation<F>(
+    limit: Option<Duration>,
+    call: F,
+) -> Result<CompletionResultAlias, ProviderError>
+where
+    F: Future<Output = Result<CompletionResultAlias, ProviderError>>,
+{
+    let Some(limit) = limit else {
+        return call.await;
+    };
+    match tokio::time::timeout(limit, call).await {
+        Ok(result) => result,
+        Err(_) => Err(ProviderError::Terminal(format!(
+            "generation exceeded the {}s model deadline",
+            limit.as_secs()
+        ))),
+    }
+}
 
 /// Drop guard for the paid-call window ([`Engine::run_model_call`]): armed
 /// before the retried provider dispatch, disarmed on both normal exits. It

@@ -28,7 +28,7 @@ stella chat
 | `stella storage <tree\|show\|grep\|drift>` | Inspect the [storage map](/docs/commands/storage) — layers, relations, and fields with intent (offline, no API key). |
 | `stella scripts <list\|run>` | List and run the project's [package-manager scripts](/docs/commands/scripts) via canonical verbs (offline, no API key). |
 | `stella models` | List configured providers and available models. |
-| `stella stats` | Summarize cost, tokens, and resolve rate per provider/model from local telemetry — this workspace only. |
+| `stella stats [prune]` | Summarize cost, tokens, and resolve rate per provider/model from local telemetry — this workspace only. `prune` bounds that store's growth: it drops executions past `--older-than`/`--max-rows` along with every row keyed to them, and never destroys telemetry that has not reached the hub yet unless `--force`. |
 | `stella usage <report\|sync\|prune>` | The same numbers across *every* project on this machine, via the local hub at `~/.stella/usage.db`. `sync` replicates from a cursor (safe to re-run), `prune` bounds the hub's growth. Local-only; nothing is uploaded. |
 | `stella cloud <status\|register>` | Show or set the org/workspace identity that scopes hub rows. A stub today: it persists ids locally, and the OAuth login lands later. |
 | `stella inspect` | Show the exact context a past model call was sent — the [reconstructed message array](/docs/commands/inspect), verified against the digests recorded at emission. |

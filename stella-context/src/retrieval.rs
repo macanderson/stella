@@ -80,6 +80,23 @@ const COVERAGE_TOPK: usize = 5;
 const MAX_VECTOR_SEEDS: usize = 8;
 /// Cap on lexical-fallback frames added.
 const LEXICAL_LIMIT: usize = 8;
+/// How many fused candidates survive into the MMR pass and frame construction,
+/// as a multiple of the query's `max_frames`.
+///
+/// Everything downstream of the fusion is per-candidate work — a cosine fold
+/// against every other candidate, a full clone of the node's content body, and
+/// a token count over it — but `pack_to_budget` then keeps at most
+/// `max_frames` of them. Before this bound the candidate list was *every live
+/// node* (the recency ranking contributes all of them, at any relevance), so a
+/// 5-frame recall minted and scored one frame per node in the workspace's
+/// entire lifetime and discarded >99% of them.
+///
+/// 4x leaves the diversity pass real choice — MMR's whole job is to reject a
+/// cluster of near-duplicates in favour of something further down the list, so
+/// handing it exactly `max_frames` candidates would make it a no-op — while
+/// keeping the pass `Θ(max_frames² )` instead of `Θ(n²)`. Floored at
+/// [`LEXICAL_LIMIT`] so a small `max_frames` still considers a sane window.
+const MMR_CANDIDATE_MULTIPLE: usize = 4;
 
 /// Why a candidate frame did not make it into the assembled context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,6 +310,12 @@ impl ContextStore {
         //    grounding, serve bounded lexical matches, **explicitly labeled**.
         //    Above threshold, fuse the signals into real grounding.
         let used_lexical_fallback = coverage < MIN_COVERAGE;
+        // Candidates cut before the budget pass ever sees them (the fused tail
+        // beyond `MMR_CANDIDATE_MULTIPLE`). Reported alongside the budget's own
+        // drops so the partition in `L-C5` still covers every scored candidate.
+        // The lexical-fallback arm is already bounded by `LEXICAL_LIMIT`, so it
+        // leaves this empty.
+        let mut extra_dropped: Vec<DroppedFrame> = Vec::new();
         let candidates: Vec<ContextFrame> = if used_lexical_fallback {
             let terms = query_terms(q);
             let mut frames = Vec::new();
@@ -360,7 +383,32 @@ impl ContextStore {
                 ],
                 RRF_K,
             );
-            let ordered = dedup_by_content_hash(&fused, &node_by_id);
+            let ordered_all = dedup_by_content_hash(&fused, &node_by_id);
+            // Bound the candidate set BEFORE the MMR pass and before any frame
+            // is built. Both are per-candidate and both are wasted on a tail
+            // that `pack_to_budget` cannot keep. The cut is by fused rank, so
+            // what survives is the head the ranking already judged best.
+            let keep_candidates = (q.max_frames as usize)
+                .saturating_mul(MMR_CANDIDATE_MULTIPLE)
+                .max(LEXICAL_LIMIT);
+            let considered = ordered_all.len().min(keep_candidates);
+            let ordered = &ordered_all[..considered];
+            // The tail is still reported — a bound that truncates silently is
+            // exactly the failure `L-C5` exists to prevent. It is summarized
+            // from the node rows rather than by minting frames, so reporting a
+            // drop stays cheaper than not bounding at all.
+            let mut pre_budget_dropped: Vec<DroppedFrame> = Vec::new();
+            for (id, _) in &ordered_all[considered..] {
+                if let Some(node) = node_by_id.get(id) {
+                    pre_budget_dropped.push(DroppedFrame {
+                        id: node.public_id.clone(),
+                        title: node.display_name.clone(),
+                        token_cost: contextgraph_types::budget_tokens(&node.content),
+                        reason: DropReason::FrameCount,
+                    });
+                }
+            }
+
             let max_fused = ordered.first().map(|(_, s)| *s).unwrap_or(0.0);
             let mmr_items: Vec<MmrItem> = ordered
                 .iter()
@@ -388,11 +436,15 @@ impl ContextStore {
                     )?);
                 }
             }
+            extra_dropped = pre_budget_dropped;
             frames
         };
 
         // 5. Budget-pack; report what was dropped (`L-C5`, never silent).
-        let (kept, dropped) = pack_to_budget(candidates, q.max_tokens, q.max_frames);
+        let (kept, mut dropped) = pack_to_budget(candidates, q.max_tokens, q.max_frames);
+        // Candidates cut ahead of the budget pass land at the end of the
+        // report: they ranked below everything the budget itself rejected.
+        dropped.append(&mut extra_dropped);
         Ok(RecallResult {
             frames: kept,
             dropped,
@@ -508,7 +560,18 @@ pub fn is_lexical_fallback(frame: &ContextFrame) -> bool {
 }
 
 /// Cosine similarity, guarding zero-norm vectors (defined as 0 similarity).
+/// Counts [`cosine`] calls so a test can pin recall's *complexity class*
+/// rather than its wall clock. The candidate bound is output-preserving by
+/// construction — the frames a query returns are the same either way — so the
+/// only thing a witness can observe is how much work was done to produce them.
+/// Test-only: no counter exists in a release build.
+#[cfg(test)]
+pub(crate) static COSINE_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    #[cfg(test)]
+    COSINE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if a.len() != b.len() {
         return 0.0;
     }
@@ -619,9 +682,13 @@ struct MmrItem {
 /// The diversity penalty is a running maximum folded forward once per pick,
 /// not a rescan of the selected set for every remaining candidate: `max` is
 /// associative, so the two are numerically identical, but the rescan cost
-/// `Θ(n³)` cosines. That mattered because the candidate list is *every live
-/// node* (the recency ranking contributes all of them), so the rescan made
-/// recall latency cubic in lifetime memory size. This form is `Θ(n²)` cosines.
+/// `Θ(n³)` cosines.
+///
+/// This pass is `Θ(n²)` in the candidates handed to it, which is why the caller
+/// bounds them to [`MMR_CANDIDATE_MULTIPLE`] x `max_frames` first. It used to be
+/// fed *every live node* — the recency ranking contributes all of them — so
+/// recall was quadratic in lifetime memory size and ran to exhaustion selecting
+/// candidates the budget pass then threw away.
 fn mmr_select(items: &[MmrItem], lambda: f32) -> Vec<usize> {
     let n = items.len();
     let mut selected: Vec<usize> = Vec::with_capacity(n);
@@ -1031,6 +1098,103 @@ mod tests {
             .await
             .unwrap();
         (dir, store)
+    }
+
+    /// Witness for the unbounded candidate set. The MMR pass is `Θ(n²)` in the
+    /// candidates handed to it, and it used to be handed *every live node* —
+    /// the recency ranking contributes all of them at any relevance — so a
+    /// 5-frame recall did quadratic work in lifetime memory size and threw
+    /// >99% of it away at the budget pass.
+    ///
+    /// This asserts the complexity class, not the wall clock: with the bound
+    /// in place the MMR fold is quadratic in `max_frames`, so total cosines
+    /// stay near the unavoidable `n` similarity scorings. Without it the fold
+    /// alone costs ~n²/2, which at n=120 is over 7000 extra calls.
+    #[tokio::test]
+    async fn recall_does_not_scale_quadratically_with_lifetime_memory_size() {
+        use std::sync::atomic::Ordering as AtomicOrdering;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let store = ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            FixedClock::shared(1_000),
+        )
+        .unwrap();
+
+        // A workspace with some history. Every one of these is live, so every
+        // one lands in the recency ranking and therefore in the fused list.
+        const NODES: usize = 120;
+        let mut delta = ContextDelta::new();
+        for i in 0..NODES {
+            delta = delta.with_node(
+                NodeInput::new(NodeKind::Artifact, format!("note-{i}"))
+                    .with_content(format!("note number {i} about packing frames to a budget")),
+            );
+        }
+        store.upsert(delta).await.unwrap();
+
+        let mut q = base_query("open the database", "packing frames to a budget");
+        q.max_frames = 5;
+
+        COSINE_CALLS.store(0, AtomicOrdering::Relaxed);
+        let result = store.recall(&q).await.unwrap();
+        let calls = COSINE_CALLS.load(AtomicOrdering::Relaxed);
+
+        assert!(
+            result.frames.len() <= 5,
+            "the frame budget still binds: {}",
+            result.frames.len()
+        );
+
+        // The similarity scoring pass legitimately touches every stored vector
+        // once. The MMR fold on top must be bounded by the candidate cut
+        // (5 x 4 = 20 candidates → at most ~20²/2 = 200 more), NOT by n²/2.
+        let unbounded_mmr_cost = NODES * NODES / 2;
+        let generous_ceiling = NODES + unbounded_mmr_cost / 4;
+        assert!(
+            calls < generous_ceiling,
+            "recall made {calls} cosine calls for {NODES} nodes and 5 frames; an \
+             unbounded MMR pass would cost about {} on top of the {NODES} scorings, \
+             which is the quadratic blowup this bound exists to remove",
+            unbounded_mmr_cost
+        );
+    }
+
+    /// The bound must not become a silent truncation — `L-C5` requires every
+    /// scored candidate to appear in exactly one of `frames` / `dropped`.
+    #[tokio::test]
+    async fn candidates_cut_before_the_budget_pass_are_still_reported() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("context.db");
+        let store = ContextStore::open_with(
+            &path,
+            Arc::new(HashEmbedder::default()),
+            FixedClock::shared(1_000),
+        )
+        .unwrap();
+
+        const NODES: usize = 60;
+        let mut delta = ContextDelta::new();
+        for i in 0..NODES {
+            delta = delta.with_node(
+                NodeInput::new(NodeKind::Artifact, format!("note-{i}"))
+                    .with_content(format!("note number {i} about packing frames to a budget")),
+            );
+        }
+        store.upsert(delta).await.unwrap();
+
+        let mut q = base_query("open the database", "packing frames to a budget");
+        q.max_frames = 5;
+        let result = store.recall(&q).await.unwrap();
+
+        assert_eq!(
+            result.frames.len() + result.dropped.len(),
+            NODES,
+            "kept + dropped must partition every scored candidate, not just the \
+             ones that reached the budget pass"
+        );
     }
 
     #[tokio::test]
