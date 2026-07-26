@@ -1095,6 +1095,7 @@ mod tests {
             content: "retry policy is deterministic".to_string(),
             token_cost: 4,
             id: None,
+            content_digest: None,
         }];
         let p = witness_prompt("fix the retry bug", &recall, "src/\n  lib.rs");
         assert!(p.contains("TEST_COMMAND:"));

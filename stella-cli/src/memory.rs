@@ -265,7 +265,7 @@ impl SessionMemory {
     /// The skills recall would inject for `prompt`, as `(name, reason)` pairs
     /// for skill-version usage telemetry — `reason` is the matched
     /// domains/terms that selected it. Same enabled-filtered load + selection
-    /// as [`Self::recall_block`], so this reports exactly what was applied.
+    /// as [`Self::recall_block_reported`], so this reports exactly what was applied.
     pub fn selected_skills(&self, prompt: &str) -> Vec<(String, String)> {
         skills::select_skills(
             &self.load_skills(),

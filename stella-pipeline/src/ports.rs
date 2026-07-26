@@ -69,6 +69,23 @@ pub struct RecalledFrame {
     /// Present only when the frame is materialized in the store; a candidate
     /// frame carries `None` (L-C4).
     pub id: Option<String>,
+    /// `"sha256:<hex>"` over the exact bytes of [`Self::content`], as the
+    /// source frame declared it — Phase 2 (#713).
+    ///
+    /// The digest was already minted at the store boundary and was then thrown
+    /// away one layer up, at the CGP→pipeline projection, so every
+    /// `ContextFrameRef` on every recall event carried `content_digest: null`.
+    /// It is what makes a frame reference *resolve*: with it, a receipt names
+    /// a record and the exact revision of that record's content, which is the
+    /// identity ADR 0004 defines. Without it, a reference names a row whose
+    /// text may since have been superseded, and a past turn's context is
+    /// reconstructed rather than verified.
+    ///
+    /// `None` when the serving provider declared none — per
+    /// `docs/context-reuse.md` §1 such a frame is *not verifiable* and a host
+    /// must re-query rather than reuse it, so the absence is meaningful and is
+    /// carried rather than papered over with a locally recomputed hash.
+    pub content_digest: Option<String>,
 }
 
 /// Context recall at turn start (L-E8): a *live provider query*, never a
@@ -117,6 +134,64 @@ impl Recall {
     /// Whether nothing was recalled.
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
+    }
+
+    /// This recall as its telemetry event, or `None` when nothing was recalled.
+    ///
+    /// Phase 2 (#713) deliverable 3. This lives on [`Recall`] rather than in
+    /// the pipeline because the pipeline was, until now, the **only** path that
+    /// emitted it: the one-shot run, the interactive REPL, `/goal`, and the
+    /// Command Deck all recalled and reported nothing, so most real usage was
+    /// invisible to `stella inspect`. Fixing that by copying the pipeline's
+    /// projection into five call sites would have made the event's shape a
+    /// convention rather than a definition — and the first divergence would be
+    /// a provider mix that only some surfaces counted.
+    ///
+    /// `block_id` is deliberately absent here and present on the receipt side
+    /// instead: a recalled frame becomes a context block only once it is
+    /// *rendered* into a message, which happens after this event is emitted and
+    /// does not happen at all on the planner's structured path. The join to a
+    /// block runs through the record — `BlockOrigin::memory_id` — not through
+    /// an id fabricated before the block exists.
+    #[must_use]
+    pub fn telemetry_event(&self) -> Option<stella_protocol::AgentEvent> {
+        if self.frames.is_empty() {
+            return None;
+        }
+        let mut provider_mix: Vec<stella_protocol::ProviderShare> = Vec::new();
+        for frame in &self.frames {
+            match provider_mix
+                .iter_mut()
+                .find(|share| share.provider == frame.provider)
+            {
+                Some(share) => share.frames += 1,
+                None => provider_mix.push(stella_protocol::ProviderShare {
+                    provider: frame.provider.clone(),
+                    frames: 1,
+                }),
+            }
+        }
+        Some(stella_protocol::AgentEvent::ContextRecall {
+            tokens: self.frames.iter().map(|f| f.token_cost).sum(),
+            frames: self
+                .frames
+                .iter()
+                .map(|f| stella_protocol::ContextFrameRef {
+                    id: f.id.clone(),
+                    citation_label: f.citation_label.clone(),
+                    provider: f.provider.clone(),
+                    source: f.source.clone(),
+                    kind: f.kind.clone(),
+                    uri: f.uri.clone(),
+                    method: f.method.clone(),
+                    token_cost: f.token_cost,
+                    block_id: None,
+                    content_digest: f.content_digest.clone(),
+                })
+                .collect(),
+            provider_mix,
+            usage: self.usage.clone(),
+        })
     }
 }
 
@@ -615,5 +690,68 @@ mod tests {
             AlwaysAbortGate.review(&proposal).await,
             ScopeDecision::Abort
         );
+    }
+
+    fn recalled(provider: &str, id: &str, digest: Option<&str>) -> RecalledFrame {
+        RecalledFrame {
+            citation_label: format!("label for {id}"),
+            provider: provider.into(),
+            source: "stella-context".into(),
+            kind: "memory".into(),
+            uri: None,
+            method: None,
+            content: "body".into(),
+            token_cost: 7,
+            id: Some(id.into()),
+            content_digest: digest.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_recall_projects_to_one_telemetry_event_with_provenance_intact() {
+        // Phase 2 (#713) deliverable 3. The projection lives here, once, so
+        // the five surfaces that recall cannot disagree about the shape of the
+        // event they report — the failure mode of copying it into each.
+        let recall = Recall {
+            frames: vec![
+                recalled("workspace-memory", "nod_a", Some("sha256:aa")),
+                recalled("workspace-memory", "nod_b", None),
+                recalled("code-graph", "sym_c", Some("sha256:cc")),
+            ],
+            usage: None,
+        };
+        let Some(stella_protocol::AgentEvent::ContextRecall {
+            frames,
+            provider_mix,
+            tokens,
+            ..
+        }) = recall.telemetry_event()
+        else {
+            panic!("a non-empty recall reports an event");
+        };
+        assert_eq!(tokens, 21, "the summed per-frame cost");
+        // The mix counts frames that reached the prompt, per provider, in
+        // first-seen order.
+        assert_eq!(provider_mix.len(), 2);
+        assert_eq!(provider_mix[0].provider, "workspace-memory");
+        assert_eq!(provider_mix[0].frames, 2);
+        assert_eq!(provider_mix[1].frames, 1);
+        // The digest survives the projection — the whole point of deliverable
+        // 2. Before this it was hard-coded `None` at the one emission site.
+        assert_eq!(frames[0].content_digest.as_deref(), Some("sha256:aa"));
+        assert_eq!(
+            frames[1].content_digest, None,
+            "a provider that declared none keeps none — that absence is the \
+             signal that the frame is not verifiable and must be re-queried"
+        );
+        assert_eq!(frames[2].content_digest.as_deref(), Some("sha256:cc"));
+    }
+
+    #[test]
+    fn an_empty_recall_reports_nothing_rather_than_an_empty_event() {
+        // A turn that recalled nothing did not have a recall stage worth a
+        // receipt; an empty event would be a row that means "we looked" and
+        // reads as "we found nothing", which are different claims.
+        assert!(Recall::default().telemetry_event().is_none());
     }
 }

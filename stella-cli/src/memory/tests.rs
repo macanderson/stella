@@ -178,6 +178,7 @@ fn frame(
         content: content.into(),
         token_cost: 10,
         id: Some(id.into()),
+        content_digest: None,
     }
 }
 
@@ -307,6 +308,49 @@ fn graph_frame_projection_preserves_provider_and_origin_provenance() {
         recalled.method.as_deref(),
         Some("tree-sitter/symbol-extract")
     );
+}
+
+#[test]
+fn projection_carries_the_frames_content_digest_instead_of_dropping_it() {
+    // Phase 2 (#713) deliverable 2. The store mints this digest over exactly
+    // the bytes that become the frame's content, and this projection used to
+    // drop it on the floor — which is why every `ContextFrameRef` on every
+    // recall event carried `content_digest: null`. Without it a frame
+    // reference names a row whose text may since have been superseded; with it
+    // the reference identifies a revision, which is what makes a past turn's
+    // context verifiable rather than merely reconstructed.
+    let mut memory = contextgraph_frame(
+        "nod_abc",
+        contextgraph_types::FrameKind::Memory,
+        "auth module",
+        "validate the token",
+    );
+    memory.content_digest = Some("sha256:feedface".into());
+    let recalled = project_recalled_frame(crate::contextgraph::AttributedContextFrame {
+        provider: "workspace-memory".into(),
+        frame: memory,
+    })
+    .expect("labeled memory frame projects");
+    assert_eq!(recalled.content_digest.as_deref(), Some("sha256:feedface"));
+
+    // A provider that declares none keeps `None`. Per docs/context-reuse.md §1
+    // such a frame is not verifiable and must be re-queried rather than reused,
+    // so the absence is information — recomputing a digest locally would erase
+    // it and, since this projection trims the content, would not even agree
+    // with the provider's.
+    let mut undeclared = contextgraph_frame(
+        "nod_def",
+        contextgraph_types::FrameKind::Memory,
+        "deploy runbook",
+        "staging first",
+    );
+    undeclared.content_digest = None;
+    let recalled = project_recalled_frame(crate::contextgraph::AttributedContextFrame {
+        provider: "workspace-memory".into(),
+        frame: undeclared,
+    })
+    .expect("projects");
+    assert_eq!(recalled.content_digest, None);
 }
 
 #[test]

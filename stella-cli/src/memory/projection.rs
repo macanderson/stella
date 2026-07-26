@@ -39,6 +39,13 @@ pub(super) fn project_recalled_frame(
         content: frame.content.as_deref().unwrap_or("").trim().to_string(),
         token_cost: frame.token_cost,
         id: Some(frame.id),
+        // Phase 2 (#713): the store already minted this over exactly the bytes
+        // that became `content`; dropping it here is what made every recall
+        // event's `content_digest` null. Carried, never recomputed — a locally
+        // derived hash would agree with the provider's only by luck (this
+        // projection trims the content), and a digest that does not match the
+        // record it claims to identify is worse than none.
+        content_digest: frame.content_digest,
     })
 }
 
