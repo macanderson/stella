@@ -72,12 +72,21 @@ pub struct ToolEntry {
     pub read_only: bool,
     /// What has to be true for it to register.
     pub availability: Availability,
+    /// The family this tool belongs to, and the name an operator can switch
+    /// off to disable the whole family at once
+    /// (`"tools": {"process": "off"}`).
+    ///
+    /// These were section comments in this table for a long time; they are
+    /// data now because a per-tool policy needs "turn off the process group"
+    /// to be one line rather than four, and because the settings UI groups its
+    /// rows by exactly this.
+    pub group: &'static str,
 }
 
 /// Declares the canonical table once and derives every flat name list from it,
 /// so the two can never disagree.
 macro_rules! catalog {
-    ($($name:literal => ($read_only:expr, $availability:expr)),* $(,)?) => {
+    ($($name:literal => ($read_only:expr, $availability:expr, $group:literal)),* $(,)?) => {
         /// Every tool Stella can dispatch by name, sorted, declared once.
         ///
         /// See the [module docs](self) for how to add one.
@@ -86,6 +95,7 @@ macro_rules! catalog {
                 name: $name,
                 read_only: $read_only,
                 availability: $availability,
+                group: $group,
             }),*
         ];
 
@@ -100,91 +110,130 @@ use Availability::{Always, Bash, Issue, Media, Session, Video, Web, WebSearch};
 catalog! {
     // ---- Always-on: registered in every session ----
     // File CRUD
-    "read_file"           => (true,  Always),
+    "read_file"           => (true, Always, "file"),
     // Graph-resolved span read (reads through the same `read_file` instance)
-    "read_symbol"         => (true,  Always),
-    "write_file"          => (false, Always),
-    "edit_file"           => (false, Always),
-    "apply_edits"         => (false, Always),
-    "delete_file"         => (false, Always),
+    "read_symbol"         => (true, Always, "file"),
+    "write_file"          => (false, Always, "file"),
+    "edit_file"           => (false, Always, "file"),
+    "apply_edits"         => (false, Always, "file"),
+    "delete_file"         => (false, Always, "file"),
     // Search
-    "grep"                => (true,  Always),
-    "glob"                => (true,  Always),
-    "graph_query"         => (true,  Always),
+    "grep"                => (true, Always, "search"),
+    "glob"                => (true, Always, "search"),
+    "graph_query"         => (true, Always, "search"),
     // Context & memory
-    "project_overview"    => (true,  Always),
-    "gather_context"      => (true,  Always),
-    "explorations"        => (true,  Always),
-    "save_exploration"    => (false, Always),
-    "save_memory"         => (false, Always),
-    "cite_memory"         => (false, Always),
+    "project_overview"    => (true, Always, "context"),
+    "gather_context"      => (true, Always, "context"),
+    "explorations"        => (true, Always, "context"),
+    "save_exploration"    => (false, Always, "context"),
+    "save_memory"         => (false, Always, "context"),
+    "cite_memory"         => (false, Always, "context"),
     // The definition of done + build/test
-    "verify_done"         => (false, Always),
-    "build_project"       => (false, Always),
-    "run_tests"           => (false, Always),
-    "diagnostics"         => (true,  Always),
+    "verify_done"         => (false, Always, "build"),
+    "build_project"       => (false, Always, "build"),
+    "run_tests"           => (false, Always, "build"),
+    "diagnostics"         => (true, Always, "build"),
     // Manifest-verb execution (argv, no shell)
-    "run_lint"            => (false, Always),
-    "format_code"         => (false, Always),
+    "run_lint"            => (false, Always, "build"),
+    "format_code"         => (false, Always, "build"),
     // The project scripts index (docs/design/scripts-index.md)
-    "list_scripts"        => (true,  Always),
-    "run_script"          => (false, Always),
+    "list_scripts"        => (true, Always, "scripts"),
+    "run_script"          => (false, Always, "scripts"),
     // The long-running process group
-    "start_process"       => (false, Always),
-    "read_output"         => (false, Always),
-    "send_stdin"          => (false, Always),
-    "stop_process"        => (false, Always),
+    "start_process"       => (false, Always, "process"),
+    "read_output"         => (false, Always, "process"),
+    "send_stdin"          => (false, Always, "process"),
+    "stop_process"        => (false, Always, "process"),
     // Vendor-neutral repository tools
-    "repo_status"         => (true,  Always),
-    "repo_diff"           => (true,  Always),
-    "repo_commit"         => (false, Always),
-    "repo_push"           => (false, Always),
-    "repo_pull"           => (false, Always),
-    "repo_rollback"       => (false, Always),
+    "repo_status"         => (true, Always, "repo"),
+    "repo_diff"           => (true, Always, "repo"),
+    "repo_commit"         => (false, Always, "repo"),
+    "repo_push"           => (false, Always, "repo"),
+    "repo_pull"           => (false, Always, "repo"),
+    "repo_rollback"       => (false, Always, "repo"),
     // CI & evidence
-    "ci_status"           => (true,  Always),
-    "screenshot"          => (false, Always),
+    "ci_status"           => (true, Always, "ci"),
+    "screenshot"          => (false, Always, "ci"),
     // generate_svg is client-side, so it needs no media key
-    "generate_svg"        => (false, Always),
+    "generate_svg"        => (false, Always, "media"),
     // The session task board
-    "task_create"         => (false, Always),
-    "task_list"           => (true,  Always),
-    "task_start"          => (false, Always),
-    "task_complete"       => (false, Always),
-    "task_cancel"         => (false, Always),
-    "task_assign"         => (false, Always),
-
+    "task_create"         => (false, Always, "task"),
+    "task_list"           => (true, Always, "task"),
+    "task_start"          => (false, Always, "task"),
+    "task_complete"       => (false, Always, "task"),
+    "task_cancel"         => (false, Always, "task"),
+    "task_assign"         => (false, Always, "task"),
     // ---- Conditionally registered ----
-    "bash"                => (false, Bash),
-    "web_fetch"           => (true,  Web),
-    "web_extract_assets"  => (true,  Web),
-    "web_download"        => (false, Web),
-    "web_search"          => (true,  WebSearch),
-    "generate_image"      => (false, Media),
-    "generate_video"      => (false, Video),
-    "poll_video"          => (false, Video),
+    "bash"                => (false, Bash, "bash"),
+    "web_fetch"           => (true, Web, "web"),
+    "web_extract_assets"  => (true, Web, "web"),
+    "web_download"        => (false, Web, "web"),
+    "web_search"          => (true, WebSearch, "web"),
+    "generate_image"      => (false, Media, "media"),
+    "generate_video"      => (false, Video, "media"),
+    "poll_video"          => (false, Video, "media"),
     // Issue tracking
-    "create_issue"        => (false, Issue),
-    "update_issue"        => (false, Issue),
-    "close_issue"         => (false, Issue),
-    "search_issues"       => (true,  Issue),
-    "get_issue"           => (true,  Issue),
-    "list_labels"         => (true,  Issue),
-    "list_members"        => (true,  Issue),
-    "start_work_on_issue" => (false, Issue),
-
+    "create_issue"        => (false, Issue, "issue"),
+    "update_issue"        => (false, Issue, "issue"),
+    "close_issue"         => (false, Issue, "issue"),
+    "search_issues"       => (true, Issue, "issue"),
+    "get_issue"           => (true, Issue, "issue"),
+    "list_labels"         => (true, Issue, "issue"),
+    "list_members"        => (true, Issue, "issue"),
+    "start_work_on_issue" => (false, Issue, "issue"),
     // ---- CLI session layer (never in the native registry) ----
-    "ask_user"            => (false, Session),
-    "search_skills"       => (true,  Session),
-    "install_skill"       => (false, Session),
-    "tool_search"         => (true,  Session),
-    "skill_search"        => (true,  Session),
-    "mcp_search"          => (true,  Session),
+    "ask_user"            => (false, Session, "session"),
+    "search_skills"       => (true, Session, "session"),
+    "install_skill"       => (false, Session, "session"),
+    "tool_search"         => (true, Session, "session"),
+    "skill_search"        => (true, Session, "session"),
+    "mcp_search"          => (true, Session, "session"),
 }
 
 /// Look up a tool's canonical row by dispatch name.
 pub fn get(name: &str) -> Option<&'static ToolEntry> {
     CATALOG.iter().find(|entry| entry.name == name)
+}
+
+/// The group an operator switches off to disable a whole family.
+///
+/// Built-ins answer from [`CATALOG`]. Everything else is grouped by where it
+/// came from, so a policy can address tools this table has never heard of:
+/// MCP tools (`mcp__<server>__<tool>`) are `"mcp"`, and anything else — a
+/// customer's own manifest tool — is `"custom"`. That is what makes
+/// `{"custom": "off"}` mean "none of my registered tools" without enumerating
+/// them.
+pub fn group_for(name: &str) -> &'static str {
+    if let Some(entry) = get(name) {
+        return entry.group;
+    }
+    if name.starts_with("mcp__") {
+        return "mcp";
+    }
+    "custom"
+}
+
+/// Every group name in the catalog plus the two dynamic ones, sorted and
+/// deduped — what the settings UI lists as its sections and what validation
+/// accepts as a group key.
+pub fn groups() -> Vec<&'static str> {
+    let mut groups: Vec<&'static str> = CATALOG.iter().map(|entry| entry.group).collect();
+    groups.push("mcp");
+    groups.push("custom");
+    groups.sort_unstable();
+    groups.dedup();
+    groups
+}
+
+/// Names in one group, sorted.
+pub fn names_in_group(group: &str) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = CATALOG
+        .iter()
+        .filter(|entry| entry.group == group)
+        .map(|entry| entry.name)
+        .collect();
+    names.sort_unstable();
+    names
 }
 
 /// Names whose [`Availability`] satisfies `pred`, sorted.
