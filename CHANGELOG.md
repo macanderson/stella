@@ -26,15 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
-### Removed
+## [0.5.41] — 2026-07-26
 
-- `stella storage prune` — superseded by `stella stats prune`, which is the
-  `store.db` retention path documented in `AGENTS.md` and covered end-to-end by
-  `stella-cli/tests/stats_prune_cli.rs`. Both verbs landed in parallel (#704 and
-  #707) as rival implementations of #616; #707's engine won and replaced the
-  other's module, leaving `storage prune` wired to code that no longer existed.
-  Use `stella stats prune --older-than 90d` / `--max-rows N`; note it guards
-  un-replicated telemetry rather than in-flight turns and pending exports.
 ## [0.5.40] — 2026-07-26
 
 ### Changed
