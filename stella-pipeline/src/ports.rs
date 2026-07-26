@@ -331,7 +331,15 @@ pub trait CandidateWorkspace: Send + Sync {
     /// byte-identical and the error names the conflicting paths
     /// ([`WorkspaceError::Adopt`]); the user's index and stash are never
     /// touched on any path.
-    async fn adopt(&self) -> Result<Vec<AdoptedChange>, WorkspaceError>;
+    ///
+    /// `withhold` names workspace-relative paths to leave behind — they are
+    /// excluded from both the returned change list and the applied patch, so
+    /// the two can never disagree. This is how an authored witness stays
+    /// ephemeral: it must exist inside the candidate (it *is* the test the
+    /// flip oracle runs), but it is scaffolding for the run, not a change the
+    /// user asked for, so by default it dies with the workspace instead of
+    /// being copied into the real tree. Empty means adopt everything.
+    async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError>;
     /// Remove the workspace. Best-effort and infallible — the cleanup
     /// discipline is the pipeline's (every workspace is removed on every
     /// path, except a winner whose adoption failed, which is preserved for

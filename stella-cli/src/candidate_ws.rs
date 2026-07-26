@@ -642,7 +642,7 @@ impl GitCandidateWorkspace {
     /// apply that patch to the REAL tree in one atomic
     /// `git apply` — no `--index`, so the user's index is untouched and the
     /// adopted files land exactly as uncommitted working-tree changes.
-    async fn adopt_inner(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+    async fn adopt_inner(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
         let fail = |reason: String, paths: Vec<String>| WorkspaceError::Adopt {
             reason,
             paths,
@@ -664,19 +664,42 @@ impl GitCandidateWorkspace {
                 Vec::new(),
             ));
         }
-        let names = git(
-            &self.dir,
-            &[
-                "diff",
-                "--name-status",
-                "--no-renames",
-                "-z",
-                &self.baseline,
-                &sealed,
-            ],
-        )
-        .await
-        .map_err(|e| fail(e, Vec::new()))?;
+        // Withheld paths drop out via git pathspec magic, appended identically
+        // to the name-status listing and to the binary patch below — the
+        // reported changes and the applied bytes must never disagree, or the
+        // event stream would claim a file the user's tree does not have.
+        // `literal` disables glob interpretation: a path is a path, never a
+        // pattern, so a witness filename containing `*` or `[` cannot widen
+        // the exclusion into production code.
+        let exclusions: Vec<String> = withhold
+            .iter()
+            .map(|path| format!(":(exclude,literal){path}"))
+            .collect();
+        let mut name_args = vec![
+            "diff",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
+        let mut patch_args = vec![
+            "diff",
+            "--binary",
+            "--no-renames",
+            self.baseline.as_str(),
+            sealed.as_str(),
+        ];
+        if !exclusions.is_empty() {
+            for args in [&mut name_args, &mut patch_args] {
+                args.push("--");
+                args.push(".");
+                args.extend(exclusions.iter().map(String::as_str));
+            }
+        }
+        let names = git(&self.dir, &name_args)
+            .await
+            .map_err(|e| fail(e, Vec::new()))?;
         let changes = parse_name_status(&names);
         if changes.is_empty() {
             return Ok(Vec::new());
@@ -688,13 +711,9 @@ impl GitCandidateWorkspace {
             SHADOW_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         let all_paths = || changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
-        git_stdout_to_file(
-            &self.dir,
-            &["diff", "--binary", "--no-renames", &self.baseline, &sealed],
-            &patch_file,
-        )
-        .await
-        .map_err(|e| fail(e, all_paths()))?;
+        git_stdout_to_file(&self.dir, &patch_args, &patch_file)
+            .await
+            .map_err(|e| fail(e, all_paths()))?;
         let patch_str = match patch_file.to_str() {
             Some(s) => s,
             None => {
@@ -756,8 +775,8 @@ impl CandidateWorkspace for GitCandidateWorkspace {
         self.sealed_unchanged_inner().await
     }
 
-    async fn adopt(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
-        self.adopt_inner().await
+    async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+        self.adopt_inner(withhold).await
     }
 
     async fn remove(&self) {
@@ -1030,12 +1049,90 @@ mod tests {
             verified.as_ref()
         ));
 
-        let adopted = ws.adopt().await.unwrap();
+        let adopted = ws.adopt(&[]).await.unwrap();
         assert_eq!(adopted.len(), 1);
         assert_eq!(
             read(&root.join("tests/authority_witness.rs")),
             "#[test] fn authority_witness() {}\n"
         );
+        ws.remove().await;
+        assert_no_candidate_worktrees(&root);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Withholding the witness must remove ONLY the witness. The whole risk of
+    /// filtering the adoption patch is that an over-broad pathspec silently
+    /// swallows real work, which would look like the model simply not doing
+    /// the task — so this asserts both halves: the witness is absent from the
+    /// real tree AND from the reported change list, while the production edit
+    /// beside it lands byte-exactly.
+    #[tokio::test]
+    async fn withholding_the_witness_still_adopts_the_work_it_verified() {
+        let root = scaffold("witness-withhold");
+        let port = GitCandidateWorkspaces::new(
+            root.clone(),
+            RegistryOptions::default(),
+            Vec::new(),
+            crate::rules::ResolvedRules::default(),
+        );
+        let ws = port.create_workspace().await.unwrap();
+        std::fs::create_dir_all(ws.dir().join("tests")).unwrap();
+        std::fs::write(
+            ws.dir().join("tests/authority_witness.rs"),
+            "#[test] fn authority_witness() {}\n",
+        )
+        .unwrap();
+        // The real work the witness exists to prove.
+        std::fs::write(ws.dir().join("tracked.txt"), "the actual fix\n").unwrap();
+        ws.seal().await.unwrap();
+
+        let withhold = vec!["tests/authority_witness.rs".to_string()];
+        let adopted = ws.adopt(&withhold).await.unwrap();
+
+        assert_eq!(
+            adopted.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+            vec!["tracked.txt"],
+            "the withheld witness must not be reported as adopted"
+        );
+        assert_eq!(read(&root.join("tracked.txt")), "the actual fix\n");
+        assert!(
+            !root.join("tests/authority_witness.rs").exists(),
+            "the witness must never reach the real tree"
+        );
+        ws.remove().await;
+        assert_no_candidate_worktrees(&root);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A witness whose filename contains glob metacharacters must exclude
+    /// exactly itself. `:(exclude)` without `literal` would treat `[` and `*`
+    /// as a pattern and could withhold production files that happen to match.
+    #[tokio::test]
+    async fn withholding_treats_the_path_literally_not_as_a_glob() {
+        let root = scaffold("witness-glob");
+        let port = GitCandidateWorkspaces::new(
+            root.clone(),
+            RegistryOptions::default(),
+            Vec::new(),
+            crate::rules::ResolvedRules::default(),
+        );
+        let ws = port.create_workspace().await.unwrap();
+        std::fs::create_dir_all(ws.dir().join("tests")).unwrap();
+        // `t*.rs` as a glob would also match `tracked_rs.rs`; as a literal it
+        // matches only the file actually named `t*.rs`.
+        std::fs::write(ws.dir().join("tests/t*.rs"), "#[test] fn w() {}\n").unwrap();
+        std::fs::write(ws.dir().join("tests/tracked_rs.rs"), "// real work\n").unwrap();
+        ws.seal().await.unwrap();
+
+        let adopted = ws.adopt(&["tests/t*.rs".to_string()]).await.unwrap();
+
+        assert_eq!(
+            adopted.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(),
+            vec!["tests/tracked_rs.rs"],
+            "only the literally-named witness may be withheld"
+        );
+        assert!(root.join("tests/tracked_rs.rs").exists());
+        assert!(!root.join("tests/t*.rs").exists());
         ws.remove().await;
         assert_no_candidate_worktrees(&root);
         std::fs::remove_dir_all(&root).ok();
@@ -1212,7 +1309,7 @@ mod tests {
             )
             .await;
         ws.seal().await.unwrap();
-        let adopted = ws.adopt().await.unwrap();
+        let adopted = ws.adopt(&[]).await.unwrap();
         let landed = root.join("protected/store.txt").exists();
         ws.remove().await;
         assert_no_candidate_worktrees(&root);
@@ -1264,7 +1361,7 @@ mod tests {
             )
             .await;
         ws.seal().await.unwrap();
-        let adopted = ws.adopt().await.unwrap();
+        let adopted = ws.adopt(&[]).await.unwrap();
         let landed = root.join("protected/ignored.txt").exists();
         ws.remove().await;
         assert_no_candidate_worktrees(&root);
@@ -1306,7 +1403,7 @@ mod tests {
         let (_, before_cached, before_stash, before_head) = tree_state(&root);
         loser.remove().await;
 
-        let mut adopted = winner.adopt().await.unwrap();
+        let mut adopted = winner.adopt(&[]).await.unwrap();
         adopted.sort_by(|a, b| a.path.cmp(&b.path));
         let described: Vec<(String, FileChangeKind)> =
             adopted.into_iter().map(|c| (c.path, c.kind)).collect();
@@ -1360,7 +1457,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = ws.adopt().await.expect_err("drift must reject adoption");
+        let error = ws.adopt(&[]).await.expect_err("drift must reject adoption");
         assert!(
             error.to_string().contains("changed after verification"),
             "{error}"
@@ -1394,7 +1491,7 @@ mod tests {
         // The user edits the same file while the candidate runs.
         std::fs::write(root.join("tracked.txt"), "base\nuser-edit\n").unwrap();
 
-        match ws.adopt().await.unwrap_err() {
+        match ws.adopt(&[]).await.unwrap_err() {
             WorkspaceError::Adopt {
                 paths, workspace, ..
             } => {

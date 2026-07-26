@@ -247,6 +247,48 @@ async fn authored_witness_degrades_when_judge_is_worker() {
     assert!(!stages(&events).contains(&StageKind::Witness));
 }
 
+/// `keep_witness` is the explicit promotion step: the same run, opted in,
+/// adopts the witness alongside the work. Paired with the default-path
+/// assertion in `authored_witness_with_one_candidate_uses_one_disposable_snapshot`,
+/// this pins BOTH directions of the flag — a default-only test would still
+/// pass if the flag were ignored entirely.
+#[tokio::test]
+async fn keep_witness_promotes_the_authored_witness_into_the_real_tree() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("single"),
+        text_result(
+            "TEST_COMMAND: cargo test --test authority_witness authority_witness -- --exact",
+        ),
+        text_result("done"),
+    ]);
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let workspace = FakeWorkspace::new(0, vec![false, false, true], Ok(vec![]), log.clone())
+        .with_repo_status(SeqRepoStatus::new(vec![
+            vec![],
+            vec![("tests/authority_witness.rs", "sha256:test")],
+        ]));
+    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log.clone());
+
+    let (outcome, _, _) = run_isolated(
+        &provider,
+        &port,
+        PipelineConfig {
+            candidates: Some(1),
+            keep_witness: true,
+            ..PipelineConfig::default()
+        },
+        "Fix the failing test",
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds inside the snapshot");
+    assert_eq!(outcome.status, PipelineStatus::Completed);
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["create", "seal:0", "adopt:0", "remove:0"],
+        "keep_witness withholds nothing — the witness is adopted with the work"
+    );
+}
+
 #[tokio::test]
 async fn authored_witness_with_one_candidate_uses_one_disposable_snapshot() {
     let provider = ScriptedProvider::new(vec![
@@ -278,8 +320,14 @@ async fn authored_witness_with_one_candidate_uses_one_disposable_snapshot() {
     assert_eq!(outcome.status, PipelineStatus::Completed);
     assert_eq!(
         *log.lock().unwrap(),
-        vec!["create", "seal:0", "adopt:0", "remove:0"],
-        "authoring, worker verification, and adoption share one workspace"
+        vec![
+            "create",
+            "seal:0",
+            "adopt:0:withhold=tests/authority_witness.rs",
+            "remove:0"
+        ],
+        "authoring, worker verification, and adoption share one workspace, \
+         and the witness is withheld from the real tree by default"
     );
 }
 
@@ -328,7 +376,12 @@ async fn sealed_witness_identity_survives_git_reclassification_out_of_untracked_
     assert_eq!(outcome.status, PipelineStatus::Completed);
     assert_eq!(
         *log.lock().unwrap(),
-        vec!["create", "seal:0", "adopt:0", "remove:0"]
+        vec![
+            "create",
+            "seal:0",
+            "adopt:0:withhold=tests/authority_witness.rs",
+            "remove:0"
+        ]
     );
 }
 
