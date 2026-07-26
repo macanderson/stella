@@ -78,31 +78,43 @@ pub enum StatsCmd {
     /// old executions and everything keyed to them: events, telemetry, tool
     /// calls, context blocks, receipts. Replication-safe by default — never
     /// drops an execution whose telemetry has not reached the usage hub
-    Prune {
-        /// Drop executions older than this window: N followed by d, w, h, mo,
-        /// or y (e.g. 90d, 12w, 720h, 3mo). A bare number means days
-        #[arg(long, value_name = "AGE")]
-        older_than: Option<String>,
+    Prune(PruneArgs),
+}
 
-        /// Hard ceiling on retained executions; evict the oldest prunable
-        /// ones until at/under it
-        #[arg(long, value_name = "N")]
-        max_rows: Option<i64>,
+/// Flags for `stella stats prune` and its alias `stella storage prune`.
+///
+/// One `Args` struct with two mount points, rather than the flags declared
+/// twice: `store.db` retention is discoverable both from the store's *stats*
+/// (where you notice it is too big) and from `storage` (where the rest of the
+/// store verbs live), and two copies of five flags is how the two verbs drift
+/// into accepting different spellings of the same knob. #709 removed a rival
+/// second implementation that had done exactly that — `--max-executions` on one
+/// verb, `--max-rows` on the other, against two different engines.
+#[derive(clap::Args, Debug, Clone)]
+pub struct PruneArgs {
+    /// Drop executions older than this window: N followed by d, w, h, mo,
+    /// or y (e.g. 90d, 12w, 720h, 3mo). A bare number means days
+    #[arg(long, value_name = "AGE")]
+    pub older_than: Option<String>,
 
-        /// Also drop executions whose telemetry has not replicated into the
-        /// usage hub — permanently loses that cost data. Off by default
-        #[arg(long)]
-        force: bool,
+    /// Hard ceiling on retained executions; evict the oldest prunable
+    /// ones until at/under it
+    #[arg(long, value_name = "N")]
+    pub max_rows: Option<i64>,
 
-        /// VACUUM afterwards to hand freed pages back to the filesystem (also
-        /// automatic for a large prune)
-        #[arg(long)]
-        vacuum: bool,
+    /// Also drop executions whose telemetry has not replicated into the
+    /// usage hub — permanently loses that cost data. Off by default
+    #[arg(long)]
+    pub force: bool,
 
-        /// Report what would be pruned without deleting anything
-        #[arg(long)]
-        dry_run: bool,
-    },
+    /// VACUUM afterwards to hand freed pages back to the filesystem (also
+    /// automatic for a large prune)
+    #[arg(long)]
+    pub vacuum: bool,
+
+    /// Report what would be pruned without deleting anything
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// Output format for `stella stats`.
@@ -254,6 +266,8 @@ fn session_diagnosis_lines(sessions: &[SessionCacheTrendRow]) -> Vec<String> {
 }
 
 /// Entry point for `stella stats prune` — retention for `store.db` (#616).
+/// `stella storage prune` is an alias onto this same function; see
+/// [`PruneArgs`] for why the flags are defined once.
 ///
 /// The store engine ([`Store::prune`]) owns the deletion and the
 /// "is this telemetry safe to destroy" invariant; this function owns the two
@@ -267,13 +281,16 @@ fn session_diagnosis_lines(sessions: &[SessionCacheTrendRow]) -> Vec<String> {
 ///    renumber) the `telemetry.rowid`s the hub's cursor addresses; the report
 ///    carries the re-measured value and it is persisted here. Skipping this
 ///    would strand un-replicated rows above a stale cursor forever.
-pub fn run_stats_prune(
-    older_than: Option<&str>,
-    max_rows: Option<i64>,
-    force: bool,
-    vacuum: bool,
-    dry_run: bool,
-) -> Result<(), String> {
+pub fn run_stats_prune(args: &PruneArgs) -> Result<(), String> {
+    let PruneArgs {
+        older_than,
+        max_rows,
+        force,
+        vacuum,
+        dry_run,
+    } = args;
+    let (older_than, max_rows, force, vacuum, dry_run) =
+        (older_than.as_deref(), *max_rows, *force, *vacuum, *dry_run);
     if older_than.is_none() && max_rows.is_none() {
         return Err("nothing to prune — pass at least one of --older-than or --max-rows".into());
     }
