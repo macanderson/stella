@@ -799,88 +799,6 @@ pub enum McpCmd {
     Usage,
 }
 
-/// `stella memory` subcommands — the inspection and promotion surface of the
-/// memory-citation loop (agents cite the memories that informed a turn via
-/// the `cite_memory` tool; the citations aggregate into the eligibility gate
-/// `promote` enforces).
-#[derive(Subcommand)]
-enum MemoryCmd {
-    /// List memories ranked by citation count, with average usefulness,
-    /// truthfulness rate, and rule-promotion eligibility
-    List {
-        /// Output format: table (aligned) or json
-        #[arg(long, value_enum, default_value = "table")]
-        format: memory_cmd::MemoryFormat,
-    },
-    /// Promote an eligible memory to a project rule at
-    /// `.stella/rules/<slug>.md`. Eligibility is strict: cited successfully
-    /// MORE THAN 10 consecutive times since its last negative remark — one
-    /// negative citation resets the count until it is re-earned.
-    Promote {
-        /// The memory's stable id (nod_…) as shown by `stella memory list`
-        id: String,
-    },
-    /// Re-validate old memories against the current codebase (Proposal 5).
-    /// Scans each memory for file-path anchors (e.g. `stella-cli/src/agent.rs`),
-    /// checks whether those paths still exist, and flags stale ones. A stale
-    /// memory is one whose referenced path no longer exists — a strong signal
-    /// the memory is about refactored-away code and may mislead.
-    Validate,
-    /// Forget a memory: stop it steering the agent, and stop the reflection
-    /// loop re-learning it. Reversible with `stella memory restore <id>`.
-    ///
-    /// This is a tombstone, not a delete. The reflection loop re-mines
-    /// paraphrases of lessons it has already learned, so removing the row
-    /// alone does not hold — the tombstone also suppresses restatements at
-    /// the point new lessons are recorded and at the point the log is mined
-    /// into skills.
-    Forget {
-        /// The memory's stable id (nod_…) as shown by `stella memory list`
-        id: String,
-        /// Optional note on why, shown by `stella memory forgotten`
-        #[arg(long, default_value = "")]
-        reason: String,
-    },
-    /// Rewrite a memory in place, as a new revision of the same memory.
-    ///
-    /// The old text becomes history rather than a competitor: one live record,
-    /// the same id, and recall stops serving the words you replaced. Before
-    /// memories had a lineage, changing one meant writing a second memory and
-    /// leaving the first live — both citable, with nothing to say which was
-    /// current.
-    Edit {
-        /// The memory's stable id (nod_…) as shown by `stella memory list`
-        id: String,
-        /// The replacement text
-        text: String,
-    },
-    /// Lift a tombstone written by `stella memory forget`, letting the memory
-    /// be recalled again and be re-learnable.
-    Restore {
-        /// The memory's stable id (nod_…) as shown by `stella memory forgotten`
-        id: String,
-    },
-    /// List the tombstones in this workspace — what was forgotten, when, and
-    /// why.
-    Forgotten,
-    /// Reclaim space in .stella/private/context.db by dropping derived index
-    /// rows whose owner is already gone: embedding vectors no memory, node or
-    /// episode points at (every `memory edit` strands one), and domain tags
-    /// pointing at rows that no longer exist.
-    ///
-    /// Memories, episodes, facts and forget tombstones are never touched —
-    /// point-in-time queries answer identically before and after.
-    Compact(memory_compact::CompactArgs),
-    /// Build the approximate-similarity (IVF) index recall can use instead of
-    /// scoring every stored vector on every turn.
-    ///
-    /// Opt-in twice over: this builds it, and `context.retrieval.ann_enabled`
-    /// in settings.json is what lets a recall use it. An approximate index
-    /// considers a subset of the corpus, so it can miss a frame the exact scan
-    /// would have found — which is why neither half is on by default.
-    Index(memory_index::IndexArgs),
-}
-
 /// NUL boundaries prevent LLVM's string pooling from adjoining identifier
 /// characters to the version bytes. The claim launcher can therefore attest
 /// the full compile-time identity without executing the binary.
@@ -1137,15 +1055,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads local stores only (list) / writes one rule file
             // (promote) — works with zero API keys.
             return match cmd {
-                MemoryCmd::List { format } => memory_cmd::run_memory_list(*format),
-                MemoryCmd::Promote { id } => memory_cmd::run_memory_promote(id),
-                MemoryCmd::Validate => memory_cmd::run_memory_validate(),
-                MemoryCmd::Forget { id, reason } => memory_cmd::run_memory_forget(id, reason),
-                MemoryCmd::Edit { id, text } => memory_cmd::run_memory_edit(id, text),
-                MemoryCmd::Restore { id } => memory_cmd::run_memory_restore(id),
-                MemoryCmd::Forgotten => memory_cmd::run_memory_forgotten(),
-                MemoryCmd::Compact(args) => memory_compact::run_memory_compact(args),
-                MemoryCmd::Index(args) => memory_index::run_memory_index(args),
+                memory_cmd::MemoryCmd::List { format } => memory_cmd::run_memory_list(*format),
+                memory_cmd::MemoryCmd::Promote { id } => memory_cmd::run_memory_promote(id),
+                memory_cmd::MemoryCmd::Validate => memory_cmd::run_memory_validate(),
+                memory_cmd::MemoryCmd::Forget { id, reason } => {
+                    memory_cmd::run_memory_forget(id, reason)
+                }
+                memory_cmd::MemoryCmd::Edit { id, text } => memory_cmd::run_memory_edit(id, text),
+                memory_cmd::MemoryCmd::Restore { id } => memory_cmd::run_memory_restore(id),
+                memory_cmd::MemoryCmd::Forgotten => memory_cmd::run_memory_forgotten(),
+                memory_cmd::MemoryCmd::Compact(args) => memory_compact::run_memory_compact(args),
+                memory_cmd::MemoryCmd::Index(args) => memory_index::run_memory_index(args),
             };
         }
         Some(Command::Mcp { cmd }) => {
