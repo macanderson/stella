@@ -10,6 +10,7 @@
 //! kicks embedding catch-up as a background task at mount instead of paying it
 //! lazily on the first real query.
 
+mod compact;
 mod domain;
 mod edge;
 mod embedding;
@@ -35,6 +36,7 @@ use schema::{migrate, register_fingerprint};
 // The module was one 2,232-line file until #712 split it along the seams it
 // already had. Everything below stays reachable as `crate::store::X`, which is
 // the path every consumer uses, so the split is invisible outside this file.
+pub use compact::{CompactionWatermark, ContextCompactPolicy, ContextCompactReport};
 pub(crate) use domain::{
     domains_by_node, list_domains, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains,
     upsert_domain,
@@ -84,13 +86,31 @@ pub struct MemoryLineageStats {
 ///
 /// # Retention
 ///
-/// Nothing here forgets. `node.superseded_at` is never written (only edges are
-/// versioned), there is no delete or tombstone path, and a node whose uri
-/// changed — a renamed or deleted file — is orphaned live forever, still
-/// serving its last-known content. So the row count a recall *considers* still
-/// grows monotonically with the workspace's lifetime.
+/// This plane forgets *and*, since [`Self::compact`], reclaims — but the two are
+/// different mechanisms with different guarantees, and conflating them is how
+/// `L-C3` gets broken.
 ///
-/// What that costs is now bounded by the query rather than by that row count:
+/// **Forgetting** is [`Self::supersede_node`]: a tombstone, never a delete, with
+/// [`Self::restore_node`] as its exact inverse. Nothing a point-in-time query
+/// can see is affected.
+///
+/// **Reclaiming** is [`Self::compact`], and it touches only *derived index
+/// entries whose owner is already gone*: embeddings no node in any state and no
+/// live memory points at (every memory edit strands one), orphaned
+/// `node_domains`/`edge_domains` rows, and — opt-in — vectors under an embedder
+/// recall is forbidden to read. `edge` rows, `memory` revisions, and superseded
+/// `node` rows are named exclusions; see the `store::compact` module docs for
+/// each one's reason. `L-C3` is a guarantee about *queryability*, not bytes: a
+/// row whose deletion cannot change the answer to "what did we believe at T" is
+/// not what it protects. The authority for treating the index as disposable is
+/// `docs/adr/0010-incremental-authority-transfer.md` decision point 6.
+///
+/// What compaction does **not** bound is the live row count. A node whose uri
+/// changed — a renamed or deleted file — is still orphaned live forever, serving
+/// its last-known content until something supersedes it, so the set a recall
+/// *considers* still grows with the workspace's lifetime.
+///
+/// What that costs is bounded by the query rather than by that row count:
 ///
 /// - The fused candidate list is cut to a multiple of the query's `max_frames`
 ///   before the MMR pass and before any frame is built
@@ -109,8 +129,7 @@ pub struct MemoryLineageStats {
 /// runs on the blocking pool rather than on the worker that awaited it, so the
 /// timeouts callers wrap around recall can actually fire. That is fine at
 /// CLI-local scale and is the plane's next scaling wall; an ANN index over the
-/// vector scan and a forget/compaction path are the tracked follow-ups, not
-/// oversights.
+/// vector scan is the remaining tracked follow-up, not an oversight.
 ///
 /// # Drop
 ///

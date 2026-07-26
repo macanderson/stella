@@ -52,6 +52,7 @@ mod interactive;
 mod mcp_cmd;
 mod memory;
 mod memory_cmd;
+mod memory_compact;
 mod model_catalog;
 mod rules;
 mod runtime;
@@ -859,6 +860,14 @@ enum MemoryCmd {
     /// List the tombstones in this workspace — what was forgotten, when, and
     /// why.
     Forgotten,
+    /// Reclaim space in .stella/private/context.db by dropping derived index
+    /// rows whose owner is already gone: embedding vectors no memory, node or
+    /// episode points at (every `memory edit` strands one), and domain tags
+    /// pointing at rows that no longer exist.
+    ///
+    /// Memories, episodes, facts and forget tombstones are never touched —
+    /// point-in-time queries answer identically before and after.
+    Compact(memory_compact::CompactArgs),
 }
 
 /// NUL boundaries prevent LLVM's string pooling from adjoining identifier
@@ -1521,6 +1530,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 MemoryCmd::Edit { id, text } => memory_cmd::run_memory_edit(id, text),
                 MemoryCmd::Restore { id } => memory_cmd::run_memory_restore(id),
                 MemoryCmd::Forgotten => memory_cmd::run_memory_forgotten(),
+                MemoryCmd::Compact(args) => memory_compact::run_memory_compact(args),
             };
         }
         Some(Command::Mcp { cmd }) => {

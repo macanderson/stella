@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 5;
+pub(crate) const SCHEMA_VERSION: i64 = 6;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -194,7 +194,7 @@ CREATE INDEX IF NOT EXISTS idx_embedding_fingerprint ON embedding(fingerprint);
 /// without a similarity judgment, and a migration is the wrong place to make
 /// one: it runs unattended, on the only copy a user has. `stella memory
 /// validate` reports them instead (#711, decision 4).
-fn migrate_v5(tx: &Connection) -> Result<(), ContextError> {
+pub(crate) fn migrate_v5(tx: &Connection) -> Result<(), ContextError> {
     let existing: std::collections::HashSet<String> = {
         let mut stmt = tx.prepare("PRAGMA table_info(memory)")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>("name"))?;
@@ -212,6 +212,38 @@ fn migrate_v5(tx: &Connection) -> Result<(), ContextError> {
     )?;
     Ok(())
 }
+
+/// V6 — the **compaction watermark** ([`crate::store::compact`]).
+///
+/// A singleton row recording that this store has been compacted, when, and how
+/// much each reclaim class took. It exists for the same reason
+/// `compacted_through_execution_id` exists in `stella-store`'s export ledger:
+/// once compaction deletes the rows that proved a fact, a scalar has to
+/// remember in its place. The fact here is "this store's `embedding` count is
+/// no longer its lifetime embedding count" — without the row, a reader
+/// comparing vectors to nodes sees a shortfall it cannot tell from a broken
+/// index, and `stella memory compact` cannot answer "has this ever run".
+///
+/// `compacted_at` is written `MAX(existing, new)` and the counters accumulate,
+/// so every column can only rise. The timestamps are fixed-width RFC-3339, so
+/// SQLite's string `MAX` is a chronological max with no parsing — the same
+/// property the bi-temporal readers rely on.
+///
+/// `CHECK (singleton = 1)` makes "one row" a schema constraint rather than a
+/// convention the writer has to keep. `IF NOT EXISTS` for the same reason V4
+/// and V5 are statement-level idempotent: a store whose `user_version` was
+/// rewound (a partial restore, or the migration fixtures below) must be able to
+/// re-run this without failing on an existing table.
+pub(crate) const MIGRATION_V6: &str = "\
+CREATE TABLE IF NOT EXISTS context_compaction (
+    singleton                    INTEGER PRIMARY KEY CHECK (singleton = 1),
+    compacted_at                 TEXT NOT NULL,
+    orphaned_embeddings          INTEGER NOT NULL DEFAULT 0,
+    orphaned_node_domains        INTEGER NOT NULL DEFAULT 0,
+    orphaned_edge_domains        INTEGER NOT NULL DEFAULT 0,
+    stale_fingerprint_embeddings INTEGER NOT NULL DEFAULT 0
+);
+";
 
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
@@ -318,6 +350,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     }
     if version < 5 {
         migrate_v5(&tx)?;
+    }
+    if version < 6 {
+        tx.execute_batch(MIGRATION_V6)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;

@@ -31,7 +31,12 @@
 //!   fingerprint)`; identical content is never re-embedded; retrieval never
 //!   mixes fingerprints.
 //! - `L-C3` bi-temporal facts: corrections close-and-supersede, never delete;
-//!   [`ContextStore::facts_as_of`] answers "what did we believe at T1".
+//!   [`ContextStore::facts_as_of`] answers "what did we believe at T1". It is a
+//!   guarantee about **queryability**, not about bytes: [`ContextStore::compact`]
+//!   reclaims derived index entries whose owner is already gone (orphaned
+//!   embeddings, orphaned domain tags) precisely because deleting them cannot
+//!   change that answer. `edge` rows, `memory` revisions and superseded `node`
+//!   rows are named exclusions.
 //! - `L-C6` coverage gate: weak graph/vector coverage falls back to bounded
 //!   lexical search, **labeled as such** rather than dressed up as grounding.
 //! - `L-L1` crash consistency: every write batch is one transaction; a kill
@@ -72,7 +77,10 @@ pub use retrieval::{
     DEFAULT_MMR_CANDIDATE_MULTIPLE, DEFAULT_MMR_LAMBDA, DEFAULT_RECENCY_WEIGHT, DEFAULT_RRF_K,
     DropReason, DroppedFrame, RecallResult, RecallTuning, is_lexical_fallback,
 };
-pub use store::{ContextStore, MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow};
+pub use store::{
+    CompactionWatermark, ContextCompactPolicy, ContextCompactReport, ContextStore,
+    MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow,
+};
 pub use writeback::{
     ContextDelta, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion, FactView, MemoryInput,
     MemoryKind, UpsertReceipt,
