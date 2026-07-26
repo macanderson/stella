@@ -1577,3 +1577,46 @@ async fn openrouter_resends_without_reasoning_when_the_endpoint_mandates_it() {
         "the resend drops the field so the endpoint applies its own default: {second}"
     );
 }
+
+/// The pdf/audio/video arm of [`attachment_part`] is out of reach only
+/// because `ZAI_CAPS` switches those kinds off. Flipping one of those bools
+/// is a routine one-line edit, so the arm it lands in has to degrade like
+/// every other unsupported attachment instead of aborting the process
+/// mid-turn.
+#[test]
+fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
+    use crate::attachment::{DialectCaps, wire_parts};
+    use stella_protocol::{Attachment, AttachmentSource};
+    let flipped = DialectCaps {
+        images: true,
+        pdfs: true,
+        audio: true,
+        video: true,
+    };
+    let cases = [
+        ("spec.pdf", "application/pdf", "spec.pdf"),
+        ("song.mp3", "audio/mpeg", "audio/mpeg"),
+        ("clip.mp4", "video/mp4", "video/mp4"),
+    ];
+    for (name, mime, needle) in cases {
+        let attachment = Attachment {
+            name: name.into(),
+            media_type: mime.into(),
+            byte_len: 3,
+            source: AttachmentSource::Data {
+                base64: "YWJj".into(),
+            },
+        };
+        let parts: Vec<_> = wire_parts(&[attachment], flipped)
+            .into_iter()
+            .map(attachment_part)
+            .collect();
+        let [ZaiContentPart::Text { text }] = parts.as_slice() else {
+            panic!("expected a degrade note for {mime}, got {parts:?}");
+        };
+        assert!(
+            text.contains(needle),
+            "the note names what was attached: {text}"
+        );
+    }
+}

@@ -26,7 +26,18 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
-## [0.5.31] — 2026-07-26
+## [0.5.32] — 2026-07-26
+
+### Added
+
+- `--output-format json|stream-json` summaries now declare `schema_version`
+  (currently `1`). Every envelope carries it — the pipeline summary, the
+  `--no-pipeline` summary, and the pre-flight error envelope — and all three
+  always declare the same value. The bump rule is documented in
+  [Scripting & automation](https://stella.oxagen.sh/docs/scripting#the-envelope-contract):
+  it increments only when a key is removed, renamed, retyped, or changes
+  meaning, never when a key is added, so consumers must keep ignoring
+  unrecognized keys.
 
 ## [0.5.30] — 2026-07-26
 

@@ -15,6 +15,13 @@
 //! the conversation replays every turn, so a hard error here would brick the
 //! session permanently.
 //!
+//! [`DialectCaps`] is what normally keeps a part an adapter has no wire shape
+//! for from ever reaching that adapter. The two are edited independently
+//! though — switching a cap on is a one-line change — so adapters back the
+//! caps up with [`unsupported_part_note`] on the arms their caps exclude
+//! today. A half-finished caps edit then degrades like any other unsupported
+//! attachment instead of aborting the process mid-turn.
+//!
 //! ## Size
 //!
 //! Stella imposes no size cap of its own. Payloads are hydrated from disk at
@@ -61,6 +68,37 @@ pub(crate) enum WirePart {
     Text {
         text: String,
     },
+}
+
+impl WirePart {
+    /// A phrase naming what this part carries, for a degrade note the model
+    /// reads aloud. Media types and file names come along because they are
+    /// what lets the model suggest a workable format.
+    fn describe(&self) -> String {
+        match self {
+            WirePart::Image { media_type, .. } => format!("an image ({media_type})"),
+            WirePart::Pdf { name, .. } => format!("a PDF document ({name})"),
+            WirePart::Audio { media_type, .. } => format!("an audio file ({media_type})"),
+            WirePart::Video { media_type, .. } => format!("a video ({media_type})"),
+            WirePart::Text { .. } => "a text note".to_string(),
+        }
+    }
+}
+
+/// The note an adapter emits for a part its dialect has no wire shape for —
+/// the belt to [`DialectCaps`]'s braces.
+///
+/// Reaching this means a caps const advertises a kind the adapter's mapping
+/// never learned to encode, which is a wiring mistake rather than anything
+/// the user did. It still degrades: the module's promise is that an
+/// attachment never fails the request, and a panic here would abort the
+/// process mid-turn over a config flag.
+pub(crate) fn unsupported_part_note(part: &WirePart, dialect: &str) -> String {
+    format!(
+        "[the user attached {}, but the {dialect} cannot carry it on the wire; acknowledge \
+         the attachment and suggest a provider or format that can be read]",
+        part.describe()
+    )
 }
 
 /// Resolve a message's attachments into wire parts for a dialect. Infallible
@@ -157,7 +195,9 @@ fn degrade_note(attachment: &Attachment, kind: AttachmentKind) -> String {
         AttachmentKind::Video => "video",
         AttachmentKind::Pdf => "PDF documents",
         AttachmentKind::Binary => "this file format",
-        AttachmentKind::Text => unreachable!("text always inlines"),
+        // Text inlines before this is called, so this arm is dead today. It
+        // stays total anyway — a note is a fine answer, an abort is not.
+        AttachmentKind::Text => "text files",
     };
     format!(
         "[the user attached {}, but the current provider cannot ingest {noun} natively; \

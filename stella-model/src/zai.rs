@@ -485,21 +485,7 @@ fn user_content(message: &CompletionMessage) -> ZaiContent {
     let mut parts: Vec<ZaiContentPart> =
         crate::attachment::wire_parts(&message.attachments, ZAI_CAPS)
             .into_iter()
-            .map(|part| match part {
-                crate::attachment::WirePart::Image { media_type, base64 } => {
-                    ZaiContentPart::ImageUrl {
-                        image_url: ZaiImageUrl {
-                            url: format!("data:{media_type};base64,{base64}"),
-                        },
-                    }
-                }
-                crate::attachment::WirePart::Text { text } => ZaiContentPart::Text { text },
-                crate::attachment::WirePart::Pdf { .. }
-                | crate::attachment::WirePart::Audio { .. }
-                | crate::attachment::WirePart::Video { .. } => {
-                    unreachable!("caps exclude pdf/audio/video")
-                }
-            })
+            .map(attachment_part)
             .collect();
     if !message.content.is_empty() {
         parts.push(ZaiContentPart::Text {
@@ -507,6 +493,25 @@ fn user_content(message: &CompletionMessage) -> ZaiContent {
         });
     }
     ZaiContent::Parts(parts)
+}
+
+/// One resolved part as a GLM content part.
+fn attachment_part(part: crate::attachment::WirePart) -> ZaiContentPart {
+    match part {
+        crate::attachment::WirePart::Image { media_type, base64 } => ZaiContentPart::ImageUrl {
+            image_url: ZaiImageUrl {
+                url: format!("data:{media_type};base64,{base64}"),
+            },
+        },
+        crate::attachment::WirePart::Text { text } => ZaiContentPart::Text { text },
+        // Excluded by ZAI_CAPS today; turning one of those caps on without
+        // adding a part arm lands here — degrade, never abort the turn.
+        part @ (crate::attachment::WirePart::Pdf { .. }
+        | crate::attachment::WirePart::Audio { .. }
+        | crate::attachment::WirePart::Video { .. }) => ZaiContentPart::Text {
+            text: crate::attachment::unsupported_part_note(&part, "Z.ai chat API"),
+        },
+    }
 }
 
 /// An assistant-authored tool call echoed back in conversation history

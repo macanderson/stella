@@ -595,11 +595,36 @@ mod tests {
 
     impl MediaOperationIdSource for FixedOperationIds {
         fn operation_id(&self) -> HostMediaOperation {
+            // The journal folds `expires_at` into a claim's identity, so
+            // recomputing it per call would hand the same operation a different
+            // deadline as soon as the clock ticked between two `execute`s —
+            // the retry then reads as a different request wearing the same key
+            // and the claim is rejected. Snapshot the deadline once, process
+            // wide, so a "fixed" id source is fixed in both of its fields.
+            static EXPIRES_AT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
             HostMediaOperation {
                 opaque_id: self.0.to_string(),
-                expires_at: fixed_expiry(),
+                expires_at: *EXPIRES_AT.get_or_init(|| unix_now() + 3600),
             }
         }
+    }
+
+    /// Guards the helper above, not production code: every retry-safety test
+    /// here calls `execute` twice against one id source and would pass by luck
+    /// on a machine fast enough to stay inside a single second. Crossing a
+    /// second boundary on purpose is the only way to make that luck visible.
+    #[test]
+    fn a_fixed_operation_id_source_holds_one_expiry_across_a_clock_tick() {
+        let ids = FixedOperationIds("host-stable-expiry");
+        let first = ids.operation_id();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let second = ids.operation_id();
+        assert_eq!(
+            first.expires_at, second.expires_at,
+            "a retry must re-present the same expiry or the journal reads it as \
+             a different request wearing the same key",
+        );
+        assert_eq!(first.opaque_id, second.opaque_id);
     }
 
     #[async_trait]
