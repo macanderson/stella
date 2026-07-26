@@ -10,6 +10,10 @@ publish.workspace = true
 
 [dependencies]
 stella-protocol = { path = "../stella-protocol" }
+# For the workspace's single durable-write + schema-version contract
+# (`stella_store::durable`, #617) — one implementation of temp + fsync +
+# rename, not one per crate.
+stella-store = { path = "../stella-store" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

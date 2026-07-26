@@ -11,7 +11,6 @@
 
 pub mod agent_use;
 pub mod apply_edits;
-pub mod atomic_write;
 pub mod bash;
 pub mod catalog;
 pub mod ci;
@@ -19,6 +18,7 @@ pub mod code_map;
 pub mod custom;
 pub mod delete;
 pub mod diagnostics;
+pub mod durable_write;
 pub mod edit;
 pub mod exec;
 pub mod exploration;

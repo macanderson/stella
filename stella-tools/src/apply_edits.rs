@@ -318,7 +318,7 @@ impl Tool for ApplyEdits {
         let mut written: Vec<&String> = Vec::new();
         for key in &order {
             let (path, full, _, simulated) = &files[key];
-            if let Err(e) = crate::atomic_write::replace_file_atomically(
+            if let Err(e) = crate::durable_write::write_file_durably(
                 full.clone(),
                 simulated.as_bytes().to_vec(),
             )
@@ -330,7 +330,7 @@ impl Tool for ApplyEdits {
                     // The rollback especially must not truncate: a failed
                     // rollback with a truncating write turns a partial batch
                     // into a destroyed file.
-                    if crate::atomic_write::replace_file_atomically(
+                    if crate::durable_write::write_file_durably(
                         prior_full.clone(),
                         original.as_bytes().to_vec(),
                     )
