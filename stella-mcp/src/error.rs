@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::client::MAX_TOOL_RESULT_BYTES;
+use crate::client::ingest::MAX_TOOL_RESULT_BYTES;
 use crate::http::truncate_middle_out;
 
 /// Everything that can go wrong talking to an MCP server.
