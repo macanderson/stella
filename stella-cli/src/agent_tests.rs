@@ -1615,3 +1615,54 @@ fn index_workspace_graph_blocking_reports_generated_skips_end_to_end() {
     let line = format_graph_stats(&summary);
     assert!(line.contains("skipped 1 generated file"), "{line}");
 }
+
+/// Issue #644: the machine-readable envelope declares its contract version, and
+/// declares the *same* one on both arms. A version present on the success shape
+/// but missing from the error shape is worse than no version at all — a script
+/// could not rely on reading it, and the error arm is the one a headless
+/// consumer hits most.
+#[test]
+fn the_json_summary_envelope_declares_its_schema_version_on_both_arms() {
+    let sample = |status, text: Option<&str>, reason: Option<&str>| PipelineRunSummary {
+        schema_version: crate::SUMMARY_SCHEMA_VERSION,
+        status,
+        text: text.map(str::to_string),
+        cost_usd: 0.25,
+        reason: reason.map(str::to_string),
+        task_class: text.map(|_| "Edit".to_string()),
+        verdict: text.map(|_| serde_json::json!({ "passed": true })),
+        revisions: text.map(|_| 1),
+        candidates_run: text.map(|_| 2),
+        model: "anthropic/claude-opus".to_string(),
+        events: Vec::new(),
+        reflection: serde_json::Value::Null,
+    };
+
+    let ok = serde_json::to_value(sample("completed", Some("done"), None)).expect("serializes");
+    let err = serde_json::to_value(sample("error", None, Some("boom"))).expect("serializes");
+
+    assert_eq!(
+        ok["schema_version"],
+        serde_json::json!(crate::SUMMARY_SCHEMA_VERSION)
+    );
+    assert_eq!(
+        err["schema_version"], ok["schema_version"],
+        "one run, one envelope contract: the arms cannot declare different versions"
+    );
+
+    // The key set is the contract (#373), and the version stamp is now part of
+    // it — on both arms, as an explicit key rather than an inferred default.
+    let keys = |v: &serde_json::Value| {
+        v.as_object()
+            .expect("the summary serializes as an object")
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(
+        keys(&ok),
+        keys(&err),
+        "the success and error arms share one key set"
+    );
+    assert!(keys(&ok).contains("schema_version"));
+}

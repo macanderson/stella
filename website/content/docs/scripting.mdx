@@ -42,9 +42,10 @@ done
 ```
 
 `json` embeds those same event objects under an `events` key in its single summary
-object — exactly what `stream-json` would have emitted line by line. The summary's other
-keys depend on the execution path: a default run goes through the staged pipeline and
-summarizes as `status`, `text`, `cost_usd`, `reason`, `task_class`, `verdict`,
+object — exactly what `stream-json` would have emitted line by line. Every summary object
+declares `schema_version` (see [The envelope contract](#the-envelope-contract) below). The
+summary's other keys depend on the execution path: a default run goes through the staged
+pipeline and summarizes as `status`, `text`, `cost_usd`, `reason`, `task_class`, `verdict`,
 `revisions`, `candidates_run`, `model`, `events`, and `reflection`; a `--no-pipeline` (raw step-loop)
 run summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus the
 top-level [`files_touched`](/docs/telemetry/files-touched) telemetry payload — which the
@@ -59,11 +60,52 @@ model or an event log, so it emits the minimal envelope on stdout alongside the 
 line on stderr:
 
 ```json
-{ "status": "error", "text": null, "reason": "no API key found. …" }
+{ "schema_version": 1, "status": "error", "text": null, "reason": "no API key found. …" }
 ```
 
 Under `--output-format text` stdout stays clean in both cases; the diagnostic is the stderr
 line.
+
+## The envelope contract
+
+Every summary object above — the pipeline summary, the `--no-pipeline` summary, and the
+pre-flight error envelope — carries a `schema_version` integer. It is **1** today. The
+three shapes always declare the same value: it versions the envelope contract, not the
+execution path, so you never have to special-case which run you got.
+
+`schema_version` increments only when a change could break a script written against the
+previous version:
+
+- a key is **removed** or **renamed**,
+- a key's value **type** changes (`string` → `object`, scalar → array),
+- a key's **meaning** changes while its name and type stay the same.
+
+It does **not** increment when a key is added. New keys may appear in any release, so your
+parser must ignore keys it does not recognize — the same rule the
+[event stream](/docs/event-stream-compatibility) asks of clients. If additions bumped the
+version, the number would change so often it would tell you nothing.
+
+The `events` array is outside this contract: the event vocabulary has its
+[own forward-compatibility guarantee](/docs/event-stream-compatibility), and a new event
+type never bumps `schema_version`. Everything else the envelope owns — including the nested
+`verdict`, `reflection`, and `files_touched` payloads — is covered by it.
+
+Two practical consequences for a consumer:
+
+- **Pin what you require, not what you receive.** Assert on the keys you actually read;
+  do not assert the full key set, and do not reject an object because it carries keys you
+  have never seen.
+- **Treat an unexpected `schema_version` as the branch point.** A number higher than the
+  one you were written against means the shape may have changed under you; fail loudly
+  there rather than silently misreading a renamed key.
+
+```bash
+# Refuse to parse a shape this script was not written for
+stella --output-format json run "…" | jq -e '
+  if .schema_version == 1 then .status else error("unsupported schema_version") end'
+```
+
+Key order is not part of the contract — read by key, never by position.
 
 ## Configure via environment
 
