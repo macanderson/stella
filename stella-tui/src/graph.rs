@@ -21,7 +21,7 @@ pub struct GraphSnapshot {
     /// picker lists these so any file can be re-rooted, not just the busiest
     /// one the caller seeds `focus` with. Rides along on the snapshot because
     /// `stella-tui` cannot reach the graph store itself (it renders data given
-    /// to it); the caller fills it from [`stella_graph::CodeGraph::all_files`].
+    /// to it); the caller fills it from `stella_graph::CodeGraph::all_files`.
     pub files: Vec<String>,
 }
 

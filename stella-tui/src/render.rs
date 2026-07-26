@@ -7,14 +7,14 @@
 //!
 //! # Panel panic boundary (L-T7)
 //!
-//! Each panel is drawn through [`guarded_panel`], which renders it into its
+//! Each panel is drawn through `guarded_panel`, which renders it into its
 //! **own** throwaway [`Buffer`] inside `catch_unwind`. If a panel panics
 //! mid-write, that local buffer is discarded and an error card is drawn in its
 //! place; the app keeps running with input alive. This is sound because the
 //! draw closures capture only immutable references (`&SessionModel` and
 //! `Copy` values — no interior mutability) and the sole mutable state they
 //! touch is the freshly-created local buffer, which is thrown away on panic.
-//! The frame's real buffer is only ever written by the infallible [`blit`]
+//! The frame's real buffer is only ever written by the infallible `blit`
 //! *after* the panel has finished, so a half-written panel can never reach the
 //! screen. Hence the `AssertUnwindSafe` wrapper is justified rather than
 //! papered over.

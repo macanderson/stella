@@ -362,7 +362,7 @@ fn toml_escape(text: &str) -> String {
 /// segment. Enough for `migrations/**`, `db/*.sql`, `prisma/schema.prisma`.
 ///
 /// Patterns are repo-controlled (`stella.storage.toml` layer `paths`, and
-/// `.gitattributes` via [`crate::generated`]) and evaluated once per file per
+/// `.gitattributes` via `crate::generated`) and evaluated once per file per
 /// index pass, so the `**` search must not be exponential in path depth: a
 /// cloned repo carrying `**/a/**/a/**/x` would otherwise wedge indexing.
 /// Two things keep it polynomial, both semantics-preserving:

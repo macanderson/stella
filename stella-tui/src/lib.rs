@@ -12,7 +12,7 @@
 //!   pending scope-review — via its single mutator [`SessionModel::apply`]. No
 //!   panel owns state that isn't reconstructible by replaying the log from seq
 //!   1 (so replay is a supported debug mode, and the panic boundary is sound).
-//!   [`render`] draws that model into a `ratatui` frame as a deterministic
+//!   [`fn@render`] draws that model into a `ratatui` frame as a deterministic
 //!   function of `(model, ui)`. Ephemeral interaction state (scroll, composer,
 //!   focus) lives in [`UiState`], never in the model.
 //!
@@ -26,7 +26,7 @@
 //! native copy (L-T2, [`RunOptions::mouse_capture`]), paste chips (L-T3,
 //! [`Composer::paste`]), line-exact scroll (L-T4, [`ScrollState`]), diffs on
 //! the single event path (L-T5, [`model::FileState`]), buffer-not-ANSI tests
-//! (L-T6), the panel panic boundary (L-T7, [`render`]), and the debug channel
+//! (L-T6), the panel panic boundary (L-T7, [`mod@render`]), and the debug channel
 //! (L-T8, [`DebugLog`]).
 
 pub mod attach;

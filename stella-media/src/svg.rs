@@ -20,7 +20,7 @@
 //! # Sanitization rules (each documented, all tested)
 //! Because roxmltree is read-only, sanitization is a *re-serialization* pass:
 //! the validated tree is walked and a **deny-list** of dangerous nodes and
-//! attributes is elided — the elements in [`is_dropped_element`], event-handler
+//! attributes is elided — the elements in `is_dropped_element`, event-handler
 //! attributes, and external/script URL references are dropped; every other
 //! node/attribute is re-emitted verbatim (with text escaped). The rules:
 //!
@@ -225,7 +225,7 @@ fn element_depth_exceeds(root: Node, max: usize) -> bool {
 
 /// The result of processing: the sanitized, optimized SVG text and a
 /// human-readable list of what sanitization removed (for reporting to the
-/// user — "stripped 1 <script>, 1 external @href").
+/// user — "stripped 1 `<script>`, 1 external @href").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessedSvg {
     pub svg: String,

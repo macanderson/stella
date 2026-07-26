@@ -343,7 +343,7 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
 
 /// Resolve one color for the mode actually in use. Truecolor passes through;
 /// `None` (NO_COLOR) drops every RGB to `Reset` (terminal default); 256/16 map
-/// via [`FALLBACKS`]. A color with no matching entry (already-indexed, named,
+/// via `FALLBACKS`. A color with no matching entry (already-indexed, named,
 /// `Reset`, or an interpolated gradient cell) passes through unchanged — this
 /// only ever narrows the palette tokens, never anything else.
 pub fn resolve(color: Color, mode: ColorMode) -> Color {
@@ -492,7 +492,7 @@ pub fn spark_glyph(intensity: u8) -> char {
 const AGENT_PALETTE: [Color; 5] = [HELD, AZURE, OK, AGENT_ICE, TEXT_SECONDARY];
 
 /// A deterministic (not randomized — stable across processes and test runs)
-/// color for one agent id, picked from [`AGENT_PALETTE`] by hashing the id.
+/// color for one agent id, picked from `AGENT_PALETTE` by hashing the id.
 pub fn agent_color(id: &str) -> Color {
     AGENT_PALETTE[(fnv1a(id) as usize) % AGENT_PALETTE.len()]
 }
