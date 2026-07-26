@@ -1063,6 +1063,19 @@ impl ToolRegistry {
     /// (and `start_process`'s argv[0] may itself be a shell,
     /// `["bash", "-c", …]`), so leaving any of them out hands ambient shell
     /// execution to the very posture that turned `bash` off.
+    ///
+    /// That covers tools which *compose* a command line. `send_stdin` does
+    /// not — it writes into an interpreter someone already started — but the
+    /// bytes it writes are commands to that interpreter, so it rides the fence
+    /// too. Gating only the spawn meant `start_process(["bash", "-i"])` was
+    /// fenced once, on that one argv, and every command subsequently pushed
+    /// into the live shell executed with no policy consultation and left no
+    /// `command.*` audit record at all. An auditor reconstructing what ran
+    /// from the command stream saw `bash -i` and nothing after it.
+    ///
+    /// A REPL fed data rather than commands is gated here too. That direction
+    /// is the safe one: the fence is opt-in per operator, and showing a policy
+    /// more than it needs beats showing it nothing.
     fn command_line_for(
         name: &str,
         input: &Value,
@@ -1102,6 +1115,14 @@ impl ToolRegistry {
                     })
                     .unwrap_or_default(),
             ),
+            // The text is what the live interpreter will execute, so it is
+            // what the policy chain and the `command.*` audit trail see. A
+            // missing/non-string `text` is `None` — ungated, and the tool
+            // returns its own named error, exactly as the other arms behave.
+            "send_stdin" => input
+                .get("text")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             _ => None,
         }
     }
@@ -2861,6 +2882,58 @@ mod tests {
         assert!(
             read.is_error(),
             "no process may exist after a denied spawn: {read:?}"
+        );
+    }
+
+    /// The hole the `start_process` gate left open. Gating only the spawn
+    /// fences `["bash", "-c", "cat"]` once, on that one argv; every command
+    /// pushed into the live shell afterwards used to execute with no policy
+    /// consultation and no `command.*` audit record, so a session could run
+    /// arbitrary shell through a channel that is on by default while `bash`
+    /// is opt-in.
+    #[tokio::test]
+    async fn the_command_chain_gates_the_text_written_into_a_live_interpreter() {
+        let (_dir, reg) = telemetry_fixture();
+        let bus = HookBus::new("sess");
+        let seen = StdArc::new(StdMutex::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        // Allow the spawn, deny what gets written into it — the operator
+        // posture that permits a REPL but not arbitrary commands inside it.
+        bus.on_blocking(hook_names::COMMAND_STARTED, move |event| {
+            let command = event.payload["command"].as_str().unwrap_or("").to_string();
+            sink.lock().unwrap().push(command.clone());
+            if command.contains("rm -rf") {
+                HookDecision::Deny {
+                    reason: "no destructive commands".into(),
+                }
+            } else {
+                HookDecision::Allow
+            }
+        })
+        .detach();
+        reg.attach_bus(bus);
+
+        let spawned = reg
+            .execute("start_process", &serde_json::json!({"argv": ["cat"]}))
+            .await;
+        assert!(!spawned.is_error(), "the spawn is allowed: {spawned:?}");
+
+        let out = reg
+            .execute(
+                "send_stdin",
+                &serde_json::json!({"handle": "proc-1", "text": "rm -rf /\n"}),
+            )
+            .await;
+        assert!(
+            out.is_error(),
+            "writing a denied command into a live interpreter must not go \
+             through: {out:?}"
+        );
+        let seen = seen.lock().unwrap().clone();
+        assert!(
+            seen.iter().any(|c| c.contains("rm -rf")),
+            "the chain must be shown the stdin text, not just the spawn argv; \
+             it saw {seen:?}"
         );
     }
 
