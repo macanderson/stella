@@ -35,6 +35,22 @@ record of *changes*, curated by the person who made them.
   other's module, leaving `storage prune` wired to code that no longer existed.
   Use `stella stats prune --older-than 90d` / `--max-rows N`; note it guards
   un-replicated telemetry rather than in-flight turns and pending exports.
+## [0.5.40] — 2026-07-26
+
+### Changed
+
+- `stella storage prune` is now an alias for `stella stats prune` — same flags,
+  same engine. Both verbs landed in parallel (#704 and #707) as rival
+  implementations of #616's `store.db` retention, against two different store
+  engines and with different flag spellings. #707's engine won and replaced the
+  other's module, which left `storage prune` wired to code that no longer
+  existed. The verb is kept and re-pointed at the surviving engine, so
+  retention stays discoverable from both `stats` and `storage`.
+
+  Two flag/behaviour changes for anyone who used `storage prune` in the window
+  it existed: the ceiling flag is `--max-rows` (was `--max-executions`), and the
+  guard is on un-replicated telemetry rather than on in-flight turns and pending
+  enterprise exports.
 
 ## [0.5.38] — 2026-07-26
 
