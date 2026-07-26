@@ -2051,8 +2051,14 @@ async fn run_turn(
 
     // The scoped tool set must drop its tx clone before awaiting the renderer.
     let outcome = if crate::enterprise_telemetry::process_free_authority_active() {
+        // Even when process-free authority strips the MCP/custom/interactive
+        // layers, the `"tools"` policy (operator/managed-org tool switches)
+        // must still be enforced above the session tool stack — mirroring
+        // every other driver path. Wrap the raw registry in `PolicyToolSet`
+        // so disabled tools cannot be invoked here either.
+        let permitted = PolicyToolSet::new(registry, session_tool_policy(cfg));
         let engine =
-            Engine::with_sleeper(provider, registry, engine_config_for(cfg), &TokioSleeper)
+            Engine::with_sleeper(provider, &permitted, engine_config_for(cfg), &TokioSleeper)
                 .with_calibration(calibration);
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
