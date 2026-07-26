@@ -78,6 +78,34 @@ pub(crate) fn unary_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
+/// Classify a dispatch failure from a **unary** adapter.
+///
+/// Splitting timeout from the rest is the other half of #547. On a unary
+/// adapter [`UNARY_READ_TIMEOUT`] covers the entire generation, so its expiry
+/// means the request was too long to serve — not that the network hiccuped.
+/// Classifying that as retryable `Transport` made the driver re-issue the
+/// identical too-long request until the retry budget ran out, turning one
+/// wedged call into four full read timeouts (~40 minutes) before anything
+/// surfaced. Moving #547's bound from 120s to 600s widened that window rather
+/// than closing it.
+///
+/// A **connect** timeout is the opposite case and stays retryable: nothing
+/// reached the model, nothing was generated, and the next attempt may well
+/// land. Ordinary transport faults (resets, DNS, TLS) stay retryable too.
+pub(crate) fn classify_unary_dispatch_error(label: &str, error: &reqwest::Error) -> ProviderError {
+    if error.is_connect() {
+        return ProviderError::Transport(error.to_string());
+    }
+    if error.is_timeout() {
+        return ProviderError::Terminal(format!(
+            "{label} did not answer within {}s; retrying would re-issue the \
+             identical request and wait again",
+            UNARY_READ_TIMEOUT.as_secs()
+        ));
+    }
+    ProviderError::Transport(error.to_string())
+}
+
 /// Parse a `Retry-After` header (delta-seconds form, RFC 9110 §10.2.3) into
 /// a millisecond hint for the retry policy — `stella-core/src/retry.rs`
 /// honors `RateLimited.retry_after_ms` when present. The HTTP-date form is
@@ -376,6 +404,69 @@ mod tests {
             UNARY_READ_TIMEOUT > STREAM_IDLE_TIMEOUT,
             "a unary read bound must exceed the per-chunk stream bound: \
              {UNARY_READ_TIMEOUT:?} vs {STREAM_IDLE_TIMEOUT:?}"
+        );
+    }
+
+    /// The other half of #547. Raising the bound to 600s only widened the
+    /// window; what multiplied it by four was the classification. A unary read
+    /// timeout consumed the whole generation, so re-issuing the identical
+    /// request just waits again — it must not be retryable.
+    #[tokio::test]
+    async fn a_unary_read_timeout_is_terminal_not_retryable_transport() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            // Accept, then hold the connection without writing a byte — the
+            // "LB accepts and black-holes" shape `UNARY_READ_TIMEOUT` exists
+            // for, compressed so the test costs milliseconds instead of 600s.
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::builder()
+            .read_timeout(Duration::from_millis(50))
+            .build()
+            .expect("client builds");
+        let error = client
+            .post(server.uri())
+            .send()
+            .await
+            .expect_err("the stalled response must time out");
+        assert!(error.is_timeout(), "expected a timeout, got {error}");
+
+        let classified = classify_unary_dispatch_error("Bedrock", &error);
+        assert!(
+            matches!(classified, ProviderError::Terminal(_)),
+            "a read timeout must be Terminal, got {classified:?}"
+        );
+        assert!(
+            !classified.is_retryable(),
+            "a retryable read timeout costs four full attempts, not one: {classified:?}"
+        );
+    }
+
+    /// The converse case, so the fix above cannot over-reach: a *connect*
+    /// failure never reached the model and nothing was generated, so it stays
+    /// retryable.
+    #[tokio::test]
+    async fn a_connect_failure_stays_retryable_transport() {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_millis(50))
+            .build()
+            .expect("client builds");
+        // Port 1 on loopback refuses immediately.
+        let error = client
+            .post("http://127.0.0.1:1/")
+            .send()
+            .await
+            .expect_err("connection must fail");
+
+        let classified = classify_unary_dispatch_error("Bedrock", &error);
+        assert!(
+            classified.is_retryable(),
+            "a connect failure generated nothing and must stay retryable: {classified:?}"
         );
     }
 

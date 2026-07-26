@@ -689,6 +689,74 @@ async fn mutating_calls_are_never_speculated() {
     );
 }
 
+/// A provider that accepts the request and then never answers — the "an LB
+/// took the connection and black-holed it" shape. Counts dispatches so a test
+/// can tell one deadline from four.
+struct WedgedProvider {
+    calls: Arc<AtomicU32>,
+}
+#[async_trait]
+impl Provider for WedgedProvider {
+    fn id(&self) -> &str {
+        "wedged"
+    }
+    async fn complete(
+        &self,
+        _req: CompletionRequest,
+    ) -> Result<CompletionResultAlias, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        std::future::pending().await
+    }
+}
+
+/// Witness for the missing generation deadline. Before
+/// [`EngineConfig::model_timeout`] nothing above the transport bounded a model
+/// call, so this turn never returned at all — the only limit was whichever
+/// reqwest deadline the adapter carried, and on Bedrock that was 600s of
+/// *retryable* `Transport`, i.e. four of them.
+///
+/// The call count is the load-bearing assertion. A deadline that tripped as
+/// `Transport` would be retried and this would read 4, multiplying the very
+/// window the deadline exists to close.
+#[tokio::test]
+async fn a_wedged_generation_trips_the_deadline_once_instead_of_burning_the_retry_budget() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let provider = WedgedProvider {
+        calls: calls.clone(),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let config = EngineConfig {
+        model_timeout: Some(Duration::from_millis(50)),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    match &outcome {
+        TurnOutcome::Aborted { reason, .. } => assert!(
+            reason.contains("deadline"),
+            "the abort should name the deadline, got {reason:?}"
+        ),
+        other => panic!("a wedged generation must abort the turn, got {other:?}"),
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "a deadline trip is Terminal, so the wedged request must be issued once"
+    );
+    drain_events(&mut rx);
+}
+
 #[tokio::test]
 async fn simple_turn_with_no_tool_calls_completes() {
     let provider = ScriptedProvider {
