@@ -56,6 +56,14 @@ your own provider under a non-reserved id with a `base_url`; the `dialect` defau
 stella --model ollama/llama3.3 chat
 ```
 
+A complete first run, endpoint baked in:
+
+```bash
+ollama pull qwen2.5-coder:32b
+
+stella --model ollama/qwen2.5-coder:32b run "add a --dry-run flag to the sync command"
+```
+
 See [settings.json](/docs/configuration/settings) for the full `providers` schema —
 custom providers get the same treatment as built-ins, including a `default_model`. Two
 more knobs worth knowing:
@@ -69,6 +77,20 @@ more knobs worth knowing:
   Gemini-shaped gateway too. `vertex` and `bedrock` are **rejected** for custom ids:
   those dialects need credential resolution (project/region addressing, SigV4 signing)
   that a settings entry cannot express.
+
+## Reasoning is dropped on this provider
+
+<Callout type="warn">
+  The `local` posture is **unsupported**, and deliberately so: OpenAI-compatible servers
+  have no portable reasoning field, so a pinned `effort` is **discarded** — surfaced as a
+  boot notice rather than guessed at. Sending a key the server has never heard of risks a
+  400 on an endpoint you never opted into experimenting with. A local model that reasons
+  does so at whatever depth it was built or served with; control it at the server, not
+  from Stella.
+</Callout>
+
+This applies to `settings.json`-defined custom providers too — they inherit the same
+shared OpenAI-compatible adapter, which sends no reasoning field.
 
 ## In the pipeline
 

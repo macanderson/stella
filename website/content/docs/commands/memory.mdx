@@ -1,16 +1,16 @@
 ---
 title: stella memory
-description: Inspect memories through the citation feedback loop, validate them against the code, and promote one to a project rule.
+description: Inspect memories through the citation feedback loop, validate them against the code, promote a proven one to a project rule, and forget the ones that turned out wrong.
 ---
 
-Inspect the project's memories through the citation feedback loop — most-cited first, with usefulness and truthfulness — and promote a proven memory to a project rule. It reads local state only and needs no API key.
+Inspect the project's memories through the citation feedback loop — most-cited first, with usefulness and truthfulness — promote a proven memory to a project rule, and tombstone the ones that turned out wrong. It reads local state only and needs no API key.
 
 For the concepts behind memories, reflections, and the code graph, see [Memory](/docs/context-engine). This page is the command reference.
 
 ## Synopsis
 
 ```bash
-stella memory <list|promote|validate> [args]
+stella memory <list|promote|validate|forget|restore|forgotten> [args]
 ```
 
 ## What it does
@@ -49,3 +49,45 @@ Re-validate old memories against the current codebase. It scans each memory for 
 ```bash
 stella memory validate
 ```
+
+### `stella memory forget <id>`
+
+Stop a memory steering the agent — and stop the reflection loop re-learning it.
+
+```bash
+stella memory forget nod_9f2c1a
+stella memory forget nod_9f2c1a --reason "superseded by the new store API"
+```
+
+This writes a **tombstone**, not a delete, and the distinction is the whole point.
+The reflection loop mines the session log for lessons and re-records paraphrases of
+what it has already learned, so deleting the row alone does not hold — the memory
+grows back under a new id within a few sessions. The tombstone also suppresses
+restatements at the two points new lessons enter: when a lesson is recorded, and when
+the log is mined into skills.
+
+`--reason` is optional and shown later by `stella memory forgotten`. Write one — the
+future reader deciding whether to `restore` is usually you, months on.
+
+### `stella memory restore <id>`
+
+Lift a tombstone: the memory can be recalled again, and becomes re-learnable.
+
+```bash
+stella memory restore nod_9f2c1a
+```
+
+### `stella memory forgotten`
+
+List this workspace's tombstones — what was forgotten, when, and why.
+
+```bash
+stella memory forgotten
+```
+
+<Callout type="info">
+`forget` is reversible and `validate` is advisory: neither destroys anything. Between
+them they are the maintenance pass for a memory store that has drifted — `validate` to
+find memories pointing at code that no longer exists, `forget` to retire the ones that
+turned out to be wrong rather than merely stale.
+</Callout>

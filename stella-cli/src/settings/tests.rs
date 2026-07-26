@@ -872,3 +872,43 @@ fn managed_authority_settings_round_trip() {
     let round_trip: ManagedAuthoritySettings = serde_json::from_str(&json).unwrap();
     assert_eq!(round_trip, policy);
 }
+
+/// `enable_recap` must survive the scope merge.
+///
+/// It did not: `overlay_scope` copied every other top-level key and silently
+/// dropped this one, so `"enable_recap": "on"` in any settings.json parsed
+/// fine, merged to `None`, and never reached the runtime. The existing
+/// coverage missed it because it exercised `recap_enabled()` on a
+/// directly-deserialized `Settings` — which is exactly the one path where the
+/// field was never lost. This test goes through `Settings::load`, the way the
+/// binary does.
+#[test]
+fn enable_recap_survives_the_scope_merge() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace = dir.path();
+    std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
+    std::fs::write(
+        workspace.join(".stella/settings.json"),
+        r#"{"enable_recap": "on"}"#,
+    )
+    .expect("write settings");
+
+    let merged = Settings::load(workspace).expect("settings load");
+    assert!(
+        merged.recap_enabled(),
+        "a scope that sets `enable_recap: on` must reach the merged settings"
+    );
+}
+
+/// The complement: an absent key must not reset a lower scope's value, and the
+/// default stays off.
+#[test]
+fn enable_recap_defaults_off_when_no_scope_sets_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace = dir.path();
+    std::fs::create_dir_all(workspace.join(".stella")).expect("mkdir .stella");
+    std::fs::write(workspace.join(".stella/settings.json"), r#"{}"#).expect("write settings");
+
+    let merged = Settings::load(workspace).expect("settings load");
+    assert!(!merged.recap_enabled(), "recap defaults off");
+}

@@ -59,12 +59,21 @@ let sub = bus.on("file.*", |event| {
 
 Matching:
 
-| Pattern | Matches |
-| --- | --- |
-| `file.read` | exactly that event |
-| `file.*` | `file.read`, `file.created`, `file.diff.computed`, … |
-| `tool.*` | `tool.call.requested`, `tool.call.completed`, … |
-| `*` | every event |
+<CardGrid size="sm">
+  <OptionCard name="file.read">
+    An exact name — exactly that event, nothing else.
+  </OptionCard>
+  <OptionCard name="file.*">
+    A namespace wildcard — `file.read`, `file.created`, `file.diff.computed`, and the rest
+    of the namespace.
+  </OptionCard>
+  <OptionCard name="tool.*">
+    Likewise: `tool.call.requested`, `tool.call.completed`, …
+  </OptionCard>
+  <OptionCard name="*">
+    Every event the host emits.
+  </OptionCard>
+</CardGrid>
 
 ### Policy hooks — gate the sensitive actions
 
@@ -146,17 +155,53 @@ sub.unsubscribe();          // or: drop(sub);  — same effect
 The host emits events across these namespaces. Extensions may also emit their own names —
 the catalog is the contract for what the *host* emits.
 
-| Namespace | Events |
-| --- | --- |
-| `session.*` | `created`, `started`, `paused`, `resumed`, `cancel_requested`, `cancelled`, `completed`, `failed` |
-| `agent.*` / `transcript.*` | `agent.turn.started/completed`, `agent.thinking.*`, `agent.message.*`, `agent.error`, `transcript.entry.created/updated` |
-| `model.*` | `request.started/completed/failed`, `response.started/delta/completed`, `rate_limited`, `context.compacted` |
-| `tool.*` | `registered`, `call.requested`, `call.validated`, `call.started`, `call.progress`, `call.completed`, `call.failed`, `call.cancelled` |
-| `policy.*` / `approval.*` | `policy.evaluated/allowed/blocked`, `approval.requested/granted/denied/expired`, `secret.detected`, `sensitive_operation.detected` |
-| `file.*` / `workspace.*` / `search.*` | `file.read/created/updated/deleted/renamed/diff.computed`, `files_touched.updated`, `workspace.opened`, `workspace.index.started/completed`, `search.started/completed/failed` |
-| `command.*` / `build.*` / `test.*` | `command.started/stdout/stderr/completed/failed`, `build.*`, `test.*`, `diagnostic.detected/resolved` |
-| `git.*` / delivery | `git.status.changed`, `git.diff.created`, `git.commit.requested/created`, `git.push.requested/completed`, `pull_request.requested/created`, `deployment.requested/completed/failed` |
-| `extension.*` / `telemetry.*` | `extension.loaded/unloaded/error`, `telemetry.event.queued/flushed/failed` |
+<CardGrid size="md">
+  <OptionCard name="session.*">
+    `created`, `started`, `paused`, `resumed`, `cancel_requested`, `cancelled`,
+    `completed`, `failed`.
+  </OptionCard>
+  <OptionCard name="agent.* / transcript.*">
+    `agent.turn.started/completed`, `agent.thinking.*`, `agent.message.*`, `agent.error`,
+    `transcript.entry.created/updated`.
+  </OptionCard>
+  <OptionCard name="model.*">
+    `request.started/completed/failed`, `response.started/delta/completed`,
+    `rate_limited`, `context.compacted`.
+  </OptionCard>
+  <OptionCard name="tool.*">
+    `registered`, `call.requested`, `call.validated`, `call.started`, `call.progress`,
+    `call.completed`, `call.failed`, `call.cancelled`.
+  </OptionCard>
+  <OptionCard name="policy.* / approval.*">
+    `policy.evaluated/allowed/blocked`, `approval.requested/granted/denied/expired`,
+    `secret.detected`, `sensitive_operation.detected`.
+  </OptionCard>
+  <OptionCard name="file.* / workspace.* / search.*">
+    `file.read/created/updated/deleted/renamed/diff.computed`, `files_touched.updated`,
+    `workspace.opened`, `workspace.index.started/completed`,
+    `search.started/completed/failed`.
+  </OptionCard>
+  <OptionCard name="command.* / build.* / test.*">
+    `command.started/stdout/stderr/completed/failed`, `build.*`, `test.*`,
+    `diagnostic.detected/resolved`.
+  </OptionCard>
+  <OptionCard name="git.* / delivery">
+    `git.status.changed`, `git.diff.created`, `git.commit.requested/created`,
+    `git.push.requested/completed`, `pull_request.requested/created`,
+    `deployment.requested/completed/failed`.
+  </OptionCard>
+  <OptionCard name="extension.* / telemetry.*">
+    `extension.loaded`, `extension.unloaded`, `extension.error`,
+    `extension.quarantined`, `telemetry.event.queued/flushed/failed`.
+  </OptionCard>
+</CardGrid>
+
+`extension.quarantined` is the one worth knowing about before you need it: an observer
+that repeatedly overruns its per-dispatch time budget is **quarantined** — skipped for the
+rest of the session — and the event is how you find out. Observers run inline on the
+emitting thread, so this is the resilience valve that stops a wedged extension from
+silently stalling the agent. If your handler is doing real work, move it off-thread rather
+than discovering it in a quarantine event.
 
 ## Relationship to file-touch telemetry
 

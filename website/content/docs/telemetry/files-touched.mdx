@@ -16,13 +16,33 @@ Only Stella's dedicated file tools are attributable. Shell commands are opaque �
 cannot see what a `bash` command did to the filesystem, which is one reason the file tools
 exist and the agent is steered toward them.
 
-| Tool | CRUD event | Line counts |
-| --- | --- | --- |
-| `read_file` | **R** | always `0` added, `0` removed |
-| `write_file` (new path) | **C** | `lines_added` = the full new file's line count |
-| `write_file` (existing path) | **U** | the line diff of pre- vs post-write content |
-| `edit_file` | **U** | the line diff of the replaced region |
-| `delete_file` | **D** | `lines_removed` = the full pre-deletion line count |
+<CardGrid size="md">
+  <OptionCard name="read_file">
+    **R** — always `0` added, `0` removed. A read is a first-class touch, not a
+    non-event.
+  </OptionCard>
+  <OptionCard name="write_file (new path)">
+    **C** — `lines_added` is the full new file's line count.
+  </OptionCard>
+  <OptionCard name="write_file (existing path)">
+    **U** — the line diff of pre- versus post-write content.
+  </OptionCard>
+  <OptionCard name="web_download">
+    **C** or **U**, chosen exactly as `write_file` does: it lands a file at a path, so it
+    takes the same ledger classification — and the same hook gating.
+  </OptionCard>
+  <OptionCard name="edit_file">
+    **U** — the line diff of the replaced region.
+  </OptionCard>
+  <OptionCard name="delete_file">
+    **D** — `lines_removed` is the full pre-deletion line count.
+  </OptionCard>
+  <OptionCard name="apply_edits">
+    One **U** per *distinct* file in the batch — the one tool that can produce several
+    ledger records from a single call. A `dry_run` batch records nothing, because nothing
+    was written.
+  </OptionCard>
+</CardGrid>
 
 A **failed** operation records nothing — a blocked write, a missing file, or an
 out-of-workspace path never produces a ledger entry.
@@ -106,11 +126,19 @@ Which keys the final JSON object carries depends on which execution path ran:
   `status`, `text`, `cost_usd`, `reason`, `model`, and `events` — plus the full telemetry
   payload under `files_touched`.
 
+<Callout type="info">
+  Mind the nesting: the envelope's `files_touched` key holds the whole telemetry
+  **object**, and that object's own `files_touched` key holds the record array. So the
+  records are at `.files_touched.files_touched[]`, not `.files_touched[]`. The doubled key
+  is not a typo — the payload is the same serialized shape that goes into the store, and
+  it is embedded rather than flattened.
+</Callout>
+
 So a script that asserts on exactly what a run changed must pass `--no-pipeline`:
 
 ```bash
 stella --output-format json run --no-pipeline "add a --health flag and wire the readiness probe" \
-  | jq '.files_touched[] | {path, crud_events, lines_added, lines_removed}'
+  | jq '.files_touched.files_touched[] | {path, crud_events, lines_added, lines_removed}'
 ```
 
 ```json
@@ -120,7 +148,7 @@ stella --output-format json run --no-pipeline "add a --health flag and wire the 
 
 <Callout type="warn">
   On a default (pipeline) run, `.files_touched` is absent from the JSON —
-  `jq '.files_touched[]'` errors out, and a CI gate built on it fails every run. Add
+  `jq '.files_touched.files_touched[]'` errors out, and a CI gate built on it fails every run. Add
   `--no-pipeline`, or read the ledger back from the store: it is persisted on **both**
   paths.
 </Callout>
@@ -137,7 +165,7 @@ it stays entirely on your machine.
 **Fail CI when a run edits files outside a directory.**
 
 ```bash
-touched=$(stella --output-format json run --no-pipeline "$TASK" | jq -r '.files_touched[].path')
+touched=$(stella --output-format json run --no-pipeline "$TASK" | jq -r '.files_touched.files_touched[].path')
 echo "$touched" | grep -qv '^src/' && { echo "run touched files outside src/"; exit 1; }
 ```
 
@@ -145,9 +173,21 @@ echo "$touched" | grep -qv '^src/' && { echo "run touched files outside src/"; e
 
 ```bash
 stella --output-format json run --no-pipeline "$TASK" \
-  | jq -r '.files_touched[] | "\(.crud_events|join("")) \(.path) (+\(.lines_added) -\(.lines_removed))"'
-# CU src/router.rs (+18 -4)
+  | jq -r '.files_touched.files_touched[] | "\(.crud_events|join("")) \(.path) (+\(.lines_added) -\(.lines_removed))"'
+# RU src/router.rs (+18 -4)
 # C  src/health.rs (+22 -0)
+```
+
+**Read the same ledger back out of the store**, on either execution path — no
+`--no-pipeline` needed, because it is persisted on both:
+
+```bash
+sqlite3 -json .stella/private/store.db \
+  "SELECT path, ops, lines_added, lines_removed
+     FROM files_touched
+    WHERE execution_id = (SELECT MAX(id) FROM executions)
+    ORDER BY path" \
+  | jq -r '.[] | "\(.ops)\t\(.path) (+\(.lines_added) -\(.lines_removed))"'
 ```
 
 <Callout type="info">

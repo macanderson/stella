@@ -8,7 +8,7 @@ Send a one-shot prompt and let the agent work to completion without any interact
 ## Synopsis
 
 ```bash
-stella run <prompt> [--no-pipeline] [--test-command <CMD>] [global flags]
+stella run <prompt> [--no-pipeline] [--test-command <CMD>] [--keep-witness] [global flags]
 ```
 
 ## What it does
@@ -25,20 +25,43 @@ Because it is non-interactive, `stella run` is the natural place to combine `--o
 
 ## Flags
 
-`stella run` adds two command-specific flags on top of the [global flags](/docs/commands):
+`stella run` adds three command-specific flags on top of the [global flags](/docs/commands):
 
-| Flag | Meaning |
-| --- | --- |
-| `--no-pipeline` | Use the raw step loop instead of the staged pipeline (triage, plan, execute, verify, judge). |
-| `--test-command <CMD>` | The test command the pipeline's verify stage runs (e.g. `"cargo test -p my-crate"`). Arms the fail→pass flip oracle: a change that flips a failing test to passing can submit without a model-judge call. Omitted, verification always escalates to the judge. |
+<CardGrid size="md">
+  <OptionCard name="--no-pipeline">
+    Use the raw step loop instead of the staged pipeline (triage, plan, execute, verify,
+    judge).
+  </OptionCard>
+  <OptionCard name="--test-command <CMD>">
+    The test command the pipeline's verify stage runs deterministically — e.g.
+    `"cargo test -p my-crate"`. Arms the fail→pass flip oracle: a change that flips a
+    failing test to passing can submit without a model-judge call. Omitted, verification
+    always escalates to the judge.
+  </OptionCard>
+  <OptionCard name="--keep-witness">
+    Keep the authored witness test as a file in your working tree. By default the witness
+    is scaffolding — it proves this run's goal inside the candidate workspace and is
+    discarded with it, so an already-satisfied test is never left behind in your test
+    tree. Pass this to promote it to a real test you can commit.
+  </OptionCard>
+</CardGrid>
 
 The most relevant global flags here:
 
-| Flag | Why it matters here |
-| --- | --- |
-| `--model <provider/model_id>` | Pin the worker model instead of relying on auto-detection. |
-| `--output-format <text\|json\|stream-json>` | Use `json` or `stream-json` for machine-readable, headless output. Place it before the subcommand: `stella --output-format json run "…"`. |
-| `--budget <usd>` | Cap total spend for the run; work aborts cleanly once the cap is exceeded. |
+<CardGrid size="md">
+  <OptionCard name="--model <provider/model_id>">
+    Pin the worker model instead of relying on auto-detection.
+  </OptionCard>
+  <OptionCard name="--output-format <text|json|stream-json>" defaultValue="text">
+    Use `json` or `stream-json` for machine-readable, headless output. Like every global
+    flag it is registered with the subcommand too, so either position parses —
+    `stella --output-format json run "…"` and `stella run "…" --output-format json` are
+    the same command.
+  </OptionCard>
+  <OptionCard name="--budget <usd>">
+    Cap total spend for the run; work aborts cleanly once the cap is exceeded.
+  </OptionCard>
+</CardGrid>
 
 ## Examples
 
@@ -48,7 +71,7 @@ Run a simple one-shot task with the default (auto-detected) model:
 stella run "Add a docstring to every public function in src/utils.py"
 ```
 
-Pin a specific model and emit a single JSON object for a script to parse. Global flags go **before** the `run` subcommand:
+Pin a specific model and emit a single JSON object for a script to parse. Global flags read most clearly before the subcommand, though [either position parses](/docs/commands#global-flags):
 
 ```bash
 stella --model anthropic/claude-fable-5 --output-format json \
@@ -67,4 +90,25 @@ Point at a local OpenAI-compatible server:
 ```bash
 stella --model local/llama3.3 --base-url http://localhost:11434/v1 \
   run "Explain what main.rs does"
+```
+
+Hand the verify stage a deterministic oracle, so a fixed test can submit without a
+model-judge call:
+
+```bash
+stella run --test-command "cargo test -p stella-store" \
+  "Fix the failing WAL checkpoint test"
+```
+
+Keep the witness the pipeline authored, so you can review and commit it alongside the fix:
+
+```bash
+stella run --keep-witness \
+  "Add retry-with-backoff to the HTTP client and prove it with a test"
+```
+
+Skip the pipeline entirely for a small mechanical edit:
+
+```bash
+stella run --no-pipeline "Bump the serde dependency to 1.0.220 in every crate"
 ```

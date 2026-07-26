@@ -11,7 +11,9 @@ pay $2 for once than $0.20 for three times.
 
 ## The config
 
-```jsonc title="~/.stella/settings.json"
+Three keys, one file — paste it whole:
+
+```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "pipeline_worker_model": "anthropic/claude-fable-5",
@@ -47,6 +49,17 @@ pay $2 for once than $0.20 for three times.
 }
 ```
 
+The three keys it expects:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # the worker
+export OPENAI_API_KEY="sk-..."          # the judge
+export DEEPSEEK_API_KEY="sk-..."        # triage
+
+stella models    # every provider with its key status — all three must read configured
+stella config    # the resolved provider, model, and a redacted key preview
+```
+
 Why these choices:
 
 - **Fable 5 as worker.** The strongest coding/agentic model in the
@@ -55,13 +68,17 @@ Why these choices:
   thinking on: let it deliberate.
 - **GPT-5.5 as judge — not another Claude.** Cross-family judging is the
   point: a different family shares fewer blind spots with the worker. High
-  effort, thinking on, and a stricter custom prompt. `service_tier:
-  "priority"` buys faster verdicts on providers that support tiers.
+  effort, thinking on, a stricter custom prompt, and a roomy 400k window.
+  `service_tier: "priority"` buys faster verdicts — OpenAI's is the one
+  dialect that puts it on the wire, so it is only worth setting on an
+  OpenAI-routed agent.
 - **DeepSeek triage.** Even a maximal setup shouldn't pay flagship rates
   for a one-token classification. This is the one dial that *never* needs
-  to be expensive.
+  to be expensive. (DeepSeek drops `effort` silently — the `low` above is
+  documentation of intent, not a wire parameter.)
 - **Autos off.** In a hand-tuned profile, explicit settings beat automatic
-  ones.
+  ones. Leaving `effort_auto` off is specifically what lets the per-agent
+  `effort` values stand; turning it on would overwrite all three.
 
 ## Run it hard
 
@@ -73,6 +90,9 @@ stella --budget 8.00 run \
 
 # Outcome-driven, judged rounds, capped.
 stella --budget 15.00 goal "the payments integration test suite passes on CI"
+
+# Then read back what it actually cost, per provider and model.
+stella stats
 ```
 
 ## What it costs
@@ -80,12 +100,22 @@ stella --budget 15.00 goal "the payments integration test suite passes on CI"
 Estimates at list prices, medium task, caching healthy (see the
 [cost anatomy](/docs/examples)):
 
-| Task shape | Ballpark |
-| --- | --- |
-| Focused single-file fix | $0.15 – $0.60 |
-| Medium multi-file change, one revision | **$0.40 – $2.50** |
-| Hard refactor / long session | $2 – $8+ |
-| Goal mode, several rounds | multiply by rounds — cap with `--budget` |
+<CardGrid size="sm">
+  <SpecCard title="Focused single-file fix" meta={[{ label: "Ballpark", value: "$0.15 – $0.60" }]} />
+  <SpecCard
+    title="Medium multi-file change, one revision"
+    meta={[{ label: "Ballpark", value: "$0.40 – $2.50" }]}
+  >
+    The reference shape for the estimate on the [examples index](/docs/examples).
+  </SpecCard>
+  <SpecCard title="Hard refactor / long session" meta={[{ label: "Ballpark", value: "$2 – $8+" }]} />
+  <SpecCard
+    title="Goal mode, several rounds"
+    meta={[{ label: "Ballpark", value: "× rounds", mono: false }]}
+  >
+    Multiply by the number of judged rounds, and cap it with `--budget`.
+  </SpecCard>
+</CardGrid>
 
 The judge adds only cents per verification; the worker's output tokens are
 ~80–90% of the bill. If this profile stings, the

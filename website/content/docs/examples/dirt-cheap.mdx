@@ -12,7 +12,9 @@ spending real money.
 
 ## The config
 
-```jsonc title="~/.stella/settings.json"
+Two keys, one file — paste it whole:
+
+```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "pipeline_worker_model": "deepseek/deepseek-chat",
@@ -39,18 +41,31 @@ spending real money.
 }
 ```
 
+The two keys it expects:
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."   # the worker and triage
+export ZAI_API_KEY="..."           # the judge
+
+stella models    # both must read configured
+stella config    # the resolved provider, model, and a redacted key preview
+```
+
 Why these choices:
 
 - **DeepSeek as worker** — $0.27/$1.10 per Mtok with a $0.07 cached rate:
   the [catalog](/docs/api-providers/models)'s price floor among hosted
   models. Thinking off and `max_tokens` capped: mechanical work doesn't
-  need deliberation, and a runaway answer can't run far.
+  need deliberation, and a runaway answer can't run far. (DeepSeek drops
+  `effort` on the wire, so `low` there records intent; `reasoning: "off"`
+  and `max_tokens` are the settings actually doing the work.)
 - **GLM-5.2 as judge** — still cheap, still a *different family* than the
   worker, with thinking on: the judge is the one place this profile keeps
   its brain switched fully on. The whole judge call costs a fraction of a
   cent.
-- **No autos** — `effort_auto` would raise the worker to medium; this
-  profile wants the floor.
+- **No autos** — `effort_auto` would raise the worker to medium and
+  `reasoning_auto` would switch thinking back on for it; this profile wants
+  the floor, so both stay off.
 
 ## Run it with a hard cap
 
@@ -63,20 +78,32 @@ stella --budget 1.00 fleet \
   "fix clippy warnings in stella-store" \
   "fix clippy warnings in stella-tools" \
   "normalize log messages to sentence case"
+
+# Confirm the bill.
+stella stats --format table
 ```
 
-Always pass `--test-command` when there are tests — the deterministic
-fail→pass flip is **free verification** that skips the judge call entirely
-on the happy path.
+On a `stella run`, always pass `--test-command` when there are tests — the
+deterministic fail→pass flip is **free verification** that skips the judge
+call entirely on the happy path. (It is a `run` flag; `goal` and `fleet`
+drive verification from their own prompts.)
 
 ## What it costs
 
-| Task shape | Ballpark |
-| --- | --- |
-| Lookup / explain | well under $0.01 |
-| Focused single-file fix | $0.005 – $0.03 |
-| Medium multi-file change | **$0.01 – $0.10** |
-| A ten-task chore fleet | often under $0.50 total |
+<CardGrid size="sm">
+  <SpecCard title="Lookup / explain" meta={[{ label: "Ballpark", value: "well under $0.01", mono: false }]} />
+  <SpecCard title="Focused single-file fix" meta={[{ label: "Ballpark", value: "$0.005 – $0.03" }]} />
+  <SpecCard
+    title="Medium multi-file change"
+    meta={[{ label: "Ballpark", value: "$0.01 – $0.10" }]}
+  >
+    The reference shape for the estimate on the [examples index](/docs/examples).
+  </SpecCard>
+  <SpecCard
+    title="A ten-task chore fleet"
+    meta={[{ label: "Ballpark", value: "often under $0.50 total", mono: false }]}
+  />
+</CardGrid>
 
 ## The $0.00 tier: local models
 

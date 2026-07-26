@@ -29,19 +29,29 @@ Run `stella init` once per workspace to prime Stella's understanding of your cod
 
 `stella init` takes the [global flags](/docs/commands). Because it can run offline, model selection is optional:
 
-| Flag | Why it matters here |
-| --- | --- |
-| `--model <provider/model_id>` | Pin the model used for taxonomy inference. Omit it to rely on auto-detection or the offline heuristic fallback. |
+<CardGrid size="md">
+  <OptionCard name="--model <provider/model_id>" defaultValue="auto-detected">
+    Pin the model used for taxonomy inference. Omit it to rely on auto-detection, or on
+    the offline heuristic fallback when nothing resolves.
+  </OptionCard>
+</CardGrid>
 
 The global `--budget` flag is accepted but not honored by `init` — the analysis makes at most a couple of token-capped inference calls and does not track a budget.
 
 ## Generated files
 
-| Path | Contents |
-| --- | --- |
-| `<workspace>/.stella/domains.toml` | The inferred domain taxonomy (tagging vocabulary). |
-| `<workspace>/.stella/private/codegraph.db` | The code-graph index (queried by `stella graph`). |
-| `<workspace>/.stella/private/context.db` | The context plane — the domain taxonomy and context facts. |
+<CardGrid size="md">
+  <OptionCard name="<workspace>/.stella/domains.toml">
+    The inferred domain taxonomy — the tagging vocabulary.
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/private/codegraph.db">
+    The code-graph index, queried by [`stella graph`](/docs/commands/graph) and
+    [`stella storage`](/docs/commands/storage).
+  </OptionCard>
+  <OptionCard name="<workspace>/.stella/private/context.db">
+    The context plane — the domain taxonomy and context facts.
+  </OptionCard>
+</CardGrid>
 
 ## Examples
 
@@ -55,4 +65,18 @@ Initialize using a specific model for taxonomy inference:
 
 ```bash
 stella --model openai/gpt-5.5 init
+```
+
+Re-index after a large refactor, then confirm the graph followed the move:
+
+```bash
+stella init
+stella graph definitions resolve_provider_key
+```
+
+Initialize with no credential configured at all — the heuristic fallback still produces a
+usable taxonomy and graph:
+
+```bash
+env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY stella init
 ```

@@ -8,14 +8,26 @@ file** — pick the page that matches your situation, paste, verify, adjust.
 
 ## Setups by use case
 
-| Your situation | Recipe |
-| --- | --- |
-| One API key, want the best default setup | [Single provider, single key](/docs/examples/single-key) |
-| Z.ai GLM coding-plan subscriber | [Z.ai coding plan](/docs/examples/zai-coding-plan) |
-| One OpenRouter key for every model family | [One gateway key](/docs/examples/openrouter-gateway) |
-| Ollama / vLLM / LM Studio, or no network at all | [Local &amp; air-gapped](/docs/examples/local-airgapped) |
-| Models must flow through GCP / AWS | [Enterprise cloud](/docs/examples/enterprise-cloud) |
-| Sharing `.stella/` config across a team | [Team-shared settings](/docs/examples/team-settings) |
+<CardGrid size="md">
+  <SpecCard title="Single provider, single key" href="/docs/examples/single-key">
+    One API key, and you want the best setup it can buy.
+  </SpecCard>
+  <SpecCard title="Z.ai coding plan" href="/docs/examples/zai-coding-plan">
+    A GLM coding-plan subscription, where cost is flat rather than per token.
+  </SpecCard>
+  <SpecCard title="One gateway key" href="/docs/examples/openrouter-gateway">
+    A single OpenRouter key reaching every model family.
+  </SpecCard>
+  <SpecCard title="Local &amp; air-gapped" href="/docs/examples/local-airgapped">
+    Ollama, vLLM, or LM Studio — or no network at all.
+  </SpecCard>
+  <SpecCard title="Enterprise cloud" href="/docs/examples/enterprise-cloud">
+    Models must flow through your GCP or AWS account.
+  </SpecCard>
+  <SpecCard title="Team-shared settings" href="/docs/examples/team-settings">
+    Sharing `.stella/` configuration across a team.
+  </SpecCard>
+</CardGrid>
 
 ## Cost-tier profiles
 
@@ -23,11 +35,44 @@ The [inference pipeline](/docs/inference-pipeline) makes several model calls
 per run, and each one is [independently configurable](/docs/configuration/agent-engine-config).
 Three ready-to-paste tiers — and below, the cost model to reason about your own:
 
-| Profile | Worker | Judge | Triage | Typical run* |
-| --- | --- | --- | --- | --- |
-| [Maximum quality](/docs/examples/max-quality) | claude-fable-5 | gpt-5.5 | deepseek-chat | ~$0.40 – $2.50 |
-| [Balanced](/docs/examples/balanced) | glm-5.2 | claude-fable-5 | deepseek-chat | ~$0.05 – $0.50 |
-| [Dirt cheap](/docs/examples/dirt-cheap) | deepseek-chat | glm-5.2 | deepseek-chat | ~$0.01 – $0.10 |
+<CardGrid size="md">
+  <SpecCard
+    title="Maximum quality"
+    href="/docs/examples/max-quality"
+    meta={[
+      { label: "Worker", value: "claude-fable-5" },
+      { label: "Judge", value: "gpt-5.5" },
+      { label: "Triage", value: "deepseek-chat" },
+      { label: "Typical run", value: "~$0.40 – $2.50" },
+    ]}
+  >
+    The strongest worker money buys, judged by a different family.
+  </SpecCard>
+  <SpecCard
+    title="Balanced"
+    href="/docs/examples/balanced"
+    meta={[
+      { label: "Worker", value: "glm-5.2" },
+      { label: "Judge", value: "claude-fable-5" },
+      { label: "Triage", value: "deepseek-chat" },
+      { label: "Typical run", value: "~$0.05 – $0.50" },
+    ]}
+  >
+    A cheap worker under a flagship judge — most of the quality, a fraction of the bill.
+  </SpecCard>
+  <SpecCard
+    title="Dirt cheap"
+    href="/docs/examples/dirt-cheap"
+    meta={[
+      { label: "Worker", value: "deepseek-chat" },
+      { label: "Judge", value: "glm-5.2" },
+      { label: "Triage", value: "deepseek-chat" },
+      { label: "Typical run", value: "~$0.01 – $0.10" },
+    ]}
+  >
+    Pennies per run, for high-volume or exploratory work.
+  </SpecCard>
+</CardGrid>
 
 *Estimates for a *medium* task (a focused multi-file change, one revision) at
 the catalog's list prices, with prompt caching working normally. A lookup
@@ -40,15 +85,74 @@ profiles assume keys for two or three providers — with one key, start from
 
 Cost intuition starts with knowing who calls the model, and how much:
 
-| Stage | Calls | Typical size | Cost driver |
-| --- | --- | --- | --- |
-| Triage | 1 | ~1–2k in, ~1 token out | Negligible on any model — but why pay flagship rates for one token? Route it to the cheapest model you have. |
-| Plan | 1 (+1 repair, rarely) | ~5–15k in, ~1k out | Small. Rides the worker's settings. |
-| Witness | ~1 engine turn | ~10–30k in, ~1–2k out | Only when no `--test-command` was given. Test runs themselves are local and free. |
-| **Execute** | 5–40+ steps | ~100–500k in (mostly **cached**), ~5–30k out | **The dominant cost.** The worker model's price — especially its *output* price — is most of your bill. |
-| Verify | 0 | — | The deterministic ladder (flip oracle, diff budget) is free. |
-| Judge | 0–1 per verification | ~3–10k in, ~0.5–1k out | Only when deterministic evidence is inconclusive. Cents, even on a flagship. |
-| Revise | 0–2 extra execute rounds | like Execute, smaller | Each revision re-runs part of the execute cost. |
+<PipelineFlowDiagram />
+
+<CardGrid size="md">
+  <SpecCard
+    title="Triage"
+    meta={[
+      { label: "Calls", value: "1" },
+      { label: "Size", value: "~1–2k in, ~1 token out" },
+    ]}
+  >
+    Negligible on any model — but why pay flagship rates for one token? Route it to the
+    cheapest model you have.
+  </SpecCard>
+  <SpecCard
+    title="Plan"
+    meta={[
+      { label: "Calls", value: "1 (+1 repair, rarely)" },
+      { label: "Size", value: "~5–15k in, ~1k out" },
+    ]}
+  >
+    Small. Rides the worker's settings.
+  </SpecCard>
+  <SpecCard
+    title="Witness"
+    meta={[
+      { label: "Calls", value: "~1 engine turn" },
+      { label: "Size", value: "~10–30k in, ~1–2k out" },
+    ]}
+  >
+    Only when no `--test-command` was given. Test runs themselves are local and free.
+  </SpecCard>
+  <SpecCard
+    title="Execute — the dominant cost"
+    meta={[
+      { label: "Calls", value: "5–40+ steps" },
+      { label: "Size", value: "~100–500k in (mostly cached), ~5–30k out" },
+    ]}
+  >
+    The worker model's price — especially its **output** price — is most of your bill.
+  </SpecCard>
+  <SpecCard
+    title="Verify"
+    meta={[
+      { label: "Calls", value: "0" },
+      { label: "Size", value: "—" },
+    ]}
+  >
+    The deterministic ladder (flip oracle, diff budget) is free.
+  </SpecCard>
+  <SpecCard
+    title="Judge"
+    meta={[
+      { label: "Calls", value: "0–1 per verification" },
+      { label: "Size", value: "~3–10k in, ~0.5–1k out" },
+    ]}
+  >
+    Only when deterministic evidence is inconclusive. Cents, even on a flagship.
+  </SpecCard>
+  <SpecCard
+    title="Revise"
+    meta={[
+      { label: "Calls", value: "0–2 extra execute rounds" },
+      { label: "Size", value: "like Execute, smaller" },
+    ]}
+  >
+    Each revision re-runs part of the execute cost.
+  </SpecCard>
+</CardGrid>
 
 Three consequences worth internalizing:
 

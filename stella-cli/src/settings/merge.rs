@@ -106,6 +106,18 @@ impl Settings {
         if let Some(authority) = scope.managed_authority {
             self.managed_authority = Some(authority);
         }
+        // Last-wins, and only when the scope actually declares it — an absent
+        // key must not reset a lower scope's `"on"` back to the default.
+        //
+        // This was missing entirely, which made `enable_recap` inert: every
+        // scope parsed it, `overlay_scope` dropped it, and `recap_enabled()`
+        // read `None` off the merged value no matter what any file said. The
+        // accessor's own tests passed throughout because they call it on a
+        // directly-deserialized `Settings`, never on a merged one — the merge
+        // is the only place the field was lost.
+        if let Some(recap) = scope.enable_recap {
+            self.enable_recap = Some(recap);
+        }
         // Adaptive-context config: whole-block last-wins (a higher-precedence
         // scope that declares `context` replaces a lower one's). Inert in
         // Phase 0 — nothing reads it — so no trust restoration is needed (it

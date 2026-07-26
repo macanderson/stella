@@ -25,10 +25,14 @@ The dashboard's tabs cover the overview, executions (with per-run drill-down), t
 
 ## Flags
 
-| Flag | Meaning |
-| --- | --- |
-| `--port <N>` | Port to bind on `127.0.0.1`. Default `7787`; `0` picks a free port. |
-| `--open` | Open the dashboard in your default browser once the server is up. |
+<CardGrid size="md">
+  <OptionCard name="--port <N>" defaultValue="7787">
+    Port to bind on `127.0.0.1`. `0` picks a free port.
+  </OptionCard>
+  <OptionCard name="--open">
+    Open the dashboard in your default browser once the server is up.
+  </OptionCard>
+</CardGrid>
 
 ## Examples
 
@@ -42,4 +46,16 @@ Bind an ephemeral port (useful when 7787 is taken):
 
 ```bash
 stella observe --port 0
+```
+
+Pin a port so a bookmark keeps working, and leave it running in the background:
+
+```bash
+stella observe --port 8080 &
+```
+
+Serve a different workspace's telemetry by starting from its root:
+
+```bash
+(cd ~/projects/acme && stella observe --open)
 ```

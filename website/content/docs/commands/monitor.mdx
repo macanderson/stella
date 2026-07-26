@@ -31,10 +31,14 @@ Under the hood, `monitor` is [goal mode](/docs/agent-modes#outcome-driven-goal-m
 
 `stella monitor` takes the [global flags](/docs/commands). The most relevant ones:
 
-| Flag | Why it matters here |
-| --- | --- |
-| `--model <provider/model_id>` | Pin the worker model used to diagnose and fix failures. |
-| `--budget <usd>` | Cap total spend while it works across CI runs. |
+<CardGrid size="md">
+  <OptionCard name="--model <provider/model_id>">
+    Pin the worker model used to diagnose and fix failures.
+  </OptionCard>
+  <OptionCard name="--budget <usd>">
+    Cap total spend while it works across CI runs.
+  </OptionCard>
+</CardGrid>
 
 <Callout type="info">
 `monitor` is an interactive mode and always renders human-readable text; it does **not** honor `--output-format`.

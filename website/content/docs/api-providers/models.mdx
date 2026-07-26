@@ -84,9 +84,9 @@ stella models list --provider anthropic    # browse valid slugs + live pricing
   overlay resolves through each provider's configured credential (only the models.dev
   master list is keyless).
 - **Incremental.** The HTTP `ETag` is persisted and replayed; an unchanged list is one
-  conditional request, zero writes. After your first explicit refresh, Stella re-syncs a
-  stale list (>24h) automatically at startup — never before your first refresh (the
-  no-phone-home rule), and `STELLA_CATALOG_AUTO_REFRESH=0` turns the re-sync off.
+  conditional request, zero writes. A stale list (>24h) re-syncs automatically at startup,
+  and `STELLA_CATALOG_AUTO_REFRESH=0` turns the re-sync off — though *when* automatic
+  syncing may first fire differs by source (see below).
 - **Strict slug validation, everywhere.** Once a provider's master-list rows are synced,
   an invalid `--model` slug is a hard, immediate, named error with did-you-mean
   suggestions — before any wire call, for **every** provider including OpenRouter and
@@ -98,6 +98,33 @@ stella models list --provider anthropic    # browse valid slugs + live pricing
   telemetry) — to `(api provider, model provider, model version, model card)`, so
   per-model cost analytics never split one model across its spellings.
 
+### When each source may sync on its own
+
+<Callout type="info">
+  **A fresh install never contacts models.dev on its own.** The two sources are gated
+  differently, and deliberately:
+
+  - **Each configured provider's own `/models` listing** auto-syncs whenever it is stale,
+    **including the very first time** — this is what surfaces new releases as they ship.
+    That traffic is BYOK-clean: it goes to a provider you already gave Stella a key for,
+    the same host your next turn calls anyway. No credential for a provider means nothing
+    is fetched for it.
+  - **The models.dev master list** is a third party, so the no-phone-home rule forbids
+    contacting it implicitly. It may only auto-refresh once a sync record already exists —
+    that is, **after your first explicit `stella models refresh`**. Until you run that
+    command once, the seed table above is your whole catalog and models.dev is never
+    touched.
+</Callout>
+
+Because the native overlay resolves through each provider's configured credential, the
+slugs and prices you get back are exactly what that key can see. It is the same
+[credential chain](/docs/api-providers#the-credential-chain) that authorizes inference —
+resolved once, used for both:
+
+<CredentialChainDiagram />
+
+Only the models.dev master list is keyless.
+
 ## Prompt caching changes the math
 
 The **cached-input** column is what most worker input actually costs mid-run. Stella keeps
@@ -107,6 +134,36 @@ cache hit billed at the cached-input rate: a 10x–20x discount depending on pro
 is why real per-run cost lands far below naive input-tokens-times-list-price math, and why
 a model's cached-input price matters more than its headline input price for long agentic
 runs.
+
+### The cache-write rate
+
+Reads are only half the ledger. Writing a prefix into the cache is itself billed, at a
+**premium over the input rate**, and the seed catalog carries that figure per model
+alongside the other three. It appears in no column above because it is not a price you
+shop on — it is the cost of entry you amortize:
+
+| Model | Provider | In $/Mtok | Cache-write $/Mtok | Premium |
+| --- | --- | --- | --- | --- |
+| `claude-fable-5` | `anthropic` | 3.00 | 3.75 | 1.25x |
+| `us.anthropic.claude-sonnet-4-5-20250929-v1:0` | `bedrock` | 3.00 | 3.75 | 1.25x |
+| `gpt-5.5` | `openai` | 1.25 | 1.25 | 1x |
+| `gemini-3-pro` | `gemini`, `vertex` | 1.25 | 1.25 | 1x |
+| `grok-4` | `xai` | 3.00 | 3.00 | 1x |
+| `glm-5.2` | `zai` | 0.60 | 0.60 | 1x |
+| `deepseek-chat` | `deepseek` | 0.27 | 0.27 | 1x |
+| `openrouter/auto` | `openrouter` | gateway-priced | gateway-priced | — |
+
+The Claude family is the only one in the seed catalog carrying a write premium — and, not
+coincidentally, the only one where caching is **opt-in** rather than implicit: Anthropic,
+Bedrock, and Claude routed through OpenRouter each take an explicit cache marker, while
+the rest of the field caches for you. With reads at roughly a tenth of the input rate and
+writes at 1.25x, a written prefix breaks even after **two** requests — and an agent loop
+replays its prefix every turn, so the premium is paid once and repaid immediately.
+
+The failure case is worth naming: a prefix that goes cold before it is read back is a
+write you paid for and never used. `stella stats` reports this directly — a negative
+`SAVED ($)` means the write premium outran the reads it bought, and `TTL REWRITES` counts
+the prefixes that expired between turns. See [`stella stats`](/docs/commands/stats).
 
 <Callout type="info">
   `stella models` lists the full catalog with live key status per provider. And the

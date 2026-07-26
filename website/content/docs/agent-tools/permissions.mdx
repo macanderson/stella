@@ -5,6 +5,10 @@ description: How Stella's per-tool permission model separates read-only tools fr
 
 Every tool the agent can call — built-in, [custom](/docs/agent-tools/custom-tools), or provided by an [MCP server](/docs/agent-tools/mcp) — has a per-tool permission model. This is what lets Stella treat a harmless file read differently from a shell command that can change your system.
 
+<PermissionGateDiagram />
+
+Both exits are real outcomes: an allowed call executes and then fires `PostToolUse`, and a refused one is returned to the model as a refusal it can read and react to. The decision happens at the tool boundary — never by asking the model nicely in a prompt.
+
 ## Read-only vs. mutating tools
 
 Tools fall into two categories:
@@ -28,7 +32,7 @@ This gives you a programmable gate in front of any tool. A `PreToolUse` hook's m
 For blocking by pattern without a hook script, Stella also has native workspace-rule guards enforced at the tool boundary: `guard-tool` (deny a tool), `guard-deny-command` (a glob over the `bash` command), and `guard-deny-path` (a glob over a file tool's path). A rule such as `guard-deny-command: "git push --force*"` is hard-enforced per invocation.
 </Callout>
 
-```json
+```json title="~/.stella/settings.json"
 {
   "hooks": {
     "PreToolUse": [
@@ -53,11 +57,18 @@ For the full hook model — events, matchers, timeouts, and the JSON payload del
 
 Hooks and guard rules decide *whether* a command runs. An OS sandbox bounds what it can reach once it does — the difference that matters when instructions hidden in a file the agent read steer the model into running something you never asked for. `STELLA_BASH_SANDBOX` turns it on for the [`bash`](/docs/agent-tools#shell) tool:
 
-| Setting | Effect |
-| --- | --- |
-| `STELLA_BASH_SANDBOX=off` (the default) | No sandbox. `bash` runs with your own privileges. |
-| `STELLA_BASH_SANDBOX=workspace-write` | File writes confined to the workspace root plus the standard tmp directories. Reads and network are unrestricted. |
-| `STELLA_BASH_SANDBOX=restricted` | Everything `workspace-write` does, plus a blanket network denial. |
+<CardGrid size="md">
+  <OptionCard name="STELLA_BASH_SANDBOX=off">
+    No sandbox. `bash` runs with your own privileges. This is the shipped default.
+  </OptionCard>
+  <OptionCard name="STELLA_BASH_SANDBOX=workspace-write">
+    File writes confined to the workspace root plus the standard tmp directories. Reads and
+    network are unrestricted.
+  </OptionCard>
+  <OptionCard name="STELLA_BASH_SANDBOX=restricted">
+    Everything `workspace-write` does, plus a blanket network denial.
+  </OptionCard>
+</CardGrid>
 
 ```bash
 STELLA_BASH_SANDBOX=workspace-write stella run "run the migration and fix what breaks"

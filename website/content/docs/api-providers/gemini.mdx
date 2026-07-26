@@ -28,8 +28,18 @@ rename the env var Stella reads with `providers.gemini.api_key_env` — see
 The provider id is `gemini`; the default model is `gemini-3-pro`.
 
 ```bash
+export GEMINI_API_KEY="..."
+
 stella --model gemini/gemini-3-pro run "summarize why the nightly build broke"
 export STELLA_MODEL=gemini/gemini-3-pro
+```
+
+The 1M window is the reason to reach for this provider, so give it something that needs
+one — a whole subsystem rather than a file:
+
+```bash
+stella --model gemini/gemini-3-pro run \
+  "read every module under src/ingest and write a design note on where retries are handled inconsistently"
 ```
 
 The same models are also reachable through

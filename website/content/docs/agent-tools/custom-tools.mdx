@@ -16,13 +16,26 @@ If the same tool name is defined in both locations, the **workspace** manifest w
 
 Run `stella tools` at any time to see which custom tools were discovered, alongside the built-ins.
 
+<Callout type="warn">
+  Workspace manifests are behind the
+  [project trust boundary](/docs/configuration/settings#the-project-trust-boundary). A
+  manifest is a command a cloned repo gets to run on your machine, so `.stella/tools/`
+  is **not scanned at all** until you trust the repo — its manifests are neither loaded
+  nor reported as diagnostics. The user-global directory always loads. Opt in per repo:
+
+  ```bash
+  export STELLA_TRUST_PROJECT=1
+  ```
+
+  An org-managed `authority.project_custom_tools: "off"` keeps workspace manifests off
+  even for a trusted repo — that ceiling is not overridable from below.
+</Callout>
+
 ## Manifest shape
 
 A manifest declares the tool's `name`, `description`, the `command` to run, and an `input_schema`:
 
-```toml
-# .stella/tools/wordcount.toml
-
+```toml title=".stella/tools/wordcount.toml"
 name = "wordcount"
 description = "Count the words in a file and print the total."
 
@@ -50,6 +63,40 @@ type = "string"
 description = "Path to the file whose words should be counted."
 ```
 
+Every field, in the shape the manifest parser accepts:
+
+<CardGrid size="md">
+  <OptionCard name="name" required>
+    The name the model sees. Must match `^[a-z][a-z0-9_]{1,63}$` — a lowercase
+    letter followed by 1–63 more of `[a-z0-9_]`. A name that collides with a
+    built-in (or `ask_user`) is skipped with a diagnostic rather than shadowing
+    it.
+  </OptionCard>
+  <OptionCard name="description" required>
+    What the tool does, advertised to the model. An empty description is an
+    error, not a warning — it is the only thing the model has to decide with.
+  </OptionCard>
+  <OptionCard name="command" required>
+    An **argv array**, spawned directly with no shell. `command[0]` resolves
+    against the workspace root, which is also the child's working directory.
+  </OptionCard>
+  <OptionCard name="timeout_ms" defaultValue="30000">
+    Wall-clock budget for one call. Hard-capped at `600000` (10 minutes) — a
+    manifest asking for more is clamped with a warning. Past the timeout the
+    script's whole process group is killed and the tool returns a named error.
+  </OptionCard>
+  <OptionCard name="[env]">
+    Extra environment variables for the child, applied on top of the inherited
+    environment. Credential variables are stripped from the result either way —
+    see below.
+  </OptionCard>
+  <OptionCard name="[input_schema]">
+    The tool's inputs as a JSON Schema written in TOML, converted verbatim. A
+    non-table value is an error; an absent one leaves the tool with an empty
+    schema.
+  </OptionCard>
+</CardGrid>
+
 <Callout type="warn">
 `command` must be an **argv array** (`["scripts/wordcount.sh"]`), not a bare string — a string fails to parse and the tool never loads. Inputs go under `[input_schema]` (a JSON Schema), not `[parameters]`; an unknown table like `[parameters]` is silently ignored, leaving the tool with an empty schema.
 </Callout>
@@ -66,6 +113,10 @@ When the agent calls a custom tool, Stella spawns `command` **directly** from th
 2. Each top-level **scalar** property (string, number, bool) is exported as `STELLA_INPUT_<UPPER_SNAKE_KEY>` — `path` becomes `STELLA_INPUT_PATH`, `dry_run` becomes `STELLA_INPUT_DRY_RUN`. Nested objects and arrays are delivered on stdin only.
 
 The manifest's `[env]` table is applied on top of the inherited environment, before the `STELLA_INPUT_*` exports. Input keys come from the model but are namespaced under `STELLA_INPUT_`, so they can never clobber `PATH` or your `[env]` values.
+
+<Callout type="warn">
+The child's environment is **credential-scrubbed last**, after both the inherited environment and the manifest's `[env]`. A custom tool never sees Stella's provider keys (`ANTHROPIC_API_KEY`, `ZAI_API_KEY`, …) or repository/AWS tokens, and a manifest cannot reintroduce one by naming it in `[env]` — that entry is removed too. Ordinary task configuration in `[env]` survives untouched. If your script genuinely needs a credential, pass it as a tool *input* or have the script fetch it from your own secret store.
+</Callout>
 
 A script consuming both channels:
 
@@ -94,7 +145,27 @@ stella tools --validate            # scans .stella/tools/ and ~/.stella/tools/
 stella tools --validate ./mytools  # or an explicit directory
 ```
 
-It parses each `<name>.toml` and reports **errors** (bad TOML, missing/invalid/reserved name, empty description or command, a non-table `input_schema`), **warnings** (e.g. a `timeout_ms` over the 10-minute cap is clamped, a name that shadows a built-in or another manifest), and info. It exits non-zero if any manifest has errors — handy in CI.
+Discovery is deliberately lenient — a broken manifest becomes a diagnostic and the session runs on — so this is the pre-flight that tells you before a run has already spent budget. It parses each `<name>.toml` and reports three severities:
+
+<CardGrid size="md">
+  <OptionCard name="Error">
+    The manifest will not load: unreadable file, invalid TOML, a missing field,
+    an invalid or **reserved** name (one a built-in already claims), an empty
+    description, an empty `command`, or a non-table `input_schema`.
+  </OptionCard>
+  <OptionCard name="Warning">
+    It loads but will not behave as written: a `timeout_ms` over the 10-minute
+    cap (clamped at runtime), a name already claimed by an earlier manifest
+    (that one wins, this one is ignored), and a `command[0]` that does not
+    exist or is not executable — a warning, not an error, because the script
+    may legitimately be built or checked out later.
+  </OptionCard>
+  <OptionCard name="Info">
+    `timeout_ms` omitted or `0`, which silently becomes the 30-second default.
+  </OptionCard>
+</CardGrid>
+
+It exits non-zero if any manifest has errors — handy in CI.
 
 ## How custom tools appear
 

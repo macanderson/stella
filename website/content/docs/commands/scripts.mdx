@@ -20,10 +20,16 @@ Instead of guessing that a repo uses `pnpm test` versus `cargo test` versus `mak
 
 List detected scripts and their canonical verb bindings.
 
-| Flag | Meaning |
-| --- | --- |
-| `--json` | Emit the index as JSON (`schema_version` 1) for tooling. |
-| `--dir <path>` | Narrow to one workspace package directory. |
+<CardGrid size="md">
+  <OptionCard name="--json">
+    Emit the index as JSON for tooling — `schema_version`, the canonical `verbs` map, and
+    a `scripts` array of entries (`id`, `runner`, `name`, `command`, `dir`, `source`, and
+    `verb` on the entry each canonical verb binds to).
+  </OptionCard>
+  <OptionCard name="--dir <path>">
+    Narrow to one workspace package directory.
+  </OptionCard>
+</CardGrid>
 
 ```bash
 stella scripts list
@@ -34,12 +40,21 @@ stella scripts list --json --dir apps/web
 
 Run a script by canonical verb or by qualified id (e.g. `test`, `pnpm:build`).
 
-| Flag / arg | Default | Meaning |
-| --- | --- | --- |
-| `<script>` | — | `install` \| `build` \| `check` \| `start` \| `test` \| `lint` \| `format`, or a qualified id like `pnpm:build`. |
-| `--dir <path>` | — | Package dir when the id exists in several packages. |
-| `--timeout-secs <n>` | `600` | Abort the subprocess after this many seconds. |
-| `-- <args...>` | — | Extra args appended runner-natively (after `--` for npm-family runners). |
+<CardGrid size="md">
+  <OptionCard name="<script>" required>
+    One of `install`, `build`, `check`, `start`, `test`, `lint`, `format`, or a qualified
+    id like `pnpm:build`.
+  </OptionCard>
+  <OptionCard name="--dir <path>">
+    Package dir, for when the id exists in several packages.
+  </OptionCard>
+  <OptionCard name="--timeout-secs <n>" defaultValue="600">
+    Abort the subprocess after this many seconds.
+  </OptionCard>
+  <OptionCard name="-- <args...>">
+    Extra args, appended runner-natively — after a `--` for npm-family runners.
+  </OptionCard>
+</CardGrid>
 
 ```bash
 # Canonical verb
@@ -47,6 +62,12 @@ stella scripts run test
 
 # Qualified id in a specific package, with extra args
 stella scripts run pnpm:build --dir apps/web -- --no-lint
+
+# A long build, given room to finish
+stella scripts run build --timeout-secs 1800
+
+# Feed the index to another tool
+stella scripts list --json | jq '.scripts[] | select(.verb == "test")'
 ```
 
 <Callout type="info">

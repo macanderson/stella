@@ -130,13 +130,17 @@ Stella is BYOK and auto-detects the provider from whichever keys you have set.
 | **Z.ai** (GLM) | `ZAI_API_KEY` | `glm-5.2` |
 | **Anthropic** (Claude) | `ANTHROPIC_API_KEY` | `claude-fable-5` |
 | **OpenAI** (GPT) | `OPENAI_API_KEY` | `gpt-5.5` |
-| **xAI** (Grok) | `XAI_API_KEY` | `grok-4` |
+| **xAI** (Grok) | `XAI_API_KEY` | `grok-4` — [retires 2026-08-15](https://stella.oxagen.sh/docs/api-providers/xai) |
 | **DeepSeek** | `DEEPSEEK_API_KEY` | `deepseek-chat` |
 | **Google Gemini** | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `gemini-3-pro` |
-| **OpenRouter** | `OPENROUTER_API_KEY` | `auto` |
+| **OpenRouter** | `OPENROUTER_API_KEY` | `openrouter/auto` |
 | **Google Vertex AI** | `VERTEX_ACCESS_TOKEN` + `VERTEX_PROJECT_ID` | `gemini-3-pro` |
-| **Amazon Bedrock** | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | Claude via Converse |
+| **Amazon Bedrock** | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
 | **Local** | *none* — pass `--base-url` | whatever your server hosts |
+
+OpenRouter's slug keeps its vendor namespace on the wire, so pinning it on the CLI needs
+both halves: `--model openrouter/openrouter/auto`. `--model` splits on the first `/`, and
+the singly-qualified form sends the wire slug `auto`, which OpenRouter does not serve.
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here     # or OPENAI_API_KEY, GEMINI_API_KEY, …

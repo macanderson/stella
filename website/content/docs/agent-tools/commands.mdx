@@ -46,10 +46,26 @@ the prompt:
 
 ## Where commands live
 
-| Scope | Path | Travels with |
-| --- | --- | --- |
-| Project | `<workspace>/.stella/commands/` | The repo — commit it, the team shares it |
-| User | `~/.stella/commands/` | You, across every workspace |
+<CardGrid size="md">
+  <SpecCard
+    title="Project"
+    meta={[
+      { label: "Path", value: "<workspace>/.stella/commands/" },
+      { label: "Travels with", value: "the repo", mono: false },
+    ]}
+  >
+    Commit it — everyone who clones gets the command in their slash menu.
+  </SpecCard>
+  <SpecCard
+    title="User"
+    meta={[
+      { label: "Path", value: "~/.stella/commands/" },
+      { label: "Travels with", value: "you, across every workspace", mono: false },
+    ]}
+  >
+    Your own templates, in every repo you open.
+  </SpecCard>
+</CardGrid>
 
 Definitions load user-global first, then workspace — **workspace wins** on
 a name collision. In the slash menu, built-ins can never be shadowed, and

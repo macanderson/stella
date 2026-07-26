@@ -1,9 +1,9 @@
 ---
 title: stella storage
-description: Inspect the storage map — every storage layer, namespace, relation, and field, with intent and boundaries from stella.storage.toml.
+description: Inspect the storage map — every storage layer, namespace, relation, and field, with intent and boundaries from stella.storage.toml — and bound the session store's growth.
 ---
 
-`stella storage` inspects the **storage map**: every storage layer, namespace, relation, and field in your workspace, annotated with intent and boundaries from `stella.storage.toml`. It reads the local index built by [`stella init`](/docs/commands/init) (`.stella/private/codegraph.db`) plus the manifest, so it is fully offline and needs no API key.
+`stella storage` inspects the **storage map**: every storage layer, namespace, relation, and field in your workspace, annotated with intent and boundaries from `stella.storage.toml`. It reads the local index built by [`stella init`](/docs/commands/init) (`.stella/private/codegraph.db`) plus the manifest, so it is fully offline and needs no API key. One verb — `prune` — also does the store's retention housekeeping.
 
 ## Synopsis
 
@@ -12,18 +12,33 @@ stella storage tree
 stella storage show <address>
 stella storage grep <name>
 stella storage drift
+stella storage prune [--older-than <AGE>] [--max-rows <N>] [--force] [--vacuum] [--dry-run]
 ```
 
 ## What it does
 
 The storage map is Stella's vendor-agnostic index of where your data lives — SQL tables, key-value namespaces, document collections, and their fields — so the agent (and you) can reason about persistence without re-deriving the schema every time. It is the zero-drift companion to the [code graph](/docs/commands/graph): the code graph answers "who calls what," the storage map answers "what is stored where, and what does it mean."
 
-| Subcommand | Answers |
-| --- | --- |
-| `tree` | The full map — `layer → namespace → relation` tree, each with its declared intent. |
-| `show <address>` | One relation's card: fields, constraints, meaning, and provenance. Accepts a `store://` address, a bare address, or a relation name. |
-| `grep <name>` | Every relation and field whose normalized name contains the query. |
-| `drift` | A report-only drift check: near-duplicate relations, orphaned manifest meanings, and intent coverage. Changes nothing. |
+<CardGrid size="md">
+  <OptionCard name="tree">
+    The full map — `layer → namespace → relation` tree, each with its declared intent.
+  </OptionCard>
+  <OptionCard name="show <address>">
+    One relation's card: fields, constraints, meaning, and provenance. Accepts a
+    `store://` address, a bare address, or a relation name.
+  </OptionCard>
+  <OptionCard name="grep <name>">
+    Every relation and field whose normalized name contains the query.
+  </OptionCard>
+  <OptionCard name="drift">
+    A report-only drift check: near-duplicate relations, orphaned manifest meanings, and
+    intent coverage. Changes nothing.
+  </OptionCard>
+  <OptionCard name="prune">
+    The one verb here that writes. Bounds `store.db`'s growth by dropping whole
+    executions and every row keyed to them — see [below](#stella-storage-prune).
+  </OptionCard>
+</CardGrid>
 
 ```bash
 stella storage tree
@@ -34,4 +49,52 @@ stella storage drift
 
 <Callout type="info">
 The map is only as current as the last [`stella init`](/docs/commands/init). Intent and boundaries come from `stella.storage.toml`; `stella storage drift` tells you where that manifest has fallen behind the code.
+</Callout>
+
+### stella storage prune
+
+Bound the growth of this workspace's session store, `<workspace>/.stella/private/store.db`
+— dropping whole executions past `--older-than` and `--max-rows`, along with every row
+keyed to them. It is the same implementation as
+[`stella stats prune`](/docs/commands/stats#bounding-the-store--stella-stats-prune) mounted
+at a second entry point: one `PruneArgs`, the same five flags, the same engine, so store
+retention is reachable both from where you notice the store is too big and from where the
+rest of the store verbs live.
+
+```bash
+# What would go, without touching anything.
+stella storage prune --older-than 90d --dry-run
+
+# Keep a quarter of history, and hand the freed pages back to the filesystem.
+stella storage prune --older-than 90d --vacuum
+
+# Or bound it by row count instead of age.
+stella storage prune --max-rows 5000
+```
+
+<CardGrid size="sm">
+  <OptionCard name="--older-than <AGE>">
+    Drop executions older than this window — `90d`, `12w`, `720h`, `3mo`.
+  </OptionCard>
+  <OptionCard name="--max-rows <N>">
+    Hard ceiling on retained executions.
+  </OptionCard>
+  <OptionCard name="--dry-run">
+    Report what would be pruned and delete nothing.
+  </OptionCard>
+  <OptionCard name="--vacuum">
+    `VACUUM` afterwards, handing freed pages back to the filesystem.
+  </OptionCard>
+  <OptionCard name="--force">
+    Also drop executions whose telemetry has not reached the usage hub. Irreversible.
+  </OptionCard>
+</CardGrid>
+
+Each flag is documented in full — units, the replication-safety guarantee, and what
+`--force` actually costs you — on
+[`stella stats prune`](/docs/commands/stats#bounding-the-store--stella-stats-prune).
+
+<Callout type="warn">
+Unlike the other `stella storage` verbs, `prune` is not a read. It deletes rows from
+`store.db`, and only `--dry-run` makes it safe to run without thinking first.
 </Callout>

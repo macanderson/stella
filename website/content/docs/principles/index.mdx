@@ -26,14 +26,59 @@ has the research grounding; the shape of it:
 
 You can see the rule everywhere in the product:
 
-| Decision | The deterministic mechanism | The model, only as fallback |
-| --- | --- | --- |
-| Is the work done? | The [flip oracle](/docs/inference-pipeline): the same test fails before, passes after — plus the zero-diff guard and diff budget | The judge is consulted only when deterministic evidence is inconclusive |
-| What proves the change? | `verify_done` replays the witness test on a shadow worktree at `git HEAD` | A merely-green suite is *weak* evidence, never proof |
-| Which model serves a role? | Explicit pins and typed absence (`Option::None`) — never an `"auto"` magic string | `auto_mode` picks from *your* allowed list, by stated rules |
-| What goes in the prompt? | A byte-stable prefix + one fixed-position recall block | — |
-| When does a run stop? | The budget guard, between steps — never mid-tool | — |
-| What happened? | An append-only event stream and local SQLite ledgers | — |
+<CardGrid size="md">
+  <SpecCard title="Is the work done?">
+    **Mechanism:** the [flip oracle](/docs/inference-pipeline) — the same test
+    fails before the change and passes after — plus the zero-diff guard and a
+    400-line diff budget.
+
+    **Model, as fallback:** the judge is consulted only when the deterministic
+    evidence is unavailable or inconclusive.
+  </SpecCard>
+  <SpecCard title="What proves the change?">
+    **Mechanism:** `verify_done` replays the witness test on a shadow worktree
+    at `git HEAD` — it must fail there and pass on the change.
+
+    **Model, as fallback:** none. A merely-green suite is *weak* evidence, never
+    proof, whoever asserts it.
+  </SpecCard>
+  <SpecCard title="Which model serves a role?">
+    **Mechanism:** explicit pins and typed absence (`Option::None`) — never an
+    `"auto"` magic string.
+
+    **Model, as fallback:** `auto_mode` picks from *your* `allowed_models`, by
+    stated rules — different family first, then price tier, then list order.
+  </SpecCard>
+  <SpecCard title="What goes in the prompt?">
+    **Mechanism:** a byte-stable system prefix plus one fixed-position recall
+    block, so prompt caching survives across turns.
+
+    **Model, as fallback:** none.
+  </SpecCard>
+  <SpecCard title="When does a run stop?">
+    **Mechanism:** the budget guard, checked between steps — never mid-tool, so
+    an abort never leaves a half-applied edit.
+
+    **Model, as fallback:** none.
+  </SpecCard>
+  <SpecCard title="What happened?">
+    **Mechanism:** an append-only event stream and local SQLite ledgers you can
+    query yourself.
+
+    **Model, as fallback:** none.
+  </SpecCard>
+</CardGrid>
+
+Two of those are one command away. The mechanisms are not aspirational — they
+are the surfaces you already use:
+
+```bash
+# The flip oracle, armed: a run that cannot prove fail→pass does not submit.
+stella run --test-command "cargo test -p stella-pipeline" "fix the witness tamper check"
+
+# The ledgers, read back — no model involved, no network, no key.
+stella stats
+```
 
 ## The seven invariants, briefly
 

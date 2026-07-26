@@ -18,11 +18,20 @@ Each hook receives the event payload as **JSON on stdin**, so your command can r
 
 Stella fires hooks on three lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
 
-| Event | When it runs | Blocking? | Matcher |
-| --- | --- | --- | --- |
-| `SessionStart` | Once before the turn. | No — output is used as context. | Ignored. |
-| `PreToolUse` | Before a tool executes. | Yes — a non-zero exit blocks the tool. | Glob over the tool name. |
-| `PostToolUse` | After a tool executes. | No — side effects only, never blocks. | Glob over the tool name. |
+<CardGrid size="md">
+  <OptionCard name="SessionStart">
+    Runs once before the turn. **Never blocks** — its stdout is used as context instead.
+    The matcher is ignored.
+  </OptionCard>
+  <OptionCard name="PreToolUse">
+    Runs before a tool executes. **Blocking**: a non-zero exit stops the tool. The matcher
+    is a glob over the tool name.
+  </OptionCard>
+  <OptionCard name="PostToolUse">
+    Runs after a tool executes. **Never blocks** — side effects only. The matcher is a glob
+    over the tool name.
+  </OptionCard>
+</CardGrid>
 
 ### `SessionStart`
 
@@ -40,7 +49,7 @@ Runs after a tool executes. It is for **side effects only and never blocks** —
 
 Every hook receives one JSON document on stdin. Its shape:
 
-```json
+```json title="stdin of a PostToolUse hook"
 {
   "event": "PostToolUse",
   "cwd": "/path/to/workspace",
@@ -52,27 +61,52 @@ Every hook receives one JSON document on stdin. Its shape:
 }
 ```
 
-| Field | Type | Present for | Meaning |
-| --- | --- | --- | --- |
-| `event` | string | Always | `"SessionStart"`, `"PreToolUse"`, or `"PostToolUse"` — the same PascalCase names as the config keys. |
-| `cwd` | string | Always | The workspace root — also the hook's working directory. |
-| `tool` | object | `PreToolUse`, `PostToolUse` | `{ "name": …, "input": … }` — the tool's exact name and the model-produced JSON input it was (or will be) called with. |
-| `toolResult` | string | `PostToolUse` only | The (clipped) result string the tool returned. |
+<CardGrid size="md">
+  <OptionCard name="event">
+    String, always present. `"SessionStart"`, `"PreToolUse"`, or `"PostToolUse"` — the same
+    PascalCase names as the config keys.
+  </OptionCard>
+  <OptionCard name="cwd">
+    String, always present. The workspace root — also the hook's working directory.
+  </OptionCard>
+  <OptionCard name="tool">
+    Object, on `PreToolUse` and `PostToolUse`. `{ "name": …, "input": … }` — the tool's
+    exact name and the model-produced JSON input it was (or will be) called with.
+  </OptionCard>
+  <OptionCard name="toolResult">
+    String, on `PostToolUse` only. The result string the tool returned — either the
+    success content or the error message. **Nothing clips it.** A hook matched against a
+    tool that returns a large body receives that whole body on stdin, so if you only want a
+    summary, truncate on your own side.
+  </OptionCard>
+</CardGrid>
 
 Absent fields are **omitted entirely**, not set to `null` — a `SessionStart` payload is just `{ "event": "SessionStart", "cwd": "…" }`, and `toolResult` never appears on a `PreToolUse` payload.
+
+<Callout type="warn">
+  Because `toolResult` is unbounded, a `PostToolUse` hook matched on `"*"` will be handed
+  the full output of every tool call in the session — including a `read_file` of a large
+  file. Match narrowly, and read stdin in a streaming or size-capped way if the hook logs
+  it anywhere.
+</Callout>
 
 ## Timeouts
 
 Each hook may set a `timeoutMs`, the maximum time the command is allowed to run:
 
-- **Default:** `60000` (60 seconds).
-- **Hard maximum:** `600000` (600 seconds / 10 minutes).
+<CardGrid size="sm">
+  <OptionCard name="timeoutMs" defaultValue="60000">
+    Milliseconds a hook command may run before it is killed — 60 seconds by default. The
+    hard maximum is `600000` (600 seconds, or 10 minutes); a larger value buys no more
+    time.
+  </OptionCard>
+</CardGrid>
 
 ## Example
 
 The following `settings.json` runs `./scripts/guard.sh` before every `bash` tool call, with a 5-second timeout. Because it is a `PreToolUse` hook, a non-zero exit from the script blocks the `bash` call. Each hook runs as `bash -c <command>` with its working directory set to the workspace root, so a relative path like `./scripts/guard.sh` resolves from the repository root.
 
-```json
+```json title="<workspace>/.stella/settings.json"
 {
   "hooks": {
     "PreToolUse": [
@@ -115,8 +149,43 @@ exit 0
 
 Blocking is **fail-closed** on `PreToolUse`: a hook that times out or fails to start at all also blocks the tool, with the failure message as the reason — a missing or broken guard script never silently waves a call through. (`PostToolUse` and `SessionStart` never block on either failure mode.)
 
+### A `PostToolUse` logger that respects the unbounded result
+
+`toolResult` arrives whole, so a hook that appends it somewhere has to bound it itself. This one keeps a one-line-per-call audit trail with the result capped at 200 characters:
+
+```bash title="scripts/audit.sh"
+#!/usr/bin/env bash
+# PostToolUse audit trail. Never blocks — its exit status is ignored.
+set -euo pipefail
+
+payload="$(cat)"
+tool="$(jq -r '.tool.name // "?"' <<<"$payload")"
+# `toolResult` is NOT clipped by Stella: cap it here, not downstream.
+result="$(jq -r '(.toolResult // "") | .[0:200]' <<<"$payload" | tr '\n' ' ')"
+
+printf '%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$tool" "$result" \
+  >> "${TMPDIR:-/tmp}/stella-tool-audit.tsv"
+```
+
+Wire it to every tool with a `"*"` matcher:
+
+```json title="~/.stella/settings.json"
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "./scripts/audit.sh", "timeoutMs": 2000 }
+        ]
+      }
+    ]
+  }
+}
+```
+
 <Callout type="warn">
-**Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless you set `STELLA_PROJECT_HOOKS=1` — otherwise the merged hook set is rebuilt from the user and org-managed scopes alone, and a stderr notice names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.stella/settings.json`) always load.
+**Project-scope hooks are a trust boundary.** Hooks declared in a repository's project-scope file (`<workspace>/.stella/settings.json`) do **not** load unless the repo is trusted — set `STELLA_TRUST_PROJECT=1`, or the legacy hooks-scoped `STELLA_PROJECT_HOOKS=1`. Either flag unlocks them; without one, the merged hook set is rebuilt from the user and org-managed scopes alone and a stderr notice names what was skipped. This stops a cloned repo from running arbitrary commands on your machine. Hooks in the user scope (`~/.stella/settings.json`) always load. See [the project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
 </Callout>
 
 <Callout type="info">

@@ -3,19 +3,27 @@ title: "One gateway key (OpenRouter)"
 description: Every model family through a single OpenRouter key — cross-family judging with one billing relationship, and how the family logic sees through the gateway.
 ---
 
-<ProviderMark id="openrouter" size={30} />
-
 The cross-family profiles usually cost you a keyring: an Anthropic key, an OpenAI key, a
 Z.ai key. A gateway inverts that — **one `OPENROUTER_API_KEY`, any model family**, one
 invoice. This is the setup for people who want the [balanced](/docs/examples/balanced)
 architecture without three billing relationships.
 
+<ProviderGrid only={["openrouter"]} />
+
 ## The profile
+
+One key, a complete file:
 
 ```json title="~/.stella/settings.json"
 {
   "agent_engine_config": {
     "default_model": "openrouter/anthropic/claude-fable-5",
+    "pipeline_worker_model": "openrouter/anthropic/claude-fable-5",
+
+    "auto_mode": "off",
+    "effort_auto": "on",
+    "reasoning_auto": "on",
+
     "agents": {
       "judge":  { "provider": "openrouter", "model": "openai/gpt-5.5" },
       "triage": { "provider": "openrouter", "model": "deepseek/deepseek-chat" }
@@ -24,19 +32,58 @@ architecture without three billing relationships.
 }
 ```
 
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+
+stella config    # provider openrouter, and the resolved slug
+stella run "add cursor pagination to /orders" --test-command "pnpm test orders"
+```
+
 Two routing forms, deliberately shown side by side:
 
-- **`default_model: "openrouter/<vendor>/<slug>"`** — `--model` grammar. The string
-  splits on the *first* slash: provider `openrouter`, slug `<vendor>/<slug>` sent to it
-  verbatim.
-- **`agents.<agent>.provider: "openrouter"`** — the per-agent gateway pin. The `model`
-  string goes to that provider **verbatim, no splitting** — which is exactly what lets
-  an OpenRouter slug itself contain `/`.
+<CardGrid size="md">
+  <SpecCard
+    title="Flat model field"
+    meta={[
+      { label: "Written as", value: "openrouter/<vendor>/<slug>" },
+      { label: "Sent on the wire", value: "<vendor>/<slug>" },
+    ]}
+  >
+    `--model` grammar. The string splits on the **first** slash: provider
+    `openrouter`, and everything after it is the slug, forwarded verbatim.
+  </SpecCard>
+  <SpecCard
+    title="Per-agent gateway pin"
+    meta={[
+      { label: "Written as", value: "provider: openrouter · model: <vendor>/<slug>" },
+      { label: "Sent on the wire", value: "<vendor>/<slug>" },
+    ]}
+  >
+    With `provider` set, `model` goes to that provider **verbatim, no
+    splitting** — which is exactly what lets an OpenRouter slug contain a `/`
+    of its own.
+  </SpecCard>
+</CardGrid>
 
 Use OpenRouter's own catalog for slugs — they are vendor-prefixed
 (`openai/gpt-5.5`, `anthropic/claude-fable-5`, …) and OpenRouter adds models without
 Stella needing a catalog update: gateway slugs are **unseeded**, passed through
 unvalidated (typos surface as OpenRouter API errors, not local ones).
+
+<Callout type="warn">
+  The gateway's own meta-router is one place the first-slash split bites. Its
+  wire slug is `openrouter/auto` — vendor-prefixed like every other OpenRouter
+  id — so on the CLI you must write it **doubly qualified**:
+
+  ```bash
+  stella --model openrouter/openrouter/auto run "…"
+  ```
+
+  `--model openrouter/auto` splits into provider `openrouter` + slug `auto`,
+  and OpenRouter does not serve a bare `auto`. The settings-file equivalent is
+  `"default_model": "openrouter/openrouter/auto"`, or the per-agent pin with
+  `"provider": "openrouter", "model": "openrouter/auto"`.
+</Callout>
 
 ## Cross-family judging still works
 
@@ -59,15 +106,34 @@ gateway exactly as it does across native keys:
 }
 ```
 
+`auto_mode` picks the **judge** — not the worker — ranking candidates by cross-family
+first, then the seed catalog's output list price, then list order. Gateway slugs are
+unpriced locally, so on an all-OpenRouter list the price tier is a tie at zero and the
+choice comes down to family plus the order you wrote them in. Put your preferred judge
+first.
+
+Confirm the family logic picked what you expected — the per-agent model each role
+resolved to is in `stella config`, and the per-model breakdown after a run is in
+`stella stats`:
+
+```bash
+stella config
+stella --budget 3.00 goal "clippy is clean and the test suite passes"
+stella stats --format json | jq '.[] | {provider, model, input_tokens, output_tokens, resolve_rate}'
+```
+
 ## What you trade
 
 <Callout type="info">
-  **Cost telemetry moves to the gateway.** Gateway slugs are unseeded, so the local
-  catalog prices them at `$0` — `stella stats` still counts tokens, steps, and
-  resolution, but the dollar column for `openrouter/*` models reads zero. Stella
-  requests OpenRouter's **usage accounting** on every call and sends app-attribution
-  headers, so your authoritative spend lives in the OpenRouter dashboard instead.
-  `--budget` (which prices from the catalog) cannot meaningfully cap gateway runs.
+  **Cost telemetry comes from the gateway, not the catalog.** Gateway slugs are
+  unseeded, so there is no local list price to meter against. Stella therefore
+  requests OpenRouter's **usage accounting** on every call — and sends
+  app-attribution headers — and takes the gateway's reported per-call cost as the
+  authoritative one, overriding catalog pricing. That is what keeps `stella stats`
+  dollars and `--budget` caps real on a gateway whose routed model (and therefore
+  price) is only known after the fact. If a call's final usage frame carries no
+  cost, that call falls back to the unseeded slug's `$0` — so treat the OpenRouter
+  dashboard as the reconciliation source of record.
 </Callout>
 
 You also add a hop: your traffic goes through OpenRouter's servers rather than to each
