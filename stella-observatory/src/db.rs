@@ -15,6 +15,11 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
+/// Day bucket for rows SQLite's `date()` can't parse — see
+/// [`Observatory::activity`]. The dashboard matches on this exact string to
+/// keep the bucket off its date axis, so the two must not drift apart.
+pub const UNDATED: &str = "undated";
+
 /// Everything that can go wrong serving observatory data.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -519,6 +524,12 @@ impl Observatory {
     /// per UTC day — the timeframe charts' raw material. Days are merged
     /// across the three tables in Rust (a day may have tool calls but no
     /// finished executions, or vice versa).
+    ///
+    /// Rows whose timestamp SQLite cannot parse land in the [`UNDATED`]
+    /// bucket: `date()` returns NULL for those, and reading NULL as `String`
+    /// used to fail the whole query and blank the dashboard. They are real
+    /// runs, so they keep a named bucket instead of being dropped — the UI
+    /// keeps them off the date axis and reports the total separately.
     pub fn activity(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
@@ -533,10 +544,19 @@ impl Observatory {
                 })
             })
         }
+        // The `coalesce(date(…), '')` in each query below turns an unparseable
+        // timestamp into the empty string; name it here so it never reaches
+        // the UI blank. `UNDATED` sorts after every ISO day, so it lands last.
+        fn day_key(row: &Value) -> String {
+            match row["day"].as_str().unwrap_or_default() {
+                "" => UNDATED.to_string(),
+                day => day.to_string(),
+            }
+        }
         let mut days: BTreeMap<String, Value> = BTreeMap::new();
         for row in collect_rows(
             &conn,
-            "SELECT date(started_at), count(*),
+            "SELECT coalesce(date(started_at), ''), count(*),
                     count(*) FILTER (WHERE outcome = 'completed'),
                     coalesce(sum(cost_usd), 0)
              FROM executions GROUP BY 1",
@@ -549,7 +569,7 @@ impl Observatory {
                 }))
             },
         )? {
-            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let day = day_key(&row);
             let entry = day_slot(&mut days, &day);
             entry["runs"] = row["runs"].clone();
             entry["resolved"] = row["resolved"].clone();
@@ -557,7 +577,7 @@ impl Observatory {
         }
         for row in collect_rows(
             &conn,
-            "SELECT date(e.started_at),
+            "SELECT coalesce(date(e.started_at), ''),
                     coalesce(sum(t.input_tokens), 0),
                     coalesce(sum(t.output_tokens), 0),
                     coalesce(sum(t.duration_ms), 0)
@@ -572,7 +592,7 @@ impl Observatory {
                 }))
             },
         )? {
-            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let day = day_key(&row);
             let entry = day_slot(&mut days, &day);
             entry["input_tokens"] = row["input_tokens"].clone();
             entry["output_tokens"] = row["output_tokens"].clone();
@@ -580,7 +600,7 @@ impl Observatory {
         }
         for row in collect_rows(
             &conn,
-            "SELECT date(ts), count(*), count(*) FILTER (WHERE ok = 0)
+            "SELECT coalesce(date(ts), ''), count(*), count(*) FILTER (WHERE ok = 0)
              FROM tool_calls GROUP BY 1",
             |r| {
                 Ok(json!({
@@ -590,7 +610,7 @@ impl Observatory {
                 }))
             },
         )? {
-            let day = row["day"].as_str().unwrap_or_default().to_string();
+            let day = day_key(&row);
             let entry = day_slot(&mut days, &day);
             entry["tool_calls"] = row["tool_calls"].clone();
             entry["tool_errors"] = row["tool_errors"].clone();

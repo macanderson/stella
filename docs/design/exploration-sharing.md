@@ -556,7 +556,7 @@ re-implemented.
 | Compaction & dedup (`stella-core/src/compaction.rs`) | Already dedups byte-identical repeated tool outputs, so re-reading a map inside one session is near-free; unchanged | **Untouched** |
 | Speculative read-only execution (`stella-core/src/driver.rs:517-543`) | `explorations` is `read_only: true`, so map reads already parallelize with streaming; unchanged | **Untouched** |
 | Schema gate + `SchemaIndex` (`stella-tools/src/schema_gate.rs`) | Precedent: the coverage index (§6a) is its read-side analogue in the same struct; gate itself unchanged | **Untouched** — pattern reused |
-| Observatory (`stella-observatory`) | Gains `/api/explorations` (§4e) | **Extended** |
+| Observatory (`stella-observatory`) | Gains `/api/explorations` (§4e), rendered in the dashboard's **memory & rules** tab: every map with its freshness verdict, drift counts, and in-flight claims | **Extended** |
 | Skills frontloading, `usage.db` cross-project rollup, hooks | Out of this spec's scope: skills are behavioral, not cartographic; cross-checkout map sharing needs a remote-keyed store (§7); SessionStart hooks remain available for user-side injection | **Bounded** — reasons stated |
 
 The audit rule this table enforces going forward: any future context-caching

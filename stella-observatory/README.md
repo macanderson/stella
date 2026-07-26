@@ -62,7 +62,7 @@ instead. The no-`Host` allowance itself is deliberate — a browser `fetch`
 always sends one, so its absence means raw curl or a test, not the attack.
 
 **Read-only** is `OpenFlags::SQLITE_OPEN_READ_ONLY` at all three open sites —
-`db::open_read_only` (`src/db.rs:716`), `global::open_usage`
+`db::open_read_only` (`src/db.rs:736`), `global::open_usage`
 (`src/global.rs:59`), `codegraph::snapshot` (`src/codegraph.rs:38`) — each with
 a 5 s `busy_timeout`, so a checkpoint or a migration's exclusive lock makes a
 poll wait rather than 500. `Observatory::new` opens nothing, and each open
@@ -99,7 +99,7 @@ keep the original root.
 — one row in `executions`, the foreign key `telemetry`, `tool_calls`,
 `files_touched` and `execution_reflection` hang off; every join in
 `Observatory::executions`, `execution`, `models` and `activity` is on it.
-`run_id` appears only in `Observatory::fleet` (`src/db.rs:658`), against a
+`run_id` appears only in `Observatory::fleet` (`src/db.rs:678`), against a
 different file (`fleet.db`) and a different hierarchy: a fleet run fans out to
 tasks, then attempts, then commits. It is not an execution and not a session,
 and no query may join the two. AGENTS.md's glossary is the authority.
@@ -108,7 +108,7 @@ and no query may join the two. AGENTS.md's glossary is the authority.
 
 A workspace that has never run `stella` renders an empty dashboard, not a 500.
 An absent file yields `None` and an empty payload at the call site; an absent
-*table* is caught by `is_missing_table` (`src/db.rs:779`), degrading
+*table* is caught by `is_missing_table` (`src/db.rs:799`), degrading
 `collect_rows`/`or_empty` to `[]`/`{}`. `global.rs` goes further — `query_rows`
 treats any `prepare` failure as empty, because a `usage.db` predating the hub
 replica has no `telemetry` table at all.
