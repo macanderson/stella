@@ -281,3 +281,186 @@ fn terminal_status_freezes_elapsed_and_wins_over_late_events() {
     // Terminal → tool-ago dashes.
     assert!(row.tool_ago(start + Duration::from_secs(30)).is_none());
 }
+
+// ── Supervisor verbs (#645) ─────────────────────────────────────────────────
+//
+// These drive the whole `[p]`/`[r]`/`[x]` surface as `KeyEvent`s against
+// `on_key`, which is why the verbs could be wired without an interactive
+// rendering harness: the key handling is a pure fold over the view.
+
+fn key(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+}
+
+/// A board whose `t1` is dispatched and running, focus pinned to it.
+fn running_board() -> (FleetBoard, FleetView) {
+    let now = Instant::now();
+    let board = {
+        let mut b = FleetBoard::new("stella", &seed(), now);
+        b.apply(
+            FleetMsg::Status {
+                id: "t1".into(),
+                status: FleetStatus::Running,
+            },
+            now,
+        );
+        b
+    };
+    let view = FleetView::new(&board.rows);
+    (board, view)
+}
+
+#[test]
+fn pause_and_resume_emit_verbs_for_the_focused_task() {
+    let (board, mut view) = running_board();
+    let now = Instant::now();
+    assert_eq!(view.focused_id.as_deref(), Some("t1"));
+
+    assert_eq!(
+        on_key(key('p'), &board, &mut view, now),
+        KeyAction::Control(FleetControl::Pause("t1".into()))
+    );
+    assert!(view.paused.contains("t1"), "pause is recorded locally");
+    assert_eq!(view.marker(&board.rows[0]), Some("paused"));
+
+    assert_eq!(
+        on_key(key('r'), &board, &mut view, now),
+        KeyAction::Control(FleetControl::Resume("t1".into()))
+    );
+    assert!(!view.paused.contains("t1"), "resume clears the pause");
+    assert_eq!(view.marker(&board.rows[0]), None);
+}
+
+#[test]
+fn stop_takes_two_keystrokes_and_any_other_key_disarms() {
+    let (board, mut view) = running_board();
+    let now = Instant::now();
+
+    // First `x` only arms — no verb leaves the dashboard.
+    assert_eq!(on_key(key('x'), &board, &mut view, now), KeyAction::None);
+    assert_eq!(view.pending_stop.as_deref(), Some("t1"));
+
+    // An unrelated keystroke disarms it.
+    assert_eq!(on_key(key('s'), &board, &mut view, now), KeyAction::None);
+    assert_eq!(view.pending_stop, None, "sort disarmed the pending stop");
+
+    // Re-arm, then confirm.
+    assert_eq!(on_key(key('x'), &board, &mut view, now), KeyAction::None);
+    assert_eq!(
+        on_key(key('x'), &board, &mut view, now),
+        KeyAction::Control(FleetControl::Stop("t1".into()))
+    );
+    assert_eq!(view.pending_stop, None, "confirming consumes the arm");
+    assert_eq!(view.marker(&board.rows[0]), Some("stopping"));
+}
+
+#[test]
+fn moving_focus_between_the_two_stop_keystrokes_does_not_stop_the_new_task() {
+    let (board, mut view) = running_board();
+    let now = Instant::now();
+
+    on_key(key('x'), &board, &mut view, now);
+    assert_eq!(view.pending_stop.as_deref(), Some("t1"));
+    // Focus moves to t2 — the arm must not travel with it.
+    on_key(key('j'), &board, &mut view, now);
+    assert_eq!(view.focused_id.as_deref(), Some("t2"));
+    assert_eq!(view.pending_stop, None);
+    // So this `x` arms t2 rather than stopping it.
+    assert_eq!(on_key(key('x'), &board, &mut view, now), KeyAction::None);
+    assert!(view.stopped.is_empty(), "nothing was stopped");
+}
+
+#[test]
+fn a_terminal_task_accepts_no_supervisor_verb() {
+    let now = Instant::now();
+    let mut board = FleetBoard::new("stella", &seed(), now);
+    board.apply(
+        FleetMsg::Status {
+            id: "t1".into(),
+            status: FleetStatus::Done,
+        },
+        now,
+    );
+    let mut view = FleetView::new(&board.rows);
+    assert_eq!(view.focused_id.as_deref(), Some("t1"));
+
+    for c in ['p', 'r', 'x'] {
+        assert_eq!(
+            on_key(key(c), &board, &mut view, now),
+            KeyAction::None,
+            "`{c}` on a finished task is declined"
+        );
+    }
+    assert!(view.paused.is_empty() && view.stopped.is_empty());
+    assert_eq!(view.pending_stop, None);
+}
+
+#[test]
+fn a_task_that_finishes_while_paused_renders_as_finished() {
+    let (mut board, mut view) = running_board();
+    let now = Instant::now();
+    on_key(key('p'), &board, &mut view, now);
+    assert_eq!(view.marker(&board.rows[0]), Some("paused"));
+
+    board.apply(
+        FleetMsg::Status {
+            id: "t1".into(),
+            status: FleetStatus::Done,
+        },
+        now,
+    );
+    // Fleet truth wins over local supervisor intent.
+    assert_eq!(view.marker(&board.rows[0]), None);
+    let text = draw(&board, &view, 110, 24);
+    assert!(text.contains("done"), "terminal status rendered:\n{text}");
+}
+
+#[test]
+fn the_grid_and_footer_advertise_the_supervisor_keys() {
+    let (board, mut view) = running_board();
+    let now = Instant::now();
+
+    let text = draw(&board, &view, 110, 24);
+    for hint in ["[p] pause", "[r] resume", "[x] stop"] {
+        assert!(text.contains(hint), "footer advertises {hint}:\n{text}");
+    }
+
+    // A paused task says so in the grid.
+    on_key(key('p'), &board, &mut view, now);
+    let text = draw(&board, &view, 110, 24);
+    assert!(text.contains("paused"), "grid marks the pause:\n{text}");
+
+    // An armed stop replaces the legend with the confirmation prompt.
+    on_key(key('x'), &board, &mut view, now);
+    let text = draw(&board, &view, 110, 24);
+    assert!(text.contains("stop t1?"), "confirm prompt:\n{text}");
+    assert!(
+        text.contains("[x] again to confirm"),
+        "confirm hint:\n{text}"
+    );
+}
+
+#[test]
+fn detach_keys_are_unchanged_by_the_supervisor_surface() {
+    let (board, mut view) = running_board();
+    let now = Instant::now();
+    assert_eq!(on_key(key('q'), &board, &mut view, now), KeyAction::Detach);
+    assert_eq!(
+        on_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &board,
+            &mut view,
+            now
+        ),
+        KeyAction::Detach
+    );
+    assert_eq!(
+        on_key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &board,
+            &mut view,
+            now
+        ),
+        KeyAction::Detach
+    );
+}
