@@ -54,11 +54,18 @@ fn hud_and_transcript_render_the_event_content() {
     assert!(text.contains("complete"), "shows completion:\n{text}");
 }
 
-/// Every transcript entry renders through the shared label gutter: its
-/// first line starts with a right-aligned `[label]: ` tag whose display
-/// width is exactly `LABEL_COL`. Nothing prints at the left margin.
+/// Every transcript entry opens on a rail, so the left margin stays a
+/// scannable index column rather than a ragged edge: a reader running their
+/// eye down column 0 sees the *shape* of the session — calls, outcomes,
+/// prompts, system notes — before reading a single word.
+///
+/// The invariant is about the margin carrying a glyph, not about the prefix's
+/// width. A system note's prefix (`↻ retry  `, `⇣ compacted  `) is far wider
+/// than [`BODY`] and that is correct: the label *is* the note's rail, opening
+/// with its own glyph in column 0. What must never happen is a row that
+/// begins with bare unstyled text at the left margin.
 #[test]
-fn every_transcript_entry_renders_in_the_label_gutter() {
+fn every_transcript_entry_renders_on_a_rail() {
     let samples = vec![
         TranscriptEntry::User("hi".into()),
         TranscriptEntry::Stage(StageKind::Execute),
@@ -167,7 +174,8 @@ fn every_transcript_entry_renders_in_the_label_gutter() {
     for entry in &samples {
         // Exhaustive on purpose: adding a `TranscriptEntry` variant fails
         // to compile here — add a sample above and render the new arm
-        // through `push_labeled`/`push_labeled_block`.
+        // through `push_row`/`push_row_block` (a rail) or `push_note` (a
+        // system note, whose label carries its own glyph).
         match entry {
             TranscriptEntry::User(_)
             | TranscriptEntry::Stage(_)
@@ -177,9 +185,9 @@ fn every_transcript_entry_renders_in_the_label_gutter() {
             | TranscriptEntry::ToolResult { .. }
             | TranscriptEntry::Retry { .. }
             | TranscriptEntry::Compaction { .. }
-            // Not in `samples`: it deliberately renders as an untagged
-            // system note, not a `[label]: ` line — see
-            // `eviction_marker_renders_as_a_one_line_system_note`.
+            // Not in `samples`: it is a note *about* the transcript rather
+            // than an entry in it, so it renders untagged and full-bleed —
+            // see `eviction_marker_renders_as_a_one_line_system_note`.
             | TranscriptEntry::Evicted { .. }
             | TranscriptEntry::BudgetTick { .. }
             | TranscriptEntry::ProviderFallback { .. }
@@ -202,23 +210,43 @@ fn every_transcript_entry_renders_in_the_label_gutter() {
         let first = lines
             .first()
             .unwrap_or_else(|| panic!("{entry:?} renders no lines"));
-        let tag = first.spans.first().expect("first span is the label tag");
+        let rail = first.spans.first().expect("first span is the rail prefix");
+        let prefix = rail.content.as_ref();
         assert!(
-            tag.content.ends_with("]: "),
-            "{entry:?} must start with a `[label]: ` tag, got {:?}",
-            tag.content
+            !prefix.is_empty(),
+            "{entry:?} renders with no rail prefix at all"
         );
-        assert_eq!(
-            UnicodeWidthStr::width(tag.content.as_ref()),
-            LABEL_COL,
-            "{entry:?} label tag must place content at LABEL_COL, got {:?}",
-            tag.content
+        let opens_in_column_zero = !prefix.starts_with(' ');
+        // A tool result and its body are subordinate to the call above them,
+        // so they indent one rail-width and carry their glyph at column 2.
+        // These two prefixes are the *only* legal indented rails.
+        let subordinate = prefix == Rail::Result.prefix() || prefix == Rail::Fail.prefix();
+        // Assistant prose is the deliberate exception: `Rail::Agent` is two
+        // bare spaces. Prose is the transcript's default voice, and a marker
+        // on every paragraph would be noise in the one place a reader is
+        // reading words rather than scanning the margin — so it indents to
+        // the content column and shows nothing.
+        let agent_prose = prefix == Rail::Agent.prefix();
+        assert!(
+            opens_in_column_zero || subordinate || agent_prose,
+            "{entry:?} must open on a rail — a glyph in column 0, the \
+             subordinate `{:?}`/`{:?}` result rails, or assistant prose — \
+             never bare text at the left margin; got {prefix:?}",
+            Rail::Result.prefix(),
+            Rail::Fail.prefix(),
         );
+        if opens_in_column_zero {
+            let glyph = prefix.chars().next().expect("non-empty prefix");
+            assert!(
+                !glyph.is_whitespace() && !glyph.is_alphanumeric(),
+                "{entry:?} must index the margin with a glyph, not a letter: {prefix:?}"
+            );
+        }
     }
 }
 
 /// A wrapped continuation line begins flush at the content column: exactly
-/// `LABEL_COL` leading spaces, never one more. Regression for the bug where
+/// the rail's indent in leading spaces, never one more. Regression for the bug where
 /// the wrap-boundary space was carried onto the next line, stacking on top
 /// of the indent and drifting every wrapped row one column right of the
 /// clean left edge (the "extra blank space after the colon on wrap" report).
@@ -226,10 +254,13 @@ fn every_transcript_entry_renders_in_the_label_gutter() {
 fn wrapped_continuation_starts_flush_at_the_content_column() {
     let content = "the quick brown fox jumps over the lazy dog and then keeps \
                    on running well past the right edge to force several wraps";
-    let spans = vec![Span::raw(label_tag("agent")), Span::raw(content)];
+    let spans = vec![
+        Span::raw(Rail::Result.prefix().to_string()),
+        Span::raw(content),
+    ];
     let mut out = Vec::new();
     // Narrow width so the content wraps several times.
-    wrap_one_indent(Line::from(spans), 60, LABEL_COL, &mut out);
+    wrap_one_indent(Line::from(spans), 60, BODY, &mut out);
 
     assert!(
         out.len() > 1,
@@ -240,9 +271,9 @@ fn wrapped_continuation_starts_flush_at_the_content_column() {
         let text: String = line.spans.iter().flat_map(|s| s.content.chars()).collect();
         let leading = text.chars().take_while(|c| *c == ' ').count();
         assert_eq!(
-            leading, LABEL_COL,
+            leading, BODY,
             "continuation row {i} must start exactly at the content column \
-             (indent {LABEL_COL}, no carried wrap space); got {leading}: {text:?}",
+             (indent {BODY}, no carried wrap space); got {leading}: {text:?}",
         );
     }
 }
@@ -291,13 +322,17 @@ fn thinking_is_collapsed_by_default_and_expands_with_the_toggle() {
     });
     let mut ui = UiState::default();
     let collapsed = draw(&model, &mut ui, 100, 24);
+    // A system note is its own rail: the `⏵ thinking` label already opens
+    // with a glyph in column 0, so it indexes the margin without a second
+    // marker (and without the old right-aligned `[…]: ` tag column).
     assert!(
-        collapsed.contains("[⏵ thinking]: 3 lines"),
+        collapsed.contains("⏵ thinking  3 lines"),
         "collapsed header:\n{collapsed}"
     );
-    // Collapsed = header + 3 preview lines (all 3 fit within preview count).
+    // Collapsed = header + 3 preview lines (all 3 fit within preview count),
+    // then the spacer every block-closing entry ends on.
     let c_lines = transcript_lines(&model, false, 0);
-    assert_eq!(c_lines.len(), 4, "header + 3 preview lines");
+    assert_eq!(c_lines.len(), 5, "header + 3 preview lines + block spacer");
     // Preview shows the reasoning content.
     let c_text: String = c_lines
         .iter()
@@ -315,8 +350,8 @@ fn thinking_is_collapsed_by_default_and_expands_with_the_toggle() {
         expanded.contains("alpha") && expanded.contains("gamma"),
         "expanded shows the full reasoning:\n{expanded}"
     );
-    // Expanded = header + 3 content lines.
-    assert_eq!(transcript_lines(&model, true, 0).len(), 4);
+    // Expanded = header + 3 content lines + the same block spacer.
+    assert_eq!(transcript_lines(&model, true, 0).len(), 5);
 }
 
 #[test]
@@ -325,8 +360,8 @@ fn collapsed_thinking_shows_preview_lines_not_the_full_wall() {
     let long = format!("{}THE-TAIL", "reasoning noise ".repeat(20));
     model.apply(&AgentEvent::Reasoning { delta: long });
     let lines = transcript_lines(&model, false, 0);
-    // 1 line of text → header + 1 preview = 2 lines.
-    assert_eq!(lines.len(), 2);
+    // 1 line of text → header + 1 preview, then the block spacer.
+    assert_eq!(lines.len(), 3);
     // The preview should be visible.
     let text: String = lines
         .iter()
@@ -347,9 +382,9 @@ fn collapsed_thinking_preview_updates_as_deltas_stream() {
         delta: " now checking tests".into(),
     });
     let after = transcript_lines(&model, false, 0);
-    // Both produce header + 1 preview = 2 lines.
-    assert_eq!(before.len(), 2);
-    assert_eq!(after.len(), 2, "still header + 1 preview line");
+    // Both produce header + 1 preview + the block spacer.
+    assert_eq!(before.len(), 3);
+    assert_eq!(after.len(), 3, "still header + 1 preview line");
     // The preview line (index 1) visibly changes with each delta.
     assert_ne!(
         before[1], after[1],
@@ -573,13 +608,20 @@ fn transcript_scrolls_line_exact_to_show_the_tail() {
 }
 
 #[test]
-fn ui_transcript_cache_invalidates_when_a_file_mutation_stales_an_inline_diff() {
+fn ui_transcript_cache_follows_file_mutations_and_keeps_each_results_own_diff() {
     use stella_protocol::FileChangeKind as FK;
     // A FileChange appends NOTHING to the transcript — every older
     // fingerprint term (entry count, tail lengths, width) holds still —
-    // yet it stales a settled tool result's inline diff. Only the
-    // file-mutation term can catch it; without it the cache would keep
-    // showing a diff the entry no longer owns.
+    // yet it can change what a *settled* tool result renders. Only the
+    // file-mutation term can catch that.
+    //
+    // What it changes moved with `FileState::recent_diffs`: a single later
+    // mutation no longer stales anything, because each result resolves the
+    // diff recorded at its own seq and the path remembers the last
+    // `DIFF_HISTORY` of them. A row therefore keeps showing the change it
+    // made instead of blanking the moment the file is touched again. Only
+    // once its diff is *evicted* from that history does the row lose it —
+    // and the cache has to notice, still with nothing appended.
     let mut model = SessionModel::new();
     model.apply(&AgentEvent::ToolStart {
         call: ToolCall {
@@ -624,8 +666,34 @@ fn ui_transcript_cache_invalidates_when_a_file_mutation_stales_an_inline_diff() 
     ui.ensure_transcript_lines(&model, false, 120);
     let after = text(ui.transcript_lines());
     assert!(
-        !after.contains("first_diff_line") && !after.contains("second_diff_line"),
-        "the stale diff is dropped, not misattributed: {after}"
+        after.contains("first_diff_line"),
+        "the settled row keeps the diff IT produced: {after}"
+    );
+    assert!(
+        !after.contains("second_diff_line"),
+        "a newer change is never misattributed to it: {after}"
+    );
+
+    // Keep mutating until the recorded seq falls off the end of the
+    // history. The render must now drop the diff — and the cache must
+    // rebuild to show that, with the transcript still untouched.
+    for i in 0..crate::model::DIFF_HISTORY {
+        model.apply(&AgentEvent::FileChange {
+            path: "src/x.rs".into(),
+            kind: FK::Modified,
+            diff: Some(format!("@@ -1,1 +1,1 @@\n+evicting_edit_{i}")),
+        });
+    }
+    assert_eq!(model.transcript.len(), len_before, "still no append");
+    ui.ensure_transcript_lines(&model, false, 120);
+    let evicted = text(ui.transcript_lines());
+    assert!(
+        !evicted.contains("first_diff_line"),
+        "a forgotten diff stops rendering: {evicted}"
+    );
+    assert!(
+        !evicted.contains("evicting_edit_"),
+        "and is not replaced by a change the call never made: {evicted}"
     );
 }
 
@@ -795,7 +863,9 @@ fn tool_cards_and_verdicts_style_content_deterministically() {
         duration_ms: 12,
         speculated: false,
     });
-    let lines = transcript_lines(&model, false, 0);
+    // A realistic width: the right-hand metric column only lays out when
+    // there is room for it, so a 0-width render would drop the duration.
+    let lines = transcript_lines(&model, false, 120);
     let joined: String = lines
         .iter()
         .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
@@ -803,21 +873,36 @@ fn tool_cards_and_verdicts_style_content_deterministically() {
     assert!(joined.contains("read_file"));
     assert!(joined.contains("not found"));
     assert!(joined.contains("12ms"));
-    // The result row resolves its tool name from the call so the two
-    // rows read as an aligned pair.
+    // The tool is named exactly once, by its call row. The result row
+    // underneath carries only the failure text and the metric column: the
+    // rail already ties it to the call above it, so re-labelling it would
+    // spend a second row restating what the first row just said.
+    assert_eq!(
+        joined.matches("read_file").count(),
+        1,
+        "the call names the tool; the result does not repeat it: {joined}"
+    );
+    let line_text =
+        |l: &Line<'_>| -> String { l.spans.iter().map(|s| s.content.as_ref()).collect() };
+    let result = lines
+        .iter()
+        .find(|l| line_text(l).contains("not found"))
+        .expect("the failure renders");
     assert!(
-        joined.contains("[✗ read_file]"),
-        "result labels itself with its tool: {joined}"
+        line_text(result).starts_with(Rail::Fail.prefix()),
+        "a failed result rides the ✗ rail: {:?}",
+        result.spans
     );
 }
 
 /// Expanded (ctrl+o) detail rows — full tool output and pretty-printed
-/// call args — align at the content column exactly like their parent
-/// row's content, not at the left margin: the transcript's two-column
-/// layout must hold for the hidden rows too.
+/// call args — align at the subordinate body column ([`BODY`]), exactly
+/// where their parent row's content sits, not at the left margin: an
+/// expanded body must read as part of the same block rather than as a run
+/// of new top-level events.
 #[test]
 fn expanded_detail_rows_align_at_the_content_column() {
-    let indent = " ".repeat(LABEL_COL);
+    let indent = " ".repeat(BODY);
     let line_text =
         |l: &Line<'_>| -> String { l.spans.iter().map(|s| s.content.as_ref()).collect() };
 
@@ -839,12 +924,22 @@ fn expanded_detail_rows_align_at_the_content_column() {
         120,
         &mut result_rows,
     );
-    let details: Vec<String> = result_rows.iter().skip(1).map(line_text).collect();
+    // `entry_lines` closes a block with a blank spacer row; the detail rows
+    // are everything between the rail row and that trailing gap.
+    assert_eq!(
+        result_rows.last().map(line_text).as_deref(),
+        Some(""),
+        "a tool result closes its block with a spacer"
+    );
+    let details: Vec<String> = result_rows[1..result_rows.len() - 1]
+        .iter()
+        .map(line_text)
+        .collect();
     assert_eq!(details.len(), 2, "both output lines render");
     for d in &details {
         assert!(
             d.starts_with(&indent) && !d.starts_with(&format!("{indent} ")),
-            "detail row starts exactly at LABEL_COL: {d:?}"
+            "detail row starts exactly at BODY: {d:?}"
         );
     }
 
@@ -874,12 +969,20 @@ fn expanded_detail_rows_align_at_the_content_column() {
 
 // ---- Inline transcript diffs (mutating tool results) ----
 
+/// Additions in the fixture diff below. Sized off [`INLINE_DIFF_CAP`] rather
+/// than hardcoded so the collapsed render is always exercising the fold —
+/// a fixture that silently slipped under a raised cap would leave the
+/// capping contract untested while still passing.
+const FIXTURE_ADDS: usize = INLINE_DIFF_CAP + 10;
+
 /// A successful mutation's result entry, plus the file state its
-/// [`InlineDiffRef`] resolves against: a 15-line Rust diff (1 hunk header
-/// + 14 additions) whose freshness seq matches.
+/// [`InlineDiffRef`] resolves against: a one-hunk Rust diff of
+/// [`FIXTURE_ADDS`] additions whose freshness seq matches.
 fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
-    let body: String = (1..=14).map(|i| format!("+let x{i} = {i};\n")).collect();
-    let diff_text = format!("@@ -0,0 +1,14 @@\n{body}");
+    let body: String = (1..=FIXTURE_ADDS)
+        .map(|i| format!("+let x{i} = {i};\n"))
+        .collect();
+    let diff_text = format!("@@ -0,0 +1,{FIXTURE_ADDS} @@\n{body}");
     let entry = TranscriptEntry::ToolResult {
         call_id: "c1".into(),
         name: "edit_file".into(),
@@ -896,7 +999,8 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
     let files = vec![FileState {
         path: "src/x.rs".into(),
         kind: FileChangeKind::Modified,
-        latest_diff: Some(diff_text),
+        latest_diff: Some(diff_text.clone()),
+        recent_diffs: [(1, diff_text)].into_iter().collect(),
         changes: 1,
         reads: 0,
     }];
@@ -923,19 +1027,43 @@ fn collapsed_tool_result_shows_a_capped_syntax_highlighted_inline_diff() {
     entry_lines(&entry, &files, false, false, 120, &mut out);
     let text = flat_text(&out);
 
-    // The header rule carries the path; the footer carries the counts.
-    assert!(text.contains("── src/x.rs"), "path rule present:\n{text}");
-    assert!(text.contains("+14 additions"), "footer counts:\n{text}");
-    // Capped at INLINE_DIFF_CAP styled diff lines: the hunk header plus
-    // the first 9 additions — the 10th addition is folded away.
-    assert!(text.contains("@@ -0,0 +1,14 @@"), "hunk header:\n{text}");
-    assert!(text.contains("+let x9 = 9;"), "9th addition shown:\n{text}");
+    // No path rule and no counts footer inline, unlike the standalone diff
+    // viewer: the call row above already names the file and the metric
+    // column already states `+n −m`, so both rules would be the same facts
+    // a second time — four rows of chrome around a small change.
     assert!(
-        !text.contains("+let x10 = 10;"),
-        "the 11th diff line is folded behind ctrl+o:\n{text}"
+        !text.contains("── src/x.rs"),
+        "no path rule inline:\n{text}"
     );
     assert!(
-        text.contains("⋯ +5 more diff lines · ctrl+o opens the full diff"),
+        !text.contains("additions"),
+        "no counts footer inline:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("+{FIXTURE_ADDS} −0")),
+        "the metric column states the change's size instead:\n{text}"
+    );
+    // A lone hunk header is dropped too: inline under a call it restates
+    // what the line-number gutter beside it already says.
+    assert!(
+        !text.contains("@@ -0,0"),
+        "a single hunk's header is not worth a row inline:\n{text}"
+    );
+    // The cap counts raw diff lines, hunk header included — so the last
+    // addition shown is number INLINE_DIFF_CAP - 1 and the rest fold away.
+    let last_shown = INLINE_DIFF_CAP - 1;
+    let first_hidden = last_shown + 1;
+    let hidden = FIXTURE_ADDS + 1 - INLINE_DIFF_CAP;
+    assert!(
+        text.contains(&format!("+let x{last_shown} = {last_shown};")),
+        "addition {last_shown} is the last one shown:\n{text}"
+    );
+    assert!(
+        !text.contains(&format!("+let x{first_hidden} = {first_hidden};")),
+        "addition {first_hidden} is folded behind ctrl+o:\n{text}"
+    );
+    assert!(
+        text.contains(&format!("⋯ {} · ctrl+o", plural_lines(hidden))),
         "the fold names the hidden count and the key:\n{text}"
     );
     // Line-level standard: added lines are numbered on the new side.
@@ -956,40 +1084,58 @@ fn expanded_tool_result_shows_the_full_inline_diff() {
     entry_lines(&entry, &files, false, true, 120, &mut out);
     let text = flat_text(&out);
     assert!(
-        text.contains("+let x14 = 14;"),
+        text.contains(&format!("+let x{FIXTURE_ADDS} = {FIXTURE_ADDS};")),
         "ctrl+o reveals every diff line:\n{text}"
     );
     assert!(
-        !text.contains("more diff lines"),
+        !text.contains("· ctrl+o"),
         "no fold hint once expanded:\n{text}"
     );
+    // The size still reads off the metric column, expanded or not — the
+    // inline diff never grows a footer rule of its own.
     assert!(
-        text.contains("+14 additions"),
-        "footer still closes:\n{text}"
+        text.contains(&format!("+{FIXTURE_ADDS} −0")),
+        "the metric column still states the change's size:\n{text}"
+    );
+    assert!(
+        !text.contains("additions"),
+        "and still without a counts footer:\n{text}"
     );
 }
 
 #[test]
 fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
     let (entry, mut files) = mutation_entry_and_files();
-    // A later mutation bumped the path's change counter past the seq the
-    // result recorded — showing the newer diff under this ✓ would
-    // attribute a change the call never made.
-    files[0].changes = 2;
+    // The path went on mutating until this call's diff aged out of the
+    // bounded history — exactly the state `DIFF_HISTORY` evictions leave
+    // behind. No remembered diff belongs to this result any more, and
+    // showing the newest one instead would attribute a change the call
+    // never made, so the row degrades to naming its result.
+    files[0].changes = crate::model::DIFF_HISTORY as u32 + 1;
+    files[0].recent_diffs = (2..=files[0].changes)
+        .map(|seq| (seq, format!("@@ -0,0 +1,1 @@\n+later_edit_{seq}\n")))
+        .collect();
     let mut out = Vec::new();
     entry_lines(&entry, &files, false, false, 120, &mut out);
     let text = flat_text(&out);
     assert!(
-        !text.contains("── src/x.rs"),
-        "stale ref hides the diff:\n{text}"
+        !text.contains("+let x1 = 1;"),
+        "the forgotten diff cannot render:\n{text}"
     );
-    assert!(!text.contains("@@"), "no diff body either:\n{text}");
+    assert!(
+        !text.contains("later_edit_"),
+        "and a newer one is never substituted for it:\n{text}"
+    );
+    assert!(
+        text.contains("ok"),
+        "the row falls back to naming the result:\n{text}"
+    );
 
     // A ref whose path is no longer tracked resolves to nothing at all.
     let mut out = Vec::new();
     entry_lines(&entry, &[], false, false, 120, &mut out);
     assert!(
-        !flat_text(&out).contains("@@"),
+        !flat_text(&out).contains("+let x1 = 1;"),
         "unknown path renders no diff"
     );
 }
@@ -1060,9 +1206,17 @@ fn user_prompt_entry_is_one_violet_color_end_to_end() {
     );
 }
 
-/// Every other entry's `[label]:` prefix stays inside the warm brand
-/// family — failure crimson, success gold — so no raw ANSI cyan/blue/
+/// Every rail and note glyph stays inside the warm brand family — failure
+/// crimson, calls deep gold, prompts violet — so no raw ANSI cyan/blue/
 /// magenta survives from before the palette landed.
+///
+/// The margin's colour is itself the hierarchy, in three steps: the `●`
+/// call rail is brand gold because the call *is* the event; the `⎿` result
+/// rail is muted because a successful outcome is that event's consequence,
+/// subordinate chrome rather than a second thing to look at; and the `✗`
+/// fail rail is danger, the one outcome worth interrupting a scan for.
+/// Painting every ✓ as loudly as every ✗ would leave a failure with nothing
+/// to stand out against.
 #[test]
 fn transcript_prefix_colors_stay_in_the_brand_family() {
     let prefix_fg = |entry: &TranscriptEntry| -> Option<Color> {
@@ -1079,6 +1233,17 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
         "error prefix is crimson",
     );
     assert_eq!(
+        prefix_fg(&TranscriptEntry::ToolStart {
+            call_id: "c1".into(),
+            name: "read_file".into(),
+            input: "x".into(),
+            raw: "{}".into(),
+            path: None,
+        }),
+        Some(theme::ACCENT_DEEP),
+        "a tool call — the thing that happened — carries the deep-gold rail",
+    );
+    assert_eq!(
         prefix_fg(&TranscriptEntry::ToolResult {
             call_id: "c1".into(),
             name: "read_file".into(),
@@ -1089,8 +1254,9 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
             speculated: false,
             diff: None,
         }),
-        Some(theme::ACCENT),
-        "successful tool-result prefix is gold",
+        Some(theme::MUTED),
+        "a successful result's rail recedes — it is a continuation of its \
+         call, not a second event competing for the eye",
     );
     assert_eq!(
         prefix_fg(&TranscriptEntry::ToolResult {
@@ -1111,6 +1277,23 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
         prefix_fg(&TranscriptEntry::Stage(StageKind::Execute)),
         Some(theme::ACCENT_DEEP),
         "stage prefix is deep gold",
+    );
+    // A prompt is the strongest landmark in the scrollback — where a reader
+    // re-orients when scrolling back — and rides the interactive-chrome
+    // violet shared with the composer, never the reserved brand gold.
+    assert_eq!(
+        prefix_fg(&TranscriptEntry::User("hi".into())),
+        Some(theme::VIOLET),
+        "the user rail is violet",
+    );
+    // Assistant prose is the one rail with no colour, because it has no
+    // glyph to colour: `Rail::Agent` is two bare spaces. Prose is the
+    // transcript's default voice, and a marker on every paragraph would be
+    // noise exactly where a reader is reading rather than scanning.
+    assert_eq!(
+        prefix_fg(&TranscriptEntry::Text("ok".into())),
+        None,
+        "agent prose rides an unstyled, glyph-less rail",
     );
 }
 

@@ -27,7 +27,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use stella_protocol::{CiStatus, FileChangeKind, PrStatus};
 
@@ -38,7 +37,10 @@ use crate::textline::{
     stage_label,
 };
 use crate::ui::{PanelFocus, UiState, ViewportMetrics};
+
+mod row;
 use crate::{diff, theme};
+pub(crate) use row::*;
 
 /// Draw the whole TUI for one frame. Records the panels' viewport sizes back
 /// into `ui.metrics` so the pure key handler can clamp scrolling on the next
@@ -207,30 +209,6 @@ pub(crate) fn inner_width(area: Rect) -> usize {
 }
 
 // Word-aware line wrapping (pre-wrap so scroll math stays line-exact, L-T4)
-
-/// Coalesce adjacent same-styled characters into spans for compact output.
-fn styled_chars_to_spans(chars: Vec<(char, Style)>) -> Vec<Span<'static>> {
-    if chars.is_empty() {
-        return Vec::new();
-    }
-    let mut spans = Vec::new();
-    let mut buf = String::new();
-    let mut style = chars[0].1;
-    for (ch, st) in chars {
-        if st != style && !buf.is_empty() {
-            spans.push(Span::styled(std::mem::take(&mut buf), style));
-            style = st;
-        }
-        if buf.is_empty() {
-            style = st;
-        }
-        buf.push(ch);
-    }
-    if !buf.is_empty() {
-        spans.push(Span::styled(buf, style));
-    }
-    spans
-}
 
 // Panel panic boundary (L-T7)
 
@@ -711,142 +689,22 @@ fn render_composer(
         .render(area, buf);
 }
 
-// Two-column transcript layout
-
-/// Width of the right-aligned label column: 20 chars for `[name]` (right-aligned),
-/// then `:` and one space. Content always begins at column 22.
-pub(crate) const LABEL_COL: usize = 22;
-
-/// Format a label as `[name]` right-aligned so content starts at
-/// [`LABEL_COL`]. Padding is display-width aware — a wide glyph or emoji in
-/// the label must not shift the content column.
-fn label_tag(name: &str) -> String {
-    let bracketed = format!("[{name}]");
-    let pad = (LABEL_COL - 2).saturating_sub(UnicodeWidthStr::width(bracketed.as_str()));
-    format!("{}{bracketed}: ", " ".repeat(pad))
-}
-
-/// Indent string for wrapped continuation lines — exactly `LABEL_COL` spaces.
-fn cont_indent() -> String {
-    " ".repeat(LABEL_COL)
-}
-
-/// Wrap a single styled line into multiple lines of at most `max_width`,
-/// with continuation lines indented by `indent` spaces. The first line
-/// passes through unchanged (it already has its label prefix).
-fn wrap_one_indent(
-    line: Line<'static>,
-    max_width: usize,
-    indent: usize,
-    out: &mut Vec<Line<'static>>,
-) {
-    let line_width = line.width();
-    // The last clause is the narrow-terminal guard: with `indent >= max_width`
-    // the content column has zero width, and the loop below would then flush a
-    // row per character — a 60-character reply exploding into 60 rows on a
-    // ≤40-column terminal (the transcript pane is 60% of the frame, so its
-    // inner width drops under LABEL_COL there). Clip at the pane edge instead,
-    // exactly as the un-wrapped diff rows already do.
-    if line_width <= max_width || max_width == 0 || max_width <= indent {
-        out.push(line);
-        return;
-    }
-    let styled: Vec<(char, Style)> = line
-        .spans
-        .iter()
-        .flat_map(|s| s.content.chars().map(move |c| (c, s.style)))
-        .collect();
-
-    let content_width = max_width.saturating_sub(indent);
-    let mut current: Vec<(char, Style)> = Vec::new();
-    let mut current_w = 0usize;
-
-    let flush = |cur: &mut Vec<(char, Style)>, first: bool, out: &mut Vec<Line<'static>>| {
-        if !cur.is_empty() {
-            let pairs = std::mem::take(cur);
-            if first {
-                out.push(Line::from(styled_chars_to_spans(pairs)));
-            } else {
-                let mut spans = vec![Span::raw(" ".repeat(indent))];
-                spans.extend(styled_chars_to_spans(pairs));
-                out.push(Line::from(spans));
-            }
-        }
-    };
-
-    let mut is_first = true;
-    for (ch, style) in styled {
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if current_w + cw > content_width && !current.is_empty() {
-            if let Some(space_idx) = current.iter().rposition(|(c, _)| *c == ' ') {
-                let mut remainder: Vec<(char, Style)> = current.split_off(space_idx);
-                // Consume the wrap-boundary whitespace so the continuation line
-                // starts flush at the indent column. Left in place, the leading
-                // space stacks on top of `indent` and pushes every wrapped row
-                // one column right of the clean left edge — the "extra blank
-                // space after the colon" bug.
-                let lead = remainder.iter().take_while(|(c, _)| *c == ' ').count();
-                remainder.drain(..lead);
-                flush(&mut current, is_first, out);
-                is_first = false;
-                current = remainder;
-                current_w = current
-                    .iter()
-                    .map(|(c, _)| UnicodeWidthChar::width(*c).unwrap_or(0))
-                    .sum();
-            } else {
-                flush(&mut current, is_first, out);
-                is_first = false;
-                current_w = 0;
-            }
-        }
-        current.push((ch, style));
-        current_w += cw;
-    }
-    flush(&mut current, is_first, out);
-}
-
-/// Emit one transcript row in the canonical two-column layout: a
-/// right-aligned `[label]: ` tag in the gutter, content starting at
-/// [`LABEL_COL`], wrap continuations indented to the content column.
-///
-/// Every `entry_lines` arm MUST route its rows through this (or
-/// [`push_labeled_block`] for multi-line content) — no transcript row
-/// renders at the left margin. The
-/// `every_transcript_entry_renders_in_the_label_gutter` test enforces it,
-/// with exactly one deliberate exception: [`TranscriptEntry::Evicted`] is a
-/// system note *about* the transcript rather than an entry in it, so it is
-/// rendered untagged and full-bleed.
-fn push_labeled(
-    label: &str,
-    label_style: Style,
-    content: Vec<Span<'static>>,
-    width: usize,
-    out: &mut Vec<Line<'static>>,
-) {
-    push_labeled_block(label, label_style, vec![Line::from(content)], width, out);
-}
-
-/// Emit one expanded-detail row (a ctrl+o body line) at the content column.
-/// Detail rows sit directly under their parent row's content — aligned to
-/// [`LABEL_COL`] exactly like wrap continuations — never at the left margin,
-/// so an expanded body reads as part of the same two-column layout.
-fn push_detail_line(text: &str, width: usize, out: &mut Vec<Line<'static>>) {
-    wrap_one_indent(
-        Line::from(vec![
-            Span::raw(cont_indent()),
-            Span::styled(text.to_owned(), Style::new().fg(theme::MUTED)),
-        ]),
-        width,
-        LABEL_COL,
-        out,
-    );
-}
+// Transcript rail layout
+//
+// A transcript is a list, and lists are scanned down their left edge. Every
+// row therefore opens with a fixed-width *rail* — a glyph in column 0 (or 2
+// for subordinate rows) that names the row's kind — so the eye can run
+// straight down the margin and land on "what happened" without reading a
+// word. The predecessor layout right-aligned a `[name]:` tag into column 22,
+// which put the tag's *left* edge at a different column on every row (`[cmd]`
+// at 15, `[✓ read_file]` at 7): the index column jittered, so there was
+// nothing to scan. It also spent 22 columns — 19% of a 118-column pane — on
+// chrome, which the diff bodies then paid for again in clipped code.
 
 /// Most styled diff lines a collapsed tool result shows inline before folding
 /// the rest behind ctrl+o — a mutation stays glanceable in the transcript
 /// without a large diff flooding it uninvited.
-pub(crate) const INLINE_DIFF_CAP: usize = 10;
+pub(crate) const INLINE_DIFF_CAP: usize = 20;
 
 /// Resolve a tool result's [`InlineDiffRef`] to the diff text it may render,
 /// or `None` when the reference went stale: the diff shown must be the one
@@ -857,38 +715,7 @@ fn resolve_inline_diff<'a>(dref: &InlineDiffRef, files: &'a [FileState]) -> Opti
     files
         .iter()
         .find(|f| f.path == dref.path)
-        .filter(|f| f.changes == dref.seq)
-        .and_then(|f| f.latest_diff.as_deref())
-}
-
-/// Emit one inline-diff row at the content column. Diff lines are pushed
-/// un-wrapped — the transcript renders without wrap (one logical line per row
-/// keeps the scroll math line-exact), so overflow clips at the pane edge like
-/// the diff viewer, and the line-number gutter never mis-aligns mid-diff.
-fn push_diff_line(line: Line<'static>, out: &mut Vec<Line<'static>>) {
-    let mut spans = vec![Span::raw(cont_indent())];
-    spans.extend(line.spans);
-    out.push(Line::from(spans));
-}
-
-/// Multi-line form of [`push_labeled`]: the tag labels the first line and
-/// every following line indents to the content column.
-fn push_labeled_block(
-    label: &str,
-    label_style: Style,
-    lines: Vec<Line<'static>>,
-    width: usize,
-    out: &mut Vec<Line<'static>>,
-) {
-    for (i, line) in lines.into_iter().enumerate() {
-        let mut spans = if i == 0 {
-            vec![Span::styled(label_tag(label), label_style)]
-        } else {
-            vec![Span::raw(cont_indent())]
-        };
-        spans.extend(line.spans);
-        wrap_one_indent(Line::from(spans), width, LABEL_COL, out);
-    }
+        .and_then(|f| f.diff_at(dref.seq))
 }
 
 // Pure content builders (unit-tested directly)
@@ -928,7 +755,38 @@ pub(crate) fn transcript_lines(
     out
 }
 
+/// Whether an entry closes a readable block, and so is followed by a spacer.
+///
+/// Trailing rather than leading, which is what lets the rhythm stay
+/// entry-local: a leading gap would have to know what preceded it, and the
+/// deck's incremental fold renders each entry in isolation. Two entries are
+/// deliberately *not* block-closing — a [`TranscriptEntry::ToolStart`], whose
+/// result belongs directly beneath it, and [`TranscriptEntry::Evicted`], the
+/// one-line note that opens the scrollback. A consequence worth keeping: a
+/// batch of parallel `ToolStart`s renders as a tight block, which is exactly
+/// how a fan-out should read.
+fn closes_block(entry: &TranscriptEntry) -> bool {
+    !matches!(
+        entry,
+        TranscriptEntry::ToolStart { .. } | TranscriptEntry::Evicted { .. }
+    )
+}
+
 pub(crate) fn entry_lines(
+    entry: &TranscriptEntry,
+    files: &[FileState],
+    expand_thinking: bool,
+    expanded: bool,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    entry_body(entry, files, expand_thinking, expanded, width, out);
+    if closes_block(entry) {
+        push_gap(out);
+    }
+}
+
+fn entry_body(
     entry: &TranscriptEntry,
     files: &[FileState],
     expand_thinking: bool,
@@ -955,14 +813,14 @@ pub(crate) fn entry_lines(
                 .split('\n')
                 .map(|l| Line::from(Span::styled(l.to_owned(), violet)))
                 .collect();
-            push_labeled_block("user", violet, lines, width, out);
+            push_row_block(Rail::User, lines, width, out);
         }
         TranscriptEntry::Stage(name) => {
             let style = Style::new()
                 .fg(theme::ACCENT_DEEP)
                 .add_modifier(Modifier::BOLD);
-            push_labeled(
-                "stage",
+            push_note(
+                "◇ stage",
                 style,
                 vec![Span::styled(stage_label(*name), style)],
                 width,
@@ -970,13 +828,7 @@ pub(crate) fn entry_lines(
             );
         }
         TranscriptEntry::Text(text) => {
-            push_labeled_block(
-                "agent",
-                theme::accent(),
-                crate::markdown::render(text),
-                width,
-                out,
-            );
+            push_row_block(Rail::Agent, crate::markdown::render(text), width, out);
         }
         TranscriptEntry::Reasoning(text) => {
             let total_lines = text.lines().count().max(1);
@@ -1013,7 +865,7 @@ pub(crate) fn entry_lines(
                     )));
                 }
             }
-            push_labeled_block(
+            push_note_block(
                 &format!("{chevron} thinking"),
                 header_style,
                 block,
@@ -1022,20 +874,25 @@ pub(crate) fn entry_lines(
             );
         }
         TranscriptEntry::ToolStart {
-            name, input, raw, ..
+            name,
+            input,
+            raw,
+            path,
+            ..
         } => {
-            push_labeled(
-                name,
+            // `name` then `argument`, the name soft-padded to a common column
+            // so arguments line up across a run of calls. Soft, not hard: a
+            // long MCP name (`mcp__github__create_pull_request`) overruns the
+            // column rather than being truncated, since the tool's identity
+            // outranks the alignment it would cost.
+            let mut left = vec![Span::styled(
+                pad_name(name),
                 Style::new()
                     .fg(theme::ACCENT_DEEP)
                     .add_modifier(Modifier::BOLD),
-                vec![Span::styled(
-                    input.clone(),
-                    Style::new().fg(Color::DarkGray),
-                )],
-                width,
-                out,
-            );
+            )];
+            left.extend(path_spans(input, path.is_some()));
+            push_row(Rail::Call, left, width, out);
             if expanded {
                 // ctrl+o: the full argument object, pretty-printed and dim.
                 // An over-budget argument may not parse (char-capped raw) —
@@ -1049,40 +906,55 @@ pub(crate) fn entry_lines(
             }
         }
         TranscriptEntry::ToolResult {
-            name,
             ok,
-            summary,
             full,
             duration_ms,
             speculated,
             diff,
             ..
         } => {
-            let (glyph, color) = if *ok {
-                ("✓", theme::ACCENT)
-            } else {
-                ("✗", theme::DANGER)
-            };
-            // The result labels itself with the tool it answers (resolved
-            // from the start entry) so call/result rows read as a pair.
-            let label = format!("{glyph} {name}");
-            let label_style = Style::new().fg(color).add_modifier(Modifier::BOLD);
-            let extra = full.lines().count().saturating_sub(1);
+            let rail = if *ok { Rail::Result } else { Rail::Fail };
+            let dim = Style::new().fg(theme::MUTED);
+            let total = full.lines().count();
             // ⚡ marks a speculated result: the duration overlapped the
             // model's own streaming instead of following it.
             let dur = if *speculated {
-                format!("⚡{duration_ms}ms")
+                format!("⚡{}", human_duration(*duration_ms))
             } else {
-                format!("{duration_ms}ms")
+                human_duration(*duration_ms)
             };
+            let inline = diff.as_ref().and_then(|d| resolve_inline_diff(d, files));
+
+            // The right-hand metric column. A diff states its own size in
+            // added/removed lines, which is the honest unit for an edit —
+            // "42 lines of output" would describe the tool's chatter, not the
+            // change. Everything else reports output size, and only when
+            // there is more than the one line already shown.
+            let mut metric: Vec<Span<'static>> = Vec::new();
+            if let Some(d) = inline {
+                let (added, removed) = diff::count_diff_lines(d);
+                metric.push(Span::styled(
+                    format!("+{added}"),
+                    Style::new().fg(theme::OK),
+                ));
+                metric.push(Span::styled(" ".to_string(), dim));
+                metric.push(Span::styled(
+                    format!("−{removed}"),
+                    Style::new().fg(theme::BAD),
+                ));
+                metric.push(Span::styled(" · ".to_string(), dim));
+            } else if total > 1 && !expanded {
+                // `⋯` is the one glyph this UI uses for "there is more behind
+                // this", so it carries the ctrl+o affordance the removed hint
+                // row used to spell out — at no extra row.
+                metric.push(Span::styled(format!("⋯ {} · ", plural_lines(total)), dim));
+            }
+            metric.push(Span::styled(dur, dim));
+
             if expanded {
-                push_labeled(
-                    &label,
-                    label_style,
-                    vec![Span::styled(
-                        format!("({} lines · {dur})", extra + 1),
-                        Style::new().fg(Color::DarkGray),
-                    )],
+                push_row(
+                    rail,
+                    justify(vec![], metric, width, rail.indent()),
                     width,
                     out,
                 );
@@ -1090,29 +962,53 @@ pub(crate) fn entry_lines(
                     push_detail_line(l, width, out);
                 }
             } else {
-                // Collapsed: exactly one output line; the hint names how many
-                // more ctrl+o would reveal. Multi-line output NEVER floods the
-                // transcript uninvited.
-                let first = full
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or(summary.as_str());
-                let shown: String = first.chars().take(160).collect();
-                let hint = if extra > 0 {
-                    format!("  (+{extra} lines · {dur})")
+                // A failure never collapses to a single line. The whole point
+                // of reading a transcript at the moment something breaks is to
+                // see *why*, and a one-line preview of a stack trace is a
+                // prompt to go hunting rather than an answer.
+                // With a diff below, a prose summary ("Applied edit to
+                // src/agent.rs") would restate the call row above it and the
+                // diff under it in the same breath. The row carries only its
+                // metrics and gets out of the way.
+                let shown: Vec<&str> = if inline.is_some() {
+                    Vec::new()
                 } else {
-                    format!("  ({dur})")
+                    // A failure never collapses to a single line. The point of
+                    // reading a transcript at the moment something breaks is to
+                    // see *why*, and a one-line preview of a stack trace is a
+                    // prompt to go hunting rather than an answer.
+                    let budget = if *ok { 1 } else { FAIL_PREVIEW };
+                    full.lines().skip(salient_line(full)).take(budget).collect()
                 };
-                push_labeled(
-                    &label,
-                    label_style,
-                    vec![
-                        Span::raw(shown),
-                        Span::styled(hint, Style::new().fg(Color::DarkGray)),
-                    ],
+                let head: Vec<Span<'static>> = match shown.first() {
+                    Some(l) => vec![Span::styled(
+                        l.trim_end().to_owned(),
+                        if *ok {
+                            dim
+                        } else {
+                            Style::new().fg(theme::BAD)
+                        },
+                    )],
+                    None => Vec::new(),
+                };
+                push_row(
+                    rail,
+                    justify(head, metric, width, rail.indent()),
                     width,
                     out,
                 );
+                for l in shown.iter().skip(1) {
+                    push_detail_line(l.trim_end(), width, out);
+                }
+                // Only a failure earns the "there is more" row: a successful
+                // result already states its size in the metric column, and
+                // saying it twice is how a dense layout turns back into a
+                // sparse one. Anchoring mid-output also means the count is
+                // "everything but the window", not "everything after it".
+                let hidden = total.saturating_sub(shown.len());
+                if hidden > 0 && !*ok {
+                    push_detail_line(&format!("⋯ {} · ctrl+o", plural_lines(hidden)), width, out);
+                }
             }
             // The mutation's diff, inline under the result — GitHub-PR style
             // via `crate::diff` (the one implementation of "how a diff
@@ -1121,39 +1017,35 @@ pub(crate) fn entry_lines(
             // no longer belongs to this call, so it is hidden rather than
             // misattributed. Collapsed shows at most [`INLINE_DIFF_CAP`]
             // styled lines; ctrl+o reveals the whole diff.
-            if let Some(dref) = diff
-                && let Some(d) = resolve_inline_diff(dref, files)
-            {
-                let rule_w = width.saturating_sub(LABEL_COL);
+            if let (Some(dref), Some(d)) = (diff.as_ref(), inline) {
+                // No path header and no counts footer here, unlike the
+                // standalone viewer: the call row above already names the file
+                // and the metric column already states `+n −m`, so both rules
+                // would be the same facts a second time — four rows of chrome
+                // around what is often a two-row change.
                 let cap = if expanded {
                     usize::MAX
                 } else {
                     INLINE_DIFF_CAP
                 };
-                let (body, total) = diff::body_lines_capped(d, Some(&dref.path), cap);
-                let (added, removed) = diff::count_diff_lines(d);
-                push_diff_line(diff::header_line(&dref.path, rule_w), out);
+                let (body, hidden) = diff::body_lines_inline(d, Some(&dref.path), cap);
                 for line in body {
                     push_diff_line(line, out);
                 }
-                if !expanded && total > INLINE_DIFF_CAP {
+                if hidden > 0 {
                     push_diff_line(
                         Line::from(Span::styled(
-                            format!(
-                                "⋯ +{} more diff lines · ctrl+o opens the full diff",
-                                total - INLINE_DIFF_CAP
-                            ),
-                            Style::new().fg(Color::DarkGray),
+                            format!("⋯ {} · ctrl+o", plural_lines(hidden)),
+                            Style::new().fg(theme::MUTED),
                         )),
                         out,
                     );
                 }
-                push_diff_line(diff::footer_line(added, removed, rule_w), out);
             }
         }
         TranscriptEntry::Retry { attempt, reason } => {
             let style = Style::new().fg(theme::WARNING_BRIGHT);
-            push_labeled(
+            push_note(
                 "↻ retry",
                 style,
                 vec![Span::styled(format!("#{attempt}: {reason}"), style)],
@@ -1168,7 +1060,7 @@ pub(crate) fn entry_lines(
             deduped,
         } => {
             let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_labeled(
+            push_note(
                 "⇣ compacted",
                 style,
                 vec![Span::styled(
@@ -1188,8 +1080,8 @@ pub(crate) fn entry_lines(
         } => {
             let limit = limit_usd.map(|l| format!("/${l:.2}")).unwrap_or_default();
             let style = Style::new().fg(theme::WARNING);
-            push_labeled(
-                "spend",
+            push_note(
+                "◇ spend",
                 style,
                 vec![Span::styled(
                     format!("${spent_usd:.4}{limit} ({})", budget_mode_label(*mode)),
@@ -1201,7 +1093,7 @@ pub(crate) fn entry_lines(
         }
         TranscriptEntry::ProviderFallback { from, to, reason } => {
             let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_labeled(
+            push_note(
                 "⚡ fallback",
                 style,
                 vec![Span::styled(format!("{from} → {to}: {reason}"), style)],
@@ -1216,7 +1108,7 @@ pub(crate) fn entry_lines(
         } => {
             let cited = labels.join(", ");
             let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_labeled(
+            push_note(
                 "◉ recalled",
                 style,
                 vec![Span::styled(
@@ -1233,7 +1125,7 @@ pub(crate) fn entry_lines(
             superseded,
         } => {
             let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_labeled(
+            push_note(
                 "✎ memory",
                 style,
                 vec![Span::styled(
@@ -1250,7 +1142,7 @@ pub(crate) fn entry_lines(
             state,
         } => {
             let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_labeled(
+            push_note(
                 "🎞 media",
                 style,
                 vec![Span::styled(
@@ -1269,7 +1161,7 @@ pub(crate) fn entry_lines(
             let style = Style::new()
                 .fg(theme::ACCENT_DEEP)
                 .add_modifier(Modifier::BOLD);
-            push_labeled(
+            push_note(
                 "🎨 media",
                 style,
                 vec![
@@ -1295,7 +1187,7 @@ pub(crate) fn entry_lines(
             } else {
                 "model-judge"
             };
-            push_labeled(
+            push_note(
                 &format!("{glyph} verdict"),
                 Style::new().fg(color).add_modifier(Modifier::BOLD),
                 vec![
@@ -1316,7 +1208,7 @@ pub(crate) fn entry_lines(
             } else {
                 ("○", theme::WARN)
             };
-            push_labeled(
+            push_note(
                 &format!("{glyph} goal"),
                 Style::new().fg(color).add_modifier(Modifier::BOLD),
                 vec![
@@ -1342,7 +1234,7 @@ pub(crate) fn entry_lines(
             let style = Style::new()
                 .fg(theme::WARNING_BRIGHT)
                 .add_modifier(Modifier::BOLD);
-            push_labeled(
+            push_note(
                 "⏸ scope",
                 style,
                 vec![Span::styled(
@@ -1357,7 +1249,7 @@ pub(crate) fn entry_lines(
             let style = Style::new()
                 .fg(theme::WARNING_BRIGHT)
                 .add_modifier(Modifier::BOLD);
-            push_labeled(
+            push_note(
                 "? ask",
                 style,
                 vec![Span::styled(
@@ -1371,7 +1263,7 @@ pub(crate) fn entry_lines(
         TranscriptEntry::Commit { sha, message } => {
             let short = sha.chars().take(9).collect::<String>();
             let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_labeled(
+            push_note(
                 "● commit",
                 style,
                 vec![
@@ -1405,7 +1297,7 @@ pub(crate) fn entry_lines(
                 ));
             }
             spans.push(Span::styled(url.clone(), Style::new().fg(Color::DarkGray)));
-            push_labeled("⇢ pr", style, spans, width, out);
+            push_note("⇢ pr", style, spans, width, out);
         }
         TranscriptEntry::TaskUpdate {
             done,
@@ -1420,12 +1312,12 @@ pub(crate) fn entry_lines(
                     Style::new().fg(theme::TEXT_SECONDARY),
                 ));
             }
-            push_labeled("☰ tasks", style, spans, width, out);
+            push_note("☰ tasks", style, spans, width, out);
         }
         TranscriptEntry::Error { message, retryable } => {
             let tag = if *retryable { " (retryable)" } else { "" };
             let style = Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD);
-            push_labeled(
+            push_note(
                 "✗ error",
                 style,
                 vec![Span::styled(format!("{message}{tag}"), style)],
@@ -1437,8 +1329,8 @@ pub(crate) fn entry_lines(
             // A quiet footnote, not an event — warning-orange keeps the cost
             // in the warm family without borrowing the reserved brand gold.
             let style = Style::new().fg(theme::WARNING);
-            push_labeled(
-                "cost",
+            push_note(
+                "◇ cost",
                 style,
                 vec![Span::styled(format!("${cost_usd:.4} · {model}"), style)],
                 width,

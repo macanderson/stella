@@ -1,0 +1,125 @@
+---
+title: stella doctor
+description: Check the local state stella owns, report each named check's verdict, and exit non-zero if any fails — with an opt-in repair that moves a corrupt session store aside without ever deleting it.
+---
+
+Answer "is my local state sound?" before you go looking for a bug that isn't yours. `stella doctor` runs each check it knows how to run, prints a verdict per check, and exits non-zero if any failed — so it can gate a script. It reads local state only: no provider, no API key, no network.
+
+## Synopsis
+
+```bash
+stella doctor                                    # diagnose, change nothing
+stella doctor --repair                           # also quarantine a corrupt store
+```
+
+## What it does
+
+Today it runs exactly one check — **`store integrity`**, the soundness of this workspace's session store at `<workspace>/.stella/private/store.db`, verified with SQLite's own `quick_check` and `integrity_check` pragmas. The list is built to hold more, but one check is what currently ships; the command is worth what it actually verifies.
+
+A verdict is deliberately binary. There is no "warn": a check that cannot say *this is fine* has failed, and a third maybe-state would only be an invitation to ignore it.
+
+| Verdict | When |
+| --- | --- |
+| ✓ pass | The store passed, **or** there is no store yet — `store.db` is created by your first session, and its absence is not a fault. |
+| ✗ fail | SQLite reported damage, **or** the check could not be performed at all (a locked file, a permissions problem). |
+
+Diagnosis never writes. The check opens the database immutably — no locks, no `-shm`, zero bytes written — and escalates to a read-write open only when a first verdict already looks bad and a `-wal` sibling exists. Being asked a question is not a reason to create a `.stella/` that wasn't there.
+
+`stella doctor` runs *before* stella loads your configuration, on purpose: a workspace whose store is corrupt has to stay diagnosable without a working model config. One consequence is that `--output-format` does not apply to it — there is no JSON form of this output.
+
+## Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--repair` | Act on a store SQLite judged corrupt: move it aside to a timestamped name (renamed, **never** deleted) and copy out whatever is still readable. A healthy store and an inconclusive check are both left untouched. |
+
+## Exit codes
+
+`0` when every check passed — including a `--repair` that repaired. `1` when any check failed, with `stella: 1 of 1 doctor check failed` on stderr. That is the whole contract, which is what makes the command usable as a gate:
+
+```bash
+stella doctor || echo "local state needs attention"
+```
+
+## What `--repair` does to the file on disk
+
+This is the one part of `stella doctor` that touches your disk, so it is worth stating exactly.
+
+It runs **only** on a verdict of genuine corruption — a database SQLite could read but found structurally damaged, or one it could not read as a database at all. A check that merely failed to *complete* is inconclusive, and an inconclusive diagnosis leaves the store exactly where it is; moving a database on a guess is how a repair tool loses somebody's data. On a healthy store, `--repair` reports that it had nothing to do.
+
+When it does act, in this order:
+
+1. **The database is renamed**, along with both sidecars if present, all sharing one timestamp (seconds since the Unix epoch):
+
+   ```text
+   .stella/private/store.db      → .stella/private/store.db.corrupt-1769472000
+   .stella/private/store.db-wal  → .stella/private/store.db-wal.corrupt-1769472000
+   .stella/private/store.db-shm  → .stella/private/store.db-shm.corrupt-1769472000
+   ```
+
+   The sidecars must travel with the database. A stale WAL left beside the fresh store your next session creates is how a successful repair turns into new corruption. Renames come first because once they land the workspace is usable again even if everything after them fails.
+
+2. **Whatever is still readable is copied out** to a separate database beside the original — `store.db.salvaged-1769472000` — restricted to your user. If nothing can be salvaged, that is reported and the quarantine still stands; a failed salvage is never fatal.
+
+3. **Your next session starts a fresh store.** Nothing was deleted.
+
+<Callout type="warn">
+Uncheckpointed pages in the quarantined `-wal` do not reach the salvaged copy — SQLite only replays a WAL sitting at its database's exact name. If you need them, rename the quarantined pair back to `store.db` and `store.db-wal` and let SQLite's own recovery run.
+</Callout>
+
+Every quarantine is undoable with `mv`, and a repeat repair within the same second gets a `.2`, `.3`, … suffix rather than overwriting an earlier one — a quarantine that clobbered a quarantine would destroy exactly the bytes the whole path exists to preserve.
+
+The store holds local telemetry and session replay only. It never holds your source.
+
+## Examples
+
+A healthy workspace:
+
+```text
+─── Doctor — local state checks
+  ✓ store integrity — .stella/private/store.db: ok (quick_check)
+
+  1 check: 1 ok, 0 failed
+```
+
+`quick_check` is the fast path; `integrity_check` runs only when `quick_check` flags something, and the headline names whichever produced the verdict.
+
+A corrupt store, diagnosed but untouched (exit `1`):
+
+```text
+─── Doctor — local state checks
+  ✗ store integrity — .stella/private/store.db: not readable as a SQLite database
+      file is not a database
+      → `stella doctor --repair` moves it aside (renamed, never deleted) and copies out whatever is still readable
+      → by hand: sqlite3 .stella/private/store.db ".recover" | sqlite3 .stella/private/store.db.recovered
+      → the store holds local telemetry and session replay only — never your source
+
+  1 check: 0 ok, 1 failed
+```
+
+At most five problem rows are printed, followed by `… and N more`; the store itself records up to twenty, and the total is never truncated.
+
+The same workspace after `stella doctor --repair` (exit `0`):
+
+```text
+─── Doctor — local state checks
+  ✓ store integrity — .stella/private/store.db: quarantined
+      was: not readable as a SQLite database
+      moved .stella/private/store.db → .stella/private/store.db.corrupt-1769472000
+      moved .stella/private/store.db-wal → .stella/private/store.db-wal.corrupt-1769472000
+      salvaged what was readable → .stella/private/store.db.salvaged-1769472000
+      nothing was deleted; the next session starts a fresh store
+
+  1 check: 1 ok, 0 failed
+```
+
+A check that could not be performed — reported, and the store is not moved even with `--repair`:
+
+```text
+  ✗ store integrity — could not be checked: <error>
+      → the store was NOT touched — resolve the error above and re-run `stella doctor`
+```
+
+<Callout type="info">
+You will usually meet this command by being sent here: when a session cannot open `store.db`, the error names `stella doctor` directly. Running it without `--repair` first is always safe — it is a read-only diagnosis.
+</Callout>
