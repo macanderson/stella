@@ -51,6 +51,31 @@ pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
         .to_string()
 }
 
+/// Every `*.md` file physically present in `dir`, as the exact path strings
+/// [`stella_core::skills::decide_auto_creation`] builds and compares against.
+///
+/// Deliberately a directory read rather than a view of the loaded skill list:
+/// a file can sit on disk and still be absent from [`load_workspace_skills_with_authority`]
+/// — disabled from the SKILLS tab, excluded by authority, or dropped by a load
+/// diagnostic — and the no-clobber guard has to see it anyway (#737). Paths are
+/// rebuilt from `dir` plus the entry's file name so they match the guard's own
+/// `format!("{dir}/{name}.md")` spelling exactly. Unreadable dir ⇒ empty, which
+/// is safe only because the caller unions this with the loaded paths.
+pub(crate) fn skill_paths_on_disk(dir: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|e| e == "md"))
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            Some(format!("{}/{name}", dir.trim_end_matches('/')))
+        })
+        .collect()
+}
+
 /// `~/.stella/skills` — the user-global skills directory (empty
 /// string without a home, which the loader skips silently).
 fn user_skills_dir() -> String {
