@@ -3,6 +3,7 @@
 //! event/history parity, whitespace-only empty turns, the summary marker's
 //! loop-window neutrality, and the hard-cancel `Cancelled` usage envelope.
 
+use super::super::loop_evidence::ResultIdentities;
 use super::*;
 
 /// F1: `summarize_keep_recent: 0` is a legal config — the tail walk must
@@ -867,8 +868,8 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
     // then compact hard enough to force every pass, and assert the older
     // results really were rewritten (or the test would pass vacuously).
     let compact_as_run_turn_does = |messages: &mut Vec<CompletionMessage>| {
-        let mut identities = HashMap::new();
-        snapshot_result_identities(messages, &mut identities);
+        let mut identities = ResultIdentities::default();
+        snapshot_result_identities(messages, &mut identities, TranscriptRevision::default());
         assert!(
             crate::compaction::compact(messages, 16).is_some(),
             "fixture sanity: the budget must force a real compaction pass"
@@ -939,7 +940,7 @@ fn compaction_does_not_destroy_loop_detection_evidence() {
     let mut reused = history(&|_| "c1".to_string(), &|n| format!("{payload}{n}"));
     let identities = compact_as_run_turn_does(&mut reused);
     assert_eq!(
-        identities.get(&(
+        identities.by_call.get(&(
             "c1".to_string(),
             "read_file".to_string(),
             serde_json::json!({ "path": "big.rs" }).to_string(),
@@ -1014,8 +1015,8 @@ fn a_provider_recycling_call_ids_per_response_still_gets_loop_detection() {
 
     // Snapshot where `run_turn` does — before the pass — then compact hard
     // enough that the older results really are stubbed.
-    let mut identities = HashMap::new();
-    snapshot_result_identities(&messages, &mut identities);
+    let mut identities = ResultIdentities::default();
+    snapshot_result_identities(&messages, &mut identities, TranscriptRevision::default());
     assert!(
         crate::compaction::compact(&mut messages, 16).is_some(),
         "fixture sanity: the budget must force a real compaction pass"
@@ -1033,7 +1034,7 @@ fn a_provider_recycling_call_ids_per_response_still_gets_loop_detection() {
     // The unrelated `grep` no longer costs `read_file` its evidence: they are
     // different calls that merely share a recycled ordinal.
     assert_eq!(
-        identities.get(&(
+        identities.by_call.get(&(
             "call_0".to_string(),
             "read_file".to_string(),
             read_input.to_string(),
