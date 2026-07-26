@@ -34,7 +34,7 @@ use stella_protocol::JudgeEvidence;
 /// the tracked command has been seen failing; `Flipped` = the tracked command
 /// was seen failing and then passing. The invariant the whole design rests on:
 /// **`Flipped` is reachable only by passing through `Failing` for the same
-/// normalized command** — proven by [`tests::flip_requires_a_prior_failing_observation`].
+/// normalized command** — proven by `tests::flip_requires_a_prior_failing_observation`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FlipState {
     #[default]

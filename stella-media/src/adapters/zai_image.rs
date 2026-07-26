@@ -3,11 +3,11 @@
 //! adapter (`stella-model::zai`). CogView's `POST /images/generations` returns
 //! a URL (or inline base64) for the generated image; this adapter downloads
 //! the URL to bytes so the caller gets a self-contained
-//! [`MediaArtifact`](crate::provider::MediaArtifact), never a URL that could
+//! [`MediaArtifact`], never a URL that could
 //! expire.
 //!
 //! Error classification (auth / rate-limit / content-policy / terminal)
-//! routes through [`crate::http::classify_http_error`], mirroring
+//! routes through `crate::http::classify_http_error`, mirroring
 //! `ProviderError`'s categories with this crate's [`MediaError`].
 
 use async_trait::async_trait;

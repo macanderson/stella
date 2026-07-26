@@ -21,7 +21,7 @@
 //! Unlike `graph_query`, [`for_files`] is synchronous and is called inline
 //! from `grep`/`glob`'s `execute`, so its SQLite open and per-file queries
 //! run on a runtime worker. It deliberately does NOT run `index_all` — it is
-//! reads against whatever the index already holds, bounded by [`MAX_FILES`] —
+//! reads against whatever the index already holds, bounded by `MAX_FILES` —
 //! but the #549 discipline (hand the synchronous region to the blocking pool)
 //! has not been extended to this caller.
 

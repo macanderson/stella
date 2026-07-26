@@ -30,7 +30,9 @@
 //! server-initiated request or notification (sampling, roots, progress). The
 //! transport drops those silently.
 
-use std::borrow::Cow;
+mod health;
+pub(crate) mod ingest;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -42,23 +44,25 @@ use tokio::sync::Mutex;
 
 use crate::config::{McpServerConfig, McpTransport};
 use crate::error::McpError;
-use crate::http::{HttpTransport, truncate, truncate_middle_out};
+use crate::http::HttpTransport;
 use crate::oauth::OAuthManager;
 use crate::protocol::{
-    CallToolParams, CallToolResult, ContentBlock, Implementation, InitializeParams,
-    InitializeResult, ListToolsParams, ListToolsResult, PREFERRED_PROTOCOL_VERSION,
+    CallToolParams, Implementation, InitializeParams, InitializeResult, PREFERRED_PROTOCOL_VERSION,
     SUPPORTED_PROTOCOL_VERSIONS, is_supported_version,
 };
 use crate::stdio::StdioTransport;
 use crate::toolset::DEFAULT_CALL_TIMEOUT;
 use crate::transport::Transport;
 
-/// Reconnect backoff floor: the first re-attempt after the *second* straight
-/// failure waits this long, doubling each further failure.
-const RECONNECT_BASE: Duration = Duration::from_secs(1);
-/// Reconnect backoff ceiling — the delay never grows past this, so a
-/// long-dead server is still probed roughly twice a minute forever.
-const RECONNECT_CAP: Duration = Duration::from_secs(30);
+use health::{Connection, Health, is_connection_death};
+use ingest::{decode_call_result, fetch_all_tools};
+
+// The two submodules above hold what `client.rs` outgrew (#629's 1500-line
+// ratchet). Every PUBLIC path is re-exported here, so no consumer's imports
+// move; the crate-internal ingest budgets are addressed as
+// `crate::client::ingest::*` (only `error` and tests want them).
+pub use health::{HealthState, ServerHealth};
+pub use ingest::{MAX_TOOLS_PER_SERVER, McpToolInfo, render_content};
 
 /// Rebuilds a fresh (pre-handshake) transport for a server whose connection
 /// dropped. Boxed so a [`McpClient`] can carry it without naming the concrete
@@ -70,118 +74,10 @@ type Reconnector = Arc<
         + Sync,
 >;
 
-/// Health of one server's connection, as surfaced to the CLI/TUI/telemetry so
-/// a mid-session drop is a *visible, non-fatal* diagnostic rather than a
-/// silent degradation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HealthState {
-    /// The transport is connected and the last call succeeded.
-    Live,
-    /// A reconnect attempt is in flight right now.
-    ///
-    /// Not observable through [`McpClient::health`] today: a snapshot takes the
-    /// same connection mutex the reconnect holds for its whole duration, so it
-    /// blocks until the attempt finishes and then reports its outcome (`Live`
-    /// or `Down`). Surfacing it live would need the health fields to move out
-    /// from behind that mutex.
-    Reconnecting,
-    /// The connection is down; the next call will retry once the backoff
-    /// window (see [`ServerHealth::retry_in`]) elapses.
-    Down,
-}
-
-/// A point-in-time snapshot of a server's connection health.
-#[derive(Debug, Clone)]
-pub struct ServerHealth {
-    /// The server name (tool namespace segment).
-    pub name: String,
-    /// Live / Reconnecting / Down.
-    pub state: HealthState,
-    /// How many calls in a row have failed (0 when healthy).
-    pub consecutive_failures: u32,
-    /// The last failure's model-safe message, if any.
-    pub last_error: Option<String>,
-    /// When `Down`, roughly how long until the next reconnect is allowed.
-    pub retry_in: Option<Duration>,
-}
-
 /// The `clientInfo.name` advertised in `initialize`.
 const CLIENT_NAME: &str = "stella";
 /// The `clientInfo.version` advertised in `initialize`.
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-/// A hard cap on `tools/list` pages, defending against a server that returns
-/// a non-advancing cursor forever.
-const MAX_TOOL_PAGES: usize = 1000;
-
-// Context budgets (#551). An MCP server is *untrusted input*: nothing on the
-// wire stops it from answering a call with a gigabyte of text, advertising ten
-// thousand tools, or attaching a megabyte description to each one. Without a
-// bound here the tokens are already paid for by the time `stella-core`'s
-// compaction runs — on a LATER turn — so the cap has to live at ingest, in
-// this crate.
-//
-// The numbers below are deliberately conservative starting points, not
-// ratified product values: they are sized to be invisible to every
-// well-behaved server we know of while still bounding a hostile one. Wiring
-// them to configuration would change this crate's public entry points
-// (`McpToolSet::connect`, `McpClient::connect`), which is an owner API
-// decision — see #551's own "Not applied" note.
-
-/// Byte budget for one rendered `tools/call` result, applied middle-out
-/// (head and tail kept, with an explicit elision marker between them).
-/// Matches the ceiling `stella-tools` already imposes on native
-/// `bash`/custom-tool output, so an MCP tool cannot buy more of the model's
-/// context than a local one.
-pub(crate) const MAX_TOOL_RESULT_BYTES: usize = 100_000;
-
-/// How many tools this client will accept from ONE server. Past this the
-/// remaining tools are dropped and `tools/list` pagination stops; the count is
-/// recorded as a non-fatal diagnostic ([`McpClient::dropped_tool_count`]) —
-/// the server is connected and working, it just advertises more surface than
-/// the model's context can afford.
-pub(crate) const MAX_TOOLS_PER_SERVER: usize = 256;
-
-/// Character budget for one tool's advertised `description`, truncated
-/// head-only (a description's contract is stated up front).
-pub(crate) const MAX_TOOL_DESCRIPTION_CHARS: usize = 2_000;
-
-/// Byte budget for one tool's serialized `inputSchema`. A JSON Schema cannot
-/// be string-truncated and stay valid, so an over-budget schema is *replaced*
-/// with the permissive `{"type": "object"}` (see [`normalize_schema`]) rather
-/// than chopped into malformed JSON.
-pub(crate) const MAX_TOOL_SCHEMA_BYTES: usize = 16_384;
-
-/// Appended to a tool's description when its schema was over budget and
-/// replaced, so the model is told the shape it can no longer see. Added
-/// *after* the description is truncated, so the steer is never the part that
-/// gets cut.
-const SCHEMA_REPLACED_NOTE: &str = "\n\n[stella: this tool's advertised input schema exceeded the \
-     size budget and was replaced with a permissive `{\"type\": \"object\"}` schema — pass the \
-     arguments this description names.]";
-
-/// One tool advertised by a server, in the client's own shape (the raw,
-/// un-namespaced name plus its input schema).
-#[derive(Debug, Clone)]
-pub struct McpToolInfo {
-    /// The tool's name exactly as the server advertised it, before
-    /// [`crate::toolset::McpToolSet`] prefixes it with the server namespace.
-    pub name: String,
-    /// The server's human-readable description of the tool, already bounded at
-    /// ingest (`MAX_TOOL_DESCRIPTION_CHARS`) and carrying an appended note when
-    /// this tool's schema was over budget and replaced.
-    pub description: String,
-    /// The tool's JSON Schema for its arguments (`inputSchema` on the wire),
-    /// passed through verbatim unless it was absent or over budget — see
-    /// `normalize_schema`, the only place this client substitutes a schema.
-    pub input_schema: Value,
-    /// The server advertised this tool as read-only or idempotent, so a
-    /// duplicate delivery is harmless and the client may transparently
-    /// re-send it after an ambiguous connection drop. `false` (the default
-    /// for un-annotated tools) means a drop mid-call is surfaced as an
-    /// error instead — the server may have already executed the call, and
-    /// re-sending a mutating tool risks double execution.
-    pub safe_to_retry: bool,
-}
 
 /// A connected MCP client for a single server.
 ///
@@ -198,7 +94,7 @@ pub struct McpClient {
     /// How to rebuild a dropped transport. `None` = no auto-reconnect.
     reconnect: Option<Reconnector>,
     /// Per-call timeout (also the reconnect/handshake bound). Set at build
-    /// time by [`McpToolSet`]; a timed-out call is treated as a drop.
+    /// time by [`crate::McpToolSet`]; a timed-out call is treated as a drop.
     call_timeout: Duration,
     negotiated_version: String,
     server_info: Option<Implementation>,
@@ -206,62 +102,6 @@ pub struct McpClient {
     /// How many advertised tools were refused past [`MAX_TOOLS_PER_SERVER`]
     /// (#551). Non-fatal: the server is live and every kept tool routes.
     dropped_tools: usize,
-}
-
-/// The mutable half of a client: the current transport (`None` once it has
-/// been torn down) and its rolling health.
-struct Connection {
-    transport: Option<Box<dyn Transport>>,
-    health: Health,
-}
-
-/// Rolling connection health + the backoff clock.
-struct Health {
-    state: HealthState,
-    consecutive_failures: u32,
-    last_error: Option<String>,
-    /// Earliest instant a reconnect may be attempted (set while `Down`).
-    next_retry_at: Option<Instant>,
-}
-
-impl Default for Health {
-    fn default() -> Self {
-        Self {
-            state: HealthState::Live,
-            consecutive_failures: 0,
-            last_error: None,
-            next_retry_at: None,
-        }
-    }
-}
-
-impl Connection {
-    /// A call (or reconnect) succeeded: back to fully healthy.
-    fn mark_healthy(&mut self) {
-        self.health.state = HealthState::Live;
-        self.health.consecutive_failures = 0;
-        self.health.last_error = None;
-        self.health.next_retry_at = None;
-    }
-
-    /// A call (or reconnect) failed: drop the transport and arm the backoff
-    /// clock so the next reconnect waits an increasing, capped interval.
-    fn tear_down(&mut self, err: &McpError) {
-        self.transport = None;
-        self.health.consecutive_failures = self.health.consecutive_failures.saturating_add(1);
-        self.health.last_error = Some(err.user_message());
-        self.health.state = HealthState::Down;
-        self.health.next_retry_at =
-            Some(Instant::now() + backoff_delay(self.health.consecutive_failures));
-    }
-
-    /// How long until a reconnect is allowed (`Some(0)` = now), or `None` when
-    /// the connection is not currently down.
-    fn retry_in(&self) -> Option<Duration> {
-        self.health
-            .next_retry_at
-            .map(|at| at.saturating_duration_since(Instant::now()))
-    }
 }
 
 /// The outcome of one bounded transport request, classified so the caller can
@@ -273,26 +113,6 @@ enum RequestOutcome {
     Dropped(McpError),
     Timeout(McpError),
     Protocol(McpError),
-}
-
-/// Bounded exponential backoff. The first failure retries immediately (so a
-/// single blip self-heals within the turn); each further consecutive failure
-/// doubles the wait from [`RECONNECT_BASE`], capped at [`RECONNECT_CAP`].
-fn backoff_delay(consecutive_failures: u32) -> Duration {
-    if consecutive_failures <= 1 {
-        return Duration::ZERO;
-    }
-    // failures=2 -> 2^0·base, =3 -> 2^1·base, … clamp the exponent so the
-    // shift can never overflow (the cap dominates long before this bites).
-    let exp = (consecutive_failures - 2).min(20);
-    let secs = RECONNECT_BASE.as_secs().saturating_mul(1u64 << exp);
-    Duration::from_secs(secs).min(RECONNECT_CAP)
-}
-
-/// Whether an error means the *connection* died (spawn/pipe/stream failure or
-/// a closed transport) — the only errors a reconnect can fix.
-fn is_connection_death(err: &McpError) -> bool {
-    matches!(err, McpError::Transport(_) | McpError::Closed(_))
 }
 
 impl McpClient {
@@ -317,7 +137,7 @@ impl McpClient {
     }
 
     /// Override the per-call timeout (default [`DEFAULT_CALL_TIMEOUT`]). Set by
-    /// [`McpToolSet`] when the set is assembled so every server shares one
+    /// [`crate::McpToolSet`] when the set is assembled so every server shares one
     /// bound; a call that exceeds it is treated as a drop and schedules a
     /// reconnect.
     pub fn set_call_timeout(&mut self, timeout: Duration) {
@@ -384,7 +204,10 @@ impl McpClient {
         self.server_info = handshake.server_info;
         self.tools = handshake.tools;
         self.dropped_tools = handshake.dropped_tools;
-        self.conn.get_mut().mark_healthy();
+        // The handshake is itself a completed request round-trip
+        // (`initialize` + `tools/list`), so a freshly-connected server is
+        // legitimately `Live`.
+        self.conn.get_mut().mark_call_success();
         Ok(())
     }
 
@@ -424,14 +247,14 @@ impl McpClient {
         // file content.
         match self.request_once(&conn, "tools/call", raw_params).await {
             RequestOutcome::Ok(raw) => {
-                conn.mark_healthy();
+                conn.mark_call_success();
                 decode_call_result(tool, raw)
             }
             // A hung call already burned the whole timeout; retrying now would
             // double the wait. Tear down (arming reconnect for the next call)
             // and surface the timeout as model-visible data.
             RequestOutcome::Timeout(err) => {
-                conn.tear_down(&err);
+                conn.note_call_failure(&err);
                 Err(err)
             }
             // The connection died fast. Reconnect (healing the transport for
@@ -443,7 +266,7 @@ impl McpClient {
             // (duplicate ticket, double insert). Those surface the drop as
             // model-visible data instead.
             RequestOutcome::Dropped(err) => {
-                conn.tear_down(&err);
+                conn.note_call_failure(&err);
                 let reconnected = self.reconnect_locked(&mut conn).await.is_ok();
                 if !self.tool_is_retry_safe(tool) {
                     return Err(McpError::Transport(format!(
@@ -461,11 +284,11 @@ impl McpClient {
                     .await
                 {
                     RequestOutcome::Ok(raw) => {
-                        conn.mark_healthy();
+                        conn.mark_call_success();
                         decode_call_result(tool, raw)
                     }
                     RequestOutcome::Timeout(e2) | RequestOutcome::Dropped(e2) => {
-                        conn.tear_down(&e2);
+                        conn.note_call_failure(&e2);
                         Err(e2)
                     }
                     RequestOutcome::Protocol(e2) => Err(e2),
@@ -513,6 +336,11 @@ impl McpClient {
     /// (without spawning) when the backoff window has not elapsed, when there
     /// is no reconnector (test clients built via [`McpClient::new`]), or when
     /// the fresh handshake fails — each path arms the clock for the next try.
+    ///
+    /// On success the connection is trusted again but the server is **not**
+    /// declared [`HealthState::Live`] unless its calls were already healthy:
+    /// see [`Connection::mark_connected`] and the #638 contract on
+    /// [`HealthState`].
     async fn reconnect_locked(&self, conn: &mut Connection) -> Result<(), McpError> {
         if let Some(at) = conn.health.next_retry_at {
             let now = Instant::now();
@@ -539,7 +367,7 @@ impl McpClient {
         let transport = match reconnect().await {
             Ok(transport) => transport,
             Err(err) => {
-                conn.tear_down(&err);
+                conn.note_connect_failure(&err);
                 return Err(err);
             }
         };
@@ -559,7 +387,7 @@ impl McpClient {
         {
             Ok(Ok(_)) => {}
             Ok(Err(err)) => {
-                conn.tear_down(&err);
+                conn.note_connect_failure(&err);
                 return Err(err);
             }
             Err(_elapsed) => {
@@ -568,12 +396,12 @@ impl McpClient {
                     self.name,
                     self.call_timeout.as_secs_f64(),
                 ));
-                conn.tear_down(&err);
+                conn.note_connect_failure(&err);
                 return Err(err);
             }
         }
         conn.transport = Some(transport);
-        conn.mark_healthy();
+        conn.mark_connected();
         Ok(())
     }
 
@@ -589,13 +417,16 @@ impl McpClient {
 
     /// A point-in-time snapshot of this server's connection health, so the
     /// CLI/TUI/telemetry can render a clear, non-fatal diagnostic when a
-    /// server drops and while it is reconnecting.
+    /// server drops and while it is reconnecting. See [`HealthState`] for what
+    /// each state promises — in particular, `Live` means the server *answered*,
+    /// not merely that it accepted a connection.
     pub async fn health(&self) -> ServerHealth {
         let conn = self.conn.lock().await;
         ServerHealth {
             name: self.name.clone(),
             state: conn.health.state,
-            consecutive_failures: conn.health.consecutive_failures,
+            call_failures: conn.health.call_failures,
+            connect_failures: conn.health.connect_failures,
             last_error: conn.health.last_error.clone(),
             retry_in: conn.retry_in(),
         }
@@ -622,14 +453,18 @@ impl McpClient {
     }
 
     /// How many advertised tools were refused because the server exceeded
-    /// this crate's per-server tool cap (#551). `0` for every well-behaved
-    /// server.
+    /// this crate's per-server tool cap ([`MAX_TOOLS_PER_SERVER`], #551). `0`
+    /// for every well-behaved server.
     ///
     /// This is a **floor**, not a total: discovery stops on the page where the
     /// cap is reached, so anything the server would have listed on later pages
     /// is never counted (or fetched). It is a non-fatal diagnostic — unlike
     /// [`crate::McpToolSet::failed_servers`], the server is connected and its
     /// kept tools route normally.
+    ///
+    /// Reconnecting does not re-open this question: a reconnect restores
+    /// connectivity to the tool set negotiated at the first handshake, so this
+    /// count describes that same surface for the life of the client.
     pub fn dropped_tool_count(&self) -> usize {
         self.dropped_tools
     }
@@ -732,226 +567,16 @@ async fn run_handshake(name: &str, transport: &dyn Transport) -> Result<Handshak
     })
 }
 
-/// Drive `tools/list` to exhaustion over `transport`, following `nextCursor`,
-/// returning the accepted tools plus how many were refused past
-/// [`MAX_TOOLS_PER_SERVER`] (#551).
-///
-/// Every tool is bounded *at ingest* — description and schema included — so
-/// each consumer (routing, `schemas()`, telemetry) sees the same already-safe
-/// values instead of each having to remember to cap them.
-async fn fetch_all_tools(
-    name: &str,
-    transport: &dyn Transport,
-) -> Result<(Vec<McpToolInfo>, usize), McpError> {
-    let mut tools = Vec::new();
-    let mut cursor: Option<String> = None;
-    for _ in 0..MAX_TOOL_PAGES {
-        let params = ListToolsParams {
-            cursor: cursor.clone(),
-        };
-        let raw = transport.request("tools/list", to_value(&params)?).await?;
-        let page: ListToolsResult = serde_json::from_value(raw)
-            .map_err(|e| McpError::Protocol(format!("could not decode tools/list result: {e}")))?;
-        let advertised = page.tools.len();
-        // `tools.len()` never exceeds the cap (we return the moment it would),
-        // so this cannot underflow.
-        let accepted = advertised.min(MAX_TOOLS_PER_SERVER - tools.len());
-        for tool in page.tools.into_iter().take(accepted) {
-            let (input_schema, schema_replaced) = normalize_schema(tool.input_schema);
-            let mut description = truncate(
-                tool.description.as_deref().unwrap_or_default(),
-                MAX_TOOL_DESCRIPTION_CHARS,
-            );
-            if schema_replaced {
-                description.push_str(SCHEMA_REPLACED_NOTE);
-            }
-            tools.push(McpToolInfo {
-                description,
-                name: tool.name,
-                input_schema,
-                safe_to_retry: tool.annotations.read_only_hint || tool.annotations.idempotent_hint,
-            });
-        }
-        if accepted < advertised {
-            // The cap bit mid-page. Stop paginating too — a server that
-            // advertises more tools than the model's context can hold is not
-            // one we want to keep fetching from, so the returned count is the
-            // remainder of THIS page, a floor rather than a total.
-            return Ok((tools, advertised - accepted));
-        }
-        match page.next_cursor {
-            Some(next) if !next.is_empty() => cursor = Some(next),
-            _ => return Ok((tools, 0)),
-        }
-    }
-    Err(McpError::Protocol(format!(
-        "server `{name}` exceeded {MAX_TOOL_PAGES} tools/list pages — cursor never terminated"
-    )))
-}
-
-/// Map a raw `tools/call` result value into the engine's [`ToolOutput`].
-///
-/// This is the seam where an untrusted *result* is bounded (#551): the
-/// rendered string is capped at [`MAX_TOOL_RESULT_BYTES`] middle-out, on both
-/// the `Ok` and the `isError: true` branch, so a server cannot evict the
-/// conversation with one enormous answer. [`render_content`] itself stays pure
-/// and zero-copy.
-///
-/// It bounds **only** the two branches below. A server that answers
-/// `tools/call` with a JSON-RPC *error object* fails the request before it
-/// gets here (`RequestOutcome::Protocol` → `Err`), and that route is bounded
-/// by [`McpError::user_message`] at the same budget.
-fn decode_call_result(tool: &str, raw: Value) -> Result<ToolOutput, McpError> {
-    let result: CallToolResult = serde_json::from_value(raw)
-        .map_err(|e| McpError::Protocol(format!("could not decode tools/call result: {e}")))?;
-    let rendered = render_content(&result.content);
-    // Under budget stays byte-identical (and un-copied) — only an oversized
-    // result pays for the middle-out rebuild.
-    let rendered = if rendered.len() > MAX_TOOL_RESULT_BYTES {
-        truncate_middle_out(&rendered, MAX_TOOL_RESULT_BYTES)
-    } else {
-        rendered
-    };
-    if result.is_error {
-        Ok(ToolOutput::Error {
-            message: if rendered.is_empty() {
-                format!("tool `{tool}` reported an error with no detail")
-            } else {
-                rendered
-            },
-        })
-    } else {
-        Ok(ToolOutput::Ok { content: rendered })
-    }
-}
-
 /// Serialize a params struct, mapping any (unexpected) failure to a protocol
 /// error rather than panicking.
 fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, McpError> {
     serde_json::to_value(value).map_err(|e| McpError::Protocol(e.to_string()))
 }
 
-/// A tool with a null/missing input schema still needs *a* schema; default to
-/// the permissive empty-object schema so the model always sees valid JSON
-/// Schema.
-///
-/// An **over-budget** schema (past [`MAX_TOOL_SCHEMA_BYTES`] serialized) gets
-/// that same fallback, and the `true` in the returned pair tells the caller to
-/// say so in the tool's description. A schema is the one field that cannot be
-/// string-truncated: chopping it would hand the model malformed JSON Schema,
-/// which is strictly worse than a permissive one. Losing the shape costs an
-/// argument round-trip; losing the *validity* costs every call to that tool.
-fn normalize_schema(schema: Value) -> (Value, bool) {
-    let permissive = || serde_json::json!({ "type": "object" });
-    if schema.is_null() {
-        return (permissive(), false);
-    }
-    let over_budget = match serde_json::to_vec(&schema) {
-        Ok(bytes) => bytes.len() > MAX_TOOL_SCHEMA_BYTES,
-        // Unserializable is unusable either way, and the permissive fallback
-        // is still valid JSON Schema — fall back rather than pass it through.
-        Err(_) => true,
-    };
-    if over_budget {
-        (permissive(), true)
-    } else {
-        (schema, false)
-    }
-}
-
-/// Concatenate a `tools/call` content array into a single model-visible
-/// string: text verbatim, everything else a compact placeholder.
-///
-/// Text blocks are *borrowed* rather than cloned into an intermediate `Vec`:
-/// a tool that returns a large file reads back as one multi-megabyte text
-/// block, and the old shape copied it twice (once per part, once by `join`)
-/// on the hot path of every MCP call.
-pub fn render_content(blocks: &[ContentBlock]) -> String {
-    let mut out = String::new();
-    for block in blocks {
-        let piece: Cow<'_, str> = match block.kind.as_str() {
-            "text" => Cow::Borrowed(block.text.as_deref().unwrap_or_default()),
-            "image" => Cow::Borrowed("[image]"),
-            "audio" => Cow::Borrowed("[audio]"),
-            "resource" => match block.resource.as_ref().and_then(|r| r.uri.as_deref()) {
-                Some(uri) => Cow::Owned(format!("[resource: {uri}]")),
-                None => Cow::Borrowed("[resource]"),
-            },
-            "resource_link" => match block.uri.as_deref() {
-                Some(uri) => Cow::Owned(format!("[resource: {uri}]")),
-                None => Cow::Borrowed("[resource]"),
-            },
-            // A block with no `type` is malformed; fall back to any text it
-            // carried, else a generic marker.
-            "" => Cow::Borrowed(block.text.as_deref().unwrap_or("[unknown]")),
-            // An unknown but named type: summarize by its name.
-            other => Cow::Owned(format!("[{other}]")),
-        };
-        if piece.is_empty() {
-            continue;
-        }
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        out.push_str(&piece);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ResourceContents;
     use crate::transport::testkit::ScriptedTransport;
-
-    fn block(kind: &str) -> ContentBlock {
-        ContentBlock {
-            kind: kind.to_string(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn render_concatenates_text_and_summarizes_the_rest() {
-        let blocks = vec![
-            ContentBlock {
-                kind: "text".into(),
-                text: Some("first".into()),
-                ..Default::default()
-            },
-            block("image"),
-            ContentBlock {
-                kind: "text".into(),
-                text: Some("second".into()),
-                ..Default::default()
-            },
-            ContentBlock {
-                kind: "resource".into(),
-                resource: Some(ResourceContents {
-                    uri: Some("file:///a.txt".into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ContentBlock {
-                kind: "resource_link".into(),
-                uri: Some("https://x/y".into()),
-                ..Default::default()
-            },
-            block("audio"),
-            block("brand_new_kind"),
-        ];
-        let rendered = render_content(&blocks);
-        assert_eq!(
-            rendered,
-            "first\n[image]\nsecond\n[resource: file:///a.txt]\n[resource: https://x/y]\n[audio]\n[brand_new_kind]"
-        );
-    }
-
-    #[test]
-    fn empty_content_renders_empty() {
-        assert_eq!(render_content(&[]), "");
-    }
 
     #[tokio::test]
     async fn initialize_negotiates_version_and_lists_tools() {
@@ -1141,8 +766,75 @@ mod tests {
 
         let health = client.health().await;
         assert_eq!(health.state, HealthState::Live);
-        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.call_failures, 0);
+        assert_eq!(health.connect_failures, 0);
+        assert_eq!(health.consecutive_failures(), 0);
         assert!(health.last_error.is_none());
+    }
+
+    /// Witness for #638's first finding. A server that accepts every
+    /// connection and then drops every `tools/call` used to report `Live` with
+    /// a zeroed failure streak forever: the successful reconnect called
+    /// `mark_healthy()`, which wiped the call failures too, so the deck said
+    /// healthy while every call failed AND the backoff never grew past zero
+    /// (the server was respawned once per call, indefinitely).
+    #[tokio::test]
+    async fn a_server_that_reconnects_but_fails_every_call_is_not_live_and_backs_off() {
+        /// Handshakes fine, advertises a read-only tool (so the transparent
+        /// retry is allowed), then drops the connection on `tools/call`.
+        fn accepts_but_drops_calls() -> Box<dyn Transport> {
+            let t = ScriptedTransport::new();
+            t.push_ok(
+                "initialize",
+                serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+            );
+            t.push_ok(
+                "tools/list",
+                serde_json::json!({ "tools": [{ "name": "echo", "inputSchema": { "type": "object" },
+                    "annotations": { "readOnlyHint": true } }] }),
+            );
+            t.push_err("tools/call", McpError::Closed("child exited".into()));
+            Box::new(t)
+        }
+
+        let mut client = McpClient::new("flaky", accepts_but_drops_calls())
+            .with_test_reconnector(|| async { Ok(accepts_but_drops_calls()) });
+        client.initialize().await.unwrap();
+        // The handshake is a completed round-trip, so a fresh connect IS Live.
+        assert_eq!(client.health().await.state, HealthState::Live);
+
+        // One call: it drops, the reconnect *succeeds*, the retry drops again.
+        client
+            .call_tool("echo", serde_json::json!({}))
+            .await
+            .expect_err("every call on this server fails");
+
+        let health = client.health().await;
+        assert_eq!(
+            health.state,
+            HealthState::Down,
+            "a server whose every call fails must not read as Live just because \
+             it accepts connections"
+        );
+        assert_eq!(
+            health.call_failures, 2,
+            "the dropped call and its retry both count"
+        );
+        assert_eq!(
+            health.connect_failures, 0,
+            "the reconnect itself keeps succeeding — the two are tracked apart"
+        );
+        assert!(
+            health.consecutive_failures() >= 2,
+            "the combined streak is what drives the backoff"
+        );
+        assert!(
+            health.retry_in.is_some_and(|d| d > Duration::ZERO),
+            "the backoff clock is armed, so the next call does not respawn \
+             immediately: {:?}",
+            health.retry_in
+        );
+        assert!(health.last_error.is_some(), "and the cause is retained");
     }
 
     #[tokio::test]
@@ -1304,9 +996,25 @@ mod tests {
             "hints at the backoff wait: {msg}"
         );
 
+        // The health contract (#638), stated as numbers: this server failed one
+        // CALL and then could not be re-established at all, so the two counters
+        // move independently and the backoff streak is their sum. (The old
+        // single `consecutive_failures` field asserted `>= 2` here — the same
+        // property, but it could not distinguish this genuinely-unreachable
+        // server from one whose reconnects succeed and whose calls all fail,
+        // which is exactly the case that used to report `Live`.)
         let health = client.health().await;
         assert_eq!(health.state, HealthState::Down);
-        assert!(health.consecutive_failures >= 2);
+        assert_eq!(health.call_failures, 1, "the one `tools/call` that dropped");
+        assert_eq!(
+            health.connect_failures, 1,
+            "plus the reconnect that could not be re-established"
+        );
+        assert!(
+            health.consecutive_failures() >= 2,
+            "the combined streak is what armed the backoff: {}",
+            health.consecutive_failures()
+        );
         assert!(health.last_error.is_some());
     }
 
@@ -1356,18 +1064,10 @@ mod tests {
 
         let health = client.health().await;
         assert_eq!(health.state, HealthState::Down);
-        assert_eq!(health.consecutive_failures, 1);
-    }
-
-    #[test]
-    fn backoff_is_zero_on_first_failure_then_doubles_to_the_cap() {
-        assert_eq!(backoff_delay(0), Duration::ZERO);
-        assert_eq!(backoff_delay(1), Duration::ZERO);
-        assert_eq!(backoff_delay(2), Duration::from_secs(1));
-        assert_eq!(backoff_delay(3), Duration::from_secs(2));
-        assert_eq!(backoff_delay(4), Duration::from_secs(4));
-        // Grows exponentially but never past the cap, even at absurd counts.
-        assert_eq!(backoff_delay(50), RECONNECT_CAP);
-        assert_eq!(backoff_delay(u32::MAX), RECONNECT_CAP);
+        assert_eq!(health.call_failures, 1);
+        assert_eq!(
+            health.connect_failures, 0,
+            "a hung call is a CALL failure — no reconnect was attempted"
+        );
     }
 }

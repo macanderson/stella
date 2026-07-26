@@ -3,17 +3,17 @@
 //! relation / field), stable addresses, name normalization, and per-adapter
 //! structural extraction (spec §4a):
 //!
-//! - [`sql`] — deep DDL: types, nullability, defaults, constraints, FKs,
+//! - `sql` — deep DDL: types, nullability, defaults, constraints, FKs,
 //!   `ALTER TABLE … ADD COLUMN`, `COMMENT ON` harvesting.
-//! - [`prisma`] — `.prisma` schemas: models, enums, `@map`/`@@map`,
+//! - `prisma` — `.prisma` schemas: models, enums, `@map`/`@@map`,
 //!   `@relation` FKs, `///` doc harvesting, Mongo-provider detection.
-//! - [`ts`] — TypeScript/JavaScript: Drizzle `pgTable`-family calls,
+//! - `ts` — TypeScript/JavaScript: Drizzle `pgTable`-family calls,
 //!   TypeORM `@Entity`/`@Column` decorators, Mongoose schemas (document
 //!   paths included), DynamoDB CDK/SDK table definitions.
-//! - [`py`] — Python: Django `models.Model` classes, SQLAlchemy declarative
+//! - `py` — Python: Django `models.Model` classes, SQLAlchemy declarative
 //!   and core `Table(...)` definitions.
 //!
-//! Extraction here is **shared** by the indexer ([`crate::store`]) and the
+//! Extraction here is **shared** by the indexer (`crate::store`) and the
 //! pre-write gate (`stella-tools`), so the gate and the index cannot drift
 //! apart. Structure only: intent/boundary meaning comes from the committed
 //! manifest ([`crate::manifest`]) and is merged at snapshot time, never
@@ -52,15 +52,6 @@ impl RelationKind {
             RelationKind::View => "view",
             RelationKind::EnumType => "enum",
             RelationKind::Collection => "collection",
-        }
-    }
-
-    pub fn from_tag(tag: &str) -> RelationKind {
-        match tag {
-            "view" => RelationKind::View,
-            "enum" => RelationKind::EnumType,
-            "collection" => RelationKind::Collection,
-            _ => RelationKind::Table,
         }
     }
 
@@ -216,7 +207,7 @@ pub fn is_storage_file(path: &str) -> bool {
 
 /// Whether a path should be indexed for storage even though no
 /// [`Language`] grammar claims it (`.prisma` — its own DSL, parsed by the
-/// [`prisma`] adapter). Used by the walker and watcher membership tests.
+/// `prisma` adapter). Used by the walker and watcher membership tests.
 pub fn indexes_without_language(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -309,13 +300,14 @@ pub fn relation_address(layer: &str, namespace: &str, relation: &str) -> String 
     )
 }
 
-/// Canonical address of a field: `layer/namespace/relation/field`.
-pub fn field_address(layer: &str, namespace: &str, relation: &str, field: &str) -> String {
-    format!(
-        "{}/{}",
-        relation_address(layer, namespace, relation),
-        normalize_name(field)
-    )
+/// Canonical address of a field: `<relation address>/field`.
+///
+/// Takes the already-composed relation address rather than its three parts:
+/// every caller reaches this point holding a `RelationEntry::address` that
+/// [`relation_address`] produced, and splitting it back apart to recompose it
+/// would be the only reason for a four-argument form.
+pub fn field_address(relation_address: &str, field: &str) -> String {
+    format!("{}/{}", relation_address, normalize_name(field))
 }
 
 /// Human rendering of an address (`store://…`, spec §3a).
@@ -489,7 +481,7 @@ mod tests {
             "primary_pg/public/payments"
         );
         assert_eq!(
-            field_address("sql", "default", "payments", "userId"),
+            field_address(&relation_address("sql", "default", "payments"), "userId"),
             "sql/default/payments/user_id"
         );
         assert_eq!(display_address("a/b/c"), "store://a/b/c");

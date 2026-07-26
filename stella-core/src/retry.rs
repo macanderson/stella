@@ -14,7 +14,7 @@
 //!   providers set at the source.
 //! - **L-E10**: speculative side-effect events flush only when the step
 //!   commits. Retry history follows that rule, while paid-call accounting is
-//!   intentionally stricter: [`retry_with_backoff_observed`] synchronously
+//!   intentionally stricter: `retry_with_backoff_observed` synchronously
 //!   exposes every failed dispatched attempt so unknown provider usage can be
 //!   persisted even when a later attempt succeeds.
 //!
@@ -74,7 +74,7 @@ const DEFAULT_MAX_SERVER_HINT_MS: u64 = 120_000;
 
 impl RetryPolicy {
     /// Build a policy from explicit values. The server-hint ceiling defaults
-    /// to [`DEFAULT_MAX_SERVER_HINT_MS`] — separate from `max_delay_ms`, so a
+    /// to `DEFAULT_MAX_SERVER_HINT_MS` — separate from `max_delay_ms`, so a
     /// caller that passes a small computed-backoff cap still honors a
     /// realistic server `Retry-After` rather than clamping it down.
     pub fn new(max_retries: u32, base_delay_ms: u64, max_delay_ms: u64) -> Self {

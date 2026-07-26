@@ -1,6 +1,6 @@
 //! The workspace model — the command deck's derived state.
 //!
-//! Where [`SessionModel`](crate::model::SessionModel) folds one agent's
+//! Where [`SessionModel`] folds one agent's
 //! `AgentEvent` log, [`WorkspaceModel`] folds the multi-agent [`Inbound`]
 //! stream: it keeps one `SessionModel` per agent (so per-agent purity is
 //! untouched) and layers cross-agent read-models on top — the file ledger, the

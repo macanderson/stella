@@ -59,7 +59,7 @@ impl HookRunner for ShellHookRunner {
         // Cancellation backstop: a dropped future (the session ending mid-hook)
         // must not leave the setsid'd group running.
         #[cfg(unix)]
-        let mut guard = crate::exec::GroupKillGuard { pid, armed: true };
+        let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         // Feed the payload on a DETACHED task and let the timeout-bounded
         // `wait_with_output` below drain stdout concurrently. Writing inline
@@ -91,14 +91,9 @@ impl HookRunner for ShellHookRunner {
             Err(_) => {
                 #[cfg(unix)]
                 {
-                    guard.armed = false;
-                    // Guard on a real pid: kill(-0, …) would SIGKILL Stella's
-                    // OWN process group.
-                    if pid > 0 {
-                        unsafe {
-                            libc::kill(-pid, libc::SIGKILL);
-                        }
-                    }
+                    // Disarms and SIGKILLs the group in one step, guarding on
+                    // a real pid: kill(-0, …) would hit Stella's OWN group.
+                    guard.kill_now();
                 }
                 Err(HookExecError::TimedOut {
                     command: action.command.clone(),
@@ -114,7 +109,7 @@ impl HookRunner for ShellHookRunner {
             Ok(Ok(output)) => {
                 #[cfg(unix)]
                 {
-                    guard.armed = false;
+                    guard.disarm();
                 }
                 Ok(HookExecResult {
                     exit_code: output.status.code().unwrap_or(-1),

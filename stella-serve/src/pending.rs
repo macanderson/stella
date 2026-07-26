@@ -14,6 +14,7 @@
 //! is the fleet's `!Send`-future bridge pattern (`stella-cli::fleet_cmd`).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use stella_protocol::{CompletionResult, ProviderError, ToolOutput};
@@ -35,6 +36,11 @@ enum PendingReply {
 #[derive(Clone, Default)]
 pub struct Pending {
     inner: Arc<Mutex<HashMap<String, PendingReply>>>,
+    /// Latched by [`Pending::cancel`]. The registry is the natural home for the
+    /// turn's cancel flag: it is already the shared, `Send`, cloneable handle
+    /// that both the HTTP side and the engine thread hold, and cancellation
+    /// means exactly "stop waiting on reverse requests".
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Pending {
@@ -75,6 +81,41 @@ impl Pending {
     /// session is torn down or its host disconnects.
     pub(crate) fn clear(&self) {
         self.lock().clear();
+    }
+
+    /// Cancel the turn: latch the flag, then drop every in-flight request so any
+    /// parked engine step wakes at once.
+    ///
+    /// The latch is what makes cancellation stick. Dropping the senders alone
+    /// would only unblock the *current* step; the engine would then take the
+    /// resulting error as an ordinary failure and, for a tool, simply call the
+    /// model again — registering a fresh request that parks all over again. With
+    /// the flag set, [`Pending::is_cancelled`] lets each port refuse to park
+    /// again, so the turn unwinds to `ProviderError::Cancelled` (not retryable)
+    /// within one engine step.
+    ///
+    /// Ordering matters: latch *before* clearing, so a step woken by the clear
+    /// always observes the flag already set.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        self.clear();
+    }
+
+    /// Whether [`Pending::cancel`] has been called for this turn.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Drop the reply channel registered under `id` without resolving it, used
+    /// when a port gives up on a request (its deadline expired).
+    ///
+    /// Leaving the entry behind would let a host that answers late resolve a
+    /// one-shot nobody is listening to — a silent no-op the host reads as
+    /// success. Removing it means that late POST gets an honest
+    /// [`ServeError::UnknownRequest`] 409 instead.
+    pub(crate) fn abandon(&self, id: &str) {
+        self.lock().remove(id);
     }
 
     /// Take the tool reply channel registered under `id`, leaving a

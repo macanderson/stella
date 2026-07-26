@@ -3,7 +3,7 @@
 //! Agent responses are markdown-capable, so every `Text` transcript entry is
 //! parsed for common markdown constructs before rendering. Block-level syntax
 //! (headings, lists, fenced code, blockquotes, rules) is detected per-line;
-//! inline syntax (**bold**, *italic*, `code`, [links](url)) is parsed within
+//! inline syntax (**bold**, *italic*, `code`, \[links\](url)) is parsed within
 //! each line. The output is a vector of styled [`Line`]s that the transcript
 //! renderer and word-wrapper consume unchanged.
 

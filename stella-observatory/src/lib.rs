@@ -30,11 +30,13 @@
 //! the dashboard's project switcher. Unknown ids fall back to the serving
 //! workspace rather than erroring, so a stale dropdown never breaks the page.
 
+mod accept;
 mod codegraph;
 mod db;
 mod fsview;
 mod global;
 
+use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -272,8 +274,32 @@ pub async fn serve(
         .map_err(|source| ServeError::Bind { port, source })?;
     let addr = listener.local_addr().map_err(ServeError::Accept)?;
     on_ready(addr);
+    let mut backoff = AcceptBackoff::new();
     loop {
-        let (stream, _) = listener.accept().await?;
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => {
+                backoff.succeeded();
+                stream
+            }
+            Err(err) => match accept::classify(&err) {
+                // A dead pending connection or an interrupted syscall: the
+                // listener is fine, and this cannot spin (see `accept`).
+                AcceptAction::Retry => {
+                    backoff.succeeded();
+                    continue;
+                }
+                // Exhaustion, or a condition `io::ErrorKind` cannot name. Sleep
+                // so it cannot busy-loop, and give up if it never clears.
+                AcceptAction::Backoff => match backoff.next_delay() {
+                    Some(delay) => {
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    None => return Err(ServeError::Accept(err)),
+                },
+                AcceptAction::Fatal => return Err(ServeError::Accept(err)),
+            },
+        };
         let root = workspace_root.clone();
         tokio::spawn(async move {
             // Per-connection errors (bad request line, client hangup) only

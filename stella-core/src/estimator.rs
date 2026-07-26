@@ -183,8 +183,8 @@ impl Calibration {
     }
 
     /// The correction factor to multiply a raw estimate by: exactly 1.0
-    /// below [`CALIBRATION_MIN_SAMPLES`], otherwise the EWMA ratio clamped
-    /// to [[`CALIBRATION_MIN_FACTOR`], [`CALIBRATION_MAX_FACTOR`]] — see the
+    /// below `CALIBRATION_MIN_SAMPLES`, otherwise the EWMA ratio clamped
+    /// to \[`CALIBRATION_MIN_FACTOR`, `CALIBRATION_MAX_FACTOR`\] — see the
     /// bounds' doc for why that keeps the safe over-estimate direction.
     pub fn factor(&self) -> f64 {
         if self.samples < CALIBRATION_MIN_SAMPLES {

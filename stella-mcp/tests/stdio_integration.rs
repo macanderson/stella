@@ -305,6 +305,81 @@ async fn server_death_mid_call_errors_naming_it() {
     set.close_all().await;
 }
 
+/// #638: a server that starts and then dies must hand the operator its own
+/// explanation. Before this, `stderr` went to `Stdio::null()` and all that came
+/// back was "closed the connection before responding" — true, and useless.
+#[tokio::test]
+async fn a_dead_server_surfaces_its_stderr_tail_in_the_error() {
+    // Logs a fatal line to stderr on startup and before every response, then
+    // dies before answering the first `tools/call` (initialize + tools/list are
+    // served, so the connect itself succeeds).
+    let cfg = stdio_config(
+        "diesrv",
+        &[
+            "--stderr",
+            "fatal: DATABASE_URL is unset",
+            "--die-after",
+            "2",
+        ],
+        BTreeMap::new(),
+    );
+    let set = McpToolSet::connect(std::slice::from_ref(&cfg), Duration::from_secs(5))
+        .await
+        .with_call_timeout(Duration::from_secs(2));
+    assert_eq!(set.connected_count(), 1);
+
+    let out = stella_core::ports::ToolExecutor::execute(
+        &set,
+        "mcp__diesrv__echo",
+        &serde_json::json!({}),
+    )
+    .await;
+    match out {
+        ToolOutput::Error { message } => {
+            assert!(message.contains("diesrv"), "names the server: {message}");
+            assert!(
+                message.contains("fatal: DATABASE_URL is unset"),
+                "the operator is told WHY the server died: {message}"
+            );
+        }
+        other => panic!("expected an error carrying the stderr tail, got {other:?}"),
+    }
+    set.close_all().await;
+}
+
+/// The other half of the contract: capturing stderr must not let it near the
+/// JSON-RPC parser. This server writes a log line before *every* response, so
+/// every framed reply is interleaved with stderr traffic, and the round-trip
+/// must be untouched.
+#[tokio::test]
+async fn a_chatty_stderr_never_corrupts_the_json_rpc_stream() {
+    let cfg = stdio_config(
+        "noisy",
+        &["--stderr", "[info] handling request"],
+        BTreeMap::new(),
+    );
+    let client = McpClient::connect(&cfg, Duration::from_secs(5))
+        .await
+        .expect("stderr noise must not break the handshake");
+    assert!(client.tools().iter().any(|t| t.name == "echo"));
+
+    let out = client
+        .call_tool("echo", serde_json::json!({ "x": 1 }))
+        .await
+        .expect("stderr noise must not break a call");
+    match out {
+        ToolOutput::Ok { content } => {
+            assert!(content.contains("echo:"), "got {content}");
+            assert!(
+                !content.contains("[info] handling request"),
+                "stderr must never reach the JSON-RPC stream: {content}"
+            );
+        }
+        other => panic!("expected Ok, got {other:?}"),
+    }
+    client.close().await.unwrap();
+}
+
 #[tokio::test]
 async fn a_failed_server_does_not_block_a_healthy_one() {
     // One server whose command cannot be spawned, and one healthy fixture.

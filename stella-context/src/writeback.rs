@@ -14,9 +14,9 @@ use sha2::{Digest, Sha256};
 
 use crate::error::ContextError;
 use crate::store::{
-    ContextStore, NodeInput, NodeKind, close_edge, currently_valid_edge, edges_as_of,
-    embedding_exists, insert_edge, insert_episode, insert_memory, node_by_id, sha256_hex,
-    store_embedding, tag_edge_domains, tag_node_domains, to_hex, upsert_domain, upsert_node,
+    ContextStore, NodeInput, NodeKind, close_edge, edges_as_of, embedding_exists, insert_edge,
+    insert_episode, insert_memory, node_by_id, sha256_hex, store_embedding, tag_edge_domains,
+    tag_node_domains, to_hex, upsert_domain, upsert_node,
 };
 
 /// How an episode turned out. Stored as its `as_str` form.
@@ -389,8 +389,10 @@ pub struct UpsertReceipt {
     /// Fact edges inserted. Re-asserting a `(subject, predicate, object)` that
     /// is already believed inserts nothing and is not counted.
     pub facts_asserted: usize,
-    /// Prior beliefs closed by a single-valued correction. They are closed and
-    /// linked with `SUPERSEDES`, never deleted (`L-C3`).
+    /// Prior beliefs closed by a single-valued correction — **all** of the
+    /// live ones, so a correction over two coexisting beliefs counts 2
+    /// (#617). They are closed and linked with `SUPERSEDES`, never deleted
+    /// (`L-C3`).
     pub facts_superseded: usize,
     /// Vectors the embedder produced this batch — content with no vector yet
     /// under the active fingerprint.
@@ -598,9 +600,41 @@ impl ContextStore {
     }
 }
 
-/// Insert a fact edge, superseding a prior single-valued belief if the object
-/// changed. Idempotent when the same `(subject, predicate, object)` is
-/// re-asserted.
+/// Every currently-believed edge with this subject and relation, newest
+/// first, as `(edge_id, dst_id)`.
+///
+/// **All** of them, not just the newest (#617). This used to be
+/// `currently_valid_edge`, an `ORDER BY id DESC LIMIT 1` in
+/// [`crate::store`]: a single-valued assert closed the newest belief and left
+/// every older live one open, so the store kept answering with two
+/// simultaneous beliefs for a fact that is single-valued by definition, and
+/// `facts_superseded` under-counted what the assert had actually replaced.
+/// Two live edges arise the ordinary way — the same predicate asserted
+/// multivalued (which is allowed to coexist) and later corrected as
+/// single-valued.
+fn live_edges(
+    conn: &rusqlite::Connection,
+    src: i64,
+    rel: &str,
+) -> Result<Vec<(i64, i64)>, ContextError> {
+    let mut statement = conn.prepare(
+        "SELECT id, dst_id FROM edge
+         WHERE src_id = ?1 AND rel = ?2 AND superseded_at IS NULL
+         ORDER BY id DESC",
+    )?;
+    let rows = statement.query_map(rusqlite::params![src, rel], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    let mut edges = Vec::new();
+    for row in rows {
+        edges.push(row?);
+    }
+    Ok(edges)
+}
+
+/// Insert a fact edge, superseding **every** prior single-valued belief when
+/// the object changed. Idempotent when the same `(subject, predicate,
+/// object)` is re-asserted and it is the only live belief.
 fn apply_fact(
     tx: &rusqlite::Connection,
     fact: &FactAssertion,
@@ -630,32 +664,12 @@ fn apply_fact(
         return Ok(());
     }
 
-    // Single-valued: find the current belief for (subject, predicate).
-    match currently_valid_edge(tx, src, &fact.predicate)? {
-        Some((_, existing_dst)) if existing_dst == dst => {
-            // Same object → idempotent no-op; the belief already holds.
-        }
-        Some((existing_edge, _)) => {
-            // Object changed → close the old interval, link SUPERSEDES.
-            let valid_to = fact.valid_from.as_deref().unwrap_or(now);
-            close_edge(tx, existing_edge, now, valid_to)?;
-            let edge_id = insert_edge(
-                tx,
-                &fact.predicate,
-                src,
-                dst,
-                fact.weight,
-                &fact.properties,
-                fact.valid_from.as_deref(),
-                fact.valid_to.as_deref(),
-                now,
-                Some(existing_edge),
-            )?;
-            receipt.domain_tags_added += tag_edge_domains(tx, edge_id, &fact.domains, now)?;
-            receipt.facts_superseded += 1;
-            receipt.facts_asserted += 1;
-        }
-        None => {
+    // Single-valued: every currently-believed edge for (subject, predicate).
+    let live = live_edges(tx, src, &fact.predicate)?;
+    match live.as_slice() {
+        // The belief already holds, and holds alone → idempotent no-op.
+        [(_, existing_dst)] if *existing_dst == dst => {}
+        [] => {
             let edge_id = insert_edge(
                 tx,
                 &fact.predicate,
@@ -669,6 +683,38 @@ fn apply_fact(
                 None,
             )?;
             receipt.domain_tags_added += tag_edge_domains(tx, edge_id, &fact.domains, now)?;
+            receipt.facts_asserted += 1;
+        }
+        _ => {
+            // A correction. Close EVERY live interval, not just the newest:
+            // "single-valued" is the claim that at most one belief holds, and
+            // leaving an older one open is the state that claim forbids
+            // (#617). The newest becomes the new edge's `supersedes` link —
+            // that column names one predecessor, and the newest is the belief
+            // this assertion is actually correcting; the rest are closed with
+            // the same transaction time, so a bi-temporal query at any earlier
+            // instant still sees exactly what was believed then (`L-C3`).
+            let valid_to = fact.valid_from.as_deref().unwrap_or(now);
+            for (edge, _) in &live {
+                close_edge(tx, *edge, now, valid_to)?;
+            }
+            let newest = live[0].0;
+            let edge_id = insert_edge(
+                tx,
+                &fact.predicate,
+                src,
+                dst,
+                fact.weight,
+                &fact.properties,
+                fact.valid_from.as_deref(),
+                fact.valid_to.as_deref(),
+                now,
+                Some(newest),
+            )?;
+            receipt.domain_tags_added += tag_edge_domains(tx, edge_id, &fact.domains, now)?;
+            // One per belief actually closed. The old code always added 1,
+            // which under-reported a correction that replaced several.
+            receipt.facts_superseded += live.len();
             receipt.facts_asserted += 1;
         }
     }
@@ -752,6 +798,63 @@ mod tests {
         assert_eq!(then.len(), 1, "exactly one belief held at T1");
         assert_eq!(then[0].object, "make");
         assert_eq!(then[0].subject, "build system");
+    }
+
+    /// #617: a single-valued assert closes **every** live belief for its
+    /// `(subject, predicate)`, not just the newest.
+    ///
+    /// Two live edges are reachable the ordinary way — the same predicate
+    /// asserted multivalued, which is allowed to coexist, and later corrected
+    /// as single-valued. Against the old `ORDER BY id DESC LIMIT 1` lookup
+    /// this closed one of the two and left the store believing "the build
+    /// system IS make" *and* "the build system IS buck2" simultaneously, with
+    /// `facts_superseded` reporting 1 for a correction that replaced two.
+    #[tokio::test]
+    async fn a_single_valued_assert_closes_every_live_belief() {
+        let clock = FixedClock::shared(1_000);
+        let (_dir, store) = store_at(clock.clone());
+        for object in ["make", "bazel"] {
+            let mut fact = FactAssertion::new(
+                NodeInput::new(NodeKind::Concept, "build system"),
+                "IS",
+                NodeInput::new(NodeKind::Concept, object),
+            );
+            fact.multivalued = true;
+            store
+                .upsert(ContextDelta::new().with_fact(fact))
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            store.facts_as_of(None).unwrap().len(),
+            2,
+            "the fixture needs two coexisting live beliefs"
+        );
+        let before_correction = store.clock().now_rfc3339();
+
+        clock.advance(1_000);
+        let receipt = store
+            .upsert(ContextDelta::new().with_fact(FactAssertion::new(
+                NodeInput::new(NodeKind::Concept, "build system"),
+                "IS",
+                NodeInput::new(NodeKind::Concept, "buck2"),
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(receipt.facts_superseded, 2, "both beliefs were replaced");
+        assert_eq!(receipt.facts_asserted, 1);
+        let live = store.facts_as_of(None).unwrap();
+        assert_eq!(
+            live.len(),
+            1,
+            "a single-valued fact must leave exactly one live belief, got {live:?}"
+        );
+        assert_eq!(live[0].object, "buck2");
+
+        // L-C3: closing them is not deleting them.
+        let then = store.facts_as_of(Some(&before_correction)).unwrap();
+        assert_eq!(then.len(), 2, "history survives the correction");
     }
 
     #[tokio::test]

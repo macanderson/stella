@@ -9,7 +9,7 @@
 //! on the docs side) caught after the fact.
 //!
 //! This module is the fix. Every built-in — plus the six the CLI layers on
-//! top — is declared exactly once in the [`catalog!`] invocation below, with
+//! top — is declared exactly once in the `catalog!` invocation below, with
 //! its read-only flag and what has to be true for it to register. Everything
 //! that used to be duplicated is now derived from it:
 //!

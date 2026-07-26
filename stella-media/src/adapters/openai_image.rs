@@ -5,7 +5,7 @@
 //!
 //! Same `OPENAI_API_KEY` bearer-auth and `api.openai.com/v1` base-URL
 //! convention as `stella-model::openai`. Error classification routes through
-//! the shared [`crate::http`] policy.
+//! the shared `crate::http` policy.
 
 use async_trait::async_trait;
 use base64::Engine as _;

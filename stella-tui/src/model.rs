@@ -13,9 +13,9 @@
 //! leaving torn state — L-T7).
 //!
 //! Styling is deliberately *not* stored here: entries are semantic records,
-//! and [`crate::render`] converts them to styled `ratatui` lines as a pure
+//! and [`fn@crate::render`] converts them to styled `ratatui` lines as a pure
 //! function of the model. Determinism therefore extends all the way to the
-//! backing cell buffer (the replay-determinism test in [`crate::render`]).
+//! backing cell buffer (the replay-determinism test in [`mod@crate::render`]).
 
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
@@ -50,7 +50,7 @@ const _: () =
 /// Every field is a pure function of the sequence of events applied so far;
 /// two `SessionModel`s that have seen the same event vector are identical
 /// (the L-T1 replay-determinism guarantee, exercised by tests here and in
-/// [`crate::render`]).
+/// [`mod@crate::render`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionModel {
     /// The scrollback transcript, oldest first. Streaming `Text`/`Reasoning`
@@ -83,7 +83,7 @@ pub struct SessionModel {
     /// step's authoritative `Text` event lands — which also folds retries
     /// away, since a retried attempt re-streams its deltas from the start —
     /// and dropped on `Error`/`Complete`/a new prompt. Middle-out capped at
-    /// [`OUTPUT_BUDGET`] so an unbounded stream can't grow per-frame render
+    /// `OUTPUT_BUDGET` so an unbounded stream can't grow per-frame render
     /// cost; the authoritative `Text` entry is never capped by this.
     pub streaming_text: String,
 }
@@ -102,11 +102,11 @@ pub struct AskUserPrompt {
 }
 
 /// One semantic entry in the transcript. Rendering (colour, borders, glyphs)
-/// is applied by [`crate::render`]; this type carries only content.
+/// is applied by [`fn@crate::render`]; this type carries only content.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TranscriptEntry {
     /// Stands in for entries dropped by the retention cap
-    /// ([`MAX_TRANSCRIPT_ENTRIES`]) — always the first entry when present.
+    /// (`MAX_TRANSCRIPT_ENTRIES`) — always the first entry when present.
     /// `count` is cumulative across eviction passes (a pass that drains an
     /// earlier marker absorbs its count), so the retained window stays a pure
     /// function of the event sequence and the monotonically growing count
@@ -145,7 +145,7 @@ pub enum TranscriptEntry {
         name: String,
         ok: bool,
         summary: String,
-        /// The output, capped at [`OUTPUT_BUDGET`] chars — the collapsed row
+        /// The output, capped at `OUTPUT_BUDGET` chars — the collapsed row
         /// shows one line; ctrl+o reveals this.
         full: String,
         duration_ms: u64,

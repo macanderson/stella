@@ -970,7 +970,7 @@ impl Tool for WebDownload {
         // still needed for the report below.
         let bytes = std::mem::take(&mut fetched.bytes);
         let byte_count = bytes.len();
-        if let Err(e) = crate::atomic_write::replace_file_atomically(full.clone(), bytes).await {
+        if let Err(e) = crate::durable_write::write_file_durably(full.clone(), bytes).await {
             return ToolOutput::Error {
                 message: format!("cannot write {}: {e}", full.display()),
             };

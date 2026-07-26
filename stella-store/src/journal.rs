@@ -334,7 +334,7 @@ fn write_snapshot<T: Serialize + ?Sized>(dir: &Path, name: &str, value: &T) -> R
     let json = serde_json::to_string(value)
         .map_err(|e| StoreError(format!("cannot serialize {name}: {e}")))?;
     let path = dir.join(name);
-    crate::write_private_atomic(&path, json.as_bytes(), true)
+    crate::private::write_private_atomic(&path, json.as_bytes())
 }
 
 /// Scan a journal for the prompts an interruption cut short: every

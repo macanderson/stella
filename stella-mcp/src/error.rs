@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::client::MAX_TOOL_RESULT_BYTES;
+use crate::client::ingest::MAX_TOOL_RESULT_BYTES;
 use crate::http::truncate_middle_out;
 
 /// Everything that can go wrong talking to an MCP server.
@@ -77,7 +77,7 @@ impl McpError {
     /// which a JSON-RPC *error* response never reaches — the request fails
     /// before it, so the cap there bounds only the `isError: true` content
     /// route. This is the seam that covers the rest, at the same
-    /// [`MAX_TOOL_RESULT_BYTES`] budget and with the same middle-out elision
+    /// `MAX_TOOL_RESULT_BYTES` budget and with the same middle-out elision
     /// marker, so a server cannot evict the conversation by answering
     /// `tools/call` with a gigabyte-long error message instead of a
     /// gigabyte-long result. An under-budget message is returned verbatim.

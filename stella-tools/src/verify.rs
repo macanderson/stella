@@ -18,6 +18,22 @@
 //! the witness. The shadow worktree is removed afterward, success or
 //! failure.
 //!
+//! # Cancellation
+//!
+//! "Success or failure" used to exclude a third outcome: the future being
+//! dropped (Ctrl-C, Esc, a session timeout, a caller `select!`). That skipped
+//! `cleanup_shadow` entirely and stranded both a `/tmp` directory and a
+//! `.git/worktrees` registration that no later run removed (#613). The
+//! teardown is now split along the one line that matters — whether the
+//! syscall is synchronous:
+//!
+//! - the `/tmp` directory is removed by `ShadowDirGuard`, a synchronous
+//!   `Drop` guard, which is the only kind that still runs during runtime
+//!   shutdown;
+//! - the git registration is reclaimed by a `git worktree prune` at the start
+//!   of the *next* `verify_done`, because removing it requires an awaited
+//!   subprocess.
+//!
 //! # Reading the verdict
 //!
 //! The shadow run's output tail is always included: a shadow failure that
@@ -86,6 +102,38 @@ async fn cleanup_shadow(root: &std::path::Path, shadow: &std::path::Path) {
         .await;
     let _ = tokio::fs::remove_dir_all(shadow).await;
     let _ = git_in(root).args(["worktree", "prune"]).output().await;
+}
+
+/// Drop half of the cancellation fix (#613): removes the shadow worktree's
+/// `/tmp` **directory** synchronously.
+///
+/// [`cleanup_shadow`] cannot be an RAII guard — it awaits three git
+/// subprocesses and `tokio::fs::remove_dir_all`, and `Drop` cannot await.
+/// Spawning it from `Drop` is worse than useless: during runtime shutdown, the
+/// exact case a cancelled `verify_done` is in, the spawn silently does nothing.
+/// So the teardown is split by what each half needs:
+///
+/// - the directory goes here, because `std::fs::remove_dir_all` is one
+///   synchronous syscall that needs no runtime;
+/// - the `.git/worktrees/<name>` **registration** cannot, so it is reclaimed
+///   by the `git worktree prune` that every `verify_done` now runs at start
+///   (cheap, idempotent, and it also clears registrations stranded by earlier
+///   releases).
+///
+/// Idempotent with `cleanup_shadow`: on every non-cancelled path the directory
+/// is already gone by the time this drops and `remove_dir_all` is a no-op on a
+/// missing path, so the guard stays armed rather than carrying a flag that a
+/// future early-return could forget to set.
+struct ShadowDirGuard {
+    shadow: std::path::PathBuf,
+}
+
+impl Drop for ShadowDirGuard {
+    fn drop(&mut self) {
+        // Blocking, but bounded: a shadow worktree is a checkout of HEAD in
+        // `std::env::temp_dir()`, and this only runs on the cancellation path.
+        let _ = std::fs::remove_dir_all(&self.shadow);
+    }
 }
 
 #[async_trait]
@@ -211,6 +259,18 @@ impl Tool for VerifyDone {
             }
         };
 
+        // Prune-on-start (#613): reclaim `.git/worktrees` registrations left
+        // by a PREVIOUS run whose future was dropped. Such a run could only
+        // remove its `/tmp` directory synchronously ([`ShadowDirGuard`]);
+        // unregistering needs an awaited git call, which a `Drop` cannot make.
+        // It runs here — before either half, as soon as the repo is known to
+        // exist — so a NOT DONE or VACUOUS verdict, which never reaches
+        // `cleanup_shadow`, still collects the debris. `prune` drops only
+        // registrations whose directory is already gone, so it is cheap,
+        // idempotent, and can never disturb a live worktree (this run's or a
+        // concurrent one's).
+        let _ = git_in(root).args(["worktree", "prune"]).output().await;
+
         // Half 1: the new code must pass.
         let (new_exit, new_output) = match run(test_cmd, root, timeout_secs).await {
             Ok(pair) => pair,
@@ -258,6 +318,13 @@ impl Tool for VerifyDone {
                 };
             }
         }
+        // Armed the instant the directory exists. Everything below awaits —
+        // the file copies, and above all the shadow test run, which is where
+        // a cancelled turn actually lands — and none of it is reached when
+        // this future is dropped.
+        let _shadow_dir = ShadowDirGuard {
+            shadow: shadow.clone(),
+        };
 
         // Layer ONLY the test files onto the previous version.
         for (rel, src, relpath) in &resolved {
@@ -466,6 +533,191 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Count the live `.git/worktrees/*` registrations in a repo.
+    fn registrations(root: &std::path::Path) -> usize {
+        std::fs::read_dir(root.join(".git").join("worktrees"))
+            .map(|entries| entries.flatten().count())
+            .unwrap_or(0)
+    }
+
+    /// #613, drop half: the synchronous `Drop` guard removes the shadow's
+    /// `/tmp` directory with no runtime, no `await`, and no spawn — the only
+    /// shape that still works while the runtime is shutting down.
+    #[test]
+    fn the_shadow_dir_guard_removes_the_directory_synchronously_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let shadow = dir.path().join("shadow");
+        std::fs::create_dir_all(shadow.join("nested")).unwrap();
+        std::fs::write(shadow.join("nested").join("f"), b"x").unwrap();
+
+        let guard = ShadowDirGuard {
+            shadow: shadow.clone(),
+        };
+        assert!(shadow.exists());
+        drop(guard);
+        assert!(!shadow.exists(), "the guard must remove the shadow tree");
+
+        // Idempotent with `cleanup_shadow` having already run: a second drop
+        // over a missing path is a no-op, not an error.
+        drop(ShadowDirGuard { shadow });
+    }
+
+    /// #613, prune half: the `/tmp` directory the drop guard removes leaves a
+    /// `.git/worktrees/<name>` registration behind, because unregistering it
+    /// needs an awaited git call. The next `verify_done` collects it.
+    ///
+    /// The stranded state is produced directly — add a worktree, then delete
+    /// its directory the way the sync guard does — because racing a real
+    /// cancellation into the window between `worktree add` and cleanup is
+    /// racy by construction.
+    ///
+    /// The verdict is deliberately **NOT DONE**: that path returns before any
+    /// worktree is created and therefore never reaches `cleanup_shadow`,
+    /// whose trailing `prune` would otherwise make this pass vacuously. The
+    /// reclamation has to come from the prune at *start*.
+    #[tokio::test]
+    async fn a_stranded_worktree_registration_is_pruned_on_the_next_start() {
+        let root = scaffold("prune").await;
+        let stranded = std::env::temp_dir().join(format!(
+            "stella_verify_stranded_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let out = git_in(&root)
+            .args(["worktree", "add", "--detach"])
+            .arg(&stranded)
+            .output()
+            .await
+            .unwrap();
+        assert!(out.status.success(), "fixture worktree add failed");
+        // What the synchronous drop guard can do, and all it can do.
+        std::fs::remove_dir_all(&stranded).unwrap();
+        assert_eq!(
+            registrations(&root),
+            1,
+            "the fixture must leave exactly the stranded registration"
+        );
+
+        std::fs::write(root.join("witness.sh"), "grep -q 'nonexistent' impl.txt\n").unwrap();
+        let input = serde_json::json!({
+            "test_cmd": "bash witness.sh",
+            "test_files": ["witness.sh"],
+            "timeout_secs": 60
+        });
+        match VerifyDone.execute(&input, &root).await {
+            ToolOutput::Error { message } => assert!(message.contains("NOT DONE"), "{message}"),
+            other => panic!("expected NOT DONE, got {other:?}"),
+        }
+        assert_eq!(
+            registrations(&root),
+            0,
+            "verify_done must prune the stranded registration on start"
+        );
+
+        // Idempotent: a second run over an already-clean repo prunes nothing
+        // and reaches the same verdict.
+        assert!(VerifyDone.execute(&input, &root).await.is_error());
+        assert_eq!(registrations(&root), 0);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// #613, end to end: dropping the `verify_done` future while the shadow
+    /// run is in flight must not leave the shadow directory behind. The
+    /// witness script branches on whether `.git` is a directory — true in the
+    /// real workspace, false in a linked worktree, where it is a file — so
+    /// only the *shadow* half hangs, after announcing itself through a marker
+    /// file in the real root. Waiting on that marker (rather than on the
+    /// worktree appearing) is what makes the cancellation land inside the
+    /// shadow run every time instead of racing `git worktree add`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_cancelled_verify_done_removes_its_shadow_directory() {
+        use std::time::Duration;
+
+        let root = scaffold("cancelled").await;
+        let started = root.join("shadow-started");
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        std::fs::write(
+            root.join("witness.sh"),
+            format!(
+                "if [ -d .git ]; then grep -q 'new behavior' impl.txt; else touch '{}'; sleep \
+                 300; fi\n",
+                started.display()
+            ),
+        )
+        .unwrap();
+
+        let run_root = root.clone();
+        let handle = tokio::spawn(async move {
+            VerifyDone
+                .execute(
+                    &serde_json::json!({
+                        "test_cmd": "bash witness.sh",
+                        "test_files": ["witness.sh"],
+                        "timeout_secs": 600
+                    }),
+                    &run_root,
+                )
+                .await
+        });
+
+        for _ in 0..500 {
+            if started.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(started.exists(), "the shadow run never started");
+
+        // The shadow's path, read out of THIS repo's registration — sibling
+        // tests share the `/tmp` `stella_verify_<pid>_` prefix, so scanning
+        // the temp dir would pick up their worktrees too.
+        let shadow = std::fs::read_dir(root.join(".git").join("worktrees"))
+            .ok()
+            .and_then(|entries| {
+                entries.flatten().find_map(|entry| {
+                    let gitdir = std::fs::read_to_string(entry.path().join("gitdir")).ok()?;
+                    // `<shadow>/.git` → `<shadow>`.
+                    Some(
+                        std::path::PathBuf::from(gitdir.trim())
+                            .parent()?
+                            .to_path_buf(),
+                    )
+                })
+            })
+            .expect("a running shadow test implies a registered worktree");
+
+        handle.abort();
+        let _ = handle.await;
+
+        let mut gone = false;
+        for _ in 0..250 {
+            if !shadow.exists() {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            gone,
+            "a cancelled verify_done left the shadow worktree at {}",
+            shadow.display()
+        );
+
+        // And the registration the synchronous guard could not remove is
+        // collected by a prune — the other half of the fix, which every later
+        // `verify_done` runs at start.
+        assert_eq!(registrations(&root), 1);
+        let _ = git_in(&root).args(["worktree", "prune"]).output().await;
+        assert_eq!(registrations(&root), 0);
+
         std::fs::remove_dir_all(&root).ok();
     }
 

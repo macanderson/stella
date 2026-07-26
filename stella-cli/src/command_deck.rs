@@ -19,11 +19,11 @@
 //! its live event lane, an inbox notification, and (for task workers) the
 //! board task auto-completing. Prompts queue only past the worker cap, on a
 //! dispatch hold, or when they are slash commands (the lead's dispatcher owns
-//! those). The fleet layer now carries its own per-task control verbs
-//! (`Fleet::pause_task` / `resume_task` / `stop_task`, riding
-//! `stella_fleet::WorkerControls` through the `FleetWorker` port);
-//! surfacing `stella fleet` tasks as controllable deck lanes and
-//! fleet-worktree isolation for deck workers remain follow-ups on that seam.
+//! those). The fleet layer's per-task control verbs (`Fleet::pause_task` /
+//! `resume_task` / `stop_task`, riding `stella_fleet::WorkerControls` through
+//! the `FleetWorker` port) are driven by the `stella fleet` dashboard's
+//! `[p]`/`[r]`/`[x]` keys (#645); controllable *deck* lanes and fleet-worktree
+//! isolation for deck workers remain follow-ups on that seam.
 //!
 //! ## The three engine seams handled here
 //!
@@ -3897,7 +3897,7 @@ async fn run_deck_command(
 }
 
 /// One engine turn for the lead agent: the deck-mode analogue of
-/// [`agent::run_turn`] — same engine, same tool stack, same persistence —
+/// `agent::run_turn` — same engine, same tool stack, same persistence —
 /// with the stdout renderer replaced by [`spawn_forwarder`] and the tool
 /// stack wrapped in the [`FileChangeTap`].
 #[allow(clippy::too_many_arguments)]

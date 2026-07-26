@@ -60,7 +60,7 @@
 //! `key: value` parse this format needs (no YAML dependency), so it is reused
 //! rather than duplicated. The lexical mining helpers (`terms`/`jaccard`/
 //! `slugify`/`hash8`, clustering, representative selection) live once in
-//! [`crate::mining`], shared with the rules miner — they were briefly two
+//! `crate::mining`, shared with the rules miner — they were briefly two
 //! identical private copies, which is exactly the divergence trap the shared
 //! module closes.
 
@@ -483,10 +483,10 @@ const SKILL_BODY_TOKEN_BUDGET: u64 = 400;
 /// Total budget for the whole injected section — once exceeded, remaining
 /// skills are dropped with an explicit note.
 const SKILLS_SECTION_TOKEN_BUDGET: u64 = 1500;
-/// Appended to a body cut to fit [`SKILL_BODY_TOKEN_BUDGET`].
+/// Appended to a body cut to fit `SKILL_BODY_TOKEN_BUDGET`.
 const SKILL_BODY_TRUNCATION_MARKER: &str =
     "\n[skill body truncated to fit the context budget — open the skill file for the full text]";
-/// Appended when [`SKILLS_SECTION_TOKEN_BUDGET`] is hit and further skills are
+/// Appended when `SKILLS_SECTION_TOKEN_BUDGET` is hit and further skills are
 /// dropped.
 const SKILLS_SECTION_OMISSION_MARKER: &str =
     "\n[additional lower-ranked skills omitted to fit the context budget]\n";
@@ -514,9 +514,9 @@ fn truncate_to_tokens(text: &str, budget: u64) -> String {
 /// **volatile context message after the byte-stable system prefix** — never
 /// baked into the cached system block, so prompt-cache hits on the prefix are
 /// preserved ( L-E8). Each skill contributes its name,
-/// description, and body; bodies over [`SKILL_BODY_TOKEN_BUDGET`] are
+/// description, and body; bodies over `SKILL_BODY_TOKEN_BUDGET` are
 /// truncated with a marker, and once the running total exceeds
-/// [`SKILLS_SECTION_TOKEN_BUDGET`] the remaining (lower-ranked) skills are
+/// `SKILLS_SECTION_TOKEN_BUDGET` the remaining (lower-ranked) skills are
 /// dropped with a note. At least the top skill always renders. Empty input ⇒
 /// empty string (inject nothing).
 pub fn render_skills_section(selected: &[SelectedSkill]) -> String {

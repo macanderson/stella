@@ -640,7 +640,7 @@ impl Default for MineConfig {
 /// docs), so callers construct `RawObservation` directly. `memory_kind` is
 /// intentionally a loose `String` rather than a `MemoryRecord["memoryKind"]`
 /// enum for the same reason — only the literal value `"gotcha"` is
-/// inspected, by [`infer_guard`].
+/// inspected, by `infer_guard`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawObservation {
     pub text: String,

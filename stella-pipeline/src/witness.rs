@@ -498,6 +498,17 @@ fn changed_paths(before: &HashMap<String, String>, after: &HashMap<String, Strin
 }
 
 /// Whether a candidate-relative path has a supported witness-test shape.
+///
+/// Rust is the one language here with no filename-only form: cargo can only
+/// run an integration test from a `tests/` directory, so the `"rs"` arm
+/// requires `recognized_dir` outright. A bare `_test.` fallback accepted
+/// `src/backdoor_test.rs` as a witness artifact — after which
+/// [`validate_witness_invocation`]'s required `cargo test --test <stem>` can
+/// never pass, the flip never happens, the run burns its full revision
+/// budget, and a judge scoring the diff may still PASS, adopting the stray
+/// production file into the user's real tree. The other arms keep their
+/// filename forms because their runners genuinely collect by filename
+/// wherever the file sits (`pytest test_*.py`, `go test ./... _test.go`).
 pub fn is_witness_test_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let name = normalized.rsplit('/').next().unwrap_or(&normalized);
@@ -506,7 +517,7 @@ pub fn is_witness_test_path(path: &str) -> bool {
         .any(|part| matches!(part, "test" | "tests" | "__tests__" | "spec" | "specs"));
     let extension = name.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
     match extension {
-        "rs" => recognized_dir || name.contains("_test."),
+        "rs" => recognized_dir,
         "py" => recognized_dir || name.starts_with("test_") || name.contains("_test."),
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => {
             recognized_dir || name.contains(".test.") || name.contains(".spec.")
@@ -554,6 +565,9 @@ pub fn witness_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str
          Hard requirements:\n\
          - Create ONE NEW test file. Never modify existing files, and never touch \
          production code — the implementation is someone else's job.\n\
+         - Put it where the language's runner collects it. Rust integration tests MUST \
+         live in `tests/` (cargo cannot run a test file under `src/`); Python, Vitest, Go \
+         and .NET may use their filename conventions.\n\
          - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
          behavior), not because of a typo, a missing import, or a harness error.\n\
          - Use `create_witness_test`; no general write, edit, process, network, or external \
@@ -628,54 +642,10 @@ pub fn parse_witness_command(text: &str) -> Option<String> {
     found
 }
 
-/// The witness watchlist: every untracked file the witness turn created or
-/// modified, as `path -> fingerprint` — present in `after` with no `before`
-/// entry or a different fingerprint. This *observed* delta is the tamper
-/// baseline; the author's own claims about which files it wrote are never
-/// trusted (a wrong claim would corrupt tamper detection, an observed delta
-/// cannot).
-///
-/// Superseded inside this crate by [`validate_witness_artifact`], which admits
-/// exactly one newly created test file rather than a whole delta; kept as
-/// public API for callers building their own witness acceptance.
-pub fn witness_watchlist(
-    before: &HashMap<String, String>,
-    after: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    after
-        .iter()
-        .filter(|(path, fp)| before.get(*path) != Some(*fp))
-        .map(|(path, fp)| (path.clone(), fp.clone()))
-        .collect()
-}
-
-/// Tamper check: which watchlisted witness files are no longer byte-identical
-/// (fingerprint changed) or gone (deleted / moved out of the untracked set)
-/// at verify time. Non-empty means the deterministic flip must NOT be
-/// credited — the candidate hard-fails before judge evaluation. Sorted for
-/// deterministic error text.
-///
-/// The pipeline itself enforces the strictly stronger
-/// [`witness_identity_matches`] check (bytes *plus* type, mode, and link
-/// count, read without following symlinks), which a fingerprint comparison
-/// alone cannot express; this remains public for callers whose repo status
-/// carries fingerprints only.
-pub fn tampered_paths(
-    watchlist: &HashMap<String, String>,
-    current: &HashMap<String, String>,
-) -> Vec<String> {
-    let mut tampered: Vec<String> = watchlist
-        .iter()
-        .filter(|(path, fp)| current.get(*path) != Some(*fp))
-        .map(|(path, _)| path.clone())
-        .collect();
-    tampered.sort();
-    tampered
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::ArtifactKind;
 
     fn fps(entries: &[(&str, &str)]) -> HashMap<String, String> {
         entries
@@ -798,23 +768,6 @@ mod tests {
                 "candidate escape must be rejected: {command}"
             );
         }
-    }
-
-    // witness_watchlist
-
-    #[test]
-    fn watchlist_is_created_and_modified_files_only() {
-        let before = fps(&[("stale.txt", "a"), ("edited_test.rs", "old")]);
-        let after = fps(&[
-            ("stale.txt", "a"),         // untouched pre-existing dirt
-            ("edited_test.rs", "new"),  // modified by the witness turn
-            ("tests/witness.rs", "w1"), // created by the witness turn
-        ]);
-        let list = witness_watchlist(&before, &after);
-        assert_eq!(list.len(), 2);
-        assert_eq!(list.get("tests/witness.rs"), Some(&"w1".to_string()));
-        assert_eq!(list.get("edited_test.rs"), Some(&"new".to_string()));
-        assert!(!list.contains_key("stale.txt"));
     }
 
     #[test]
@@ -997,36 +950,135 @@ mod tests {
             rust_prefix_backdoor.is_err(),
             "Rust test prefixes outside a recognized test directory are not integration tests"
         );
-    }
-
-    // tampered_paths
-
-    #[test]
-    fn untouched_watchlist_reports_no_tampering() {
-        let watch = fps(&[("tests/witness.rs", "w1")]);
-        let current = fps(&[("tests/witness.rs", "w1"), ("other.rs", "x")]);
-        assert!(tampered_paths(&watch, &current).is_empty());
-    }
-
-    #[test]
-    fn a_modified_witness_file_is_tampered() {
-        let watch = fps(&[("tests/witness.rs", "w1")]);
-        let current = fps(&[("tests/witness.rs", "w2")]);
-        assert_eq!(tampered_paths(&watch, &current), vec!["tests/witness.rs"]);
+        let rust_suffix_backdoor = validate_witness_artifact(
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &fps(&[("src/backdoor_test.rs", "payload")]),
+        );
+        assert!(
+            rust_suffix_backdoor.is_err(),
+            "cargo runs integration tests only from tests/, so a `_test.rs` under src/ \
+             is a production file the run would adopt, never a witness"
+        );
     }
 
     #[test]
-    fn a_deleted_witness_file_is_tampered() {
-        let watch = fps(&[("tests/witness.rs", "w1")]);
-        let current = HashMap::new();
-        assert_eq!(tampered_paths(&watch, &current), vec!["tests/witness.rs"]);
+    fn witness_test_path_shapes_per_language() {
+        for accepted in [
+            "tests/authority_witness.rs",
+            "crates/api/tests/witness.rs",
+            "tests/test_authority.py",
+            "test_authority.py",
+            "authority_test.py",
+            "src/__tests__/authority.ts",
+            "src/authority.test.ts",
+            "src/authority.spec.tsx",
+            "internal/authority_test.go",
+            "tests/Authority.Tests/AuthorityWitnessTests.cs",
+        ] {
+            assert!(
+                is_witness_test_path(accepted),
+                "{accepted} is a legitimate witness artifact"
+            );
+        }
+        for rejected in [
+            // Rust: cargo cannot run an integration test outside tests/, so a
+            // filename-only form is a production file, not a witness.
+            "src/backdoor_test.rs",
+            "src/test_backdoor.rs",
+            "src/lib.rs",
+            "README.md",
+            "tests/fixture.json",
+        ] {
+            assert!(
+                !is_witness_test_path(rejected),
+                "{rejected} must not be accepted as a witness artifact"
+            );
+        }
+    }
+
+    // witness_identity_matches — the tamper check the pipeline actually runs.
+    //
+    // These cases were inherited from the deleted `tampered_paths`, which
+    // compared fingerprints only and had no caller. The live check is strictly
+    // stronger (bytes *plus* type, mode and link count, read without following
+    // symlinks), so the last three cases below are ones a fingerprint
+    // comparison could not express at all.
+
+    fn identity(fingerprint: &str) -> ArtifactIdentity {
+        ArtifactIdentity {
+            fingerprint: fingerprint.to_string(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100_644,
+            link_count: 1,
+        }
     }
 
     #[test]
-    fn tampered_paths_are_sorted_for_deterministic_evidence() {
-        let watch = fps(&[("b.rs", "1"), ("a.rs", "1")]);
-        let current = HashMap::new();
-        assert_eq!(tampered_paths(&watch, &current), vec!["a.rs", "b.rs"]);
+    fn an_untouched_witness_artifact_is_not_tampered() {
+        let expected = identity("w1");
+        assert!(witness_identity_matches(&expected, Some(&expected.clone())));
+    }
+
+    #[test]
+    fn a_modified_witness_artifact_is_tampered() {
+        let expected = identity("w1");
+        assert!(!witness_identity_matches(&expected, Some(&identity("w2"))));
+    }
+
+    #[test]
+    fn a_deleted_witness_artifact_is_tampered() {
+        let expected = identity("w1");
+        assert!(
+            !witness_identity_matches(&expected, None),
+            "an artifact that no longer exists can never match"
+        );
+    }
+
+    #[test]
+    fn identical_bytes_with_a_changed_mode_are_tampered() {
+        let expected = identity("w1");
+        let chmodded = ArtifactIdentity {
+            mode: 0o100_755,
+            ..expected.clone()
+        };
+        assert!(
+            !witness_identity_matches(&expected, Some(&chmodded)),
+            "mode is part of the identity — a fingerprint comparison misses this"
+        );
+    }
+
+    #[test]
+    fn a_witness_artifact_that_gained_a_hard_link_is_tampered() {
+        let expected = identity("w1");
+        let linked = ArtifactIdentity {
+            link_count: 2,
+            ..expected.clone()
+        };
+        assert!(!witness_identity_matches(&expected, Some(&linked)));
+    }
+
+    #[test]
+    fn a_non_regular_expected_identity_never_matches_even_itself() {
+        // The accepted-at-authoring-time guard: a symlink or multi-link file
+        // was never a valid witness artifact, so re-observing it unchanged
+        // must still fail rather than credit the flip.
+        for kind in [ArtifactKind::Symlink, ArtifactKind::Other] {
+            let odd = ArtifactIdentity {
+                kind,
+                ..identity("w1")
+            };
+            assert!(
+                !witness_identity_matches(&odd, Some(&odd.clone())),
+                "{kind:?} is not an acceptable witness artifact"
+            );
+        }
+        let multi = ArtifactIdentity {
+            link_count: 2,
+            ..identity("w1")
+        };
+        assert!(!witness_identity_matches(&multi, Some(&multi.clone())));
     }
 
     // prompts

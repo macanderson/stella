@@ -3,15 +3,14 @@
 
 //! `stella-tools` — the built-in tool set the agent loop calls.
 //!
-//! Every tool implements [`Tool`], takes a JSON input from the model, and
-//! returns a [`ToolOutput`] (success or a typed, named error — never a bare
+//! Every tool implements [`registry::Tool`], takes a JSON input from the model, and
+//! returns a [`stella_protocol::ToolOutput`] (success or a typed, named error — never a bare
 //! string). Tools are workspace-root-pinned: file paths resolve against the
 //! configured root, and `cd` inside `bash` cannot silently diverge the root
 //! for subsequent file operations (L-S2).
 
 pub mod agent_use;
 pub mod apply_edits;
-pub mod atomic_write;
 pub mod bash;
 pub mod catalog;
 pub mod ci;
@@ -19,6 +18,7 @@ pub mod code_map;
 pub mod custom;
 pub mod delete;
 pub mod diagnostics;
+pub mod durable_write;
 pub mod edit;
 pub mod exec;
 pub mod exploration;

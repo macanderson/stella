@@ -209,7 +209,7 @@ pub fn classify_conversational(text: &str) -> bool {
 /// model choosing `chat` is fragile — the model that shipped this bug
 /// *recognized* `hi` was odd and forced a task class anyway:
 ///
-/// 1. **Deterministic** ([`is_bare_greeting`]): an unmistakable bare greeting
+/// 1. **Deterministic** (`is_bare_greeting`): an unmistakable bare greeting
 ///    (`hi`, `hello`, `thanks`, an empty submit) routes to chat with no model
 ///    opinion needed. EXACT whole-message match only — never prefix/substring
 ///    — so `hey, fix the login bug` can never be swallowed.
@@ -284,7 +284,7 @@ fn is_bare_greeting(goal: &str) -> bool {
 /// this module that may move assurance *down*. [`deterministic_floor`] may only
 /// ever add ceremony because its evidence is weak — keyword guesses about how
 /// big a task is. This may only ever remove ceremony, and only for the single
-/// shape where the evidence is not a guess at all: see [`is_pure_deletion`].
+/// shape where the evidence is not a guess at all: see `is_pure_deletion`.
 ///
 /// Everything else keeps the existing contract exactly — triage's explicit call
 /// if it made one, otherwise what the class implies.

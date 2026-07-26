@@ -80,7 +80,7 @@ impl Tool for WriteFile {
             }
         }
 
-        match crate::atomic_write::replace_file_atomically(
+        match crate::durable_write::write_file_durably(
             full_path.clone(),
             content.as_bytes().to_vec(),
         )

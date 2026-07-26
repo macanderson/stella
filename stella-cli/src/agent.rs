@@ -1456,7 +1456,7 @@ pub(crate) async fn connect_mcp_servers(
 
 /// Connect the workspace's MCP servers (.stella/mcp.toml), wrapping the
 /// native registry so their tools merge into the agent's set under
-/// mcp__<server>__<tool> names. Absent config -> None (zero overhead).
+/// `mcp__<server>__<tool>` names. Absent config -> None (zero overhead).
 /// Connection is best-effort per server (stella-mcp isolates failures);
 /// failed servers are reported once in text mode, never fatal. Deck mode
 /// stages [`load_mcp_plan`] / [`connect_mcp_servers`] itself instead: the

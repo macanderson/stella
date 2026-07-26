@@ -37,7 +37,7 @@
 //! Every other path to a subprocess — `build_project`/`run_tests`'s
 //! `command` override, `verify_done`'s `test_cmd` (which additionally runs
 //! in a shadow worktree under the temp dir, outside the workspace), the
-//! `run_script` index-composed line, `start_process` with a shell argv[0],
+//! `run_script` index-composed line, `start_process` with a shell `argv[0]`,
 //! the `repo_*`/`ci_status`/issue-tool `git` and `gh` invocations,
 //! [`crate::custom`]'s manifest tools, and [`crate::hook_runner`]'s hook
 //! actions — goes through [`crate::exec`] or its own spawn and runs

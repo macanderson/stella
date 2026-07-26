@@ -21,18 +21,23 @@
 //! counts real parse invocations, which the skip test asserts drops to zero on
 //! an unchanged second pass.
 //!
-//! Schema: `codegraph.db` carries **no version stamp**. Like `usage.db` (see
-//! `stella_store::usage`) and unlike `.stella/private/store.db`, it is
-//! versioned by *convergence*: every statement in [`MIGRATION`] is
-//! `CREATE … IF NOT EXISTS` and the whole batch replays on every writer
-//! [`open`], so an additive table or index reaches an existing store the next
-//! time it is opened. Adding a table or an index here is the migration. That is
-//! acceptable specifically because this file is a **cache**: it is fully
-//! rebuildable from the tree by `stella init`, so the worst outcome of a shape
-//! this crate cannot express is a stale index the user re-indexes. A table that
-//! ever needs a *reshape* (an altered or backfilled column, which the
-//! `IF NOT EXISTS` guard silently skips on an existing store) would need the
-//! versioned machinery introduced first.
+//! Schema: `codegraph.db` is versioned by *convergence* — every statement in
+//! [`MIGRATION`] is `CREATE … IF NOT EXISTS` and the whole batch replays on
+//! every writer [`open`], so an additive table or index reaches an existing
+//! store the next time it is opened. Adding a table or an index here is the
+//! migration. That is acceptable specifically because this file is a
+//! **cache**: it is fully rebuildable from the tree by `stella init`.
+//!
+//! It nevertheless carries a **stamp** ([`SCHEMA_VERSION`] in `PRAGMA
+//! user_version`, #617). Convergence cannot express a *reshape* — an altered
+//! or backfilled column, which the `IF NOT EXISTS` guard silently skips on an
+//! existing store — and without a version recorded on the file there is no
+//! way for a future stella to know which stores need one. The stamp costs one
+//! integer in the header and is the difference between "we can migrate this
+//! later" and "we can only ever tell the user to delete it". It also makes
+//! the downgrade case explicit: a `codegraph.db` written by a newer stella is
+//! refused with a message that says which side is out of date, rather than
+//! being written into by code that does not know its shape.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -51,6 +56,20 @@ use crate::parse::{Grammars, parse_file};
 use crate::storage::{self, FieldEntry, RelationEntry};
 use crate::symbol::SymbolKind;
 use crate::walk::walk_indexable;
+
+/// The on-disk schema version stamped in `PRAGMA user_version`. Bump it in
+/// the same commit that changes the shape [`MIGRATION`] produces.
+const SCHEMA_VERSION: i64 = 1;
+
+/// The tables [`MIGRATION`] must have produced before the version is stamped.
+/// A store missing one of these is not stamped — see
+/// [`stella_store::durable::ensure_converged_schema_version`].
+const SCHEMA_TABLES: &[&str] = &[
+    "code_graph_files",
+    "code_graph_symbols",
+    "code_graph_imports",
+    "code_graph_storage_objects",
+];
 
 /// DDL for the code graph's tables. `IF NOT EXISTS` throughout so opening an
 /// existing store (possibly a legacy file that already carries another
@@ -174,9 +193,22 @@ pub(crate) fn open_read(db_path: &Path) -> Result<Connection, GraphError> {
 
 /// [`open_read`] plus [`MIGRATION`] — the writer's open. Safe to call against a
 /// file that already holds another crate's tables.
+///
+/// The `user_version` stamp lives here rather than in [`open_read`] for two
+/// reasons: stamping is a write, and putting one on the read path would make
+/// the pre-write gate take a write lock on every proposed edit; and only the
+/// writer has just run [`MIGRATION`], which is what makes the store's shape
+/// provably match the version being stamped.
 pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = open_read(db_path)?;
     conn.execute_batch(MIGRATION)?;
+    stella_store::durable::ensure_converged_schema_version(
+        &conn,
+        "codegraph.db",
+        SCHEMA_VERSION,
+        SCHEMA_TABLES,
+    )
+    .map_err(|error| GraphError::Schema(error.to_string()))?;
     Ok(conn)
 }
 
@@ -909,6 +941,98 @@ mod tests {
             .unwrap();
         assert!(tables > 0, "open must migrate");
         assert!(storage_rows(&writer).unwrap().is_empty());
+    }
+
+    fn user_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("read user_version")
+    }
+
+    /// #617: the writer stamps, a reopen accepts the stamp it finds, and the
+    /// read path never writes one.
+    #[test]
+    fn the_writer_stamps_the_schema_version_and_the_reader_does_not() {
+        let dbdir = tempdir().unwrap();
+        let db = dbdir.path().join("codegraph.db");
+
+        let reader = open_read(&db).unwrap();
+        assert_eq!(user_version(&reader), 0, "the read path must not stamp");
+        drop(reader);
+
+        let writer = open(&db).unwrap();
+        assert_eq!(user_version(&writer), SCHEMA_VERSION);
+        drop(writer);
+
+        let reopened = open(&db).unwrap();
+        assert_eq!(user_version(&reopened), SCHEMA_VERSION, "stamp persists");
+    }
+
+    /// The in-the-field case the policy is written for: a `codegraph.db`
+    /// created before the stamp existed. Its rows must survive the upgrade —
+    /// stamped, never rebuilt.
+    #[test]
+    fn an_unstamped_store_in_the_field_is_stamped_not_rebuilt() {
+        let ws = tempdir().unwrap();
+        let dbdir = tempdir().unwrap();
+        let root = canon(&ws);
+        let db = dbdir.path().join("codegraph.db");
+        fs::write(root.join("x.py"), "def foo():\n    pass\n").unwrap();
+        let grammars = Grammars::load().unwrap();
+        let mut conn = open(&db).unwrap();
+        index_tree(&mut conn, &root, &grammars).unwrap();
+        let indexed: i64 = conn
+            .query_row("SELECT count(*) FROM code_graph_symbols", [], |r| r.get(0))
+            .unwrap();
+        assert!(indexed > 0, "the fixture must have indexed something");
+        // Rewind the header to what a pre-#617 store looks like on disk.
+        conn.pragma_update(None, "user_version", 0i64).unwrap();
+        drop(conn);
+
+        let reopened = open(&db).unwrap();
+
+        assert_eq!(user_version(&reopened), SCHEMA_VERSION);
+        let after: i64 = reopened
+            .query_row("SELECT count(*) FROM code_graph_symbols", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, indexed, "field rows must survive the stamp");
+    }
+
+    #[test]
+    fn a_store_from_a_newer_stella_is_refused() {
+        let dbdir = tempdir().unwrap();
+        let db = dbdir.path().join("codegraph.db");
+        let conn = open(&db).unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+            .unwrap();
+        drop(conn);
+
+        let error = open(&db).expect_err("a newer store must fail closed");
+        assert!(
+            matches!(&error, GraphError::Schema(message) if message.contains("codegraph.db")),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// The schema declares `REFERENCES … ON DELETE CASCADE` on three tables;
+    /// SQLite ignores every one of them unless the pragma is set per
+    /// connection. Pinned on both opens (#617).
+    #[test]
+    fn foreign_keys_are_enforced_on_both_opens() {
+        let dbdir = tempdir().unwrap();
+        let db = dbdir.path().join("codegraph.db");
+        for conn in [open(&db).unwrap(), open_read(&db).unwrap()] {
+            let on: i64 = conn
+                .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(on, 1, "foreign key enforcement must be on");
+        }
+        let conn = open(&db).unwrap();
+        let orphan = conn.execute(
+            "INSERT INTO code_graph_symbols (file_id, name, kind, start_line, end_line) \
+             VALUES (9999, 'x', 'function', 1, 1)",
+            [],
+        );
+        assert!(orphan.is_err(), "an orphan row must not be representable");
     }
 
     #[test]

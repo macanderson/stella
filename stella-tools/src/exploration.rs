@@ -33,7 +33,7 @@
 //! Records are plain JSON files, one per slice, so they are inspectable,
 //! diffable, and shareable through the filesystem with zero coordination —
 //! and each one is published by a synced temp-sibling rename
-//! ([`write_atomically`]), never truncated in place, because the reader
+//! (`write_atomically`), never truncated in place, because the reader
 //! skips a corrupt record silently.
 
 use std::collections::BTreeMap;
@@ -580,44 +580,31 @@ impl Tool for Explorations {
     }
 }
 
-/// Write `bytes` to `path` via a synced temp sibling and a rename, so a
-/// crash or a full disk can never publish a truncated record.
+/// Write `bytes` to `path` durably, through the workspace's one contract
+/// ([`stella_store::durable::write_atomic`], #617): a pid-tagged temp
+/// sibling, `fsync`, rename, `fsync` of the directory, and the temp removed
+/// on any failure.
 ///
 /// These files are cross-session shared state holding agent-authored prose
 /// that is not derivable from anything else, and the reader is deliberately
 /// tolerant of junk (a corrupt record is *skipped*, not reported), so a
-/// half-written file would make an exploration silently disappear. Same
-/// discipline — and the same rationale — as `stella-graph`'s manifest write.
-/// The temp name carries the pid because concurrent sessions saving the same
-/// slice is the exact scenario this store exists for, and it keeps the
-/// `.json` extension off the temp so the readers' extension filter skips it.
-async fn write_atomically(
-    dir: &std::path::Path,
-    slice: &str,
-    path: &std::path::Path,
-    bytes: &[u8],
-) -> Result<(), String> {
-    use tokio::io::AsyncWriteExt as _;
-
-    let tmp = dir.join(format!("{slice}.json.tmp.{}", std::process::id()));
-    let write = async {
-        let mut file = tokio::fs::File::create(&tmp).await?;
-        file.write_all(bytes).await?;
-        // The sync is what makes the rename's atomicity mean anything after
-        // a power loss: without it the rename can land while the bytes are
-        // still only in the page cache.
-        file.sync_all().await
-    }
-    .await;
-    if let Err(e) = write {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return Err(format!("could not write {}: {e}", tmp.display()));
-    }
-    if let Err(e) = tokio::fs::rename(&tmp, path).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return Err(format!("could not replace {}: {e}", path.display()));
-    }
-    Ok(())
+/// half-written file would make an exploration silently disappear. This was a
+/// hand-rolled copy of the same sequence missing the directory `fsync`. The
+/// temp keeps the `.json` extension off its tail, so the readers' extension
+/// filter skips it.
+///
+/// `spawn_blocking` because the shared helper is synchronous: it fsyncs a file
+/// and a directory, which has no async equivalent, and running it on a reactor
+/// thread would stall the runtime.
+async fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    let path = path.to_path_buf();
+    let bytes = bytes.to_vec();
+    tokio::task::spawn_blocking(move || {
+        stella_store::durable::write_atomic(&path, &bytes, stella_store::durable::MODE_SHARED)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("exploration write task failed: {e}"))?
 }
 
 /// Persist an exploration map for a slice.
@@ -734,7 +721,7 @@ impl Tool for SaveExploration {
                 };
             }
         };
-        if let Err(message) = write_atomically(&dir, slice, &path, json.as_bytes()).await {
+        if let Err(message) = write_atomically(&path, json.as_bytes()).await {
             return ToolOutput::Error { message };
         }
         let mut note = format!(

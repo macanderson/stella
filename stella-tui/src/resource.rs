@@ -8,7 +8,7 @@
 //! Backed by `sysinfo`. CPU usage is a diff over time: the first `sample()`
 //! call after construction reports 0% (there is no prior snapshot to diff
 //! against) and later calls report real utilization. `sample()` self-throttles
-//! to [`SAMPLE_INTERVAL`]: the shell tick may call it at animation rate
+//! to `SAMPLE_INTERVAL`: the shell tick may call it at animation rate
 //! (~30 Hz), but real refreshes stay ~1 s apart — which is both the spacing
 //! sysinfo needs for an accurate CPU diff and what keeps the OS query off the
 //! per-frame budget. The process refresh is also narrowed to the registered
@@ -51,7 +51,7 @@ impl ResourceMonitor {
 
     /// Refresh the sample and stamp it onto the model: set
     /// `model.global_cpu_pct` and each agent's `res` from its `meta.pid`.
-    /// Self-throttled to [`SAMPLE_INTERVAL`] — safe to call every UI tick.
+    /// Self-throttled to `SAMPLE_INTERVAL` — safe to call every UI tick.
     pub fn sample(&mut self, model: &mut WorkspaceModel) {
         if self
             .last_refresh

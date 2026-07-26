@@ -10,7 +10,7 @@
 //! - `start_process` spawns an **argv vector directly** (no shell), cwd
 //!   pinned to the workspace root, in its own process group, with
 //!   `kill_on_drop`. It returns a handle id (`proc-N`). "No shell" is a
-//!   quoting guarantee, not a power bound — argv[0] may itself be a shell —
+//!   quoting guarantee, not a power bound — `argv[0]` may itself be a shell —
 //!   so the registry gates the joined argv through the same
 //!   `command.started` policy chain as `bash` before the spawn.
 //!
@@ -23,7 +23,7 @@
 //!   that means to bound shell execution must therefore deny the
 //!   interpreter argv itself — matching on command text alone will not see
 //!   what the REPL is later asked to run.
-//! - At most [`MAX_LIVE_PROCESSES`] processes may be LIVE at once; past
+//! - At most `MAX_LIVE_PROCESSES` processes may be LIVE at once; past
 //!   that `start_process` refuses with a named error rather than letting a
 //!   runaway loop spawn children without bound.
 //! - Output (stdout + stderr, interleaved by arrival) accumulates in a
@@ -37,7 +37,7 @@
 //!   tombstone takes their place, so the handle still reports its exit
 //!   instead of degrading to "unknown handle".
 //! - `stop_process` closes stdin, sends SIGTERM to the process group,
-//!   waits [`STOP_GRACE_MS`], then SIGKILLs the group — and any process
+//!   waits `STOP_GRACE_MS`, then SIGKILLs the group — and any process
 //!   still alive when the registry (and with it this table) drops is
 //!   killed the same way, so nothing outlives the session.
 //!

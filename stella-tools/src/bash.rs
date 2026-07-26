@@ -1,7 +1,7 @@
 //! `bash` — run a shell command in the workspace root with a timeout.
 //! Process-group based kill so children don't outlive the timeout — or a
 //! cancelled turn: the driving future being dropped arms the same group kill
-//! ([`crate::exec::GroupKillGuard`]).
+//! (`crate::exec::GroupKillGuard`).
 //!
 //! **Opt-in, never ambient.** This tool is registered only when the host
 //! enabled it ([`crate::registry::RegistryOptions::bash`], set from the
@@ -13,7 +13,7 @@
 //! The opt-in bounds the *general-purpose* shell, not every path to one.
 //! `build_project` and `run_tests` accept a `command` override,
 //! `verify_done` a `test_cmd`, and `run_script` composes from the scripts
-//! index — all four reach `bash -c` through [`crate::exec::run`], and all
+//! index — all four reach `bash -c` through `crate::exec::run`, and all
 //! four are always-on. Turning `tools.bash` off therefore removes the
 //! shell TOOL, not the shell CAPABILITY; the fence that covers every one of
 //! them uniformly is the registry's `command.started` policy chain (see
@@ -284,15 +284,13 @@ impl Tool for Bash {
         // Cancellation backstop: a dropped future (Esc, the engine's tool
         // timeout, a fleet stop) must not leave the setsid'd group running.
         #[cfg(unix)]
-        let mut guard = crate::exec::GroupKillGuard { pid, armed: true };
+        let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         let timeout = Duration::from_secs(timeout_secs);
         let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
             Ok(Ok(output)) => {
                 #[cfg(unix)]
-                {
-                    guard.armed = false;
-                }
+                guard.disarm();
                 output
             }
             // Wait failure leaves the child's state unknown — the still-armed
@@ -305,16 +303,7 @@ impl Tool for Bash {
             Err(_) => {
                 // Timeout — kill the process group.
                 #[cfg(unix)]
-                {
-                    guard.armed = false;
-                    unsafe {
-                        // Guard on a real pid: kill(-0, …) would SIGKILL
-                        // Stella's OWN process group.
-                        if pid > 0 {
-                            libc::kill(-pid, libc::SIGKILL);
-                        }
-                    }
-                }
+                guard.kill_now();
                 return ToolOutput::Error {
                     message: format!("command timed out after {timeout_secs}s"),
                 };
@@ -446,7 +435,7 @@ mod tests {
     }
 
     /// Dropping the future mid-wait (a cancelled turn) must kill the whole
-    /// process group — the [`crate::exec::GroupKillGuard`] backstop. Without
+    /// process group — the `crate::exec::GroupKillGuard` backstop. Without
     /// it, Esc during a long `bash` call left the command running and
     /// mutating the tree, `setsid`'d beyond the reach of anything else.
     #[cfg(unix)]

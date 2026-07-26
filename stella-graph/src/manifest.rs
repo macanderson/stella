@@ -14,10 +14,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use stella_store::durable::{MODE_SHARED, write_atomic_preserving_mode};
 
 use crate::storage::{
-    DEFAULT_NAMESPACE, DEFAULT_SQL_LAYER, LayerEntry, RedirectEntry, RelationEntry,
-    StorageSnapshot, normalize_name, relation_address,
+    DEFAULT_NAMESPACE, LayerEntry, RedirectEntry, RelationEntry, StorageSnapshot, normalize_name,
+    relation_address,
 };
 
 /// File name at the workspace root.
@@ -118,12 +119,6 @@ impl StorageManifest {
             .map(|(key, _)| key.clone())
     }
 
-    /// [`Self::layer_claim`], falling back to the implicit SQL layer.
-    pub fn layer_for(&self, rel_path: &str) -> String {
-        self.layer_claim(rel_path)
-            .unwrap_or_else(|| DEFAULT_SQL_LAYER.to_string())
-    }
-
     fn meaning_for<'a>(
         table: &'a BTreeMap<String, MeaningDecl>,
         address: &str,
@@ -140,20 +135,6 @@ impl StorageManifest {
 
     pub fn field_meaning(&self, address: &str) -> Option<&MeaningDecl> {
         Self::meaning_for(&self.fields, address)
-    }
-
-    pub fn namespace_meaning(&self, layer: &str, namespace: &str) -> Option<&MeaningDecl> {
-        let layer_key = normalize_name(layer);
-        let ns_key = normalize_name(namespace);
-        self.namespaces
-            .iter()
-            .find(|(key, _)| normalize_name(key) == layer_key)
-            .and_then(|(_, table)| {
-                table
-                    .iter()
-                    .find(|(ns, _)| normalize_name(ns) == ns_key)
-                    .map(|(_, decl)| decl)
-            })
     }
 
     /// Declared layers as snapshot entries (engine/class default to
@@ -238,7 +219,7 @@ pub fn merge_snapshot(
                     .collect();
             }
             for field in &mut rel.fields {
-                let address = format!("{}/{}", rel.address, normalize_name(&field.name));
+                let address = crate::storage::field_address(&rel.address, &field.name);
                 if let Some(meaning) = manifest.field_meaning(&address)
                     && meaning.intent.is_some()
                 {
@@ -339,32 +320,22 @@ pub fn append_meaning(
         toml_escape(intent.trim()),
         toml_escape(origin),
     ));
-    // Write-then-rename rather than truncate-in-place: a crash (or a full
-    // disk) partway through a direct write would leave a committed file
-    // truncated mid-entry, i.e. invalid TOML that no longer parses — and
-    // with it every intent sentence a human ever wrote. The temp file is a
-    // sibling of the manifest, so the rename is atomic on the same
-    // filesystem. The `sync_all` before the rename is what makes that
-    // atomicity mean something after a power loss: without it the rename can
-    // land while the temp file's bytes are still only in the page cache,
-    // publishing an empty or half-written manifest under the real name.
-    let tmp = path.with_extension("toml.tmp");
-    {
-        use std::io::Write as _;
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&tmp, &path)?;
-    // Syncing the *directory* is what makes the rename itself survive a power
-    // loss: without it the durable temp file can outlive a rename that never
-    // reached the disk, leaving the previous manifest (or none) under the real
-    // name. Best-effort — a platform that will not hand out a directory handle
-    // (Windows) or fsync one still gets the atomic rename above.
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
-    }
-    Ok(())
+    // Durable replace rather than truncate-in-place: a crash (or a full disk)
+    // partway through a direct write would leave a committed file truncated
+    // mid-entry, i.e. invalid TOML that no longer parses — and with it every
+    // intent sentence a human ever wrote. This is the workspace's one write
+    // contract (#617): a pid-tagged sibling temp (the fixed `.toml.tmp` this
+    // used to use let two concurrent appends interleave into one file and
+    // publish a spliced manifest), fsynced before the rename so the rename
+    // cannot publish page-cache bytes, and the directory fsynced after it so
+    // the rename itself survives a power loss.
+    //
+    // Still NOT serialized across writers: two concurrent appends can both
+    // read the same pre-image and the later rename wins, silently dropping
+    // the earlier entry. That needs a lock around the whole read-modify-write
+    // and is deliberately not in this change (#617 rules on atomicity, not on
+    // a locking protocol).
+    write_atomic_preserving_mode(&path, text.as_bytes(), MODE_SHARED).map_err(std::io::Error::other)
 }
 
 /// Escape a sentence for a TOML basic string. Backslash and quote escape,
@@ -394,7 +365,7 @@ fn toml_escape(text: &str) -> String {
 /// segment. Enough for `migrations/**`, `db/*.sql`, `prisma/schema.prisma`.
 ///
 /// Patterns are repo-controlled (`stella.storage.toml` layer `paths`, and
-/// `.gitattributes` via [`crate::generated`]) and evaluated once per file per
+/// `.gitattributes` via `crate::generated`) and evaluated once per file per
 /// index pass, so the `**` search must not be exponential in path depth: a
 /// cloned repo carrying `**/a/**/a/**/x` would otherwise wedge indexing.
 /// Two things keep it polynomial, both semantics-preserving:
@@ -543,14 +514,18 @@ intent = "Gross amount charged."
             m.field_meaning("primary_pg/billing/payments/amount")
                 .is_some()
         );
-        assert!(m.namespace_meaning("primary-pg", "billing").is_some());
     }
 
     #[test]
     fn layer_matching_uses_paths_globs() {
         let m = manifest();
-        assert_eq!(m.layer_for("migrations/001_init.sql"), "primary-pg");
-        assert_eq!(m.layer_for("src/schema.sql"), DEFAULT_SQL_LAYER);
+        assert_eq!(
+            m.layer_claim("migrations/001_init.sql").as_deref(),
+            Some("primary-pg")
+        );
+        // No layer claims a bare `src/*.sql`; callers fall back to the
+        // implicit SQL layer themselves.
+        assert_eq!(m.layer_claim("src/schema.sql"), None);
     }
 
     #[test]

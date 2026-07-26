@@ -367,7 +367,7 @@ impl Observatory {
     /// Tool leaderboard: calls, failures, latency, bytes returned. The p50
     /// is computed here (SQLite has no percentile function).
     ///
-    /// Accumulates into [`ToolAgg`] rather than a bare tuple so the fold and
+    /// Accumulates into `ToolAgg` rather than a bare tuple so the fold and
     /// the row-building loop name the same four quantities.
     pub fn tools(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
@@ -528,7 +528,7 @@ impl Observatory {
     /// across the three tables in Rust (a day may have tool calls but no
     /// finished executions, or vice versa).
     ///
-    /// Rows whose timestamp SQLite cannot parse land in the [`UNDATED`]
+    /// Rows whose timestamp SQLite cannot parse land in the `UNDATED`
     /// bucket: `date()` returns NULL for those, and reading NULL as `String`
     /// used to fail the whole query and blank the dashboard. They are real
     /// runs, so they keep a named bucket instead of being dropped — the UI

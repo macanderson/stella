@@ -634,13 +634,13 @@ impl SessionMemory {
         let Ok(log) = std::fs::read_to_string(log_path) else {
             return;
         };
-        // Tombstones from BOTH surfaces: forgetting the memory should stop the
-        // lesson being promoted to a skill, and forgetting the skill should
-        // stop it being re-created from the same log lines it came from.
+        // Every surface a background loop can regenerate; `ContextSurface` owns which.
         let forgotten: Vec<String> = stella_store::Store::open(&self.workspace_root)
             .and_then(|store| {
-                let mut texts = store.forgotten_texts(stella_store::ContextSurface::Memory)?;
-                texts.extend(store.forgotten_texts(stella_store::ContextSurface::Skill)?);
+                let mut texts = Vec::new();
+                for surface in stella_store::ContextSurface::restatement_suppressing() {
+                    texts.extend(store.forgotten_texts(surface)?);
+                }
                 Ok(texts)
             })
             .unwrap_or_default();

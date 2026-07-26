@@ -57,4 +57,11 @@ pub enum GraphError {
     /// A filesystem watcher could not be created or armed (`notify`).
     #[error("code-graph watcher error: {0}")]
     Watch(String),
+
+    /// The store's `PRAGMA user_version` cannot be reconciled with this
+    /// build's schema — it was written by a newer stella, or the shape the
+    /// DDL claims to have produced is not there (#617). The message carries
+    /// the store's name and what to do about it.
+    #[error("{0}")]
+    Schema(String),
 }

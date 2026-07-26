@@ -13,6 +13,12 @@
 # Patterns are matched against the path relative to the context root, so a bare
 # `.stella/` excludes only the top-level one — the tracked
 # bench/readiness/.../app/.stella/ fixture is untouched, which is what we want.
+# That cuts the other way too: a rule meant to catch a directory *wherever* it
+# appears needs a `**/` prefix, or it silently only ever matches at the root.
+# `node_modules/` was written as the recursive rule it looks like and was not
+# (verified by building a probe context: with `node_modules/`, a nested
+# `website/node_modules` still landed in the image; with `**/node_modules` it
+# did not).
 #
 # DO NOT exclude a workspace member (root Cargo.toml `members`, including
 # bench/loop-bench): cargo needs every member manifest present to load the
@@ -37,10 +43,14 @@ target/
 sandbox/
 verifications/
 
-# Docs site and its node_modules — not part of the cargo build
+# Docs site and its node_modules — not part of the cargo build. `website/` is
+# the tracked site (docs.yml builds it); `stella-docs/` is the standalone copy
+# the manual deploy uses. Neither is a workspace member, and nothing in the
+# cargo build include_str!s out of either.
 stella-docs/
+website/
 docs/
-node_modules/
+**/node_modules
 
 # Editor and OS noise
 .DS_Store

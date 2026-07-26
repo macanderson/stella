@@ -460,7 +460,11 @@ pub async fn fetch_openai_compatible(
     api_key: &ApiKey,
 ) -> Result<Vec<ProviderModel>, String> {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let auth = format!("Bearer {}", api_key.reveal());
+    // `Zeroizing`, not a bare `String`: this is a fresh heap copy of the
+    // secret that the `ApiKey`'s own wipe-on-drop cannot reach, and a plain
+    // `format!` would leave the whole `Bearer …` line legible in freed memory
+    // for the rest of the process.
+    let auth = zeroize::Zeroizing::new(format!("Bearer {}", api_key.reveal()));
     let client = http::client();
     let body = get_json(&client, label, &url, &[("Authorization", auth.as_str())]).await?;
     parse_openai_compatible(label, &body)

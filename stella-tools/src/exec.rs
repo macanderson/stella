@@ -1,8 +1,8 @@
 //! Shared subprocess runner for tools that spawn commands: process-group
 //! spawn, hard timeout with a group kill, combined output, middle-out
-//! truncation. Two entry points: [`run`] shells out via `bash -c`
+//! truncation. Two entry points: `run` shells out via `bash -c`
 //! (`verify_done`, `build_project`, `run_tests`, `run_script`, `screenshot`);
-//! [`run_argv`] execs an argv vector directly with NO shell anywhere
+//! `run_argv` execs an argv vector directly with NO shell anywhere
 //! (`run_lint`, `format_code`, `diagnostics`, the `repo_*` tools).
 //!
 //! The opt-in `bash` tool does NOT come through here — it spawns its own
@@ -103,7 +103,7 @@ pub(crate) async fn run(
 /// Run a repository-owned GitHub CLI command while preserving only GitHub
 /// CLI's exact documented authentication variables. The command text must be
 /// constructed by Stella code with user values shell-quoted; model-authored
-/// arbitrary shell commands must use [`run`] and receive no credential.
+/// arbitrary shell commands must use `run` and receive no credential.
 pub(crate) async fn run_github(
     command: &str,
     dir: &std::path::Path,
@@ -126,7 +126,7 @@ pub(crate) async fn run_github(
 /// `dir`. The runner for the manifest-verb tools (`run_script`, `run_lint`,
 /// `format_code`): arguments reach the child exactly as given, so no
 /// model-supplied string is ever shell-interpreted. Same process-group
-/// spawn, timeout kill, and truncation as [`run`].
+/// spawn, timeout kill, and truncation as `run`.
 pub(crate) async fn run_argv(
     program: &str,
     args: &[String],
@@ -138,7 +138,7 @@ pub(crate) async fn run_argv(
         .map(|(code, output)| (code, truncate_middle(output)))
 }
 
-/// [`run_argv`] without the middle-out truncation — for callers that PARSE
+/// `run_argv` without the middle-out truncation — for callers that PARSE
 /// the full output into a bounded structure of their own (`diagnostics`
 /// consuming a `--message-format=json` stream: truncating the raw stream
 /// would sever JSON lines and silently drop the very records the parse
@@ -160,16 +160,57 @@ pub(crate) async fn run_argv_untruncated(
 }
 
 /// SIGKILLs `pid`'s process group on drop unless disarmed — the
-/// cancellation backstop for [`drive`] and for the tools that spawn their
-/// own child instead of coming through it ([`crate::bash`],
+/// cancellation backstop for this module's shared runner and for the tools
+/// that spawn their own child instead of coming through it ([`crate::bash`],
 /// [`crate::custom`]): when the future driving a tool call is dropped
 /// mid-wait (Esc cancels the turn), the detached process group must not keep
 /// running — and mutating the tree — after the user believes the turn
 /// stopped. Normal exit and the timeout path disarm it.
+///
+/// It is deliberately `pub`: every `pre_exec(setsid)` spawn site in the
+/// workspace must use *this* guard rather than grow a second one. A `setsid`
+/// child is in its own session, so Ctrl-C's SIGINT — delivered only to the
+/// tty's foreground process group — never reaches it; this guard is the only
+/// thing that reaps the tree, and it fires because the CLI drops the work
+/// future on a signal instead of calling `exit` (`stella-cli/src/signals.rs`).
+///
+/// Never `tokio::spawn` teardown from a `Drop` instead: during runtime
+/// shutdown the spawn silently does nothing, which is precisely the case
+/// being handled. `kill(2)` is synchronous, so this guard needs no runtime.
 #[cfg(unix)]
-pub(crate) struct GroupKillGuard {
-    pub(crate) pid: i32,
-    pub(crate) armed: bool,
+pub struct GroupKillGuard {
+    pid: i32,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl GroupKillGuard {
+    /// Arm a guard over the process group led by `pid` (a child spawned with
+    /// `pre_exec(setsid)`, so its pid *is* its process-group id). A pid of 0
+    /// — `Child::id` after the child was already reaped — is inert.
+    pub fn arm(pid: i32) -> Self {
+        Self { pid, armed: true }
+    }
+
+    /// Stop the guard from killing on drop. Call it once the group is known
+    /// to be gone: the child exited normally, or the caller already killed
+    /// the group itself on its timeout path.
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    /// SIGKILL the group now, and disarm. The timeout path: the child is
+    /// still running and must die *before* the caller returns an error,
+    /// rather than at some later scope exit.
+    pub fn kill_now(&mut self) {
+        self.armed = false;
+        // Same real-pid guard as `Drop`.
+        if self.pid > 0 {
+            unsafe {
+                libc::kill(-self.pid, libc::SIGKILL);
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -185,7 +226,7 @@ impl Drop for GroupKillGuard {
     }
 }
 
-/// Shared spawn/wait/kill body of [`run`] and [`run_argv`] — `command` is
+/// Shared spawn/wait/kill body of `run` and `run_argv` — `command` is
 /// the human-readable command line for error messages. Output is returned
 /// UNTRUNCATED; the wrappers apply [`truncate_middle`] except
 /// [`run_argv_untruncated`], whose callers parse the full stream.
@@ -224,7 +265,7 @@ async fn drive(
     #[cfg(unix)]
     let pid = child.id().unwrap_or(0) as i32;
     #[cfg(unix)]
-    let mut guard = GroupKillGuard { pid, armed: true };
+    let mut guard = GroupKillGuard::arm(pid);
 
     let output =
         match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
@@ -232,9 +273,7 @@ async fn drive(
         {
             Ok(Ok(output)) => {
                 #[cfg(unix)]
-                {
-                    guard.armed = false;
-                }
+                guard.disarm();
                 output
             }
             // Wait failure leaves the child's state unknown — the still-armed
@@ -242,15 +281,7 @@ async fn drive(
             Ok(Err(e)) => return Err(format!("command failed: {e}")),
             Err(_) => {
                 #[cfg(unix)]
-                {
-                    guard.armed = false;
-                    unsafe {
-                        // Same real-pid guard as `GroupKillGuard`.
-                        if pid > 0 {
-                            libc::kill(-pid, libc::SIGKILL);
-                        }
-                    }
-                }
+                guard.kill_now();
                 return Err(format!("`{command}` timed out after {timeout_secs}s"));
             }
         };
@@ -266,7 +297,7 @@ async fn drive(
     Ok((output.status.code().unwrap_or(-1), combined))
 }
 
-/// [`run`] with the PASSED/FAILED framing shared by `build_project`,
+/// `run` with the PASSED/FAILED framing shared by `build_project`,
 /// `run_tests`, and `run_script` — the model reads success or failure from
 /// the first line without a follow-up question.
 pub(crate) async fn run_and_report(
@@ -291,7 +322,7 @@ pub(crate) async fn run_and_report(
 ///
 /// The crate's ONE implementation of this security primitive: it lives here
 /// because this module owns the `bash -c` runner every composed command line
-/// eventually reaches ([`run`], [`run_github`]). `scripts::shell_quote`,
+/// eventually reaches (`run`, [`run_github`]). `scripts::shell_quote`,
 /// `ci::shell_quote`, `screenshot::shell_quote`, `project::shell_quote` and
 /// `issue_ops::quote` were five independent copies — the shape that lets one
 /// of them drift. They are all thin aliases for this function now; a new one

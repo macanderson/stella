@@ -195,6 +195,24 @@ fn pack_path(root: &Path, slug: &str) -> std::path::PathBuf {
     root.join(PACKS_DIR).join(format!("{slug}.json"))
 }
 
+/// Write a pack through the workspace's one atomic contract
+/// ([`stella_store::durable::write_atomic`], #617) rather than the in-place
+/// [`crate::durable_write`] path: a pack is Stella's own state, not a user
+/// source file, so replacing the inode costs nothing and rules out the
+/// half-written file that `load_pack`'s tolerant reader would silently skip —
+/// making a pack two racing agents both wrote simply disappear.
+///
+/// `spawn_blocking` because the shared helper is synchronous: it fsyncs a file
+/// and a directory, which has no async equivalent.
+async fn write_pack_atomically(path: std::path::PathBuf, bytes: Vec<u8>) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        stella_store::durable::write_atomic(&path, &bytes, stella_store::durable::MODE_SHARED)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("pack write task failed: {e}"))?
+}
+
 async fn load_pack(root: &Path, slug: &str) -> Option<ContextPack> {
     let raw = tokio::fs::read_to_string(pack_path(root, slug))
         .await
@@ -441,12 +459,20 @@ type SymbolAnswers = Vec<(String, Option<(ToolOutput, ToolOutput)>)>;
 ///
 /// Synchronous by design — the caller runs it on the blocking pool, and the
 /// handle never leaves this frame.
-fn graph_sweep(root: &Path, symbols: Vec<String>) -> SymbolAnswers {
-    let graph = match crate::graph::open_or_build(root) {
-        Ok(graph) => graph,
+///
+/// Returns the answers **and** any non-fatal index-pass warning, which the
+/// caller folds into the pack's status line: a library must not print over the
+/// TUI frame, so the diagnostic crosses the `spawn_blocking` boundary as data
+/// (#643).
+fn graph_sweep(root: &Path, symbols: Vec<String>) -> (SymbolAnswers, Option<String>) {
+    let crate::graph::OpenedGraph {
+        graph,
+        index_warning,
+    } = match crate::graph::open_or_build(root) {
+        Ok(opened) => opened,
         // The exact shape the per-symbol `run_query` produced when the open
         // failed: the same error under both of the symbol's headings.
-        Err(message) => return symbol_failures(symbols, message),
+        Err(message) => return (symbol_failures(symbols, message), None),
     };
     let answers = symbols
         .into_iter()
@@ -457,7 +483,7 @@ fn graph_sweep(root: &Path, symbols: Vec<String>) -> SymbolAnswers {
         })
         .collect();
     graph.shutdown();
-    answers
+    (answers, index_warning)
 }
 
 /// One shared failure rendered under both of every symbol's headings.
@@ -529,16 +555,22 @@ async fn gather(
         let cancelled = inputs.symbols.clone();
         async move {
             if !graph_on {
-                return symbols.into_iter().map(|symbol| (symbol, None)).collect();
+                return (
+                    symbols.into_iter().map(|symbol| (symbol, None)).collect(),
+                    None,
+                );
             }
             tokio::task::spawn_blocking(move || graph_sweep(&graph_root, symbols))
                 .await
                 .unwrap_or_else(|_| {
-                    symbol_failures(cancelled, "the code-graph sweep was cancelled".into())
+                    (
+                        symbol_failures(cancelled, "the code-graph sweep was cancelled".into()),
+                        None,
+                    )
                 })
         }
     };
-    let (glob_results, grep_results, graph_results) =
+    let (glob_results, grep_results, (graph_results, index_warning)) =
         futures_util::join!(glob_results, grep_results, graph_results);
 
     // ── Fold results into sections + the excerpt worklist ───────────────
@@ -707,24 +739,28 @@ async fn gather(
             // pack disappear. Two agents racing the same slug is the exact
             // scenario this store exists for, and a plain `write` lets their
             // bytes interleave.
-            Ok(json) => match crate::atomic_write::replace_file_atomically(
-                pack_path(root, &slug),
-                json.into_bytes(),
-            )
-            .await
-            {
-                Err(e) => {
-                    format!("NOT saved (write: {e}) — findings below are this call only")
+            Ok(json) => {
+                match write_pack_atomically(pack_path(root, &slug), json.into_bytes()).await {
+                    Err(e) => {
+                        format!("NOT saved (write: {e}) — findings below are this call only")
+                    }
+                    Ok(()) => format!(
+                        "saved — any agent can reuse it via gather_context {{\"pack\": \"{slug}\"}}"
+                    ),
                 }
-                Ok(()) => format!(
-                    "saved — any agent can reuse it via gather_context {{\"pack\": \"{slug}\"}}"
-                ),
-            },
+            }
         },
+    };
+    // The index-pass warning belongs to THIS run, not to the pack on disk, so
+    // it rides the status line rather than becoming a persisted section — and
+    // it is reported to the model instead of printed over the frame (#643).
+    let status = match &index_warning {
+        Some(warning) => format!("{persist_note} · {warning}"),
+        None => persist_note,
     };
 
     ToolOutput::Ok {
-        content: render_pack(&pack, &persist_note),
+        content: render_pack(&pack, &status),
     }
 }
 
@@ -920,6 +956,48 @@ mod tests {
             pack.sections.iter().any(|s| s.title == "Excerpts"),
             "excerpts section expected"
         );
+    }
+
+    /// The #643 witness for the sweep: its graph arm runs on the blocking pool
+    /// behind a `join!`, so the index-pass warning has the longest way to
+    /// travel. It must land on the pack's status line the model reads rather
+    /// than on the process's stderr.
+    #[tokio::test]
+    async fn a_failed_index_pass_warns_on_the_pack_status_line() {
+        let dir = workspace();
+        // The sweep's graph arm is gated on an existing index, so build one,
+        // then block its next write pass and give that pass something to write.
+        let db = crate::graph::graph_db_path(dir.path());
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        let graph = stella_graph::CodeGraph::open(dir.path(), &db).expect("open graph");
+        graph.index_all().expect("index");
+        graph.shutdown();
+        crate::graph::block_index_writes(&db);
+        std::fs::write(dir.path().join("src/added.rs"), "pub fn added_later() {}\n").unwrap();
+
+        let out = GatherContext
+            .execute(
+                &serde_json::json!({
+                    "goal": "Map the login flow",
+                    "symbols": ["login"],
+                    "save_as": "warned-sweep"
+                }),
+                dir.path(),
+            )
+            .await;
+        match out {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains(crate::graph::INDEX_PASS_WARNING),
+                    "the sweep's index-pass failure must reach the model: {content}"
+                );
+                assert!(
+                    content.contains("Symbol `login`"),
+                    "the sweep still answered from the last good index: {content}"
+                );
+            }
+            ToolOutput::Error { message } => panic!("a failed index pass is not fatal: {message}"),
+        }
     }
 
     #[tokio::test]

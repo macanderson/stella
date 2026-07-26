@@ -1,13 +1,13 @@
 //! `read_file` — read a file with optional line range, a line cap, and a
 //! byte cap. Mirrors the TS `read_file` tool: 1-based line numbers,
 //! `offset`/`limit` params, and a cap on the number of lines *returned*
-//! ([`MAX_LINES`]) so a huge file can't flood the context.
+//! (`MAX_LINES`) so a huge file can't flood the context.
 //!
 //! Lines alone are not a bound on context, though: a minified bundle, a
 //! single-line JSON fixture, or a generated SQL dump is one or two "lines"
 //! and sails under the line cap. Two byte caps close that: each emitted line
-//! is clipped at [`MAX_LINE_BYTES`] and the whole rendered payload at
-//! [`MAX_RENDER_BYTES`], both with a loud `[… N bytes elided …]` marker and
+//! is clipped at `MAX_LINE_BYTES` and the whole rendered payload at
+//! `MAX_RENDER_BYTES`, both with a loud `[… N bytes elided …]` marker and
 //! both named in the trailing footer so the model knows to narrow its range
 //! rather than assume it saw the file. The *memory* half is unchanged — the
 //! file is still read into memory in full before anything is capped — so a

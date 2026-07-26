@@ -83,7 +83,7 @@ pub use watch::WatchInjector;
 /// index and no manifest yields an empty snapshot, which makes every
 /// storage mechanism a no-op (spec §11).
 ///
-/// This is a pure read: it opens the store with [`store::open_read`], so the
+/// This is a pure read: it opens the store with `store::open_read`, so the
 /// gate never runs DDL on the agent's write path. A store no writer has
 /// migrated yet has no tables to read and yields the same empty snapshot a
 /// missing store does.

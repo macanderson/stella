@@ -71,8 +71,14 @@ impl ScriptEntry {
 pub struct ScriptIndex {
     pub scripts: Vec<ScriptEntry>,
     pub verbs: BTreeMap<&'static str, String>,
-    /// Workspace members beyond [`MAX_WORKSPACE_MEMBERS`] that were skipped.
+    /// Workspace members beyond `MAX_WORKSPACE_MEMBERS` that were skipped.
     pub truncated_members: usize,
+    /// Declared workspace members that resolved outside the workspace root
+    /// (a `../` member pattern, or a member symlinked out of the tree) and
+    /// were therefore not indexed. Counted rather than dropped silently: some
+    /// monorepos legitimately declare `../` members, and a maintainer who
+    /// sees fewer scripts than they declared needs to be told why.
+    pub out_of_root_members: usize,
 }
 
 /// Marker-order rank of a runner's ecosystem — the precedence used both for
@@ -125,7 +131,7 @@ impl ScriptIndex {
         let mut entries: Vec<ScriptEntry> = Vec::new();
         let root_pm = node_pm(root, None);
         detect_package(root, ".", true, root_pm, &mut entries);
-        let (members, truncated_members) = workspace_members(root);
+        let (members, truncated_members, out_of_root_members) = workspace_members(root);
         for dir in &members {
             detect_package(root, dir, false, root_pm, &mut entries);
         }
@@ -140,6 +146,7 @@ impl ScriptIndex {
             scripts: entries,
             verbs,
             truncated_members,
+            out_of_root_members,
         }
     }
 
@@ -347,6 +354,12 @@ impl ScriptIndex {
             s.push_str(&format!(
                 "\n({} workspace members beyond the {MAX_WORKSPACE_MEMBERS}-member cap were not indexed)\n",
                 self.truncated_members
+            ));
+        }
+        if self.out_of_root_members > 0 {
+            s.push_str(&format!(
+                "\n({} declared workspace member(s) resolve outside the workspace root and were not indexed)\n",
+                self.out_of_root_members
             ));
         }
         s.trim_end().to_string()
@@ -1047,9 +1060,12 @@ fn strip_jsonc_comments(src: &str) -> String {
 
 /// Member dirs declared by the root manifests: `package.json` `workspaces`,
 /// `pnpm-workspace.yaml` `packages`, `[workspace] members` in `Cargo.toml`.
-/// Sorted, deduplicated, capped — the overflow count is reported, never
+/// Sorted, deduplicated, capped, and confined to the workspace root — both
+/// the cap overflow and the out-of-root skips are counted and reported, never
 /// silently dropped.
-fn workspace_members(root: &Path) -> (Vec<String>, usize) {
+///
+/// Returns `(members, truncated_by_cap, skipped_out_of_root)`.
+fn workspace_members(root: &Path) -> (Vec<String>, usize, usize) {
     let mut patterns: Vec<String> = Vec::new();
     if let Ok(text) = std::fs::read_to_string(root.join("package.json"))
         && let Ok(pkg) = serde_json::from_str::<Value>(&text)
@@ -1076,14 +1092,16 @@ fn workspace_members(root: &Path) -> (Vec<String>, usize) {
     }
 
     let mut dirs: BTreeSet<String> = BTreeSet::new();
+    let mut out_of_root = 0usize;
     for pattern in &patterns {
-        expand_member_pattern(root, pattern, &mut dirs);
+        out_of_root += expand_member_pattern(root, pattern, &mut dirs);
     }
     dirs.remove(".");
     let truncated = dirs.len().saturating_sub(MAX_WORKSPACE_MEMBERS);
     (
         dirs.into_iter().take(MAX_WORKSPACE_MEMBERS).collect(),
         truncated,
+        out_of_root,
     )
 }
 
@@ -1118,42 +1136,63 @@ fn pnpm_workspace_globs(text: &str) -> Vec<String> {
 /// one-level glob. Anything fancier is skipped — deterministically, not
 /// approximately.
 ///
-/// Every candidate is confined to the workspace root. The patterns come from
-/// repository manifests, which are untrusted content: a `package.json`
-/// declaring `"workspaces": ["../../elsewhere"]` — or a member dir that is a
-/// symlink pointing out of the tree — would otherwise make detection index a
-/// foreign tree AND make `run_script` execute its scripts with a cwd outside
-/// the session root. [`crate::resolve_within_root`] rejects both spellings
-/// (`..` traversal and symlink laundering), so the index can only ever name
-/// directories the session is actually rooted on.
-fn expand_member_pattern(root: &Path, pattern: &str, dirs: &mut BTreeSet<String>) {
+/// Every produced dir is confined with [`crate::resolve_within_root`], so a
+/// pattern read out of `Cargo.toml` / `package.json` / `pnpm-workspace.yaml`
+/// cannot make the index walk, or `run_script` execute in, a directory
+/// outside the workspace root. The manifests are repository-controlled input:
+/// a `../` member (or a member symlinked out of the tree) would otherwise
+/// index whatever the checkout sits next to.
+///
+/// Some monorepos legitimately declare `../` members, so the skip is a
+/// reported outcome rather than a silent one — the count returned here rides
+/// [`ScriptIndex::out_of_root_members`] into `render_list`.
+fn expand_member_pattern(root: &Path, pattern: &str, dirs: &mut BTreeSet<String>) -> usize {
     let pattern = pattern.trim().trim_end_matches('/');
     if pattern.is_empty() {
-        return;
+        return 0;
     }
-    let in_root = |rel: &str| crate::resolve_within_root(root, rel).is_some_and(|p| p.is_dir());
     let base = pattern
         .strip_suffix("/*")
         .or_else(|| pattern.strip_suffix("/**"));
     if let Some(base) = base {
-        if !in_root(base) {
-            return;
-        }
-        let Ok(read) = std::fs::read_dir(root.join(base)) else {
-            return;
+        let Some(base_dir) = crate::resolve_within_root(root, base) else {
+            return 1;
         };
+        let Ok(read) = std::fs::read_dir(base_dir) else {
+            return 0;
+        };
+        let mut out_of_root = 0usize;
         for child in read.filter_map(|e| e.ok()) {
             let name = child.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') || name == "node_modules" || name == "target" {
                 continue;
             }
-            let member = format!("{base}/{name}");
-            if in_root(&member) {
-                dirs.insert(member);
+            if !child.path().is_dir() {
+                continue;
+            }
+            // A member directory can itself be a symlink out of the tree, so
+            // each expansion is confined, not just the glob's base.
+            let dir = format!("{base}/{name}");
+            match crate::resolve_within_root(root, &dir) {
+                Some(_) => {
+                    dirs.insert(dir);
+                }
+                None => out_of_root += 1,
             }
         }
-    } else if !pattern.contains('*') && in_root(pattern) {
-        dirs.insert(pattern.to_string());
+        out_of_root
+    } else if !pattern.contains('*') {
+        match crate::resolve_within_root(root, pattern) {
+            Some(full) => {
+                if full.is_dir() {
+                    dirs.insert(pattern.to_string());
+                }
+                0
+            }
+            None => 1,
+        }
+    } else {
+        0
     }
 }
 
@@ -1509,6 +1548,62 @@ mod tests {
         // Verbs bind at the root only.
         assert_eq!(index.verbs.get("start"), None);
         assert_eq!(index.verbs.get("build").unwrap(), "pnpm:build");
+    }
+
+    #[test]
+    fn a_dotdot_member_pattern_is_not_walked_and_the_skip_is_reported() {
+        // The manifests are repository-controlled input: a `../` member would
+        // otherwise index — and let `run_script` execute in — whatever the
+        // checkout happens to sit next to.
+        let outer = tempfile::tempdir().unwrap();
+        write(
+            outer.path(),
+            "sibling/package.json",
+            r#"{"scripts": {"exfil": "cat ~/.ssh/id_rsa"}}"#,
+        );
+        let root = outer.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        write(
+            &root,
+            "package.json",
+            r#"{"workspaces": ["../sibling", "../*", "packages/*"], "scripts": {"build": "true"}}"#,
+        );
+        write(&root, "pnpm-lock.yaml", "");
+        write(
+            &root,
+            "packages/app/package.json",
+            r#"{"scripts": {"dev": "vite"}}"#,
+        );
+
+        let index = ScriptIndex::detect_blocking(&root);
+        assert!(
+            index.scripts.iter().all(|e| e.name != "exfil"),
+            "an out-of-root member was walked: {:?}",
+            index.scripts.iter().map(|e| &e.id).collect::<Vec<_>>()
+        );
+        assert!(
+            index.scripts.iter().all(|e| !e.dir.contains("..")),
+            "a member dir escaped the root: {:?}",
+            index.scripts.iter().map(|e| &e.dir).collect::<Vec<_>>()
+        );
+        // In-root members still index normally.
+        assert!(
+            index
+                .scripts
+                .iter()
+                .any(|e| e.dir == "packages/app" && e.name == "dev"),
+            "confinement dropped a legitimate member"
+        );
+        // The skip is observable, not silent: `../sibling` and the `../*`
+        // base both resolve outside the root.
+        assert_eq!(index.out_of_root_members, 2);
+        assert!(
+            index
+                .render_list(None)
+                .contains("resolve outside the workspace root"),
+            "{}",
+            index.render_list(None)
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Vendor media adapters. Each implements
 //! [`crate::provider::MediaProvider`] for one vendor endpoint and owns its
 //! wire types; error classification routes through the shared
-//! [`crate::http`] policy so a 401 means the same thing everywhere.
+//! `crate::http` policy so a 401 means the same thing everywhere.
 //!
 //! Deliberate architecture deviation (documented at the crate root): these
 //! vendor HTTP clients live in `stella-media`, not `stella-model`, so this

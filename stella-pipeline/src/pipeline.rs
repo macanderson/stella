@@ -30,7 +30,7 @@
 //!
 //! Recalled context rides as a **volatile message after the byte-stable system
 //! prefix**, never mutated into the system block itself, so prompt-cache hits
-//! on the stable prefix survive across turns. See [`assemble_user_message`].
+//! on the stable prefix survive across turns. See `assemble_user_message`.
 //!
 //! # Breaker feedback boundary
 //!
@@ -539,14 +539,6 @@ impl<'a> Pipeline<'a> {
             configured_test,
             raw_call_seq: AtomicU64::new(RECEIPT_SEQ_ALLOCATED_BASE),
         }
-    }
-
-    /// Replace the ordinary channel wrapper with a caller-supplied ordered
-    /// sender. Benchmark mode uses this to journal+flush every event before
-    /// the same event enters the renderer queue.
-    pub fn with_event_sender(mut self, events: EventSender) -> Self {
-        self.events = events;
-        self
     }
 
     /// Drive one prompt through the full staged flow. `messages` is the

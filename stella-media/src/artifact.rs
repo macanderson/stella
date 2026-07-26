@@ -11,16 +11,16 @@
 //! hostile-input test even though the generated-id path already makes escape
 //! impossible.
 //!
-//! The manifest is `manifest.json` (a JSON array). Writes are atomic against
-//! process death: the store reads the current array, inserts or replaces the
-//! row for that path, serializes to a sibling temp file, `fsync`s it, then
-//! `rename`s it over the manifest — so a crash mid-write never leaves a
-//! partially written or corrupt manifest. That read → upsert → rename cycle
-//! runs under an advisory lock on `manifest.json.lock`, so two stores over one
-//! root (in one process or two) cannot each read the pre-image and lose a row.
-//! The *directory* is never `fsync`ed, so a rename the kernel has not yet
-//! flushed is still lost to power loss: this is crash atomicity, not power-loss
-//! durability.
+//! The manifest is `manifest.json` (a JSON array). Its replacement is a
+//! durable write under the workspace's one contract
+//! ([`stella_store::durable::write_atomic`], #617): the store reads the
+//! current array, upserts the row, and the serialized document goes to a
+//! pid-tagged sibling temp that is `fsync`ed, renamed over the manifest, and
+//! followed by an `fsync` of the directory — so neither a crash nor a power
+//! loss can publish a partial manifest. The read → upsert → replace cycle is
+//! serialized across processes by `mutation_lock` (crate-private, so this
+//! names it rather than linking it); atomicity of the replacement alone would
+//! not stop two racers from both reading the same pre-image.
 //!
 //! The artifact file itself is written *outside* that lock (`create_new` +
 //! `fsync`, then the manifest upsert), so two processes racing on one
@@ -38,6 +38,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use stella_protocol::{MediaArtifactRef, MediaKind};
+use stella_store::durable::{MODE_SHARED, write_atomic_preserving_mode};
 
 use crate::error::MediaError;
 use crate::provider::MediaArtifact;
@@ -184,6 +185,12 @@ impl ArtifactStore {
                 file.sync_all().map_err(|e| {
                     MediaError::Artifact(format!("cannot fsync {}: {e}", dest.display()))
                 })?;
+                // And about the file existing at all: a fresh file's directory
+                // entry has to reach the disk too, or a power loss can leave a
+                // manifest row pointing at nothing (#617).
+                stella_store::durable::sync_directory(&self.root).map_err(|e| {
+                    MediaError::Artifact(format!("cannot fsync {}: {e}", self.root.display()))
+                })?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 let existing = std::fs::read(&dest).map_err(|e| {
@@ -284,49 +291,14 @@ impl ArtifactStore {
             .map_err(|e| MediaError::Artifact(format!("cannot serialize manifest: {e}")))?;
 
         let final_path = self.root.join(MANIFEST_NAME);
-        let sequence = NEXT_MANIFEST_TEMP.fetch_add(1, Ordering::Relaxed);
-        let tmp_path = self.root.join(format!(
-            ".{MANIFEST_NAME}.tmp.{}.{sequence}",
-            std::process::id()
-        ));
-        let commit = (|| {
-            use std::io::Write as _;
-            let mut file = std::fs::File::create(&tmp_path).map_err(|e| {
-                MediaError::Artifact(format!(
-                    "cannot write temp manifest {}: {e}",
-                    tmp_path.display()
-                ))
-            })?;
-            file.write_all(body.as_bytes()).map_err(|e| {
-                MediaError::Artifact(format!(
-                    "cannot write temp manifest {}: {e}",
-                    tmp_path.display()
-                ))
-            })?;
-            file.sync_all().map_err(|e| {
-                MediaError::Artifact(format!(
-                    "cannot fsync temp manifest {}: {e}",
-                    tmp_path.display()
-                ))
-            })?;
-            drop(file);
-            std::fs::rename(&tmp_path, &final_path).map_err(|e| {
-                MediaError::Artifact(format!(
-                    "cannot commit manifest {}: {e}",
-                    final_path.display()
-                ))
-            })
-        })();
-        if commit.is_err() {
-            let _ = std::fs::remove_file(&tmp_path);
-        }
-        commit
+        write_atomic_preserving_mode(&final_path, body.as_bytes(), MODE_SHARED).map_err(|e| {
+            MediaError::Artifact(format!(
+                "cannot commit manifest {}: {e}",
+                final_path.display()
+            ))
+        })
     }
 }
-
-/// Counter for manifest temp names, so a second writer in this process
-/// cannot collide with the first.
-static NEXT_MANIFEST_TEMP: AtomicU64 = AtomicU64::new(0);
 
 /// Take an advisory lock on `path`, creating it if absent, and hold it for
 /// the caller's whole read-modify-write. Shared by [`ArtifactStore`] and

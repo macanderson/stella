@@ -38,7 +38,7 @@
 //! ([`Store::session_cache_trend`]), each carrying a probable-cause
 //! diagnosis line when its own turn count and hit rate warrant one
 //! ([`diagnose_cache`] against [`LOW_HIT_RATE_THRESHOLD`], the same
-//! selection logic and [`CacheCause::hint`] wording the deck would use).
+//! selection logic and [`stella_protocol::CacheCause::hint`] wording the deck would use).
 //! Deliberately **per-session**, not per-(provider, model): `StatsRow::runs`
 //! aggregates executions across every session sharing a provider/model, so
 //! twenty independent one-shot `stella run`s (each turn 1 — nothing to
@@ -111,7 +111,7 @@ pub struct StatsRow {
 }
 
 /// Look up `(provider, model)` in the running model catalog and price this
-/// row's summed token counts — [`Pricing::cache_savings_usd_for`], the same
+/// row's summed token counts — [`stella_model::Pricing::cache_savings_usd_for`], the same
 /// formula `Store::cache_call_gaps`' caller-side economics and the deck's
 /// `CacheInsight` producer both use. `None` when the catalog has no entry
 /// for the pair (a retired or custom model) — never a guessed number.

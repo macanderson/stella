@@ -16,7 +16,7 @@
 //!   engine's speculative execution never fires on it. The event-stream
 //!   decoder is what closes both gaps; until then the whole generation has
 //!   to fit inside one read, which is why this adapter takes
-//!   [`crate::http::unary_client`] rather than the shared streaming client.
+//!   `crate::http::unary_client` rather than the shared streaming client.
 //! - **Explicit credentials, not the full AWS chain.** The adapter takes
 //!   access key / secret / optional session token directly;
 //!   [`crate::credential::BedrockCredentials`] resolves the secret, session
@@ -27,7 +27,7 @@
 //!   chain doc (`credential.rs`) already records as deferred alongside this
 //!   adapter.
 //!
-//! Requests are signed with SigV4 implemented in [`sigv4`] below — pure
+//! Requests are signed with SigV4 implemented in `sigv4` below — pure
 //! functions over explicit inputs, pinned by golden vectors generated from
 //! botocore's reference implementation (see `sigv4::tests`), because
 //! request signing is exactly the kind of code that "looks right" while
@@ -918,7 +918,11 @@ pub(crate) mod sigv4 {
         region: &str,
         service: &str,
     ) -> Vec<u8> {
-        let k_date = hmac_sha256(format!("AWS4{secret_key}").as_bytes(), date.as_bytes());
+        // `Zeroizing`: `AWS4` + the raw secret is a fresh copy of the AWS
+        // secret access key that outlives nothing but would otherwise be left
+        // legible in freed heap once per request.
+        let seed = zeroize::Zeroizing::new(format!("AWS4{secret_key}"));
+        let k_date = hmac_sha256(seed.as_bytes(), date.as_bytes());
         let k_region = hmac_sha256(&k_date, region.as_bytes());
         let k_service = hmac_sha256(&k_region, service.as_bytes());
         hmac_sha256(&k_service, b"aws4_request")

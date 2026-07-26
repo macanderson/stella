@@ -36,6 +36,7 @@ mod contextgraph;
 mod credential_handoff;
 mod credential_status;
 mod discovery;
+mod doctor;
 mod domains;
 mod engine_config;
 mod enterprise_telemetry;
@@ -262,7 +263,7 @@ struct GlobalArgs {
     #[arg(long, global = true)]
     api_key: Option<String>,
 
-    /// Base URL override. Required with --model local/<model> to point at a
+    /// Base URL override. Required with `--model local/<model>` to point at a
     /// local OpenAI-compatible server (Ollama, vLLM, LM Studio, llama.cpp
     /// server — e.g. http://localhost:11434/v1); optional for every other
     /// provider to route through a proxy.
@@ -335,7 +336,7 @@ enum Command {
     /// while recording a contextgraph-trace journal the arena runner judges
     /// with the protocol's replay oracles. Speaks the adapter contract
     /// (--task-dir/--journal/--state-dir/--resume); see
-    /// https://github.com/macanderson/arena-bench.
+    /// <https://github.com/macanderson/arena-bench>.
     Arena {
         /// The episode workspace; the prompt is read from TASK.md inside it.
         #[arg(long)]
@@ -409,7 +410,7 @@ enum Command {
     /// developer custom tools (.stella/tools/), and manifest diagnostics
     Tools {
         /// Validate custom tool manifests instead of listing: parse every
-        /// <name>.toml, check names, required fields, timeouts, and
+        /// `<name>.toml`, check names, required fields, timeouts, and
         /// collisions with built-ins and other manifests, then exit
         /// non-zero if any manifest has errors. Pass a directory to check
         /// (defaults to the dirs discovery scans: .stella/tools/ and
@@ -422,7 +423,7 @@ enum Command {
     /// coordinated by cooperative claims (lock-on-first-write, sub-second,
     /// rivals named), wave-scheduled by dependency, every attempt, commit,
     /// and dollar recorded in .stella/private/fleet.db. Tasks opting into
-    /// isolation = "isolated" get a dedicated worktree whose fleet/<task>
+    /// isolation = "isolated" get a dedicated worktree whose `fleet/<task>`
     /// branch is left in place for review.
     Fleet {
         /// Task prompts — each becomes an independent task in the SHARED
@@ -431,7 +432,7 @@ enum Command {
         #[arg(required_unless_present = "plan")]
         tasks: Vec<String>,
 
-        /// A plan file instead: .json or .toml with [[tasks]] entries
+        /// A plan file instead: `.json` or `.toml` with `[[tasks]]` entries
         /// (id, title, prompt, optional depends_on + isolation + claims —
         /// paths held as cooperative file locks while the task runs)
         #[arg(long, value_name = "FILE", conflicts_with = "tasks")]
@@ -605,6 +606,22 @@ enum Command {
 
     /// Show current configuration
     Config,
+
+    /// Check the local state stella owns and report each named check's
+    /// verdict — today the integrity of this workspace's session store
+    /// (.stella/private/store.db), verified with SQLite's own
+    /// quick_check/integrity_check. Exits non-zero if any check fails, so it
+    /// can gate a script. Reads local state only; needs no API key.
+    Doctor {
+        /// Repair a store.db that failed the check: move it aside to a
+        /// timestamped name (RENAMED, never deleted — its WAL/SHM siblings
+        /// travel with it), then copy out whatever is still readable into a
+        /// separate salvaged database. Only ever acts on a database SQLite
+        /// itself judged corrupt; a healthy store and an inconclusive check
+        /// are both left untouched. The next session starts a fresh store.
+        #[arg(long)]
+        repair: bool,
+    },
 
     /// Manage BYOK provider keys stored in
     /// ~/.stella/credentials.toml (set/remove/list) — keys resolved
@@ -786,7 +803,7 @@ enum MemoryCmd {
         format: memory_cmd::MemoryFormat,
     },
     /// Promote an eligible memory to a project rule at
-    /// .stella/rules/<slug>.md. Eligibility is strict: cited successfully
+    /// `.stella/rules/<slug>.md`. Eligibility is strict: cited successfully
     /// MORE THAN 10 consecutive times since its last negative remark — one
     /// negative citation resets the count until it is re-earned.
     Promote {
@@ -1483,6 +1500,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // API key required; the stores are opened strictly read-only.
             return run_observe(*port, *open);
         }
+        Some(Command::Doctor { repair }) => {
+            // Reads local state only — and with --repair renames files inside
+            // .stella/private/. No provider, no API key, and deliberately
+            // before `Config::load`: a workspace whose store is corrupt must be
+            // diagnosable without a working model configuration.
+            return doctor::run_doctor(*repair);
+        }
         Some(Command::Version) => {
             println!("stella v{}", version_string());
             return Ok(());
@@ -1536,6 +1560,15 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
     // stderr, as advisory warnings that never block the run.
     for issue in settings_check::validate_at_launch(&cfg) {
         eprintln!("⚠ settings: {}", issue.line());
+    }
+
+    // Same posture, one file over: `~/.stella/credentials.toml` is read even
+    // when its mode lets others at it (refusing would lock a user out of their
+    // own keys) and is never silently `chmod`ed (its mode is not ours to
+    // change) — so the only honest response left is to say so, out loud, once.
+    // A check whose finding nothing prints would be worse than no check.
+    for advisory in &cfg.credential_advisories {
+        eprintln!("⚠ credentials: {}", advisory.line());
     }
 
     match cli.command.unwrap_or(Command::Chat) {
@@ -1692,6 +1725,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Auth { .. }
         | Command::Observe { .. }
         | Command::Models { .. }
+        | Command::Doctor { .. }
         | Command::Version => {
             unreachable!("handled before provider resolution")
         }

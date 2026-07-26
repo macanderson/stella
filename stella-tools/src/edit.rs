@@ -236,7 +236,7 @@ impl Tool for EditFile {
             content.replacen(old_string, new_string, 1)
         };
 
-        match crate::atomic_write::replace_file_atomically(
+        match crate::durable_write::write_file_durably(
             full_path.clone(),
             new_content.as_bytes().to_vec(),
         )

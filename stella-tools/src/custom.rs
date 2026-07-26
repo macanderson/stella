@@ -62,7 +62,7 @@
 //!   [`crate::bash`]) and a named error is returned.
 //! - **Cancellation** (the driving future dropped mid-wait, e.g. Esc) → the
 //!   same group kill, armed as an RAII guard
-//!   ([`crate::exec::GroupKillGuard`]), so nothing survives the turn.
+//!   (`crate::exec::GroupKillGuard`), so nothing survives the turn.
 //! - **Spawn failure** (e.g. missing script) → a named error naming the path
 //!   that was tried, so the developer can fix the manifest.
 //!
@@ -462,7 +462,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     // Cancellation backstop: a dropped future (Esc, the engine's tool
     // timeout, a fleet stop) must not leave the setsid'd group running.
     #[cfg(unix)]
-    let mut guard = crate::exec::GroupKillGuard { pid, armed: true };
+    let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
     // Deliver the input as one JSON document on stdin, concurrently with
     // draining stdout/stderr, so a chatty child cannot deadlock the write.
@@ -479,9 +479,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
         Ok(Ok(output)) => {
             #[cfg(unix)]
-            {
-                guard.armed = false;
-            }
+            guard.disarm();
             output
         }
         // Wait failure leaves the child's state unknown — the still-armed
@@ -493,16 +491,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         }
         Err(_) => {
             #[cfg(unix)]
-            {
-                guard.armed = false;
-                unsafe {
-                    // Guard on a real pid: kill(-0, …) would SIGKILL Stella's
-                    // OWN process group.
-                    if pid > 0 {
-                        libc::kill(-pid, libc::SIGKILL);
-                    }
-                }
-            }
+            guard.kill_now();
             return ToolOutput::Error {
                 message: format!(
                     "custom tool `{}` timed out after {}ms",
@@ -1069,7 +1058,7 @@ command = []"#;
     }
 
     /// Dropping the future mid-wait (a cancelled turn) must kill the whole
-    /// process group — the [`crate::exec::GroupKillGuard`] backstop, the same
+    /// process group — the `crate::exec::GroupKillGuard` backstop, the same
     /// leak the `bash` tool had. Without it, a cancelled turn left the
     /// script's own children running, `setsid`'d beyond anyone's reach.
     #[cfg(unix)]

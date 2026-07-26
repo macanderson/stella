@@ -66,8 +66,8 @@
 //!
 //! `PRAGMA user_version` stamps every database with its schema version
 //! (version 0 is the legacy pre-versioning shape). A fresh file is created
-//! at [`SCHEMA_VERSION`] directly; an existing file is upgraded by the
-//! ordered [`MIGRATIONS`] list, one transaction per step, with the new
+//! at `SCHEMA_VERSION` directly; an existing file is upgraded by the
+//! ordered `MIGRATIONS` list, one transaction per step, with the new
 //! version stamped inside that same transaction — a crash mid-migration
 //! rolls the file back to the old version and old shape, never a mix.
 //!
@@ -75,7 +75,7 @@
 //! optional enterprise export-ledger tables ([`enterprise_telemetry`]) converge
 //! by per-column probing on every open instead of by `user_version`, because
 //! they belong to a feature a store may never enroll in and must not gate the
-//! host schema. Everything the store itself owns goes through [`MIGRATIONS`].
+//! host schema. Everything the store itself owns goes through `MIGRATIONS`.
 //!
 //! # Graceful degradation
 //!
@@ -112,6 +112,8 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //               that keeps a re-mined paraphrase from walking back in
 //   home        `~/.stella` resolution + the one-time legacy-layout migration
 //   identity    org/workspace/repo telemetry scoping and cloud registration
+//   integrity   `PRAGMA quick_check`/`integrity_check` verdicts plus the
+//               opt-in, never-deleting quarantine behind `stella doctor`
 //   journal     append-only per-session sidecar journal (crash-safe resume)
 //   notify      persist-until-read cross-session notifications
 //   private     (crate-private) the owner-only, no-follow filesystem
@@ -146,16 +148,22 @@ pub mod cache_trend;
 pub mod catalog;
 pub mod content_free;
 pub mod drain;
+pub mod durable;
 pub mod enterprise_telemetry;
 pub mod forget;
 pub mod home;
 pub mod identity;
+pub mod integrity;
 pub mod journal;
 pub mod notify;
 pub mod sessions;
 pub mod usage;
 
 use ddl::TABLES;
+// Corruption classification and its actionable wording live with the tooling
+// that shares them (`integrity`), imported here because `Store::init` is where a
+// malformed file first announces itself.
+use integrity::corrupt_store_error;
 use migrations::{
     MIGRATIONS, SCHEMA_VERSION, any_store_table_exists, apply_migration, create_latest_schema,
 };
@@ -168,6 +176,7 @@ pub use drain::{
     RejectionClass, drain_org, schema_version_supported,
 };
 pub use forget::{ContextSurface, is_restatement, is_suppressed};
+pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
 // The sidecar journal's writer is deliberately NOT re-exported at the top
 // level: `SessionJournal` here names the DB read-model reassembled by
 // [`Store::session_events`] (read-only replay), while
@@ -183,7 +192,7 @@ pub use private::{
 };
 pub(crate) use private::{
     ensure_private_dir, ensure_workspace_generated_ignore, ensure_workspace_state_dir,
-    open_private_file, open_private_sqlite, read_private_to_string, write_private_atomic,
+    open_private_file, open_private_sqlite, open_private_sqlite_read_only, read_private_to_string,
 };
 pub use receipts::{
     ContextBlockRow, InspectableExecution, ManifestBlockRow, RecordedCall, StepManifestRow,
@@ -605,39 +614,6 @@ fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
     Ok(())
 }
 
-/// Give genuine on-disk corruption the same actionable error the schema-version
-/// branches of [`Store::migrate`] already produce.
-///
-/// Without this a malformed `store.db` reaches the caller as the raw rusqlite
-/// string ("database disk image is malformed"), which `open_store` prints as
-/// `local store unavailable (store: …)` — and then EVERY later session repeats
-/// the warning and runs with zero persistence, because nothing ever tells the
-/// user to move the file aside. `From<rusqlite::Error>` flattens the error to a
-/// `String`, so the code has to be inspected before that conversion happens.
-/// Anything that is not corruption is passed through unchanged.
-fn corrupt_store_error(error: rusqlite::Error, db_path: Option<&Path>) -> StoreError {
-    let corrupt = matches!(
-        &error,
-        rusqlite::Error::SqliteFailure(sqlite, _)
-            if matches!(
-                sqlite.code,
-                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
-            )
-    );
-    if !corrupt {
-        return StoreError::from(error);
-    }
-    let path = db_path.map_or_else(
-        || ".stella/private/store.db".to_string(),
-        |path| path.display().to_string(),
-    );
-    StoreError(format!(
-        "store.db cannot be read as a SQLite database ({error}), so it is corrupt or \
-         was overwritten. Move {path} aside and reopen this workspace to start a fresh \
-         one — it holds local telemetry and session replay, never your source."
-    ))
-}
-
 pub struct Store {
     conn: Mutex<Connection>,
     /// The workspace root this store was opened for — stashed so a turn's
@@ -674,7 +650,8 @@ impl Store {
 
     /// `db_path` is the on-disk file behind `conn` (`None` for in-memory), and
     /// exists only so an unreadable file can be named in the error — see
-    /// [`corrupt_store_error`].
+    /// [`corrupt_store_error`]. [`Store::integrity_check`] needs no path: its
+    /// verdicts carry SQLite's own wording, and the caller located the file.
     fn init(conn: Connection, root: Option<PathBuf>, db_path: Option<&Path>) -> Result<Self> {
         // execute_batch tolerates the row PRAGMA journal_mode returns (a
         // plain pragma_update errors on it). WAL means a read-only caller
@@ -720,11 +697,11 @@ impl Store {
             .unwrap_or(false)
     }
 
-    /// Bring the database to [`SCHEMA_VERSION`]. `PRAGMA user_version` 0 is
+    /// Bring the database to `SCHEMA_VERSION`. `PRAGMA user_version` 0 is
     /// both "fresh empty file" and "legacy pre-versioning file",
     /// disambiguated by probing for the store's tables: fresh files get the
     /// latest schema in one transaction and are stamped directly; existing
-    /// files run each pending [`MIGRATIONS`] entry in its own transaction
+    /// files run each pending `MIGRATIONS` entry in its own transaction
     /// (version stamped inside it — see [`apply_migration`]).
     fn migrate(&self) -> Result<()> {
         let mut conn = self.lock();
@@ -855,7 +832,7 @@ impl Store {
     ///
     /// One transaction, like every sibling fan-out writer here: a failure
     /// partway through the batch (an out-of-range line count tripping
-    /// [`sqlite_i64`] on a later path) rolls the whole set back instead of
+    /// `sqlite_i64` on a later path) rolls the whole set back instead of
     /// leaving the execution with a truncated file list, and the batch costs
     /// one WAL commit rather than one per row on the turn-finalize path.
     pub fn record_files_touched(&self, execution_id: i64, files: &[FileTouchRow]) -> Result<()> {

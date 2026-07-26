@@ -1,13 +1,13 @@
 //! The interactive shell: terminal setup/teardown, the crossterm event loop,
 //! and channel plumbing. **Deliberately thin** — every decision (key→action,
 //! event→state) lives in the pure, unit-tested layers ([`crate::ui`],
-//! [`crate::model`], [`crate::render`]); this file only wires them to real I/O
+//! [`crate::model`], [`mod@crate::render`]); this file only wires them to real I/O
 //! and is the one part not covered by unit tests (its integration smoke test
 //! is `#[ignore]`d because it needs a TTY).
 //!
 //! ## Terminal restoration & signals (L-L1, L-T2)
 //!
-//! [`TerminalGuard`] enables raw mode + the alternate screen on entry and
+//! `TerminalGuard` enables raw mode + the alternate screen on entry and
 //! **always** restores them on drop — including during a panic unwind, so a
 //! crash never leaves the user's terminal wedged. Mouse capture is **off by
 //! default** (L-T2): native terminal text selection/copy keeps working; it is
