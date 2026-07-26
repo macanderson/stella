@@ -1,8 +1,16 @@
 # ADR 0005: Storage Authority
 
-- Status: Accepted (Phase 0)
+- Status: Accepted (Phase 0) — **route amended by
+  [ADR 0010](0010-incremental-authority-transfer.md)** (Proposed)
 - Date: 2026-07-23
 - Deciders: (Phase 0 baseline)
+
+> **Amendment notice.** The authority *model* below stands: `context_records`
+> becomes the canonical local authority and legacy tables become projections.
+> The *route* — a single big-bang migration — is amended by ADR 0010, which
+> replaces it with incremental transfer (new record kinds born canonical;
+> legacy rows transferred on write; optional resumable backfill). Read the two
+> together; where they conflict on sequencing, 0010 wins once ratified.
 
 ## Context
 

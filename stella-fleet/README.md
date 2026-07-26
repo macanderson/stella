@@ -198,5 +198,5 @@ only, treat a closed channel as "resumed"/"no stop coming").
   — the user-facing `stella fleet` contract (flags, cleanup behavior).
 - [`../website/content/docs/agent-fleets.mdx`](../website/content/docs/agent-fleets.mdx)
   — the fleet concept guide, including the plan-file schema.
-- [`../docs/design/fleet.plan.toml`](../docs/design/fleet.plan.toml) — a real
-  plan file that deserializes straight into `Plan`.
+- [`../docs/design/serve-surface.fleet.toml`](../docs/design/serve-surface.fleet.toml)
+  — a real plan file that deserializes straight into `Plan`.
