@@ -1,8 +1,12 @@
-# The pnpm workspace for the stella monorepo's web packages. Rust crates are
-# NOT pnpm packages — cargo remains their build system and source of truth
-# (see the root package.json's rust:* scripts for the pnpm-side bridge).
-packages:
-  - website
+# pnpm settings for the docs site. Not a workspace list — `website/` is a
+# single, standalone package — but pnpm 10+ reads these policy settings from
+# this file rather than from `.npmrc`, so it has to exist for them to apply.
+#
+# It used to live at the repo root, where it declared `packages: [website]`.
+# That workspace never linked anything: the root importer was empty, and there
+# were no `workspace:` dependencies, catalogs, overrides, or patches — one
+# package with a workspace wrapped around it. The Rust crates were never pnpm
+# packages, so nothing was ever shared across the two toolchains.
 
 # pnpm 11 reads build-script approvals from here. Both deps ship prebuilt
 # platform binaries via optional deps, so approving their build scripts just
@@ -15,9 +19,10 @@ allowBuilds:
 # Supply-chain policy: refuse any version published less than this many minutes
 # ago. A compromised release is typically yanked within hours, so waiting a day
 # before anything enters the lockfile is most of the protection for none of the
-# cost. This lives here — not in each developer's global pnpm config — so devs
-# and CI resolve under the same rule; docs.yml's `pnpm install --frozen-lockfile`
-# previously ran under whatever policy the runner happened to have.
+# cost. This lives in the repo — not in each developer's global pnpm config —
+# so devs and CI resolve under the same rule; docs.yml's `pnpm install
+# --frozen-lockfile` previously ran under whatever policy the runner happened
+# to have.
 minimumReleaseAge: 1440
 
 # baseline-browser-mapping is exempt. Next depends on it as `^2.9.19`, and it is

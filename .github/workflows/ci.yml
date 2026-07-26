@@ -13,9 +13,6 @@ on:
       - "docs/**"
       - "*.md"
       - ".github/ISSUE_TEMPLATE/**"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - "pnpm-lock.yaml"
   push:
     branches: [main]
     paths-ignore:
@@ -23,9 +20,6 @@ on:
       - "docs/**"
       - "*.md"
       - ".github/ISSUE_TEMPLATE/**"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - "pnpm-lock.yaml"
   # Merge queue: GitHub tests each queued PR against the current queue tip
   # before it lands, so two individually-green PRs can't combine into a red
   # `main` (see #306). The queue evaluates the required checks on the

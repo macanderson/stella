@@ -103,7 +103,8 @@ under `website/content/docs/`, published at
 nothing else; you never have to build Rust to fix a docs page:
 
 ```bash
-pnpm install                 # once, from the repo root
+cd website                   # the site owns its own manifest and lockfile
+pnpm install                 # once
 pnpm dev                     # the site at http://localhost:3400
 pnpm typecheck && pnpm build # what the docs CI job runs
 ```
