@@ -188,8 +188,12 @@ pub fn build_overview(root: &Path) -> Value {
 
     let map = out.as_object_mut().expect("object literal");
     match &graph {
-        Some(graph) => {
-            map.insert("index".into(), index_section(graph));
+        Some(opened) => {
+            let graph = &opened.graph;
+            map.insert(
+                "index".into(),
+                index_section(graph, opened.index_warning.as_deref()),
+            );
             map.insert("code".into(), code_section(graph));
             map.insert("storage".into(), storage_section(&graph.storage_snapshot()));
         }
@@ -209,7 +213,7 @@ pub fn build_overview(root: &Path) -> Value {
     out
 }
 
-fn open_graph(root: &Path) -> Option<stella_graph::CodeGraph> {
+fn open_graph(root: &Path) -> Option<crate::graph::OpenedGraph> {
     // Build on first use, the same path `graph_query` takes: project_overview
     // is meant to be the FIRST call in a session, before the background index
     // build could possibly have finished, so it must be able to produce the
@@ -217,8 +221,8 @@ fn open_graph(root: &Path) -> Option<stella_graph::CodeGraph> {
     crate::graph::open_or_build(root).ok()
 }
 
-fn index_section(graph: &stella_graph::CodeGraph) -> Value {
-    json!({
+fn index_section(graph: &stella_graph::CodeGraph, index_warning: Option<&str>) -> Value {
+    let mut section = json!({
         "built": true,
         "files": graph.file_count().unwrap_or(0),
         "symbols": graph.symbol_count().unwrap_or(0),
@@ -227,7 +231,19 @@ fn index_section(graph: &stella_graph::CodeGraph) -> Value {
         // invisible here. Saying so is what keeps a stale answer from being
         // mistaken for a current one.
         "freshness": "caught up to the working tree when this call ran",
-    })
+    });
+    // A failed catch-up pass makes the freshness claim above a lie, so it is
+    // reported here — in the object the model reads — rather than printed over
+    // the TUI frame (#643).
+    if let Some(warning) = index_warning {
+        let map = section.as_object_mut().expect("object literal");
+        map.insert(
+            "freshness".into(),
+            json!("NOT caught up — the index pass for this call failed"),
+        );
+        map.insert("warning".into(), json!(warning));
+    }
+    section
 }
 
 fn code_section(graph: &stella_graph::CodeGraph) -> Value {
@@ -384,6 +400,36 @@ mod tests {
         // zero files honestly rather than pretending there is nothing to index.
         assert_eq!(out["index"]["built"], serde_json::json!(true));
         assert_eq!(out["index"]["files"], serde_json::json!(0));
+    }
+
+    /// The #643 witness for this tool: the overview's `freshness` line claims
+    /// the index is caught up, so a failed catch-up pass has to retract that
+    /// claim **in the JSON the model reads** rather than on the TUI's stderr.
+    #[test]
+    fn a_failed_index_pass_retracts_the_freshness_claim_in_the_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "pub fn f() {}\n").unwrap();
+        // Build once so there is an index to answer from, then block the next
+        // pass and give it a file it must write.
+        assert_eq!(build_overview(dir.path())["index"]["built"], json!(true));
+        crate::graph::block_index_writes(&crate::graph::graph_db_path(dir.path()));
+        std::fs::write(dir.path().join("added.rs"), "pub fn added_later() {}\n").unwrap();
+
+        let out = build_overview(dir.path());
+        let index = &out["index"];
+        assert_eq!(index["built"], json!(true), "{index}");
+        assert!(
+            index["warning"]
+                .as_str()
+                .is_some_and(|w| w.contains(crate::graph::INDEX_PASS_WARNING)),
+            "the index-pass failure must reach the model: {index}"
+        );
+        assert!(
+            index["freshness"]
+                .as_str()
+                .is_some_and(|f| f.contains("NOT caught up")),
+            "a failed pass must not still claim freshness: {index}"
+        );
     }
 
     /// With real source present, the first call builds the index and the

@@ -250,8 +250,11 @@ pub(crate) async fn select_impacted(root: &Path) -> ImpactSelection {
     // `ImpactSelection` crosses back.
     let graph_root = root.to_path_buf();
     let selection = tokio::task::spawn_blocking(move || {
-        let graph = match crate::graph::open_or_build(&graph_root) {
-            Ok(graph) => graph,
+        let crate::graph::OpenedGraph {
+            graph,
+            index_warning,
+        } = match crate::graph::open_or_build(&graph_root) {
+            Ok(opened) => opened,
             Err(e) => {
                 return ImpactSelection::FullSuite {
                     note: format!(
@@ -261,6 +264,16 @@ pub(crate) async fn select_impacted(root: &Path) -> ImpactSelection {
                 };
             }
         };
+        // A failed catch-up pass means the importer edges may predate the very
+        // change being scoped — exactly the under-selection this module refuses
+        // to make silently. It stands the selection down with the reason named
+        // (a library cannot print it: #643).
+        if let Some(warning) = index_warning {
+            graph.shutdown();
+            return ImpactSelection::FullSuite {
+                note: format!("impact selection unavailable ({warning}) — ran the full suite"),
+            };
+        }
         // A store read error mid-walk would make importers look empty — an
         // under-selection — so it is recorded and turned into a loud stand-down
         // instead of being swallowed.
