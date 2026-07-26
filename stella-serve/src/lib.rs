@@ -12,6 +12,12 @@
 //! sidecar), whose port surface is identical to the in-process embed, so the
 //! transport is swappable.
 //!
+//! **Where ADR-033 lives:** in the private `oxagen-platform` repository
+//! (`docs/specs/agent-engine-v2/`), not in this one — Stella's own `docs/adr/`
+//! is a separate 0001-0009 series scoped to Phase 0 adaptive-context. Every
+//! bare "ADR-033" in this crate means that Oxagen ADR;
+//! `docs/design/serve-surface.md` is the self-contained Stella-side account.
+//!
 //! # Shape
 //!
 //! - [`Session`] drives one turn on a dedicated OS thread (the engine turn

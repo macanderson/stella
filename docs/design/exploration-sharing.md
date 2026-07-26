@@ -328,6 +328,12 @@ drift lists, draft/complete status, producing session, and manifest sizes —
 the human-facing twin of the §4a index. Reads the JSON directory directly
 (read-only, loopback-only, like everything else there); no schema work.
 
+> **Status (2026-07-25):** this route was built ahead of its UI, and removed
+> again in #640 — no dashboard tab ever fetched it, and it was the crate's only
+> reason to carry `sha2`. The §4e design still stands, but reinstating the route
+> means shipping the tab that consumes it *in the same change*; a served route
+> with no consumer is what got deleted.
+
 ---
 
 ## 5. Surface C — context-plane ingestion (wiring the seam)
@@ -556,7 +562,7 @@ re-implemented.
 | Compaction & dedup (`stella-core/src/compaction.rs`) | Already dedups byte-identical repeated tool outputs, so re-reading a map inside one session is near-free; unchanged | **Untouched** |
 | Speculative read-only execution (`stella-core/src/driver.rs:517-543`) | `explorations` is `read_only: true`, so map reads already parallelize with streaming; unchanged | **Untouched** |
 | Schema gate + `SchemaIndex` (`stella-tools/src/schema_gate.rs`) | Precedent: the coverage index (§6a) is its read-side analogue in the same struct; gate itself unchanged | **Untouched** — pattern reused |
-| Observatory (`stella-observatory`) | Gains `/api/explorations` (§4e) | **Extended** |
+| Observatory (`stella-observatory`) | Gains `/api/explorations` (§4e) — built ahead of its UI and removed again in #640; reinstate route + tab together | **Extended** — not currently served |
 | Skills frontloading, `usage.db` cross-project rollup, hooks | Out of this spec's scope: skills are behavioral, not cartographic; cross-checkout map sharing needs a remote-keyed store (§7); SessionStart hooks remain available for user-side injection | **Bounded** — reasons stated |
 
 The audit rule this table enforces going forward: any future context-caching
