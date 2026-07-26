@@ -102,6 +102,6 @@ pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};
 pub use witness::{
     TestInvocationError, Witness, WitnessArtifactError, parse_test_invocation,
-    parse_witness_command, tampered_paths, validate_witness_artifact, validate_witness_identity,
-    validate_witness_invocation, witness_identity_matches, witness_watchlist,
+    parse_witness_command, validate_witness_artifact, validate_witness_identity,
+    validate_witness_invocation, witness_identity_matches,
 };

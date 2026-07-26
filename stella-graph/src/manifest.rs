@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::storage::{
-    DEFAULT_NAMESPACE, DEFAULT_SQL_LAYER, LayerEntry, RedirectEntry, RelationEntry,
-    StorageSnapshot, normalize_name, relation_address,
+    DEFAULT_NAMESPACE, LayerEntry, RedirectEntry, RelationEntry, StorageSnapshot, normalize_name,
+    relation_address,
 };
 
 /// File name at the workspace root.
@@ -118,12 +118,6 @@ impl StorageManifest {
             .map(|(key, _)| key.clone())
     }
 
-    /// [`Self::layer_claim`], falling back to the implicit SQL layer.
-    pub fn layer_for(&self, rel_path: &str) -> String {
-        self.layer_claim(rel_path)
-            .unwrap_or_else(|| DEFAULT_SQL_LAYER.to_string())
-    }
-
     fn meaning_for<'a>(
         table: &'a BTreeMap<String, MeaningDecl>,
         address: &str,
@@ -140,20 +134,6 @@ impl StorageManifest {
 
     pub fn field_meaning(&self, address: &str) -> Option<&MeaningDecl> {
         Self::meaning_for(&self.fields, address)
-    }
-
-    pub fn namespace_meaning(&self, layer: &str, namespace: &str) -> Option<&MeaningDecl> {
-        let layer_key = normalize_name(layer);
-        let ns_key = normalize_name(namespace);
-        self.namespaces
-            .iter()
-            .find(|(key, _)| normalize_name(key) == layer_key)
-            .and_then(|(_, table)| {
-                table
-                    .iter()
-                    .find(|(ns, _)| normalize_name(ns) == ns_key)
-                    .map(|(_, decl)| decl)
-            })
     }
 
     /// Declared layers as snapshot entries (engine/class default to
@@ -238,7 +218,7 @@ pub fn merge_snapshot(
                     .collect();
             }
             for field in &mut rel.fields {
-                let address = format!("{}/{}", rel.address, normalize_name(&field.name));
+                let address = crate::storage::field_address(&rel.address, &field.name);
                 if let Some(meaning) = manifest.field_meaning(&address)
                     && meaning.intent.is_some()
                 {
@@ -511,14 +491,18 @@ intent = "Gross amount charged."
             m.field_meaning("primary_pg/billing/payments/amount")
                 .is_some()
         );
-        assert!(m.namespace_meaning("primary-pg", "billing").is_some());
     }
 
     #[test]
     fn layer_matching_uses_paths_globs() {
         let m = manifest();
-        assert_eq!(m.layer_for("migrations/001_init.sql"), "primary-pg");
-        assert_eq!(m.layer_for("src/schema.sql"), DEFAULT_SQL_LAYER);
+        assert_eq!(
+            m.layer_claim("migrations/001_init.sql").as_deref(),
+            Some("primary-pg")
+        );
+        // No layer claims a bare `src/*.sql`; callers fall back to the
+        // implicit SQL layer themselves.
+        assert_eq!(m.layer_claim("src/schema.sql"), None);
     }
 
     #[test]
