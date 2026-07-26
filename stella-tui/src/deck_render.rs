@@ -1511,6 +1511,12 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ("⌘[ / ⌘]", "jump to transcript start / end (⌃ works too)"),
             ("ctrl-o", "expand/collapse the selected message (none: all)"),
             ("ctrl-r", "expand/collapse all thinking"),
+            (
+                "ctrl-f",
+                "find in the transcript — ⏎ next · ctrl-p previous",
+            ),
+            ("ctrl-n / ctrl-p", "jump to the next / previous failure"),
+            ("ctrl-z", "fold the selected turn to one line (none: all)"),
             ("↑", "with prompts queued: open the queue editor"),
             ("←", "SESSIONS overlay — every session on this machine"),
             ("→", "CONTEXT overlay — active skills + MCP servers"),

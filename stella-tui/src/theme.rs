@@ -139,6 +139,11 @@ pub const DIFF_DEL_BG: Color = Color::Rgb(52, 24, 26);
 /// [`DIFF_ADD_BG`]: the whole line is already "added", so this has to read as
 /// a second level of emphasis *within* it rather than a different category.
 pub const DIFF_ADD_BG_EMPH: Color = Color::Rgb(26, 82, 44);
+/// Background behind a live search match. Warm enough to find by eye while
+/// scrolling, muted enough not to outshout the `✗` rail beside it — a match is
+/// something you asked for, not something that went wrong.
+pub const MATCH_BG: Color = Color::Rgb(92, 74, 0);
+
 /// The removed-line counterpart of [`DIFF_ADD_BG_EMPH`].
 pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(102, 34, 42);
 
@@ -351,6 +356,7 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
     (DIFF_DEL_BG, 52, 1),
     (DIFF_ADD_BG_EMPH, 28, 2),
     (DIFF_DEL_BG_EMPH, 88, 1),
+    (MATCH_BG, 58, 3),
     (SYNTAX_STRING, 114, 10),
     (SYNTAX_COMMENT, 244, 8),
 ];
@@ -622,6 +628,7 @@ mod tests {
         DIFF_DEL_BG,
         DIFF_ADD_BG_EMPH,
         DIFF_DEL_BG_EMPH,
+        MATCH_BG,
         SYNTAX_STRING,
         SYNTAX_COMMENT,
     ];

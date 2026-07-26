@@ -15,6 +15,7 @@ mod help;
 mod issues;
 mod queue;
 mod skills;
+mod transcript_nav;
 
 /// A model whose lead already has `prompts` queued, for the queue-editor and
 /// dispatch tests. Shared: both this module and `queue` build on it.
