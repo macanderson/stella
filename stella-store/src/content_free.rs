@@ -86,7 +86,7 @@ pub struct Sentinel {
 
 /// Free-text content: prompt previews/digests, project names, turn kinds, the
 /// per-call `call_role`, tool identities. The fixtures suffix this prefix with
-/// the field name (see [`content_sentinel`]) so a failure names the leak.
+/// the field name (see `content_sentinel`) so a failure names the leak.
 pub const CONTENT_SENTINEL: &str = "STELLA-SENTINEL-CONTENT";
 
 /// A local filesystem path — the literal thing invariant #3 calls out first.

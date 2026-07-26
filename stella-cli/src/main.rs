@@ -240,7 +240,7 @@ struct GlobalArgs {
     #[arg(long, global = true)]
     api_key: Option<String>,
 
-    /// Base URL override. Required with --model local/<model> to point at a
+    /// Base URL override. Required with `--model local/<model>` to point at a
     /// local OpenAI-compatible server (Ollama, vLLM, LM Studio, llama.cpp
     /// server — e.g. http://localhost:11434/v1); optional for every other
     /// provider to route through a proxy.
@@ -313,7 +313,7 @@ enum Command {
     /// while recording a contextgraph-trace journal the arena runner judges
     /// with the protocol's replay oracles. Speaks the adapter contract
     /// (--task-dir/--journal/--state-dir/--resume); see
-    /// https://github.com/macanderson/arena-bench.
+    /// <https://github.com/macanderson/arena-bench>.
     Arena {
         /// The episode workspace; the prompt is read from TASK.md inside it.
         #[arg(long)]
@@ -387,7 +387,7 @@ enum Command {
     /// developer custom tools (.stella/tools/), and manifest diagnostics
     Tools {
         /// Validate custom tool manifests instead of listing: parse every
-        /// <name>.toml, check names, required fields, timeouts, and
+        /// `<name>.toml`, check names, required fields, timeouts, and
         /// collisions with built-ins and other manifests, then exit
         /// non-zero if any manifest has errors. Pass a directory to check
         /// (defaults to the dirs discovery scans: .stella/tools/ and
@@ -400,7 +400,7 @@ enum Command {
     /// coordinated by cooperative claims (lock-on-first-write, sub-second,
     /// rivals named), wave-scheduled by dependency, every attempt, commit,
     /// and dollar recorded in .stella/private/fleet.db. Tasks opting into
-    /// isolation = "isolated" get a dedicated worktree whose fleet/<task>
+    /// isolation = "isolated" get a dedicated worktree whose `fleet/<task>`
     /// branch is left in place for review.
     Fleet {
         /// Task prompts — each becomes an independent task in the SHARED
@@ -409,7 +409,7 @@ enum Command {
         #[arg(required_unless_present = "plan")]
         tasks: Vec<String>,
 
-        /// A plan file instead: .json or .toml with [[tasks]] entries
+        /// A plan file instead: `.json` or `.toml` with `[[tasks]]` entries
         /// (id, title, prompt, optional depends_on + isolation + claims —
         /// paths held as cooperative file locks while the task runs)
         #[arg(long, value_name = "FILE", conflicts_with = "tasks")]
@@ -780,7 +780,7 @@ enum MemoryCmd {
         format: memory_cmd::MemoryFormat,
     },
     /// Promote an eligible memory to a project rule at
-    /// .stella/rules/<slug>.md. Eligibility is strict: cited successfully
+    /// `.stella/rules/<slug>.md`. Eligibility is strict: cited successfully
     /// MORE THAN 10 consecutive times since its last negative remark — one
     /// negative citation resets the count until it is re-earned.
     Promote {

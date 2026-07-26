@@ -359,7 +359,7 @@ impl Observatory {
     /// Tool leaderboard: calls, failures, latency, bytes returned. The p50
     /// is computed here (SQLite has no percentile function).
     ///
-    /// Accumulates into [`ToolAgg`] rather than a bare tuple so the fold and
+    /// Accumulates into `ToolAgg` rather than a bare tuple so the fold and
     /// the row-building loop name the same four quantities.
     pub fn tools(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {

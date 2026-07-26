@@ -364,7 +364,7 @@ impl DrainOutcome {
 ///   Nothing is quarantined and the cursor does not move.
 /// - **terminal-batch** → stop and report. No row is attributable, so
 ///   dead-lettering any would be silent loss.
-/// - **terminal-row** → [`bisect`] the page down to the exact row, dead-letter
+/// - **terminal-row** → `bisect` the page down to the exact row, dead-letter
 ///   it with its reason, and advance the cursor past both the delivered prefix
 ///   and the poison row — in one transaction — then keep draining. The org's
 ///   newer rows flow again.

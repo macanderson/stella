@@ -140,7 +140,13 @@ fn render(checks: &[Check]) {
         };
         println!("  {mark} {} — {}", check.name.bold(), check.summary);
         for detail in &check.details {
-            println!("      {}", detail.dimmed());
+            // SQLite puts newlines inside a single `integrity_check` row (the
+            // "*** in database main ***" banner arrives glued to the finding
+            // under it), so each line is indented on its own rather than letting
+            // one row break the column.
+            for line in detail.lines() {
+                println!("      {}", line.dimmed());
+            }
         }
         for line in &check.remedy {
             println!("      {} {line}", "→".yellow());
@@ -201,11 +207,12 @@ fn store_integrity(workspace_root: &Path, repair: bool) -> Check {
         .take(MAX_PRINTED_PROBLEMS)
         .cloned()
         .collect();
-    if report.total_problems() > details.len() {
-        details.push(format!(
-            "… and {} more",
-            report.total_problems() - details.len()
-        ));
+    // `saturating_sub` on purpose: the count comes from the store and the
+    // listing from this function, and a diagnostic must never be the thing that
+    // panics on a workspace that is already in trouble.
+    let undisplayed = report.total_problems().saturating_sub(details.len());
+    if undisplayed > 0 {
+        details.push(format!("… and {undisplayed} more"));
     }
 
     if !repair {

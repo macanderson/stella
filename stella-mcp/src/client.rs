@@ -94,7 +94,7 @@ pub struct McpClient {
     /// How to rebuild a dropped transport. `None` = no auto-reconnect.
     reconnect: Option<Reconnector>,
     /// Per-call timeout (also the reconnect/handshake bound). Set at build
-    /// time by [`McpToolSet`]; a timed-out call is treated as a drop.
+    /// time by [`crate::McpToolSet`]; a timed-out call is treated as a drop.
     call_timeout: Duration,
     negotiated_version: String,
     server_info: Option<Implementation>,
@@ -137,7 +137,7 @@ impl McpClient {
     }
 
     /// Override the per-call timeout (default [`DEFAULT_CALL_TIMEOUT`]). Set by
-    /// [`McpToolSet`] when the set is assembled so every server shares one
+    /// [`crate::McpToolSet`] when the set is assembled so every server shares one
     /// bound; a call that exceeds it is treated as a drop and schedules a
     /// reconnect.
     pub fn set_call_timeout(&mut self, timeout: Duration) {

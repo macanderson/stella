@@ -20,7 +20,7 @@
 //!   chain doc (`credential.rs`) already records as deferred alongside this
 //!   adapter.
 //!
-//! Requests are signed with SigV4 implemented in [`sigv4`] below — pure
+//! Requests are signed with SigV4 implemented in `sigv4` below — pure
 //! functions over explicit inputs, pinned by golden vectors generated from
 //! botocore's reference implementation (see `sigv4::tests`), because
 //! request signing is exactly the kind of code that "looks right" while

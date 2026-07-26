@@ -5,7 +5,7 @@
 //! quarantine that gives a corrupt one a way out — the two halves
 //! `stella doctor` is made of.
 //!
-//! [`corrupt_store_error`] — the session path's mapping, which lives here
+//! `corrupt_store_error` — the session path's mapping, which lives here
 //! because it shares this module's classifier — already turns "database disk
 //! image is malformed" into an actionable sentence at open time. That is a
 //! diagnosis the user cannot confirm and a repair they have to invent, which is
@@ -17,7 +17,7 @@
 //! # Safety posture
 //!
 //! - Checking never mutates. The probe opens read-only
-//!   ([`open_private_sqlite_read_only`]) precisely so SQLite cannot recover or
+//!   (`open_private_sqlite_read_only`) precisely so SQLite cannot recover or
 //!   checkpoint a leftover `-wal` into a file the user may still want to
 //!   salvage. It also never *creates* a database: a workspace that has never
 //!   run a session has nothing to check, and saying so beats materializing an
@@ -43,9 +43,10 @@ use crate::{
 /// statement being wrong)? `SQLITE_CORRUPT` is a database whose pages no longer
 /// hold a valid b-tree; `SQLITE_NOTADB` is a file whose header is not SQLite's
 /// at all (truncated to nothing, overwritten by another tool, or an encrypted
-/// blob). Shared by [`corrupt_store_error`] (the session-path message) and
-/// [`classify_pragma_failure`] (the diagnostic verdict), so the classification
-/// behind "your store is corrupt" is one definition, not two that can drift.
+/// blob). Shared by `corrupt_store_error` (the session-path message) and
+/// `PragmaRun::refuse_if_not_corruption` (the diagnostic verdict), so the
+/// classification behind "your store is corrupt" is one definition, not two that
+/// can drift.
 pub(crate) fn is_sqlite_corruption(error: &rusqlite::Error) -> bool {
     matches!(
         error,
@@ -137,7 +138,7 @@ pub enum IntegrityReport {
     /// could say so.
     Healthy { depth: IntegrityDepth },
     /// The file is a readable SQLite database with structural damage.
-    /// `problems` is SQLite's own wording, capped at [`MAX_REPORTED_PROBLEMS`]
+    /// `problems` is SQLite's own wording, capped at `MAX_REPORTED_PROBLEMS`
     /// rows, with `total_problems` carrying the untruncated count.
     Corrupt {
         depth: IntegrityDepth,
@@ -147,7 +148,7 @@ pub enum IntegrityReport {
     /// The file could not be read as a SQLite database at all (truncated to
     /// nothing, overwritten, or encrypted). `reason` is SQLite's own wording for
     /// why — "file is not a database", "database disk image is malformed" — the
-    /// same distinction [`corrupt_store_error`] classifies on the session path.
+    /// same distinction `corrupt_store_error` classifies on the session path.
     /// Deliberately just the reason, with no advice attached: the caller knows
     /// whether it is a session that should point at `stella doctor` or the doctor
     /// itself, which must not tell a user to run the command they are running.
@@ -254,7 +255,7 @@ pub fn check_workspace_store(workspace_root: &Path) -> Result<Option<(PathBuf, I
 /// Check one SQLite database file in place, mutating nothing in the healthy
 /// case and nothing at all unless a `-wal` forces a session-shaped open.
 ///
-/// The probe is an immutable read ([`open_private_sqlite_read_only`]): no locks,
+/// The probe is an immutable read (`open_private_sqlite_read_only`): no locks,
 /// no `-shm`, not one byte written — a diagnostic must not be the thing that
 /// rewrites a file the user may still want to salvage. Immutable reads cannot
 /// see a `-wal`'s uncheckpointed pages, so a BAD verdict (or a probe that could
@@ -289,64 +290,126 @@ pub fn check_file(db_path: &Path) -> Result<IntegrityReport> {
 
 /// The pragma ladder, against an already-open connection.
 fn check_connection(conn: &Connection) -> Result<IntegrityReport> {
-    let quick = match pragma_rows(conn, IntegrityDepth::Quick) {
-        Ok(rows) => rows,
-        Err(error) => return classify_pragma_failure(error),
-    };
-    if rows_say_ok(&quick) {
+    let quick = pragma_run(conn, IntegrityDepth::Quick);
+    quick.refuse_if_not_corruption()?;
+    if quick.stopped_by.is_none() && quick.problems.is_empty() {
         return Ok(IntegrityReport::Healthy {
             depth: IntegrityDepth::Quick,
         });
     }
-    let full = match pragma_rows(conn, IntegrityDepth::Full) {
-        Ok(rows) => rows,
-        Err(error) => return classify_pragma_failure(error),
-    };
+
+    // Something is wrong. The full check enumerates more (indexes against their
+    // tables) and, when the damage aborts the walk partway, still hands back
+    // everything it named before giving up — which is the difference between
+    // "your database is broken" and "index forgotten_by_surface disagrees with
+    // its table, page 62 is unreadable".
+    let full = pragma_run(conn, IntegrityDepth::Full);
+    full.refuse_if_not_corruption()?;
+
     // `quick_check`'s checks are a strict subset of `integrity_check`'s, so a
-    // clean full pass after a dirty quick one should be impossible — if SQLite
-    // ever does that, keep the findings we actually have rather than reporting
-    // a clean bill of health nobody gave us.
-    let (depth, problems) = if rows_say_ok(&full) {
+    // silent full pass after a dirty quick one should be impossible — if SQLite
+    // ever does that, keep the findings we actually have rather than reporting a
+    // clean bill of health nobody gave us.
+    let (depth, mut run) = if full.problems.is_empty() {
         (IntegrityDepth::Quick, quick)
     } else {
         (IntegrityDepth::Full, full)
     };
-    let total_problems = problems.len();
+    if run.problems.is_empty() {
+        // The check aborted before naming anything: the file cannot be walked at
+        // all, which is a different verdict from a walkable file with damage.
+        return Ok(IntegrityReport::Unreadable {
+            reason: run.stopped_by.map_or_else(
+                || "no reason reported".to_string(),
+                |error| error.to_string(),
+            ),
+        });
+    }
+    if let Some(error) = run.stopped_by {
+        // The listing is incomplete and the user must know that, or a short list
+        // reads as the full extent of the damage.
+        run.problems.push(format!("{depth} stopped early: {error}"));
+    }
+    let total_problems = run.problems.len();
     Ok(IntegrityReport::Corrupt {
         depth,
-        problems: problems.into_iter().take(MAX_REPORTED_PROBLEMS).collect(),
+        problems: run
+            .problems
+            .into_iter()
+            .take(MAX_REPORTED_PROBLEMS)
+            .collect(),
         total_problems,
     })
 }
 
-/// Run one integrity pragma and collect its rows. The pragma name comes from
-/// [`IntegrityDepth`], never from a caller, so the interpolation cannot be an
-/// injection site (pragma names cannot be bound as parameters).
-fn pragma_rows(conn: &Connection, depth: IntegrityDepth) -> rusqlite::Result<Vec<String>> {
-    let mut statement = conn.prepare(&format!("PRAGMA {}", depth.pragma()))?;
-    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-    rows.collect()
+/// One pragma's output: the problem rows it named (an `ok` row is not a problem)
+/// and the failure that ended it, if any.
+struct PragmaRun {
+    problems: Vec<String>,
+    stopped_by: Option<rusqlite::Error>,
 }
 
-/// SQLite says a database is sound with a single `ok` row. An empty result is
-/// treated the same way: no problem was reported, so none is invented.
-fn rows_say_ok(rows: &[String]) -> bool {
-    rows.iter().all(|row| row.eq_ignore_ascii_case("ok"))
-}
-
-/// A pragma that fails with `SQLITE_CORRUPT`/`SQLITE_NOTADB` has answered the
-/// question — that is the verdict, not an error. Anything else means the check
-/// could not be performed and propagates.
-fn classify_pragma_failure(error: rusqlite::Error) -> Result<IntegrityReport> {
-    if is_sqlite_corruption(&error) {
-        return Ok(IntegrityReport::Unreadable {
-            reason: error.to_string(),
-        });
+impl PragmaRun {
+    /// A pragma that failed for a reason OTHER than corruption did not judge the
+    /// database — the check could not be performed, and that propagates as an
+    /// error rather than masquerading as a verdict. (`corrupt_store_error` makes
+    /// the same distinction on the session path, through the same predicate.)
+    fn refuse_if_not_corruption(&self) -> Result<()> {
+        match &self.stopped_by {
+            Some(error) if !is_sqlite_corruption(error) => Err(StoreError(error.to_string())),
+            _ => Ok(()),
+        }
     }
-    // Not corruption: the check could not be performed, which is the caller's
-    // problem to report, not a verdict on the database. `corrupt_store_error`
-    // handles the same fork on the session path.
-    Err(StoreError::from(error))
+}
+
+/// Run one integrity pragma, keeping the rows it produced even when it aborts
+/// mid-walk — SQLite names what it found and *then* raises `SQLITE_CORRUPT`, so
+/// collecting into a `Result` would throw away the entire diagnosis.
+///
+/// The pragma name comes from [`IntegrityDepth`], never from a caller, so the
+/// interpolation cannot be an injection site (pragma names cannot be bound as
+/// parameters).
+fn pragma_run(conn: &Connection, depth: IntegrityDepth) -> PragmaRun {
+    let mut problems = Vec::new();
+    let mut statement = match conn.prepare(&format!("PRAGMA {}", depth.pragma())) {
+        Ok(statement) => statement,
+        Err(error) => {
+            return PragmaRun {
+                problems,
+                stopped_by: Some(error),
+            };
+        }
+    };
+    let mut rows = match statement.query([]) {
+        Ok(rows) => rows,
+        Err(error) => {
+            return PragmaRun {
+                problems,
+                stopped_by: Some(error),
+            };
+        }
+    };
+    loop {
+        let stopped_by = match rows.next() {
+            // SQLite says "sound" with a single `ok` row; anything else is a
+            // finding.
+            Ok(Some(row)) => match row.get::<_, String>(0) {
+                Ok(text) => {
+                    if !text.eq_ignore_ascii_case("ok") {
+                        problems.push(text);
+                    }
+                    continue;
+                }
+                Err(error) => Some(error),
+            },
+            Ok(None) => None,
+            Err(error) => Some(error),
+        };
+        return PragmaRun {
+            problems,
+            stopped_by,
+        };
+    }
 }
 
 /// What [`quarantine_corrupt_store`] did, so a caller can tell the user where

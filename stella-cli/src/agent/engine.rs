@@ -227,7 +227,7 @@ pub(crate) struct EngineWiring {
     pub(crate) notices: Vec<String>,
 }
 
-/// Resolve one role's already-computed [`ModelSpec`] into a pin: find the
+/// Resolve one role's already-computed [`crate::engine_config::ModelSpec`] into a pin: find the
 /// credentialed provider, and build its adapter unless the pin names the
 /// exact same model the primary resolver entry already serves (`base_ref` —
 /// always the literal session-default `ModelRef` the pre-built primary

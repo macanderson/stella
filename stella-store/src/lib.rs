@@ -66,8 +66,8 @@
 //!
 //! `PRAGMA user_version` stamps every database with its schema version
 //! (version 0 is the legacy pre-versioning shape). A fresh file is created
-//! at [`SCHEMA_VERSION`] directly; an existing file is upgraded by the
-//! ordered [`MIGRATIONS`] list, one transaction per step, with the new
+//! at `SCHEMA_VERSION` directly; an existing file is upgraded by the
+//! ordered `MIGRATIONS` list, one transaction per step, with the new
 //! version stamped inside that same transaction — a crash mid-migration
 //! rolls the file back to the old version and old shape, never a mix.
 //!
@@ -670,11 +670,11 @@ impl Store {
             .unwrap_or(false)
     }
 
-    /// Bring the database to [`SCHEMA_VERSION`]. `PRAGMA user_version` 0 is
+    /// Bring the database to `SCHEMA_VERSION`. `PRAGMA user_version` 0 is
     /// both "fresh empty file" and "legacy pre-versioning file",
     /// disambiguated by probing for the store's tables: fresh files get the
     /// latest schema in one transaction and are stamped directly; existing
-    /// files run each pending [`MIGRATIONS`] entry in its own transaction
+    /// files run each pending `MIGRATIONS` entry in its own transaction
     /// (version stamped inside it — see [`apply_migration`]).
     fn migrate(&self) -> Result<()> {
         let mut conn = self.lock();
@@ -805,7 +805,7 @@ impl Store {
     ///
     /// One transaction, like every sibling fan-out writer here: a failure
     /// partway through the batch (an out-of-range line count tripping
-    /// [`sqlite_i64`] on a later path) rolls the whole set back instead of
+    /// `sqlite_i64` on a later path) rolls the whole set back instead of
     /// leaving the execution with a truncated file list, and the batch costs
     /// one WAL commit rather than one per row on the turn-finalize path.
     pub fn record_files_touched(&self, execution_id: i64, files: &[FileTouchRow]) -> Result<()> {
