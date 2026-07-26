@@ -104,7 +104,7 @@ multi-thread runtime, sessions addressed by id.
 │                                                                                            │
 │  POST /v1/sessions            → create Session { id, workspace_root, provider cfg, ... }    │
 │  POST /v1/sessions/:id/turn   → drive one turn/pipeline; returns run id                     │
-│  GET  /v1/sessions/:id/events → SSE stream of AgentEvent (resumable via ?after=<seq>)       │
+│  GET  /v1/sessions/:id/events → SSE stream of AgentEvent (no ?after=<seq> replay yet)       │
 │  POST /v1/sessions/:id/steer  → TurnSteering::drain_steering  (mid-turn message)            │
 │  POST /v1/sessions/:id/pause  → TurnGate::wait_if_paused                                     │
 │  POST /v1/sessions/:id/cancel → soft-stop (keep work) | hard-cancel (drop future)           │
@@ -160,9 +160,12 @@ per-step checkpoint and crash-resume. This is ADR-033 §6 item 1 and §4.3.
 ### Wire protocol
 
 - **Events (engine → host):** newline-delimited `AgentEvent` JSON over SSE,
-  identical to `stream-json`. Each carries a monotonic `seq`; the SSE endpoint
-  replays from `?after=<seq>` so a reconnect resumes losslessly (mirrors the
-  Observatory's read model and Oxagen's `agent_events` log discipline).
+  identical to `stream-json`. Each carries a monotonic `seq`. **Planned, not
+  built:** the SSE endpoint is to replay from `?after=<seq>` so a reconnect
+  resumes losslessly (mirroring the Observatory's read model and Oxagen's
+  `agent_events` log discipline). At this baseline no `?after=` parameter is
+  parsed and no event history is retained, so a dropped connection loses
+  whatever was streamed while it was down.
 - **Reverse RPC (host → engine):** the engine surfaces a `tool_start` /
   `scope_review` / `ask_user` `AgentEvent` carrying a `call_id`; the host runs
   the governed work and POSTs the result back to
