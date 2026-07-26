@@ -955,6 +955,10 @@ enum StorageCmd {
     /// Drift report: near-duplicate relations, orphaned manifest meanings,
     /// and intent coverage. Report-only — nothing is changed.
     Drift,
+    /// Bound `store.db`'s growth: drop whole executions and every row keyed to
+    /// them, by age and/or a ceiling. Alias for `stella stats prune` — same
+    /// flags, same engine. Start with `--dry-run`.
+    Prune(crate::stats::PruneArgs),
 }
 
 /// `stella observe` — serve the Observatory dashboard for this workspace on
@@ -1110,6 +1114,12 @@ fn load_storage_snapshot_checked(
 
 fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
     use stella_graph::storage::{dedup_key, display_address, embed_card, normalize_name};
+    // Retention operates on store.db itself, not on the storage *map*, so it
+    // runs ahead of the snapshot load below — a workspace with no
+    // stella.storage.toml still has a store.db worth bounding.
+    if let StorageCmd::Prune(args) = cmd {
+        return crate::stats::run_stats_prune(args);
+    }
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let snapshot = load_storage_snapshot_checked(&root)?;
@@ -1464,19 +1474,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // it is `Copy`, so deref rather than move.
             return match cmd {
                 None => stats::run_stats(*format, provider.as_deref()),
-                Some(stats::StatsCmd::Prune {
-                    older_than,
-                    max_rows,
-                    force,
-                    vacuum,
-                    dry_run,
-                }) => stats::run_stats_prune(
-                    older_than.as_deref(),
-                    *max_rows,
-                    *force,
-                    *vacuum,
-                    *dry_run,
-                ),
+                Some(stats::StatsCmd::Prune(args)) => stats::run_stats_prune(args),
             };
         }
         Some(Command::Usage { cmd }) => {
