@@ -1309,8 +1309,6 @@ fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
                 println!("{}", "no drift signals".dimmed());
             }
         }
-        // Handled above, before the storage-map snapshot is loaded.
-        StorageCmd::Prune(_) => unreachable!("`storage prune` returns before the map loads"),
     }
     Ok(())
 }

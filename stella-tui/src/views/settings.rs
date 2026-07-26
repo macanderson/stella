@@ -13,7 +13,7 @@
 //!
 //! Layout is width-driven rather than fixed: two columns need enough room for
 //! the engine panel's label column and the tools panel's name + state + reason
-//! columns, so below [`SPLIT_MIN_WIDTH`] the tab shows one panel full-width —
+//! columns, so below `SPLIT_MIN_WIDTH` the tab shows one panel full-width —
 //! whichever is focused, defaulting to the engine editor. A cramped two-column
 //! split that truncated every reason to nothing would be worse than one honest
 //! panel and a keystroke.

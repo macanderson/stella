@@ -8,11 +8,11 @@
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
 1872 stella-cli/src/agent_tests.rs
-2223 stella-cli/src/agent.rs
+2224 stella-cli/src/agent.rs
 1623 stella-cli/src/candidate_ws.rs
-4466 stella-cli/src/command_deck.rs
+4592 stella-cli/src/command_deck.rs
 1503 stella-cli/src/contextgraph.rs
-1776 stella-cli/src/main.rs
+1782 stella-cli/src/main.rs
 1641 stella-cli/src/memory.rs
 2224 stella-context/src/store.rs
 2095 stella-core/src/bus.rs
@@ -34,7 +34,7 @@
 1556 stella-tools/src/media.rs
 3014 stella-tools/src/registry.rs
 1797 stella-tools/src/scripts.rs
-1670 stella-tui/src/deck_render.rs
-3940 stella-tui/src/deck_ui.rs
+1671 stella-tui/src/deck_render.rs
+3965 stella-tui/src/deck_ui.rs
 1609 stella-tui/src/model.rs
-1650 stella-tui/src/views/engine.rs
+1652 stella-tui/src/views/engine.rs
