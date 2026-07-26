@@ -33,7 +33,7 @@
 1828 stella-store/src/usage.rs
 1558 stella-tools/src/media.rs
 2966 stella-tools/src/registry.rs
-1688 stella-tools/src/scripts.rs
+1797 stella-tools/src/scripts.rs
 1662 stella-tui/src/deck_render.rs
 6884 stella-tui/src/deck_ui.rs
 1615 stella-tui/src/model.rs

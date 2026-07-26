@@ -498,6 +498,17 @@ fn changed_paths(before: &HashMap<String, String>, after: &HashMap<String, Strin
 }
 
 /// Whether a candidate-relative path has a supported witness-test shape.
+///
+/// Rust is the one language here with no filename-only form: cargo can only
+/// run an integration test from a `tests/` directory, so the `"rs"` arm
+/// requires `recognized_dir` outright. A bare `_test.` fallback accepted
+/// `src/backdoor_test.rs` as a witness artifact — after which
+/// [`validate_witness_invocation`]'s required `cargo test --test <stem>` can
+/// never pass, the flip never happens, the run burns its full revision
+/// budget, and a judge scoring the diff may still PASS, adopting the stray
+/// production file into the user's real tree. The other arms keep their
+/// filename forms because their runners genuinely collect by filename
+/// wherever the file sits (`pytest test_*.py`, `go test ./... _test.go`).
 pub fn is_witness_test_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let name = normalized.rsplit('/').next().unwrap_or(&normalized);
@@ -506,7 +517,7 @@ pub fn is_witness_test_path(path: &str) -> bool {
         .any(|part| matches!(part, "test" | "tests" | "__tests__" | "spec" | "specs"));
     let extension = name.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
     match extension {
-        "rs" => recognized_dir || name.contains("_test."),
+        "rs" => recognized_dir,
         "py" => recognized_dir || name.starts_with("test_") || name.contains("_test."),
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" => {
             recognized_dir || name.contains(".test.") || name.contains(".spec.")
@@ -554,6 +565,9 @@ pub fn witness_prompt(goal: &str, recall: &[RecalledFrame], repo_structure: &str
          Hard requirements:\n\
          - Create ONE NEW test file. Never modify existing files, and never touch \
          production code — the implementation is someone else's job.\n\
+         - Put it where the language's runner collects it. Rust integration tests MUST \
+         live in `tests/` (cargo cannot run a test file under `src/`); Python, Vitest, Go \
+         and .NET may use their filename conventions.\n\
          - The test must fail NOW for the RIGHT reason (it exercises the missing/broken \
          behavior), not because of a typo, a missing import, or a harness error.\n\
          - Use `create_witness_test`; no general write, edit, process, network, or external \
@@ -917,6 +931,52 @@ mod tests {
             rust_prefix_backdoor.is_err(),
             "Rust test prefixes outside a recognized test directory are not integration tests"
         );
+        let rust_suffix_backdoor = validate_witness_artifact(
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &fps(&[("src/backdoor_test.rs", "payload")]),
+        );
+        assert!(
+            rust_suffix_backdoor.is_err(),
+            "cargo runs integration tests only from tests/, so a `_test.rs` under src/ \
+             is a production file the run would adopt, never a witness"
+        );
+    }
+
+    #[test]
+    fn witness_test_path_shapes_per_language() {
+        for accepted in [
+            "tests/authority_witness.rs",
+            "crates/api/tests/witness.rs",
+            "tests/test_authority.py",
+            "test_authority.py",
+            "authority_test.py",
+            "src/__tests__/authority.ts",
+            "src/authority.test.ts",
+            "src/authority.spec.tsx",
+            "internal/authority_test.go",
+            "tests/Authority.Tests/AuthorityWitnessTests.cs",
+        ] {
+            assert!(
+                is_witness_test_path(accepted),
+                "{accepted} is a legitimate witness artifact"
+            );
+        }
+        for rejected in [
+            // Rust: cargo cannot run an integration test outside tests/, so a
+            // filename-only form is a production file, not a witness.
+            "src/backdoor_test.rs",
+            "src/test_backdoor.rs",
+            "src/lib.rs",
+            "README.md",
+            "tests/fixture.json",
+        ] {
+            assert!(
+                !is_witness_test_path(rejected),
+                "{rejected} must not be accepted as a witness artifact"
+            );
+        }
     }
 
     // witness_identity_matches — the tamper check the pipeline actually runs.
