@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.5.40] — 2026-07-26
+
 ### Changed
 
 - `stella storage prune` is now an alias for `stella stats prune` — same flags,
