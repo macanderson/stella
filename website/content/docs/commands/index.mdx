@@ -39,6 +39,7 @@ stella chat
 | `stella auth <set\|remove\|list>` | Manage BYOK provider keys in [`credentials.toml`](/docs/commands/auth) (never prints a secret). |
 | `stella tools` | List every tool available to the agent this session. |
 | `stella config` | Show the fully resolved configuration. |
+| `stella doctor` | Check the local state stella owns — today the integrity of this workspace's [session store](/docs/commands/doctor) — and exit non-zero if any check fails. `--repair` moves a corrupt `store.db` aside (renamed, never deleted). |
 | `stella version` | Print the version and exit. |
 
 Each command page in this section documents its usage synopsis, behavior, relevant flags, and realistic examples.
