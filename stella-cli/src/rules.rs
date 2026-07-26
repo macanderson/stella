@@ -174,6 +174,31 @@ pub(crate) fn load_workspace_rules(
     )
 }
 
+/// Phase 3 (#714): every rule already on disk, for the miner's dedup check.
+///
+/// Deliberately NOT `load_workspace_rules`: that applies the session's
+/// authority policy, and a workspace whose project prompts are untrusted would
+/// return an empty list — handing the miner an empty "already captured" set and
+/// letting it re-propose rules that are sitting right there. That is the same
+/// shape as [#737](https://github.com/macanderson/stella/issues/737) on the
+/// skills side, where an authority-filtered list blinded a guard that is about
+/// what is on the filesystem, not about what the session is allowed to read.
+///
+/// Trust governs whether a rule *steers the model*. It has nothing to say about
+/// whether a file exists, and mining needs the second question answered.
+pub(crate) fn load_workspace_rules_unfiltered(workspace_root: &Path) -> Vec<Rule> {
+    if crate::settings::filesystem_settings_disabled() {
+        return Vec::new();
+    }
+    load_rules(
+        &FsRuleSource,
+        &LoadRulesOptions {
+            cwd: workspace_root.display().to_string(),
+            user_rules_dir: String::new(),
+        },
+    )
+}
+
 /// [`load_workspace_rules`] over an explicit user rules directory — the seam
 /// tests use so precedence and both authority branches are provable without
 /// touching `$HOME`. `None` omits user rules; project sources still follow

@@ -60,6 +60,7 @@ pub mod context_use;
 pub mod contract;
 pub mod hash;
 pub mod kind;
+pub mod lifecycle;
 pub mod outcome;
 pub mod representation;
 pub mod scope;
@@ -79,6 +80,11 @@ pub use kind::{
     ConstraintEffect, ContextRecordKind, DirectiveEnforcement, DirectiveKind, DirectivePriority,
     EffectiveStatus, KnowledgeKind, MemoryKind, Origin, PromotionAction, RecordProposalKind,
     RecordProposalStatus, RecordStatus,
+};
+pub use lifecycle::{
+    LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ObservationSource, PromotionActor,
+    PromotionEventError, PromotionEventRecord, ProposalRecord, ProposalScore,
+    confidence_from_score,
 };
 pub use outcome::{
     CompletionAssessment, CompletionStatus, CorrectnessAssessment, CorrectnessStatus,

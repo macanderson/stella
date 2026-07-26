@@ -1069,3 +1069,121 @@ fn a_v4_context_db_migrates_and_the_compaction_migration_is_idempotent() {
         "and the v4 memory still made it through the lineage backfill"
     );
 }
+
+// ── v8: the lifecycle ledger, and episode.lineage_id (#714) ──────────────
+
+/// ADR 0010 point 6 (ratified 2026-07-26) says `lineage_id` lands on `memory`
+/// **and `episode`**, and the plan document records Phase 1 as having delivered
+/// exactly that. It did not — `migrate_v5` altered `memory` alone. v8 closes the
+/// gap in favor of the ratified ADR rather than amending the ADR down to the
+/// code.
+///
+/// The backfill is the same lossless one v5 used: every existing row is its own
+/// lineage's first revision, so `lineage_id = public_id`. This asserts that on a
+/// row written by a **pre-v6** binary, which is the only case where the backfill
+/// does any work.
+#[test]
+fn v8_backfills_episode_lineage_from_public_id_without_touching_content() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    {
+        let conn = open_legacy(&path, 3);
+        conn.execute(
+            "INSERT INTO episode (public_id, summary, files_touched, outcome, salience,
+                                  started_at, ended_at, recorded_at)
+             VALUES ('epi_legacy', 'fixed the tenancy leak', '[\"src/db.rs\"]', 'success',
+                     0.5, '2026-01-01T00:00:00Z', '2026-01-01T01:00:00Z',
+                     '2026-01-01T01:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let _store = ContextStore::open(&path).unwrap();
+    let conn = Connection::open(&path).unwrap();
+
+    let (lineage, summary, superseded): (String, String, Option<String>) = conn
+        .query_row(
+            "SELECT lineage_id, summary, superseded_at FROM episode WHERE public_id = 'epi_legacy'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        lineage, "epi_legacy",
+        "an existing episode is its own lineage's first revision"
+    );
+    assert_eq!(
+        summary, "fixed the tenancy leak",
+        "the backfill read no content and changed none"
+    );
+    assert!(
+        superseded.is_none(),
+        "a migrated episode is live, not superseded"
+    );
+}
+
+/// The migration is statement-level idempotent, not merely gated by the version
+/// ladder — a rewound `user_version` is how the fixtures above are built and
+/// what a partial restore looks like, and SQLite has no `ADD COLUMN IF NOT
+/// EXISTS` to fall back on.
+#[test]
+fn v8_is_idempotent_across_a_rewound_user_version() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    ContextStore::open(&path).unwrap();
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "user_version", 5i64).unwrap();
+    }
+    // Re-running v6 over a database that already has every v6 object must not
+    // fail on a duplicate column, index, table, or trigger.
+    ContextStore::open(&path).unwrap();
+    let conn = Connection::open(&path).unwrap();
+    let v: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, SCHEMA_VERSION);
+}
+
+/// The ledger's append-only guarantee survives a migration, because it is
+/// installed as triggers rather than enforced by the writing code.
+#[test]
+fn v8_installs_the_append_only_triggers_on_a_migrated_store() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    drop(open_legacy(&path, 3));
+    let store = ContextStore::open(&path).unwrap();
+    store
+        .append_record(crate::LedgerAppend {
+            record_id: "obs_1",
+            lineage_id: "obs_1",
+            record_kind: "observation",
+            record_hash: "sha256:aa",
+            schema_version: "1.0-draft",
+            body: "{}",
+            observed_at: "2026-07-26T12:00:00Z",
+            supersedes: None,
+        })
+        .unwrap();
+    drop(store);
+
+    let conn = Connection::open(&path).unwrap();
+    assert!(
+        conn.execute("DELETE FROM context_records", []).is_err(),
+        "a migrated store's ledger is rewritable"
+    );
+}
+
+/// Not one legacy row is rewritten by v8 (ADR 0010: new kinds are born
+/// canonical and have no migration). The only writes are the additive episode
+/// columns and their backfill.
+#[test]
+fn v8_creates_the_ledger_empty() {
+    let dir = TempDir::new().unwrap();
+    let store = ContextStore::open(dir.path().join("context.db")).unwrap();
+    assert!(
+        store.record_counts().unwrap().is_empty(),
+        "a fresh ledger holds nothing — records are born, never migrated in"
+    );
+}
