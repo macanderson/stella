@@ -2120,8 +2120,10 @@ fn a_corrupt_store_db_names_the_file_and_the_remedy() {
         "the error must name the exact file: {error}"
     );
     assert!(
-        error.contains("Move") && error.contains("aside"),
-        "the error must name the remedy: {error}"
+        error.contains("stella doctor") && error.contains("aside"),
+        "the error must name the remedy — since #642 that remedy is the doctor \
+         command that confirms the diagnosis and moves the file aside, not a \
+         hand-rolled `mv` the user has to compose: {error}"
     );
 }
 

@@ -36,6 +36,7 @@ mod contextgraph;
 mod credential_handoff;
 mod credential_status;
 mod discovery;
+mod doctor;
 mod domains;
 mod engine_config;
 mod enterprise_telemetry;
@@ -582,6 +583,22 @@ enum Command {
 
     /// Show current configuration
     Config,
+
+    /// Check the local state stella owns and report each named check's
+    /// verdict — today the integrity of this workspace's session store
+    /// (.stella/private/store.db), verified with SQLite's own
+    /// quick_check/integrity_check. Exits non-zero if any check fails, so it
+    /// can gate a script. Reads local state only; needs no API key.
+    Doctor {
+        /// Repair a store.db that failed the check: move it aside to a
+        /// timestamped name (RENAMED, never deleted — its WAL/SHM siblings
+        /// travel with it), then copy out whatever is still readable into a
+        /// separate salvaged database. Only ever acts on a database SQLite
+        /// itself judged corrupt; a healthy store and an inconclusive check
+        /// are both left untouched. The next session starts a fresh store.
+        #[arg(long)]
+        repair: bool,
+    },
 
     /// Manage BYOK provider keys stored in
     /// ~/.stella/credentials.toml (set/remove/list) — keys resolved
@@ -1447,6 +1464,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // API key required; the stores are opened strictly read-only.
             return run_observe(*port, *open);
         }
+        Some(Command::Doctor { repair }) => {
+            // Reads local state only — and with --repair renames files inside
+            // .stella/private/. No provider, no API key, and deliberately
+            // before `Config::load`: a workspace whose store is corrupt must be
+            // diagnosable without a working model configuration.
+            return doctor::run_doctor(*repair);
+        }
         Some(Command::Version) => {
             println!("stella v{}", version_string());
             return Ok(());
@@ -1656,6 +1680,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Auth { .. }
         | Command::Observe { .. }
         | Command::Models { .. }
+        | Command::Doctor { .. }
         | Command::Version => {
             unreachable!("handled before provider resolution")
         }
