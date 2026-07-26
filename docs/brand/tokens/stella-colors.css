@@ -1,0 +1,16 @@
+:root {
+  --stella-ink: #0B0B0C;
+  --stella-sub: #9AA0A6;
+  --stella-chevron: #C9CDD2;
+  --stella-cursor: #FF3D1F;
+  --stella-paper: #FFFFFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --stella-ink: #F5F6F7;
+    --stella-sub: #7D838A;
+    --stella-chevron: #45494F;
+    --stella-cursor: #FF4B2A;
+    --stella-paper: #0B0B0C;
+  }
+}
