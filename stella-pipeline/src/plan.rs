@@ -265,6 +265,7 @@ mod tests {
             content: content.into(),
             token_cost: 10,
             id: None,
+            content_digest: None,
         }
     }
 

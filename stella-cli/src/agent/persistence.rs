@@ -357,6 +357,7 @@ pub(crate) fn persist_event(
         effective_budget_tokens,
         calibration_factor,
         estimated_input_tokens,
+        compiled_frame,
     } = event
     {
         let _ = store.record_step_manifest(
@@ -371,6 +372,10 @@ pub(crate) fn persist_event(
                 effective_budget_tokens: *effective_budget_tokens,
                 calibration_factor: *calibration_factor,
                 estimated_input_tokens: *estimated_input_tokens,
+                // Phase 2 (#713): the two travel together or not at all — a
+                // half-written frame identity would be a hash no id resolves.
+                compiled_frame_id: compiled_frame.as_ref().map(|f| f.compiled_frame_id.clone()),
+                frame_hash: compiled_frame.as_ref().map(|f| f.frame_hash.clone()),
                 blocks: blocks
                     .iter()
                     .map(|b| ManifestBlockRow {
@@ -614,6 +619,7 @@ mod stream_tests {
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,
             estimated_input_tokens: 40,
+            compiled_frame: None,
         };
         assert!(persist_event(&store, id, 1, &manifest, "anthropic"));
 
@@ -715,6 +721,119 @@ mod stream_tests {
         // Reconstruct purely from the persisted store, and prove it byte-exact.
         let recon = store
             .reconstruct_worker_step(id, 0, 1)
+            .expect("reconstruct");
+        assert!(
+            recon.is_verified(),
+            "unresolved={:?} mismatches={:?}",
+            recon.unresolved,
+            recon.digest_mismatches
+        );
+        assert_eq!(recon.messages, original);
+    }
+
+    #[test]
+    fn a_decomposed_recall_turn_still_reconstructs_byte_exact() {
+        // The Phase 2 gate (#713): "byte-exact turn reconstruction still
+        // passes, NOW INCLUDING DECOMPOSED RECALL." The recall block splits
+        // into one block per recalled item, the summary and the steer stop
+        // being attributed to the user, and an attachment gets a block of its
+        // own — and after all of that the persisted receipt must still rebuild
+        // the exact messages the model saw.
+        //
+        // This is the single most important assertion in the phase: every other
+        // benefit of decomposition is worthless if the receipt stops being a
+        // faithful record.
+        use stella_core::event_sender::EventSender;
+        use stella_core::receipts::{RECALL_MARKER, ReceiptLedger};
+        use stella_protocol::{Attachment, CompletionMessage, MessageRole};
+
+        let recall = format!(
+            "{RECALL_MARKER}\n\nRelevant context:\n\
+             - [nod_abc123] auth module — always validate the token before use\n\
+             - [nod_def456] deploy runbook — staging first, then production\n\
+             - engine step-driver (driver.rs) — the step loop lives here"
+        );
+        let summary = "[earlier history summarized to fit context — full detail was compacted \
+                       away; re-read files or re-run tools for specifics]\n\nwe read three files";
+        let steer = "[stuck-loop warning] you appear to be looping: same call twice.";
+
+        let original = vec![
+            CompletionMessage::system("you are a careful engineer"),
+            CompletionMessage::user(summary),
+            CompletionMessage::user(recall.clone()),
+            CompletionMessage {
+                role: MessageRole::User,
+                content: "fix the failing test".into(),
+                tool_calls: vec![],
+                tool_results: vec![],
+                attachments: vec![Attachment::from_path(
+                    "screenshot.png",
+                    "image/png",
+                    2048,
+                    "/tmp/screenshot.png",
+                )],
+            },
+            CompletionMessage::user(steer),
+        ];
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let mut ledger = ReceiptLedger::new(0).with_lifecycle(true);
+        ledger.emit_step_receipt_estimating(
+            &original,
+            0,
+            stella_core::receipts::ServedBy {
+                role: stella_protocol::ModelCallRole::Worker,
+                provider: "anthropic",
+                model: "opus",
+            },
+            &events,
+        );
+        drop(events);
+
+        let store = Store::in_memory().expect("store");
+        let id = store
+            .begin_execution("run", "fix the failing test", "anthropic", "opus")
+            .expect("exec");
+        let mut seq = 0u64;
+        let mut kinds: Vec<String> = Vec::new();
+        let mut memory_ids: Vec<String> = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let AgentEvent::BlockRegistered { kind, origin, .. } = &event {
+                kinds.push(enum_tag(kind));
+                if let Some(memory_id) = &origin.memory_id {
+                    memory_ids.push(memory_id.clone());
+                }
+            }
+            persist_event(&store, id, seq, &event, "anthropic");
+            seq += 1;
+        }
+
+        // Decomposition actually happened — otherwise the round-trip below
+        // would pass trivially by never having split anything.
+        assert!(
+            kinds.contains(&"summary".to_string()),
+            "the overflow summary is no longer the user's goal: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&"steered".to_string()),
+            "the stuck-loop steer is no longer the user's goal: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&"attachment".to_string()),
+            "the attachment has a block: {kinds:?}"
+        );
+        assert_eq!(
+            kinds.iter().filter(|k| *k == "recalled_frame").count(),
+            4,
+            "one leading segment + three recalled items: {kinds:?}"
+        );
+        // Per-item provenance: the two memory frames resolve to their records.
+        assert_eq!(memory_ids, vec!["nod_abc123", "nod_def456"]);
+
+        // And the receipt is still a faithful record of what the model saw.
+        let recon = store
+            .reconstruct_worker_step(id, 0, 0)
             .expect("reconstruct");
         assert!(
             recon.is_verified(),

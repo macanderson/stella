@@ -23,6 +23,15 @@ fn candidate(id: &str, token_cost: u32) -> Ranked {
             recorded_at: "2026-01-01T00:00:00Z".into(),
         },
         relevance: 0.5,
+        selection_reason: SelectionReason::Ranked,
+    }
+}
+
+/// A candidate the caller asked for by name — ranking may not evict it.
+fn required(id: &str, token_cost: u32) -> Ranked {
+    Ranked {
+        selection_reason: SelectionReason::Anchored,
+        ..candidate(id, token_cost)
     }
 }
 
@@ -245,6 +254,110 @@ fn packing_skips_an_oversized_frame_but_fits_a_later_small_one() {
     assert_eq!(dropped[0].reason, DropReason::TokenBudget);
 }
 
+// ── Required items survive ranking pressure (#713 deliverable 5) ────────────
+
+#[test]
+fn a_required_item_survives_ranking_pressure_that_would_have_evicted_it() {
+    // The gate criterion. `max_frames` is 2 and the anchored item ranks LAST,
+    // so under the old strictly-rank-ordered packer it was dropped for
+    // FrameCount — silently answering a different question than the one the
+    // user asked, since an anchor is a file they named verbatim.
+    let frames = vec![
+        candidate("ranked_a", 1),
+        candidate("ranked_b", 1),
+        candidate("ranked_c", 1),
+        required("anchored", 1),
+    ];
+    let (kept, dropped) = pack_to_budget(frames, 1000, 2);
+    let ids: Vec<&str> = kept.iter().map(|k| k.meta.public_id.as_str()).collect();
+    assert!(ids.contains(&"anchored"), "kept: {ids:?}");
+    // …and the required item does not silently steal a ranked slot either: the
+    // count budget is a floor for what the caller asked for, so asking for two
+    // frames while anchoring one yields the anchor plus two ranked.
+    assert_eq!(ids, vec!["ranked_a", "ranked_b", "anchored"]);
+    // Rank order is preserved — a packer that emitted required-first would
+    // reorder the rendered block whenever an anchor appeared, which is a
+    // cache-prefix change (spec §5.1) bought for nothing.
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].id, "ranked_c");
+    assert_eq!(dropped[0].reason, DropReason::FrameCount);
+}
+
+#[test]
+fn a_required_item_takes_its_budget_before_ranked_candidates_compete_for_it() {
+    // Token pressure rather than count pressure: the ranked candidates alone
+    // would consume the whole budget, and the anchor ranks last.
+    let frames = vec![
+        candidate("ranked_a", 60),
+        candidate("ranked_b", 60),
+        required("anchored", 40),
+    ];
+    let (kept, dropped) = pack_to_budget(frames, 100, 10);
+    let ids: Vec<&str> = kept.iter().map(|k| k.meta.public_id.as_str()).collect();
+    assert_eq!(ids, vec!["ranked_a", "anchored"]);
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].id, "ranked_b");
+    assert_eq!(dropped[0].reason, DropReason::TokenBudget);
+}
+
+#[test]
+fn a_required_item_that_cannot_fit_at_all_is_dropped_by_an_explicit_named_decision() {
+    // The one way a required item may be dropped: it exceeds the entire
+    // budget, so no ordering could have admitted it. Reported under its own
+    // reason, not folded into TokenBudget — collapsing them would hide the
+    // only case where the caller's own instruction was overruled, behind a
+    // reason that reads as "the budget filled up before we got here".
+    let frames = vec![required("enormous", 500), candidate("ranked", 10)];
+    let (kept, dropped) = pack_to_budget(frames, 100, 10);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].meta.public_id, "ranked");
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].id, "enormous");
+    assert_eq!(dropped[0].reason, DropReason::RequiredOverBudget);
+    assert_ne!(
+        dropped[0].reason,
+        DropReason::TokenBudget,
+        "an overruled instruction must not read as ordinary budget pressure"
+    );
+}
+
+#[test]
+fn the_selection_reason_crosses_the_cgp_seam_on_the_frames_provenance() {
+    // The RecallResult → ContextQueryResult conversion keeps frames and a
+    // collapsed `truncated`/`dropped_estimate` and nothing else, so a reason
+    // recorded anywhere but on the frame is a reason a CGP consumer never
+    // sees. Provenance is the channel; this pins that it is actually written.
+    let node = node_row(1, "some content");
+    let frame =
+        frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Anchored).expect("frame");
+    let reason = frame
+        .provenance
+        .iter()
+        .find(|p| p.kind == SELECTION_PROVENANCE_KIND)
+        .and_then(|p| p.method.clone());
+    assert_eq!(reason.as_deref(), Some("anchored"));
+
+    let frame =
+        frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Ranked).expect("frame");
+    let reason = frame
+        .provenance
+        .iter()
+        .find(|p| p.kind == SELECTION_PROVENANCE_KIND)
+        .and_then(|p| p.method.clone());
+    assert_eq!(reason.as_deref(), Some("ranked"));
+}
+
+#[test]
+fn only_an_anchor_is_required_today() {
+    // The category-aware precedence ADR 0006 asks for, stated as a test so
+    // widening it is a deliberate edit rather than a drift. An anchor is the
+    // one signal in the ranking that came from the user rather than from a
+    // heuristic; nothing else has earned the exemption yet.
+    assert!(SelectionReason::Anchored.is_required());
+    assert!(!SelectionReason::Ranked.is_required());
+    assert!(!SelectionReason::LexicalFallback.is_required());
+}
+
 #[test]
 fn missing_citation_is_a_constructor_error() {
     let node = NodeRow {
@@ -258,7 +371,7 @@ fn missing_citation_is_a_constructor_error() {
         valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
     };
-    let err = frame_from_node(&node, 0.5, "fp", false, &[]).unwrap_err();
+    let err = frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Ranked).unwrap_err();
     assert!(matches!(err, ContextError::MissingCitation { .. }));
 }
 
@@ -275,12 +388,21 @@ fn lexical_frames_are_labeled_in_provenance() {
         valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
     };
-    let frame = frame_from_node(&node, 0.5, "fp", true, &["billing".to_string()]).unwrap();
+    let frame = frame_from_node(
+        &node,
+        0.5,
+        "fp",
+        true,
+        &["billing".to_string()],
+        SelectionReason::Ranked,
+    )
+    .unwrap();
     assert!(
         is_lexical_fallback(&frame),
         "fallback frames must be labeled"
     );
-    let graph_frame = frame_from_node(&node, 0.5, "fp", false, &[]).unwrap();
+    let graph_frame =
+        frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Ranked).unwrap();
     assert!(!is_lexical_fallback(&graph_frame));
 }
 

@@ -73,13 +73,21 @@ pub(crate) use skill_files::load_workspace_skills;
 pub(crate) use skill_files::{
     load_workspace_skills_with_authority, skill_paths_on_disk, workspace_skills_dir,
 };
+// Phase 2 (#713): the engine-config builder reads the lifecycle switch through
+// here, so exactly one place in the crate resolves a `context.*` sub-block.
+pub use tuning::session_lifecycle_enabled;
 
 /// Marker prefixing a recalled-context message so [`inject_recall_block`]
 /// can find the newest one for dedup. Blocks land at the conversation
 /// tail and stay in place as durable history (L-E8: the byte-stable
 /// prefix — system prompt AND replayed turns — is never rewritten, which
 /// is what preserves prompt-cache hits).
-pub const RECALL_MARKER: &str = "[auto-recalled context]";
+///
+/// Phase 2 (#713) moved the definition to `stella-core`, where receipt
+/// decomposition reads it to recognize a recall block. This is a re-export,
+/// not a second copy: two spellings of one marker is a decomposition that
+/// silently stops firing the day either is edited.
+pub use stella_core::receipts::RECALL_MARKER;
 
 /// One reflection lesson as the model returns it and as persisted to the
 /// mining log (`.stella/private/reflections.jsonl`, one JSON object per line).
@@ -276,7 +284,7 @@ impl SessionMemory {
     /// The skills recall would inject for `prompt`, as `(name, reason)` pairs
     /// for skill-version usage telemetry — `reason` is the matched
     /// domains/terms that selected it. Same enabled-filtered load + selection
-    /// as [`Self::recall_block`], so this reports exactly what was applied.
+    /// as [`Self::recall_block_reported`], so this reports exactly what was applied.
     pub fn selected_skills(&self, prompt: &str) -> Vec<(String, String)> {
         skills::select_skills(
             &self.load_skills(),

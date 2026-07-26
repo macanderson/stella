@@ -28,7 +28,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 15] = [
+pub(crate) const MIGRATIONS: [Migration; 16] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -82,6 +82,15 @@ pub(crate) const MIGRATIONS: [Migration; 15] = [
     // (byte-identical blocks share an id, so only the first minting call was
     // ever recorded). Additive ADD COLUMN, column-guarded.
     migrate_v14_to_v15,
+    // v15 → v16: `step_receipt` grows the compiled frame's identity —
+    // `compiled_frame_id` and `frame_hash`, both nullable. The compiled frame
+    // IS the step manifest (ADR 0006 as amended), so its identity is two
+    // columns on the receipt header rather than a second table; a parallel
+    // frame table would be a second immutable record of one turn's context.
+    // Nullable because the frame is gated on `context.lifecycle.enabled` and
+    // because every pre-v16 row predates it. Additive ADD COLUMNs,
+    // column-guarded.
+    migrate_v15_to_v16,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -94,7 +103,7 @@ pub(crate) const MIGRATIONS: [Migration; 15] = [
     // Adaptive context is being built on two branches in parallel, so the
     // slots are reserved here in advance:
     //
-    //   v15 → v16: adaptive-context Phase 2 (#713)
+    //   v15 → v16: adaptive-context Phase 2 (#713) — CLAIMED above.
     //   v16 → v17: adaptive-context Phase 3 (#714)
     //
     // If you are neither of those, take v17 → v18 and add your own line
@@ -461,6 +470,26 @@ fn migrate_v13_to_v14(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 fn migrate_v14_to_v15(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     if !column_exists(tx, "step_manifest", "call_id")? {
         tx.execute_batch("ALTER TABLE step_manifest ADD COLUMN call_id TEXT;")?;
+    }
+    Ok(())
+}
+
+/// v15 → v16: the compiled frame's identity on the receipt header — Phase 2
+/// (#713). Two nullable columns, not a table: ADR 0006 as amended says the
+/// compiled frame is the step manifest extended, so a `compiled_frame` table
+/// would be the second immutable record of one turn's context that amendment
+/// exists to forbid.
+///
+/// Both columns are nullable and stay null for every row written while
+/// `context.lifecycle.enabled` is off, which is the default. A reader must
+/// therefore treat "no frame hash" as "the lifecycle was off", never as "this
+/// receipt is damaged".
+fn migrate_v15_to_v16(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "step_receipt", "compiled_frame_id")? {
+        tx.execute_batch("ALTER TABLE step_receipt ADD COLUMN compiled_frame_id TEXT;")?;
+    }
+    if !column_exists(tx, "step_receipt", "frame_hash")? {
+        tx.execute_batch("ALTER TABLE step_receipt ADD COLUMN frame_hash TEXT;")?;
     }
     Ok(())
 }
@@ -906,5 +935,53 @@ mod tests {
 
         // Idempotent on a file already at the v15 shape.
         apply_migration(&mut conn, migrate_v14_to_v15, 15).expect("idempotent");
+    }
+
+    #[test]
+    fn v16_migration_adds_the_frame_identity_and_leaves_legacy_receipts_null() {
+        // Phase 2 (#713). A v15 file's receipt header has no frame columns and
+        // its rows predate the compiled frame entirely. After the migration the
+        // columns exist and the old row reads back NULL — which a reader must
+        // interpret as "the lifecycle was off", never as a damaged receipt.
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE step_receipt (
+               execution_id INTEGER NOT NULL,
+               turn_instance INTEGER NOT NULL,
+               step INTEGER NOT NULL,
+               call_seq INTEGER NOT NULL DEFAULT 0,
+               provider TEXT NOT NULL,
+               model TEXT NOT NULL,
+               call_role TEXT NOT NULL,
+               effective_budget_tokens INTEGER NOT NULL,
+               calibration_factor REAL NOT NULL,
+               estimated_input_tokens INTEGER NOT NULL,
+               PRIMARY KEY (execution_id, turn_instance, step, call_seq)
+             );
+             INSERT INTO step_receipt VALUES (1, 0, 3, 0, 'anthropic', 'opus', 'worker', 100, 1.0, 40);",
+        )
+        .expect("v15 schema");
+
+        apply_migration(&mut conn, migrate_v15_to_v16, 16).expect("migrate");
+
+        let (id, hash): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT compiled_frame_id, frame_hash FROM step_receipt WHERE execution_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("the legacy row survives with both columns readable");
+        assert_eq!(id, None, "a pre-frame receipt has no frame id");
+        assert_eq!(hash, None);
+
+        // A post-migration write round-trips both halves of the identity.
+        conn.execute(
+            "INSERT INTO step_receipt VALUES (1, 0, 4, 0, 'anthropic', 'opus', 'worker', 100, 1.0, 40, 'cf_abc', 'sha256:abc')",
+            [],
+        )
+        .expect("the new shape accepts a frame");
+
+        // Idempotent on a file already at the v16 shape.
+        apply_migration(&mut conn, migrate_v15_to_v16, 16).expect("idempotent");
     }
 }

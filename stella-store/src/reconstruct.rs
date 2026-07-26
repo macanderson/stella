@@ -228,10 +228,20 @@ fn resolve_content(block: &crate::ContextBlockRow, preimages: &JournalPreimages)
 fn empty_message_for(kind: &str) -> CompletionMessage {
     let role = match kind {
         "system_prefix" => MessageRole::System,
-        "user_goal" | "steered" => MessageRole::User,
+        // `summary` moved here in Phase 2 (#713). The comment it replaces said
+        // "the summary is spliced as assistant-authored"; it is not — the
+        // overflow summarizer splices `CompletionMessage::user`, so rebuilding
+        // it as an assistant message would have produced a transcript the model
+        // never saw. The mapping was unobservable until now because nothing
+        // ever emitted a `summary` block, so no stored row is affected: this
+        // corrects a latent bug rather than changing a behavior.
+        //
+        // `recalled_frame` and `attachment` join for the ordinary reason —
+        // both hang off the user message that carries them.
+        "user_goal" | "steered" | "summary" | "recalled_frame" | "attachment" => MessageRole::User,
         "tool_result" => MessageRole::Tool,
-        // assistant_text, tool_call, summary, and anything else open an
-        // assistant message (the summary is spliced as assistant-authored).
+        // assistant_text, tool_call, and anything else open an assistant
+        // message.
         _ => MessageRole::Assistant,
     };
     CompletionMessage {
@@ -261,9 +271,19 @@ fn append_block(
     unresolved: &mut Vec<String>,
 ) {
     match block.kind.as_str() {
-        "system_prefix" | "user_goal" | "steered" | "assistant_text" | "summary" => {
-            message.content = content.to_string();
+        // APPEND, not assign. One message can now decompose into several text
+        // blocks — the recall block splits per item (#713) — and the segments
+        // were cut so that concatenating them in manifest order reproduces the
+        // original bytes exactly. For the single-block kinds this is identical
+        // to the assignment it replaces: the message was just created empty.
+        "system_prefix" | "user_goal" | "steered" | "assistant_text" | "summary"
+        | "recalled_frame" => {
+            message.content.push_str(content);
         }
+        "attachment" => match serde_json::from_str::<stella_protocol::Attachment>(content) {
+            Ok(attachment) => message.attachments.push(attachment),
+            Err(_) => unresolved.push(block.block_id.clone()),
+        },
         "tool_call" => match serde_json::from_str::<ToolCall>(content) {
             Ok(call) => message.tool_calls.push(call),
             Err(_) => unresolved.push(block.block_id.clone()),
@@ -442,6 +462,8 @@ mod tests {
                     effective_budget_tokens: 100,
                     calibration_factor: 1.0,
                     estimated_input_tokens: 40,
+                    compiled_frame_id: None,
+                    frame_hash: None,
                     blocks: vec![
                         entry("blk_sys", 0),
                         entry("blk_user", 1),
@@ -493,6 +515,8 @@ mod tests {
                     effective_budget_tokens: 1,
                     calibration_factor: 1.0,
                     estimated_input_tokens: 1,
+                    compiled_frame_id: None,
+                    frame_hash: None,
                     blocks: vec![entry("blk_orphan", 0)],
                 },
             )

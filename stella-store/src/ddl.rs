@@ -489,5 +489,7 @@ pub(crate) const STEP_RECEIPT_DDL: &str = "CREATE TABLE IF NOT EXISTS step_recei
        effective_budget_tokens INTEGER NOT NULL,
        calibration_factor REAL NOT NULL,
        estimated_input_tokens INTEGER NOT NULL,
+       compiled_frame_id TEXT,
+       frame_hash TEXT,
        PRIMARY KEY (execution_id, turn_instance, step, call_seq)
      );";

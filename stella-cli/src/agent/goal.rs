@@ -89,8 +89,14 @@ pub(crate) async fn run_raw_one_shot(
         m.register_external_providers(|message| eprintln!("  {} {message}", "!".yellow()))
             .await;
     }
+    // Phase 2 (#713): carried forward rather than emitted here — the turn's
+    // event channel is created inside `run_turn`, after the messages recall
+    // contributes to have been assembled.
+    let mut recall_event = None;
     if let Some(m) = &memory {
-        inject_recall_block(&mut messages, m.recall_block(prompt).await);
+        let recalled = m.recall_block_reported(prompt).await;
+        recall_event = recalled.telemetry_event();
+        inject_recall_block(&mut messages, recalled.text);
     }
 
     let started_unix = crate::memory::unix_now_secs();
@@ -112,6 +118,7 @@ pub(crate) async fn run_raw_one_shot(
         prompt,
         Some(presence.id()),
         &crate::discovery::new_activation(),
+        recall_event,
     )
     .await;
     // Episodic memory first (works even for a failed turn — failures are
@@ -248,8 +255,12 @@ pub async fn run_goal_cmd(
         .await,
     )];
     let mut memory = SessionMemory::open_with_authority(&cfg.workspace_root, true, &cfg.authority);
+    // Phase 2 (#713): carried to the turn runner, which owns the event channel.
+    let mut recall_event = None;
     if let Some(m) = &memory {
-        inject_recall_block(&mut messages, m.recall_block(goal).await);
+        let recalled = m.recall_block_reported(goal).await;
+        recall_event = recalled.telemetry_event();
+        inject_recall_block(&mut messages, recalled.text);
     }
 
     let started_unix = crate::memory::unix_now_secs();
@@ -272,6 +283,7 @@ pub async fn run_goal_cmd(
             registry_options.clone(),
             active_rules.clone(),
             mcp.clone(),
+            recall_event,
         )
         .await
     } else {
@@ -287,6 +299,7 @@ pub async fn run_goal_cmd(
             &store,
             goal,
             Some(presence.id()),
+            recall_event,
         )
         .await
     };
@@ -368,6 +381,9 @@ pub(crate) async fn run_goal_turn(
     store: &Option<Arc<Store>>,
     goal: &str,
     session: Option<&str>,
+    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
+    // because recall necessarily precedes the channel it would be emitted on.
+    recall_event: Option<AgentEvent>,
 ) -> Result<(), String> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
@@ -401,6 +417,10 @@ pub(crate) async fn run_goal_turn(
         cfg.provider.id.to_string(),
         false,
     );
+    // First event of the turn: what recall put in front of the model.
+    if let Some(event) = recall_event {
+        let _ = tx.send(event);
+    }
 
     let outcome = {
         let customs = CustomToolSet::new(
@@ -511,6 +531,8 @@ async fn run_goal_pipeline_turn(
     registry_options: stella_tools::RegistryOptions,
     active_rules: crate::rules::ResolvedRules,
     mcp: Option<Arc<stella_mcp::McpToolSet>>,
+    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller.
+    recall_event: Option<AgentEvent>,
 ) -> Result<(), String> {
     let turn_start = Instant::now();
     let execution = begin_execution(store, "goal", goal, cfg, session);
@@ -572,6 +594,10 @@ async fn run_goal_pipeline_turn(
         cfg.provider.id.to_string(),
         false,
     );
+    // First event of the turn: what recall put in front of the model.
+    if let Some(event) = recall_event {
+        let _ = tx.send(event);
+    }
 
     // Run the loop; the result is folded into `goal_result` so there is exactly
     // one teardown path (drop tx → await renderer → record execution → return).

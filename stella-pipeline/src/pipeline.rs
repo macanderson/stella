@@ -54,8 +54,8 @@ use stella_core::retry::{RetryPolicy, Sleeper};
 use stella_core::router::FallbackInfo;
 use stella_core::{BudgetGuard, Engine, EngineConfig, EventSender, Router, TurnOutcome};
 use stella_protocol::{
-    AgentEvent, CompletionMessage, ContextFrameRef, ContextUsage, JudgeEvidence, MessageRole,
-    ModelCallRole, ModelRef, Provider, ProviderShare, Role, StageKind,
+    AgentEvent, CompletionMessage, ContextUsage, JudgeEvidence, MessageRole, ModelCallRole,
+    ModelRef, Provider, Role, StageKind,
 };
 
 use crate::candidate::{
@@ -65,8 +65,8 @@ use crate::plan::{PlanStep, build_planner_prompt, parse_plan, plan_repair_prompt
 use crate::ports::{
     ApprovalGate, CandidateWorkspace, CandidateWorkspacePort, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, McpPrefetchPort, PipelinePorts, ProviderResolver,
-    RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation, TestRunner,
-    WorkspaceError,
+    Recall, RecalledFrame, RepoStatusPort, RepoStructurePort, ScopeDecision, TestInvocation,
+    TestRunner, WorkspaceError,
 };
 use crate::scope::{ScopeEstimate, apply_trim, build_proposal, needs_scope_review};
 use crate::triage::{
@@ -2313,46 +2313,18 @@ impl<'a> Pipeline<'a> {
         (lines, text)
     }
 
+    /// Emit this recall's telemetry. The projection itself lives on
+    /// [`Recall::telemetry_event`] — Phase 2 (#713) moved it there because the
+    /// pipeline was the only surface that emitted it, and four other recall
+    /// paths now need the same event built the same way.
     fn emit_context_recall(&self, frames: &[RecalledFrame], usage: Option<ContextUsage>) {
-        if frames.is_empty() {
-            return;
-        }
-        let tokens: u32 = frames.iter().map(|f| f.token_cost).sum();
-        let mut mix: Vec<ProviderShare> = Vec::new();
-        for f in frames {
-            if let Some(share) = mix.iter_mut().find(|s| s.provider == f.provider) {
-                share.frames += 1;
-            } else {
-                mix.push(ProviderShare {
-                    provider: f.provider.clone(),
-                    frames: 1,
-                });
-            }
-        }
-        let frame_refs = frames
-            .iter()
-            .map(|f| ContextFrameRef {
-                id: f.id.clone(),
-                citation_label: f.citation_label.clone(),
-                provider: f.provider.clone(),
-                source: f.source.clone(),
-                kind: f.kind.clone(),
-                uri: f.uri.clone(),
-                method: f.method.clone(),
-                token_cost: f.token_cost,
-                // Frame-granular block ids are populated in the memory-join
-                // increment (spec §9). Engine-level receipts (increment 1) do
-                // not split the recalled user message into per-frame blocks.
-                block_id: None,
-                content_digest: None,
-            })
-            .collect();
-        self.emit(AgentEvent::ContextRecall {
-            frames: frame_refs,
-            provider_mix: mix,
-            tokens,
+        let recall = Recall {
+            frames: frames.to_vec(),
             usage,
-        });
+        };
+        if let Some(event) = recall.telemetry_event() {
+            self.emit(event);
+        }
     }
 
     /// Whether a witness author independent of the worker can be resolved.

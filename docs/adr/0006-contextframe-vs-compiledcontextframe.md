@@ -81,6 +81,14 @@ body and hash (spec §5.3) — is a property to establish *over the manifest
 body*, and `frame_hash` becomes a hash of that body with volatile fields
 excluded, not the identity of a separate object.
 
+The volatile fields excluded are the ones that vary between two runs of
+identical work — who served the call, what the budget arithmetic produced, and
+how long a block had been resident. Determinism is a property of *what entered
+the prompt*, not of the accounting around it. The hash itself reuses the
+canonical scheme ADR 0004 already ratified: drop the hash field, strip nulls,
+RFC 8785 JCS, sha256. A second hashing scheme in the same codebase would be two
+answers to "are these the same bytes".
+
 Two constraints follow, and they bind Phase 2:
 
 - **Additive and version-tolerant.** The manifest is a persisted wire type with

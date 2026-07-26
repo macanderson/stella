@@ -8,19 +8,28 @@
 //! payload bytes — the preimage already lives in the originating event in the
 //! journal, so this is an index over the fold, not a second content store.
 //!
-//! Granularity is event-level (increment 1): the engine decomposes what it can
-//! see in the message vec — the system prefix, each assistant text and
-//! tool-call, and each tool result by `call_id`. Splitting the recalled user
-//! message into per-frame `RecalledFrame` blocks (with `memory_id`) is the
-//! memory-join increment (spec §9), where the pipeline participates.
+//! Granularity is what the engine can see in the message vec: the system
+//! prefix, each assistant text and tool-call, each tool result by `call_id`,
+//! each attachment, and — since Phase 2 (#713) — the assembled recall block
+//! split into one `RecalledFrame` block per recalled item, with the `nod_…`
+//! record each resolves to. The driver's own User-role injections (the overflow
+//! summary, the stuck-loop steer) are classified as `Summary` and `Steered`
+//! rather than attributed to the person who did not write them.
+//!
+//! Per step the receipt also carries the **compiled frame**'s identity — a
+//! content-addressed id and a byte-stable hash over what entered the prompt,
+//! excluding the accounting around it. ADR 0006 as amended: the compiled frame
+//! is this manifest extended, not a parallel aggregate. Gated on
+//! `context.lifecycle.enabled`, off by default.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use stella_protocol::{
-    AgentEvent, BlockKind, BlockOrigin, CacheZone, CompletionMessage, ManifestEntry, MessageRole,
-    ModelCallRole, ToolOutput,
+    AgentEvent, BlockKind, BlockOrigin, CacheZone, CompiledContextFrameBuilt, CompletionMessage,
+    ManifestEntry, MessageRole, ModelCallRole, ToolOutput,
 };
 
 use crate::estimator::{CHARS_PER_TOKEN, estimate_conversation_tokens};
@@ -148,6 +157,19 @@ fn kind_tag(kind: BlockKind) -> &'static str {
     }
 }
 
+/// The stable snake_case tag for a cache zone, in lockstep with the protocol
+/// enum's `rename_all` for the same reason [`kind_tag`] is: the frame preimage
+/// carries the string, and a divergence would move every stored frame hash
+/// without moving anything a reader can see.
+fn zone_tag(zone: CacheZone) -> &'static str {
+    match zone {
+        CacheZone::StablePrefix => "stable_prefix",
+        CacheZone::Cacheable => "cacheable",
+        CacheZone::Volatile => "volatile",
+        CacheZone::Other => "other",
+    }
+}
+
 /// The engine's raw per-block token estimate: one block's content over the
 /// conversation estimator's [`CHARS_PER_TOKEN`] divisor, so a block's cost is
 /// on the same scale as `StepUsage.estimated_input_tokens`.
@@ -169,6 +191,15 @@ fn estimate_tokens(content: &str) -> u32 {
 /// assistant text ride the journal (`ToolStart`/`ToolResult`/`Text`); the
 /// system prefix and the assembled user/recall/steer/summary messages do not,
 /// so their bytes are carried as local-only block content (spec §5.3).
+///
+/// [`BlockKind::Attachment`] joined this list in Phase 2 (#713), and what it
+/// carries is worth being precise about: an attachment at rest is
+/// `AttachmentSource::Path` — a name, a MIME type, a byte count, and a
+/// workspace path — and that metadata is the preimage. The base64 payload
+/// exists only after the model layer hydrates a request, which happens below
+/// this point and never on the messages a receipt sees. A hydrated attachment
+/// that somehow reached here is stripped by
+/// [`BlockDraft::without_local_content`] rather than journaled.
 fn is_gap_kind(kind: BlockKind) -> bool {
     matches!(
         kind,
@@ -177,6 +208,7 @@ fn is_gap_kind(kind: BlockKind) -> bool {
             | BlockKind::RecalledFrame
             | BlockKind::Steered
             | BlockKind::Summary
+            | BlockKind::Attachment
     )
 }
 
@@ -264,6 +296,128 @@ impl BlockDigestCache {
     }
 }
 
+/// Why a block is in the prompt, as recorded on the frame preimage.
+///
+/// A deliberately small, closed vocabulary of `&'static str` rather than an
+/// enum: it participates in the frame hash, so its wire spelling is the
+/// contract and a Rust-level rename that did not change the string would be
+/// invisible where it matters. The retrieval plane has its own, finer
+/// `SelectionReason` for why a *candidate* won ranking
+/// (`stella_context::SelectionReason`); this one answers the coarser question a
+/// receipt asks — which mechanism put these bytes in front of the model.
+///
+/// Only recall carries a reason today. Structural blocks — the system prefix,
+/// the goal, tool I/O — have none, because "it is structural" is not a
+/// selection decision anybody made and recording it would be noise in every
+/// frame body.
+pub const SELECTION_RECALLED: &str = "recalled";
+
+/// Marker prefixing the volatile recalled-context message the CLI assembles
+/// and lands at the conversation tail. Lives here, next to the decomposition
+/// that reads it, because the engine cannot recognize a recall block without
+/// it — and `stella-cli` re-exports this rather than keeping a second copy,
+/// since two spellings of one marker is a decomposition that silently stops
+/// firing the day one of them is edited.
+pub const RECALL_MARKER: &str = "[auto-recalled context]";
+
+/// Which block kind a `User`-role message actually is.
+///
+/// Not every `User` message is the user's goal. The driver injects two of its
+/// own — the overflow summary and the stuck-loop steer, both
+/// `CompletionMessage::user` — and the CLI injects the recalled-context block.
+/// Before Phase 2 all four collapsed onto [`BlockKind::UserGoal`], so a receipt
+/// attributed engine-generated text to the person. The three markers are
+/// prefixes on content the engine and CLI both write, which is why this is a
+/// prefix match and not a heuristic.
+fn user_block_kind(content: &str) -> BlockKind {
+    if content.starts_with(crate::driver::SUMMARY_MARKER_PREFIX) {
+        BlockKind::Summary
+    } else if content.starts_with(crate::driver::LOOP_STEER_PREFIX) {
+        BlockKind::Steered
+    } else if content.starts_with(RECALL_MARKER) {
+        BlockKind::RecalledFrame
+    } else {
+        BlockKind::UserGoal
+    }
+}
+
+/// One piece of a decomposed recall block: a contiguous slice of the assembled
+/// message, plus whatever provenance its first line declares.
+struct RecallSegment<'a> {
+    text: &'a str,
+    memory_id: Option<String>,
+    citation_label: Option<String>,
+}
+
+/// Split the assembled recall message into per-item segments.
+///
+/// **The segments concatenate back to the input byte for byte**, and that is
+/// the load-bearing property, not the split itself: reconstruction rebuilds the
+/// message by appending each block's preimage in manifest order, so a split
+/// that lost or duplicated a separator would break byte-exact reconstruction —
+/// the one signal this whole plane exists to provide.
+///
+/// The cut is the start of every line beginning with `"- "`, which is how the
+/// CLI renders one recalled frame. Everything before the first such line (the
+/// marker and the section header) is its own leading segment. A frame whose
+/// *body* happens to contain a line starting with `"- "` splits into two
+/// segments: the concatenation still holds, and the second segment simply
+/// parses no label. That is the right failure — a mis-split is a coarser
+/// receipt, never a wrong reconstruction.
+fn split_recall(content: &str) -> Vec<RecallSegment<'_>> {
+    let mut cuts: Vec<usize> = vec![0];
+    let mut at = 0usize;
+    for line in content.split_inclusive('\n') {
+        if at > 0 && line.starts_with("- ") {
+            cuts.push(at);
+        }
+        at += line.len();
+    }
+    cuts.push(content.len());
+    cuts.dedup();
+    cuts.windows(2)
+        .filter(|w| w[0] < w[1])
+        .map(|w| {
+            let text = &content[w[0]..w[1]];
+            let (memory_id, citation_label) = parse_recall_item(text);
+            RecallSegment {
+                text,
+                memory_id,
+                citation_label,
+            }
+        })
+        .collect()
+}
+
+/// The `nod_…` id and human label a rendered recall line declares.
+///
+/// The CLI renders a memory as `- [nod_…] <label> — <body>` and every other
+/// frame kind as `- <label> — <body>`. Both are parsed; anything else yields
+/// `(None, None)` rather than a guess, because a wrong `memory_id` is worse
+/// than an absent one — it is the join key the write→citation loop reads, so a
+/// mis-parse would attribute a turn's use to the wrong record.
+fn parse_recall_item(segment: &str) -> (Option<String>, Option<String>) {
+    let Some(first) = segment.lines().next() else {
+        return (None, None);
+    };
+    let Some(rest) = first.strip_prefix("- ") else {
+        return (None, None);
+    };
+    let (memory_id, rest) = match rest.strip_prefix('[').and_then(|r| r.split_once(']')) {
+        Some((id, after)) if id.starts_with("nod_") => {
+            (Some(id.to_string()), after.trim_start().to_string())
+        }
+        _ => (None, rest.to_string()),
+    };
+    // The em-dash separator the renderer writes between label and body. A line
+    // without one is all label — the shape a frame with empty content takes.
+    let label = rest
+        .split_once(" — ")
+        .map_or(rest.as_str(), |(l, _)| l)
+        .trim();
+    (memory_id, (!label.is_empty()).then(|| label.to_string()))
+}
+
 /// One decomposed context block, before it becomes a manifest entry.
 struct BlockDraft<'a> {
     block_id: String,
@@ -282,7 +436,35 @@ struct BlockDraft<'a> {
     /// turn. Owning it here meant re-cloning the system prefix — the largest gap
     /// block there is — on every step for the rest of the turn, to hand it to a
     /// registration that had already happened.
-    content: Option<&'a str>,
+    content: Option<Cow<'a, str>>,
+    /// The `nod_…` record this block was recalled from, for a `RecalledFrame`.
+    /// The join hub of [`BlockOrigin`], filled by decomposition when the block
+    /// is a recall frame and `None` for every structural kind.
+    memory_id: Option<String>,
+    /// The human label a recall frame is cited under, carried to
+    /// `BlockRegistered::citation_label` so a receipt names frames rather than
+    /// ids (L-C4).
+    citation_label: Option<String>,
+    /// Why this block is in the prompt, when the producer knows. `None` for
+    /// structural blocks, whose reason is that they are structural.
+    selection_reason: Option<String>,
+}
+
+impl<'a> BlockDraft<'a> {
+    /// This block as it enters the frame preimage.
+    fn frame_block(&self) -> FrameBlock<'_> {
+        FrameBlock {
+            block_id: &self.block_id,
+            kind: kind_tag(self.kind),
+            cache_zone: zone_tag(self.cache_zone),
+            token_cost: self.token_cost,
+            message_index: self.message_index,
+            content_digest: &self.content_digest,
+            call_id: self.call_id.as_deref(),
+            memory_id: self.memory_id.as_deref(),
+            selection_reason: self.selection_reason.as_deref(),
+        }
+    }
 }
 
 /// Decompose the live message vector into event-granular blocks, in wire order,
@@ -292,23 +474,38 @@ struct BlockDraft<'a> {
 /// tail that is recomputed each step; cache attribution (spec §7, A3) refines
 /// these against reported usage.
 ///
-/// Two known gaps, named rather than papered over — closing either moves every
-/// stored manifest's numbers or ids, so both are fidelity increments, not
-/// comment fixes:
+/// Both of the gaps this function used to name are closed as of Phase 2
+/// (#713), and closing them moved block ids — a block's id is
+/// `sha256(kind_tag \0 content)`, so a message that used to hash as
+/// `user_goal` and now hashes as `summary` is a different id. That is a
+/// one-way fidelity change, accepted deliberately: the ids that moved were
+/// wrong, and a receipt that attributes the engine's own compaction notice to
+/// the person is not a receipt anyone should be asked to keep for stability's
+/// sake. Stored ids from before the change remain valid for the receipts that
+/// cite them; nothing rewrites history.
 ///
-/// - **Every `User` message becomes [`BlockKind::UserGoal`].** The driver also
-///   injects User-role messages that are not the user's goal: the overflow
-///   summary (`driver::SUMMARY_MARKER_PREFIX`) and the stuck-loop steer
-///   (`driver::LOOP_STEER_PREFIX`), plus real mid-turn steers from
-///   `ports::TurnSteering`. [`BlockKind::Steered`] and [`BlockKind::Summary`]
-///   exist for exactly those and are never emitted from here, so a receipt
-///   attributes engine-generated text to the user. Reclassifying changes
-///   `kind_tag`, and with it the block id.
-/// - **Attachments are not decomposed.** `CompletionMessage::attachments`
-///   yields no block, while `crate::estimator` counts its base64 weight — so on
-///   a multimodal turn the manifest's summed `token_cost` reads materially
-///   below the same event's `estimated_input_tokens`. [`BlockKind::Attachment`]
-///   is the seat reserved for it.
+/// - **`User` messages are classified, not assumed** ([`user_block_kind`]).
+///   The overflow summary and the stuck-loop steer are the driver's own text
+///   and now land on [`BlockKind::Summary`] and [`BlockKind::Steered`]; the
+///   assembled recall block lands on [`BlockKind::RecalledFrame`], **split per
+///   item** ([`split_recall`]) so a receipt can say *what* was recalled rather
+///   than only that something was.
+/// - **Attachments are decomposed.** Each yields an [`BlockKind::Attachment`]
+///   block over its metadata, so a multimodal turn's summed manifest
+///   `token_cost` stops reading materially below the same event's
+///   `estimated_input_tokens`.
+///
+/// What did NOT move is cache zones (spec §5.1): the head is still the system
+/// prefix and the tail is still the last block, so the prefix a provider caches
+/// is byte-identical before and after this change. Splitting only ever adds
+/// blocks *within* the volatile region.
+///
+/// Nor did the hashing budget move: every block a message yields — including
+/// each recall segment and each attachment — is minted through the one `push`
+/// below and is therefore memoized in `cache` under `(message_index, ordinal)`.
+/// Splitting a message into more blocks makes the memo finer, never absent, so
+/// a decomposed recall block is still hashed once per turn rather than once per
+/// step.
 fn decompose<'a>(
     messages: &'a [CompletionMessage],
     cache: &mut BlockDigestCache,
@@ -323,7 +520,7 @@ fn decompose<'a>(
                         cache: &mut BlockDigestCache,
                         kind: BlockKind,
                         content: &dyn Fn() -> Cow<'a, str>,
-                        borrowed: Option<&'a str>,
+                        local: Option<Cow<'a, str>>,
                         call_id: Option<String>| {
             let digests = cache.digests((message_index, ordinal), kind, content);
             ordinal += 1;
@@ -335,7 +532,12 @@ fn decompose<'a>(
                 call_id,
                 cache_zone: CacheZone::Cacheable,
                 message_index,
-                content: is_gap_kind(kind).then_some(borrowed).flatten(),
+                content: is_gap_kind(kind).then_some(local).flatten(),
+                // Decomposition fills these for recall frames; every
+                // structural kind leaves them `None` (#713).
+                memory_id: None,
+                citation_label: None,
+                selection_reason: None,
             });
         };
         match message.role {
@@ -345,22 +547,43 @@ fn decompose<'a>(
                     cache,
                     BlockKind::SystemPrefix,
                     &|| Cow::Borrowed(message.content.as_str()),
-                    Some(message.content.as_str()),
+                    Some(Cow::Borrowed(message.content.as_str())),
                     None,
                 );
             }
-            MessageRole::User => {
-                // The recalled frames live inside this message; splitting them
-                // into per-frame blocks is the memory-join increment (§9).
-                push(
-                    &mut drafts,
-                    cache,
-                    BlockKind::UserGoal,
-                    &|| Cow::Borrowed(message.content.as_str()),
-                    Some(message.content.as_str()),
-                    None,
-                );
-            }
+            MessageRole::User => match user_block_kind(&message.content) {
+                // The recalled frames live inside this message, one per
+                // segment. Each is pushed like any other block — same memo,
+                // same `(message_index, ordinal)` key — and only then gains the
+                // provenance that is the segment's alone.
+                BlockKind::RecalledFrame => {
+                    for segment in split_recall(&message.content) {
+                        push(
+                            &mut drafts,
+                            cache,
+                            BlockKind::RecalledFrame,
+                            &|| Cow::Borrowed(segment.text),
+                            Some(Cow::Borrowed(segment.text)),
+                            None,
+                        );
+                        if let Some(draft) = drafts.last_mut() {
+                            draft.memory_id = segment.memory_id;
+                            draft.citation_label = segment.citation_label;
+                            draft.selection_reason = Some(SELECTION_RECALLED.to_string());
+                        }
+                    }
+                }
+                kind => {
+                    push(
+                        &mut drafts,
+                        cache,
+                        kind,
+                        &|| Cow::Borrowed(message.content.as_str()),
+                        Some(Cow::Borrowed(message.content.as_str())),
+                        None,
+                    );
+                }
+            },
             MessageRole::Assistant => {
                 if !message.content.is_empty() {
                     push(
@@ -368,7 +591,7 @@ fn decompose<'a>(
                         cache,
                         BlockKind::AssistantText,
                         &|| Cow::Borrowed(message.content.as_str()),
-                        Some(message.content.as_str()),
+                        Some(Cow::Borrowed(message.content.as_str())),
                         None,
                     );
                 }
@@ -396,6 +619,31 @@ fn decompose<'a>(
                 }
             }
         }
+        // Attachments ride any role, so they are decomposed after the role
+        // match rather than inside it. The preimage is the attachment's own
+        // JSON — a name, a MIME type, a byte count, and (at rest) a path — so
+        // the block is both content-addressed and reconstructable. A hydrated
+        // attachment carries inline base64 and must not be journaled: its
+        // identity still hashes the real value, but the local preimage is
+        // dropped so the bytes never reach the event stream.
+        for attachment in &message.attachments {
+            let content = serde_json::to_string(attachment).unwrap_or_default();
+            // A hydrated attachment's preimage is dropped rather than
+            // journaled, so its inline base64 never reaches the event stream.
+            // The identity still hashes the real value either way.
+            let local = match attachment.source {
+                stella_protocol::AttachmentSource::Data { .. } => None,
+                stella_protocol::AttachmentSource::Path { .. } => Some(Cow::Owned(content.clone())),
+            };
+            push(
+                &mut drafts,
+                cache,
+                BlockKind::Attachment,
+                &|| Cow::Owned(content.clone()),
+                local,
+                None,
+            );
+        }
     }
     // Structural zones: the head is the stable prefix, the tail is volatile.
     // Set the tail first so a single-block conversation ends StablePrefix.
@@ -408,6 +656,97 @@ fn decompose<'a>(
         first.cache_zone = CacheZone::StablePrefix;
     }
     drafts
+}
+
+// ── The compiled frame (Phase 2, #713 deliverable 4) ────────────────────────
+
+/// Schema version of the frame preimage. Part of the hashed body on purpose: a
+/// later change to which fields participate must produce different hashes for
+/// the same prompt, or two incompatible preimages would silently share a digest
+/// space and a replay could not tell which scheme minted a stored hash.
+pub const FRAME_SCHEMA_VERSION: &str = "1.0-draft";
+
+/// One block as it enters the frame preimage.
+///
+/// Deliberately NOT [`ManifestEntry`]: `resident_since_step` is on the manifest
+/// and must not be on the frame. It records how long a block has been carried,
+/// which is a fact about the *history* of the session rather than about what
+/// this prompt contained — a turn replayed from step 0 and the same turn reached
+/// after a compaction see identical bytes with different residencies. Hashing it
+/// would make the frame hash a function of when you started looking.
+#[derive(Debug, Serialize)]
+struct FrameBlock<'a> {
+    block_id: &'a str,
+    /// The block's kind tag — the same string that is half its id preimage.
+    /// Carried explicitly so a frame body is readable without a registry join.
+    kind: &'a str,
+    cache_zone: &'a str,
+    token_cost: u32,
+    message_index: usize,
+    /// `sha256:<hex>` of the exact bytes. Present so the frame hash is a
+    /// function of *content*, not only of the 96-bit id prefix that stands in
+    /// for it, and so a stored frame can be verified against the block registry
+    /// without recomputing every id.
+    content_digest: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection_reason: Option<&'a str>,
+}
+
+/// The canonical body a [`CompiledContextFrameBuilt::frame_hash`] is taken over.
+///
+/// Every field here is stable across two runs of identical work. The volatile
+/// fields of the manifest event are absent by construction rather than by
+/// filtering, so adding one back is a visible edit to this struct:
+///
+/// - `provider` / `model` — the served model can differ per run and per
+///   fallback, and the same prompt is the same prompt whoever answers it;
+/// - `call_seq` — an allocation order within an execution, not a property of
+///   the prompt;
+/// - `effective_budget_tokens` / `calibration_factor` /
+///   `estimated_input_tokens` — accounting *about* the frame, and the first two
+///   move with a per-model calibration that learns across a session;
+/// - `resident_since_step` (per block) — see [`FrameBlock`].
+#[derive(Debug, Serialize)]
+struct FrameBody<'a> {
+    schema_version: &'a str,
+    turn_instance: u32,
+    step: usize,
+    /// Which role's prompt this is. Kept: a worker frame and a summarizer frame
+    /// at the same step are different frames, and `call_seq` — the field that
+    /// would otherwise distinguish them — is excluded as volatile.
+    role: ModelCallRole,
+    blocks: Vec<FrameBlock<'a>>,
+}
+
+/// The identity of the compiled frame a set of blocks constitutes: a
+/// content-addressed id and the byte-stable hash it derives from.
+///
+/// The hash reuses the canonical scheme ADR 0004 ratified —
+/// [`crate::context_record::hash::record_hash`]: strip nulls, RFC 8785 JCS,
+/// sha256, `sha256:` prefix. A second hashing scheme in one codebase is two
+/// answers to "are these the same bytes", so this calls the existing one rather
+/// than growing a parallel canonicalizer next to [`block_id`]'s streamed
+/// sha256 (which hashes raw prompt bytes, not JSON, and is a different job).
+///
+/// The id is `cf_` + the first 24 hex chars of the hash, mirroring `blk_…` and
+/// the context store's `nod_…`. Derived from the hash rather than allocated so
+/// two runs that produce the same frame also produce the same id — an id drawn
+/// from a counter would make the determinism gate untestable across processes.
+///
+/// Returns `None` only when the body will not canonicalize, which for this
+/// shape (owned scalars and strings) does not happen — but a receipt is
+/// telemetry, and no frame identity is worth failing a turn over.
+fn frame_identity(body: &FrameBody<'_>) -> Option<CompiledContextFrameBuilt> {
+    let frame_hash = crate::context_record::hash::record_hash(body).ok()?;
+    let hex = frame_hash.strip_prefix("sha256:")?;
+    Some(CompiledContextFrameBuilt {
+        compiled_frame_id: format!("cf_{}", &hex[..24]),
+        frame_hash,
+    })
 }
 
 /// Per-turn receipt state: which blocks have been registered (and at which
@@ -430,6 +769,12 @@ pub struct ReceiptLedger {
     /// The revision the next receipt describes; see
     /// [`Self::set_transcript_revision`].
     revision: TranscriptRevision,
+    /// Whether `context.lifecycle.enabled` is on for this session. Off by
+    /// default and off for every caller that does not opt in, which is the
+    /// whole point: with it off the receipt is byte-for-byte what it was
+    /// before Phase 2, so the flag's default preserves behavior rather than
+    /// merely gating a feature.
+    lifecycle_enabled: bool,
 }
 
 impl ReceiptLedger {
@@ -451,7 +796,18 @@ impl ReceiptLedger {
             calibration_factor: 1.0,
             digests: BlockDigestCache::default(),
             revision: TranscriptRevision::default(),
+            lifecycle_enabled: false,
         }
+    }
+
+    /// Turn the adaptive-context lifecycle on for this ledger — the session's
+    /// `context.lifecycle.enabled` setting, threaded from the CLI through
+    /// [`crate::EngineConfig`]. While it is off, no manifest carries a compiled
+    /// frame and nothing else about the receipt changes.
+    #[must_use]
+    pub fn with_lifecycle(mut self, enabled: bool) -> Self {
+        self.lifecycle_enabled = enabled;
+        self
     }
 
     /// Record the effective compaction budget and calibration factor the
@@ -520,14 +876,14 @@ impl ReceiptLedger {
                             turn_instance: self.turn_instance,
                             step,
                             call_id: draft.call_id.clone(),
-                            memory_id: None,
+                            memory_id: draft.memory_id.clone(),
                         },
                         token_cost: draft.token_cost,
                         content_digest: draft.content_digest.clone(),
-                        citation_label: None,
+                        citation_label: draft.citation_label.clone(),
                         // The only place a gap block's bytes are copied, and
                         // only on the step it first appears.
-                        content: draft.content.map(str::to_string),
+                        content: draft.content.as_deref().map(str::to_string),
                     });
                     step
                 }
@@ -544,6 +900,18 @@ impl ReceiptLedger {
                 call_id: draft.call_id.clone(),
             });
         }
+        // The compiled frame IS this manifest (ADR 0006 as amended), so its
+        // identity is computed from the same drafts the entries came from —
+        // never from a second walk that could disagree with them.
+        let compiled_frame = self.lifecycle_enabled.then(|| {
+            frame_identity(&FrameBody {
+                schema_version: FRAME_SCHEMA_VERSION,
+                turn_instance: self.turn_instance,
+                step,
+                role,
+                blocks: drafts.iter().map(BlockDraft::frame_block).collect(),
+            })
+        });
         let _ = events.send(AgentEvent::StepManifest {
             turn_instance: self.turn_instance,
             step,
@@ -555,6 +923,7 @@ impl ReceiptLedger {
             effective_budget_tokens: self.effective_budget_tokens,
             calibration_factor: self.calibration_factor,
             estimated_input_tokens,
+            compiled_frame: compiled_frame.flatten(),
         });
     }
 
@@ -577,231 +946,4 @@ impl ReceiptLedger {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use stella_protocol::{ToolCall, ToolOutput, ToolResult};
-    use tokio::sync::mpsc::unbounded_channel;
-
-    fn worker<'a>(provider: &'a str, model: &'a str) -> ServedBy<'a> {
-        ServedBy {
-            role: ModelCallRole::Worker,
-            provider,
-            model,
-        }
-    }
-
-    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
-        let mut out = Vec::new();
-        while let Ok(ev) = rx.try_recv() {
-            out.push(ev);
-        }
-        out
-    }
-
-    fn convo() -> Vec<CompletionMessage> {
-        vec![
-            CompletionMessage::system("you are a careful engineer"),
-            CompletionMessage::user("fix the failing test"),
-            CompletionMessage {
-                role: MessageRole::Assistant,
-                content: String::new(),
-                tool_calls: vec![ToolCall {
-                    call_id: "c1".into(),
-                    name: "read_file".into(),
-                    input: serde_json::json!({"path": "a.rs"}),
-                }],
-                tool_results: vec![],
-                attachments: vec![],
-            },
-            CompletionMessage {
-                role: MessageRole::Tool,
-                content: String::new(),
-                tool_calls: vec![],
-                tool_results: vec![ToolResult {
-                    call_id: "c1".into(),
-                    output: ToolOutput::Ok {
-                        content: "fn a() {}".into(),
-                    },
-                }],
-                attachments: vec![],
-            },
-        ]
-    }
-
-    #[test]
-    fn manifest_names_every_block_in_wire_order_with_structural_zones() {
-        let (tx, mut rx) = unbounded_channel();
-        let events = EventSender::new(tx);
-        let mut ledger = ReceiptLedger::new(0);
-        ledger.set_effective_budget(136_363, 1.1);
-        let messages = convo();
-        ledger.emit_step_receipt_estimating(&messages, 0, worker("anthropic", "opus"), &events);
-
-        let evts = drain(&mut rx);
-        let manifest = evts
-            .iter()
-            .find_map(|e| match e {
-                AgentEvent::StepManifest { blocks, .. } => Some(blocks.clone()),
-                _ => None,
-            })
-            .expect("a manifest was emitted");
-        // system prefix, user goal, one tool_call, one tool_result = 4 blocks.
-        assert_eq!(manifest.len(), 4);
-        assert_eq!(manifest[0].cache_zone, CacheZone::StablePrefix);
-        assert_eq!(manifest[3].cache_zone, CacheZone::Volatile);
-        // A BlockRegistered was emitted for each, before the manifest.
-        let registered = evts
-            .iter()
-            .filter(|e| matches!(e, AgentEvent::BlockRegistered { .. }))
-            .count();
-        assert_eq!(registered, 4);
-    }
-
-    /// Two distinct calls whose output is byte-identical collapse onto one
-    /// content-addressed `block_id`, so `BlockRegistered` fires once and its
-    /// `BlockOrigin` can only name the first call. If the manifest inherited
-    /// that provenance, "which calls left context" would silently drop the
-    /// duplicate — an eviction of this block would be attributed to `c1` alone.
-    /// The manifest records the call per occurrence, so both survive.
-    #[test]
-    fn identical_output_from_two_calls_keeps_both_call_ids_on_the_manifest() {
-        let (tx, mut rx) = unbounded_channel();
-        let events = EventSender::new(tx);
-        let mut ledger = ReceiptLedger::new(0);
-        // Same bytes, different calls — e.g. the agent runs `git status` twice.
-        let identical = |call_id: &str| CompletionMessage {
-            role: MessageRole::Tool,
-            content: String::new(),
-            tool_calls: vec![],
-            tool_results: vec![ToolResult {
-                call_id: call_id.into(),
-                output: ToolOutput::Ok {
-                    content: "nothing to commit".into(),
-                },
-            }],
-            attachments: vec![],
-        };
-        let messages = vec![
-            CompletionMessage::system("s"),
-            identical("c1"),
-            identical("c2"),
-        ];
-        ledger.emit_step_receipt_estimating(&messages, 0, worker("p", "m"), &events);
-        let evts = drain(&mut rx);
-
-        // The content-addressed contract still holds: one registration, one id.
-        let registered: Vec<_> = evts
-            .iter()
-            .filter_map(|e| match e {
-                AgentEvent::BlockRegistered {
-                    block_id, origin, ..
-                } => Some((block_id.clone(), origin.call_id.clone())),
-                _ => None,
-            })
-            .collect();
-        let dupes: Vec<_> = registered
-            .iter()
-            .filter(|(_, call_id)| call_id.is_some())
-            .collect();
-        assert_eq!(dupes.len(), 1, "byte-identical results register once");
-        assert_eq!(
-            dupes[0].1.as_deref(),
-            Some("c1"),
-            "birth provenance is the first call to mint the block"
-        );
-
-        let manifest = evts
-            .iter()
-            .find_map(|e| match e {
-                AgentEvent::StepManifest { blocks, .. } => Some(blocks.clone()),
-                _ => None,
-            })
-            .expect("manifest");
-        let tool_entries: Vec<_> = manifest.iter().filter(|b| b.call_id.is_some()).collect();
-        assert_eq!(
-            tool_entries.len(),
-            2,
-            "both occurrences are on the manifest"
-        );
-        assert_eq!(
-            tool_entries[0].block_id, tool_entries[1].block_id,
-            "and they do share the one content-addressed id"
-        );
-        assert_eq!(
-            tool_entries
-                .iter()
-                .map(|b| b.call_id.as_deref().unwrap())
-                .collect::<Vec<_>>(),
-            vec!["c1", "c2"],
-            "each occurrence keeps its own call — the join is not lossy"
-        );
-    }
-
-    #[test]
-    fn a_block_carried_across_steps_registers_once_and_ages_its_residency() {
-        let (tx, mut rx) = unbounded_channel();
-        let events = EventSender::new(tx);
-        let mut ledger = ReceiptLedger::new(0);
-        let messages = convo();
-
-        ledger.emit_step_receipt_estimating(&messages, 0, worker("p", "m"), &events);
-        let _ = drain(&mut rx);
-        // Same conversation on the next step: no NEW registrations, and the
-        // blocks report resident_since_step == 0 (they arrived on step 0).
-        ledger.emit_step_receipt_estimating(&messages, 1, worker("p", "m"), &events);
-        let evts = drain(&mut rx);
-
-        let new_registrations = evts
-            .iter()
-            .filter(|e| matches!(e, AgentEvent::BlockRegistered { .. }))
-            .count();
-        assert_eq!(new_registrations, 0, "carried blocks re-register 0 times");
-        let manifest = evts
-            .iter()
-            .find_map(|e| match e {
-                AgentEvent::StepManifest { blocks, .. } => Some(blocks.clone()),
-                _ => None,
-            })
-            .expect("manifest");
-        assert!(
-            manifest.iter().all(|b| b.resident_since_step == 0),
-            "every block has been resident since step 0"
-        );
-    }
-
-    #[test]
-    fn identical_tool_output_resolves_to_the_same_block_id() {
-        // Two tool results with byte-identical output share a content-addressed
-        // id — the property dedup/supersession identities rely on.
-        let a = serde_json::to_string(&ToolOutput::Ok {
-            content: "same".into(),
-        })
-        .unwrap();
-        let id1 = block_id(BlockKind::ToolResult, &a);
-        let id2 = block_id(BlockKind::ToolResult, &a);
-        assert_eq!(id1, id2);
-        assert!(id1.starts_with("blk_"));
-        assert_eq!(id1.len(), 4 + 24);
-    }
-
-    #[test]
-    fn streamed_preimage_hashes_exactly_like_the_joined_one() {
-        // `block_id` streams `kind_tag`, a NUL, and the content as three
-        // `update`s instead of allocating the joined String. Every stored
-        // block_id depends on that being the same digest.
-        for kind in [
-            BlockKind::SystemPrefix,
-            BlockKind::ToolResult,
-            BlockKind::AssistantText,
-        ] {
-            for content in ["", "plain", "ünïcödé — 日本語 \u{0}embedded NUL"] {
-                let joined = format!("{}\0{}", kind_tag(kind), content);
-                assert_eq!(
-                    block_id(kind, content),
-                    format!("blk_{}", &sha256_hex(&joined)[..24]),
-                    "streamed and joined preimages must agree for {kind:?}"
-                );
-            }
-        }
-    }
-}
+mod tests;

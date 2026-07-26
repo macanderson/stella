@@ -64,6 +64,15 @@ pub struct StepManifestRow {
     pub effective_budget_tokens: u64,
     pub calibration_factor: f64,
     pub estimated_input_tokens: u64,
+    /// The compiled frame this receipt IS (ADR 0006 as amended): its
+    /// content-addressed id and byte-stable hash. `None` for every receipt
+    /// written while `context.lifecycle.enabled` was off — which is the
+    /// default — and for every row that predates the frame. A reader must
+    /// treat absence as "the lifecycle was off", never as a damaged receipt.
+    pub compiled_frame_id: Option<String>,
+    /// `sha256:<64 hex>` over the frame's canonical body. Travels with
+    /// `compiled_frame_id`; the two are always both present or both absent.
+    pub frame_hash: Option<String>,
     pub blocks: Vec<ManifestBlockRow>,
 }
 
@@ -113,8 +122,9 @@ impl Store {
         tx.execute(
             "INSERT OR REPLACE INTO step_receipt
                (execution_id, turn_instance, step, call_seq, provider, model, call_role,
-                effective_budget_tokens, calibration_factor, estimated_input_tokens)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                effective_budget_tokens, calibration_factor, estimated_input_tokens,
+                compiled_frame_id, frame_hash)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
                 turn,
@@ -126,6 +136,8 @@ impl Store {
                 budget,
                 row.calibration_factor,
                 estimated,
+                row.compiled_frame_id,
+                row.frame_hash,
             ],
         )?;
         // Clear any prior ordinals for this call before rewriting, so a
@@ -268,7 +280,7 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT turn_instance, step, call_seq, call_role, provider, model,
-                    estimated_input_tokens
+                    estimated_input_tokens, compiled_frame_id, frame_hash
              FROM step_receipt WHERE execution_id = ?
              ORDER BY turn_instance, step, call_seq",
         )?;
@@ -282,6 +294,8 @@ impl Store {
                     provider: r.get(4)?,
                     model: r.get(5)?,
                     estimated_input_tokens: r.get::<_, i64>(6)? as u64,
+                    compiled_frame_id: r.get(7)?,
+                    frame_hash: r.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -312,6 +326,12 @@ pub struct RecordedCall {
     pub provider: String,
     pub model: String,
     pub estimated_input_tokens: u64,
+    /// This call's compiled-frame id, when one was built (Phase 2, #713).
+    pub compiled_frame_id: Option<String>,
+    /// Its byte-stable frame hash — what `stella inspect` prints to prove two
+    /// calls saw byte-identical context, and what a replay re-derives to prove
+    /// a stored receipt has not drifted.
+    pub frame_hash: Option<String>,
 }
 
 #[cfg(test)]
@@ -372,6 +392,8 @@ mod tests {
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,
             estimated_input_tokens: 203,
+            compiled_frame_id: None,
+            frame_hash: None,
             blocks: vec![
                 ManifestBlockRow {
                     block_id: "blk_sys".into(),
@@ -420,6 +442,8 @@ mod tests {
             effective_budget_tokens: 100,
             calibration_factor: 1.0,
             estimated_input_tokens: 3,
+            compiled_frame_id: None,
+            frame_hash: None,
             blocks: (0..3)
                 .map(|i| ManifestBlockRow {
                     block_id: format!("blk_{i}"),

@@ -195,6 +195,10 @@ pub struct EngineConfig {
     /// (the receipt is still valid — `(execution_id, step)` disambiguates
     /// within an execution).
     pub turn_instance: u32,
+    /// `context.lifecycle.enabled` — Phase 2 (#713). `false` (its own default)
+    /// preserves every pre-adaptive behavior; it gates only the compiled-frame
+    /// identity on this turn's step manifests.
+    pub lifecycle_enabled: bool,
 }
 
 impl Default for EngineConfig {
@@ -220,6 +224,7 @@ impl Default for EngineConfig {
             model_timeout: Some(Duration::from_secs(10 * 60)),
             cwd: ".".to_string(),
             turn_instance: 0,
+            lifecycle_enabled: false,
         }
     }
 }
@@ -470,7 +475,8 @@ impl<'a> Engine<'a> {
         // Per-turn context-receipt state: block registry + residency, carried
         // by reference into each model call. Stack-local — the engine holds no
         // receipt state of its own.
-        let mut receipts = ReceiptLedger::new(self.config.turn_instance);
+        let lifecycle = self.config.lifecycle_enabled;
+        let mut receipts = ReceiptLedger::new(self.config.turn_instance).with_lifecycle(lifecycle);
         // Per-turn overflow-summarizer latch: stops a persistently failing
         // cheap summarizer re-firing every step for the rest of the turn.
         let mut summarizer_health = SummarizerHealth::default();
@@ -825,6 +831,7 @@ impl<'a> Engine<'a> {
                     turn_instance: self.config.turn_instance,
                     step,
                     call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
+                    lifecycle_enabled: self.config.lifecycle_enabled,
                 }),
             },
             budget,
@@ -2013,7 +2020,7 @@ impl Drop for SpeculationDropGuard {
 /// [`recent_call_records`]: the marker is User-role on the wire, but it is
 /// NOT a real user turn and must not act as a loop-detection window
 /// boundary.
-const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
+pub(crate) const SUMMARY_MARKER_PREFIX: &str = "[earlier history summarized";
 
 /// Consecutive overflow-summarizer failures this turn that trip the give-up
 /// latch ([`SummarizerHealth`]). Each failed attempt is a wasted completion
@@ -2069,8 +2076,7 @@ struct CompactionPass {
     rewrote: bool,
 }
 
-const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
-
+pub(crate) const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
 /// callers match on this to render "stopped" rather than "failed", and to
 /// keep (never truncate) the turn's completed work.
