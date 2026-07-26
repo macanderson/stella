@@ -27,7 +27,7 @@ pub enum UsageCmd {
     /// Global telemetry report from the hub: per (org, provider, model)
     /// calls, tokens, cache reads, cost, and contributing projects
     Report {
-        /// Output format: table (aligned) or json
+        /// Output format: table (aligned), json, or csv
         #[arg(long, value_enum, default_value = "table")]
         format: StatsFormat,
 
@@ -150,11 +150,15 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 "org_id,provider,model,calls,input_tokens,output_tokens,cache_read_tokens,cost_usd,projects"
             );
             for r in &rows {
+                // The three text columns are config- and catalog-supplied, so
+                // they go through the same RFC-4180 escape `stella stats` uses
+                // — an org id or model slug carrying a comma must not silently
+                // shift every following column.
                 println!(
                     "{},{},{},{},{},{},{},{},{}",
-                    r.org_id.as_deref().unwrap_or(""),
-                    r.provider,
-                    r.model,
+                    crate::stats::csv_escape(r.org_id.as_deref().unwrap_or("")),
+                    crate::stats::csv_escape(&r.provider),
+                    crate::stats::csv_escape(&r.model),
                     r.calls,
                     r.input_tokens,
                     r.output_tokens,

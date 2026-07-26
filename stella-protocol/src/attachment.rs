@@ -49,10 +49,17 @@ pub enum AttachmentKind {
 pub enum AttachmentSource {
     /// The payload is a file on disk, hydrated to bytes only when a provider
     /// request is built. The canonical form for anything persisted.
-    Path { path: String },
+    Path {
+        /// Where the payload lives. Resolved by the model layer at hydration
+        /// time, so a moved or deleted file fails then, not at attach time.
+        path: String,
+    },
     /// The payload is inline base64 — the post-hydration form the provider
     /// adapters consume. Never the at-rest form for anything large.
-    Data { base64: String },
+    Data {
+        /// The payload, base64-encoded (no data-URI prefix).
+        base64: String,
+    },
 }
 
 /// One multimodal input attached to a user message.
@@ -65,11 +72,14 @@ pub struct Attachment {
     pub media_type: String,
     /// Payload size in bytes (pre-base64), for display and telemetry.
     pub byte_len: u64,
+    /// Where the payload actually lives — a path at rest, inline base64 only
+    /// after the model layer hydrates it for one request.
     pub source: AttachmentSource,
 }
 
 impl Attachment {
     /// An attachment whose payload lives at `path`.
+    #[must_use]
     pub fn from_path(
         name: impl Into<String>,
         media_type: impl Into<String>,

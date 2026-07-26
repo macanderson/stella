@@ -54,15 +54,30 @@ make watch-lint          # re-run clippy on every save
 
 ### The gate — run before every push
 
-CI (`/.github/workflows/ci.yml`) runs exactly these four plus a release
-smoke build (thin LTO) in the same required job, and a red gate is an
-automatic "not yet":
+A red gate is an automatic "not yet":
 
 ```bash
-make gate                # = no-scratch + fmt --check + clippy -D warnings + test --workspace
+make gate                # = no-scratch + doc-citations + fmt --check + clippy -D warnings + test --workspace
 ```
 
-For a faster pre-push sanity check (no tests): `make check`.
+`/.github/workflows/ci.yml` runs those five in one required job, plus
+`scripts/check-action-pins.sh` and a release smoke build (thin LTO).
+`normative-home.yml` is the second doc-facing job: it re-runs
+`check-doc-citations.sh` and adds `check-normative-home.sh`, which asserts the
+CGP revision pinned in `docs/**` still matches the `contextgraph-*` git rev in
+`stella-cli/Cargo.toml`. Neither of those two scripts needs a Rust toolchain,
+so run them by hand after touching `.github/workflows/` or a `NORMATIVE-HOME:`
+document.
+
+`doc-citations` is the guard that keeps a rustdoc comment from citing a
+`docs/**.md` path — or a `§N` inside one — that does not exist (#652). Adding
+a citation to a document you have not written yet fails the build, by design.
+
+For a faster pre-push sanity check (no tests): `make check`. **Known break:**
+that target's prerequisite list names an `action-pins` rule the `Makefile` never
+defines, so it dies with *"No rule to make target 'action-pins'"* before running
+anything — until it is defined, run `./scripts/check-action-pins.sh` alongside
+`make no-scratch format-check lint`.
 
 `no-scratch` runs first because it costs milliseconds: it asserts no tracked
 file matches a `.gitignore` rule. **Session scratch must never reach the

@@ -391,6 +391,44 @@ mod tests {
         );
     }
 
+    /// The read must go through the sensitive helper, not a plain
+    /// `std::fs::read_to_string`. A group-writable parent means anyone in the
+    /// group could have substituted the `oauth_token`, so the file is refused
+    /// and the install reads as unregistered rather than believing it.
+    ///
+    /// Pins the property, not the spelling: #699 dropped this read's helper
+    /// while leaving the call site, and the cheap repair is to reach for a
+    /// plain read — which would pass every other test in this module.
+    #[cfg(unix)]
+    #[test]
+    fn a_cloud_json_under_a_group_writable_parent_is_refused_not_believed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("loose");
+        let path = dir.join("cloud.json");
+        let reg = CloudRegistration {
+            org_id: Some("org-abc".into()),
+            oauth_token: Some("tok-secret".into()),
+        };
+        save_cloud_registration_at(&path, &reg).unwrap();
+        assert_eq!(
+            cloud_registration_at(&path),
+            reg,
+            "sanity: readable at 0700"
+        );
+
+        // Open the parent to group-write, which is exactly the substitution
+        // risk `validate_owner_controlled_parent` exists to catch.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o770)).unwrap();
+        assert_eq!(
+            cloud_registration_at(&path),
+            CloudRegistration::default(),
+            "a cloud.json under a group-writable parent must degrade to \
+             unregistered, not hand back an org_id we cannot vouch for"
+        );
+    }
+
     /// A missing file stays the unregistered default rather than an error —
     /// telemetry scoping is infallible by contract.
     #[test]

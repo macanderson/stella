@@ -272,8 +272,12 @@ pub fn truecolor_supported(colorterm: Option<&str>, term: Option<&str>) -> bool 
 /// Decide the [`ColorMode`] from the three environment inputs, most-restrictive
 /// first — pure, so it is unit-testable without touching the real environment.
 ///
-/// 1. `NO_COLOR` set to anything (even empty, per the `no-color.org` spec) →
-///    [`ColorMode::None`]. It wins over every color signal.
+/// 1. `NO_COLOR` present → [`ColorMode::None`]. It wins over every color
+///    signal. Note this is *presence*, not the `no-color.org` letter, which
+///    disables color only when the variable is present **and non-empty**;
+///    `NO_COLOR=` therefore strips color here where the spec would keep it.
+///    The looser reading is shared with `stella-cli`'s animation gate, so
+///    tightening it belongs in one change across both, not here alone.
 /// 2. Truecolor (via [`truecolor_supported`]) → [`ColorMode::Truecolor`].
 /// 3. A `TERM` promising 256 colors (`-256color`, or `COLORTERM` present at all)
 ///    → [`ColorMode::Ansi256`].
@@ -342,17 +346,24 @@ const FALLBACKS: &[(Color, u8, u8)] = &[
 ];
 
 /// Resolve one color for the mode actually in use. Truecolor passes through;
-/// `None` (NO_COLOR) drops every RGB to `Reset` (terminal default); 256/16 map
-/// via `FALLBACKS`. A color with no matching entry (already-indexed, named,
-/// `Reset`, or an interpolated gradient cell) passes through unchanged — this
-/// only ever narrows the palette tokens, never anything else.
+/// `None` (NO_COLOR) drops **every** color to `Reset` (terminal default);
+/// 256/16 map via `FALLBACKS`. A color with no matching entry
+/// (already-indexed, named, `Reset`, or an interpolated gradient cell) passes
+/// through unchanged in the two indexed modes — this only ever narrows the
+/// palette tokens, never anything else. That pass-through is a known gap for
+/// interpolated cells (the `crate::fx` sweeps, `gold_gradient`): on a 256- or
+/// 16-color terminal they still emit 24-bit SGR. Surfaces that care collapse
+/// to a solid named token themselves when [`ColorMode::is_truecolor`] is false
+/// (see `crate::progress`).
+///
+/// `None` must catch the *named* ANSI colors too (`Color::Green`,
+/// `Color::DarkGray`, …), not just RGB: the single-session REPL still styles
+/// its HUD, composer and cards with those, and leaving them intact left color
+/// on screen under `NO_COLOR` — precisely what the spec forbids.
 pub fn resolve(color: Color, mode: ColorMode) -> Color {
     match mode {
         ColorMode::Truecolor => color,
-        ColorMode::None => match color {
-            Color::Rgb(..) | Color::Indexed(_) => Color::Reset,
-            other => other,
-        },
+        ColorMode::None => Color::Reset,
         ColorMode::Ansi256 => FALLBACKS
             .iter()
             .find_map(|(rgb, i256, _)| (*rgb == color).then_some(Color::Indexed(*i256)))
@@ -786,6 +797,22 @@ mod tests {
         assert_eq!(resolve(Color::Indexed(9), ColorMode::None), Color::Reset);
         // A non-color (Reset) stays put — nothing to strip.
         assert_eq!(resolve(Color::Reset, ColorMode::None), Color::Reset);
+        // The named ANSI colors are colors too: the single-session REPL styles
+        // its HUD/composer/cards with them, so `NO_COLOR` must strip them as
+        // surely as it strips a palette token.
+        for named in [
+            Color::Green,
+            Color::Red,
+            Color::Yellow,
+            Color::Cyan,
+            Color::DarkGray,
+        ] {
+            assert_eq!(
+                resolve(named, ColorMode::None),
+                Color::Reset,
+                "NO_COLOR must strip the named ANSI colors too ({named:?})"
+            );
+        }
     }
 
     #[test]

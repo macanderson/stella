@@ -37,11 +37,19 @@ pub enum Role {
 /// deliberately no "auto" variant here — see module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRef {
+    /// The provider's stable id, matching [`crate::provider::Provider::id`] —
+    /// `"zai"`, `"anthropic"`, never a display name.
     pub provider: String,
+    /// The provider-native model slug, exactly as that provider spells it.
+    /// Never qualified with the provider again: `zai/glm-5.2` is the
+    /// [`Display`](std::fmt::Display) form, not the value of this field (the
+    /// doubled-slug class of bug, #259).
     pub model_id: String,
 }
 
 impl ModelRef {
+    /// An explicit `provider/model` pin.
+    #[must_use]
     pub fn new(provider: impl Into<String>, model_id: impl Into<String>) -> Self {
         Self {
             provider: provider.into(),

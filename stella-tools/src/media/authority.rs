@@ -1,3 +1,16 @@
+//! The spend-authority plumbing behind the paid media tools: who may approve
+//! money, what identifies one paid invocation, and how a half-finished one is
+//! reported.
+//!
+//! Nothing here talks to a provider. It exists so `generate_image` /
+//! `generate_video` / `poll_video` share ONE definition of the two rules that
+//! keep a paid call honest: spend authority is host-owned (never a tool
+//! argument — see [`HostDataIsolation`]), and an invocation's identity is
+//! host-minted and retry-stable (see [`MediaOperationIdSource`]) so a retried
+//! call replays through the journal instead of paying twice. Every failure
+//! after the provider may have been reached becomes `reconciliation_required`,
+//! which refuses to resubmit rather than risk a second charge.
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use stella_media::{ArtifactStore, JobStore, MediaJob, MediaKind, MediaSpendRequest};

@@ -21,6 +21,13 @@ use crate::tool::ToolCall;
 /// (same `call_id`, `name`, and parsed `input`) to the one in the final
 /// result, because consumers match announced work back by exact equality.
 /// An adapter must never announce a call whose input failed to parse.
+///
+/// Both methods are synchronous and are invoked **inline on the task polling
+/// the provider's stream**, so an implementation must return promptly: hand
+/// the work to a runtime task or a channel, never block, sleep, do file or
+/// network I/O, or take a lock the completion path also wants. Stalling here
+/// stalls the model call itself, which is the opposite of what speculation is
+/// for.
 pub trait ToolCallObserver: Send + Sync {
     /// One tool call's block has fully streamed: id, name, and complete,
     /// well-formed input are known.

@@ -19,6 +19,14 @@ const STOPWORDS: &[&str] = &[
 /// scoring/clustering (TS: `terms`). Stopword checks scan the 43-item
 /// static slice directly — this runs inside the clustering loops, and a
 /// per-call `HashSet` rebuild cost more than the linear scans it saved.
+///
+/// Word characters are **ASCII** alphanumerics plus `_`; everything else is a
+/// boundary. That is deliberate for the English-shaped lesson text the miners
+/// see, but it does mean an accented or non-Latin observation tokenizes to
+/// nothing and therefore never clusters — unlike [`crate::discovery`]'s
+/// `split_terms`, which is Unicode-aware because it indexes tool and skill
+/// names. Widening this would change every mined `<slug>-<hash8>` id, so it is
+/// a deliberate migration, not a drive-by tweak.
 pub(crate) fn terms(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();

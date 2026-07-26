@@ -191,7 +191,7 @@ pub(crate) async fn run_raw_one_shot(
 /// single family it stays the worker provider, identical to before. The
 /// worker turns get the full tool stack (MCP + custom + interactive +
 /// skills), same as `run_one_shot`.
-/// Work in judged rounds until a judge model confirms the goal is met.
+///
 /// `use_pipeline` (the default) runs each working round through the staged
 /// pipeline (triage → recall → plan → witness → execute → verify → judge);
 /// `false` falls back to the raw `Engine::run_goal` step-loop.

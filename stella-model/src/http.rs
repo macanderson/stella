@@ -31,7 +31,19 @@ pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// so it can never kill a stream the idle timeout would have allowed.
 /// Falls back to the default client if the builder fails (only possible on
 /// a broken TLS backend, which is catastrophic and unrelated to any single
-/// request) — never panics on the construction path.
+/// request) — never panics on the construction path. Note what that fallback
+/// costs: `reqwest::Client::default()` carries NO connect and NO read bound,
+/// so the degraded client is precisely the unbounded-hang shape this function
+/// exists to prevent. Acceptable only because the trigger is a process-wide
+/// TLS failure that fails every request anyway.
+///
+/// Neither this client nor [`unary_client`] sets a *total* request timeout:
+/// the bound is per-read, so a peer that dribbles one byte inside every
+/// [`STREAM_IDLE_TIMEOUT`] window is never cut off. That is deliberate for
+/// streaming completions (a long generation is legitimate) but it means the
+/// non-completion callers — [`crate::modelsdev`] and
+/// [`crate::provider_listing`], which run on the CLI's blocking startup
+/// auto-sync path — have no wall-clock ceiling of their own.
 ///
 /// This bound fits streaming callers only. A non-streaming caller has no
 /// first token to reset the clock, so the whole generation must fit inside
@@ -167,7 +179,16 @@ const ERROR_BODY_SNIPPET_CHARS: usize = 800;
 /// naming how much was elided so nobody mistakes the cut for the provider's
 /// whole answer. Character-bounded, not byte-bounded: a body is
 /// environment-controlled text and a byte slice could land mid-character.
-fn body_snippet(body: &str) -> String {
+///
+/// `pub(crate)` because the vendor pre-checks that run *ahead* of
+/// [`classify_http_status`] build their own message and would otherwise echo
+/// an unbounded body. Three such callers today: `gemini.rs`'s
+/// `API_KEY_INVALID`-on-400 arm, `zai.rs`'s billing-vs-throttle 429
+/// classifier, and `bedrock.rs`'s throttle arm. Every path that puts a
+/// provider body into an error message must go through here — each of those
+/// pre-checks classifies on the FULL body and bounds only the message it
+/// surfaces.
+pub(crate) fn body_snippet(body: &str) -> String {
     let total = body.chars().count();
     if total <= ERROR_BODY_SNIPPET_CHARS {
         return body.to_string();
@@ -186,6 +207,13 @@ fn body_snippet(body: &str) -> String {
 /// stable machine code for this (the same body-sniffing tradeoff
 /// `zai.rs`'s 429 billing classifier makes) — a false negative that falls
 /// through to the generic hint beats a wrong diagnosis.
+///
+/// The model-enablement arm deliberately does NOT match on bare "access":
+/// "access denied" / "you do not have access" is how providers phrase the
+/// *generic* permission refusal, so keying on that word sent nearly every
+/// plain 403 to the "enable this model for your key" hint — a confident
+/// wrong diagnosis, which is the one outcome this bucketing exists to avoid.
+/// "model" and "enable" stay, because both really are enablement language.
 fn forbidden_hint(haystack: &str) -> &'static str {
     if haystack.contains("credit")
         || haystack.contains("balance")
@@ -196,10 +224,7 @@ fn forbidden_hint(haystack: &str) -> &'static str {
     {
         "the key is valid but the account is out of credits or over its spend cap — add \
          credit or raise the cap, then retry"
-    } else if haystack.contains("model")
-        || haystack.contains("enable")
-        || haystack.contains("access")
-    {
+    } else if haystack.contains("model") || haystack.contains("enable") {
         "the key is valid but isn't enabled for this model — enable it for this key/org, or \
          switch models on the SETTINGS tab / with `--model provider/slug`"
     } else {
@@ -686,6 +711,25 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("upstream down"), "{msg}");
         assert!(!msg.contains("more chars"), "{msg}");
+    }
+
+    /// The word "access" is how providers spell a *generic* permission
+    /// refusal, not model enablement. Keying the enablement hint on it told
+    /// users to "enable this model for your key/org" for every plain
+    /// access-denied 403 — a confident wrong diagnosis. It must fall to the
+    /// scopes/organization hint instead.
+    #[test]
+    fn classify_http_status_403_access_denied_is_a_permission_hint_not_a_model_hint() {
+        let err = classify_http_status(
+            "OpenAI",
+            reqwest::StatusCode::FORBIDDEN,
+            None,
+            r#"{"error":{"message":"Access denied for this resource"}}"#,
+            "gpt-5.5",
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("lacks permission"), "{msg}");
+        assert!(!msg.contains("enable it"), "{msg}");
     }
 
     /// 429/5xx stay retryable — pinned here so a future edit to the

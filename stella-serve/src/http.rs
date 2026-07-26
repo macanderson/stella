@@ -35,16 +35,29 @@ impl Request {
     }
 
     /// The bearer token from `Authorization: Bearer <token>`, if present.
+    ///
+    /// The scheme is matched case-insensitively because RFC 7235 §2.1 defines
+    /// it that way: a client that sends `bearer <token>` (curl's `--oauth2-bearer`
+    /// spells it `Bearer`, but hand-rolled and proxy-rewritten clients do not
+    /// always) is presenting a well-formed credential, and rejecting it as a 401
+    /// is an interop bug that reads as an auth failure.
     pub fn bearer(&self) -> Option<&str> {
-        self.header("authorization")
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(str::trim)
+        let value = self.header("authorization")?;
+        let (scheme, token) = value.split_once(' ')?;
+        scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
     }
 }
 
 /// Read and parse one request (head + `Content-Length` body). Returns `None` on
 /// a clean early hangup or a malformed/over-cap request — the caller closes the
 /// connection without a response, exactly as the observatory does.
+///
+/// Note the cost of that silence on the over-cap path: a host whose POST exceeds
+/// [`MAX_REQUEST_BYTES`] sees a bare connection close, not a 413, so it cannot
+/// distinguish "too large" from a crashed peer — and if the POST was a
+/// `tool-result`, the engine step it would have answered stays parked. Callers
+/// sizing a turn body (an assembled conversation) or a tool output against this
+/// cap should treat it as a hard limit, not a soft one.
 pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0_u8; 8192];
@@ -135,8 +148,16 @@ pub(crate) async fn write_json(
 }
 
 /// Write the SSE response head, leaving the connection open to stream frames.
+///
+/// `X-Accel-Buffering: no` is not decoration. The deployment this crate
+/// documents puts a reverse proxy in front (see `serve`'s operational limits),
+/// and nginx-family proxies buffer a response body by default — which for this
+/// stream is a deadlock, not a latency wart: the host cannot answer a
+/// `provider_request` it has not received, so the engine parks forever and the
+/// buffered stream never reaches the size that would flush it. The header is the
+/// standard opt-out and is ignored by proxies that do not honour it.
 pub(crate) async fn write_sse_head(stream: &mut TcpStream) -> std::io::Result<()> {
-    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n";
     stream.write_all(head.as_bytes()).await
 }
 
@@ -149,4 +170,35 @@ pub(crate) async fn write_sse_frame(stream: &mut TcpStream, json: &str) -> std::
     stream.write_all(b"data: ").await?;
     stream.write_all(json.as_bytes()).await?;
     stream.write_all(b"\n\n").await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_with_auth(value: &str) -> Request {
+        Request {
+            method: "GET".to_string(),
+            path: "/".to_string(),
+            headers: vec![("authorization".to_string(), value.to_string())],
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bearer_scheme_is_matched_case_insensitively() {
+        // RFC 7235 §2.1 makes the scheme case-insensitive. Getting this wrong
+        // costs more than it looks: the failure surfaces as a 401, which an
+        // operator reads as "wrong token", not as an interop bug.
+        assert_eq!(request_with_auth("Bearer tok").bearer(), Some("tok"));
+        assert_eq!(request_with_auth("bearer tok").bearer(), Some("tok"));
+        assert_eq!(request_with_auth("BEARER tok").bearer(), Some("tok"));
+    }
+
+    #[test]
+    fn a_non_bearer_credential_is_never_read_as_a_token() {
+        assert_eq!(request_with_auth("Basic dXNlcjpwdw==").bearer(), None);
+        assert_eq!(request_with_auth("Bearer").bearer(), None);
+        assert_eq!(request_with_auth("").bearer(), None);
+    }
 }

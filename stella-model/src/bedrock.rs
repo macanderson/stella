@@ -6,10 +6,17 @@
 //! - **Non-streaming `Converse`, not `ConverseStream`.** The streaming
 //!   variant speaks `application/vnd.amazon.eventstream` — a binary framing
 //!   with per-message CRC32 prologues, not SSE — an entirely separate
-//!   transport decoder. `Provider::complete` aggregates internally either
-//!   way (no caller renders partial tokens yet), so `Converse` returns an
-//!   identical `CompletionResult`; the event-stream decoder lands when the
-//!   TUI actually streams partial output.
+//!   transport decoder. `Converse` returns an identical `CompletionResult`,
+//!   so nothing downstream of the adapter can tell the difference; what the
+//!   scoping does cost is everything that needs the response *while it is
+//!   still arriving*. This is now the only adapter in the crate that does
+//!   not override `Provider::complete_observed`, so a Bedrock turn emits no
+//!   `TextDelta` previews (the deck stays blank until the whole answer
+//!   lands, #612) and its read-only tool calls are never announced, so the
+//!   engine's speculative execution never fires on it. The event-stream
+//!   decoder is what closes both gaps; until then the whole generation has
+//!   to fit inside one read, which is why this adapter takes
+//!   `crate::http::unary_client` rather than the shared streaming client.
 //! - **Explicit credentials, not the full AWS chain.** The adapter takes
 //!   access key / secret / optional session token directly;
 //!   [`crate::credential::BedrockCredentials`] resolves the secret, session
@@ -320,6 +327,12 @@ fn attachment_block(part: crate::attachment::WirePart) -> BedrockContentBlock {
     }
 }
 
+/// The degrade note for a media type Converse ingests as a *kind* but whose
+/// specific format is outside its allowlist (a TIFF image, an AVI video).
+/// Distinct from [`crate::attachment::unsupported_part_note`], which covers a
+/// kind this dialect cannot carry at all: here the block shape exists and only
+/// the `format` token is missing, so sending it would be a hard API rejection
+/// where a note keeps the turn alive.
 fn unsupported_format_note(kind: &str, media_type: &str) -> BedrockContentBlock {
     BedrockContentBlock {
         text: Some(format!(
@@ -666,13 +679,20 @@ impl Provider for BedrockProvider {
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             // Vendor pre-check ahead of the shared ladder: surface the
             // server's own throttle message plus any Retry-After hint, so
-            // the driver can honor the provider's stated backoff.
+            // the driver can honor the provider's stated backoff. The echoed
+            // body goes through the same bound the shared ladder applies —
+            // a throttle answered by an API-Gateway/CDN error page is a
+            // multi-kilobyte document, and this message reaches the
+            // transcript, the log, and the user's terminal.
             let retry_after_ms = http::parse_retry_after_ms(response.headers());
             let text = response.text().await.unwrap_or_default();
             let message = if text.trim().is_empty() {
                 "Bedrock throttled the request".to_string()
             } else {
-                format!("Bedrock throttled the request: {text}")
+                format!(
+                    "Bedrock throttled the request: {}",
+                    http::body_snippet(text.trim())
+                )
             };
             return Err(ProviderError::RateLimited {
                 message,

@@ -1,5 +1,7 @@
 //! Three-scope settings capture, overlay, trust restoration, and authority merge.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use super::authority::{apply_tool_ceiling, restore_project_prompts, restore_project_tools};
 use super::managed::managed_settings_path;
 use super::*;
@@ -218,7 +220,18 @@ impl Settings {
         let trust = project_trust();
         let merged = Self::merge_captured_scopes(&user, &managed, &project, trust);
 
-        if !trust.hooks && project.hooks.is_some() {
+        // One launch loads the chain several times over — `Config::load`,
+        // `settings_check::validate_at_launch`, `discover_configured_providers`
+        // (itself reached from the catalog bootstrap), and every `/models`
+        // render. Each pass re-derives the same verdict from the same file, so
+        // printing the block every time turned one accurate notice into three
+        // or four identical ones, which reads as a fault rather than a notice.
+        // Latch it: the trust boundary is a property of the process, not of
+        // the call.
+        static ANNOUNCED: AtomicBool = AtomicBool::new(false);
+        let announce = !ANNOUNCED.swap(true, Ordering::Relaxed);
+
+        if announce && !trust.hooks && project.hooks.is_some() {
             eprintln!(
                 "  ! project hooks in {} were NOT loaded — set STELLA_PROJECT_HOOKS=1 \
                  (or STELLA_TRUST_PROJECT=1) to trust this repo's hooks",
@@ -226,7 +239,7 @@ impl Settings {
             );
         }
 
-        if !trust.hooks && !project.context_providers.is_empty() {
+        if announce && !trust.hooks && !project.context_providers.is_empty() {
             eprintln!(
                 "  ! project context providers in {} were NOT loaded — set \
                  STELLA_TRUST_PROJECT=1 to let this repo run its context sources \
@@ -236,7 +249,7 @@ impl Settings {
             );
         }
 
-        if !trust.credentials {
+        if announce && !trust.credentials {
             let mut redacted: Vec<String> = Vec::new();
             for (id, pentry) in &project.providers {
                 let touches_credentials = pentry.base_url.is_some()

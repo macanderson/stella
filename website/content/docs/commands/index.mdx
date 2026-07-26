@@ -52,7 +52,7 @@ Two subcommands are deliberately absent from the table because they are not part
 
 The following flags apply to **every** command. Most have a corresponding environment variable so you can set it once for a shell session or in your CI configuration — the exception is `--api-key`, which is intentionally env-less (use `credentials.toml` or a provider key env var such as `ANTHROPIC_API_KEY` instead).
 
-Because these are top-level flags, place them **before** the subcommand — e.g. `stella --output-format json run "…"`, not `stella run "…" --output-format json`.
+Every one of them is registered with every subcommand, so **either position parses** — `stella --output-format json run "…"` and `stella run "…" --output-format json` are equivalent. (That is not clap's default: a plain root-level flag is only accepted before the subcommand token, which is why `main.rs` marks each of these `global = true` and a test asserts no new one is added without it.) Because the flag names are reserved CLI-wide, no subcommand reuses them — `stella connect linear` pastes a key with `--paste-key`, not `--api-key`.
 
 | Flag | Env var | Default | Meaning |
 | --- | --- | --- | --- |

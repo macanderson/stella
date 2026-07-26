@@ -438,6 +438,12 @@ impl ContextStore {
     /// Open (creating if absent) the store at `path` with the default
     /// [`HashEmbedder`] and system clock. Runs migrations and registers the
     /// embedder fingerprint. Does **not** warm — see [`Self::open_and_warm`].
+    ///
+    /// **Opening is a write.** Creating the file, replaying migrations and
+    /// registering the fingerprint all happen here, so there is no read-only
+    /// open: an inspection-only surface (`stella stats`, the command deck)
+    /// still dirties the db, and a read-only mount fails at `open` rather than
+    /// degrading to "no hits".
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ContextError> {
         Self::open_with(
             path,
@@ -722,6 +728,15 @@ fn restrict_to_owner(_path: &Path) {}
 /// know would silently violate whatever invariants the newer schema added. The
 /// message mirrors the one `stella_store::Store::migrate` already writes — the
 /// fault is an out-of-date binary, not a broken workspace.
+///
+/// **The version read is outside the transaction.** `unchecked_transaction` is
+/// `DEFERRED`, so two processes opening the same fresh workspace at once (a
+/// fleet run, or a `stella` session next to a `stella stats`) can both read
+/// `user_version = 0` and both try to apply `MIGRATION_V1`; the loser reports
+/// SQLITE_BUSY or "table node already exists" instead of the "already migrated"
+/// no-op it should. Re-reading `user_version` inside a `BEGIN IMMEDIATE` closes
+/// the window — an audit note, not a fix, because the fix belongs with a test
+/// that opens the same fresh path from two threads.
 fn migrate(conn: &Connection) -> Result<(), ContextError> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version > SCHEMA_VERSION {

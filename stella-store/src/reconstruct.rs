@@ -147,7 +147,13 @@ impl Store {
             let message = messages
                 .last_mut()
                 .expect("a message was just pushed for this group");
-            append_block(message, block, &content, &mut unresolved);
+            append_block(
+                message,
+                block,
+                &content,
+                entry.call_id.as_deref(),
+                &mut unresolved,
+            );
         }
 
         Ok(Reconstruction {
@@ -238,10 +244,20 @@ fn empty_message_for(kind: &str) -> CompletionMessage {
 }
 
 /// Fold one resolved block into the message it belongs to.
+///
+/// `occurrence_call_id` is the manifest entry's own `call_id` (v15). It wins
+/// over the block's birth `call_id` for the rebuilt `ToolResult`, because
+/// `block_id` is content-addressed: two calls whose results are byte-identical
+/// share one registry row, so `ContextBlockRow::call_id` names only the call
+/// that minted it first. Emitting that id for the second occurrence would put a
+/// `tool_use_id` in the reconstruction that the model never saw. `None` (every
+/// pre-v15 row, and every non-tool block) falls back to birth provenance, which
+/// is the best the older shape can know.
 fn append_block(
     message: &mut CompletionMessage,
     block: &crate::ContextBlockRow,
     content: &str,
+    occurrence_call_id: Option<&str>,
     unresolved: &mut Vec<String>,
 ) {
     match block.kind.as_str() {
@@ -254,7 +270,10 @@ fn append_block(
         },
         "tool_result" => match serde_json::from_str::<ToolOutput>(content) {
             Ok(output) => message.tool_results.push(ToolResult {
-                call_id: block.call_id.clone().unwrap_or_default(),
+                call_id: occurrence_call_id
+                    .map(str::to_owned)
+                    .or_else(|| block.call_id.clone())
+                    .unwrap_or_default(),
                 output,
             }),
             Err(_) => unresolved.push(block.block_id.clone()),

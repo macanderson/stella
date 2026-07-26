@@ -143,6 +143,7 @@ pub struct RecallResult {
 impl RecallResult {
     /// Total token cost of the assembled frames — must never exceed the
     /// query's `max_tokens` (the invariant the packer guarantees).
+    #[must_use]
     pub fn assembled_tokens(&self) -> u64 {
         self.frames.iter().map(|f| f.token_cost as u64).sum()
     }
@@ -198,6 +199,16 @@ impl ContextStore {
     /// Both are honest gaps, not intentional policy: honoring them changes
     /// which frames and how many tokens a recall returns, so they belong in a
     /// deliberate change with its own tests, not in a silent tightening here.
+    ///
+    /// # Suppression happens after this, not inside it
+    ///
+    /// There is no forget/quarantine seam here: `stella memory forget` stores
+    /// its tombstone in `store.db`, and the CLI filters the frames this call
+    /// already returned. A forgotten memory therefore still competes for — and
+    /// can win — a slot against `max_frames`/`max_tokens`, and the turn ends up
+    /// with fewer frames rather than with a replacement. Suppression belongs
+    /// upstream of packing; moving it here means an exclusion set on the query,
+    /// which is an API change with its own tests.
     pub async fn recall_scoped(
         &self,
         q: &ContextQuery,
@@ -286,7 +297,11 @@ impl ContextStore {
                     (overlap > 0).then_some((n.id, overlap))
                 })
                 .collect();
-            scored.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+            // Descending overlap, ties on node id: `nodes` arrives in SQLite's
+            // unordered scan order, and overlap counts collide constantly (most
+            // tagged nodes carry exactly one domain), so ordering by overlap
+            // alone would hand equally-tagged nodes a different rank each run.
+            scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
             scored.into_iter().map(|(id, _)| id).collect()
         };
 
@@ -345,7 +360,13 @@ impl ContextStore {
                 *graph_weight.entry(neighbor).or_insert(0.0) += weight;
             }
             let mut graph_scored: Vec<(i64, f64)> = graph_weight.into_iter().collect();
-            graph_scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+            // Ties break on node id, for the same reason the cosine sort and
+            // the dedup survivor do: `graph_weight` is a `HashMap`, and the
+            // default edge weight is 1.0, so equally-weighted neighbors are the
+            // common case rather than the exception. Their drained order is
+            // exactly what RRF converts into a rank, so without the tiebreak
+            // the same store answers the same query differently between runs.
+            graph_scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
             let graph_ranked: Vec<i64> = graph_scored.iter().map(|(id, _)| *id).collect();
 
             // 4c. Fuse (RRF) → dedup by content hash → MMR diversity pass.
@@ -524,6 +545,13 @@ pub(crate) fn frame_from_node(
 
 /// Whether a frame is a lexical-fallback frame (`L-C6`), by inspecting its
 /// provenance chain. Lets a host label weak-coverage context honestly.
+///
+/// Per-frame provenance is the *only* place the fallback marker crosses the
+/// provider seam: the `RecallResult` → [`ContextQueryResult`] conversion keeps
+/// the frames and the drop report but drops `coverage` and
+/// `used_lexical_fallback`, so a CGP consumer that never reads provenance sees
+/// weak-coverage frames as ordinary grounding.
+#[must_use]
 pub fn is_lexical_fallback(frame: &ContextFrame) -> bool {
     frame
         .provenance
@@ -756,7 +784,12 @@ fn lexical_search(nodes: &[NodeRow], terms: &[String], limit: usize) -> Vec<(i64
             scored.push((node.id, hits as f32 / terms.len() as f32));
         }
     }
-    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+    // Ties break on node id. Term-fraction scores collide heavily (there are
+    // only `terms.len() + 1` possible values) and `nodes` arrives in SQLite's
+    // unordered scan order, so without the tiebreak the `truncate` below keeps
+    // a *different set* of frames from run to run — not merely a different
+    // order — which is the one thing the fallback path must not do.
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     scored.truncate(limit);
     scored
 }

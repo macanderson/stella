@@ -40,13 +40,23 @@ pub fn hex_sha256(bytes: &[u8]) -> String {
 /// Hash every extant path into a manifest, silently skipping paths that do
 /// not exist or cannot be read (they were never evidence). Order and dedup
 /// come from the `BTreeMap`.
+///
+/// Paths are confined to the workspace the same way every file tool confines
+/// them: the evidence list on a `save_exploration` is model-authored, and a
+/// bare `root.join(raw)` would happily hash `../../../etc/shadow` into a
+/// record that is then shared through the tree — an out-of-root read and a
+/// content oracle (the re-check reports "changed" whenever those bytes move).
+/// An escaping path is dropped exactly like a nonexistent one.
 pub async fn build_manifest(
     root: &Path,
     paths: impl IntoIterator<Item = String>,
 ) -> BTreeMap<String, String> {
     let mut manifest = BTreeMap::new();
     for path in paths {
-        if let Ok(bytes) = tokio::fs::read(root.join(&path)).await {
+        let Some(resolved) = crate::resolve_within_root(root, &path) else {
+            continue;
+        };
+        if let Ok(bytes) = tokio::fs::read(&resolved).await {
             manifest.insert(path, hex_sha256(&bytes));
         }
     }
@@ -122,7 +132,14 @@ pub async fn freshness(
     }
     let (mut changed, mut missing) = (Vec::new(), Vec::new());
     for (path, saved_hash) in manifest {
-        match tokio::fs::read(root.join(path)).await {
+        // A record travels with the tree and is hand-editable, so a manifest
+        // key naming a path outside the workspace must not be read here
+        // either — it counts as missing, the same as a deleted file.
+        let Some(resolved) = crate::resolve_within_root(root, path) else {
+            missing.push(path.clone());
+            continue;
+        };
+        match tokio::fs::read(&resolved).await {
             Ok(bytes) if &hex_sha256(&bytes) == saved_hash => {}
             Ok(_) => changed.push(path.clone()),
             Err(_) => missing.push(path.clone()),
@@ -158,7 +175,12 @@ pub fn freshness_sync(
     }
     let (mut changed, mut missing) = (Vec::new(), Vec::new());
     for (path, saved_hash) in manifest {
-        match std::fs::read(root.join(path)) {
+        // Same confinement as the async path above.
+        let Some(resolved) = crate::resolve_within_root(root, path) else {
+            missing.push(path.clone());
+            continue;
+        };
+        match std::fs::read(&resolved) {
             Ok(bytes) if &hex_sha256(&bytes) == saved_hash => {}
             Ok(_) => changed.push(path.clone()),
             Err(_) => missing.push(path.clone()),

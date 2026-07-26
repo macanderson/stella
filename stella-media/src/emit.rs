@@ -4,6 +4,11 @@
 //! renderer. Centralizing the mapping means a `MediaJob` and a
 //! `MediaJobStatus` translate to `MediaProgress`/`MediaComplete` one way, not
 //! per call site.
+//!
+//! **Nothing in the workspace calls these yet.** `stella-tui` renders both
+//! events, but no producer exists — the media tools return a text
+//! `ToolOutput` instead — so, like [`crate::preview`], this is a port waiting
+//! on its caller rather than behaviour a user sees today.
 
 use stella_protocol::{AgentEvent, MediaArtifactRef, MediaJobState};
 

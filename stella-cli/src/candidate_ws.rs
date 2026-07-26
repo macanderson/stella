@@ -341,7 +341,17 @@ impl GitCandidateWorkspaces {
                 // and the schema gate travel with the tree — best-of-N must
                 // not be a way around them. Applied while `registry` is still
                 // a plain `ToolRegistry`, before it moves into the `Arc`.
-                crate::agent::populate_schema_index(&registry, &ws_root).map_err(snap)?;
+                //
+                // A schema-gate failure is still a failure PAST the worktree
+                // registration, so it takes the same teardown as
+                // `populate_snapshot`'s errors below — a bare `?` here leaked
+                // both the registered worktree and its temp directory, and the
+                // leak survived the process (only a later `git worktree prune`
+                // would notice).
+                if let Err(reason) = crate::agent::populate_schema_index(&registry, &ws_root) {
+                    cleanup(&toplevel, &dir).await;
+                    return Err(snap(reason));
+                }
                 crate::rules::attach_rule_guards(&registry, &self.active_rules);
                 // `attach_rule_guards` is what gives this registry a live
                 // HookBus, so the bridge must follow it — and both must

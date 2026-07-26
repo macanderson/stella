@@ -142,42 +142,31 @@ pub struct ProviderConfig {
     pub seeded: bool,
 }
 
-/// The wire dialect a provider speaks — which `stella_model` adapter is
-/// constructed for it. Serialized form is the settings.json `dialect` field
-/// (kebab-case, e.g. `"openai-compatible"`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Dialect {
-    /// OpenAI Chat Completions shape (`stella_model::zai::ZaiProvider`,
-    /// re-identified per provider) — Z.ai, xAI, DeepSeek, OpenRouter,
-    /// local endpoints, and the default for config-defined providers.
-    OpenaiCompatible,
-    /// OpenAI Responses API (`stella_model::openai::OpenAiProvider`).
-    OpenaiResponses,
-    /// Anthropic Messages API (`stella_model::anthropic::AnthropicProvider`).
-    Anthropic,
-    /// Gemini generateContent (`stella_model::gemini::GeminiProvider`).
-    Gemini,
-    /// Vertex generateContent with project/location addressing. Built-in
-    /// only: it needs `VERTEX_PROJECT_ID`/`VERTEX_LOCATION` resolution that
-    /// a settings.json entry has no way to express.
-    Vertex,
-    /// Bedrock Converse with SigV4. Built-in only, same reasoning.
-    Bedrock,
-}
-
-impl Dialect {
-    /// Human-readable label for `stella config` / `stella models`.
-    pub fn label(self) -> &'static str {
-        match self {
-            Dialect::OpenaiCompatible => "OpenAI-compatible",
-            Dialect::OpenaiResponses => "OpenAI Responses",
-            Dialect::Anthropic => "Anthropic Messages",
-            Dialect::Gemini | Dialect::Vertex => "Gemini generateContent",
-            Dialect::Bedrock => "Bedrock Converse",
+impl ProviderConfig {
+    /// Narrow this to the parts [`stella_model::factory::build_provider`] needs.
+    ///
+    /// The factory deliberately does not take a whole `ProviderConfig`: env var
+    /// names, aliases, and the default model are credential-resolution and
+    /// config-UI concerns that belong up here, not in the model layer.
+    pub fn factory_spec(&self) -> stella_model::factory::ProviderSpec<'_> {
+        stella_model::factory::ProviderSpec {
+            id: self.id,
+            display_name: self.display_name,
+            dialect: self.dialect,
+            seeded: self.seeded,
         }
     }
 }
+
+/// The wire dialect a provider speaks — which `stella_model` adapter is
+/// constructed for it. Serialized form is the settings.json `dialect` field
+/// (kebab-case, e.g. `"openai-compatible"`).
+///
+/// Defined in [`stella_model::factory`], alongside the adapters its variants
+/// name and the factory that dispatches on it, so callers below `stella-cli`
+/// in the dependency graph can construct providers too. Re-exported here
+/// because settings.json parsing and the provider table are this module's job.
+pub use stella_model::factory::Dialect;
 
 /// All supported providers, in preference order. Order matters twice over:
 /// auto-detection picks the first row with a resolvable credential, which is
@@ -371,7 +360,7 @@ pub static LOCAL_PROVIDER: ProviderConfig = ProviderConfig {
 /// process lifetime in proportion to turns × configured providers. Interning
 /// makes the leak what the doc always promised: bounded by the number of
 /// DISTINCT strings, not by how often they are resynthesized.
-fn leak(s: &str) -> &'static str {
+pub(crate) fn leak(s: &str) -> &'static str {
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
 

@@ -12,6 +12,15 @@
 //!    hit rate, consulting the read-only [`crate::provider_parity`] posture
 //!    matrix to tell an opt-in-marker bug from prefix instability.
 //!
+//! One honest caveat on "canonical": the *diagnosis* half is not reached by
+//! the deck. `stella-tui`'s `AgentEntry::cache_diagnosis` re-derives
+//! [`diagnose_cache`]'s gate (`MIN_TURNS`, the threshold compare, the
+//! write-token discriminator) by hand, because the TUI cannot depend on this
+//! model-tier crate; the CLI producer folds in the one piece of real domain
+//! knowledge, the opt-in flag. Nothing cross-checks the two, so a change to
+//! the constants or the discriminator here must be mirrored there in the same
+//! change — the deck will not fail if it isn't, it will simply disagree.
+//!
 //! The **write premium** (what a cache write costs *over* the base input rate)
 //! is provider policy, not arithmetic: today only the opt-in providers
 //! (Anthropic, Bedrock, OpenRouter-Claude) report cache writes, and their
@@ -70,6 +79,7 @@ impl Pricing {
     /// reported input (a provider reporting more cached than total input, which
     /// shouldn't happen, never inflates the saving), mirroring
     /// [`Pricing::cost_usd`].
+    #[must_use]
     pub fn cache_savings_usd(
         &self,
         usage: &CompletionUsage,
@@ -108,6 +118,7 @@ impl Pricing {
 /// The prompt-cache hit rate for a usage aggregate: cached input over total
 /// input, in `[0, 1]`. `0.0` when no input has been metered (an honest
 /// "nothing to hit yet", never a divide-by-zero).
+#[must_use]
 pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
     if input_tokens == 0 {
         return 0.0;
@@ -132,6 +143,7 @@ pub fn hit_rate(input_tokens: u64, cached_input_tokens: u64) -> f64 {
 /// `IdleBeyondTtl` is a refinement the live scheduler surfaces from actual
 /// idle gaps; this token-only diagnosis cannot see wall-clock gaps, so it
 /// never returns it (it stays reachable for the TTL-aware scheduler path).
+#[must_use]
 pub fn diagnose_cache(
     provider: &str,
     turns: u64,
@@ -172,6 +184,7 @@ pub fn diagnose_cache(
 /// Local const table, deliberately: the authoritative home is the
 /// `provider_parity` matrix's not-yet-added TTL column. Merge this into that
 /// column when it lands — it pairs with [`cache_write_premium_multiplier`].
+#[must_use]
 pub fn provider_cache_ttl_secs(provider: &str) -> Option<u64> {
     match provider {
         "anthropic" | "bedrock" | "openrouter" => Some(300),
@@ -196,6 +209,7 @@ impl CacheWarmth {
     /// Warmth of a session whose last provider call was `elapsed_secs` ago,
     /// against a `ttl_secs` cache TTL. Saturating: a session idle longer than
     /// the TTL reads `remaining_secs: 0, expired: true`, never underflows.
+    #[must_use]
     pub fn from_elapsed(elapsed_secs: u64, ttl_secs: u64) -> Self {
         let remaining_secs = ttl_secs.saturating_sub(elapsed_secs);
         Self {
@@ -214,6 +228,7 @@ impl CacheWarmth {
 /// savings measurable (the `cache_expired_rewrite` counter). The strict `>`
 /// mirrors the provider contract that a prefix is still readable *at* the TTL
 /// boundary, cold only past it.
+#[must_use]
 pub fn is_cache_expired_rewrite(gap_secs: u64, cache_write_tokens: u64, ttl_secs: u64) -> bool {
     gap_secs > ttl_secs && cache_write_tokens > 0
 }
@@ -396,6 +411,33 @@ mod tests {
         // Providers with no documented eviction window: nothing to schedule.
         assert_eq!(provider_cache_ttl_secs("zai"), None);
         assert_eq!(provider_cache_ttl_secs("local"), None);
+    }
+
+    /// The two local const tables here are keyed by provider id independently
+    /// of the posture matrix, which is the same "adopt a per-provider fact as
+    /// adapter folklore" shape `provider_parity` exists to forbid. Both are
+    /// really restatements of one fact — a provider bills (and evicts) a cache
+    /// write only if its cache is opt-in — so pin them to `CACHE_POSTURE`
+    /// rather than to a hand-copied id list. A provider added to the matrix as
+    /// `OptIn` without a premium/TTL row would otherwise be metered as if its
+    /// writes were free and its prefix never expired.
+    #[test]
+    fn the_local_write_premium_and_ttl_tables_agree_with_the_posture_matrix() {
+        use crate::provider_parity::CACHE_POSTURE;
+
+        for (id, posture) in CACHE_POSTURE {
+            let opt_in = matches!(posture, CachePosture::OptIn { .. });
+            assert_eq!(
+                cache_write_premium_multiplier(id) > 1.0,
+                opt_in,
+                "`{id}`: a write premium must be declared for exactly the opt-in cache providers"
+            );
+            assert_eq!(
+                provider_cache_ttl_secs(id).is_some(),
+                opt_in,
+                "`{id}`: a cache TTL must be declared for exactly the opt-in cache providers"
+            );
+        }
     }
 
     #[test]

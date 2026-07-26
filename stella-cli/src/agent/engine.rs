@@ -541,8 +541,24 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 /// catalog check — live in exactly one place. `effective_base_url` is the
 /// base URL requests go to (override-or-default); `base_url_override` is the
 /// raw `--base-url`, which only the Vertex/Bedrock arms consume (they build
-/// region/project-scoped URLs themselves). See [`build_provider`]'s note on
-/// the catalog check and the shared Chat Completions arm.
+/// region/project-scoped URLs themselves).
+///
+/// The catalog is consulted first (provider-scoped, since the same slug
+/// legitimately exists on several providers — `gemini-3-pro` on both `gemini`
+/// and `vertex`) so an unrecognized model slug is a hard, immediate, named
+/// error, never a silent construction of a provider that will simply fail its
+/// first live call (L-M1/L-M2). `local` and never-synced custom endpoints are
+/// exempt: their models are whatever the user pulled into them, and the
+/// anti-phantom-slug rule exists to catch drift in OUR seed data, not to veto
+/// the user's own endpoint.
+///
+/// Each wire dialect gets its own arm: OpenAI (Responses API), Anthropic
+/// (Messages), Gemini direct + Vertex (generateContent), Bedrock (Converse,
+/// SigV4). Everything else — Z.ai, xAI, DeepSeek, OpenRouter, local — is
+/// genuinely the same Chat Completions shape behind different base URLs,
+/// served by the shared adapter re-identified per provider so its
+/// `Provider::id()` and error messages name the surface actually being called
+/// (an xAI 401 must never read "Z.ai rejected the API key").
 fn build_provider_parts(
     provider_config: &crate::config::ProviderConfig,
     model_id: &str,
@@ -550,103 +566,28 @@ fn build_provider_parts(
     effective_base_url: String,
     base_url_override: Option<&str>,
 ) -> Result<Box<dyn Provider>, String> {
-    use crate::config::Dialect;
-
-    let provider_id = provider_config.id;
-    let display_name = provider_config.display_name;
-    // The anti-invalid-slug gate, for EVERY provider (not just seeded
-    // ones): the seed floor always passes; a provider whose master-list
-    // rows are synced (`stella models refresh`) gets hard validation with
+    // The full anti-invalid-slug ladder, for EVERY provider (not just seeded
+    // ones): the seed floor always passes; a provider whose master-list rows
+    // are synced (`stella models refresh`) gets hard validation with
     // suggestions; `local` and never-synced custom endpoints keep their
     // endpoint-is-the-authority posture. See
     // `crate::model_catalog::validate_model_slug` for the full ladder.
+    //
+    // The seed-floor half of this also runs inside
+    // `stella_model::factory::build_provider`, so a caller that reaches the
+    // factory without going through here — a second host, or stella-model's
+    // own live smoke tests — still cannot construct a phantom-slug provider.
+    // Running it here first is what buys the synced-catalog escalation and its
+    // suggestions, which need the on-disk catalog this crate owns.
     crate::model_catalog::validate_model_slug(provider_config, model_id)?;
 
-    match provider_config.dialect {
-        Dialect::OpenaiResponses => {
-            let provider = stella_model::openai::OpenAiProvider::new(api_key, model_id.to_string())
-                .with_base_url(effective_base_url);
-            Ok(Box::new(provider))
-        }
-        Dialect::Anthropic => {
-            let provider =
-                stella_model::anthropic::AnthropicProvider::new(api_key, model_id.to_string())
-                    .with_base_url(effective_base_url);
-            Ok(Box::new(provider))
-        }
-        Dialect::Gemini => {
-            let provider = stella_model::gemini::GeminiProvider::new(api_key, model_id.to_string())
-                .with_base_url(effective_base_url);
-            Ok(Box::new(provider))
-        }
-        Dialect::Vertex => {
-            // The access token is `api_key` (VERTEX_ACCESS_TOKEN via the
-            // credential chain); project and location are Vertex-specific
-            // addressing, owned by `stella_model::credential` so a second
-            // host of the engine gets the same variable names, the same
-            // fallback order, and the same named errors without copying them.
-            let addressing =
-                stella_model::credential::VertexAddressing::resolve().map_err(|e| e.to_string())?;
-            let mut provider = stella_model::vertex::VertexProvider::new(
-                api_key,
-                model_id.to_string(),
-                addressing.project,
-                addressing.location,
-            );
-            if let Some(override_url) = base_url_override {
-                provider = provider.with_base_url(override_url.to_string());
-            }
-            Ok(Box::new(provider))
-        }
-        Dialect::Bedrock => {
-            // `api_key` is AWS_ACCESS_KEY_ID via the credential chain; the
-            // rest of the standard AWS env set is resolved by
-            // `stella_model::credential`, alongside the adapter that needs
-            // it. A missing secret is a named error pointing at the exact
-            // var, not a doomed unsigned request.
-            let aws = stella_model::credential::BedrockCredentials::resolve()
-                .map_err(|e| e.to_string())?;
-            let mut provider = stella_model::bedrock::BedrockProvider::new(
-                api_key,
-                aws.secret_access_key,
-                aws.session_token,
-                aws.region,
-                model_id.to_string(),
-            );
-            if let Some(override_url) = base_url_override {
-                provider = provider.with_base_url(override_url.to_string());
-            }
-            Ok(Box::new(provider))
-        }
-        // Z.ai, xAI, DeepSeek, OpenRouter, local, and config-defined
-        // providers (settings.json) — the shared Chat Completions adapter,
-        // re-identified per provider so its `Provider::id()` and error
-        // messages name the surface actually being called.
-        Dialect::OpenaiCompatible => {
-            let label = match provider_id {
-                "zai" => "Z.ai",
-                "xai" => "xAI",
-                "deepseek" => "DeepSeek",
-                "openrouter" => "OpenRouter",
-                "local" => "the local endpoint",
-                _ => display_name,
-            };
-            let mut provider = stella_model::zai::ZaiProvider::new(api_key, model_id.to_string())
-                .with_base_url(effective_base_url)
-                .with_identity(provider_id, label);
-            if provider_id == "openrouter" {
-                // First-class OpenRouter: app attribution on every request,
-                // and the gateway's own usage accounting so
-                // `CompletionResult::cost_usd` is the routed call's real
-                // price (its slugs are unseeded — see config.rs — so there
-                // is no catalog list price to fall back on).
-                provider = provider
-                    .with_attribution("https://stella.oxagen.sh", "Stella")
-                    .with_usage_accounting();
-            }
-            Ok(Box::new(provider))
-        }
-    }
+    stella_model::factory::build_provider(
+        &provider_config.factory_spec(),
+        model_id,
+        api_key,
+        effective_base_url,
+        base_url_override,
+    )
 }
 
 /// Cross-family grouping key for judge selection. Same-vendor providers must

@@ -324,11 +324,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_oversized_asset_is_refused_even_when_the_length_is_not_declared() {
-        // The arm that actually matters. The up-front Content-Length check is
-        // an optimisation; the accumulation guard is the bound. A body under
-        // the declared length but over the cap proves the loop stops on its
-        // own -- this is the case a lying or absent header would exploit.
+    async fn a_body_under_the_cap_downloads_past_the_declared_length_check() {
+        // The up-front Content-Length check must not be trigger-happy: a body
+        // that fits under the cap has to arrive intact through the
+        // chunk-accumulation loop.
+        //
+        // Not covered here, and recorded: the accumulation guard's *refusal*
+        // arm — the one a lying or absent Content-Length would exploit — has
+        // no witness, because wiremock always declares an accurate length and
+        // so the up-front check fires first on every oversized body. Exercising
+        // it needs a server that streams chunked without a length header.
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .respond_with(

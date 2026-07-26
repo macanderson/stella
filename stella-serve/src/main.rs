@@ -193,6 +193,14 @@ async fn healthcheck() -> ExitCode {
     }
 }
 
+/// Probe `/healthz` over loopback and report whether it answered 200.
+///
+/// Only the port is taken from `STELLA_SERVE_BIND`; the host is always
+/// loopback. That is deliberate — the probe runs *inside* the container, where
+/// the documented bind is `0.0.0.0:8080` and loopback is the cheapest way in.
+/// The corollary is that a deployment binding a single non-loopback address
+/// (or IPv6-only `[::1]`) will see this report failure even with a healthy
+/// server; such a deployment must supply its own healthcheck.
 async fn probe_health(port: u16) -> std::io::Result<bool> {
     let response = tokio::time::timeout(HEALTH_PROBE_TIMEOUT, async {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;

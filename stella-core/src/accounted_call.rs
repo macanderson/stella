@@ -60,12 +60,25 @@ pub struct AccountedCall<'a> {
 /// deliberately not a plain failure: the completion COMMITTED and was paid
 /// for, so it carries the result through for a caller that can still use it
 /// (the overflow summarizer splices its summary in either way).
+///
+/// `Debug`/`Display`/`Error` so this behaves like every other error in the
+/// workspace: it can be `?`-propagated into a boxed error, logged, and
+/// `unwrap`ed in a test. The `Display` messages are content-free by
+/// construction — `Budget` names the axis-free fact, never the completion
+/// text it carries — so `{}` (and `{:#}` through a boxed `Error`) can never
+/// leak a response body. `Debug` is NOT content-free: `Budget` derives it
+/// over the whole `CompletionResult`, response text included, so `{:?}` and
+/// `unwrap()`'s panic message belong in tests, never in a log line.
+#[derive(Debug, thiserror::Error)]
 pub enum AccountedCallError {
     /// The provider failed terminally, or retries were exhausted.
+    #[error("provider call failed: {0}")]
     Provider(ProviderError),
     /// [`AccountedCall::timeout`] expired before the call resolved.
+    #[error("the call's deadline expired before the provider responded")]
     Timeout,
     /// The call succeeded, but settling its cost breached an enforced budget.
+    #[error("the call committed, but settling its cost breached an enforced budget")]
     Budget {
         /// The committed, already-paid-for result.
         result: CompletionResult,

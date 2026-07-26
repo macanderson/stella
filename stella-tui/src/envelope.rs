@@ -146,8 +146,9 @@ pub enum Inbound {
     SessionReset { agent: AgentId },
     /// A refreshed code-graph snapshot for the Graph tab. Unlike the other
     /// variants this is **not** a folded event — the graph is an out-of-band
-    /// read-model — out-of-band, not folded from events. It
-    /// rides the inbound channel only because that is the driver→deck path;
+    /// read-model, since a graph's structure is not in the per-session event
+    /// stream. It rides the inbound channel only because that is the
+    /// driver→deck path;
     /// [`crate::deck_ui::ingest_inbound`] applies it straight to the view
     /// state (`DeckUi::graph`) and the model fold ignores it. The driver
     /// sends one after `/init` rebuilds the index so the tab reflects it

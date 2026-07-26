@@ -211,11 +211,13 @@ fn with_note(note: &str, out: ToolOutput) -> ToolOutput {
     }
 }
 
-/// Minimal POSIX single-quote escaping: wrap in `'…'` and close/reopen
-/// around any embedded quote, so the result is one shell word whose content
-/// is exactly `s`.
+/// Thin alias for the crate's one POSIX escaper ([`crate::exec::shell_quote`])
+/// — kept under this local name because [`SafeFilter`] quotes token by token
+/// and reads better unqualified. This module carried its own byte-identical
+/// copy until it was folded back in: a second implementation of a security
+/// primitive is exactly the shape that lets one of them drift.
 fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
+    crate::exec::shell_quote(s)
 }
 
 /// A test filter that is safe to interpolate into a `bash -c` line.

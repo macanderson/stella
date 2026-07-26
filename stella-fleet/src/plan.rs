@@ -53,8 +53,15 @@ pub enum Isolation {
 /// tasks it must wait for and how its workspace is isolated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
+    /// Stable, plan-unique identifier — the key `depends_on` edges reference,
+    /// the dispatch tie-break, and the seed for this task's worktree
+    /// directory and branch name.
     pub id: TaskId,
+    /// One-line human label, shown in the run report and stored on the
+    /// ledger's `tasks` row. Never interpreted.
     pub title: String,
+    /// The goal handed to the worker verbatim — this crate does no prompt
+    /// assembly of its own.
     pub prompt: String,
     /// Ids of tasks that must complete before this one may start. Every id
     /// here must name a task in the same plan (enforced by
@@ -78,6 +85,7 @@ pub struct Task {
 
 impl Task {
     /// A dependency-free, shared-tree task claiming no paths.
+    #[must_use]
     pub fn new(id: impl Into<TaskId>, title: impl Into<String>, prompt: impl Into<String>) -> Self {
         Self {
             id: id.into(),
@@ -168,11 +176,14 @@ impl Plan {
     /// validates — call [`validate`](Self::validate) (or any scheduling
     /// method, which calls it first) to reject duplicate ids, dangling
     /// dependencies, and cycles.
+    #[must_use]
     pub fn new(tasks: Vec<Task>) -> Self {
         Self { tasks }
     }
 
-    /// Look a task up by id.
+    /// Look a task up by id. Linear in the plan's size — plans run to tens of
+    /// tasks, so this stays a scan rather than an index that could drift.
+    #[must_use]
     pub fn task(&self, id: &str) -> Option<&Task> {
         self.tasks.iter().find(|t| t.id == id)
     }
@@ -273,6 +284,7 @@ impl Plan {
     /// order. This is the wave-scheduling primitive — call it, dispatch the
     /// returned wave, add the finished ids to `completed`, and repeat until
     /// it returns empty.
+    #[must_use]
     pub fn ready_tasks(&self, completed: &HashSet<TaskId>) -> Vec<&Task> {
         let mut ready: Vec<&Task> = self
             .tasks

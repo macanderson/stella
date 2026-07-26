@@ -291,6 +291,11 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
                 AcceptAction::Fatal => return Err(err),
             },
         };
+        // Nagle off. Every frame on this wire gates the next engine step — a
+        // `provider_request` the host has not seen yet is a step that cannot
+        // proceed — so coalescing a small write with the next one trades
+        // nothing for up to a delayed-ACK's worth of added latency per step.
+        let _ = stream.set_nodelay(true);
         let state = Arc::clone(&state);
         // Per-connection errors (client hangup, bad request) stay local to the
         // connection; the accept loop keeps serving.

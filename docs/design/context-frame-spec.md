@@ -8,9 +8,14 @@
 > representation) and **all wire semantics** are defined normatively by the
 > **Context Graph Protocol (CGP)** — not by this document. Stella consumes the CGP
 > types directly (`contextgraph-types`, pinned in `stella-cli/Cargo.toml`; used by
-> `stella-graph` and `stella-context`). See CGP `SPEC.md`, `docs/adr/0007-protocol-product-boundary.md`,
-> and the reconciliation delta table (`docs/adaptive-context-reconciliation.md`),
-> tracked in [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27).
+> `stella-graph` and `stella-context`). All three paths below are in the **CGP
+> repository**, not this one: `SPEC.md`, `docs/adr/0007-protocol-product-boundary.md`,
+> and the reconciliation delta table `docs/adaptive-context-reconciliation.md`.
+> The latter two are the outcome of
+> [context-graph-protocol#27](https://github.com/macanderson/context-graph-protocol/issues/27)
+> and are **not yet published at the revision pinned above** — until #27 lands
+> they name the intended home of that decision rather than a document you can
+> open. Do not read `docs/adr/0007-…` as this workspace's `docs/adr/0007-immutable-promotion-history.md`.
 >
 > **What this document is.** A host-side design doc for Stella's *adaptive-context
 > runtime*. The "Context Frame" it describes below is the **task-wide compiled

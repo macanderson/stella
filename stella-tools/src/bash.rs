@@ -5,11 +5,21 @@
 //!
 //! **Opt-in, never ambient.** This tool is registered only when the host
 //! enabled it ([`crate::registry::RegistryOptions::bash`], set from the
-//! settings key `tools.bash: "on"`); the default tool surface has no
-//! shell at all. Prefer the structured executors — `run_tests`,
-//! `build_project`, `run_lint`, `format_code`, `run_script`, the process
-//! group, and the `repo_*` tools — which spawn enumerable argv and never
-//! interpret a shell string.
+//! settings key `tools.bash: "on"`). Prefer the structured executors —
+//! `run_lint`, `format_code`, `diagnostics`, the process group, and the
+//! `repo_*` tools — which spawn enumerable argv and never interpret a shell
+//! string.
+//!
+//! The opt-in bounds the *general-purpose* shell, not every path to one.
+//! `build_project` and `run_tests` accept a `command` override,
+//! `verify_done` a `test_cmd`, and `run_script` composes from the scripts
+//! index — all four reach `bash -c` through `crate::exec::run`, and all
+//! four are always-on. Turning `tools.bash` off therefore removes the
+//! shell TOOL, not the shell CAPABILITY; the fence that covers every one of
+//! them uniformly is the registry's `command.started` policy chain (see
+//! `ToolRegistry::command_line_for`), which is why that chain enumerates
+//! them all. An operator who needs shell execution actually contained wants
+//! the OS sandbox below plus that chain, not the registration switch alone.
 //!
 //! Opt-in OS sandbox: `STELLA_BASH_SANDBOX=workspace-write|restricted` wraps
 //! the spawn in `sandbox-exec` (macOS, Seatbelt) or `bwrap` (Linux) — file
