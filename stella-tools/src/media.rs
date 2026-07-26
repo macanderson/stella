@@ -577,6 +577,22 @@ mod tests {
 
     struct FixedOperationIds(&'static str);
 
+    /// One expiry for the whole test binary, minted on first use.
+    ///
+    /// The journal treats the expiry as part of a claim's identity, so a
+    /// replay under the same operation key must present a byte-identical
+    /// expiry to be recognized as the same request. Recomputing `unix_now()`
+    /// per call raced the next second boundary: two `execute` calls that
+    /// straddled one landed a claim of `now + 3600` and then `now + 3601`,
+    /// and the second was rejected as a conflicting identity instead of
+    /// replaying. Pinning it keeps `FixedOperationIds` as fixed as its name
+    /// promises. A host does the same thing — see the `SameHostOperation`
+    /// source in `tests/media_replay.rs`, which carries its expiry as a field.
+    fn fixed_expiry() -> u64 {
+        static EXPIRY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        *EXPIRY.get_or_init(|| unix_now() + 3600)
+    }
+
     impl MediaOperationIdSource for FixedOperationIds {
         fn operation_id(&self) -> HostMediaOperation {
             // The journal folds `expires_at` into a claim's identity, so
@@ -765,6 +781,58 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// A host that recomputes its expiry from a clock on every call, which is
+    /// what [`FixedOperationIds`] used to do — the drift is one second, the
+    /// same step a real clock takes across a boundary.
+    struct DriftingOperationIds {
+        opaque_id: &'static str,
+        calls: AtomicUsize,
+    }
+
+    impl MediaOperationIdSource for DriftingOperationIds {
+        fn operation_id(&self) -> HostMediaOperation {
+            HostMediaOperation {
+                opaque_id: self.opaque_id.to_string(),
+                expires_at: fixed_expiry() + self.calls.fetch_add(1, Ordering::SeqCst) as u64,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_drifting_host_expiry_is_refused_instead_of_replayed() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tool: Arc<dyn Tool> = Arc::new(GenerateImage::with_host_context(
+            Arc::new(OrderedProvider {
+                events: events.clone(),
+                image_price: Some(0.01),
+                video_price: None,
+            }),
+            Arc::new(OrderedGate(events.clone())),
+            Arc::new(DriftingOperationIds {
+                opaque_id: "host-drifting-image",
+                calls: AtomicUsize::new(0),
+            }),
+            operation_journal(),
+        ));
+        let args = serde_json::json!({"prompt": "same"});
+
+        let first = tool.execute(&args, dir.path()).await;
+        assert!(matches!(first, ToolOutput::Ok { .. }), "{first:?}");
+        let second = tool.execute(&args, dir.path()).await;
+
+        let ToolOutput::Error { message } = second else {
+            panic!("a moved expiry is a different request, not a replay: {second:?}");
+        };
+        assert!(
+            message.contains("conflicting media identity or expiry"),
+            "{message}"
+        );
+        // Refused at the claim, so the second attempt never reaches the gate
+        // or the provider: the two events are the first attempt's.
+        assert_eq!(events.lock().unwrap().len(), 2);
     }
 
     fn tool() -> GenerateImage {
