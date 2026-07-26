@@ -157,6 +157,10 @@ fn assemble_system_prompt_bakes_a_byte_stable_orientation_map() {
 /// advertised in BOTH static base personas the way its siblings `repo_diff`
 /// (#381) and `diagnostics` (#384) are — a tool the prompt never mentions
 /// loses to guessed read_file offsets no matter how good it is.
+///
+/// The catalogue line this used to match is gone (#639): what `read_symbol`
+/// *does* now comes from its schema, and only the offset-guessing steering —
+/// which no single schema can express — stayed behind.
 #[test]
 fn both_static_prompts_carry_a_read_symbol_steering_line() {
     for (name, prompt) in [
@@ -164,7 +168,7 @@ fn both_static_prompts_carry_a_read_symbol_steering_line() {
         ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
     ] {
         assert!(
-            prompt.contains("- read_symbol: "),
+            prompt.contains("read_symbol"),
             "{name} must carry a read_symbol steering line"
         );
         assert!(
@@ -477,6 +481,83 @@ fn system_prompt_carries_the_workspace_maps_index() {
         &crate::rules::ResolvedRules::default(),
     );
     assert!(!empty.contains("## Workspace maps"));
+}
+
+/// The #639 acceptance criterion, guarded across the WHOLE prefix rather than
+/// the one section that regressed.
+///
+/// A one-shot run assembles this prefix and pays for it; the next one-shot run
+/// only hits the provider's cache if it assembles the same bytes. The exact
+/// bug was a section rendering `age_human` and a live pid — so the guard is
+/// that no section emits a wall-clock-relative age or this process's identity,
+/// whichever section a later change adds them to.
+#[test]
+fn the_cached_prefix_carries_no_wall_clock_or_per_process_bytes() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let dir = root.path().join(".stella/explorations");
+    std::fs::create_dir_all(&dir).unwrap();
+    // A completed map and a draft claimed live by THIS process: the pair that
+    // used to put a relative age and a pid straight into the cached prefix.
+    for (slice, status, pid) in [
+        ("cli", "complete", None),
+        ("wip", "draft", Some(std::process::id())),
+    ] {
+        std::fs::write(
+            dir.join(format!("{slice}.json")),
+            serde_json::json!({
+                "slice": slice, "title": format!("Map {slice}"), "summary": "covers it",
+                "content": "body", "files": [], "created_at_ms": 1_700_000_000_000u64,
+                "status": status, "pid": pid,
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        root.path().join("package.json"),
+        r#"{"scripts": {"build": "next build"}}"#,
+    )
+    .unwrap();
+    std::fs::write(root.path().join(".stella/memories/.keep"), "").ok();
+
+    let mut cfg = cfg_for("zai");
+    cfg.authority.project_prompts_allowed = true;
+    let rules = crate::rules::ResolvedRules::default();
+    let prompt = build_system_prompt(&cfg, root.path(), &rules);
+
+    // The fixture must actually reach the prefix, or every assertion below
+    // passes vacuously on a record that silently failed to parse.
+    assert!(
+        prompt.contains("`cli`") && prompt.contains("## Project scripts"),
+        "the fixture never reached the prefix — this guard would be vacuous:\n{prompt}"
+    );
+    assert!(
+        prompt.contains("saved 2023-11-14"),
+        "freshness must render as an absolute stamp, not a relative age:\n{prompt}"
+    );
+    assert!(
+        !prompt.contains("`wip`"),
+        "an in-progress draft belongs in the volatile recall block, never the \
+         cached prefix (#639):\n{prompt}"
+    );
+
+    for volatile in [" ago", "just now", "IN PROGRESS", "abandoned draft"] {
+        assert!(
+            !prompt.contains(volatile),
+            "the cached prefix must carry no wall-clock-relative bytes \
+             ({volatile:?}) — an unstable prefix pays the cache-WRITE premium \
+             on every call instead of hitting cache (#639):\n{prompt}"
+        );
+    }
+    assert!(
+        !prompt.contains(&format!("pid {}", std::process::id())),
+        "the cached prefix must not name the producing process (#639):\n{prompt}"
+    );
+    assert_eq!(
+        prompt,
+        build_system_prompt(&cfg, root.path(), &rules),
+        "same workspace state ⇒ identical bytes"
+    );
 }
 
 #[test]
