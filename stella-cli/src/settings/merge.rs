@@ -2,9 +2,36 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::authority::{apply_tool_ceiling, restore_project_prompts, restore_project_tools};
+use stella_tools::policy::ToolPolicy;
+
+use super::authority::{
+    apply_tool_ceiling, managed_tool_ceiling, restore_project_prompts, restore_project_tools,
+};
 use super::managed::managed_settings_path;
 use super::*;
+
+/// What each settings scope says about tools, kept APART instead of merged.
+///
+/// [`Settings::tool_policy`] answers *whether* a tool is on — the only question
+/// enforcement asks. A settings editor has to answer a second one: *who said
+/// so*, because "bash is off" and "your org turned bash off" are different
+/// facts, and only one of them is something the operator can change. Merging
+/// the scopes destroys exactly that distinction, so this type never does.
+#[derive(Debug, Clone, Default)]
+pub struct ToolScopePolicies {
+    /// The org-managed ceiling, [`managed_tool_ceiling`]'s output — the same
+    /// value [`Settings::load`] folds into the merged settings. A tool it
+    /// denies is denied for good: neither user nor project can grant it, and
+    /// the editor must render it LOCKED rather than as a switch that appears
+    /// to work and silently does nothing.
+    pub managed: ToolPolicy,
+    /// The user scope's own switches (`~/.stella/settings.json`).
+    pub user: ToolPolicy,
+    /// The project scope's own switches (`<workspace>/.stella/settings.json`),
+    /// as written — trust restoration is not applied, because this is a report
+    /// of what the file says, not of what the runtime honored.
+    pub project: ToolPolicy,
+}
 
 /// Append `extra`'s matchers onto `base`, per event. `None + None` stays
 /// `None` so a hook-free session carries no hooks handle at all.
@@ -61,13 +88,14 @@ impl Settings {
                 target.registry_url = Some(url.clone());
             }
         }
+        // Tool switches merge PER KEY, later scope wins — the same shape the
+        // two hardcoded fields had, now over an open map. A scope that does
+        // not mention a key leaves the lower scope's value alone, so a
+        // project narrowing `bash` never resets a user's `{"mcp": "off"}`.
         if let Some(tools) = &scope.tools {
             let target = self.tools.get_or_insert_with(ToolsSettings::default);
-            if let Some(bash) = tools.bash {
-                target.bash = Some(bash);
-            }
-            if let Some(web) = tools.web {
-                target.web = Some(web);
+            for (key, &toggle) in &tools.entries {
+                target.entries.insert(key.clone(), toggle);
             }
         }
         if let Some(engine) = &scope.agent_engine_config {
@@ -115,9 +143,14 @@ impl Settings {
     ) -> Self {
         let trusted_only = Self::merge_snapshots(&[user, managed]);
         let mut merged = Self::merge_snapshots(&[user, managed, project]);
+        // Captured from the managed snapshot only: the ceiling is what the ORG
+        // said, and no later fold can grow it or shrink it. `AuthorityPolicy`
+        // reads it rather than re-deriving, so the two can never disagree.
+        let ceiling =
+            managed_tool_ceiling(managed.managed_authority.as_ref(), managed.tools.as_ref());
         let authority = AuthorityPolicy::compute(
             managed.managed_authority.as_ref(),
-            managed.tools.as_ref(),
+            &ceiling,
             trust.credentials,
         );
 
@@ -170,7 +203,7 @@ impl Settings {
         if !authority.project_prompts_allowed {
             restore_project_prompts(&mut merged, &trusted_only, project);
         }
-        apply_tool_ceiling(&mut merged, authority);
+        apply_tool_ceiling(&mut merged, &ceiling);
         merged.managed_authority = managed.managed_authority;
         merged.enterprise_telemetry = managed.enterprise_telemetry.clone();
         merged.authority_policy = authority;
@@ -279,6 +312,40 @@ impl Settings {
             }
         }
         Ok(merged)
+    }
+
+    /// Read the same three scope files [`Settings::load`] reads, but keep
+    /// their `tools` sections apart — see [`ToolScopePolicies`] for why the
+    /// merged answer is not enough.
+    ///
+    /// Cheap local reads, and deliberately re-read on every call rather than
+    /// cached: the editor's whole job is to change these files, and a stale
+    /// snapshot would attribute a switch to the scope that used to carry it.
+    pub fn load_tool_scopes(workspace_root: &Path) -> Result<ToolScopePolicies, String> {
+        if filesystem_settings_disabled() {
+            return Ok(ToolScopePolicies::default());
+        }
+        let user = match user_settings_path() {
+            Some(path) => Self::load_scope(&path)?,
+            None => Self::default(),
+        };
+        let managed = Self::load_managed_scope(&managed_settings_path())?;
+        let project = Self::load_scope(&project_settings_path(workspace_root))?;
+        let own = |scope: &Settings| {
+            scope
+                .tools
+                .as_ref()
+                .map(ToolsSettings::policy)
+                .unwrap_or_default()
+        };
+        Ok(ToolScopePolicies {
+            managed: managed_tool_ceiling(
+                managed.managed_authority.as_ref(),
+                managed.tools.as_ref(),
+            ),
+            user: own(&user),
+            project: own(&project),
+        })
     }
 
     /// Merge the files at `paths`, later paths taking precedence. Split out

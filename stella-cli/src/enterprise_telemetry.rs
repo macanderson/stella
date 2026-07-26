@@ -415,8 +415,6 @@ pub(crate) fn prove_process_free_surface(workspace_root: &Path) -> Result<(), St
         None,
         None,
         stella_tools::RegistryOptions {
-            bash: false,
-            web: false,
             media_host_data_isolation: Some(stella_tools::media::HostDataIsolation::ProcessFree),
             ..Default::default()
         },

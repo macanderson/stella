@@ -611,6 +611,9 @@ async fn run_task(
     // transient build lane, coordinated across every writer in the
     // workspace. Same holder as the fleet's declared claims — re-entrant.
     let claims = crate::claims::ClaimTap::new(&registry, claims_store, claim_holder);
+    // A fleet worker runs the operator's tool policy, same as every other
+    // driver — an isolated worktree is not a different trust posture.
+    let permitted = agent::PolicyToolSet::new(&claims, agent::session_tool_policy(&cfg));
     // Every fleet attempt owns the same durable event/accounting envelope as
     // a one-shot or deck turn. The store is rooted in the task worktree so
     // parallel workers never contend on a single SQLite writer.
@@ -743,7 +746,7 @@ async fn run_task(
             let ports = PipelinePorts {
                 router: &router,
                 providers: &resolver,
-                tools: &claims,
+                tools: &permitted,
                 recall: &recall,
                 repo: &ws_ports.repo_structure,
                 repo_status: &ws_ports.repo_status,
@@ -809,7 +812,7 @@ async fn run_task(
                 let hook_runner = ShellHookRunner;
                 let mut engine = Engine::with_sleeper(
                     &*provider,
-                    &claims,
+                    &permitted,
                     agent::engine_config_for(&cfg),
                     &TokioSleeper,
                 )

@@ -61,8 +61,6 @@ fn process_free_surface_enumeration_omits_every_spawn_and_extension_action() {
         None,
         None,
         stella_tools::RegistryOptions {
-            bash: true,
-            web: false,
             media_host_data_isolation: Some(HostDataIsolation::ProcessFree),
             ..Default::default()
         },
@@ -107,8 +105,6 @@ fn every_process_free_forbidden_name_is_a_real_tool() {
         None,
         None,
         stella_tools::RegistryOptions {
-            bash: true,
-            web: false,
             ..Default::default()
         },
     );

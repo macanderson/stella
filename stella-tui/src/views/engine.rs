@@ -337,6 +337,8 @@ pub fn ingest_config(ui: &mut DeckUi, state: &EngineConfigState, status: &Option
 /// [`ingest_config`], so refocusing over unsaved edits is safe).
 pub fn focus_panel(ui: &mut DeckUi) -> DeckAction {
     ui.set_tab(DeckTab::Settings);
+    // The SETTINGS tab hosts two modal editors; exactly one owns the keyboard.
+    ui.tools.focused = false;
     let e = &mut ui.engine;
     e.focused = true;
     e.tab = EngineTab::Global;

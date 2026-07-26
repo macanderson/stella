@@ -6,13 +6,17 @@ use super::Tool;
 /// Kept as one closed list so a process-free media registry can omit the
 /// entire authority class rather than trying to protect one host-data path.
 pub(super) fn builtins(
-    bash: bool,
     task_board: crate::tasks::TaskBoardHandle,
     spawn_queue: crate::tasks::SpawnQueue,
 ) -> Vec<Arc<dyn Tool>> {
     let processes: crate::process::ProcessTableHandle = Arc::default();
     let repo: Arc<dyn crate::repo::RepoBackend> = Arc::new(crate::repo::GitCli);
-    let mut tools: Vec<Arc<dyn Tool>> = vec![
+    vec![
+        // `bash` belongs to this list and to no switch. It is the same
+        // authority class as `run_script` and the process group beside it —
+        // an operator who wants it gone writes `"tools": {"bash": "off"}`,
+        // which the policy layer above enforces for MCP and custom tools too.
+        Arc::new(crate::bash::Bash),
         Arc::new(crate::verify::VerifyDone),
         Arc::new(crate::project::BuildProject),
         Arc::new(crate::project::RunTests),
@@ -33,9 +37,5 @@ pub(super) fn builtins(
         Arc::new(crate::ci::CiStatus),
         Arc::new(crate::screenshot::Screenshot),
         Arc::new(crate::tasks::TaskAssign(task_board, spawn_queue)),
-    ];
-    if bash {
-        tools.push(Arc::new(crate::bash::Bash));
-    }
-    tools
+    ]
 }

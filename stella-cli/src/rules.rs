@@ -720,17 +720,12 @@ mod tests {
             "Match the surrounding code style.",
         );
 
-        // Command guards apply to `bash`, which is settings opt-in — this
-        // fixture opts it in the way an enabled session would.
+        // Command guards apply to `bash`, which ships registered.
         let registry = ToolRegistry::with_backends_and_options(
             root.path().to_path_buf(),
             None,
             None,
-            stella_tools::RegistryOptions {
-                bash: true,
-                web: false,
-                ..Default::default()
-            },
+            stella_tools::RegistryOptions::default(),
         );
         enforce_workspace_rules(&registry, root.path(), &trusted_project_authority());
 

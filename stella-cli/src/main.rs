@@ -62,6 +62,8 @@ mod signals;
 mod skill_manager;
 mod stats;
 mod subsession;
+mod tool_policy;
+mod tool_switches;
 mod tui;
 mod usage_cmd;
 
@@ -1145,6 +1147,12 @@ fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
         return Ok(());
     }
     match cmd {
+        // Returned above, before the storage map is even loaded — retention
+        // operates on `store.db`, not on the map. Exhaustiveness is not
+        // flow-sensitive, so the arm has to exist; it is genuinely unreachable.
+        StorageCmd::Prune(_) => {
+            unreachable!("`stella storage prune` returns before the map loads")
+        }
         StorageCmd::Tree => {
             for layer in &snapshot.layers {
                 println!(
@@ -1301,8 +1309,6 @@ fn run_storage(cmd: &StorageCmd) -> Result<(), String> {
                 println!("{}", "no drift signals".dimmed());
             }
         }
-        // Handled above, before the storage-map snapshot is loaded.
-        StorageCmd::Prune(_) => unreachable!("`storage prune` returns before the map loads"),
     }
     Ok(())
 }
