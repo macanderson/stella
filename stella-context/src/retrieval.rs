@@ -47,6 +47,10 @@ pub(crate) const PROVIDER_ID: &str = concat!("stella-context/", env!("CARGO_PKG_
 /// The lexical-fallback marker written into a frame's provenance chain so a
 /// host can see the frame is a weak-coverage substitute, not graph grounding.
 pub(crate) const LEXICAL_FALLBACK_METHOD: &str = "stella-context/lexical-fallback";
+/// Provenance `kind` carrying a frame's [`SelectionReason`] across the CGP
+/// seam — Phase 2 (#713). The `method` field holds
+/// [`SelectionReason::as_str`].
+pub const SELECTION_PROVENANCE_KIND: &str = "selection";
 
 /// Reciprocal-rank-fusion constant (the standard 60).
 pub const DEFAULT_RRF_K: f64 = 60.0;
@@ -245,6 +249,63 @@ pub(crate) struct Ranked {
     /// Its MMR-adjusted relevance, carried through packing so the frame built
     /// for a survivor declares the score the ranking gave it.
     pub relevance: f32,
+    /// Why this candidate is in front of the budget at all — Phase 2 (#713).
+    pub selection_reason: SelectionReason,
+}
+
+impl Ranked {
+    /// Whether ranking is forbidden from evicting this candidate. See
+    /// [`SelectionReason::is_required`].
+    pub fn is_required(&self) -> bool {
+        self.selection_reason.is_required()
+    }
+}
+
+/// Why a candidate was selected into the ranked shortlist.
+///
+/// Phase 2 (#713) deliverable 5. Before this, a frame arrived with a score and
+/// no account of what produced it, so "why is this in my context?" was
+/// answerable only by re-deriving the whole retrieval. The vocabulary is
+/// deliberately small — it names the *mechanism*, which is stable, rather than
+/// a rationale, which would drift into prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionReason {
+    /// The goal named this file verbatim, so the graph expansion anchored on
+    /// it. **Required**: the user pointed at it, and no ranking heuristic is a
+    /// better judge of relevance than that.
+    Anchored,
+    /// It won the hybrid ranking — vector similarity fused with recency and
+    /// graph adjacency, then diversified. The ordinary path.
+    Ranked,
+    /// Vector coverage of the goal fell below the floor and labeled lexical
+    /// search ran instead (`L-C6`). Carried so a consumer can tell grounding
+    /// from a keyword match dressed up as grounding.
+    LexicalFallback,
+}
+
+impl SelectionReason {
+    /// Whether budget packing may drop this candidate **by rank**.
+    ///
+    /// A required item can still be dropped, but only by an explicit decision
+    /// that is reported ([`DropReason::RequiredOverBudget`]) — never by
+    /// falling off the bottom of a ranked list. That is the ADR 0006
+    /// guarantee: "required items cannot be evicted by ranking; precedence is
+    /// category-aware, and budget packing may drop only non-required items,
+    /// always with a drop-report".
+    #[must_use]
+    pub fn is_required(self) -> bool {
+        matches!(self, SelectionReason::Anchored)
+    }
+
+    /// The stable wire spelling, for receipts and drop reports.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SelectionReason::Anchored => "anchored",
+            SelectionReason::Ranked => "ranked",
+            SelectionReason::LexicalFallback => "lexical_fallback",
+        }
+    }
 }
 
 /// Why a candidate frame did not make it into the assembled context.
@@ -254,6 +315,18 @@ pub enum DropReason {
     TokenBudget,
     /// The query's `max_frames` count was already reached.
     FrameCount,
+    /// A **required** item that could not be honored: on its own it exceeds
+    /// the query's entire token budget, so no ordering of the pack could have
+    /// admitted it — Phase 2 (#713).
+    ///
+    /// Distinct from [`Self::TokenBudget`] on purpose. That one says "the
+    /// budget filled up before we got here", which is a statement about the
+    /// other candidates and is fixed by asking for more or for fewer frames.
+    /// This one says "you asked for this specifically and it does not fit at
+    /// all", which is the explicit, reported decision ADR 0006 requires before
+    /// a required item may be dropped. Collapsing the two would hide the only
+    /// case where the caller's own instruction was overruled.
+    RequiredOverBudget,
 }
 
 /// A frame that was retrieved and scored but did not fit the budget. Reported
@@ -719,6 +792,10 @@ fn recall_blocking(
                 meta_by_id.get(&id).map(|meta| Ranked {
                     meta: (*meta).clone(),
                     relevance,
+                    // Every candidate on this arm came from labeled lexical
+                    // search, by construction — the arm only runs when vector
+                    // coverage fell below the floor.
+                    selection_reason: SelectionReason::LexicalFallback,
                 })
             })
             .collect()
@@ -829,6 +906,16 @@ fn recall_blocking(
                 meta_by_id.get(&id).map(|meta| Ranked {
                     meta: (*meta).clone(),
                     relevance: mmr_items[idx].relevance,
+                    // An anchor is a file the goal named verbatim. It is the
+                    // one signal in this whole ranking that came from the user
+                    // rather than from a heuristic, so it is required and the
+                    // budget honors it before anything competes for the space
+                    // (#713 deliverable 5).
+                    selection_reason: if anchor_ids.contains(&id) {
+                        SelectionReason::Anchored
+                    } else {
+                        SelectionReason::Ranked
+                    },
                 })
             })
             .collect()
@@ -862,6 +949,7 @@ fn recall_blocking(
             tags.get(&candidate.meta.id)
                 .unwrap_or(&no_domains)
                 .as_slice(),
+            candidate.selection_reason,
         )?);
     }
 
@@ -946,6 +1034,7 @@ pub(crate) fn frame_from_node(
     fingerprint: &str,
     lexical: bool,
     domains: &[String],
+    selection_reason: SelectionReason,
 ) -> Result<ContextFrame, ContextError> {
     let label = node.display_name.trim();
     if label.is_empty() {
@@ -961,6 +1050,20 @@ pub(crate) fn frame_from_node(
         method: None,
         by: Some(PROVIDER_ID.into()),
     }];
+    // Phase 2 (#713): why this frame was selected, on the frame itself.
+    // Provenance is the only channel that survives the CGP seam — the
+    // `RecallResult` → `ContextQueryResult` conversion keeps frames and a
+    // collapsed drop count and nothing else — so a reason recorded anywhere
+    // but here is a reason a CGP consumer never sees. Same trick, and the same
+    // reason, as the lexical-fallback marker below.
+    provenance.push(Provenance {
+        kind: SELECTION_PROVENANCE_KIND.into(),
+        uri: None,
+        range: None,
+        digest: None,
+        method: Some(selection_reason.as_str().to_string()),
+        by: Some(PROVIDER_ID.into()),
+    });
     if lexical {
         provenance.push(Provenance {
             kind: "derivation".into(),
@@ -1236,17 +1339,67 @@ fn mmr_select(items: &[MmrItem<'_>], lambda: f32) -> Vec<usize> {
 /// partition of the input (nothing vanishes silently — `L-C5`). A frame that
 /// individually exceeds the remaining budget is dropped, but packing continues
 /// so a smaller later frame can still fit.
+///
+/// **Required items are admitted first** — Phase 2 (#713) deliverable 5.
+/// [`SelectionReason::is_required`] marks a candidate the caller asked for by
+/// name (today: a goal that names a file verbatim), and ADR 0006 says ranking
+/// may not evict one. A required item is therefore charged against the token
+/// budget before any ranked candidate competes for it, and **`max_frames`
+/// bounds the ranked admissions only**. Counting required items against the
+/// frame budget would let it evict one for `FrameCount`, which is exactly the
+/// eviction the ADR forbids — so a query for five frames that anchors two
+/// files yields up to seven, and the caller gets what it asked for plus what
+/// it named. The result stays bounded: anchors are capped where they are
+/// extracted, and the token budget still applies to every one of them.
+///
+/// The two passes exist purely to reserve budget; **the kept set is emitted in
+/// the original candidate order**, so the ranking's ordering — and with it the
+/// byte-stability of the rendered block — is untouched. A packer that returned
+/// required-first would reorder the prompt whenever an anchor appeared, which
+/// is a cache-prefix change (spec §5.1) bought for nothing.
+///
+/// The one way a required item is dropped is that it exceeds `max_tokens`
+/// alone, in which case no ordering could have admitted it. That is reported
+/// as [`DropReason::RequiredOverBudget`] — an explicit, named decision rather
+/// than a rank it happened to lose.
 pub(crate) fn pack_to_budget(
     candidates: Vec<Ranked>,
     max_tokens: u32,
     max_frames: u32,
 ) -> (Vec<Ranked>, Vec<DroppedFrame>) {
-    let mut kept = Vec::new();
-    let mut dropped = Vec::new();
     let mut spent: u64 = 0;
-    for candidate in candidates {
+    let mut dropped = Vec::new();
+    // Pass 1: required items take their budget first. A required item is
+    // measured against the WHOLE budget, not the remainder, because nothing
+    // ranked has been charged yet — so "it does not fit" here really means it
+    // could never fit.
+    let mut admitted = vec![false; candidates.len()];
+    for (index, candidate) in candidates.iter().enumerate() {
+        if !candidate.is_required() {
+            continue;
+        }
         let cost = budget_tokens_for_bytes(candidate.meta.content_bytes);
-        if kept.len() as u32 >= max_frames {
+        if spent + cost as u64 > max_tokens as u64 {
+            dropped.push(dropped_from(
+                &candidate.meta,
+                DropReason::RequiredOverBudget,
+            ));
+            continue;
+        }
+        spent += cost as u64;
+        admitted[index] = true;
+    }
+    // Pass 2: everything else competes for what is left, in rank order.
+    // `max_frames` bounds the RANKED admissions only — see the doc comment:
+    // counting required items against it would let the count budget evict one,
+    // which is precisely what ADR 0006 forbids.
+    let mut ranked_kept = 0usize;
+    for (index, candidate) in candidates.iter().enumerate() {
+        if candidate.is_required() {
+            continue;
+        }
+        let cost = budget_tokens_for_bytes(candidate.meta.content_bytes);
+        if ranked_kept as u32 >= max_frames {
             dropped.push(dropped_from(&candidate.meta, DropReason::FrameCount));
             continue;
         }
@@ -1255,8 +1408,14 @@ pub(crate) fn pack_to_budget(
             continue;
         }
         spent += cost as u64;
-        kept.push(candidate);
+        ranked_kept += 1;
+        admitted[index] = true;
     }
+    let kept = candidates
+        .into_iter()
+        .zip(&admitted)
+        .filter_map(|(candidate, keep)| keep.then_some(candidate))
+        .collect();
     (kept, dropped)
 }
 

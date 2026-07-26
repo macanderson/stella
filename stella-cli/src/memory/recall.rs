@@ -213,6 +213,21 @@ impl SessionMemory {
         // and a cost that vanishes because the host discarded the frames is
         // exactly the unmeterable cost #452 exists to surface.
         let recalled = crate::contextgraph::recall_via_host(&self.host, &query).await;
+        // Phase 2 (#713): the host's cross-provider merge is a second budget
+        // pass and reported nothing at all, so anything it cut vanished
+        // without a trace — a silent truncation `L-C5` bans. A required item
+        // it could not honor is the loudest case and is named first: the
+        // caller pointed at that file, and being told it did not fit is the
+        // whole difference between a budget and a lie.
+        for drop in &recalled.dropped {
+            if drop.reason == stella_context::DropReason::RequiredOverBudget {
+                report(format!(
+                    "recall could not fit an anchored frame: {} ({} tokens) exceeds the \
+                     {}-token budget — raise context.retrieval.max_tokens to include it",
+                    drop.citation_label, drop.token_cost, query.max_tokens
+                ));
+            }
+        }
         Recall {
             frames: recalled
                 .frames
