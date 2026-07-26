@@ -250,6 +250,14 @@ enum Command {
         /// judge.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
+
+        /// Keep the authored witness test as a file in your working tree.
+        /// By default the witness is scaffolding: it proves this run's goal
+        /// inside the candidate workspace and is discarded with it, so an
+        /// already-satisfied test is never left behind in your test tree.
+        /// Pass this to promote it to a real test you can commit.
+        #[arg(long)]
+        keep_witness: bool,
     },
 
     /// arena-bench adapter: run the task in --task-dir (prompt in TASK.md)
@@ -1424,6 +1432,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             prompt,
             no_pipeline,
             test_command,
+            keep_witness,
         } => {
             signals::block_on_interruptible(
                 rt()?,
@@ -1434,6 +1443,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                     cli.globals.output_format,
                     !no_pipeline,
                     test_command.as_deref(),
+                    keep_witness,
                 ),
             )?;
         }

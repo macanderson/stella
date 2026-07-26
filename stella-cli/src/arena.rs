@@ -99,6 +99,9 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         OutputFormat::StreamJson,
         !args.no_pipeline,
         args.test_command.as_deref(),
+        // The arena judges the task result, not the scaffolding that proved
+        // it — a witness left in the tree would show up as unexplained work.
+        false,
     )
     .await;
 

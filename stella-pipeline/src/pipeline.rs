@@ -201,6 +201,23 @@ pub struct PipelineConfig {
     /// oracle, with tamper exclusion at verify time ([`crate::witness`]).
     /// Costs one engine turn + up to two test runs per pipeline run.
     pub witness_writer: bool,
+    /// Whether an authored witness is adopted into the real tree along with
+    /// the work it verified. Off by default: the witness is scaffolding for
+    /// one run, not a change the user asked for.
+    ///
+    /// A witness is written to *fail* — it encodes a moment ("this code does
+    /// not do X yet"), not an invariant, which is the opposite of what a
+    /// durable regression test encodes. Adopting one by default dropped an
+    /// untracked, already-satisfied test into the project's real test tree,
+    /// where the runner picks it up forever and nobody reviews it because it
+    /// was never in a diff. They accumulate: the witness executor creates
+    /// exclusively (`create_new`), so each run that lands on a taken filename
+    /// simply picks another.
+    ///
+    /// Turning this on is the explicit promotion step — the run's verdict is
+    /// unchanged either way, since the witness has already done its job by
+    /// the time adoption happens.
+    pub keep_witness: bool,
     /// Distress-triggered course-correction: on the *second consecutive*
     /// deterministic verification failure, spend one judge call for guidance
     /// that rides with the next revision prompt ([`crate::verify::guidance_prompt`]).
@@ -242,6 +259,7 @@ impl Default for PipelineConfig {
             headless_bypass_scope_review: false,
             test_command: None,
             witness_writer: true,
+            keep_witness: false,
             distress_guidance: true,
             diff_diagnostic: Some(DiagnosticInvocation::GitDiff),
             diff_budget_lines: 400,
@@ -439,6 +457,21 @@ struct CandidateSurface<'c> {
     cwd: Option<&'c str>,
     hook_runner: Option<&'c dyn HookRunner>,
     workspace: Option<&'c dyn CandidateWorkspace>,
+}
+
+/// One candidate's live workspace plus the witness paths authored inside it.
+///
+/// They travel together because adoption needs both and indexes by candidate:
+/// a parallel `Vec<Vec<String>>` would have to be kept aligned by hand at
+/// every early `continue` in the candidate loop, and a single missed push
+/// would silently shift every later candidate's witness onto the wrong
+/// workspace. Pairing them makes that misalignment unrepresentable.
+struct CandidateSlot {
+    workspace: Box<dyn CandidateWorkspace>,
+    /// Workspace-relative paths of the accepted witness artifact(s). Withheld
+    /// from adoption unless [`PipelineConfig::keep_witness`]; empty when the
+    /// candidate authored no witness.
+    witness_paths: Vec<String>,
 }
 
 /// The staged orchestrator. Holds only borrowed ports + an owned event sender
@@ -1340,8 +1373,11 @@ impl<'a> Pipeline<'a> {
         };
 
         let mut candidates: Vec<CandidateResult> = Vec::with_capacity(n as usize);
-        let mut workspaces: Vec<Option<Box<dyn CandidateWorkspace>>> =
-            Vec::with_capacity(n as usize);
+        // The witness paths ride WITH their workspace rather than in a parallel
+        // vector: adoption indexes by candidate, and every early `continue`
+        // below would otherwise have to remember to keep a second vector
+        // aligned. Carrying them together makes drift unrepresentable.
+        let mut workspaces: Vec<Option<CandidateSlot>> = Vec::with_capacity(n as usize);
         for i in 0..n {
             let ws = match port.create().await {
                 Ok(ws) => ws,
@@ -1358,7 +1394,7 @@ impl<'a> Pipeline<'a> {
                     continue;
                 }
             };
-            let result = {
+            let (result, witness_paths) = {
                 let bound_hook_runner = self.hooks.map(|(_, runner)| BoundHookRunner {
                     inner: runner,
                     cwd: ws.root(),
@@ -1394,13 +1430,27 @@ impl<'a> Pipeline<'a> {
                                 CandidateResult::aborted(base_messages.to_vec(), abort.reason)
                             };
                             candidates.push(candidate);
-                            workspaces.push(Some(ws));
+                            // No accepted witness, so nothing to withhold. This
+                            // candidate cannot be adopted anyway (adoption
+                            // requires a passing verdict, and this one aborted),
+                            // but the slot must still be pushed to keep indices
+                            // aligned with `candidates`.
+                            workspaces.push(Some(CandidateSlot {
+                                workspace: ws,
+                                witness_paths: Vec::new(),
+                            }));
                             continue;
                         }
                     }
                 } else {
                     None
                 };
+                // Captured before `witness` is handed to the candidate: these
+                // are the paths withheld from adoption unless `keep_witness`.
+                let witness_paths: Vec<String> = witness
+                    .as_ref()
+                    .map(|w| w.files.keys().cloned().collect())
+                    .unwrap_or_default();
                 let mut engine = Engine::with_sleeper(
                     worker.provider,
                     ws.tools(),
@@ -1413,36 +1463,55 @@ impl<'a> Pipeline<'a> {
                 if let Some(steering) = self.steering {
                     engine = engine.with_steering(steering);
                 }
-                self.run_candidate(
-                    goal,
-                    base_messages,
-                    plan,
-                    assessment,
-                    witness.as_ref(),
-                    &engine,
-                    surface,
-                    budget,
-                    total,
-                )
-                .await
+                let result = self
+                    .run_candidate(
+                        goal,
+                        base_messages,
+                        plan,
+                        assessment,
+                        witness.as_ref(),
+                        &engine,
+                        surface,
+                        budget,
+                        total,
+                    )
+                    .await;
+                (result, witness_paths)
             };
             candidates.push(result);
-            workspaces.push(Some(ws));
+            workspaces.push(Some(CandidateSlot {
+                workspace: ws,
+                witness_paths,
+            }));
         }
 
         let best_idx = best_index(&candidates);
         // Winner adoption + cleanup. An aborted winner adopts nothing — an
         // aborted best-of-N run leaves the real tree untouched.
         let mut adopt_failure: Option<WorkspaceError> = None;
-        for (i, ws) in workspaces.into_iter().enumerate() {
-            let Some(ws) = ws else { continue };
+        for (i, slot) in workspaces.into_iter().enumerate() {
+            let Some(CandidateSlot {
+                workspace: ws,
+                witness_paths,
+            }) = slot
+            else {
+                continue;
+            };
             if i == best_idx
                 && candidates[best_idx]
                     .verdict
                     .as_ref()
                     .is_some_and(|verdict| verdict.passed)
             {
-                match ws.adopt().await {
+                // The witness has already done its whole job by now — it armed
+                // the flip oracle and the flip was observed — so withholding it
+                // cannot change the verdict, only what lands in the tree.
+                let withhold: &[String] = if self.config.keep_witness {
+                    &[]
+                } else {
+                    &witness_paths
+                };
+                match ws.adopt(withhold).await {
                     Ok(adopted) => {
                         // Surface the adopted paths on the event stream: the
                         // winner's edits happened inside the snapshot, so no

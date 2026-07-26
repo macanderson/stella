@@ -397,8 +397,16 @@ impl CandidateWorkspace for FakeWorkspace {
     async fn sealed_is_unchanged(&self) -> Result<bool, WorkspaceError> {
         Ok(self.sealed_unchanged)
     }
-    async fn adopt(&self) -> Result<Vec<AdoptedChange>, WorkspaceError> {
-        self.log.lock().unwrap().push(format!("adopt:{}", self.id));
+    async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
+        // The withheld set is logged so tests can assert that an authored
+        // witness never reaches the real tree, without reaching for real git.
+        // Unchanged shape when nothing is withheld, so every pre-existing
+        // `adopt:<id>` assertion still reads the same.
+        self.log.lock().unwrap().push(if withhold.is_empty() {
+            format!("adopt:{}", self.id)
+        } else {
+            format!("adopt:{}:withhold={}", self.id, withhold.join(","))
+        });
         self.adopt_result.clone()
     }
     async fn remove(&self) {

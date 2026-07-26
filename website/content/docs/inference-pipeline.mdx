@@ -75,6 +75,14 @@ the **witness author**, never the worker — writes a minimal *failing* test
 that pins down the intended behavior. Witness files are watched for tampering:
 a worker that edits the witness test doesn't get credit for "passing" it.
 
+The witness is scaffolding for one run, not a test you inherit. It is written
+to *fail* — it encodes a moment ("this code doesn't do X yet"), not an
+invariant, which is the opposite of what a durable regression test encodes. So
+it lives and dies inside the candidate workspace and is **not** adopted into
+your tree: you never find an already-satisfied test sitting in `tests/` that
+nobody reviewed. Pass `--keep-witness` to promote it into your working tree
+when the test is worth keeping.
+
 ### 5. Execute
 
 The worker runs the step loop against the plan — reading, editing, building,
