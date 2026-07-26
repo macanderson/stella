@@ -265,48 +265,59 @@ fn sanitize_document_name(name: &str) -> String {
 fn attachment_blocks(message: &CompletionMessage) -> Vec<BedrockContentBlock> {
     crate::attachment::wire_parts(&message.attachments, BEDROCK_CAPS)
         .into_iter()
-        .map(|part| match part {
-            crate::attachment::WirePart::Text { text } => BedrockContentBlock {
-                text: Some(text),
-                ..Default::default()
-            },
-            crate::attachment::WirePart::Image { media_type, base64 } => {
-                match bedrock_image_format(&media_type) {
-                    Some(format) => BedrockContentBlock {
-                        image: Some(BedrockMediaBlock {
-                            format,
-                            source: BedrockMediaSource { bytes: base64 },
-                        }),
-                        ..Default::default()
-                    },
-                    None => unsupported_format_note("image", &media_type),
-                }
-            }
-            crate::attachment::WirePart::Video { media_type, base64 } => {
-                match bedrock_video_format(&media_type) {
-                    Some(format) => BedrockContentBlock {
-                        video: Some(BedrockMediaBlock {
-                            format,
-                            source: BedrockMediaSource { bytes: base64 },
-                        }),
-                        ..Default::default()
-                    },
-                    None => unsupported_format_note("video", &media_type),
-                }
-            }
-            crate::attachment::WirePart::Pdf { name, base64 } => BedrockContentBlock {
-                document: Some(BedrockDocumentBlock {
-                    format: "pdf",
-                    name: sanitize_document_name(&name),
-                    source: BedrockMediaSource { bytes: base64 },
-                }),
-                ..Default::default()
-            },
-            crate::attachment::WirePart::Audio { .. } => {
-                unreachable!("caps exclude audio")
-            }
-        })
+        .map(attachment_block)
         .collect()
+}
+
+/// One resolved part as a Converse content block.
+fn attachment_block(part: crate::attachment::WirePart) -> BedrockContentBlock {
+    match part {
+        crate::attachment::WirePart::Text { text } => BedrockContentBlock {
+            text: Some(text),
+            ..Default::default()
+        },
+        crate::attachment::WirePart::Image { media_type, base64 } => {
+            match bedrock_image_format(&media_type) {
+                Some(format) => BedrockContentBlock {
+                    image: Some(BedrockMediaBlock {
+                        format,
+                        source: BedrockMediaSource { bytes: base64 },
+                    }),
+                    ..Default::default()
+                },
+                None => unsupported_format_note("image", &media_type),
+            }
+        }
+        crate::attachment::WirePart::Video { media_type, base64 } => {
+            match bedrock_video_format(&media_type) {
+                Some(format) => BedrockContentBlock {
+                    video: Some(BedrockMediaBlock {
+                        format,
+                        source: BedrockMediaSource { bytes: base64 },
+                    }),
+                    ..Default::default()
+                },
+                None => unsupported_format_note("video", &media_type),
+            }
+        }
+        crate::attachment::WirePart::Pdf { name, base64 } => BedrockContentBlock {
+            document: Some(BedrockDocumentBlock {
+                format: "pdf",
+                name: sanitize_document_name(&name),
+                source: BedrockMediaSource { bytes: base64 },
+            }),
+            ..Default::default()
+        },
+        // Excluded by BEDROCK_CAPS today; turning audio on without adding a
+        // block arm lands here — degrade, never abort the turn.
+        part @ crate::attachment::WirePart::Audio { .. } => BedrockContentBlock {
+            text: Some(crate::attachment::unsupported_part_note(
+                &part,
+                "Bedrock Converse API",
+            )),
+            ..Default::default()
+        },
+    }
 }
 
 fn unsupported_format_note(kind: &str, media_type: &str) -> BedrockContentBlock {
@@ -1101,6 +1112,45 @@ mod tests {
     use stella_protocol::{ToolOutput, ToolResult};
     use wiremock::matchers::{body_string_contains, header_regex, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// The audio arm of [`attachment_block`] is out of reach only because
+    /// `BEDROCK_CAPS` switches audio off. Flipping that bool is a routine
+    /// one-line edit, so the arm it lands in has to degrade like every other
+    /// unsupported attachment instead of aborting the process mid-turn.
+    #[test]
+    fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
+        use crate::attachment::{DialectCaps, wire_parts};
+        use stella_protocol::{Attachment, AttachmentSource};
+        let flipped = DialectCaps {
+            images: true,
+            pdfs: true,
+            audio: true,
+            video: true,
+        };
+        let attachment = Attachment {
+            name: "song.mp3".into(),
+            media_type: "audio/mpeg".into(),
+            byte_len: 3,
+            source: AttachmentSource::Data {
+                base64: "YWJj".into(),
+            },
+        };
+        let blocks: Vec<_> = wire_parts(&[attachment], flipped)
+            .into_iter()
+            .map(attachment_block)
+            .collect();
+        let [block] = blocks.as_slice() else {
+            panic!("expected one degrade block, got {blocks:?}");
+        };
+        let note = block
+            .text
+            .as_deref()
+            .unwrap_or_else(|| panic!("expected a text degrade note, got {block:?}"));
+        assert!(
+            note.contains("audio/mpeg"),
+            "the note names what was attached: {note}"
+        );
+    }
 
     #[test]
     fn user_attachments_map_to_converse_blocks_with_format_allowlists() {

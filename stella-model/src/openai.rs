@@ -254,23 +254,30 @@ const OPENAI_CAPS: crate::attachment::DialectCaps = crate::attachment::DialectCa
 fn attachment_parts(message: &CompletionMessage) -> Vec<OpenAiContentPart> {
     crate::attachment::wire_parts(&message.attachments, OPENAI_CAPS)
         .into_iter()
-        .map(|part| match part {
-            crate::attachment::WirePart::Image { media_type, base64 } => {
-                OpenAiContentPart::InputImage {
-                    image_url: format!("data:{media_type};base64,{base64}"),
-                }
-            }
-            crate::attachment::WirePart::Pdf { name, base64 } => OpenAiContentPart::InputFile {
-                filename: name,
-                file_data: format!("data:application/pdf;base64,{base64}"),
-            },
-            crate::attachment::WirePart::Text { text } => OpenAiContentPart::InputText { text },
-            crate::attachment::WirePart::Audio { .. }
-            | crate::attachment::WirePart::Video { .. } => {
-                unreachable!("caps exclude audio/video")
-            }
-        })
+        .map(attachment_part)
         .collect()
+}
+
+/// One resolved part as a Responses input part.
+fn attachment_part(part: crate::attachment::WirePart) -> OpenAiContentPart {
+    match part {
+        crate::attachment::WirePart::Image { media_type, base64 } => {
+            OpenAiContentPart::InputImage {
+                image_url: format!("data:{media_type};base64,{base64}"),
+            }
+        }
+        crate::attachment::WirePart::Pdf { name, base64 } => OpenAiContentPart::InputFile {
+            filename: name,
+            file_data: format!("data:application/pdf;base64,{base64}"),
+        },
+        crate::attachment::WirePart::Text { text } => OpenAiContentPart::InputText { text },
+        // Excluded by OPENAI_CAPS today; turning either cap on without adding
+        // a part arm lands here — degrade, never abort the turn.
+        part @ (crate::attachment::WirePart::Audio { .. }
+        | crate::attachment::WirePart::Video { .. }) => OpenAiContentPart::InputText {
+            text: crate::attachment::unsupported_part_note(&part, "OpenAI Responses API"),
+        },
+    }
 }
 
 /// Streamed SSE payloads from the Responses API. Unlike Chat Completions'
@@ -813,6 +820,44 @@ mod tests {
     use stella_protocol::tool::ToolSchema;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// The audio/video arm of [`attachment_part`] is out of reach only
+    /// because `OPENAI_CAPS` switches those kinds off. Flipping one of those
+    /// bools is a routine one-line edit, so the arm it lands in has to
+    /// degrade like every other unsupported attachment instead of aborting
+    /// the process mid-turn.
+    #[test]
+    fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
+        use crate::attachment::{DialectCaps, wire_parts};
+        use stella_protocol::{Attachment, AttachmentSource};
+        let flipped = DialectCaps {
+            images: true,
+            pdfs: true,
+            audio: true,
+            video: true,
+        };
+        for (name, mime) in [("song.mp3", "audio/mpeg"), ("clip.mp4", "video/mp4")] {
+            let attachment = Attachment {
+                name: name.into(),
+                media_type: mime.into(),
+                byte_len: 3,
+                source: AttachmentSource::Data {
+                    base64: "YWJj".into(),
+                },
+            };
+            let parts: Vec<_> = wire_parts(&[attachment], flipped)
+                .into_iter()
+                .map(attachment_part)
+                .collect();
+            let [OpenAiContentPart::InputText { text }] = parts.as_slice() else {
+                panic!("expected a degrade note for {mime}, got {parts:?}");
+            };
+            assert!(
+                text.contains(mime),
+                "the note names what was attached: {text}"
+            );
+        }
+    }
 
     #[test]
     fn user_attachments_map_to_input_image_and_input_file_parts() {
