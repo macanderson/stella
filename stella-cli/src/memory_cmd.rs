@@ -18,7 +18,7 @@ use colored::Colorize;
 use serde::Serialize;
 use stella_context::{ContextStore, NodeKind, NodeRow};
 use stella_core::rules::{self, PromoteStatus, RuleCandidate};
-use stella_store::{MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
+use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
 
 /// Output format for `stella memory list`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -312,6 +312,135 @@ pub fn run_memory_validate() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// Entry point for `stella memory forget <id>`.
+///
+/// Resolves the id to its text first and stores that alongside the
+/// tombstone. The copy is the whole point: the reflection loop re-mines
+/// paraphrases under fresh ids, so suppressing only `id` would hold until
+/// the next reflection turn. Forgetting an id that is not live is still
+/// allowed — a memory may have gone by other means and the user may want the
+/// tombstone anyway — but it is reported, because the usual cause is a
+/// typo'd id that would otherwise silently do nothing.
+pub fn run_memory_forget(id: &str, reason: &str) -> Result<(), String> {
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+
+    let content = memory_text(&workspace_root, id)?;
+    if content.is_none() {
+        eprintln!(
+            "  {} `{id}` is not a live memory — recording the tombstone anyway, but check the id \
+             against `stella memory list` if you expected a match",
+            "!".yellow()
+        );
+    }
+    let content = content.unwrap_or_default();
+
+    let store = Store::open(&workspace_root).map_err(|e| format!("cannot open store: {e}"))?;
+    store
+        .forget(ContextSurface::Memory, id, &content, reason)
+        .map_err(|e| format!("cannot record tombstone: {e}"))?;
+
+    println!("  {} forgot {id}", "✓".green());
+    if !content.is_empty() {
+        println!("    {}", clip(content.trim(), 72).dimmed());
+        println!(
+            "    {}",
+            "restatements of this will also be suppressed when the loop reflects".dimmed()
+        );
+    }
+    println!(
+        "    {}",
+        format!("undo: stella memory restore {id}").dimmed()
+    );
+    Ok(())
+}
+
+/// Entry point for `stella memory restore <id>`.
+pub fn run_memory_restore(id: &str) -> Result<(), String> {
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    let store = Store::open(&workspace_root).map_err(|e| format!("cannot open store: {e}"))?;
+    let lifted = store
+        .restore(ContextSurface::Memory, id)
+        .map_err(|e| format!("cannot lift tombstone: {e}"))?;
+    if lifted {
+        println!("  {} restored {id}", "✓".green());
+    } else {
+        println!(
+            "  {} `{id}` was not forgotten — nothing to restore",
+            "·".dimmed()
+        );
+    }
+    Ok(())
+}
+
+/// Entry point for `stella memory forgotten` — the tombstones in this
+/// workspace. Read-only politeness like `list`: a workspace with no store
+/// reads as "nothing forgotten", never a created database.
+pub fn run_memory_forgotten() -> Result<(), String> {
+    let workspace_root =
+        std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
+    if stella_store::existing_workspace_private_sqlite_path(&workspace_root, "store.db")
+        .map_err(|e| format!("cannot resolve store: {e}"))?
+        .is_none()
+    {
+        println!("nothing forgotten in this workspace");
+        return Ok(());
+    }
+    let store = Store::open(&workspace_root).map_err(|e| format!("cannot open store: {e}"))?;
+    let rows = store
+        .forgotten_rows()
+        .map_err(|e| format!("cannot read tombstones: {e}"))?;
+    if rows.is_empty() {
+        println!("nothing forgotten in this workspace");
+        return Ok(());
+    }
+    for row in &rows {
+        println!(
+            "  {} {:<16} {:<30} {}",
+            "·".dimmed(),
+            row.surface,
+            row.item_id,
+            clip(row.content.trim(), 56).dimmed()
+        );
+        if !row.reason.is_empty() {
+            println!("      {}", row.reason.dimmed());
+        }
+    }
+    println!(
+        "\n  {} forgotten — `stella memory restore <id>` lifts one",
+        rows.len()
+    );
+    Ok(())
+}
+
+/// First `max` characters, ellipsised. Char-safe: a memory containing
+/// multi-byte text must not panic a listing on a byte-boundary slice.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut clipped: String = text.chars().take(max.saturating_sub(1)).collect();
+    clipped.push('…');
+    clipped
+}
+
+/// The text of a memory by public id, or `None` when no such memory is live.
+fn memory_text(workspace_root: &std::path::Path, id: &str) -> Result<Option<String>, String> {
+    let Some(context_db) =
+        stella_store::existing_workspace_private_sqlite_path(workspace_root, "context.db")
+            .map_err(|e| format!("cannot resolve context store: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let context =
+        ContextStore::open(&context_db).map_err(|e| format!("cannot open context store: {e}"))?;
+    let node = context
+        .node_by_public_id(id)
+        .map_err(|e| format!("cannot read memory `{id}`: {e}"))?;
+    Ok(node.map(|n| n.content))
 }
 
 /// Extract workspace-relative file-path anchors from memory text. A path

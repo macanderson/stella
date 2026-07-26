@@ -102,6 +102,8 @@ use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 //   sessions    cross-process session registry (one JSON file per session)
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
 mod ddl;
+#[cfg(test)]
+mod forget_tests;
 mod migrations;
 mod private;
 #[cfg(test)]
@@ -122,6 +124,7 @@ pub mod catalog;
 pub mod content_free;
 pub mod drain;
 pub mod enterprise_telemetry;
+pub mod forget;
 pub mod home;
 pub mod identity;
 pub mod journal;
@@ -141,6 +144,7 @@ pub use drain::{
     MAX_SUPPORTED_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, OTEL_SCHEMA_VERSION_ATTR,
     RejectionClass, drain_org, schema_version_supported,
 };
+pub use forget::{ContextSurface, is_restatement, is_suppressed};
 // The sidecar journal's writer is deliberately NOT re-exported at the top
 // level: `SessionJournal` here names the DB read-model reassembled by
 // [`Store::session_events`] (read-only replay), while
@@ -276,6 +280,29 @@ pub const QUARANTINE_NEGATIVES_THRESHOLD: i64 = 2;
 /// resets the streak to zero, disqualifying the memory until it re-earns
 /// MORE THAN 10 fresh all-positive citations. A memory that was never cited
 /// negatively has `positive_streak == citations`.
+/// One tombstone as stored — what a person chose to forget, the text it
+/// carried at the time, and when.
+///
+/// `surface` stays a `String` rather than a [`ContextSurface`] so a row
+/// written by a newer build (naming a surface this binary has never heard
+/// of) reads back as data instead of failing the whole query. Callers that
+/// need the typed form go through [`ContextSurface::parse`] and decide for
+/// themselves what to do with an unknown one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForgottenRow {
+    /// Storage spelling of the surface — see [`ContextSurface::as_str`].
+    pub surface: String,
+    /// The surface's own stable id: `nod_…`, a rule id, a skill name.
+    pub item_id: String,
+    /// The item's text when it was forgotten, copied so the restatement
+    /// check outlives the original row.
+    pub content: String,
+    /// Optional free-text note on why.
+    pub reason: String,
+    /// SQLite `CURRENT_TIMESTAMP` at forget time.
+    pub forgotten_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryCitationStats {
     pub memory_id: String,
@@ -937,6 +964,97 @@ impl Store {
             .filter(|s| s.quarantined)
             .map(|s| s.memory_id)
             .collect())
+    }
+
+    /// Tombstone one item so it stops steering the agent, recording the text
+    /// it carried at the time. Idempotent: re-forgetting refreshes the copied
+    /// content and the reason rather than erroring, so forgetting a memory
+    /// that was re-learned under a new id behaves the way a user expects.
+    ///
+    /// `content` is what makes this survive re-learning — the reflection
+    /// recorder and the skill miner compare candidates against it, so a
+    /// paraphrase with a fresh id is still caught. Pass the item's text, not
+    /// its id.
+    pub fn forget(
+        &self,
+        surface: crate::ContextSurface,
+        item_id: &str,
+        content: &str,
+        reason: &str,
+    ) -> Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO forgotten (surface, item_id, content, reason)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(surface, item_id) DO UPDATE SET
+               content = excluded.content,
+               reason = excluded.reason",
+            rusqlite::params![surface.as_str(), item_id, content, reason],
+        )?;
+        Ok(())
+    }
+
+    /// Lift a tombstone. Returns whether a row was actually removed, so a
+    /// caller can tell "restored" from "was never forgotten" instead of
+    /// reporting success either way.
+    pub fn restore(&self, surface: crate::ContextSurface, item_id: &str) -> Result<bool> {
+        let conn = self.lock();
+        let removed = conn.execute(
+            "DELETE FROM forgotten WHERE surface = ?1 AND item_id = ?2",
+            rusqlite::params![surface.as_str(), item_id],
+        )?;
+        Ok(removed > 0)
+    }
+
+    /// Tombstoned ids for one surface — the filter every loader applies. Like
+    /// [`Self::quarantined_memory_ids`], a query failure is explicit: an empty
+    /// set means "nothing is forgotten", and callers are expected to treat an
+    /// unreadable tombstone table as fail-closed rather than as permission to
+    /// surface everything.
+    pub fn forgotten_ids(
+        &self,
+        surface: crate::ContextSurface,
+    ) -> Result<std::collections::HashSet<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT item_id FROM forgotten WHERE surface = ?1")?;
+        let ids = stmt
+            .query_map([surface.as_str()], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<std::collections::HashSet<String>, _>>()?;
+        Ok(ids)
+    }
+
+    /// The forgotten *texts* for one surface, for the restatement check that
+    /// keeps a re-mined paraphrase from walking back in under a new id.
+    pub fn forgotten_texts(&self, surface: crate::ContextSurface) -> Result<Vec<String>> {
+        let conn = self.lock();
+        let mut stmt =
+            conn.prepare("SELECT content FROM forgotten WHERE surface = ?1 AND content <> ''")?;
+        let texts = stmt
+            .query_map([surface.as_str()], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        Ok(texts)
+    }
+
+    /// Every tombstone, newest first — the read behind `stella context
+    /// forgotten` and the deck's restore affordance.
+    pub fn forgotten_rows(&self) -> Result<Vec<ForgottenRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT surface, item_id, content, reason, forgotten_at
+               FROM forgotten ORDER BY forgotten_at DESC, surface, item_id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ForgottenRow {
+                    surface: row.get::<_, String>(0)?,
+                    item_id: row.get::<_, String>(1)?,
+                    content: row.get::<_, String>(2)?,
+                    reason: row.get::<_, String>(3)?,
+                    forgotten_at: row.get::<_, String>(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Persist the MCP tool calls recorded during an execution: one row per

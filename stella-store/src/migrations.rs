@@ -11,10 +11,10 @@
 use rusqlite::{Connection, params};
 
 use crate::ddl::{
-    AGENT_USES_DDL, CONTEXT_BLOCKS_DDL, EXECUTION_REFLECTION_DDL, EXECUTIONS_DDL, MCP_USAGE_DDL,
-    MEMORY_CITATIONS_DDL, PULL_REQUESTS_DDL, REFLECTIONS_DDL, RULES_TABLE, SKILL_USAGE_DDL,
-    STEP_MANIFEST_DDL, STEP_RECEIPT_DDL, TABLES, TASKS_DDL, TELEMETRY_INDEX, TOOL_CALLS_DDL,
-    UNCHANGED_TABLES, events_ddl, files_touched_ddl, telemetry_ddl,
+    AGENT_USES_DDL, CONTEXT_BLOCKS_DDL, EXECUTION_REFLECTION_DDL, EXECUTIONS_DDL, FORGOTTEN_DDL,
+    MCP_USAGE_DDL, MEMORY_CITATIONS_DDL, PULL_REQUESTS_DDL, REFLECTIONS_DDL, RULES_TABLE,
+    SKILL_USAGE_DDL, STEP_MANIFEST_DDL, STEP_RECEIPT_DDL, TABLES, TASKS_DDL, TELEMETRY_INDEX,
+    TOOL_CALLS_DDL, UNCHANGED_TABLES, events_ddl, files_touched_ddl, telemetry_ddl,
 };
 use crate::{Result, StoreError};
 
@@ -28,7 +28,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 13] = [
+pub(crate) const MIGRATIONS: [Migration; 14] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -74,6 +74,9 @@ pub(crate) const MIGRATIONS: [Migration; 13] = [
     // worker receipt of the step it precedes. A PK change is a table rebuild;
     // existing rows are all worker calls and backfill to seq 0.
     migrate_v12_to_v13,
+    // v13 → v14: `forgotten` — explicit, reversible human tombstones over any
+    // context surface. Purely additive; no existing table changes shape.
+    migrate_v13_to_v14,
 ];
 
 /// The schema version this build writes — the `PRAGMA user_version` of
@@ -105,6 +108,7 @@ pub(crate) fn create_latest_schema(tx: &rusqlite::Transaction<'_>) -> Result<()>
     tx.execute_batch(CONTEXT_BLOCKS_DDL)?;
     tx.execute_batch(STEP_MANIFEST_DDL)?;
     tx.execute_batch(STEP_RECEIPT_DDL)?;
+    tx.execute_batch(FORGOTTEN_DDL)?;
     Ok(())
 }
 
@@ -411,6 +415,14 @@ fn migrate_v9_to_v10(tx: &rusqlite::Transaction<'_>) -> Result<()> {
                 END;",
         )?;
     }
+    Ok(())
+}
+
+/// v13 → v14: `forgotten`, the explicit-tombstone table. Purely additive —
+/// one new table plus its by-surface index, so no §7 rebuild. `IF NOT EXISTS`
+/// in the shared DDL also tolerates a partial file that already grew it.
+fn migrate_v13_to_v14(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    tx.execute_batch(FORGOTTEN_DDL)?;
     Ok(())
 }
 
