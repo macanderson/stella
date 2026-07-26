@@ -4,15 +4,21 @@ name: docs
 # website/. Scoped to the paths that can affect the site, the mirror
 # image of ci.yml's paths-ignore — every PR runs exactly one of the two
 # (or both, when it genuinely touches both worlds).
+#
+# `docs/llms.txt` is in the trigger paths despite living outside website/: it is
+# generated *from* website/content/docs, so the staleness check below has to run
+# both when the source changes and when someone edits the generated file by hand.
 on:
   pull_request:
     paths:
       - "website/**"
+      - "docs/llms.txt"
       - ".github/workflows/docs.yml"
   push:
     branches: [main]
     paths:
       - "website/**"
+      - "docs/llms.txt"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -55,6 +61,13 @@ jobs:
 
       - name: pnpm install
         run: pnpm install --frozen-lockfile
+
+      # A generated file nobody regenerates is worse than no file: an agent
+      # handed a stale docs/llms.txt gets confidently wrong answers with no
+      # signal that it is reading last month's site. Fails with the command to
+      # run rather than regenerating in CI, so the diff stays reviewable.
+      - name: llms.txt is current
+        run: pnpm docs:llms:check
 
       - name: typecheck
         run: pnpm typecheck
