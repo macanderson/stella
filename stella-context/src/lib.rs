@@ -51,6 +51,7 @@
 // which is the point: the gap cannot reopen one field at a time.
 #![warn(missing_docs)]
 
+mod candidates;
 mod clock;
 mod embed;
 mod error;

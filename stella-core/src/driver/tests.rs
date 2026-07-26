@@ -2815,4 +2815,5 @@ async fn a_none_ceiling_leaves_tool_dispatch_unbounded() {
 
 mod audit_fixes;
 mod budget_boundaries;
+mod compute_passes;
 mod usage_completeness;

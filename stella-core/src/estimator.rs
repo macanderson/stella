@@ -92,8 +92,33 @@ fn estimate_attachment_tokens(attachment: &stella_protocol::Attachment) -> u64 {
     (base64_chars as f64 / CHARS_PER_TOKEN).ceil() as u64
 }
 
+// Counts whole-transcript estimate walks so a test can pin how many the step
+// loop performs, rather than trusting that a refactor did not quietly add one
+// back. This is the counter for the thing the cost actually scales with: each
+// walk is Θ(transcript), so on a long turn the difference between two per step
+// and four is the difference between two and four full re-reads of the history
+// for every model call. Test-only; thread-local so it measures one turn's own
+// work (see `stella_context::store::CONTENT_BYTES_LOADED` for the same reasoning).
+#[cfg(test)]
+thread_local! {
+    static CONVERSATION_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Zero this thread's whole-transcript-walk counter and return the previous
+/// value.
+#[cfg(test)]
+pub(crate) fn take_conversation_walks() -> usize {
+    CONVERSATION_WALKS.with(|c| c.replace(0))
+}
+
 /// Estimate the total token cost of a conversation.
+///
+/// Θ(transcript) — it re-reads every message's content and every tool call's
+/// serialized input. Callers on the step path should thread the result rather
+/// than recompute it.
 pub fn estimate_conversation_tokens(messages: &[CompletionMessage]) -> u64 {
+    #[cfg(test)]
+    CONVERSATION_WALKS.with(|c| c.set(c.get() + 1));
     messages.iter().map(estimate_message_tokens).sum()
 }
 

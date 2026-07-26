@@ -14,10 +14,10 @@
 1503 stella-cli/src/contextgraph.rs
 1776 stella-cli/src/main.rs
 1641 stella-cli/src/memory.rs
-2224 stella-context/src/store.rs
+2214 stella-context/src/store.rs
 2095 stella-core/src/bus.rs
-2252 stella-core/src/driver.rs
-2818 stella-core/src/driver/tests.rs
+2256 stella-core/src/driver.rs
+2819 stella-core/src/driver/tests.rs
 1666 stella-core/src/rules.rs
 1502 stella-core/src/skills.rs
 1759 stella-fleet/src/fleet.rs

@@ -25,6 +25,21 @@ use stella_protocol::{
 use crate::estimator::{CHARS_PER_TOKEN, estimate_conversation_tokens};
 use crate::event_sender::EventSender;
 
+/// Who served the call a receipt describes.
+///
+/// These three travel together and are only known at the settled boundary — the
+/// served model can differ from the requested one — so they are one parameter
+/// rather than three positional strings a caller can transpose.
+#[derive(Debug, Clone, Copy)]
+pub struct ServedBy<'a> {
+    /// Which role made the call (worker, summarizer, a pipeline management role).
+    pub role: ModelCallRole,
+    /// The provider id that answered.
+    pub provider: &'a str,
+    /// The model the provider reported actually serving.
+    pub model: &'a str,
+}
+
 /// `StepManifest::call_seq` of the engine's own worker call — the step loop's
 /// model call, the one that already had a receipt.
 pub const RECEIPT_SEQ_WORKER: u64 = 0;
@@ -311,19 +326,27 @@ impl ReceiptLedger {
     /// Emit the receipt for one committed step: a `BlockRegistered` for every
     /// block first seen this step, then the ordered `StepManifest`. Called at
     /// the settled boundary where the served model/provider are known.
+    /// `estimated_input_tokens` is the conversation estimate the driver already
+    /// computed for this same slice and pairs with `StepUsage` (a drift sample).
+    /// It is **passed in, not recomputed**: this used to run its own
+    /// `estimate_conversation_tokens` over the identical unmutated messages, one
+    /// call frame below the driver's, purely so the two events would agree.
+    /// Threading the value makes them agree by construction and removes a full
+    /// transcript walk from every step. [`Self::emit_step_receipt_estimating`]
+    /// is for callers that have no estimate in hand.
     pub fn emit_step_receipt(
         &mut self,
         messages: &[CompletionMessage],
+        estimated_input_tokens: u64,
         step: usize,
-        role: ModelCallRole,
-        provider: &str,
-        model: &str,
+        served: ServedBy<'_>,
         events: &EventSender,
     ) {
-        // The manifest's estimate is the same conversation estimate the driver
-        // pairs with `StepUsage` (a drift sample), computed here from the same
-        // messages so the two events always agree.
-        let estimated_input_tokens = estimate_conversation_tokens(messages);
+        let ServedBy {
+            role,
+            provider,
+            model,
+        } = served;
         let drafts = decompose(messages);
         let mut blocks = Vec::with_capacity(drafts.len());
         for draft in &drafts {
@@ -376,6 +399,21 @@ impl ReceiptLedger {
             estimated_input_tokens,
         });
     }
+
+    /// [`Self::emit_step_receipt`] for a caller with no estimate in hand — the
+    /// replay/reconstruction paths, which rebuild a receipt from stored messages
+    /// rather than from a live step. On the step path the driver always has the
+    /// number already; use the other form there so the transcript is walked once.
+    pub fn emit_step_receipt_estimating(
+        &mut self,
+        messages: &[CompletionMessage],
+        step: usize,
+        served: ServedBy<'_>,
+        events: &EventSender,
+    ) {
+        let estimated_input_tokens = estimate_conversation_tokens(messages);
+        self.emit_step_receipt(messages, estimated_input_tokens, step, served, events);
+    }
 }
 
 #[cfg(test)]
@@ -383,6 +421,14 @@ mod tests {
     use super::*;
     use stella_protocol::{ToolCall, ToolOutput, ToolResult};
     use tokio::sync::mpsc::unbounded_channel;
+
+    fn worker<'a>(provider: &'a str, model: &'a str) -> ServedBy<'a> {
+        ServedBy {
+            role: ModelCallRole::Worker,
+            provider,
+            model,
+        }
+    }
 
     fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
         let mut out = Vec::new();
@@ -429,14 +475,7 @@ mod tests {
         let mut ledger = ReceiptLedger::new(0);
         ledger.set_effective_budget(136_363, 1.1);
         let messages = convo();
-        ledger.emit_step_receipt(
-            &messages,
-            0,
-            ModelCallRole::Worker,
-            "anthropic",
-            "opus",
-            &events,
-        );
+        ledger.emit_step_receipt_estimating(&messages, 0, worker("anthropic", "opus"), &events);
 
         let evts = drain(&mut rx);
         let manifest = evts
@@ -487,7 +526,7 @@ mod tests {
             identical("c1"),
             identical("c2"),
         ];
-        ledger.emit_step_receipt(&messages, 0, ModelCallRole::Worker, "p", "m", &events);
+        ledger.emit_step_receipt_estimating(&messages, 0, worker("p", "m"), &events);
         let evts = drain(&mut rx);
 
         // The content-addressed contract still holds: one registration, one id.
@@ -545,11 +584,11 @@ mod tests {
         let mut ledger = ReceiptLedger::new(0);
         let messages = convo();
 
-        ledger.emit_step_receipt(&messages, 0, ModelCallRole::Worker, "p", "m", &events);
+        ledger.emit_step_receipt_estimating(&messages, 0, worker("p", "m"), &events);
         let _ = drain(&mut rx);
         // Same conversation on the next step: no NEW registrations, and the
         // blocks report resident_since_step == 0 (they arrived on step 0).
-        ledger.emit_step_receipt(&messages, 1, ModelCallRole::Worker, "p", "m", &events);
+        ledger.emit_step_receipt_estimating(&messages, 1, worker("p", "m"), &events);
         let evts = drain(&mut rx);
 
         let new_registrations = evts
