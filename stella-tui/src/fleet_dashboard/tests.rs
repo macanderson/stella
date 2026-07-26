@@ -396,6 +396,31 @@ fn a_terminal_task_accepts_no_supervisor_verb() {
 }
 
 #[test]
+fn a_queued_task_accepts_no_supervisor_verb() {
+    // A not-yet-dispatched task has no control lines registered, so `Fleet`
+    // would no-op the verb. The dashboard must decline rather than record
+    // local intent and paint a `paused`/`stopping` marker that outlives the
+    // no-op once the wave dispatches and the worker runs at full speed.
+    let now = Instant::now();
+    let board = FleetBoard::new("stella", &seed(), now);
+    let mut view = FleetView::new(&board.rows);
+    assert_eq!(view.focused_id.as_deref(), Some("t1"));
+    assert_eq!(board.rows[0].status, FleetStatus::Queued);
+
+    // Two `x` keystrokes: even a fully "confirmed" stop is declined.
+    for c in ['p', 'r', 'x', 'x'] {
+        assert_eq!(
+            on_key(key(c), &board, &mut view, now),
+            KeyAction::None,
+            "`{c}` on a queued task is declined"
+        );
+    }
+    assert!(view.paused.is_empty() && view.stopped.is_empty());
+    assert_eq!(view.pending_stop, None);
+    assert_eq!(view.marker(&board.rows[0]), None);
+}
+
+#[test]
 fn a_task_that_finishes_while_paused_renders_as_finished() {
     let (mut board, mut view) = running_board();
     let now = Instant::now();

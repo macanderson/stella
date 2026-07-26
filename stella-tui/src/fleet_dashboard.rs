@@ -170,6 +170,16 @@ impl FleetStatus {
         )
     }
 
+    /// True while a dispatched worker backs this task, i.e. `Fleet` has live
+    /// control lines registered for it. Only `Running` and `Blocked` qualify:
+    /// `Blocked` is reached from an `AskUser`/`ScopeReview` event, which fires
+    /// inside the worker's run span, whereas `Queued` (not yet dispatched) and
+    /// the terminal states have no controls — a verb there is a guaranteed
+    /// no-op.
+    pub fn has_live_worker(self) -> bool {
+        matches!(self, FleetStatus::Running | FleetStatus::Blocked)
+    }
+
     /// Sort bucket for the default ordering: blocked first (can't hide), then
     /// running, then queued, then finished.
     fn group_rank(self) -> u8 {
@@ -576,13 +586,15 @@ enum KeyAction {
 }
 
 /// The focused task, but only when a supervisor verb could still reach a live
-/// worker. A terminal task has no control lines registered — `Fleet` would
-/// answer `false` — so the dashboard declines instead of sending a verb that is
-/// guaranteed to be a no-op.
+/// worker. Control lines exist only for the span a worker runs, so a task
+/// without a live worker — a terminal task *or* a still-`Queued` one that has
+/// not been dispatched — would have `Fleet` answer `false`. The dashboard
+/// declines rather than record local intent (`paused`/`stopped`) and render a
+/// marker for a verb that is guaranteed to be a no-op.
 fn controllable_focus(board: &FleetBoard, view: &FleetView) -> Option<String> {
     let id = view.focused_id.as_deref()?;
     let row = board.rows.iter().find(|r| r.id == id)?;
-    (!row.status.is_terminal()).then(|| row.id.clone())
+    row.status.has_live_worker().then(|| row.id.clone())
 }
 
 /// Fold one keystroke into the view, returning what the caller should do.
