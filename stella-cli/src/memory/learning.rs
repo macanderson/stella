@@ -370,6 +370,75 @@ impl SessionMemory {
             .map(|i| i.candidate)
             .collect();
         self.write_candidates(eligible, quiet);
+
+        // 6. The rules half, over the SAME observations (#714 deliverable 5).
+        //    Its miner is the structural twin of the skills one and shares
+        //    `stella_core::mining`; running both from one observation pool is
+        //    what makes that sharing pay off rather than being decorative.
+        self.induce_rules(&observations, &declined, quiet);
+    }
+
+    /// Mine rule proposals from the same observations, and auto-activate only
+    /// the ones whose evidence is strong enough to earn it.
+    ///
+    /// Directives steer — a rule is injected into the system prefix as an
+    /// instruction — so they clear a higher bar than skills:
+    ///
+    /// * the same distinct-task eligibility gate, plus
+    /// * `confidence >= auto_activate_at_confidence` (85 by default). Three
+    ///   observations across three tasks score 70, so the common case is that
+    ///   a rule proposal is *recorded and waits for an explicit Keep* rather
+    ///   than landing on its own. Auto-activation is for evidence that is
+    ///   genuinely strong, which is what spec §5.4's "governed before it takes
+    ///   effect" means for something with instruction authority.
+    ///
+    /// Advisory always: the inferred guard is stripped in
+    /// `rules_mining::write_rule`, so a mined rule is Tier 1 and can never deny
+    /// a tool call.
+    fn induce_rules(
+        &mut self,
+        observations: &[stella_core::context_record::ObservationRecord],
+        declined: &std::collections::HashMap<String, stella_core::context_record::PromotionAction>,
+        quiet: bool,
+    ) {
+        let existing = crate::rules::load_workspace_rules_unfiltered(&self.workspace_root);
+        let induced = super::rules_mining::induce_rule_proposals(
+            &self.store,
+            observations,
+            &existing,
+            &stella_core::rules::MineConfig::default(),
+        );
+        let promotion = super::tuning::inferred_directive_promotion(&self.workspace_root);
+
+        for rule in induced {
+            if declined.get(&rule.proposal.lineage_id)
+                == Some(&stella_core::context_record::PromotionAction::Rejected)
+            {
+                continue;
+            }
+            if !rule
+                .proposal
+                .is_eligible(promotion.min_distinct_tasks, promotion.min_observations)
+            {
+                continue;
+            }
+            if rule.proposal.confidence.get() < promotion.auto_activate_at_confidence {
+                // Recorded, reviewable, not active. `stella proposals list`
+                // shows it; `stella proposals keep` activates it.
+                continue;
+            }
+            if let Some(path) =
+                super::rules_mining::write_rule(&self.workspace_root, &rule.candidate)
+                && !quiet
+            {
+                println!(
+                    "  {} new advisory rule from recurring observations: {} ({})",
+                    "✦".magenta().bold(),
+                    rule.candidate.id.bright_magenta(),
+                    path.display()
+                );
+            }
+        }
     }
 
     /// The lexical path exactly as it shipped — reached whenever

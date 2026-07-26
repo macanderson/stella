@@ -93,15 +93,15 @@ fn keep_edit_and_ignore_replay_from_the_event_log() {
 
     let standing = decisions(&store);
     assert_eq!(
-        standing.get("prp_keep-me-aaaa1111"),
+        standing.get("prp_knowledge_keep-me-aaaa1111"),
         Some(&PromotionAction::Confirmed)
     );
     assert_eq!(
-        standing.get("prp_edit-me-bbbb2222"),
+        standing.get("prp_knowledge_edit-me-bbbb2222"),
         Some(&PromotionAction::Confirmed)
     );
     assert_eq!(
-        standing.get("prp_ignore-me-cccc3333"),
+        standing.get("prp_knowledge_ignore-me-cccc3333"),
         Some(&PromotionAction::Rejected)
     );
 
@@ -138,13 +138,13 @@ fn a_decline_is_reversible_and_both_decisions_survive() {
     seed_proposal(&store, "changed-my-mind-dddd4444");
     ignore(&store, "changed-my-mind-dddd4444");
     assert_eq!(
-        decisions(&store).get("prp_changed-my-mind-dddd4444"),
+        decisions(&store).get("prp_knowledge_changed-my-mind-dddd4444"),
         Some(&PromotionAction::Rejected)
     );
 
     keep(&store, "changed-my-mind-dddd4444");
     assert_eq!(
-        decisions(&store).get("prp_changed-my-mind-dddd4444"),
+        decisions(&store).get("prp_knowledge_changed-my-mind-dddd4444"),
         Some(&PromotionAction::Confirmed),
         "last write wins"
     );

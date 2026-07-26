@@ -34,7 +34,7 @@ use colored::Colorize;
 use stella_context::{ContextStore, LedgerAppend};
 use stella_core::context_record::{
     ContextRecordKind, DirectiveEnforcement, LIFECYCLE_SCHEMA_VERSION, PromotionAction,
-    PromotionActor, PromotionEventRecord, ProposalRecord,
+    PromotionActor, PromotionEventRecord, ProposalRecord, RecordProposalKind,
 };
 
 /// Subcommands under `stella proposals`.
@@ -98,25 +98,33 @@ pub fn run_proposals(cmd: &ProposalsCmd) -> Result<(), String> {
 
     match cmd {
         ProposalsCmd::List { all, limit } => list(&store, *all, *limit),
-        ProposalsCmd::Keep { id, reason } => decide(
+        ProposalsCmd::Keep { id, reason } => decide_in(
             &store,
+            Some(&workspace_root),
             id,
             PromotionAction::Confirmed,
             Some(DirectiveEnforcement::Advisory),
             None,
             reason,
         ),
-        ProposalsCmd::Edit { id, body, reason } => decide(
+        ProposalsCmd::Edit { id, body, reason } => decide_in(
             &store,
+            Some(&workspace_root),
             id,
             PromotionAction::Confirmed,
             Some(DirectiveEnforcement::Advisory),
             Some(body.clone()),
             reason,
         ),
-        ProposalsCmd::Ignore { id, reason } => {
-            decide(&store, id, PromotionAction::Rejected, None, None, reason)
-        }
+        ProposalsCmd::Ignore { id, reason } => decide_in(
+            &store,
+            Some(&workspace_root),
+            id,
+            PromotionAction::Rejected,
+            None,
+            None,
+            reason,
+        ),
         ProposalsCmd::Refresh => refresh(&store, &workspace_root),
     }
 }
@@ -140,11 +148,22 @@ fn refresh(store: &ContextStore, workspace_root: &std::path::Path) -> Result<(),
     let extracted = crate::memory::observations::extract_reflection_observations(store, &log_path);
     let observations = crate::memory::observations::all_observations(store, READ_LIMIT);
     let before = current_proposals(store).len();
+
+    // BOTH miners, over one observation pool — the same thing the loop does.
+    // Running only the skills half here would make `refresh` quietly disagree
+    // with the loop it is standing in for, which is the whole failure mode a
+    // convenience verb like this invites.
     crate::memory::proposals::induce_proposals(
         store,
         &observations,
         &[],
         &stella_core::skills::SkillMineConfig::default(),
+    );
+    crate::memory::rules_mining::induce_rule_proposals(
+        store,
+        &observations,
+        &crate::rules::load_workspace_rules_unfiltered(workspace_root),
+        &stella_core::rules::MineConfig::default(),
     );
     let after = current_proposals(store).len();
 
@@ -231,9 +250,10 @@ fn list(store: &ContextStore, all: bool, limit: usize) -> Result<(), String> {
             None => "collecting".dimmed().to_string(),
         };
         println!(
-            "\n{} {}  [{status}]",
+            "\n{} {}  [{status}] [{}]",
             "✦".magenta(),
-            proposal.candidate_id.bold()
+            proposal.candidate_id.bold(),
+            proposal.proposal_kind.as_str().dimmed()
         );
         println!("  {}", proposal.body);
         // The explanation the phase promises: "three separate tasks, here they
@@ -262,6 +282,44 @@ fn list(store: &ContextStore, all: bool, limit: usize) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolve a user-typed id to exactly one proposal.
+///
+/// Matches the candidate id first, then the full lineage id. The candidate id
+/// can be ambiguous by construction: the skills and rules miners share
+/// `stella_core::mining`, so one lesson derives the same `<slug>-<hash8>` for
+/// both — a knowledge proposal and a directive proposal can genuinely wear the
+/// same candidate id. Rather than pick one, this refuses and prints the lineage
+/// ids to disambiguate with, because silently deciding the wrong artifact is
+/// the failure that would be hardest to notice.
+fn resolve_proposal(store: &ContextStore, id: &str) -> Result<ProposalRecord, String> {
+    let all = current_proposals(store);
+    if let Some(exact) = all.iter().find(|p| p.lineage_id == id) {
+        return Ok(exact.clone());
+    }
+    let matches: Vec<&ProposalRecord> = all.iter().filter(|p| p.candidate_id == id).collect();
+    match matches.as_slice() {
+        [] => Err(format!(
+            "no proposal with candidate id `{id}` — run \
+             `stella proposals list` to see what is awaiting review"
+        )),
+        [one] => Ok((*one).clone()),
+        many => Err(format!(
+            "`{id}` names {} proposals of different kinds. Re-run with one of \
+             these instead:\n{}",
+            many.len(),
+            many.iter()
+                .map(|p| format!("      {}", p.lineage_id))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )),
+    }
+}
+
+/// [`decide_in`] with no workspace, so a decision records its event without
+/// touching the filesystem. Test-only: every real caller has a workspace root
+/// and a kept directive must actually reach `.stella/rules/`, so a production
+/// path that could not materialize would be a decision with no effect.
+#[cfg(test)]
 fn decide(
     store: &ContextStore,
     candidate_id: &str,
@@ -270,15 +328,36 @@ fn decide(
     edited_body: Option<String>,
     reason: &str,
 ) -> Result<(), String> {
-    let proposal = current_proposals(store)
-        .into_iter()
-        .find(|p| p.candidate_id == candidate_id)
-        .ok_or_else(|| {
-            format!(
-                "no proposal with candidate id `{candidate_id}` — run \
-                 `stella proposals list` to see what is awaiting review"
-            )
-        })?;
+    decide_in(
+        store,
+        None,
+        candidate_id,
+        action,
+        enforcement,
+        edited_body,
+        reason,
+    )
+}
+
+/// Record a decision, and — for a kept **directive** — materialize the rule
+/// file it describes.
+///
+/// A kept knowledge proposal needs no side effect — the skills loop writes
+/// eligible skills on its own. A directive is different: it is held back from
+/// auto-activation below the confidence bar precisely so a person decides, and
+/// a "keep" that recorded an event without writing the rule would be a decision
+/// with no effect.
+#[allow(clippy::too_many_arguments)]
+fn decide_in(
+    store: &ContextStore,
+    workspace_root: Option<&std::path::Path>,
+    candidate_id: &str,
+    action: PromotionAction,
+    enforcement: Option<DirectiveEnforcement>,
+    edited_body: Option<String>,
+    reason: &str,
+) -> Result<(), String> {
+    let proposal = resolve_proposal(store, candidate_id)?;
 
     // `PromotionActor::User` because a person typed this command. That is also
     // the only actor permitted to grant blocking enforcement — and this path
@@ -296,6 +375,16 @@ fn decide(
     .map_err(|e| e.to_string())?;
     record_event(store, &event)?;
 
+    // The event is the authority and is recorded first; materializing the rule
+    // is a projection of it. If the write fails the decision still stands and a
+    // later pass can re-apply it, which is the right way round — the reverse
+    // would leave a rule on disk that no event explains.
+    if let (Some(root), RecordProposalKind::Directive, PromotionAction::Confirmed) =
+        (workspace_root, proposal.proposal_kind, action)
+    {
+        materialize_directive(root, &proposal, event.edited_body.as_deref());
+    }
+
     println!(
         "  {} {} {}",
         "✓".green(),
@@ -303,6 +392,41 @@ fn decide(
         proposal.candidate_id.bold()
     );
     Ok(())
+}
+
+/// Write the rule a kept directive proposal describes into `.stella/rules/`.
+///
+/// Advisory by construction: the candidate is rebuilt from the proposal with
+/// **no guard**, so the rule is Tier 1 and `evaluate_guards` can never deny a
+/// tool call on it. There is no argument here that could make it Tier 2 — the
+/// review surface cannot express blocking, which is what makes "no inferred
+/// directive reaches blocking by any path" checkable rather than hopeful.
+///
+/// An edit replaces the body and nothing else; the id is unchanged, so editing
+/// does not orphan the proposal's lineage.
+fn materialize_directive(
+    workspace_root: &std::path::Path,
+    proposal: &ProposalRecord,
+    edited_body: Option<&str>,
+) {
+    let candidate = stella_core::rules::RuleCandidate {
+        id: proposal.candidate_id.clone(),
+        text: edited_body.unwrap_or(&proposal.body).to_string(),
+        description: proposal.title.clone(),
+        occurrences: proposal.score.occurrences as usize,
+        salient: proposal.score.salient,
+        evidence: Vec::new(),
+        guard: None,
+        score: 0,
+    };
+    match crate::memory::rules_mining::write_rule(workspace_root, &candidate) {
+        Some(path) => println!("    {} wrote {}", "·".dimmed(), path.display()),
+        None => println!(
+            "    {} a rule file for `{}` already exists — left untouched",
+            "·".dimmed(),
+            candidate.id
+        ),
+    }
 }
 
 /// Append a promotion event to the ledger.

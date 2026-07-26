@@ -57,6 +57,7 @@ pub(crate) mod proposals;
 #[cfg(test)]
 mod quarantine_tests;
 mod recall;
+pub(crate) mod rules_mining;
 #[path = "memory/skills.rs"]
 mod skill_files;
 mod suppression;

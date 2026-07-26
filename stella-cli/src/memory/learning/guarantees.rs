@@ -569,13 +569,43 @@ fn the_typed_path_records_why_it_promoted() {
     let mut memory = session(dir.path(), Loop::Typed);
     memory.auto_create_skills(&log_path(dir.path()), true);
 
+    use stella_core::context_record::RecordProposalKind;
     let proposals = crate::memory::proposals::all_proposals(&memory.store, 100);
-    assert_eq!(proposals.len(), 1, "one promotion, one proposal record");
-    assert_eq!(proposals[0].score.distinct_tasks, 3);
-    assert_eq!(proposals[0].supporting_observations.len(), 3);
+
+    // Two proposals for one lesson: a knowledge proposal (the skill that was
+    // written) and a directive proposal (the rule the same evidence supports).
+    // Both miners run over one observation pool — that is deliverable 5, and
+    // the shared clustering module is why their candidate ids agree.
+    let knowledge = proposals
+        .iter()
+        .find(|p| p.proposal_kind == RecordProposalKind::Knowledge)
+        .expect("a knowledge proposal was recorded");
+    assert_eq!(knowledge.score.distinct_tasks, 3);
+    assert_eq!(knowledge.supporting_observations.len(), 3);
     assert_eq!(
-        proposals[0].candidate_id, "prefer-updating-witness-test-assertions-e2010443",
+        knowledge.candidate_id, "prefer-updating-witness-test-assertions-e2010443",
         "the proposal names the skill that was written"
+    );
+
+    let directive = proposals
+        .iter()
+        .find(|p| p.proposal_kind == RecordProposalKind::Directive)
+        .expect("a directive proposal was recorded");
+    assert_eq!(directive.candidate_id, knowledge.candidate_id);
+    assert_ne!(
+        directive.lineage_id, knowledge.lineage_id,
+        "the two must not collide onto one lineage"
+    );
+
+    // …and the rule did NOT auto-activate: three tasks score 70, below the 85
+    // auto-activation bar, so a directive waits for an explicit Keep. A skill
+    // informs; a rule steers, and the bar reflects that.
+    assert!(
+        !dir.path()
+            .join(".stella/rules")
+            .join(format!("{}.md", directive.candidate_id))
+            .exists(),
+        "a three-task rule auto-activated without review"
     );
 }
 
@@ -616,9 +646,13 @@ fn a_declined_proposal_is_not_re_promoted() {
         std::fs::remove_file(dir.path().join(".stella/skills").join(name)).expect("remove");
     }
 
+    // The full lineage id, not the bare candidate id: both miners derive the
+    // same candidate id for one lesson, so the bare form is ambiguous and
+    // `resolve_proposal` refuses it rather than guessing. Declining the SKILL
+    // is what this test is about.
     crate::proposals_cmd::decide_for_test(
         &memory.store,
-        "prefer-updating-witness-test-assertions-e2010443",
+        "prp_knowledge_prefer-updating-witness-test-assertions-e2010443",
         stella_core::context_record::PromotionAction::Rejected,
         "not a convention, just a habit",
     )
@@ -646,7 +680,7 @@ fn reversing_a_decline_lets_the_proposal_promote_again() {
         std::fs::remove_file(dir.path().join(".stella/skills").join(name)).expect("remove");
     }
 
-    let id = "prefer-updating-witness-test-assertions-e2010443";
+    let id = "prp_knowledge_prefer-updating-witness-test-assertions-e2010443";
     crate::proposals_cmd::decide_for_test(
         &memory.store,
         id,
@@ -668,5 +702,94 @@ fn reversing_a_decline_lets_the_proposal_promote_again() {
         skill_files(dir.path()),
         vec!["prefer-updating-witness-test-assertions-e2010443.md"],
         "reversing the decline did not let the proposal promote again"
+    );
+}
+
+// ---- deliverable 5: the rules half, through the same governance ----
+
+/// A tombstoned lesson cannot return as a **rule** either.
+///
+/// The gate criterion says "as a proposal or a skill"; wiring a second miner
+/// over the same observation pool adds a third door, and it has to be shut by
+/// the same filter rather than a new one. It is: both miners consume the
+/// observation list that `auto_create_skills_typed` has already swept, so
+/// there is one predicate, not two (spec §5.7 — a second suppression mechanism
+/// is a defect).
+#[test]
+fn a_forgotten_lesson_cannot_return_as_a_rule() {
+    let strong = "Always run the database migration before the integration suite starts.";
+    // Five turns, so the proposal would clear the auto-activation bar and
+    // actually be written — otherwise this could pass because the confidence
+    // gate stopped it rather than the tombstone.
+    let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
+
+    // Control: without a tombstone it really does write a rule.
+    let dir = workspace_with_log(&lessons);
+    let mut memory = session(dir.path(), Loop::Typed);
+    memory.auto_create_skills(&log_path(dir.path()), true);
+    let rules_dir = dir.path().join(".stella/rules");
+    assert!(
+        rules_dir.exists() && std::fs::read_dir(&rules_dir).into_iter().flatten().count() > 0,
+        "the control case must write a rule, or the suppression below proves nothing"
+    );
+
+    // With a tombstone on the lesson, nothing is written.
+    let dir = workspace_with_log(&lessons);
+    stella_store::Store::open(dir.path())
+        .expect("store")
+        .forget(ContextSurface::Skill, "some-skill-id", strong, "no")
+        .expect("forget");
+    let mut memory = session(dir.path(), Loop::Typed);
+    memory.auto_create_skills(&log_path(dir.path()), true);
+    let written: Vec<String> = std::fs::read_dir(dir.path().join(".stella/rules"))
+        .map(|e| {
+            e.flatten()
+                .map(|x| x.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        written.is_empty(),
+        "a forgotten lesson came back as a rule: {written:?}"
+    );
+}
+
+/// A well-evidenced rule auto-activates and lands where the loader reads it —
+/// which is the only thing that makes wiring the miner observable at all.
+#[test]
+fn a_well_evidenced_rule_activates_and_reaches_the_loader() {
+    let strong = "Always run the database migration before the integration suite starts.";
+    let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
+    let dir = workspace_with_log(&lessons);
+    let mut memory = session(dir.path(), Loop::Typed);
+    memory.auto_create_skills(&log_path(dir.path()), true);
+
+    let loaded = crate::rules::load_workspace_rules_unfiltered(dir.path());
+    let mined = loaded
+        .iter()
+        .find(|r| r.text.contains("database migration"))
+        .expect("the mined rule reached the loader");
+
+    // Advisory, always. A mined rule that could deny a tool call would be an
+    // inferred directive reaching blocking — the thing the gate forbids.
+    assert!(
+        mined.guard.is_none(),
+        "a mined rule arrived with a guard: {mined:?}"
+    );
+    assert_eq!(mined.tier(), stella_core::rules::RuleTier::Prompt);
+}
+
+/// The rules miner is off with the flag off, exactly like the rest of the
+/// typed path. Nothing appears in `.stella/rules` on the default path.
+#[test]
+fn the_lexical_path_mines_no_rules() {
+    let strong = "Always run the database migration before the integration suite starts.";
+    let lessons: Vec<(&str, u64)> = (1..=5).map(|i| (strong, i * 100)).collect();
+    let dir = workspace_with_log(&lessons);
+    let mut memory = session(dir.path(), Loop::Lexical);
+    memory.auto_create_skills(&log_path(dir.path()), true);
+    assert!(
+        !dir.path().join(".stella/rules").exists(),
+        "the default path wrote a rule"
     );
 }

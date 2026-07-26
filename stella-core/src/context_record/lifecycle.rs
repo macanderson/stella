@@ -197,12 +197,21 @@ pub struct ProposalRecord {
 impl ProposalRecord {
     /// Build a proposal from a mined candidate and the observations behind it.
     ///
-    /// `candidate_id` is the lexical miner's own identity and is used verbatim
-    /// as the proposal's lineage: re-inducing the same candidate tomorrow lands
-    /// in the same lineage, which is what lets a decline be remembered against
-    /// it. The per-revision `record_id` still varies with content, so a
-    /// re-induction with new evidence is a new revision rather than a silent
-    /// overwrite.
+    /// `candidate_id` is the lexical miner's own identity and is carried
+    /// verbatim, so the proposal names exactly the artifact the miner would
+    /// write. Re-inducing the same candidate tomorrow lands in the same
+    /// lineage, which is what lets a decline be remembered against it; the
+    /// per-revision `record_id` still varies with content, so a re-induction
+    /// with new evidence is a new revision rather than a silent overwrite.
+    ///
+    /// **The lineage is namespaced by `proposal_kind`, and it has to be.** The
+    /// skills and rules miners share `crate::mining`, so for one lesson they
+    /// derive the *same* `<slug>-<hash8>` — that is the shared module working
+    /// as designed. But a knowledge proposal and a directive proposal for that
+    /// lesson are different artifacts with different authority: one becomes a
+    /// SKILL.md that informs, the other a rule that steers. Without the
+    /// namespace they would collide onto one lineage, and declining the rule
+    /// would silently decline the skill too.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         proposal_kind: RecordProposalKind,
@@ -221,7 +230,7 @@ impl ProposalRecord {
             schema_version: LIFECYCLE_SCHEMA_VERSION.to_string(),
             record_kind: ContextRecordKind::RecordProposal,
             record_id: String::new(),
-            lineage_id: format!("prp_{candidate_id}"),
+            lineage_id: format!("prp_{}_{candidate_id}", proposal_kind.as_str()),
             proposal_kind,
             status,
             candidate_id,
@@ -236,7 +245,12 @@ impl ProposalRecord {
         };
         let seed = record_hash(&record)?;
         let digest = seed.strip_prefix("sha256:").unwrap_or(&seed);
-        record.record_id = format!("prp_{}_{}", record.candidate_id, &digest[..12]);
+        record.record_id = format!(
+            "prp_{}_{}_{}",
+            record.proposal_kind.as_str(),
+            record.candidate_id,
+            &digest[..12]
+        );
         record.record_hash = record_hash(&record)?;
         Ok(record)
     }
