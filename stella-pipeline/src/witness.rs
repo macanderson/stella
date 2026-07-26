@@ -621,54 +621,10 @@ pub fn parse_witness_command(text: &str) -> Option<String> {
     found
 }
 
-/// The witness watchlist: every untracked file the witness turn created or
-/// modified, as `path -> fingerprint` — present in `after` with no `before`
-/// entry or a different fingerprint. This *observed* delta is the tamper
-/// baseline; the author's own claims about which files it wrote are never
-/// trusted (a wrong claim would corrupt tamper detection, an observed delta
-/// cannot).
-///
-/// Superseded inside this crate by [`validate_witness_artifact`], which admits
-/// exactly one newly created test file rather than a whole delta; kept as
-/// public API for callers building their own witness acceptance.
-pub fn witness_watchlist(
-    before: &HashMap<String, String>,
-    after: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    after
-        .iter()
-        .filter(|(path, fp)| before.get(*path) != Some(*fp))
-        .map(|(path, fp)| (path.clone(), fp.clone()))
-        .collect()
-}
-
-/// Tamper check: which watchlisted witness files are no longer byte-identical
-/// (fingerprint changed) or gone (deleted / moved out of the untracked set)
-/// at verify time. Non-empty means the deterministic flip must NOT be
-/// credited — the candidate hard-fails before judge evaluation. Sorted for
-/// deterministic error text.
-///
-/// The pipeline itself enforces the strictly stronger
-/// [`witness_identity_matches`] check (bytes *plus* type, mode, and link
-/// count, read without following symlinks), which a fingerprint comparison
-/// alone cannot express; this remains public for callers whose repo status
-/// carries fingerprints only.
-pub fn tampered_paths(
-    watchlist: &HashMap<String, String>,
-    current: &HashMap<String, String>,
-) -> Vec<String> {
-    let mut tampered: Vec<String> = watchlist
-        .iter()
-        .filter(|(path, fp)| current.get(*path) != Some(*fp))
-        .map(|(path, _)| path.clone())
-        .collect();
-    tampered.sort();
-    tampered
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::ArtifactKind;
 
     fn fps(entries: &[(&str, &str)]) -> HashMap<String, String> {
         entries
@@ -779,23 +735,6 @@ mod tests {
                 "candidate escape must be rejected: {command}"
             );
         }
-    }
-
-    // witness_watchlist
-
-    #[test]
-    fn watchlist_is_created_and_modified_files_only() {
-        let before = fps(&[("stale.txt", "a"), ("edited_test.rs", "old")]);
-        let after = fps(&[
-            ("stale.txt", "a"),         // untouched pre-existing dirt
-            ("edited_test.rs", "new"),  // modified by the witness turn
-            ("tests/witness.rs", "w1"), // created by the witness turn
-        ]);
-        let list = witness_watchlist(&before, &after);
-        assert_eq!(list.len(), 2);
-        assert_eq!(list.get("tests/witness.rs"), Some(&"w1".to_string()));
-        assert_eq!(list.get("edited_test.rs"), Some(&"new".to_string()));
-        assert!(!list.contains_key("stale.txt"));
     }
 
     #[test]
@@ -980,34 +919,87 @@ mod tests {
         );
     }
 
-    // tampered_paths
+    // witness_identity_matches — the tamper check the pipeline actually runs.
+    //
+    // These cases were inherited from the deleted `tampered_paths`, which
+    // compared fingerprints only and had no caller. The live check is strictly
+    // stronger (bytes *plus* type, mode and link count, read without following
+    // symlinks), so the last three cases below are ones a fingerprint
+    // comparison could not express at all.
 
-    #[test]
-    fn untouched_watchlist_reports_no_tampering() {
-        let watch = fps(&[("tests/witness.rs", "w1")]);
-        let current = fps(&[("tests/witness.rs", "w1"), ("other.rs", "x")]);
-        assert!(tampered_paths(&watch, &current).is_empty());
+    fn identity(fingerprint: &str) -> ArtifactIdentity {
+        ArtifactIdentity {
+            fingerprint: fingerprint.to_string(),
+            kind: ArtifactKind::Regular,
+            mode: 0o100_644,
+            link_count: 1,
+        }
     }
 
     #[test]
-    fn a_modified_witness_file_is_tampered() {
-        let watch = fps(&[("tests/witness.rs", "w1")]);
-        let current = fps(&[("tests/witness.rs", "w2")]);
-        assert_eq!(tampered_paths(&watch, &current), vec!["tests/witness.rs"]);
+    fn an_untouched_witness_artifact_is_not_tampered() {
+        let expected = identity("w1");
+        assert!(witness_identity_matches(&expected, Some(&expected.clone())));
     }
 
     #[test]
-    fn a_deleted_witness_file_is_tampered() {
-        let watch = fps(&[("tests/witness.rs", "w1")]);
-        let current = HashMap::new();
-        assert_eq!(tampered_paths(&watch, &current), vec!["tests/witness.rs"]);
+    fn a_modified_witness_artifact_is_tampered() {
+        let expected = identity("w1");
+        assert!(!witness_identity_matches(&expected, Some(&identity("w2"))));
     }
 
     #[test]
-    fn tampered_paths_are_sorted_for_deterministic_evidence() {
-        let watch = fps(&[("b.rs", "1"), ("a.rs", "1")]);
-        let current = HashMap::new();
-        assert_eq!(tampered_paths(&watch, &current), vec!["a.rs", "b.rs"]);
+    fn a_deleted_witness_artifact_is_tampered() {
+        let expected = identity("w1");
+        assert!(
+            !witness_identity_matches(&expected, None),
+            "an artifact that no longer exists can never match"
+        );
+    }
+
+    #[test]
+    fn identical_bytes_with_a_changed_mode_are_tampered() {
+        let expected = identity("w1");
+        let chmodded = ArtifactIdentity {
+            mode: 0o100_755,
+            ..expected.clone()
+        };
+        assert!(
+            !witness_identity_matches(&expected, Some(&chmodded)),
+            "mode is part of the identity — a fingerprint comparison misses this"
+        );
+    }
+
+    #[test]
+    fn a_witness_artifact_that_gained_a_hard_link_is_tampered() {
+        let expected = identity("w1");
+        let linked = ArtifactIdentity {
+            link_count: 2,
+            ..expected.clone()
+        };
+        assert!(!witness_identity_matches(&expected, Some(&linked)));
+    }
+
+    #[test]
+    fn a_non_regular_expected_identity_never_matches_even_itself() {
+        // The accepted-at-authoring-time guard: a symlink or multi-link file
+        // was never a valid witness artifact, so re-observing it unchanged
+        // must still fail rather than credit the flip.
+        for kind in [ArtifactKind::Symlink, ArtifactKind::Other] {
+            let odd = ArtifactIdentity {
+                kind,
+                ..identity("w1")
+            };
+            assert!(
+                !witness_identity_matches(&odd, Some(&odd.clone())),
+                "{kind:?} is not an acceptable witness artifact"
+            );
+        }
+        let multi = ArtifactIdentity {
+            link_count: 2,
+            ..identity("w1")
+        };
+        assert!(!witness_identity_matches(&multi, Some(&multi.clone())));
     }
 
     // prompts

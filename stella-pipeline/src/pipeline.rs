@@ -538,14 +538,6 @@ impl<'a> Pipeline<'a> {
         }
     }
 
-    /// Replace the ordinary channel wrapper with a caller-supplied ordered
-    /// sender. Benchmark mode uses this to journal+flush every event before
-    /// the same event enters the renderer queue.
-    pub fn with_event_sender(mut self, events: EventSender) -> Self {
-        self.events = events;
-        self
-    }
-
     /// Drive one prompt through the full staged flow. `messages` is the
     /// caller-owned history: seed it with the stable system prefix (the cached
     /// prompt prefix, L-E8); the pipeline appends the volatile recall+goal

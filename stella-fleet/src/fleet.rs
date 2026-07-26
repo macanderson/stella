@@ -805,7 +805,7 @@ where
         }
     }
 
-    // Read-through accessors (tests + real callers)
+    // Read-through accessors. Every caller today is a test (no production one).
 
     /// The parent budget guard's current state (a `Copy` snapshot).
     pub fn budget_snapshot(&self) -> BudgetGuard {
