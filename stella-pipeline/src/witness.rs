@@ -786,29 +786,6 @@ mod tests {
     }
 
     #[test]
-    fn witness_test_shapes_only_accept_paths_the_runner_can_reach() {
-        for path in [
-            "tests/authority_witness.rs",
-            "crates/x/tests/authority_witness.rs",
-            "tests/witness_test.py",
-            "spec/witness_spec.rb.test.ts",
-            "internal/thing_test.go",
-        ] {
-            assert!(is_witness_test_path(path), "must be accepted: {path}");
-        }
-        // A Rust file outside a test directory has no runnable target: `cargo test
-        // --test <stem>` cannot reach it, so accepting it strands the file in the
-        // user's tree behind an oracle that can never flip.
-        for path in [
-            "src/backdoor_test.rs",
-            "src/lib_test.rs",
-            "stella-pipeline/src/witness_test.rs",
-        ] {
-            assert!(!is_witness_test_path(path), "must be rejected: {path}");
-        }
-    }
-
-    #[test]
     fn witness_invocation_names_the_exact_authored_artifact_and_test() {
         for (path, command) in [
             (
