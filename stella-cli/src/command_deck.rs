@@ -1950,6 +1950,7 @@ fn spawn_mcp_connect(
                         let _ = chrome_tx.send(chrome_note(crate::mcp_cmd::mcp_outcome_report(
                             &set.connected_names(),
                             set.failed_servers(),
+                            &set.over_advertising_servers(),
                         )));
                         // `set` is infallible here (the cell is set exactly once,
                         // by this task); an in-flight turn keeps its resolved
@@ -2005,6 +2006,7 @@ async fn mcp_snapshot(
         None => Vec::new(),
     };
     let schemas = mcp.map(|s| s.schemas()).unwrap_or_default();
+    let dropped = crate::mcp_cmd::dropped_by_server(mcp);
     let usage = crate::mcp_cmd::usage_stats(&cfg.workspace_root)?;
     let disabled_set = disabled.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let oauth_logins: std::collections::HashSet<String> =
@@ -2024,14 +2026,7 @@ async fn mcp_snapshot(
                 .iter()
                 .filter(|s| s.name.starts_with(&prefix))
                 .count();
-            let health = health.iter().find(|h| h.name == name).map(|h| {
-                match h.state {
-                    stella_mcp::HealthState::Live => "live",
-                    stella_mcp::HealthState::Reconnecting => "reconnecting",
-                    stella_mcp::HealthState::Down => "down",
-                }
-                .to_string()
-            });
+            let health = crate::mcp_cmd::health_label(&health, name);
             let calls: u64 = usage
                 .iter()
                 .filter(|s| s.server == name)
@@ -2044,6 +2039,7 @@ async fn mcp_snapshot(
                 connected: connected_now,
                 health: connected_now.then_some(health).flatten(),
                 tool_count,
+                dropped_tools: dropped.get(name).copied().unwrap_or(0),
                 auth_fields: transport
                     .credential_names()
                     .into_iter()

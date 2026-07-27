@@ -70,7 +70,18 @@ pub fn resolve_registry_url(workspace_root: &Path) -> String {
 }
 
 /// Deck-mode report for MCP connection outcomes, including total failure.
-pub(crate) fn mcp_outcome_report(connected: &[&str], failed: &[(String, String)]) -> String {
+///
+/// `truncated` carries the servers whose advertised tool list was cut at
+/// [`stella_mcp::MAX_TOOLS_PER_SERVER`], as `(name, dropped)`. It is reported
+/// separately from `failed` and never merged into it: those servers connected
+/// and their kept tools route normally, so calling them "unavailable" would be
+/// false. Without this the cap is entirely silent — the model simply has fewer
+/// tools than the server offers and nothing says so (#689).
+pub(crate) fn mcp_outcome_report(
+    connected: &[&str],
+    failed: &[(String, String)],
+    truncated: &[(&str, usize)],
+) -> String {
     let mut lines = match connected.len() {
         0 => vec!["no MCP servers connected — continuing with native tools only".to_string()],
         n => vec![format!(
@@ -83,7 +94,81 @@ pub(crate) fn mcp_outcome_report(connected: &[&str], failed: &[(String, String)]
             .iter()
             .map(|(name, reason)| format!("MCP server `{name}` unavailable: {reason}")),
     );
+    lines.extend(
+        truncated
+            .iter()
+            .map(|(name, dropped)| truncation_note(name, *dropped)),
+    );
     lines.join("\n")
+}
+
+/// One server's truncation notice, shared by deck and text mode so the wording
+/// cannot drift between them.
+///
+/// The cap is interpolated from [`stella_mcp::MAX_TOOLS_PER_SERVER`] rather
+/// than spelled out, so the sentence cannot outlive a change to the constant.
+/// "at least" is load-bearing: discovery stops on the page where the cap bites,
+/// so `dropped` is a floor and the true excess may be larger.
+pub(crate) fn truncation_note(name: &str, dropped: usize) -> String {
+    format!(
+        "MCP server `{name}` advertised more than the {}-tool cap — at least \
+         {dropped} tool(s) dropped and not callable this session",
+        stella_mcp::MAX_TOOLS_PER_SERVER
+    )
+}
+
+/// Text-mode connection diagnostics for a one-shot run.
+///
+/// Lives here rather than inline in `agent.rs` so the wording is testable: the
+/// call site prints with bare `eprintln!`/`println!` and has no injectable
+/// sink, so anything built there is unreachable from a test.
+pub(crate) fn print_connect_diagnostics(set: &stella_mcp::McpToolSet) {
+    for (name, reason) in set.failed_servers() {
+        eprintln!(
+            "  {} MCP server `{name}` unavailable: {reason}",
+            "!".yellow()
+        );
+    }
+    for (name, dropped) in set.over_advertising_servers() {
+        eprintln!("  {} {}", "!".yellow(), truncation_note(name, dropped));
+    }
+    if set.connected_count() > 0 {
+        println!(
+            "  {} {} MCP server(s) connected",
+            "◆".bright_cyan(),
+            set.connected_count()
+        );
+    }
+}
+
+/// Per-server dropped-tool counts, keyed by server name.
+///
+/// Keys are owned because [`stella_mcp::McpToolSet::over_advertising_servers`]
+/// borrows the tool set while the deck's row names come from the MCP config —
+/// two different borrows that cannot both be live in the snapshot closure.
+pub(crate) fn dropped_by_server(
+    mcp: Option<&stella_mcp::McpToolSet>,
+) -> std::collections::HashMap<String, usize> {
+    mcp.map(|s| {
+        s.over_advertising_servers()
+            .into_iter()
+            .map(|(n, c)| (n.to_string(), c))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// The deck's short health label for one server, or `None` when it reported no
+/// health at all.
+pub(crate) fn health_label(health: &[stella_mcp::ServerHealth], name: &str) -> Option<String> {
+    health.iter().find(|h| h.name == name).map(|h| {
+        match h.state {
+            stella_mcp::HealthState::Live => "live",
+            stella_mcp::HealthState::Reconnecting => "reconnecting",
+            stella_mcp::HealthState::Down => "down",
+        }
+        .to_string()
+    })
 }
 
 /// Search a registry over HTTP (async, non-blocking).

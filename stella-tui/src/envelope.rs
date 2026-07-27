@@ -1129,6 +1129,16 @@ pub struct McpServerInfo {
     pub health: Option<String>,
     /// How many tools it advertises this session (0 when disabled/unconnected).
     pub tool_count: usize,
+    /// Tools this server advertised that were **refused** past the per-server
+    /// cap (`stella_mcp::MAX_TOOLS_PER_SERVER`), so the model was never told
+    /// about them. `0` for every well-behaved server.
+    ///
+    /// Distinct from `connected: false` on purpose: the server is up, healthy,
+    /// and its kept tools route normally — rendering this as "unavailable"
+    /// would be a lie. A **floor**, not a total: discovery stops on the page
+    /// where the cap bites, so tools the server would have listed later are
+    /// never counted.
+    pub dropped_tools: usize,
     /// Configured credential field names (env vars / headers) — presence means
     /// auth is set; the values are never carried here.
     pub auth_fields: Vec<String>,

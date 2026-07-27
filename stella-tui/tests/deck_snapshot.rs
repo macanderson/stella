@@ -362,3 +362,102 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
         "a digest mismatch is called out, not folded into 'unverified':\n{torn}"
     );
 }
+
+/// Witness for #689. `stella-mcp` has recorded per-server tool truncation
+/// since #551, but nothing rendered it: an over-advertising server lost every
+/// tool past the cap and the operator was never told, so the model silently
+/// had less surface than the server offered.
+///
+/// Renders through the real `render_deck` entrypoint, so it fails if the tab
+/// stops drawing the signal for any reason — not just if the field is dropped.
+#[test]
+fn mcp_tab_renders_truncation_distinctly_from_an_unavailable_server() {
+    fn server(name: &str, connected: bool, dropped: usize) -> stella_tui::McpServerInfo {
+        stella_tui::McpServerInfo {
+            name: name.to_string(),
+            kind: "stdio".to_string(),
+            enabled: true,
+            connected,
+            health: connected.then(|| "live".to_string()),
+            tool_count: if connected { 256 } else { 0 },
+            dropped_tools: dropped,
+            auth_fields: Vec::new(),
+            oauth: None,
+            calls: 0,
+        }
+    }
+
+    let model = folded_model();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.tab = DeckTab::Mcp;
+    ui.mcp.servers = vec![server("greedy", true, 12), server("dead", false, 0)];
+
+    let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let buf = terminal.backend().buffer();
+    let area = *buf.area();
+    let screen: String = (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        screen.contains("12 dropped past cap"),
+        "the truncated server's lost surface is on its row:\n{screen}"
+    );
+    assert!(
+        screen.contains("1 truncated, 12 tools dropped"),
+        "the session total rides in the tab title, so an operator scanning \
+         tabs sees it without opening this one:\n{screen}"
+    );
+    // `dead` is the unavailable one; `greedy` is up and routing. The two must
+    // not render the same, which is the whole reason this signal is separate
+    // from `failed_servers()`.
+    assert!(
+        screen.contains("not connected"),
+        "the genuinely-down server still reads as not connected:\n{screen}"
+    );
+}
+
+/// A well-behaved session must not grow a truncation notice — a warning that
+/// fires at zero trains operators to ignore the real one.
+#[test]
+fn mcp_tab_says_nothing_about_the_cap_when_no_server_truncated() {
+    let model = folded_model();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.tab = DeckTab::Mcp;
+    ui.mcp.servers = vec![stella_tui::McpServerInfo {
+        name: "files".to_string(),
+        kind: "stdio".to_string(),
+        enabled: true,
+        connected: true,
+        health: Some("live".to_string()),
+        tool_count: 7,
+        dropped_tools: 0,
+        auth_fields: Vec::new(),
+        oauth: None,
+        calls: 3,
+    }];
+
+    let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+    terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let buf = terminal.backend().buffer();
+    let area = *buf.area();
+    let screen: String = (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(!screen.contains("dropped"), "no cap notice:\n{screen}");
+    assert!(!screen.contains("truncated"), "no cap notice:\n{screen}");
+}

@@ -122,11 +122,24 @@ impl McpTabState {
 pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let state = &ui.mcp;
     let connected = state.servers.iter().filter(|s| s.connected).count();
-    let title = format!(
-        " MCP — {} configured / {} connected ",
-        state.servers.len(),
-        connected
-    );
+    // Truncation is a session-level fact, so it belongs in the title rather
+    // than only on the row: an operator scanning tabs should not have to open
+    // this one to learn the model is short some tools.
+    let truncated = state.servers.iter().filter(|s| s.dropped_tools > 0).count();
+    let dropped: usize = state.servers.iter().map(|s| s.dropped_tools).sum();
+    let title = if truncated == 0 {
+        format!(
+            " MCP — {} configured / {} connected ",
+            state.servers.len(),
+            connected
+        )
+    } else {
+        format!(
+            " MCP — {} configured / {} connected / {truncated} truncated, {dropped} tools dropped ",
+            state.servers.len(),
+            connected
+        )
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
@@ -224,6 +237,15 @@ fn render_browse(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
             format!("  · {} tools", server.tool_count),
             theme::muted(),
         ));
+        // WARNING, not DANGER: the server is healthy and its kept tools route.
+        // Same colour as `not connected` because the consequence is the same
+        // shape — the model has less surface than the operator expects.
+        if server.dropped_tools > 0 {
+            spans.push(Span::styled(
+                format!("  · {} dropped past cap", server.dropped_tools),
+                Style::default().fg(theme::WARNING_BRIGHT),
+            ));
+        }
         spans.push(Span::styled(
             format!("  · {}×", server.calls),
             Style::default().fg(theme::ACCENT),

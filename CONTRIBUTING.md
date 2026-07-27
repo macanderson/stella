@@ -158,32 +158,20 @@ user, see **Status — what ships** in
 ## The ground rules
 
 These are the architectural invariants the whole design hangs on. PRs that
-break them will be asked to restructure, no matter how good the feature is:
+break them will be asked to restructure, no matter how good the feature is.
 
-1. **Ports, not concretions.** `stella-core` never imports a provider SDK, a
-   filesystem API, or a terminal library. Models go through the `Provider`
-   port, tools through `ToolExecutor`. A new vendor is an adapter, never a rewrite.
-2. **No I/O in the engine.** Decision logic (compaction, eviction, loop
-   detection, budget) stays synchronous functions over owned data — that's
-   what makes it property-testable.
-3. **Zero telemetry egress by default.** Community/default Stella sends no
-   telemetry anywhere; the model provider selected by the user remains the
-   normal network exception. The only managed exception is explicit Oxagen
-   Enterprise enrollment: a signed org-managed document, an exact allowlisted
-   HTTPS sink, a closed content-free operational schema, and process-free
-   execution authority are all required. Prompts, paths, tool payloads/results,
-   reasoning, errors, git state, memories, rules, and local identifiers remain
-   local. Update checks and anonymous analytics are still out of bounds.
-4. **Serde-first.** Every type crossing a crate boundary round-trips through
-   `serde_json` byte-for-byte. Add a round-trip test when you add a type.
-5. **Typed errors, no panics.** Library code returns typed, named errors —
-   never a bare `String`, never `.unwrap()`/`.expect()` on runtime data
-   (network payloads, tool arguments, and parsed source files are all runtime
-   data). `unwrap` is fine in tests.
-6. **Budget aborts at safe boundaries only** — never mid-tool.
-7. **Byte-stable prompts.** Anything that feeds the system prompt must be
-   deterministic — prompt-cache hits are a feature, and nondeterminism there
-   is a cost regression.
+**They are stated once, normatively, in
+[AGENTS.md § Architecture: ports, not concretions](AGENTS.md#architecture-ports-not-concretions)
+— read them there before your first PR.**
+
+That list is the single source, and its numbering is part of the contract:
+Rust doc comments and crate READMEs cite invariants by number (`content_free.rs`
+cites "AGENTS.md invariant #3", `stella-model/README.md` cites #8), so the
+numbers are addresses, not decoration. This file used to carry a second, silently
+abridged copy — seven of the eight, with #8 missing entirely and #3 shorn of the
+half that says how it is enforced. Two copies of a normative rule is not
+redundancy; it is a coin flip over which one a reader obeys, and nothing tells
+them they got the short one.
 
 ## The definition of done — witness tests
 

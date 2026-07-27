@@ -114,7 +114,15 @@ rejects a new dependency, drop the dependency — do not widen the allow-list in
 
 The central architectural invariant. Every design decision in the codebase
 flows from this. If a PR breaks one of these, it will be asked to restructure
-regardless of how good the feature is:
+regardless of how good the feature is.
+
+**This is the normative home.** The invariants are stated here and nowhere else;
+`CONTRIBUTING.md` and `README.md` point at this section rather than restating it
+(they used to carry their own copies, which had already drifted — one dropped
+#8 entirely). **The numbering is an address, not decoration:** Rust doc
+comments, runtime error strings, and crate READMEs cite these by number, so
+inserting or reordering an entry silently repoints every one of those citations.
+Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
 
 1. **Ports, not concretions.** `stella-core` never imports a provider SDK, a
    filesystem API, or a terminal library. Models go through the `Provider`
@@ -160,7 +168,6 @@ regardless of how good the feature is:
    in sorted filename order; recalled context rides as a volatile message
    *after* the stable prefix (see `stella-cli/src/agent.rs::build_system_prompt`
    and `stella-cli/src/memory.rs` for the L-E8 discipline).
-
 8. **Provider feature parity is declared, not assumed.** Providers diverge
    in sneaky ways, and this is guarded on **two axes** today in
    `stella-model/src/provider_parity.rs`:
