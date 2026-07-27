@@ -92,30 +92,39 @@ pub(crate) async fn warm_index(
         return Ok(0);
     }
     let conn = open_connection(&path)?;
-    let pending = nodes_missing_embedding(&conn, &fingerprint)?;
-    if pending.is_empty() {
-        return Ok(0);
-    }
-
     let mut embedded = 0usize;
-    // Note the batching does NOT bound peak memory: `pending` above already
-    // materialized every un-embedded node's content. Streaming that query is
-    // the fix for very large first indexes.
-    for chunk in pending.chunks(BATCH) {
-        // The abort check the loop lacked. Between batches, so the store is
-        // at a transaction boundary and nothing is half-written.
+    // One batch of bodies resident at a time: each committed batch drops out
+    // of the missing-embedding predicate, so re-querying with a LIMIT is the
+    // cursor — peak memory is bounded by [`BATCH`], not by the backlog a
+    // large first index leaves behind.
+    loop {
+        // The abort check runs between batches, so the store is at a
+        // transaction boundary and nothing is half-written.
         if cancel.is_cancelled() {
             break;
         }
-        let texts: Vec<String> = chunk.iter().map(|(_, c)| c.clone()).collect();
+        let pending = nodes_missing_embedding(&conn, &fingerprint, BATCH)?;
+        if pending.is_empty() {
+            break;
+        }
+        let texts: Vec<String> = pending.iter().map(|(_, c)| c.clone()).collect();
         let vectors = embedder.embed(&texts).await?;
         let now = clock.now_rfc3339();
         let tx = conn.unchecked_transaction()?;
-        for ((content_hash, _), emb) in chunk.iter().zip(vectors.iter()) {
-            store_embedding(&tx, content_hash, &fingerprint, &emb.vector, &now)?;
-            embedded += 1;
+        let mut stored = 0usize;
+        for ((content_hash, _), emb) in pending.iter().zip(vectors.iter()) {
+            if store_embedding(&tx, content_hash, &fingerprint, &emb.vector, &now)? {
+                stored += 1;
+            }
         }
         tx.commit()?;
+        embedded += stored;
+        // A backend that answers with fewer vectors than texts leaves the
+        // shortfall matching the query forever; without this a zero-progress
+        // batch would re-fetch the same rows in a tight loop.
+        if stored == 0 {
+            break;
+        }
     }
     Ok(embedded)
 }

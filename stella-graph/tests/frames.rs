@@ -324,6 +324,37 @@ fn query_stops_looking_after_twelve_distinct_identifiers() {
     assert!(frames.iter().all(|f| f.title != "fn sym_12"));
 }
 
+/// The reference scan bounds what any ONE file may cost it: a file past the
+/// 400 KiB per-file ceiling is skipped outright — the ceiling is on the
+/// scan's read, not on indexing, so the oversized file is still in the graph.
+#[test]
+fn reference_scan_skips_files_over_the_byte_ceiling() {
+    let ws = TempDir::new().unwrap();
+    let dbdir = TempDir::new().unwrap();
+    fs::write(
+        ws.path().join("small.rs"),
+        "pub fn uses() { special_needle(); }\n",
+    )
+    .unwrap();
+    // Well past the ceiling, in ordinary short lines so the minified-content
+    // filter does not exclude it — indexable, just too large to scan.
+    let mut big = String::new();
+    while big.len() <= 450 * 1024 {
+        big.push_str("pub fn filler() { special_needle(); }\n");
+    }
+    fs::write(ws.path().join("big.rs"), &big).unwrap();
+    let graph = CodeGraph::open(ws.path(), &dbdir.path().join("context.db")).unwrap();
+    graph.index_all().unwrap();
+    assert_eq!(graph.file_count().unwrap(), 2, "the big file IS indexed");
+
+    let frames = graph.references("special_needle").unwrap();
+    assert!(!frames.is_empty(), "the small file still answers");
+    assert!(
+        frames.iter().all(|f| !f.id.contains("big.rs")),
+        "an oversized file must not be read by the reference scan"
+    );
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

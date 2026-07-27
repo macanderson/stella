@@ -38,6 +38,12 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SNIPPET_MAX_LINES: usize = 60;
 /// Max reference occurrences scanned/returned by [`references`].
 const MAX_REFERENCES: usize = 50;
+/// Max bytes of any single file the reference scan will read. The same order
+/// as `stella-tools`' 400 KiB render cap: a file past this is a vendored blob
+/// or a generated artifact the walk's deny-list missed, and a whole-word scan
+/// over it is disk time spent on line noise. Checked against metadata, so an
+/// oversized file costs a `stat`, not a read.
+const REF_FILE_MAX_BYTES: u64 = 400 * 1024;
 /// Max chars of a reference line quoted into a frame.
 const REF_LINE_MAX_CHARS: usize = 200;
 /// Max import edges rendered into an import frame's listing. A barrel/index
@@ -76,12 +82,13 @@ pub(crate) fn definitions(
 /// Best-effort textual references: whole-word occurrences of `name` across
 /// indexed files — best-effort retrieval, not an index.
 ///
-/// [`MAX_REFERENCES`] bounds the frames *emitted*, not the work done: a name
-/// with fewer hits than that (a miss, most of all) reads every indexed file
-/// off disk before returning. That is linear in the corpus with a file read
-/// per step, and it runs synchronously on a caller's thread — the reason the
+/// [`MAX_REFERENCES`] bounds the frames *emitted*; [`REF_FILE_MAX_BYTES`]
+/// bounds what any one file may cost. What remains unbounded is the corpus:
+/// a name with fewer hits than the cap (a miss, most of all) still visits
+/// every indexed file, synchronously on the caller's thread — the reason the
 /// `graph_query` tool's `references` mode is the crate's slowest answer on a
-/// large tree. A scanned-bytes ceiling belongs here.
+/// large tree. Unreadable and oversized files are skipped, never errors: this
+/// is best-effort retrieval, and one bad file must not blank the answer.
 pub(crate) fn references(
     conn: &Connection,
     root: &Path,
@@ -91,6 +98,10 @@ pub(crate) fn references(
     let mut out = Vec::new();
     'outer: for rel in files {
         let abs = root.join(&rel);
+        match std::fs::metadata(&abs) {
+            Ok(meta) if meta.len() <= REF_FILE_MAX_BYTES => {}
+            _ => continue,
+        }
         let content = match std::fs::read_to_string(&abs) {
             Ok(content) => content,
             Err(_) => continue,

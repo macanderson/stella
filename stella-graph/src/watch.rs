@@ -59,9 +59,21 @@ type BatchTick = (u64, IndexStats);
 /// Whether a watcher-delivered path is worth re-indexing: a source file we
 /// recognize, not inside an ignored directory. The single relevance filter
 /// shared by the real `notify` callback and [`WatchInjector::inject`].
+///
+/// A path that no longer exists passes without the extension check: a remove
+/// event for a DIRECTORY carries the directory's path, which no language
+/// claims, and filtering it out would leave every indexed file under it
+/// stale forever. [`crate::store::apply_changes`] prunes a vanished path by
+/// prefix, so an irrelevant deletion (an editor swap file, say) costs one
+/// no-op batch, never a wrong row.
 fn is_watch_relevant(root: &Path, path: &Path) -> bool {
-    (Language::from_path(path).is_some() || crate::storage::indexes_without_language(path))
-        && !walk::rel_is_ignored(root, path)
+    if walk::rel_is_ignored(root, path) {
+        return false;
+    }
+    if !path.exists() {
+        return true;
+    }
+    Language::from_path(path).is_some() || crate::storage::indexes_without_language(path)
 }
 
 /// Spawn the consumption side of live indexing: an unbounded path channel

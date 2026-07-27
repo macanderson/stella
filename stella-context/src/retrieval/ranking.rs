@@ -242,10 +242,15 @@ pub(crate) fn mmr_select(items: &[MmrItem<'_>], lambda: f32) -> Vec<usize> {
 /// required-first would reorder the prompt whenever an anchor appeared, which
 /// is a cache-prefix change (spec §5.1) bought for nothing.
 ///
-/// The one way a required item is dropped is that it exceeds `max_tokens`
-/// alone, in which case no ordering could have admitted it. That is reported
-/// as [`DropReason::RequiredOverBudget`] — an explicit, named decision rather
-/// than a rank it happened to lose.
+/// The one way a required item is dropped is that the token budget cannot
+/// hold it — and the drop reason says which way that happened. A cost above
+/// `max_tokens` on its own is [`DropReason::RequiredOverBudget`]: no ordering
+/// could have admitted it. A required item that fits alone but not after
+/// earlier required items were charged is [`DropReason::TokenBudget`]: that is
+/// budget pressure a caller can relieve by raising `max_tokens`, and labeling
+/// it "could never fit" would misreport exactly the drops a bigger budget
+/// fixes. Either way the drop is explicit and reported, never a rank it
+/// happened to lose.
 pub(crate) fn pack_to_budget(
     candidates: Vec<Ranked>,
     max_tokens: u32,
@@ -253,10 +258,11 @@ pub(crate) fn pack_to_budget(
 ) -> (Vec<Ranked>, Vec<DroppedFrame>) {
     let mut spent: u64 = 0;
     let mut dropped = Vec::new();
-    // Pass 1: required items take their budget first. A required item is
-    // measured against the WHOLE budget, not the remainder, because nothing
-    // ranked has been charged yet — so "it does not fit" here really means it
-    // could never fit.
+    // Pass 1: required items take their budget first, in order. Only the
+    // ranked passes come later, so `spent` here is what EARLIER required
+    // items charged — which is why the drop reason must be derived from the
+    // item's own cost, not from the remainder: "does not fit the remainder"
+    // means "could never fit" only for a cost above the whole budget.
     let mut admitted = vec![false; candidates.len()];
     for (index, candidate) in candidates.iter().enumerate() {
         if !candidate.is_required() {
@@ -264,10 +270,14 @@ pub(crate) fn pack_to_budget(
         }
         let cost = budget_tokens_for_bytes(candidate.meta.content_bytes);
         if spent + cost as u64 > max_tokens as u64 {
-            dropped.push(dropped_from(
-                &candidate.meta,
-                DropReason::RequiredOverBudget,
-            ));
+            let reason = if cost as u64 > max_tokens as u64 {
+                DropReason::RequiredOverBudget
+            } else {
+                // Crowded out by earlier required items: ordinary budget
+                // pressure, reversible by asking for more tokens.
+                DropReason::TokenBudget
+            };
+            dropped.push(dropped_from(&candidate.meta, reason));
             continue;
         }
         spent += cost as u64;
