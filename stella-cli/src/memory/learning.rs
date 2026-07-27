@@ -245,6 +245,44 @@ impl SessionMemory {
             .unwrap_or_default()
     }
 
+    /// Retire context that has provably stopped helping (#715 deliverable 5).
+    ///
+    /// Notification is the `quiet` half of the deliverable's
+    /// "mark → stop selecting → notify → reaffirm" arc: a retirement the user
+    /// never hears about is indistinguishable from a memory that quietly
+    /// stopped working, which is the failure mode the whole phase exists to
+    /// remove. Refusals are printed too — a sweep that silently declines to act
+    /// on protected records reads as "nothing was failing", a different claim.
+    fn retire_failing_context(&self, quiet: bool) {
+        let policy = super::tuning::selection_health_policy(&self.workspace_root);
+        let health = super::uses::selection_health(&self.store, policy);
+        if health.is_empty() {
+            return;
+        }
+        let now = stella_context::format_rfc3339(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0) as i64,
+        );
+        let sweep = super::retirement::sweep(&self.store, &health, &now);
+        if quiet {
+            return;
+        }
+        for record_id in &sweep.retired {
+            eprintln!(
+                "memory: retired {record_id} — it stopped helping. \
+                 `stella memory reaffirm {record_id}` restores it."
+            );
+        }
+        for (record_id, protection) in &sweep.refused {
+            eprintln!(
+                "memory: {record_id} is failing but is {} — left in place.",
+                protection.as_str()
+            );
+        }
+    }
+
     /// Write out whichever candidates the caller decided to keep, under the
     /// per-session cap and the no-clobber guard.
     ///
@@ -316,6 +354,19 @@ impl SessionMemory {
     /// thresholds, the same tombstone sweep, the same cap, the same no-clobber
     /// guard, the same rendering.
     fn auto_create_skills_typed(&mut self, log_path: &Path, quiet: bool) {
+        // 0. Attribution (#715 deliverables 1 and 5). What finished turns
+        //    actually put in front of the model, and what they said about it,
+        //    become immutable ledger records; then context that has provably
+        //    stopped helping is retired — reversibly, with a reason, and never
+        //    if it is protected. Runs first so the observations below and the
+        //    selection health derived from them see the same ledger.
+        //    Best-effort by construction: a store that will not open means no
+        //    attribution this turn, never a failed turn.
+        if let Ok(store) = stella_store::Store::open(&self.workspace_root) {
+            super::uses::extract_context_uses(&store, &self.store);
+        }
+        self.retire_failing_context(quiet);
+
         // 1. Evidence → typed, redacted, replay-idempotent observations.
         super::observations::extract_reflection_observations(&self.store, log_path);
 

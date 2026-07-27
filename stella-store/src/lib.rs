@@ -145,6 +145,7 @@ pub mod catalog;
 pub mod content_free;
 pub mod drain;
 pub mod durable;
+pub mod efficacy;
 pub mod enterprise_telemetry;
 pub mod forget;
 pub mod home;
@@ -172,6 +173,7 @@ pub use drain::{
     MAX_SUPPORTED_SCHEMA_VERSION, MIN_SUPPORTED_SCHEMA_VERSION, OTEL_SCHEMA_VERSION_ATTR,
     RejectionClass, drain_org, schema_version_supported,
 };
+pub use efficacy::FinishedExecution;
 pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
 // The sidecar journal's writer is deliberately NOT re-exported at the top
