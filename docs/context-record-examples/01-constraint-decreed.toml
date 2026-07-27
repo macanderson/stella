@@ -1,0 +1,113 @@
+# A hard constraint: steers strongly, machine-enforceable, true by decree.
+#
+# Note what enforcement does NOT contain: no `command`, no `autofix`. Guards are
+# deny-shaped — they block a tool call at the boundary and can never cause one.
+# "Remove the foreign lockfile" is prose for the agent to act on, not a script
+# the engine runs.
+#
+# Note also that this is TWO records, not one. The original CLAUDE.md sentence
+# asserted both "pnpm is the only package manager" and "a foreign lockfile
+# breaks CI on the install job". Those fail independently — CI could be
+# reconfigured tomorrow without pnpm changing — so under the one-verdict test
+# they are separate records, joined by a `supports` link.
+
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+sharing_scope = "repository"
+status        = "active"
+origin        = "user"
+review_every  = "P90D"
+
+[defaults.provenance]
+source_kind   = "document"
+source_uri    = "CLAUDE.md"
+source_digest = "sha256:6b1f9d0e4a7c8823b5e1f00d92aa41c7cc55e1930b2d7f4a6e88c1029dd3c021"
+repo          = "git@github.com:acme/web.git"
+commit        = "9f2c1ab"
+extracted_at  = 2026-07-27T09:00:00Z
+extractor     = "claude-opus-5"
+
+
+[[record]]
+lineage_id  = "ctx.acme.web.pkg-manager"
+record_id   = "rec_pkg_manager_a41f9c2b71d4"
+record_hash = "sha256:a41f9c2b71d4e6038f5b1c9270ae4d8813f6c05be2917a4d0cc38e5b74a29f16"
+kind        = "constraint"
+title       = "pnpm is the only package manager"
+summary     = "Use pnpm. Never npm or yarn."
+statement   = "This repository uses pnpm exclusively; npm and yarn must not be used."
+tags        = ["build", "tooling"]
+
+  [record.provenance]
+  source_lines = [14, 16]
+
+  [record.steering]
+  force         = "must"
+  precedence    = 100
+  inject        = "always"
+  budget_tokens = 24
+  applies_to    = { paths = ["**"], tasks = ["install", "build", "ci"] }
+
+  [record.enforcement]
+  mode               = "hard"
+  guard_tool         = "Bash"
+  guard_deny_command = "npm install*|npm ci*|yarn *"
+  severity           = "error"
+  on_violation       = "Use pnpm. If a foreign lockfile was created, delete it and run `pnpm install`."
+
+  [record.truth]
+  basis       = "decree"
+  confidence  = 100
+  verified_by = "@dana"
+  verified_at = 2026-07-20T00:00:00Z
+  valid_from  = 2026-01-04T00:00:00Z
+
+    # A decree is unrefutable by construction — it is true because an owner said
+    # so, not because the world agrees. The honest probe is a human recheck.
+    [record.truth.probe]
+    kind = "manual"
+    note = "Confirm with the platform owner at each quarterly review."
+
+
+[[record]]
+lineage_id  = "ctx.acme.web.foreign-lockfile-breaks-ci"
+record_id   = "rec_foreign_lockfile_3c80ba17ff29"
+record_hash = "sha256:3c80ba17ff2941d6a0e7c5b83e2149f70dd6a8c41b95e0327fa6d418cc07b2e5"
+kind        = "fact"
+title       = "A foreign lockfile fails CI before any test runs"
+summary     = "package-lock.json or yarn.lock fails the `install` job."
+statement   = "The CI `install` job fails when package-lock.json or yarn.lock is present, before any test job runs."
+tags        = ["build", "ci"]
+
+  [record.provenance]
+  source_lines = [17, 18]
+
+  [record.steering]
+  force         = "info"
+  precedence    = 30
+  inject        = "on-match"
+  budget_tokens = 18
+  applies_to    = { paths = ["**"], tasks = ["ci", "debug"] }
+
+  [record.enforcement]
+  mode = "none"
+
+  [record.truth]
+  basis       = "measured"
+  confidence  = 95
+  verified_at = 2026-07-20T00:00:00Z
+  review_every = "P30D"
+
+    # Ungated: reads a tracked file, executes nothing.
+    [record.truth.probe]
+    kind    = "file_contains"
+    path    = ".github/workflows/ci.yml"
+    pattern = "pnpm-lock.yaml"
+
+  # This record is why the constraint above is worth enforcing. The link makes
+  # that relationship explicit instead of burying it in one compound statement.
+  [[record.link]]
+  relation = "supports"
+  target   = "ctx.acme.web.pkg-manager"

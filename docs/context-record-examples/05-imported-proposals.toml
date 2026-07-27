@@ -1,0 +1,234 @@
+# What `stella ingest CLAUDE.md` produces.
+#
+# Ingest mints PROPOSALS, never published records. The reason is not ceremony:
+# some fraction of any ingested document is already stale at the moment it is
+# read, and the split into atomic claims is a model call even when the source
+# text is an explicit human instruction. The content may be authoritative; the
+# extraction is always inferred.
+#
+# Each proposal carries the record it would create, the evidence for it, and a
+# refutation verdict. The reviewer runs `stella proposals keep|edit|ignore`.
+#
+# Three things this file is built to show:
+#
+#   * a refuted claim  — the document was stale before it was ever ingested
+#   * an unfalsifiable claim — no probe could judge it, and that is visible
+#   * a quarantined executable — the source asked for shell; ingest refused
+
+schema        = "context-record/v0.1"
+set_id        = "acme.web"
+ingest_run_id = "ing_01J8XQ4M2K7ZP3VN5T0R9WB6HC"
+
+[defaults]
+sharing_scope = "repository"
+origin        = "imported"
+
+[defaults.provenance]
+source_kind   = "document"
+source_uri    = "CLAUDE.md"
+source_digest = "sha256:6b1f9d0e4a7c8823b5e1f00d92aa41c7cc55e1930b2d7f4a6e88c1029dd3c021"
+repo          = "git@github.com:acme/web.git"
+commit        = "9f2c1ab"
+extracted_at  = 2026-07-27T09:00:00Z
+extractor     = "claude-opus-5"
+
+
+# ── Eligible: explicit instruction, probe agrees ─────────────────────────────
+[[proposal]]
+candidate_id  = "pkg-manager-a41f9c2b"
+proposal_kind = "directive"
+status        = "eligible"
+confidence    = 95
+observed_at   = 2026-07-27T09:00:00Z
+# Imported content is gated differently from mined behavior: an explicit
+# instruction in a tracked repo file is top-tier evidence and does not need the
+# distinct-task threshold that an inferred pattern must clear.
+eligibility   = "explicit_instruction"
+
+  [proposal.record]
+  lineage_id = "ctx.acme.web.pkg-manager"
+  kind       = "constraint"
+  title      = "pnpm is the only package manager"
+  statement  = "This repository uses pnpm exclusively; npm and yarn must not be used."
+
+    [proposal.record.provenance]
+    source_lines = [14, 16]
+
+    [proposal.record.steering]
+    force      = "must"
+    precedence = 100
+    inject     = "always"
+    applies_to = { paths = ["**"], tasks = ["install", "build", "ci"] }
+
+    [proposal.record.enforcement]
+    mode               = "hard"
+    guard_tool         = "Bash"
+    guard_deny_command = "npm install*|npm ci*|yarn *"
+
+    [proposal.record.truth]
+    basis      = "decree"
+    confidence = 95
+
+  [proposal.refutation]
+  verdict     = "supported"
+  checked_at  = 2026-07-27T09:00:04Z
+  probe_kind  = "path_exists"
+  detail      = "pnpm-lock.yaml present; no package-lock.json or yarn.lock in tree."
+
+
+# ── Refuted: the document was already stale ──────────────────────────────────
+[[proposal]]
+candidate_id  = "node-version-88b1e5df"
+proposal_kind = "directive"
+status        = "eligible"
+confidence    = 90
+observed_at   = 2026-07-27T09:00:00Z
+eligibility   = "explicit_instruction"
+
+  [proposal.record]
+  lineage_id = "ctx.acme.web.node-version"
+  kind       = "constraint"
+  title      = "Pin Node to 20.x"
+  statement  = "All development happens on Node 20.x."
+
+    [proposal.record.provenance]
+    source_lines = [22, 22]
+
+    [proposal.record.steering]
+    force      = "must"
+    precedence = 90
+    inject     = "always"
+    applies_to = { paths = ["**"] }
+
+    [proposal.record.enforcement]
+    mode = "soft"
+
+    [proposal.record.truth]
+    basis      = "decree"
+    confidence = 90
+
+  # This is the case that justifies the whole design. CLAUDE.md says 20.x;
+  # .nvmrc has said 22.x since June. Publishing this record would have taught
+  # the agent something false, with a `must`, on every single turn.
+  [proposal.refutation]
+  verdict     = "refuted"
+  checked_at  = 2026-07-27T09:00:05Z
+  probe_kind  = "file_contains"
+  detail      = ".nvmrc contains 22.11.0; package.json engines.node is >=22. Source document is stale."
+  recommend   = "ignore"
+
+    [[proposal.refutation.link]]
+    relation = "contradicts"
+    target   = "evidence:.nvmrc#L1"
+
+
+# ── Unfalsifiable: nothing could judge it, and that is said out loud ─────────
+[[proposal]]
+candidate_id  = "pr-descriptions-1d09fa77"
+proposal_kind = "directive"
+status        = "eligible"
+confidence    = 80
+observed_at   = 2026-07-27T09:00:00Z
+eligibility   = "explicit_instruction"
+
+  [proposal.record]
+  lineage_id = "ctx.acme.web.pr-descriptions"
+  kind       = "preference"
+  title      = "PR descriptions lead with the why"
+  statement  = "A PR description's first paragraph states why the change exists and what breaks without it."
+
+    [proposal.record.provenance]
+    source_lines = [102, 105]
+
+    [proposal.record.steering]
+    force      = "should"
+    precedence = 40
+    inject     = "on-match"
+    applies_to = { tasks = ["open-pr"] }
+
+    [proposal.record.enforcement]
+    mode   = "soft"
+    check  = "model"
+    rubric = "First paragraph states motivation or consequence-of-inaction, not a file list."
+
+    [proposal.record.truth]
+    basis      = "asserted"
+    confidence = 80
+
+  # Not a failure. The reviewer needs to know this claim's accuracy was never
+  # machine-checked — folding it into "supported" would launder it.
+  [proposal.refutation]
+  verdict    = "unfalsifiable"
+  checked_at = 2026-07-27T09:00:05Z
+  probe_kind = "none"
+  detail     = "Normative preference; no probe kind can judge it. Measure compliance instead."
+
+
+# ── Quarantined: the source asked for shell, ingest refused ──────────────────
+[[proposal]]
+candidate_id  = "reset-env-4ba7c012"
+proposal_kind = "directive"
+status        = "dismissed"
+confidence    = 40
+observed_at   = 2026-07-27T09:00:00Z
+eligibility   = "explicit_instruction"
+dismissed_reason = "quarantined_executable"
+
+  [proposal.record]
+  lineage_id = "ctx.acme.web.reset-env"
+  kind       = "procedure"
+  title      = "Resetting a broken local environment"
+  statement  = "A broken local environment is reset by clearing node_modules and reinstalling."
+
+    [proposal.record.provenance]
+    source_lines = [140, 143]
+
+    [proposal.record.steering]
+    force      = "may"
+    precedence = 15
+    inject     = "on-demand"
+    applies_to = { tasks = ["fix-env"] }
+
+    [proposal.record.enforcement]
+    mode = "none"
+
+    [proposal.record.truth]
+    basis      = "asserted"
+    confidence = 40
+
+  # The source document contained a command. A model extracted it faithfully.
+  # Honoring it would mean a document ingested from anywhere — a dependency's
+  # README, a pasted gist — could put `rm -rf` in front of the agent. The text
+  # is preserved verbatim for a human to read and ratify; it is not a field the
+  # engine will ever execute.
+  [proposal.quarantine]
+  reason       = "executable_content_from_imported_origin"
+  field        = "enforcement.autofix"
+  raw          = "rm -rf node_modules && pnpm install --force"
+  requires     = "human ratification; basis must be decree and verified_by set"
+  never_honored_when = ["origin = imported", "origin = inferred"]
+
+
+# ── Rejected by the atomicity validator ──────────────────────────────────────
+[[proposal]]
+candidate_id  = "deploy-compound-70cc9a31"
+proposal_kind = "directive"
+status        = "dismissed"
+confidence    = 60
+observed_at   = 2026-07-27T09:00:00Z
+dismissed_reason = "compound_claim"
+
+  [proposal.record]
+  lineage_id = "ctx.acme.web.deploy"
+  kind       = "procedure"
+  title      = "Deploys run from main on Tuesdays via make ship"
+  statement  = "Deploys run from main, happen on Tuesdays, and are triggered with make ship."
+
+  # Three independently refutable assertions in one statement. The release day
+  # could change without the branch or the command changing. A single verdict
+  # cannot describe it, so the record cannot be refuted at all.
+  [proposal.validation]
+  rule    = "one_verdict_per_record"
+  verdict = "compound"
+  detail  = "3 independently falsifiable assertions: source branch, cadence, command."
+  action  = "re-extract as 3 records"
