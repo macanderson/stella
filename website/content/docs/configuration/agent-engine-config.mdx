@@ -92,8 +92,9 @@ pin just the judge model while your user scope keeps everything else.
 
 Every role resolves on its own chain. `--model` sets the **session default** —
 the model the interactive agent runs on and the one every unconfigured role
-falls back to — while an explicitly configured role keeps its own model even
-under a `--model` flag.
+falls back to — and it additionally pins the **worker**, since overriding the
+worker model for one invocation is the flag's whole purpose. An explicitly
+configured **judge or triage** keeps its own model even under a `--model` flag.
 
 **Default agent** (interactive / step-loop) — first hit wins:
 
@@ -105,10 +106,12 @@ under a `--model` flag.
 **Worker** (the pipeline's execute turns, and the plan and witness turns that
 share its tier) — first hit wins:
 
-1. `agents.worker.model`, sent verbatim to `agents.worker.provider` when that is set
-2. `pipeline_worker_model`
-3. `default_model`
-4. No configuration — the role rides the session default resolved above
+1. The `--model` CLI flag (or `STELLA_MODEL`) — suppresses the settings below
+   for this invocation
+2. `agents.worker.model`, sent verbatim to `agents.worker.provider` when that is set
+3. `pipeline_worker_model`
+4. `default_model`
+5. No configuration — the role rides the session default resolved above
 
 **Judge and triage** — first hit wins:
 
@@ -125,11 +128,11 @@ with `pipeline_judge_model: openrouter/openai/gpt-5.5` runs a Fable worker under
 a GPT judge, which is usually exactly what you want from a cross-family setup.
 
 <Callout type="info">
-  Because the worker's chain falls through to `default_model`, a configured
-  `default_model` pins the execute turns even when you pass `--model` for the
-  session. If you want a one-off `--model` to change what the pipeline executes
-  on, either leave `default_model` unset or set `pipeline_worker_model`
-  deliberately.
+  `--model` always changes what the pipeline executes on. When it suppresses a
+  configured worker model, the run says so on stderr — `engine config: worker
+  model ... skipped — --model pinned ... for this invocation` — so a dropped
+  setting is never silent. Settings still own the worker whenever the flag is
+  absent.
 </Callout>
 
 Every override here is **soft**. A worker, judge, or triage model whose provider

@@ -3312,8 +3312,9 @@ pin just the judge model while your user scope keeps everything else.
 
 Every role resolves on its own chain. `--model` sets the **session default** —
 the model the interactive agent runs on and the one every unconfigured role
-falls back to — while an explicitly configured role keeps its own model even
-under a `--model` flag.
+falls back to — and it additionally pins the **worker**, since overriding the
+worker model for one invocation is the flag's whole purpose. An explicitly
+configured **judge or triage** keeps its own model even under a `--model` flag.
 
 **Default agent** (interactive / step-loop) — first hit wins:
 
@@ -3325,10 +3326,12 @@ under a `--model` flag.
 **Worker** (the pipeline's execute turns, and the plan and witness turns that
 share its tier) — first hit wins:
 
-1. `agents.worker.model`, sent verbatim to `agents.worker.provider` when that is set
-2. `pipeline_worker_model`
-3. `default_model`
-4. No configuration — the role rides the session default resolved above
+1. The `--model` CLI flag (or `STELLA_MODEL`) — suppresses the settings below
+   for this invocation
+2. `agents.worker.model`, sent verbatim to `agents.worker.provider` when that is set
+3. `pipeline_worker_model`
+4. `default_model`
+5. No configuration — the role rides the session default resolved above
 
 **Judge and triage** — first hit wins:
 
@@ -3346,11 +3349,11 @@ a GPT judge, which is usually exactly what you want from a cross-family setup.
 
 > **Note**
 >
->   Because the worker's chain falls through to `default_model`, a configured
->   `default_model` pins the execute turns even when you pass `--model` for the
->   session. If you want a one-off `--model` to change what the pipeline executes
->   on, either leave `default_model` unset or set `pipeline_worker_model`
->   deliberately.
+>   `--model` always changes what the pipeline executes on. When it suppresses a
+>   configured worker model, the run says so on stderr — `engine config: worker
+>   model ... skipped — --model pinned ... for this invocation` — so a dropped
+>   setting is never silent. Settings still own the worker whenever the flag is
+>   absent.
 
 Every override here is **soft**. A worker, judge, or triage model whose provider
 has no resolvable credential — or whose adapter fails to build — is skipped with
@@ -11442,6 +11445,13 @@ top-level `files_touched` key holding the
 [files-touched](https://stella.oxagen.sh/docs/telemetry/files-touched) telemetry payload — which the pipeline
 summary does **not** carry. That payload is the serialized telemetry object, so the array
 of records sits one level in, at `.files_touched.files_touched`.
+
+The `model` value is `provider/model_id` for the model that **actually ran** —
+on the pipeline path that is the model serving the worker turns, which is what
+`cost_usd` was spent on. It is not an echo of what you requested: a
+[`pipeline_worker_model`](https://stella.oxagen.sh/docs/configuration/agent-engine-config) that routes
+the worker somewhere other than the session default is reflected here. Read
+this key, not your own `--model` argument, when attributing spend.
 
 The `status` value is the first thing most scripts branch on. A pipeline run
 reports one of four; a `--no-pipeline` run reports three, since no verification

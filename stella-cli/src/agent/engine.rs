@@ -317,7 +317,9 @@ fn pin_role(
 
 /// Resolve the engine wiring for a pipeline run whose session-default worker
 /// is `worker_ref` (already resolved by `Config` — an explicit `--model`
-/// flag beats the settings, see `Config::load_with_settings`). `configured`
+/// flag beats `default_model`/`agents.default.*` there, see
+/// `Config::load_with_settings`; it beats the WORKER-role settings here, via
+/// `cfg.model_pinned_by_flag`). `configured`
 /// is the caller's own [`crate::config::discover_configured_providers`]
 /// snapshot — injected rather than rediscovered here so this function is a
 /// plain, testable one over owned data.
@@ -328,7 +330,10 @@ fn pin_role(
 ///   `pipeline_worker_model`/`agents.worker.*`
 ///   ([`crate::engine_config::model_spec_for`]) when configured and its
 ///   provider is credentialed; unset or unroutable falls back to the
-///   session default `worker_ref` (issue #276).
+///   session default `worker_ref` (issue #276). An explicit `--model`
+///   (`cfg.model_pinned_by_flag`) suppresses that settings override
+///   entirely — the flag exists to pin the worker for one invocation, so it
+///   outranks the config file.
 /// - TRIAGE and JUDGE pins come from their configured model specs the same
 ///   way, but always fall back to the (possibly worker-overridden) worker
 ///   model on any failure — the pre-existing behavior.
@@ -387,7 +392,29 @@ pub(crate) fn resolve_engine_wiring(
     // plan/witness turns to the session default the moment the worker is
     // overridden, defeating "plan rides the worker" (`pipeline_engine_config_for`'s
     // doc comment).
-    let worker_spec = model_spec_for(&engine, EngineAgentKind::Worker, &is_provider);
+    // ...unless the invocation carries an explicit `--model`. That flag's
+    // documented job IS pinning the worker model for one run, so settings
+    // must lose to it — otherwise the pin is not merely ignored but
+    // unobservable: the run reports the model that was asked for while a
+    // different one does the work and bills for it. Only the WORKER spec is
+    // suppressed; `pipeline_triage_model`/`pipeline_judge_model` still apply,
+    // since `--model` says nothing about those roles.
+    let worker_spec = match model_spec_for(&engine, EngineAgentKind::Worker, &is_provider) {
+        Some(spec) if cfg.model_pinned_by_flag => {
+            // An empty slug is the "provider pin without a model" form.
+            let configured_label = if spec.model.is_empty() {
+                spec.provider.clone()
+            } else {
+                format!("{}/{}", spec.provider, spec.model)
+            };
+            wiring.notices.push(format!(
+                "engine config: worker model `{configured_label}` skipped — `--model` pinned \
+                 `{worker_ref}` for this invocation"
+            ));
+            None
+        }
+        other => other,
+    };
     let effective_worker_ref = match &worker_spec {
         Some(spec) => pin_role(
             &mut wiring,

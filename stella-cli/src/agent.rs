@@ -158,6 +158,13 @@ struct PipelineRunSummary {
     verdict: Option<serde_json::Value>,
     revisions: Option<u32>,
     candidates_run: Option<u32>,
+    /// `provider/model_id` of the model that actually served the run's
+    /// WORKER turns — [`crate::agent::EngineWiring::worker_model`], not the
+    /// session default. The two differ whenever `pipeline_worker_model`/
+    /// `agents.worker.*` routes the worker somewhere other than
+    /// `cfg.model_id`; reporting the session default there named a model
+    /// that never ran a single turn and never billed a cent, which is
+    /// exactly backwards for the cost-attribution this key exists to serve.
     model: String,
     events: Vec<AgentEvent>,
     reflection: serde_json::Value,
@@ -506,7 +513,7 @@ async fn run_pipeline_one_shot(
         // all-calls total. The renderer retains only the latest Complete and
         // releases it after every queued reflection/accounting event.
         let _ = tx.send(AgentEvent::Complete {
-            model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+            model: wiring.worker_model.to_string(),
             cost_usd: outcome.total_cost_usd + reflection_report.cost_usd,
         });
     }
@@ -576,7 +583,7 @@ async fn run_pipeline_one_shot(
                     }),
                     revisions: Some(outcome.revisions),
                     candidates_run: Some(outcome.candidates_run),
-                    model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+                    model: wiring.worker_model.to_string(),
                     events: collected,
                     reflection: reflection_json(&reflection_report),
                 };
@@ -587,7 +594,7 @@ async fn run_pipeline_one_shot(
                 tui::files_touched_panel(&files);
                 tui::cost_summary(
                     outcome.total_cost_usd + reflection_report.cost_usd,
-                    &format!("{}/{}", cfg.provider.id, cfg.model_id),
+                    &wiring.worker_model.to_string(),
                     turn_start.elapsed(),
                 );
                 if cfg.enable_recap {
@@ -618,7 +625,7 @@ async fn run_pipeline_one_shot(
                     verdict: None,
                     revisions: None,
                     candidates_run: None,
-                    model: format!("{}/{}", cfg.provider.id, cfg.model_id),
+                    model: wiring.worker_model.to_string(),
                     events: collected,
                     reflection: reflection_json(&reflection_report),
                 };

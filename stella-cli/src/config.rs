@@ -512,6 +512,17 @@ fn all_provider_ids(settings: &crate::settings::Settings) -> Vec<&str> {
 pub struct Config {
     pub provider: ProviderConfig,
     pub model_id: String,
+    /// True when `provider`/`model_id` came from an explicit `--model` flag
+    /// (or its `STELLA_MODEL` env fallback) rather than from settings or
+    /// credential auto-detection.
+    ///
+    /// `load_with_settings` folds the flag and the settings-configured
+    /// default into one `Option<&str>` before resolution, so by the time a
+    /// `Config` exists the two are otherwise indistinguishable. The pipeline
+    /// wiring needs to tell them apart: an explicit flag is a per-invocation
+    /// pin of the WORKER model that `pipeline_worker_model`/`agents.worker.*`
+    /// must not override (see `crate::agent::resolve_engine_wiring`).
+    pub model_pinned_by_flag: bool,
     pub api_key: ApiKey,
     pub workspace_root: std::path::PathBuf,
     /// `--base-url`: required for the `local` provider (it IS the server
@@ -671,6 +682,11 @@ impl Config {
                 None => e.model_for(EngineAgentKind::Default).map(str::to_string),
             }
         });
+        // Captured BEFORE the fold below, which is the last point where the
+        // flag and the settings default are still distinguishable. The
+        // pipeline wiring needs the distinction to stop
+        // `pipeline_worker_model` from overriding an explicit `--model`.
+        let model_pinned_by_flag = model_override.is_some();
         let model_override = model_override.or(engine_default.as_deref());
 
         let mut cfg = Self::resolve_provider_config(
@@ -686,6 +702,7 @@ impl Config {
             settings.hooks.clone()
         };
         cfg.engine_settings = settings.agent_engine_config.clone();
+        cfg.model_pinned_by_flag = model_pinned_by_flag;
         cfg.authority = settings.authority_policy;
         // The managed ceiling is already folded into `settings.tools` by
         // `Settings::load`, so this is a straight read — no second place that
@@ -805,6 +822,9 @@ impl Config {
                 return Ok(Self {
                     provider: LOCAL_PROVIDER.clone(),
                     model_id,
+                    // Stamped by `load_with_settings`, the only place that
+                    // still knows whether the flag or the settings answered.
+                    model_pinned_by_flag: false,
                     api_key: ApiKey::new(api_key),
                     workspace_root,
                     base_url_override: Some(base_url),
@@ -987,6 +1007,8 @@ impl Config {
         Ok(Self {
             provider: provider.clone(),
             model_id,
+            // Stamped by `load_with_settings` — see the field's doc comment.
+            model_pinned_by_flag: false,
             api_key: key,
             workspace_root: workspace_root.to_path_buf(),
             base_url_override: base_url_override.map(str::to_string),
