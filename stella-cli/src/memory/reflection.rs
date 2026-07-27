@@ -46,8 +46,7 @@ pub async fn reflect_on_turn(
     domain_names: &[String],
     succeeded: bool,
     budget_limit: Option<f64>,
-) -> Result<(ReflectionParse, f64, Vec<AgentEvent>), crate::accounted_call::StandaloneCallError>
-{
+) -> Result<(ReflectionParse, f64, Vec<AgentEvent>), crate::accounted_call::StandaloneCallError> {
     let digest = transcript
         .iter()
         .rev()
