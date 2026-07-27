@@ -618,21 +618,23 @@ flowchart TD
 
 ## Design principles
 
-- **Ports, not concretions** — `stella-core` never imports a provider SDK, a
-  filesystem call, or a terminal library; it drives through traits.
-- **No I/O in the engine** — all decision logic is synchronous functions over
-  owned data, so the whole engine is property-testable.
-- **Zero telemetry egress by default** — Community/default makes no telemetry
-  calls. Explicitly enrolled Oxagen Enterprise managed mode is the only governed
-  exception, limited to its exact allowlisted HTTPS sink and minimal operational
-  rollup. Your chosen model provider remains the normal BYOK network path.
-- **BYOK** — any provider key, any combination, no account.
-- **Serde-first** — every cross-boundary type round-trips through `serde_json`
-  byte-for-byte.
-- **Fail loud, recover gracefully** — typed, named errors; never a bare string,
-  never a `panic`.
-- **Budget enforced at safe boundaries only** — never mid-tool; an abort
-  recommendation is acted on between steps.
+Eight architectural invariants hold the design together: the engine drives
+everything through ports and does no I/O, every cross-boundary type round-trips
+through `serde_json` byte-for-byte, errors are typed rather than panicked, the
+budget aborts only between steps and never mid-tool, prompts stay byte-stable so
+the provider cache keeps hitting, provider feature parity is declared and
+witness-tested rather than assumed — and Stella sends **zero telemetry
+anywhere** by default.
+
+They are stated normatively, in full, in
+[AGENTS.md § Architecture: ports, not concretions](AGENTS.md#architecture-ports-not-concretions).
+That is the only copy: this section is a summary and does not govern. A PR that
+breaks one of them will be asked to restructure regardless of how good the
+feature is.
+
+Stella is also **BYOK** — any provider key, any combination, no account. That is
+a product property rather than an architectural invariant, but it is the one
+most people want to know first.
 
 ## Workspace layout
 

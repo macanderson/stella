@@ -83,8 +83,12 @@ action-pins: ## Assert every workflow `uses:` is pinned to a commit SHA (#648)
 	@./scripts/check-action-pins.sh
 
 .PHONY: doc-citations
-doc-citations: ## Assert every docs/*.md cited from Rust source resolves (#652)
+doc-citations: ## Assert docs citations resolve and none cite by line number (#652, #561)
 	@./scripts/check-doc-citations.sh
+
+.PHONY: invariants
+invariants: ## Assert the architectural invariants have one home and stable numbering (#630)
+	@./scripts/check-invariants.sh
 
 .PHONY: file-size
 file-size: ## Assert no new .rs file exceeds the 1500-line ratchet (#629)
@@ -106,10 +110,10 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 	@./scripts/smoke-serve-image.sh stella-serve:ci
 
 .PHONY: gate
-gate: no-scratch doc-citations file-size doc-warnings format-check lint test ## Full CI gate: no-scratch + doc-citations + file-size + rustdoc + fmt-check + clippy + test
+gate: no-scratch doc-citations invariants file-size doc-warnings format-check lint test ## Full CI gate: no-scratch + doc-citations + invariants + file-size + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
-check: no-scratch action-pins file-size format-check lint ## Fast pre-push check (scratch + pins + file-size + fmt + clippy, no tests)
+check: no-scratch action-pins invariants file-size format-check lint ## Fast pre-push check (scratch + pins + invariants + file-size + fmt + clippy, no tests)
 
 .PHONY: hooks
 hooks: ## Install the pre-push gate hook (runs `make gate` on every push)

@@ -1,6 +1,6 @@
 name: normative-home
 
-# Guards that keep doc references honest. Two checks, same failure mode:
+# Guards that keep doc references honest. Three checks, same failure mode:
 # a pointer that looks authoritative and is not.
 #
 #  1. Boundary drift guard for context-graph-protocol#27: the adaptive-context
@@ -8,9 +8,15 @@ name: normative-home
 #     of restating them. This keeps the pinned CGP revision in those docs in
 #     sync with the contextgraph-* rev stella actually builds against
 #     (stella-cli/Cargo.toml).
-#  2. Citation guard (#652): every `docs/**.md` path named in a Rust comment
-#     must exist, and every cited `§N` must be a section that document has.
-#     `docs/context-reuse.md` was cited 23 times while absent from the repo.
+#  2. Citation guard (#652, #561): every `docs/**.md` path named in a Rust
+#     comment must exist, and every cited `§N` must be a section that document
+#     has. `docs/context-reuse.md` was cited 23 times while absent from the
+#     repo. It also forbids markdown citing markdown by line number — five such
+#     citations existed and every one had already drifted 16-27 lines.
+#  3. Invariant guard (#630): the architectural invariants live in AGENTS.md
+#     and nowhere else, and the numbering that Rust doc comments cite by
+#     ("AGENTS.md invariant #3") must keep resolving. CONTRIBUTING.md and
+#     README.md each carried a drifted second copy.
 #
 # Rust sources are in the path filter because check-doc-citations.sh reads
 # them — a comment added in a .rs file is exactly how a citation goes stale.
@@ -19,19 +25,23 @@ on:
   pull_request:
     paths:
       - "docs/**"
+      - "**/*.md"
       - "**/*.rs"
       - "stella-cli/Cargo.toml"
       - "scripts/check-normative-home.sh"
       - "scripts/check-doc-citations.sh"
+      - "scripts/check-invariants.sh"
       - ".github/workflows/normative-home.yml"
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "**/*.md"
       - "**/*.rs"
       - "stella-cli/Cargo.toml"
       - "scripts/check-normative-home.sh"
       - "scripts/check-doc-citations.sh"
+      - "scripts/check-invariants.sh"
       - ".github/workflows/normative-home.yml"
   workflow_dispatch:
 
@@ -51,3 +61,6 @@ jobs:
 
       - name: Check every docs/*.md cited from Rust source resolves
         run: bash scripts/check-doc-citations.sh
+
+      - name: Check the architectural invariants have one home and stable numbering
+        run: bash scripts/check-invariants.sh
