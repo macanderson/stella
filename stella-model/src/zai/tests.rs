@@ -1502,6 +1502,7 @@ async fn zai_identity_never_sends_reasoning_effort_even_when_pinned() {
 }
 
 mod error_classify_tests;
+mod openrouter_stream_tests;
 
 #[test]
 fn rejects_disabled_reasoning_matches_the_upstream_wording_only() {

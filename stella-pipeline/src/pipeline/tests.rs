@@ -1851,6 +1851,7 @@ mod golden;
 /// `pipeline.rs`; a child module, so it reaches the fakes above via
 /// `super::*`.
 mod mcp_prefetch;
+mod scope_gate_interactive;
 mod terminal_outcomes;
 mod usage;
 mod witness_isolation;

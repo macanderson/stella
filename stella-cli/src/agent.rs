@@ -69,7 +69,8 @@ use outcome::{
 pub(crate) use outcome::{pipeline_execution_closeout, settled_cost_since};
 use output::*;
 pub(crate) use persistence::{
-    persist_event, record_execution_end, spawn_renderer, warn_store_write_failed,
+    persist_event, persist_event_detailed, record_execution_end, spawn_renderer,
+    warn_store_write_failed,
 };
 pub(crate) use prompt::*;
 // `tool_policy` is a top-level module (`main.rs`); the re-export keeps every

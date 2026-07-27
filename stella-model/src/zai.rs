@@ -560,15 +560,40 @@ struct ZaiStreamChunk {
     error: Option<ZaiStreamError>,
 }
 
-/// An OpenAI-compatible in-band error object. We classify only on
-/// `type`/`message` text — the gateways don't share a stable machine
-/// code, so matching on human-readable text is the only reliable signal.
+/// An OpenAI-compatible in-band error object. Classification reads
+/// `type`/`message` text plus `code` — the gateways don't share a stable
+/// machine code *vocabulary*, so human-readable text is still the primary
+/// signal, but when a numeric status is present it is the most reliable part
+/// of the frame and must not be dropped.
 #[derive(Deserialize, Debug, Default)]
 struct ZaiStreamError {
     #[serde(default)]
     message: String,
     #[serde(default, rename = "type")]
     kind: String,
+    /// OpenRouter puts the upstream HTTP status here and nowhere else:
+    /// `{"error":{"message":"Provider returned an empty response","code":502}}`.
+    /// Without this field the status never reaches the haystack below, so the
+    /// `contains("502")` arm could not fire and a transient upstream 5xx fell
+    /// through to non-retryable `Terminal` — burning the turn on attempt 1
+    /// with all three configured retries unused. Untyped (`Value`) because
+    /// the gateways disagree on whether it is a number or a string.
+    #[serde(default)]
+    code: Option<serde_json::Value>,
+}
+
+impl ZaiStreamError {
+    /// The lowercased text classification matches against: `type`, `message`,
+    /// and the stringified `code`. A JSON string code is unquoted first so
+    /// `"502"` and `502` produce the same haystack.
+    fn haystack(&self) -> String {
+        let code = match &self.code {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(other) => other.to_string(),
+            None => String::new(),
+        };
+        format!("{} {} {}", self.kind, self.message, code).to_lowercase()
+    }
 }
 
 /// Classify an in-band OpenAI-compatible error frame into a typed
@@ -581,7 +606,7 @@ struct ZaiStreamError {
 /// the concrete provider (Z.ai / xAI / DeepSeek / …) so the surfaced message
 /// points at the right credential and endpoint.
 fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError {
-    let haystack = format!("{} {}", err.kind, err.message).to_lowercase();
+    let haystack = err.haystack();
     let detail = if err.message.is_empty() {
         format!("{label} stream error ({})", err.kind)
     } else {
@@ -597,7 +622,11 @@ fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError
         || haystack.contains("529")
     {
         ProviderError::Transport(detail)
-    } else if haystack.contains("rate") && haystack.contains("limit") {
+    } else if haystack.contains("429") || (haystack.contains("rate") && haystack.contains("limit"))
+    {
+        // A `code: 429` frame carries no "rate limit" prose on some gateways,
+        // so the numeric status is the only signal that this is throttling
+        // rather than a permanent rejection.
         ProviderError::RateLimited {
             message: detail,
             retry_after_ms: None,
@@ -1275,7 +1304,17 @@ async fn aggregate_zai_stream(
     // Reasoning-only fallback: if the model emitted no answer `content` but did
     // stream chain-of-thought, surface the reasoning as the text so the turn is
     // never blank. Normal turns keep `content` as the answer and ignore it.
-    if text.trim().is_empty() && !reasoning.trim().is_empty() {
+    //
+    // `calls.is_empty()` is load-bearing, not defensive. A tool-calling turn
+    // legitimately has empty `content` — that is the *normal* shape for every
+    // Anthropic model routed through OpenRouter, which streams `content: ""`
+    // alongside `reasoning` and the tool call. Without this guard the fallback
+    // fired on essentially every reasoning-model tool turn and published the
+    // model's private chain-of-thought as its user-visible answer (users saw
+    // "The user is asking… I should clarify…" third-person deliberation in
+    // place of a reply). A turn that called a tool is not blank, so it never
+    // needs the fallback.
+    if text.trim().is_empty() && calls.is_empty() && !reasoning.trim().is_empty() {
         text = reasoning;
     }
 
