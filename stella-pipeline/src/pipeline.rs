@@ -863,6 +863,22 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
         });
+        // Deterministic short-circuit, BEFORE the paid call.
+        //
+        // `resolve_conversational` is a disjunction whose first term ignores
+        // the model entirely, so a `true` here with `model_says_chat = false`
+        // means the greeting arm fired — and no triage answer could change the
+        // outcome. Classifying `hi` used to cost a full round-trip plus, on a
+        // wedged provider, up to `triage_latency_ceiling` of dead air, for a
+        // route the module docs already describe as never depending on a model
+        // answer. This is the same assessment the resolution-failure arm below
+        // builds; it just stops paying for it first.
+        if resolve_conversational(false, goal) {
+            return Ok(TaskAssessment {
+                conversational: true,
+                ..TaskAssessment::from_class(resolve_task_class(None, goal))
+            });
+        }
         let resolved = match self.resolve_provider(Role::Triage) {
             Ok(r) => r,
             // Triage resolution failure is soft: fall through to the full path
@@ -1915,6 +1931,20 @@ impl<'a> Pipeline<'a> {
                     );
                 }
                 LadderDecision::ModelJudge => {
+                    // Escalate on evidence, not on prediction. "Inconclusive"
+                    // here can mean two very different things: a real change
+                    // nothing proved, or a change with nothing to prove. The
+                    // diff tells them apart, and the prompt never could — so
+                    // ask it before buying a judge call to confirm the absence
+                    // of a test that was never warranted
+                    // (docs/design/witness-protocol.md §7).
+                    if let Some(evidence) = self.warranted_completion(&state) {
+                        return state.into_verified(
+                            true,
+                            &evidence,
+                            score_from_verification(false, None),
+                        );
+                    }
                     // Inconclusive — escalate to the model judge (judge ≠
                     // worker; a judge-call failure falls back to a heuristic).
                     let evidence_summary = format!(

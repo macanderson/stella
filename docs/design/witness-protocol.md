@@ -1,6 +1,6 @@
 # The Witness Protocol, adapted
 
-Status: approved for implementation — §4 lands in `stella-pipeline`; §5 records what is deliberately declined
+Status: approved for implementation — §4 and §7 land in `stella-pipeline`; §5 records what is deliberately declined
 
 ## Purpose
 
@@ -199,3 +199,73 @@ signals that should reopen it:
 
 Until one of those is observed, building for them is speculation with a
 maintenance cost.
+
+## 7. Proportionate verification: escalate on evidence
+
+Everything above is about the *heavy* path. This section is about not taking it
+when it isn't warranted.
+
+Stella's contributor rule has always been nuanced — ship a witness test, **or a
+stated reason there isn't one**; pure refactors, docs, and CI changes don't need
+one. The pipeline held itself to a stricter rule than it held people to.
+
+### 7.1 Predict-then-commit is the bug
+
+The pipeline decided how much ceremony to buy by **predicting** difficulty once,
+up front, from the prompt — the single worst moment to judge, because no work
+has happened yet. Two consequences:
+
+- **Triage was a paid model call on every prompt, including `hi`.** The
+  deterministic greeting table existed and was exact-match safe, but it was
+  consulted *after* the call had already gone out. A greeting cost a
+  classification round-trip that could not change its own answer, plus up to
+  `triage_latency_ceiling` of dead air on a wedged provider.
+- **The one escape hatch guessed from wording.** `triage::resolve_witness`
+  keyword-matches removal verbs to skip witness authoring. Its reasoning is
+  right — a removal's proof is its diff — but it has to be extremely narrow,
+  because a false positive ships a real behavior change unproven and the only
+  evidence available at that moment is the phrasing of a request.
+
+### 7.2 Escalate on evidence instead
+
+The same principle the evidence ladder already applies to *verification* —
+spend only when the evidence is genuinely inconclusive — applied to the
+pipeline itself.
+
+**Deterministic answers come before paid ones.** Anything resolvable without a
+model is resolved without a model, and *then* the call is made. A route the
+code already describes as never depending on a model answer must not pay for
+one.
+
+**The change is the evidence, not the prompt.** After execution there is a
+diff, and `witness::warrant` reads it. A docs-only edit is docs-only whether
+the prompt said "document the parser" or "make the README less confusing"; no
+phrasing changes what the diff is. The recognized reasons are `NothingChanged`,
+`DocsOnly`, `TestsOnly`, `ConfigOnly`, `CommentsOnly`, and `PureRemoval`.
+
+**Fail closed.** Anything mixed, unrecognized, or invisible to the diff
+machinery falls through to "witness required". An unnecessary witness costs one
+model call; a missing one ships unverified behavior. Where the warrant is
+unsure, it buys the test.
+
+**No test needed is not the same as no review needed.** A removal's proof is
+its diff, but deleting the *wrong* thing is a real mistake a reader catches and
+no test would have covered — so `TestsOnly` and `PureRemoval` keep the
+independent reviewer even though they skip the witness. Prose, comments, and
+manifests carry no behavior for a reviewer to reason about, so a review call
+there is spend with no question to answer.
+
+**Say why.** When no test is warranted, the reason is recorded on the verdict —
+the pipeline's half of the contract contributors are already held to. The run
+scores `Unverified`, never `DeterministicPass`: it is honestly complete, and a
+change with nothing to prove must not outrank a flip-verified sibling in
+best-of-N.
+
+### 7.3 What this does not do yet
+
+Witness *authoring* still runs before execute, because a witness must fail on
+the old code. So the warrant can spare a judge call but not the authoring call
+that preceded it. Moving authoring after execution is possible —
+`stella-tools`' `verify_done` already validates a test against `HEAD` in a
+detached shadow worktree — and that reorder is what would make verification
+cost fully demand-driven. It is not in this change.

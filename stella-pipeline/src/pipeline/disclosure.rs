@@ -15,6 +15,7 @@ use stella_protocol::PolicyKind;
 
 use super::*;
 use crate::witness::airlock::FailureBrief;
+use crate::witness::warrant::warrant;
 
 impl CandidateState {
     /// Record one deterministic failure and return how many times *this same*
@@ -91,5 +92,32 @@ impl Pipeline<'_> {
             ..deterministic_fail_evidence(tail)
         };
         (evidence, brief)
+    }
+
+    /// A clean, reasoned completion when the change itself warranted no test.
+    ///
+    /// Reached only from the ladder's inconclusive arm, where "inconclusive"
+    /// covers two very different things: a real change nothing proved, and a
+    /// change with nothing to prove. The diff separates them; the prompt never
+    /// could. `None` means buy the judge call after all.
+    ///
+    /// The verdict records *why* no test was written rather than leaving an
+    /// unexplained absence — the pipeline's half of the contract contributors
+    /// are already held to.
+    pub(super) fn warranted_completion(&self, state: &CandidateState) -> Option<JudgeEvidence> {
+        let reason = warrant(&state.diff_text, state.file_changes).reason()?;
+        if reason.warrants_independent_review() {
+            return None;
+        }
+        let evidence = JudgeEvidence {
+            summary: format!("no witness test warranted: {}", reason.sentence()),
+            deterministic: true,
+            evidence_refs: vec![format!("warrant:{reason:?}")],
+        };
+        self.emit(AgentEvent::JudgeVerdict {
+            passed: true,
+            evidence: evidence.clone(),
+        });
+        Some(evidence)
     }
 }

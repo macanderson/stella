@@ -28,6 +28,7 @@
 //! command, and the one bounded repair retry live in [`crate::pipeline`].
 
 pub mod airlock;
+pub mod warrant;
 
 use std::collections::HashMap;
 

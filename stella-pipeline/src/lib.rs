@@ -43,6 +43,15 @@
 //!   against the sealed material first. The operator still sees the real
 //!   output; only the worker's prompt is redacted.
 //!   [`witness::airlock`]. Design: `docs/design/witness-protocol.md` §4.
+//! - **Proportionate verification** — escalate on evidence, never on a
+//!   prediction made before any work exists. Deterministic routes resolve
+//!   before the paid triage call rather than after it (a greeting no longer
+//!   buys a classification that cannot change its own answer), and
+//!   [`witness::warrant`] reads the *diff* to decide whether a change needed a
+//!   test at all — recording a stated reason when it did not, the pipeline's
+//!   half of the contract contributors are held to. Fails closed: anything
+//!   mixed or unreadable buys the test. Design:
+//!   `docs/design/witness-protocol.md` §7.
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
 //! - **Distress guidance** — on the second consecutive deterministic
@@ -112,6 +121,7 @@ pub use witness::airlock::{
     DisclosureGrain, FailureBrief, FailureFingerprint, LeakKind, SealedFailure, SymptomClass,
     grain_for_repeats, redact, scrub,
 };
+pub use witness::warrant::{NoWitnessReason, WitnessWarrant, warrant};
 pub use witness::{
     TestInvocationError, Witness, WitnessArtifactError, parse_test_invocation,
     parse_witness_command, validate_witness_artifact, validate_witness_identity,
