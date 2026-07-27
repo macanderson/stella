@@ -94,7 +94,7 @@ use crate::agent::{
 };
 
 mod witness_tools;
-use witness_tools::{WitnessToolExecutor, normalized_candidate_path};
+use witness_tools::WitnessToolExecutor;
 
 /// The commit identity for snapshot plumbing commits (which exist only
 /// inside the shadow and are discarded with it) — the user's repo may have
