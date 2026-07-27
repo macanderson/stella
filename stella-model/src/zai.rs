@@ -1185,19 +1185,28 @@ async fn aggregate_zai_stream(
                     truncated_at_token_limit = true;
                 }
                 if let Some(content) = choice.delta.content {
-                    // Only `content` (the user-visible answer) is announced —
-                    // `reasoning_content`/`reasoning` stay observer-silent,
-                    // including when the reasoning-only fallback below ends up
-                    // supplying the final text (the deltas are best-effort).
+                    // `content` is the user-visible answer; thinking rides
+                    // `reasoning_delta` below. The two channels stay separate
+                    // all the way to the transcript.
                     if let Some(observer) = observer {
                         observer.text_delta(&content);
                     }
                     text.push_str(&content);
                 }
+                // GLM's name for chain-of-thought and OpenRouter's normalized
+                // one. Both announce as thinking, so a reasoning model's
+                // deliberation is visible live (collapsed, dimmed) instead of
+                // the turn looking idle until the answer lands.
                 if let Some(rc) = choice.delta.reasoning_content {
+                    if let Some(observer) = observer {
+                        observer.reasoning_delta(&rc);
+                    }
                     reasoning.push_str(&rc);
                 }
                 if let Some(r) = choice.delta.reasoning {
+                    if let Some(observer) = observer {
+                        observer.reasoning_delta(&r);
+                    }
                     reasoning.push_str(&r);
                 }
                 for tc_delta in choice.delta.tool_calls {

@@ -140,6 +140,18 @@ impl ToolCallObserver for SpeculationGate {
         });
     }
 
+    fn reasoning_delta(&self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        // `Reasoning`, never `TextDelta`: the transcript folds this into its
+        // own collapsible entry, keeping thinking visible but plainly
+        // distinct from the answer.
+        let _ = self.events.send(AgentEvent::Reasoning {
+            delta: delta.to_string(),
+        });
+    }
+
     fn tool_call_streamed(&self, call: &ToolCall) {
         if self.fenced.load(Ordering::Relaxed) {
             return;
@@ -223,6 +235,25 @@ mod tests {
             })
             .collect();
         assert_eq!(forwarded, vec!["Hel".to_string(), "lo".to_string()]);
+    }
+
+    /// Thinking rides `Reasoning`, not `TextDelta` — the transcript renders
+    /// the two differently (collapsed and dimmed vs. the reply), and merging
+    /// them is what once published chain-of-thought as the answer.
+    #[test]
+    fn reasoning_deltas_forward_as_reasoning_never_as_text() {
+        let (gate, _rx, mut events_rx) = gate_with(&[]);
+        gate.reasoning_delta("weigh");
+        gate.reasoning_delta("");
+        gate.reasoning_delta("ing");
+
+        let forwarded: Vec<String> = std::iter::from_fn(|| events_rx.try_recv().ok())
+            .map(|e| match e {
+                AgentEvent::Reasoning { delta } => delta,
+                other => panic!("thinking must never ride another event: {other:?}"),
+            })
+            .collect();
+        assert_eq!(forwarded, vec!["weigh".to_string(), "ing".to_string()]);
     }
 
     #[test]

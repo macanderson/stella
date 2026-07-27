@@ -166,3 +166,70 @@ async fn openrouter_reasoning_only_turn_still_falls_back() {
     assert_eq!(result.text, "only thinking");
     assert!(result.tool_calls.is_empty());
 }
+
+/// Thinking must reach the observer on its OWN channel. The transcript folds
+/// `reasoning_delta` into a collapsible, dimmed entry, so wiring it here is
+/// what makes a reasoning model's deliberation visible live without it ever
+/// being mistaken for the answer — the whole point of keeping the two
+/// channels separate rather than reviving the old text fallback.
+#[tokio::test]
+async fn reasoning_streams_to_the_observer_separately_from_the_answer() {
+    #[derive(Default)]
+    struct SplitObserver {
+        text: std::sync::Mutex<Vec<String>>,
+        thinking: std::sync::Mutex<Vec<String>>,
+    }
+    impl ToolCallObserver for SplitObserver {
+        fn tool_call_streamed(&self, _call: &ToolCall) {}
+        fn text_delta(&self, delta: &str) {
+            self.text.lock().unwrap().push(delta.to_string());
+        }
+        fn reasoning_delta(&self, delta: &str) {
+            self.thinking.lock().unwrap().push(delta.to_string());
+        }
+    }
+
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\"weighing \"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\"the options\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"The answer.\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "anthropic/claude-fable-5")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("hi")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+    let observer = SplitObserver::default();
+    let result = provider
+        .complete_observed(req, &observer)
+        .await
+        .expect("should succeed");
+
+    assert_eq!(
+        *observer.thinking.lock().unwrap(),
+        vec!["weighing ", "the options"],
+        "thinking streams in order on its own channel"
+    );
+    assert_eq!(
+        *observer.text.lock().unwrap(),
+        vec!["", "", "The answer."],
+        "the answer channel carries only content, never thinking"
+    );
+    assert_eq!(result.text, "The answer.");
+}
