@@ -496,10 +496,11 @@ pub enum ScopeDecision {
 
 /// The interactive scope-review gate (L-E5). Above configured thresholds the
 /// pipeline emits a `ScopeReview` event and blocks on this port for the
-/// user's [`ScopeDecision`]. Headless runs supply [`AutoApproveGate`] (with
-/// an explicit config bypass) or [`AlwaysAbortGate`]; a headless run that
-/// hits the gate with **no** bypass configured is a named error, never a
-/// silent auto-approve (see [`crate::PipelineConfig`]).
+/// user's [`ScopeDecision`]. Headless runs supply [`AlwaysAbortGate`]; the
+/// explicit config bypass (`PipelineConfig::headless_bypass_scope_review`)
+/// skips the gate entirely rather than consulting one that would abort, and
+/// a headless run that hits the gate with **no** bypass configured is a
+/// named error, never a silent auto-approve (see [`crate::PipelineConfig`]).
 #[async_trait]
 pub trait ApprovalGate: Send + Sync {
     /// Present `proposal` and await the user's decision.
@@ -548,21 +549,6 @@ impl RepoStatusPort for NoRepoStatus {
     }
 }
 
-/// An [`ApprovalGate`] that approves every proposal without prompting — for
-/// headless runs that have *explicitly* opted into bypassing scope review
-/// (`PipelineConfig::headless_bypass_scope_review`). Never the default: the
-/// pipeline requires the bypass flag before it will even construct the gate,
-/// so a headless run can't silently auto-approve a large plan.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct AutoApproveGate;
-
-#[async_trait]
-impl ApprovalGate for AutoApproveGate {
-    async fn review(&self, _proposal: &ScopeProposal) -> ScopeDecision {
-        ScopeDecision::Approve
-    }
-}
-
 /// An [`ApprovalGate`] that aborts every proposal — a conservative headless
 /// default (never runs large work unattended).
 #[derive(Debug, Default, Clone, Copy)]
@@ -581,8 +567,8 @@ impl ApprovalGate for AlwaysAbortGate {
 /// deliberately without a [`ScopeDecision::Trim`] path: per-step selection
 /// needs a real prompt, and half-implementing it here would let a typo drop
 /// steps silently. For interactive text mode only — headless runs use
-/// [`AutoApproveGate`] or [`AlwaysAbortGate`], and the TUI supplies its own
-/// gate.
+/// [`AlwaysAbortGate`] (with the config bypass skipping the gate outright),
+/// and the TUI supplies its own gate.
 ///
 /// Note that [`ApprovalGate::review`] is `async` while this reads stdin with
 /// blocking I/O, so it parks the calling runtime thread until the user
@@ -712,10 +698,6 @@ mod tests {
             estimated_files: 1,
             estimated_cost_usd: None,
         };
-        assert_eq!(
-            AutoApproveGate.review(&proposal).await,
-            ScopeDecision::Approve
-        );
         assert_eq!(
             AlwaysAbortGate.review(&proposal).await,
             ScopeDecision::Abort

@@ -85,10 +85,12 @@ fn stage_rank(stage: StageKind) -> u8 {
         StageKind::ContextRecall => 1,
         StageKind::Plan => 2,
         StageKind::ScopeReview => 3,
-        // Witness authoring precedes execution: the failing witness test is
-        // written before the worker starts (L-E11 front half).
-        StageKind::Witness => 4,
-        StageKind::Execute => 5,
+        StageKind::Execute => 4,
+        // Witness authoring is demand-driven: it runs AFTER execution, once
+        // the warrant has read the executed diff and found something to prove
+        // (L-E11 front half). The revise back-edges land on Execute below it —
+        // re-execution never re-authors.
+        StageKind::Witness => 5,
         StageKind::Verify => 6,
         StageKind::Judge => 7,
         // Reflect is post-verdict self-reflection, before context write-back.
@@ -527,6 +529,9 @@ mod tests {
             stage(StageKind::ContextRecall),
             stage(StageKind::Plan),
             stage(StageKind::Execute),
+            // The authored-witness position: after execution (the warrant
+            // reads the diff before buying an author turn), before verify.
+            stage(StageKind::Witness),
             stage(StageKind::Verify),
             stage(StageKind::Complete),
             complete(),
@@ -541,19 +546,21 @@ mod tests {
             StageKind::Execute
         ));
         assert!(stage_transition_legal(StageKind::Judge, StageKind::Execute));
-        // Witness authoring precedes execution (forward move), and the revise
-        // back-edges land AFTER it — re-execution never re-authors.
+        // Witness authoring is demand-driven and FOLLOWS execution (the
+        // warrant reads the executed diff first), so Execute → Witness is the
+        // forward move and the revise back-edges jump over Witness back to
+        // Execute — re-execution never re-authors.
         assert!(stage_transition_legal(
-            StageKind::Witness,
-            StageKind::Execute
-        ));
-        assert!(stage_transition_legal(
-            StageKind::ScopeReview,
-            StageKind::Witness
-        ));
-        assert!(!stage_transition_legal(
             StageKind::Execute,
             StageKind::Witness
+        ));
+        assert!(stage_transition_legal(
+            StageKind::Witness,
+            StageKind::Verify
+        ));
+        assert!(!stage_transition_legal(
+            StageKind::Witness,
+            StageKind::Execute
         ));
         assert!(!stage_transition_legal(
             StageKind::Verify,

@@ -162,7 +162,7 @@ pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
         Some(class) => class,
         // A pure `chat` answer carries no orchestration keyword. Park the class
         // at the cheapest tier — it is never consulted, since the
-        // conversational path skips plan/witness/execute/verify. Neither a
+        // conversational path skips plan/execute/witness/verify. Neither a
         // class nor a chat signal means the response is unparseable: fall
         // through to the deterministic floor exactly as before.
         None if conversational => TaskClass::SimpleLookup,
