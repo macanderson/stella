@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.5.61] — 2026-07-27
+
 ## [0.5.60] — 2026-07-27
 
 - `--model` now actually pins the model on the pipeline path. A configured
