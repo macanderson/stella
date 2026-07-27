@@ -111,13 +111,16 @@ impl<'a> Pipeline<'a> {
     pub(super) async fn witness_stage(
         &self,
         goal: &str,
-        frames: &[RecalledFrame],
-        author: &ResolvedRole<'a>,
+        authoring: WitnessAuthoring<'_>,
         baseline: CandidateSurface<'_>,
         candidate: CandidateSurface<'_>,
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<Option<Witness>, WitnessAbort> {
+        // `port` is deliberately not used here: the caller has already spent it
+        // to make `baseline`, and a second snapshot from inside this stage would
+        // be a tree nothing is proved against.
+        let WitnessAuthoring { author, frames, .. } = authoring;
         self.emit(AgentEvent::Stage {
             name: StageKind::Witness,
         });
@@ -322,15 +325,7 @@ impl<'a> Pipeline<'a> {
             workspace: Some(baseline.as_ref()),
         };
         let authored = self
-            .witness_stage(
-                goal,
-                authoring.frames,
-                authoring.author,
-                baseline_surface,
-                surface,
-                budget,
-                total,
-            )
+            .witness_stage(goal, authoring, baseline_surface, surface, budget, total)
             .await;
         baseline.remove().await;
 
