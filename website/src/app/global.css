@@ -1,26 +1,27 @@
 /**
  * Stella CLI docs — styles.
  *
- * Brand system: "gold on deep navy — a star against night sky." This site used
- * to be deliberately hueless ("paper & ink, no accent colour"), which was the
- * right call while the repo carried three rival palettes and a neutral site
- * refused to arbitrate. That is settled now: docs/brand/tokens.json is the one
- * normative palette, and this file consumes it.
+ * Brand system: "bright sky on black — a signal light in the dark." This site
+ * used to be deliberately hueless ("paper & ink, no accent colour"), which was
+ * the right call while the repo carried three rival palettes and a neutral site
+ * refused to arbitrate. That is settled now: there is one normative palette,
+ * and this file consumes it.
  *
- * Values live in ./tokens.css, generated from docs/brand/tokens.json by
- * docs/brand/build.py. Do not add a hex literal here — add a token there. This
+ * Values live in ./tokens.css, which mirrors stella-tui/src/palette.rs. Do not
+ * add a hex literal here — add a token in both places. This
  * file is the *semantic* layer: it decides which token is foreground in which
  * mode, exactly as stella-tui's theme.rs sits over its generated palette.rs.
  *
- * Gold is asymmetric between the modes, and that is deliberate rather than an
- * oversight. Gold is 1.35:1 on white — a third of what body text needs — so on
- * the light ground it is never text: it appears only as a FILL under an ink
- * label (14.70:1), and light-mode accent text is ink. On the navy ground gold
- * is 14.40:1 and carries brand, active/running, and progress. `--stella-gold-ink`
- * (6.12:1 on paper) is the only warm *text* tone light mode may use.
+ * The sky accent is asymmetric between the modes, and that is deliberate
+ * rather than an oversight. It is 1.67:1 on white — well under what body text
+ * needs — so on the light ground it is never text: it appears only as a FILL
+ * under an ink label (11.87:1), and light-mode accent text is ink. On the black
+ * ground it is 12.60:1 and carries brand, active/running, and progress.
+ * `--stella-sky-ink` (9.45:1 on paper) is the only brand *text* tone light mode
+ * may use.
  *
- * Gold is also reserved: brand, active, progress. Not a general-purpose
- * highlight — if everything is gold, nothing is.
+ * The accent is also reserved: brand, active, progress. Not a general-purpose
+ * highlight — if everything is blue, nothing is.
  *
  * Semantic reservation: info/warn/error/success callouts keep Fumadocs' default
  * blue/amber/red/green (from the imported neutral/preset css). Those are
@@ -44,16 +45,17 @@
 :root {
   /* Mode-aware "accent" that COMPONENTS reference (icons, diagram strokes,
    * prompt, brand headline word, marks). RULE 1: on paper this is ink, never
-   * gold — gold is 1.35:1 on white. The `.dark` block lifts it to the brand
-   * gold, where it is 14.40:1. One token flips every mark with the theme. */
+   * the accent — sky is 1.67:1 on white. The `.dark` block lifts it to the
+   * brand sky, where it is 12.60:1. One token flips every mark with the
+   * theme. */
   --stella-accent: var(--stella-ink);
   --stella-accent-fill: var(--stella-ink); /* solid fill (CTA) — inverted label */
   --stella-accent-muted: var(--stella-muted); /* quieter mark tone, 6.13:1 */
 
-  /* Legacy aurora aliases. Only --stella-azure is still consumed (diagrams.tsx);
-   * it is repointed at the mode-aware accent so diagrams keep inverting with
-   * the theme. The others (--stella-amber/-cyan/-violet/-azure-deep/-ice) named
-   * a palette that no longer exists and had no consumers left, so they are
+  /* Legacy alias. Only --stella-azure is still consumed (diagrams.tsx); it is
+   * repointed at the mode-aware accent so diagrams keep inverting with the
+   * theme. Its siblings (--stella-amber/-cyan/-violet/-azure-deep/-ice) named a
+   * palette that no longer exists and had no consumers left, so they were
    * retired rather than repointed — a dead alias pointing somewhere plausible is
    * how the last palette drifted. */
   --stella-azure: var(--stella-accent);
@@ -63,8 +65,8 @@
   --stella-cta-fg: var(--stella-paper);
   --stella-cta-bg-hover: #383838;
 
-  /* Light mode — paper ground, ink type. Accent text is ink; gold appears here
-   * only as a fill with an ink label on it. */
+  /* Light mode — paper ground, ink type. Accent text is ink; the sky accent
+   * appears here only as a fill with an ink label on it. */
   --color-fd-background: var(--stella-paper);
   --color-fd-foreground: var(--stella-ink);
   --color-fd-muted: #fafafa;
@@ -84,24 +86,24 @@
 }
 
 .dark {
-  /* Dark mode — deep navy ground (not black), gold accent. This is where the
-   * brand hue lives: gold is 14.40:1 on the ground and carries brand, active,
-   * and progress. Links stay text-primary (17.12:1) rather than gold, because
-   * a page of gold links would make gold a general-purpose highlight. */
-  --stella-accent: var(--stella-gold);
-  --stella-accent-fill: var(--stella-gold);
-  --stella-accent-muted: var(--stella-text-secondary); /* 7.60:1 on ground */
+  /* Dark mode — true black ground, bright sky accent. This is where the brand
+   * hue lives: sky is 12.60:1 on the ground and carries brand, active, and
+   * progress. Links stay text-primary (19.40:1) rather than sky, because a page
+   * of sky links would make the accent a general-purpose highlight. */
+  --stella-accent: var(--stella-sky);
+  --stella-accent-fill: var(--stella-sky);
+  --stella-accent-muted: var(--stella-text-secondary); /* 8.50:1 on ground */
 
-  /* The CTA is the one place gold fills on the dark side too — an ink label on
-   * a gold fill reads 14.70:1 in both modes. */
-  --stella-cta-bg: var(--stella-gold);
+  /* The CTA is the one place the accent fills on the dark side too — an ink
+   * label on a sky fill reads 11.87:1 in both modes. */
+  --stella-cta-bg: var(--stella-sky);
   --stella-cta-fg: var(--stella-ink);
-  --stella-cta-bg-hover: var(--stella-gold-deep);
+  --stella-cta-bg-hover: var(--stella-sky-deep);
 
   --color-fd-background: var(--stella-ground);
   --color-fd-foreground: var(--stella-text-primary);
   --color-fd-muted: var(--stella-surface);
-  --color-fd-muted-foreground: var(--stella-text-secondary); /* 7.60:1 */
+  --color-fd-muted-foreground: var(--stella-text-secondary); /* 8.50:1 */
   --color-fd-card: var(--stella-surface);
   --color-fd-card-foreground: var(--stella-text-primary);
   --color-fd-popover: var(--stella-surface);
@@ -109,11 +111,11 @@
   --color-fd-border: var(--stella-hairline); /* decorative only — never the sole cue */
   --color-fd-accent: var(--stella-raised); /* hover/selected — lifted above card */
   --color-fd-accent-foreground: var(--stella-text-primary);
-  --color-fd-primary: var(--stella-text-primary); /* links/active, 17.12:1 */
+  --color-fd-primary: var(--stella-text-primary); /* links/active, 19.40:1 */
   --color-fd-primary-foreground: var(--stella-ground); /* text on a light fill */
   --color-fd-secondary: var(--stella-raised);
   --color-fd-secondary-foreground: var(--stella-text-primary);
-  --color-fd-ring: var(--stella-gold); /* focus ring — gold, 14.40:1 */
+  --color-fd-ring: var(--stella-sky); /* focus ring — sky, 12.60:1 */
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
@@ -443,9 +445,9 @@
   }
 }
 
-/* The mark carries the brand hue (rule 4): gold on the navy ground, ink on
+/* The mark carries the brand hue (rule 4): sky on the black ground, ink on
  * paper. It rides --stella-accent rather than the foreground so it inverts with
- * the theme — gold is 1.35:1 on white and can never be the light-mode mark. */
+ * the theme — sky is 1.67:1 on white and can never be the light-mode mark. */
 .lp-mark {
   color: var(--stella-accent);
 }
@@ -469,7 +471,7 @@
   --deck-ok: var(--stella-success-ink); /* done — 5.76:1 on paper */
   --deck-warn: var(--stella-warning-ink); /* needs input — 5.49:1 on paper */
   --deck-bad: var(--stella-danger-ink); /* failed — 5.88:1 on paper */
-  --deck-run: var(--stella-accent); /* running — ink on paper; RULE 1, never gold */
+  --deck-run: var(--stella-accent); /* running — ink on paper; RULE 1 */
   --deck-queued: var(--stella-muted); /* queued — 6.13:1 on paper */
 }
 

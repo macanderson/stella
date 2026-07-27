@@ -250,6 +250,43 @@ pub(crate) fn push_note_block(
     }
 }
 
+/// Emit a section rule: a hairline across the pane with a label set into it.
+///
+/// This is what a *stage* renders as. A stage is not an event — nothing
+/// happened at it — it is the boundary between two kinds of work, and a
+/// boundary should look like a boundary. Rendered as one more note row
+/// (`◇ stage  execute`) it competed for attention with the events on either
+/// side of it while carrying a fraction of their information, and a transcript
+/// with four of them in twenty rows reads as noise. As a rule it recedes until
+/// you are scrolling for it — which is the only time a phase marker is useful.
+///
+/// The label is upper-cased because a rule is chrome, and upper-case is how
+/// this deck already distinguishes chrome from content (see the statline).
+pub(crate) fn push_rule(
+    label: &str,
+    label_style: Style,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    let hair = Style::new().fg(theme::HAIRLINE);
+    let text = label.to_uppercase();
+    // `── ` + label + ` ` — the lead is fixed so successive rules stack into a
+    // straight left edge, and only the trailing fill is elastic.
+    const LEAD_RULE: &str = "── ";
+    let used = UnicodeWidthStr::width(LEAD_RULE) + UnicodeWidthStr::width(text.as_str()) + 1;
+    let mut spans = vec![
+        Span::styled(LEAD_RULE, hair),
+        Span::styled(text, label_style),
+        Span::styled(" ", hair),
+    ];
+    // A pane too narrow for any trailing fill still gets the lead and label;
+    // the rule simply stops being a rule and becomes a heading.
+    if width > used {
+        spans.push(Span::styled("─".repeat(width - used), hair));
+    }
+    out.push(Line::from(spans));
+}
+
 /// Emit a blank spacer row.
 ///
 /// Rhythm is what turns a wall of rows into a readable page, but a blank line

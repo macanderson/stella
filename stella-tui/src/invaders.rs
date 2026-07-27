@@ -301,7 +301,7 @@ pub fn render(t_abs: f32, area: Rect, buf: &mut Buffer) {
     // The fleet, minus anyone already shot down this loop, legs alternating
     // every 0.4s. Rows shade bottom-to-top so depth reads at a glance.
     let frame = &INVADER_FRAMES[((t / 0.4) as usize) % 2];
-    let row_colors = [theme::WARNING_BRIGHT, theme::AGENT_ICE, theme::ACCENT_DEEP];
+    let row_colors = [theme::WARNING_BRIGHT, theme::TEAL, theme::ACCENT_DEEP];
     for row in 0..rows {
         for col in 0..cols {
             let dead = shots

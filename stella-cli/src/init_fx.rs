@@ -1,5 +1,5 @@
 //! The `stella init` cinematic — a tiny terminal animation that plays while
-//! the workspace is being indexed: a gold starfield drifting by, crossed by
+//! the workspace is being indexed: a sky-blue starfield drifting by, crossed by
 //! stella's mascot-grade absurdity, a turtle on a jetpack skateboard.
 //!
 //! Rendering discipline mirrors the deck's fx rules:
@@ -15,12 +15,12 @@
 //!   `NO_COLOR` → no animation, no cursor control; log lines print plainly,
 //!   exactly as before.
 //!
-//! Colors come from the brand palette (docs/brand/tokens.json) and are
-//! enforced by this module's tests: the two star/flame inks are the `gold-deep`
-//! and `gold` brand tokens, and the shell takes the deck's categorical violet.
-//! This module used to carry its own retained gold/amber palette that predated
-//! the aurora-on-navy restyle; the palette is now gold everywhere, so the
-//! cinematic and the deck finally agree instead of merely coinciding.
+//! Colors come from the brand palette (stella-tui/src/palette.rs) and are
+//! enforced by this module's tests: the two star/flame inks are the `SKY_DEEP`
+//! and `SKY` brand tokens, and the shell takes the deck's categorical violet.
+//! This module used to carry a private palette of its own that tracked nothing;
+//! it now takes the brand tokens directly, so the cinematic and the deck agree
+//! by construction instead of merely coinciding.
 
 use std::io::{IsTerminal, Write};
 
@@ -163,11 +163,11 @@ fn truncate_width(row: &mut String, width: usize) {
 /// palette-law test must check the *choice*, not the escape bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ink {
-    /// Deep gold — jetpack flames and the skateboard deck.
+    /// Deep sky — jetpack flames and the skateboard deck.
     Flame,
     /// Muted — the dimmer twinkle of a star.
     Star,
-    /// Brand gold — the brighter twinkle of a star.
+    /// Brand sky — the brighter twinkle of a star.
     StarBright,
     /// Violet — the turtle's shell linework. Categorical, not brand.
     Shell,
@@ -181,11 +181,11 @@ impl Ink {
     /// The truecolor RGB this ink renders as, or `None` for dim/plain.
     fn rgb(self) -> Option<(u8, u8, u8)> {
         match self {
-            // gold-deep, text-tertiary, gold, and the deck's categorical
-            // violet — see docs/brand/tokens.json.
-            Ink::Flame => Some((0xE0, 0xB8, 0x00)),
-            Ink::Star => Some((0x6B, 0x7C, 0x99)),
-            Ink::StarBright => Some((0xFF, 0xDD, 0x00)),
+            // sky-deep, text-tertiary, sky, and the deck's categorical
+            // violet — see stella-tui/src/palette.rs.
+            Ink::Flame => Some((0x38, 0xBD, 0xF8)),
+            Ink::Star => Some((0x6C, 0x7B, 0x90)),
+            Ink::StarBright => Some((0x7D, 0xD3, 0xFC)),
             Ink::Shell => Some((0xA7, 0x8B, 0xFA)),
             Ink::Dim | Ink::Plain => None,
         }
@@ -207,8 +207,8 @@ fn ink_for(ch: char, is_caption: bool) -> Ink {
     }
 }
 
-/// Colorize one plain row for display: flames gold, shell violet, stars
-/// alternating gold/dim, everything else muted. Row-level heuristics keep
+/// Colorize one plain row for display: flames sky, shell violet, stars
+/// alternating sky/dim, everything else muted. Row-level heuristics keep
 /// this trivially safe — a colored row is never structurally different from
 /// its plain form.
 fn paint(row: &str, is_caption: bool) -> String {
@@ -417,14 +417,14 @@ mod tests {
     }
 
     #[test]
-    fn palette_law_no_cyan_and_only_brand_inks() {
+    fn palette_law_only_brand_inks() {
         // The palette law is about the color *chosen*, not the escape bytes
         // rendered: a 16-color terminal downgrades our truecolor palette, and
         // the (on-brand, deliberately kept) violet shell is blue-dominant in
         // RGB, so it renders as a 16-color *blue* there — which is fine. What
-        // must never happen: a glyph mapped to CYAN, or to any ink outside the
-        // brand set. Asserting the pure `ink_for` choice is terminal-agnostic
-        // and never flakes on `colored`'s global rendering state.
+        // must never happen: a glyph mapped to an ink outside the brand set.
+        // Asserting the pure `ink_for` choice is terminal-agnostic and never
+        // flakes on `colored`'s global rendering state.
         let allowed = [
             Ink::Flame,
             Ink::Star,
@@ -445,24 +445,17 @@ mod tests {
                 }
             }
         }
-        // No ink is cyan (low red, high green AND blue). Violet
-        // (blue-dominant but red ≈ green) is explicitly allowed.
-        for ink in [Ink::Flame, Ink::Star, Ink::StarBright, Ink::Shell] {
-            let (r, g, b) = ink.rgb().expect("colored inks carry rgb");
-            let is_cyan = r < 0x60 && g > 0xA0 && b > 0xA0;
-            assert!(!is_cyan, "{ink:?} ({r:#04x},{g:#04x},{b:#04x}) is cyan");
-        }
         // The cinematic's two brand inks are the brand tokens themselves, not
-        // a look-alike gold that drifted. These are `gold` and `gold-deep` from
-        // docs/brand/tokens.json; if that file changes, this fails and points
+        // a look-alike blue that drifted. These are `SKY` and `SKY_DEEP` from
+        // stella-tui/src/palette.rs; if that file changes, this fails and points
         // at the copy that needs regenerating.
-        assert_eq!(Ink::StarBright.rgb(), Some((0xFF, 0xDD, 0x00)), "gold");
-        assert_eq!(Ink::Flame.rgb(), Some((0xE0, 0xB8, 0x00)), "gold-deep");
-        // And the star/flame pair stays warm — red-dominant, blue-poor — so the
-        // cinematic can never drift back to a cool accent while still passing.
+        assert_eq!(Ink::StarBright.rgb(), Some((0x7D, 0xD3, 0xFC)), "sky");
+        assert_eq!(Ink::Flame.rgb(), Some((0x38, 0xBD, 0xF8)), "sky-deep");
+        // And the star/flame pair stays cool — blue-dominant — so the cinematic
+        // can never drift back to the retired warm accent while still passing.
         for ink in [Ink::Flame, Ink::StarBright] {
             let (r, g, b) = ink.rgb().expect("colored inks carry rgb");
-            assert!(r > b && g > b, "{ink:?} must read warm, not cool");
+            assert!(b > r && b > g, "{ink:?} must read cool, not warm");
         }
     }
 

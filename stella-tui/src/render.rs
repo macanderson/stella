@@ -28,18 +28,20 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
-use stella_protocol::{CiStatus, FileChangeKind, PrStatus};
+use stella_protocol::FileChangeKind;
 
 use crate::composer::{ComposerLayout, SlashMenu, layout as composer_layout, split_row_at};
-use crate::model::{AskUserPrompt, FileState, Hud, InlineDiffRef, SessionModel, TranscriptEntry};
-use crate::textline::{
-    self, budget_mode_label, ci_status_label, media_kind_label, media_state_label, pr_status_label,
-    stage_label,
-};
+use crate::model::{AskUserPrompt, FileState, Hud, InlineDiffRef, SessionModel};
+use crate::textline::{self, budget_mode_label, stage_label};
 use crate::ui::{PanelFocus, UiState, ViewportMetrics};
 
+mod entry;
 mod row;
 use crate::{diff, theme};
+// The transcript content builders moved to `entry` when this file crossed the
+// 1500-line guard; re-exported so `crate::render::transcript_lines` and
+// `::entry_lines` still resolve for `ui.rs` and `deck_ui.rs`.
+pub(crate) use entry::{entry_lines, transcript_lines};
 pub(crate) use row::*;
 
 /// Draw the whole TUI for one frame. Records the panels' viewport sizes back
@@ -271,50 +273,66 @@ fn error_card(area: Rect, label: &str, message: &str) -> Buffer {
     let mut buf = Buffer::empty(area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(Color::Red))
+        .border_style(Style::new().fg(theme::DANGER))
         .title(format!(" ⚠ panel '{label}' panicked "));
     let body = format!("{message}\n\nthe rest of the TUI is still running");
     Paragraph::new(body)
         .block(block)
         .wrap(Wrap { trim: true })
-        .style(Style::new().fg(Color::Red).add_modifier(Modifier::BOLD))
+        .style(Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD))
         .render(area, &mut buf);
     buf
 }
 
 // Panels
 
+/// The session HUD strip: stage, model, and the live cost of the turn.
+///
+/// Cost here reads *per turn*, matching the composer's cell and the `✓ cost`
+/// line — it used to print `hud.spent_usd` raw, which on the deck is the
+/// session-cumulative gauge, so the "spend" in this box, the SPEND cell in the
+/// statline, and the `◇ spend` rows in the transcript were three different
+/// renderings of two different quantities under one word.
 pub(crate) fn render_hud(hud: &Hud, area: Rect, buf: &mut Buffer) {
+    let label = Style::new().fg(theme::TEXT_TERTIARY);
     let mut spans: Vec<Span<'static>> = vec![
-        Span::styled("stage: ", Style::new().fg(theme::MUTED)),
+        Span::styled("stage ", label),
         Span::styled(
             hud.stage.map(stage_label).unwrap_or("—").to_string(),
             Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ),
-        Span::raw("   "),
-        Span::styled("model: ", Style::new().fg(Color::DarkGray)),
-        Span::raw(hud.model.clone().unwrap_or_else(|| "—".to_string())),
-        Span::raw("   "),
-        Span::styled("spend: ", Style::new().fg(Color::DarkGray)),
+        Span::styled("   model ", label),
         Span::styled(
-            textline::spend_amount(hud.spent_usd, hud.limit_usd),
-            Style::new().fg(spend_color(hud)),
+            hud.model.clone().unwrap_or_else(|| "—".to_string()),
+            Style::new().fg(theme::INK),
+        ),
+        Span::styled("   turn ", label),
+        Span::styled(
+            textline::fmt_cost(hud.turn_spent_usd()),
+            Style::new()
+                .fg(spend_color(hud))
+                .add_modifier(Modifier::BOLD),
         ),
     ];
+    if let Some(limit) = hud.limit_usd {
+        spans.push(Span::styled(format!(" / ${limit:.2}"), label));
+    }
     if let Some(mode) = hud.budget_mode {
         spans.push(Span::styled(
-            format!(" ({})", budget_mode_label(mode)),
-            Style::new().fg(Color::DarkGray),
+            format!("  ·  {}", budget_mode_label(mode)),
+            label,
         ));
     }
     if hud.complete {
-        spans.push(Span::raw("   "));
         spans.push(Span::styled(
-            "✓ complete",
-            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
+            "   ✓ complete",
+            Style::new().fg(theme::OK).add_modifier(Modifier::BOLD),
         ));
     }
-    let block = Block::default().borders(Borders::ALL).title(" stella ");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::rule())
+        .title(" stella ");
     Paragraph::new(Line::from(spans))
         .block(block)
         .render(area, buf);
@@ -357,12 +375,15 @@ pub(crate) fn render_transcript_window(
             window.end.min(total)
         )
     };
-    let mut block = Block::default().borders(Borders::ALL).title(title);
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::rule())
+        .title(title);
     if let Some(hint) = hint {
         block = block.title_bottom(
             Line::from(Span::styled(
                 format!(" {hint} "),
-                Style::new().fg(Color::DarkGray),
+                Style::new().fg(theme::TEXT_TERTIARY),
             ))
             .right_aligned(),
         );
@@ -382,11 +403,14 @@ fn render_files(
     buf: &mut Buffer,
 ) {
     let title = format!(" files touched · {} ", files.len());
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::rule())
+        .title(title);
     let lines: Vec<Line<'static>> = if files.is_empty() {
         vec![Line::from(Span::styled(
             "no files touched yet",
-            Style::new().fg(Color::DarkGray),
+            Style::new().fg(theme::TEXT_TERTIARY),
         ))]
     } else {
         files
@@ -449,37 +473,42 @@ pub(crate) fn render_scope_review(
             proposal.steps.len(),
             proposal.estimated_files
         ),
-        Style::new().fg(Color::DarkGray),
+        Style::new().fg(theme::TEXT_TERTIARY),
     )));
     lines.push(if answered {
         Line::from(Span::styled(
             "decision sent — awaiting engine…",
             Style::new()
-                .fg(Color::DarkGray)
+                .fg(theme::TEXT_TERTIARY)
                 .add_modifier(Modifier::ITALIC),
         ))
     } else {
         Line::from(vec![
             Span::styled(
                 "[a]",
-                Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::OK).add_modifier(Modifier::BOLD),
             ),
-            Span::raw("pprove  "),
+            Span::styled("pprove  ", Style::new().fg(theme::INK)),
             Span::styled(
                 "[t]",
-                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::WARN).add_modifier(Modifier::BOLD),
             ),
-            Span::raw("rim  "),
+            Span::styled("rim  ", Style::new().fg(theme::INK)),
             Span::styled(
                 "[x]",
-                Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD),
             ),
-            Span::raw("abort"),
+            Span::styled("abort", Style::new().fg(theme::INK)),
         ])
     });
+    // Warning, not the accent. A scope gate is the deck waiting on *you*, and
+    // "needs input" is a warning everywhere else in this UI — including the
+    // `⏸ scope` row this card mirrors in the transcript. Bordering it in the
+    // brand hue made the one card that halts the session read as decoration,
+    // and it was the single largest block of accent on the frame.
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(Color::Cyan))
+        .border_style(Style::new().fg(theme::WARNING_BRIGHT))
         .title(" scope review ");
     Paragraph::new(Text::from(lines))
         .block(block)
@@ -505,7 +534,7 @@ pub(crate) fn render_ask_user(
                 format!("  {}. ", i + 1),
                 Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
             ),
-            Span::raw(option.clone()),
+            Span::styled(option.clone(), Style::new().fg(theme::INK)),
         ]));
     }
     // BINDING: always exactly one additional free-text affordance, on every
@@ -514,13 +543,13 @@ pub(crate) fn render_ask_user(
         Line::from(Span::styled(
             "answer sent — awaiting engine…",
             Style::new()
-                .fg(Color::DarkGray)
+                .fg(theme::TEXT_TERTIARY)
                 .add_modifier(Modifier::ITALIC),
         ))
     } else {
         Line::from(Span::styled(
             "  or type your own answer, then Enter",
-            Style::new().fg(Color::Green).add_modifier(Modifier::ITALIC),
+            Style::new().fg(theme::OK).add_modifier(Modifier::ITALIC),
         ))
     });
     let block = Block::default()
@@ -639,13 +668,11 @@ fn render_composer(
     buf: &mut Buffer,
 ) {
     let accent = Style::new().fg(if focused {
-        Color::Green
+        theme::OK
     } else {
-        Color::DarkGray
+        theme::TEXT_TERTIARY
     });
-    let cursor_style = Style::new()
-        .fg(Color::Green)
-        .add_modifier(Modifier::REVERSED);
+    let cursor_style = Style::new().fg(theme::OK).add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     if blank {
         // Empty composer: the cursor block plus a key hint matched to the
@@ -660,7 +687,7 @@ fn render_composer(
             spans.push(Span::styled(" ", cursor_style));
             spans.push(Span::raw(" "));
         }
-        spans.push(Span::styled(hint, Style::new().fg(Color::DarkGray)));
+        spans.push(Span::styled(hint, Style::new().fg(theme::TEXT_TERTIARY)));
         lines.push(Line::from(spans));
     } else {
         let visible = inner_height(area).max(1);
@@ -671,19 +698,22 @@ fn render_composer(
             let mut spans = vec![Span::styled(prefix, accent)];
             if focused && i == layout.cursor_row {
                 let (before, under, after) = split_row_at(row, layout.cursor_col);
-                spans.push(Span::raw(before));
+                spans.push(Span::styled(before, Style::new().fg(theme::INK)));
                 spans.push(Span::styled(
                     under.map(String::from).unwrap_or_else(|| " ".into()),
                     cursor_style,
                 ));
-                spans.push(Span::raw(after));
+                spans.push(Span::styled(after, Style::new().fg(theme::INK)));
             } else {
-                spans.push(Span::raw(row.clone()));
+                spans.push(Span::styled(row.clone(), Style::new().fg(theme::INK)));
             }
             lines.push(Line::from(spans));
         }
     }
-    let block = Block::default().borders(Borders::ALL).title(" prompt ");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::rule())
+        .title(" prompt ");
     Paragraph::new(Text::from(lines))
         .block(block)
         .render(area, buf);
@@ -718,657 +748,12 @@ fn resolve_inline_diff<'a>(dref: &InlineDiffRef, files: &'a [FileState]) -> Opti
         .and_then(|f| f.diff_at(dref.seq))
 }
 
-// Pure content builders (unit-tested directly)
-
-/// The full visual-line list for the transcript. Each entry is rendered with
-/// per-entry wrapping so continuation lines respect the label column. An
-/// in-flight streaming preview (`SessionModel::streaming_text`) renders as a
-/// live trailing agent entry — it is not a transcript entry, so the
-/// authoritative `Text` event replaces it without leaving a duplicate row.
-pub(crate) fn transcript_lines(
-    model: &SessionModel,
-    expand_thinking: bool,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let mut out = Vec::new();
-    for entry in &model.transcript {
-        entry_lines(
-            entry,
-            &model.files,
-            expand_thinking,
-            expand_thinking,
-            width,
-            &mut out,
-        );
-    }
-    if !model.streaming_text.is_empty() {
-        let preview = TranscriptEntry::Text(model.streaming_text.clone());
-        entry_lines(
-            &preview,
-            &model.files,
-            expand_thinking,
-            expand_thinking,
-            width,
-            &mut out,
-        );
-    }
-    out
-}
-
-/// Whether an entry closes a readable block, and so is followed by a spacer.
-///
-/// Trailing rather than leading, which is what lets the rhythm stay
-/// entry-local: a leading gap would have to know what preceded it, and the
-/// deck's incremental fold renders each entry in isolation. Two entries are
-/// deliberately *not* block-closing — a [`TranscriptEntry::ToolStart`], whose
-/// result belongs directly beneath it, and [`TranscriptEntry::Evicted`], the
-/// one-line note that opens the scrollback. A consequence worth keeping: a
-/// batch of parallel `ToolStart`s renders as a tight block, which is exactly
-/// how a fan-out should read.
-fn closes_block(entry: &TranscriptEntry) -> bool {
-    !matches!(
-        entry,
-        TranscriptEntry::ToolStart { .. } | TranscriptEntry::Evicted { .. }
-    )
-}
-
-pub(crate) fn entry_lines(
-    entry: &TranscriptEntry,
-    files: &[FileState],
-    expand_thinking: bool,
-    expanded: bool,
-    width: usize,
-    out: &mut Vec<Line<'static>>,
-) {
-    entry_body(entry, files, expand_thinking, expanded, width, out);
-    if closes_block(entry) {
-        push_gap(out);
-    }
-}
-
-fn entry_body(
-    entry: &TranscriptEntry,
-    files: &[FileState],
-    expand_thinking: bool,
-    expanded: bool,
-    width: usize,
-    out: &mut Vec<Line<'static>>,
-) {
-    match entry {
-        TranscriptEntry::Evicted { count } => out.push(Line::from(Span::styled(
-            format!("… {count} earlier entries evicted"),
-            Style::new()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        ))),
-        TranscriptEntry::User(text) => {
-            // The one transcript entry rendered in a single color end to end:
-            // the `[user]:` tag and every line of the prompt ride the same
-            // violet as the composer's keybind glyphs and the
-            // "deterministic-first" chip (`deck_render`) — the interactive-
-            // chrome accent, never the brand gold. Rendered as plain lines
-            // (not markdown) so nothing tints part of the prompt a 2nd color.
-            let violet = Style::new().fg(theme::VIOLET);
-            let lines: Vec<Line<'static>> = text
-                .split('\n')
-                .map(|l| Line::from(Span::styled(l.to_owned(), violet)))
-                .collect();
-            push_row_block(Rail::User, lines, width, out);
-        }
-        TranscriptEntry::Stage(name) => {
-            let style = Style::new()
-                .fg(theme::ACCENT_DEEP)
-                .add_modifier(Modifier::BOLD);
-            push_note(
-                "◇ stage",
-                style,
-                vec![Span::styled(stage_label(*name), style)],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::Text(text) => {
-            push_row_block(Rail::Agent, crate::markdown::render(text), width, out);
-        }
-        TranscriptEntry::Reasoning(text) => {
-            let total_lines = text.lines().count().max(1);
-            let show_all = expand_thinking || expanded;
-            let chevron = if show_all { "⏶" } else { "⏵" };
-            let header_style = Style::new().fg(theme::AGENT_ICE);
-            let reasoning_style = Style::new()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC);
-            let mut block = vec![Line::from(Span::styled(
-                format!("{total_lines} lines"),
-                header_style,
-            ))];
-            if show_all {
-                for l in text.split('\n') {
-                    block.push(Line::from(Span::styled(l.to_owned(), reasoning_style)));
-                }
-            } else {
-                let preview_count = 3;
-                let mut shown = 0;
-                for l in text.lines() {
-                    if shown >= preview_count {
-                        break;
-                    }
-                    if !l.trim().is_empty() {
-                        block.push(Line::from(Span::styled(l.to_owned(), reasoning_style)));
-                        shown += 1;
-                    }
-                }
-                if total_lines > preview_count {
-                    block.push(Line::from(Span::styled(
-                        "⋯ ctrl+o expands this thought · ctrl+r all",
-                        Style::new().fg(Color::DarkGray),
-                    )));
-                }
-            }
-            push_note_block(
-                &format!("{chevron} thinking"),
-                header_style,
-                block,
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::ToolStart {
-            name,
-            input,
-            raw,
-            path,
-            ..
-        } => {
-            // `name` then `argument`, the name soft-padded to a common column
-            // so arguments line up across a run of calls. Soft, not hard: a
-            // long MCP name (`mcp__github__create_pull_request`) overruns the
-            // column rather than being truncated, since the tool's identity
-            // outranks the alignment it would cost.
-            let mut left = vec![Span::styled(
-                pad_name(name),
-                Style::new()
-                    .fg(theme::ACCENT_DEEP)
-                    .add_modifier(Modifier::BOLD),
-            )];
-            left.extend(path_spans(input, path.is_some()));
-            push_row(Rail::Call, left, width, out);
-            if expanded {
-                // ctrl+o: the full argument object, pretty-printed and dim.
-                // An over-budget argument may not parse (char-capped raw) —
-                // show it wrapped rather than clipped at the pane edge.
-                let pretty = serde_json::from_str::<serde_json::Value>(raw)
-                    .and_then(|v| serde_json::to_string_pretty(&v))
-                    .unwrap_or_else(|_| raw.clone());
-                for l in pretty.lines() {
-                    push_detail_line(l, width, out);
-                }
-            }
-        }
-        TranscriptEntry::ToolResult {
-            ok,
-            full,
-            duration_ms,
-            speculated,
-            diff,
-            ..
-        } => {
-            let rail = if *ok { Rail::Result } else { Rail::Fail };
-            let dim = Style::new().fg(theme::MUTED);
-            let total = full.lines().count();
-            // ⚡ marks a speculated result: the duration overlapped the
-            // model's own streaming instead of following it.
-            let dur = if *speculated {
-                format!("⚡{}", human_duration(*duration_ms))
-            } else {
-                human_duration(*duration_ms)
-            };
-            let inline = diff.as_ref().and_then(|d| resolve_inline_diff(d, files));
-
-            // The right-hand metric column. A diff states its own size in
-            // added/removed lines, which is the honest unit for an edit —
-            // "42 lines of output" would describe the tool's chatter, not the
-            // change. Everything else reports output size, and only when
-            // there is more than the one line already shown.
-            let mut metric: Vec<Span<'static>> = Vec::new();
-            if let Some(d) = inline {
-                let (added, removed) = diff::count_diff_lines(d);
-                metric.push(Span::styled(
-                    format!("+{added}"),
-                    Style::new().fg(theme::OK),
-                ));
-                metric.push(Span::styled(" ".to_string(), dim));
-                metric.push(Span::styled(
-                    format!("−{removed}"),
-                    Style::new().fg(theme::BAD),
-                ));
-                metric.push(Span::styled(" · ".to_string(), dim));
-            } else if total > 1 && !expanded {
-                // `⋯` is the one glyph this UI uses for "there is more behind
-                // this", so it carries the ctrl+o affordance the removed hint
-                // row used to spell out — at no extra row.
-                metric.push(Span::styled(format!("⋯ {} · ", plural_lines(total)), dim));
-            }
-            metric.push(Span::styled(dur, dim));
-
-            if expanded {
-                push_row(
-                    rail,
-                    justify(vec![], metric, width, rail.indent()),
-                    width,
-                    out,
-                );
-                for l in full.lines() {
-                    push_detail_line(l, width, out);
-                }
-            } else {
-                // A failure never collapses to a single line. The whole point
-                // of reading a transcript at the moment something breaks is to
-                // see *why*, and a one-line preview of a stack trace is a
-                // prompt to go hunting rather than an answer.
-                // With a diff below, a prose summary ("Applied edit to
-                // src/agent.rs") would restate the call row above it and the
-                // diff under it in the same breath. The row carries only its
-                // metrics and gets out of the way.
-                let shown: Vec<&str> = if inline.is_some() {
-                    Vec::new()
-                } else {
-                    // A failure never collapses to a single line. The point of
-                    // reading a transcript at the moment something breaks is to
-                    // see *why*, and a one-line preview of a stack trace is a
-                    // prompt to go hunting rather than an answer.
-                    let budget = if *ok { 1 } else { FAIL_PREVIEW };
-                    full.lines().skip(salient_line(full)).take(budget).collect()
-                };
-                let head: Vec<Span<'static>> = match shown.first() {
-                    Some(l) => vec![Span::styled(
-                        l.trim_end().to_owned(),
-                        if *ok {
-                            dim
-                        } else {
-                            Style::new().fg(theme::BAD)
-                        },
-                    )],
-                    None => Vec::new(),
-                };
-                push_row(
-                    rail,
-                    justify(head, metric, width, rail.indent()),
-                    width,
-                    out,
-                );
-                for l in shown.iter().skip(1) {
-                    push_detail_line(l.trim_end(), width, out);
-                }
-                // Only a failure earns the "there is more" row: a successful
-                // result already states its size in the metric column, and
-                // saying it twice is how a dense layout turns back into a
-                // sparse one. Anchoring mid-output also means the count is
-                // "everything but the window", not "everything after it".
-                let hidden = total.saturating_sub(shown.len());
-                if hidden > 0 && !*ok {
-                    push_detail_line(&format!("⋯ {} · ctrl+o", plural_lines(hidden)), width, out);
-                }
-            }
-            // The mutation's diff, inline under the result — GitHub-PR style
-            // via `crate::diff` (the one implementation of "how a diff
-            // looks"), gated on freshness: a later mutation of the same path
-            // bumps `FileState::changes` past the recorded seq and the diff
-            // no longer belongs to this call, so it is hidden rather than
-            // misattributed. Collapsed shows at most [`INLINE_DIFF_CAP`]
-            // styled lines; ctrl+o reveals the whole diff.
-            if let (Some(dref), Some(d)) = (diff.as_ref(), inline) {
-                // No path header and no counts footer here, unlike the
-                // standalone viewer: the call row above already names the file
-                // and the metric column already states `+n −m`, so both rules
-                // would be the same facts a second time — four rows of chrome
-                // around what is often a two-row change.
-                let cap = if expanded {
-                    usize::MAX
-                } else {
-                    INLINE_DIFF_CAP
-                };
-                let (body, hidden) = diff::body_lines_inline(d, Some(&dref.path), cap);
-                for line in body {
-                    push_diff_line(line, out);
-                }
-                if hidden > 0 {
-                    push_diff_line(
-                        Line::from(Span::styled(
-                            format!("⋯ {} · ctrl+o", plural_lines(hidden)),
-                            Style::new().fg(theme::MUTED),
-                        )),
-                        out,
-                    );
-                }
-            }
-        }
-        TranscriptEntry::Retry { attempt, reason } => {
-            let style = Style::new().fg(theme::WARNING_BRIGHT);
-            push_note(
-                "↻ retry",
-                style,
-                vec![Span::styled(format!("#{attempt}: {reason}"), style)],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::Compaction {
-            before_tokens,
-            after_tokens,
-            evicted,
-            deduped,
-        } => {
-            let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_note(
-                "⇣ compacted",
-                style,
-                vec![Span::styled(
-                    format!(
-                        "{before_tokens}→{after_tokens} tok (evicted {evicted}, deduped {deduped})"
-                    ),
-                    style,
-                )],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::BudgetTick {
-            spent_usd,
-            limit_usd,
-            mode,
-        } => {
-            let limit = limit_usd.map(|l| format!("/${l:.2}")).unwrap_or_default();
-            let style = Style::new().fg(theme::WARNING);
-            push_note(
-                "◇ spend",
-                style,
-                vec![Span::styled(
-                    format!("${spent_usd:.4}{limit} ({})", budget_mode_label(*mode)),
-                    style,
-                )],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::ProviderFallback { from, to, reason } => {
-            let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_note(
-                "⚡ fallback",
-                style,
-                vec![Span::styled(format!("{from} → {to}: {reason}"), style)],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::ContextRecall {
-            frames,
-            tokens,
-            labels,
-        } => {
-            let cited = labels.join(", ");
-            let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_note(
-                "◉ recalled",
-                style,
-                vec![Span::styled(
-                    format!("{frames} frames ({tokens} tok): {cited}"),
-                    style,
-                )],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::ContextWrite {
-            provider,
-            upserts,
-            superseded,
-        } => {
-            let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_note(
-                "✎ memory",
-                style,
-                vec![Span::styled(
-                    format!("{upserts} facts ({superseded} superseded) → {provider}"),
-                    style,
-                )],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::MediaProgress {
-            artifact_id,
-            kind,
-            state,
-        } => {
-            let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_note(
-                "🎞 media",
-                style,
-                vec![Span::styled(
-                    format!(
-                        "{} {artifact_id}: {}",
-                        media_kind_label(*kind),
-                        media_state_label(state)
-                    ),
-                    style,
-                )],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::MediaComplete { label, path, kind } => {
-            let style = Style::new()
-                .fg(theme::ACCENT_DEEP)
-                .add_modifier(Modifier::BOLD);
-            push_note(
-                "🎨 media",
-                style,
-                vec![
-                    Span::styled(format!("{} {label} ", media_kind_label(*kind)), style),
-                    Span::styled(path.clone(), Style::new().fg(Color::DarkGray)),
-                ],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::JudgeVerdict {
-            passed,
-            summary,
-            deterministic,
-        } => {
-            let (glyph, color) = if *passed {
-                ("✓", theme::ACCENT)
-            } else {
-                ("✗", theme::DANGER)
-            };
-            let tag = if *deterministic {
-                "deterministic"
-            } else {
-                "model-judge"
-            };
-            push_note(
-                &format!("{glyph} verdict"),
-                Style::new().fg(color).add_modifier(Modifier::BOLD),
-                vec![
-                    Span::styled(format!("[{tag}] "), Style::new().fg(Color::DarkGray)),
-                    Span::raw(summary.clone()),
-                ],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::GoalVerdict {
-            met,
-            round,
-            reasoning,
-        } => {
-            let (glyph, color) = if *met {
-                ("✓", theme::OK)
-            } else {
-                ("○", theme::WARN)
-            };
-            push_note(
-                &format!("{glyph} goal"),
-                Style::new().fg(color).add_modifier(Modifier::BOLD),
-                vec![
-                    Span::styled(
-                        format!("[round {round}] "),
-                        Style::new().fg(Color::DarkGray),
-                    ),
-                    Span::raw(if *met {
-                        format!("goal met — {reasoning}")
-                    } else {
-                        format!("not yet met — {reasoning}")
-                    }),
-                ],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::ScopeReview {
-            summary,
-            steps,
-            estimated_files,
-        } => {
-            let style = Style::new()
-                .fg(theme::WARNING_BRIGHT)
-                .add_modifier(Modifier::BOLD);
-            push_note(
-                "⏸ scope",
-                style,
-                vec![Span::styled(
-                    format!("{summary} ({steps} steps, ~{estimated_files} files)"),
-                    style,
-                )],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::AskUser { question, options } => {
-            let style = Style::new()
-                .fg(theme::WARNING_BRIGHT)
-                .add_modifier(Modifier::BOLD);
-            push_note(
-                "? ask",
-                style,
-                vec![Span::styled(
-                    format!("{question} ({options} options + free text)"),
-                    style,
-                )],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::Commit { sha, message } => {
-            let short = sha.chars().take(9).collect::<String>();
-            let style = Style::new().fg(theme::ACCENT_DEEP);
-            push_note(
-                "● commit",
-                style,
-                vec![
-                    Span::styled(format!("{short} "), style),
-                    Span::raw(message.clone()),
-                ],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::Pr {
-            url,
-            status,
-            number,
-            ci,
-        } => {
-            let style = Style::new()
-                .fg(pr_status_color(*status))
-                .add_modifier(Modifier::BOLD);
-            let mut spans = vec![Span::styled(
-                format!("[{}] ", pr_status_label(*status)),
-                style,
-            )];
-            if let Some(n) = number {
-                spans.push(Span::styled(format!("#{n} "), style));
-            }
-            if let Some(ci) = ci {
-                spans.push(Span::styled(
-                    format!("ci {} ", ci_status_label(*ci)),
-                    Style::new().fg(ci_status_color(*ci)),
-                ));
-            }
-            spans.push(Span::styled(url.clone(), Style::new().fg(Color::DarkGray)));
-            push_note("⇢ pr", style, spans, width, out);
-        }
-        TranscriptEntry::TaskUpdate {
-            done,
-            total,
-            active,
-        } => {
-            let style = Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD);
-            let mut spans = vec![Span::styled(format!("{done}/{total}"), style)];
-            if let Some(subject) = active {
-                spans.push(Span::styled(
-                    format!(" · {subject}"),
-                    Style::new().fg(theme::TEXT_SECONDARY),
-                ));
-            }
-            push_note("☰ tasks", style, spans, width, out);
-        }
-        TranscriptEntry::Error { message, retryable } => {
-            let tag = if *retryable { " (retryable)" } else { "" };
-            let style = Style::new().fg(theme::DANGER).add_modifier(Modifier::BOLD);
-            push_note(
-                "✗ error",
-                style,
-                vec![Span::styled(format!("{message}{tag}"), style)],
-                width,
-                out,
-            );
-        }
-        TranscriptEntry::Complete { model, cost_usd } => {
-            // A quiet footnote, not an event — warning-orange keeps the cost
-            // in the warm family without borrowing the reserved brand gold.
-            let style = Style::new().fg(theme::WARNING);
-            push_note(
-                "◇ cost",
-                style,
-                vec![Span::styled(format!("${cost_usd:.4} · {model}"), style)],
-                width,
-                out,
-            );
-        }
-    }
-}
-
-fn pr_status_color(status: PrStatus) -> Color {
-    // A ramp toward the brand accent as the PR matures, so the `[⇢ pr]:`
-    // gutter reads with the rest of the transcript: warning-orange draft, deep
-    // gold while open, full gold on merge, danger on close. (The "ember"
-    // family this comment used to name was retired with the aurora→gold
-    // recolour — see `theme`'s palette-law test.)
-    match status {
-        PrStatus::Draft => theme::WARNING,
-        PrStatus::Open => theme::ACCENT_DEEP,
-        PrStatus::Merged => theme::ACCENT,
-        PrStatus::Closed => theme::DANGER,
-    }
-}
-
-fn ci_status_color(status: CiStatus) -> Color {
-    match status {
-        CiStatus::Pending => theme::TEXT_TERTIARY,
-        CiStatus::Running => theme::WARNING_BRIGHT,
-        CiStatus::Passing => theme::OK,
-        CiStatus::Failing => theme::BAD,
-    }
-}
-
 fn file_line(file: &FileState, selected: bool) -> Line<'static> {
     let (marker, color) = match file.kind {
-        FileChangeKind::Read => ("[r]", Color::DarkGray),
-        FileChangeKind::Created => ("[+]", Color::Green),
-        FileChangeKind::Modified => ("[~]", Color::Yellow),
-        FileChangeKind::Deleted => ("[-]", Color::Red),
+        FileChangeKind::Read => ("[r]", theme::TEXT_TERTIARY),
+        FileChangeKind::Created => ("[+]", theme::OK),
+        FileChangeKind::Modified => ("[~]", theme::WARN),
+        FileChangeKind::Deleted => ("[-]", theme::BAD),
     };
     let mut count = if file.changes > 1 {
         format!(" ({})", file.changes)
@@ -1390,11 +775,17 @@ fn file_line(file: &FileState, selected: bool) -> Line<'static> {
 
 // Labels — wording in `crate::textline`; only palette mapping lives here
 
+/// Cost tone: green until the turn approaches its budget, then warning, then
+/// danger. Compared against the *turn* figure, because `limit_usd` is the
+/// guard's per-turn limit — matching it against the session-cumulative gauge
+/// (as this did) meant the tone flipped to red partway through a session and
+/// stayed there regardless of what the turn in flight actually cost.
 fn spend_color(hud: &Hud) -> Color {
+    let spent = hud.turn_spent_usd();
     match hud.limit_usd {
-        Some(limit) if limit > 0.0 && hud.spent_usd >= limit => Color::Red,
-        Some(limit) if limit > 0.0 && hud.spent_usd >= limit * 0.8 => Color::Yellow,
-        _ => Color::Green,
+        Some(limit) if limit > 0.0 && spent >= limit => theme::BAD,
+        Some(limit) if limit > 0.0 && spent >= limit * 0.8 => theme::WARN,
+        _ => theme::OK,
     }
 }
 

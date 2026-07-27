@@ -262,23 +262,23 @@ fn render_dashboard(
 <title>Stella Session Telemetry — {watermark}</title>
 <style>
   :root {{
-    /* Brand palette — docs/brand/tokens.json. This export is a standalone
+    /* Brand palette — stella-tui/src/palette.rs. This export is a standalone
        file a user mails around, so the tokens are inlined rather than
-       imported; keep them in step with tokens.json. */
-    --bg: #080d1a;
-    --surface: #0f1729;
-    --raised: #172137;
-    --text: #edf1f8;
-    --text2: #94a3bc;
-    --text3: #6b7c99;
-    --gold: #ffdd00;
-    --gold-deep: #e0b800;
+       imported; keep them in step with palette.rs. */
+    --bg: #000000;
+    --surface: #0a0e14;
+    --raised: #141c26;
+    --text: #f3f6fa;
+    --text2: #98a6ba;
+    --text3: #6c7b90;
+    --sky: #7dd3fc;
+    --sky-deep: #38bdf8;
     --violet: #a78bfa;
     --azure: #4d9fff;
-    --success: #34d399;
-    --warn: #ff7a1a;
+    --success: #4ade80;
+    --warn: #ff8a1f;
     --danger: #ff5c7a;
-    --rule: #22304c;
+    --rule: #24313f;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
@@ -287,7 +287,7 @@ fn render_dashboard(
     line-height: 1.5; padding: 24px; max-width: 1280px; margin: 0 auto;
   }}
   h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
-  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--gold); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
+  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--sky); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
   .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 24px; font-family: monospace; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
   .kpi {{
@@ -305,9 +305,9 @@ fn render_dashboard(
   tr:last-child td {{ border-bottom: none; }}
   td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: monospace; }}
   .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }}
-  .badge.completed {{ background: rgba(52,211,153,0.15); color: var(--success); }}
+  .badge.completed {{ background: rgba(74,222,128,0.15); color: var(--success); }}
   .badge.failed {{ background: rgba(255,92,122,0.15); color: var(--danger); }}
-  .badge.other {{ background: rgba(148,163,188,0.15); color: var(--text2); }}
+  .badge.other {{ background: rgba(152,166,186,0.15); color: var(--text2); }}
   .chart-container {{ background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; overflow-x: auto; }}
   .bar-chart {{ display: flex; flex-direction: column; gap: 4px; }}
   .bar-row {{ display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }}
@@ -318,8 +318,8 @@ fn render_dashboard(
   .pie-legend {{ display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 0.8rem; }}
   .pie-legend span {{ display: flex; align-items: center; gap: 4px; }}
   .dot {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
-  .insight {{ background: var(--surface); border-left: 3px solid var(--gold); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
-  .insight .insight-label {{ color: var(--gold); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  .insight {{ background: var(--surface); border-left: 3px solid var(--sky); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
+  .insight .insight-label {{ color: var(--sky); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
   .footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--text3); font-size: 0.75rem; }}
 </style>
 </head>

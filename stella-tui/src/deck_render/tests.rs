@@ -43,7 +43,7 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
             eprintln!("\n──── deck @ {w}×{h} ────\n{text}\n");
         }
         for needle in [
-            ">>>",      // gold prompt prefix (§4)
+            ">>>",      // accent prompt prefix (§4)
             "add nav",  // typed prompt text
             "new line", // composer footer affordance (§4)
             "queue",    // footer / queue status
@@ -197,7 +197,7 @@ fn running_model_with_queue() -> WorkspaceModel {
 }
 
 #[test]
-fn empty_composer_is_a_single_gold_prompt_line_with_the_caret() {
+fn empty_composer_is_a_single_accent_prompt_line_with_the_caret() {
     let ui = DeckUi::default(); // blank composer
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4);
@@ -207,7 +207,7 @@ fn empty_composer_is_a_single_gold_prompt_line_with_the_caret() {
     let rows: Vec<&str> = text.lines().collect();
     assert!(
         rows[0].starts_with(">>> "),
-        "row 0 is the gold prompt: {:?}",
+        "row 0 is the accent prompt: {:?}",
         rows[0]
     );
     // Exactly one prompt line — the rest of the box is empty.

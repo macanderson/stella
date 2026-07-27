@@ -10,7 +10,7 @@ import {
  * The social card, generated at build time (next/og) so it stays in sync with
  * the brand and carries no static binary.
  *
- * It is the brand lockup on the deepest ground: a gold mark beside a paper
+ * It is the brand lockup on the deepest ground: a sky mark beside a paper
  * wordmark on navy. That split is the palette's rule 4 — the wordmark stays
  * ink/paper, the mark carries the hue — and it is what makes the card read as
  * Stella at thumbnail size, where the tagline is illegible anyway.
@@ -20,7 +20,7 @@ import {
  *
  * Colours are literals rather than CSS vars because Satori resolves no
  * cascade; they are the tokens from docs/brand/tokens.json, named inline.
- * Measured on `night` #050912: wordmark 17.58:1, mark 14.79:1, tagline 7.80:1,
+ * Measured on `night` #000000: wordmark 19.40:1, mark 12.60:1, tagline 8.50:1,
  * footer 4.71:1. Keep the markup inside Satori's supported subset — plain
  * <path> fills only, no gradients, masks, or filters.
  */
@@ -39,8 +39,8 @@ export default function OpengraphImage() {
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          background: "#050912", // night
-          color: "#edf1f8", // text-primary
+          background: "#000000", // night
+          color: "#f3f6fa", // text-primary
           padding: "80px",
         }}
       >
@@ -54,22 +54,22 @@ export default function OpengraphImage() {
               borderRadius: "9999px",
               padding: "12px 26px",
               fontSize: "28px",
-              color: "#94a3bc", // text-secondary
+              color: "#98a6ba", // text-secondary
             }}
           >
-            <span style={{ color: "#ffdd00", fontWeight: 700 }}>{">_"}</span>
+            <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{">_"}</span>
             <span>a terminal coding agent</span>
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          {/* The lockup: gold mark, paper wordmark. */}
+          {/* The lockup: sky mark, paper wordmark. */}
           <div style={{ display: "flex", alignItems: "center", gap: "36px" }}>
             <svg
               viewBox={MARK_VIEW_BOX}
               width={132}
               height={132}
-              fill="#ffdd00" // gold — the mark is the one place the hue lives
+              fill="#7dd3fc" // sky — the mark is the one place the hue lives
             >
               <path d={MARK_PATH} />
             </svg>
@@ -77,7 +77,7 @@ export default function OpengraphImage() {
               viewBox={WORDMARK_VIEW_BOX}
               width={440}
               height={130}
-              fill="#edf1f8" // text-primary — the wordmark never takes the gold
+              fill="#f3f6fa" // text-primary — the wordmark never takes the accent
             >
               <path d={WORDMARK_PATH} />
             </svg>
@@ -87,7 +87,7 @@ export default function OpengraphImage() {
               display: "flex",
               marginTop: "30px",
               fontSize: "42px",
-              color: "#94a3bc", // text-secondary
+              color: "#98a6ba", // text-secondary
               maxWidth: "940px",
               lineHeight: 1.25,
             }}
@@ -103,7 +103,7 @@ export default function OpengraphImage() {
             justifyContent: "space-between",
             alignItems: "center",
             fontSize: "28px",
-            color: "#6b7c99", // text-tertiary — 4.71:1 on night
+            color: "#6c7b90", // text-tertiary — 4.85:1 on night
           }}
         >
           <div style={{ display: "flex" }}>stella.oxagen.sh</div>

@@ -20,7 +20,7 @@ use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, PrInfo, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
-use crate::textline::{pr_status_label, stage_label};
+use crate::textline::{self, pr_status_label, stage_label};
 use crate::{fx, splash, theme, views};
 
 /// How long the deck fades in from muted after the splash hands off.
@@ -28,7 +28,7 @@ const REVEAL_MS: u32 = 350;
 /// How long the amber sweep plays over the content pane on a tab change.
 const TAB_SWITCH_MS: u32 = 180;
 
-/// The gold prompt prefix on every composer row. Chrome, not content — it
+/// The accent prompt prefix on every composer row. Chrome, not content — it
 /// is never part of the submitted string and the caret cannot enter it.
 const PROMPT_PREFIX: &str = ">>> ";
 /// Display width of [`PROMPT_PREFIX`].
@@ -938,7 +938,7 @@ const DECK_COMPOSER_MAX_ROWS: usize = 4;
 
 /// The always-on composer — typing works from any tab. A multi-line textarea:
 /// rows come pre-wrapped from [`crate::composer::layout`]; every row carries a
-/// literal gold `>>> ` prefix (chrome, never part of the submitted text), and
+/// literal accent `>>> ` prefix (chrome, never part of the submitted text), and
 /// an empty composer is a single `>>> ` line with the caret right after it.
 /// Beyond [`DECK_COMPOSER_MAX_ROWS`] the box stops growing and scrolls, showing
 /// a slim thumb in the right gutter while keeping the caret in view.
@@ -964,7 +964,7 @@ fn render_composer(
     let cursor_style = theme::accent().add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
-        // The gold `>>> ` prefix rides every row and scrolls with it.
+        // The accent `>>> ` prefix rides every row and scrolls with it.
         let mut spans = vec![Span::styled(
             PROMPT_PREFIX,
             Style::default().fg(theme::ACCENT),
@@ -1076,7 +1076,29 @@ fn render_composer_footer(
     } else {
         ("queue empty".to_string(), dim)
     };
+    // Live turn cost, pinned nearest the composer's left edge of the right
+    // cluster — the readout that replaced the `◇ spend` rows the transcript
+    // used to print once per model call.
+    //
+    // A gauge, not an event: it updates in place as ticks land and settles on
+    // the turn's real total when `Complete` arrives, at which point the
+    // transcript prints the same figure in the same green (`✓ cost`) as the
+    // turn's permanent receipt. Four decimals, because the whole value of a
+    // live cost readout is watching it move, and at two decimals most turns
+    // never leave `$0.00`.
+    let turn_cost = model
+        .agents
+        .get(ui.focused)
+        .map_or(0.0, |a| a.model.hud.turn_spent_usd());
     let right = vec![
+        Span::styled("turn ", dim),
+        Span::styled(
+            textline::fmt_cost(turn_cost),
+            Style::default()
+                .fg(theme::SUCCESS_BRIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  ·  ", sep),
         Span::styled(counter, dim),
         Span::styled("  ·  ", sep),
         Span::styled(q_text, q_style),
@@ -1230,6 +1252,12 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
             MUST_KEEP,
         ),
         (
+            // The *session* total across every agent, unchanged. The live
+            // per-turn figure deliberately lives elsewhere — one row under the
+            // composer, in `render_composer_footer` — because the two numbers
+            // answer different questions and move at different speeds, and
+            // stacking them in one cell made this row too wide to keep the
+            // ethos chip at 160 columns.
             "SPEND",
             vec![Span::styled(
                 format!("${:.2}", model.total_cost()),
@@ -1451,7 +1479,7 @@ fn pr_cell(pr: &PrInfo) -> Vec<Span<'static>> {
     spans
 }
 
-/// The transcript's PR aurora ramp — `render`'s `pr_status_color` is private
+/// The transcript's PR ramp — `render`'s `pr_status_color` is private
 /// to that module, so the statline replicates it: quiet amber draft (the one
 /// semantic-warning exception), azure while open, cyan on merge, magenta on
 /// close.
