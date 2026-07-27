@@ -26,7 +26,28 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
-## [0.5.58] — 2026-07-27
+- Short work costs less. A greeting no longer pays for a triage model call: the
+  conversational route was always resolved deterministically, but the paid
+  classification went out first and could not change the answer. `hi` now costs
+  one model call instead of two, and can no longer stall behind a wedged triage
+  provider.
+- A change with nothing to prove no longer buys a review call to be told so.
+  Verification now reads the **diff** — docs-only, tests-only, config-only,
+  comments-only, or a pure removal completes with a **stated reason** recorded
+  on the verdict, rather than escalating because no test flipped. Anything
+  mixed or unreadable still buys the test. Removals and test-only changes keep
+  their independent reviewer, because deleting the wrong thing is a mistake a
+  reader catches and no test would have. Design:
+  `docs/design/witness-protocol.md` §7.
+
+- The pipeline no longer replays raw test-runner output into a worker's
+  revision prompt. A deterministic verification failure is now disclosed
+  through a **feedback airlock** at one of four grains (`L0`–`L3`), tightening
+  automatically when the same failure repeats, and model-authored text coming
+  back inbound (distress guidance, judge reasoning) is scrubbed against the
+  sealed material before it can reach the worker. Operator-facing output is
+  unchanged — `stella` still shows you the real failure; only the model's
+  prompt is redacted. Design: `docs/design/witness-protocol.md`.
 
 ## [0.5.57] — 2026-07-27
 

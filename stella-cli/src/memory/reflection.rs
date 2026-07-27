@@ -46,8 +46,7 @@ pub async fn reflect_on_turn(
     domain_names: &[String],
     succeeded: bool,
     budget_limit: Option<f64>,
-) -> Result<(Vec<ReflectionLesson>, f64, Vec<AgentEvent>), crate::accounted_call::StandaloneCallError>
-{
+) -> Result<(ReflectionParse, f64, Vec<AgentEvent>), crate::accounted_call::StandaloneCallError> {
     let digest = transcript
         .iter()
         .rev()
@@ -109,7 +108,14 @@ pub async fn reflect_on_turn(
             ),
             CompletionMessage::user(prompt),
         ],
-        max_output_tokens: Some(512),
+        // 512 was enough for a model that answers with bare JSON and nothing
+        // else. A model that narrates first spends the whole allowance on
+        // prose and is cut off before it reaches the array, so every lesson
+        // from every turn is lost — silently, because a truncated response
+        // parses to zero lessons exactly like an empty one. The array itself
+        // is at most three short objects; the extra headroom is only ever
+        // spent by models that were going to be cut off.
+        max_output_tokens: Some(2048),
         temperature: Some(0.0),
         effort: None,
         tools: Vec::new(),
@@ -127,21 +133,82 @@ pub async fn reflect_on_turn(
     )
     .await?;
     Ok((
-        parse_lessons(&accounted.result.text, domain_names),
+        parse_lessons_checked(&accounted.result.text, domain_names),
         accounted.cost_usd,
         accounted.events,
     ))
 }
 
-pub fn parse_lessons(text: &str, allowed_domains: &[String]) -> Vec<ReflectionLesson> {
-    let (Some(start), Some(end)) = (text.find('['), text.rfind(']')) else {
-        return Vec::new();
-    };
-    if end <= start {
-        return Vec::new();
+/// The outcome of reading a reflection response.
+///
+/// `Vec::new()` used to mean two very different things — "the model considered
+/// the turn and found nothing worth keeping", which is the common and correct
+/// answer, and "the model said something we could not read", which starves the
+/// entire context lifecycle. They are separated here so the second can be
+/// reported instead of silently looking like the first.
+pub enum ReflectionParse {
+    Lessons(Vec<ReflectionLesson>),
+    /// The model produced text, but no JSON array of lessons could be read out
+    /// of it. Carries a short excerpt for the operator.
+    Unreadable(String),
+}
+
+/// Find the first balanced `[...]` span that parses as a lesson array.
+///
+/// The previous rule — first `[` to last `]` — assumed the response was bare
+/// JSON. Models that narrate before answering break it in both directions: a
+/// bracket inside prose moves `start`, and a bracket in a trailing note moves
+/// `end`, so the slice between them is not JSON at all and the whole turn's
+/// lessons are dropped. Scanning for a balanced span and taking the first one
+/// that actually deserializes tolerates prose, markdown fences, and trailing
+/// commentary without loosening what counts as a lesson.
+fn extract_lesson_array(text: &str) -> Option<Vec<ReflectionLesson>> {
+    let bytes = text.as_bytes();
+    for (start, _) in text.char_indices().filter(|(_, c)| *c == '[') {
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escaped = false;
+        for (offset, byte) in bytes[start..].iter().enumerate() {
+            if in_string {
+                match byte {
+                    _ if escaped => escaped = false,
+                    b'\\' => escaped = true,
+                    b'"' => in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match byte {
+                b'"' => in_string = true,
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = start + offset;
+                        if let Ok(parsed) =
+                            serde_json::from_str::<Vec<ReflectionLesson>>(&text[start..=end])
+                        {
+                            return Some(parsed);
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
-    let Ok(mut lessons) = serde_json::from_str::<Vec<ReflectionLesson>>(&text[start..=end]) else {
-        return Vec::new();
+    None
+}
+
+pub fn parse_lessons_checked(text: &str, allowed_domains: &[String]) -> ReflectionParse {
+    let Some(mut lessons) = extract_lesson_array(text) else {
+        // An empty response is a legitimate "nothing to record". Anything else
+        // is a response we failed to read, and the caller should say so.
+        return if text.trim().is_empty() {
+            ReflectionParse::Lessons(Vec::new())
+        } else {
+            ReflectionParse::Unreadable(text.chars().take(180).collect())
+        };
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -157,5 +224,5 @@ pub fn parse_lessons(text: &str, allowed_domains: &[String]) -> Vec<ReflectionLe
         });
     }
     lessons.retain(|lesson| !lesson.lesson.trim().is_empty());
-    lessons
+    ReflectionParse::Lessons(lessons)
 }

@@ -27,6 +27,9 @@
 //! the tamper check. Running the witness engine turn, executing the authored
 //! command, and the one bounded repair retry live in [`crate::pipeline`].
 
+pub mod airlock;
+pub mod warrant;
+
 use std::collections::HashMap;
 
 use crate::ports::{ArtifactIdentity, RecalledFrame, TestInvocation};

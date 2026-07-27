@@ -74,7 +74,28 @@ impl SessionMemory {
                 };
             }
         };
-        let (lessons, reflection_cost_usd, reflection_events) = lessons;
+        let (parsed, reflection_cost_usd, reflection_events) = lessons;
+
+        // A response we could not read is not the same as a turn with nothing
+        // to learn, and reporting them identically is how the lifecycle starves
+        // without anyone noticing: `recorded: 0, error: null` on every single
+        // turn looks exactly like an agent that keeps getting things right.
+        let lessons = match parsed {
+            crate::memory::reflection::ReflectionParse::Lessons(lessons) => lessons,
+            crate::memory::reflection::ReflectionParse::Unreadable(excerpt) => {
+                return ReflectionReport {
+                    recorded: 0,
+                    model_error: Some(format!(
+                        "reflection response was not a readable JSON array of \
+                         lessons, so this turn taught the context lifecycle \
+                         nothing; the model may not follow the bare-JSON \
+                         instruction: {excerpt}"
+                    )),
+                    cost_usd: reflection_cost_usd,
+                    events: reflection_events,
+                };
+            }
+        };
 
         // Drop anything the user has already forgotten, BEFORE it reaches any
         // of the three places this function persists to. Matching is by
@@ -209,13 +230,27 @@ impl SessionMemory {
         // it would escalate prose mined under an untrusted workspace into the
         // scope that applies to every other workspace.
         //
-        // This gate sits on the dispatcher rather than inside either arm, so
-        // it covers the typed path and the lexical one by construction. A
-        // guard that protected only one of them would be a guarantee that
-        // depended on a feature flag.
-        if !self.include_workspace_skills {
-            return;
-        }
+        // The gate belongs on the writes it describes, not on the whole loop.
+        //
+        // It used to return here, which conflated two different things: writing
+        // a skill FILE into a workspace directory the session may not read, and
+        // appending typed records to the session's own private context store.
+        // Only the first is what the reasoning above is about. The second is
+        // `.stella/private/context.db`, which this same function has already
+        // written reflection memories to a few lines earlier — so the early
+        // return did not protect the store, it just made the store's contents
+        // inconsistent.
+        //
+        // The cost of that conflation was the entire lifecycle: in any
+        // workspace without project trust — which is every fresh checkout, and
+        // every sandbox an eval or CI job runs in — attribution, retirement,
+        // observation extraction and proposal induction were all skipped, and
+        // `context_records` stayed empty forever with nothing reporting a
+        // problem. Reflection would faithfully mine lessons every turn and
+        // they would go nowhere.
+        //
+        // So the loop now runs, and `write_candidates` / `induce_rules` carry
+        // the gate on the file writes themselves.
         // Phase 3 (#714). While `context.lifecycle.enabled` is off — the
         // shipped default — this is byte-for-byte the loop that ships today:
         // no ledger write, no typed record, no behavior change of any kind.
@@ -290,6 +325,19 @@ impl SessionMemory {
     /// code on each — asserted by test rather than by inspection, which is what
     /// spec §8 asks for.
     fn write_candidates(&mut self, candidates: Vec<skills::SkillCandidate>, quiet: bool) {
+        // The workspace-skills authority gate, on the write it actually
+        // describes. Without it the loader is handed an empty workspace dir, so
+        // a skill written here would never be read back — and computing the
+        // target from `workspace_skills_dir()` regardless would write into a
+        // directory the session has just been told it may not read (#737).
+        //
+        // Everything upstream of this — attribution, retirement, observation
+        // extraction, proposal induction — writes only to the session's own
+        // private store and is safe in an untrusted workspace, so it is no
+        // longer skipped along with the file write.
+        if !self.include_workspace_skills {
+            return;
+        }
         let existing = self.load_skills();
         let skills_dir = self.workspace_skills_dir();
         // What the no-clobber guard needs is the set of paths that are
@@ -476,6 +524,14 @@ impl SessionMemory {
             if rule.proposal.confidence.get() < promotion.auto_activate_at_confidence {
                 // Recorded, reviewable, not active. `stella proposals list`
                 // shows it; `stella proposals keep` activates it.
+                continue;
+            }
+            // Same authority as `write_candidates`: the proposal is recorded in
+            // the ledger either way, but a rule FILE only lands in a workspace
+            // this session is allowed to write prompts into. An ungated write
+            // would also escalate prose mined under an untrusted workspace into
+            // something that steers every later turn.
+            if !self.include_workspace_skills {
                 continue;
             }
             if let Some(path) =
