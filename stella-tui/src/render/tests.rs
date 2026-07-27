@@ -1,5 +1,9 @@
 use super::*;
 use crate::composer::{Composer, SlashCommand};
+// Imported here rather than by the parent: `render.rs` itself no longer names
+// these once the transcript builders moved to `render::entry`, and re-adding
+// them there purely for the test module would be an unused import in the lib.
+use crate::model::TranscriptEntry;
 use proptest::prelude::*;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -7,6 +11,7 @@ use stella_protocol::{
     AgentEvent, BudgetMode, FileChangeKind, MediaJobState, MediaKind, ScopeProposal, StageKind,
     ToolCall, ToolOutput,
 };
+use stella_protocol::{CiStatus, PrStatus};
 
 /// Flatten a `TestBackend` buffer to one `String` per row (styling
 /// stripped — content is what we assert on, never raw ANSI, per L-T6).
