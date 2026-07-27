@@ -7,8 +7,8 @@
 # must be split instead. Raising an existing ceiling is allowed but is
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
-1881 stella-cli/src/agent_tests.rs
-2243 stella-cli/src/agent.rs
+1710 stella-cli/src/agent_tests.rs
+2250 stella-cli/src/agent.rs
 1627 stella-cli/src/candidate_ws.rs
 4600 stella-cli/src/command_deck.rs
 2095 stella-core/src/bus.rs
