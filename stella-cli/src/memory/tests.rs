@@ -979,8 +979,7 @@ fn auto_creation_never_writes_into_a_skills_dir_the_session_may_not_read() {
 /// and nothing reported a problem.
 #[test]
 fn an_untrusted_workspace_still_extracts_observations_even_though_no_skill_lands() {
-    const LESSON: &str =
-        "pin the toolchain version in continuous integration so a floating minor cannot change builds";
+    const LESSON: &str = "pin the toolchain version in continuous integration so a floating minor cannot change builds";
     let dir = tempfile::tempdir().expect("workspace");
     let root = dir.path();
     let log = mining_log(root, &[LESSON]);
@@ -1112,7 +1111,11 @@ fn domain_lessons_outrank_process_lessons_at_recall() {
         "durable facts about the code must survive a budget that drops \
          commentary about the agent"
     );
-    assert_eq!(LessonKind::default(), LessonKind::Process, "unlabelled lessons are not promoted to facts by accident");
+    assert_eq!(
+        LessonKind::default(),
+        LessonKind::Process,
+        "unlabelled lessons are not promoted to facts by accident"
+    );
 }
 
 /// The wire format tolerates a lesson written before `kind` existed.
