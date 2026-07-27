@@ -51,11 +51,11 @@ Stella has always recalled memories. What it could not do was tell you *why* a m
 
 ### Terminal UI
 
-- **The transcript was rebuilt for reading.** Rows open on a fixed-width rail — `●` call, `⎿` result, `✗` failure, `▌` prompt — giving back 18 columns the old right-aligned tags spent on chrome. Collapsed output anchors on the first failing line rather than line 1, and a failure never collapses to one line.
+- **The transcript was rebuilt for reading.** Rows open on a fixed-width rail — `●` call, `⎿` result, `✗` failure, `▌` prompt — giving back 18 columns the old right-aligned tags spent on chrome. Collapsed output anchors on the first failing line rather than line 1, and a failure never collapses to one line. System notes split into *loud* (errors, gates, questions — a scan should stop on them) and *quiet* (recall, memory, compaction — bookkeeping), stages render as section rules rather than rows carrying one word, and the budget gauge prints the turn's cost once instead of a fresh `spend` row after every model call.
 - **Navigation:** `Ctrl-F` incremental find that searches the *full* tool output rather than the drawn preview, `Ctrl-N`/`Ctrl-P` to jump between failures, `Ctrl-Z` to fold a finished turn to one line.
 - **The deck prompts on large plans instead of dead-ending.** Scope review was hardcoded headless with an always-abort gate, and the advice it printed named a key only `stella run` reads. `Trim` keeps the largest prefix under the thresholds and says what it dropped.
 - **Live fleet dashboard** with supervisor verbs — pause, resume, and stop the focused task, with stop requiring two keystrokes.
-- **The default accent moved cyan → gold.** Four rival palettes collapsed into one gold-on-navy system generated from tokens with WCAG-AA contrast contracts enforced at build time. `/color` keeps cyan, azure, violet, magenta and mint as personalisation.
+- **A new palette: bright sky on true black.** Four rival palettes collapsed into one system with WCAG-AA contrast contracts enforced at build time. The ground is neutral on purpose — a pale blue accent on a blue-tinted ground loses the separation that makes it read as a signal — and the accent is spent on exactly one thing in the transcript: the name of the tool being called, since those names are the index to the whole scrollback. A palette-law test rejects any categorical hue that sits within confusable distance of the accent, which moved azure to amber and the old glacier blue to teal. `/color` offers `sky` (the default), `azure`, `violet`, `magenta` and `mint`; `cyan` is kept as an alias so an existing `/color cyan` still resolves.
 
 ### Security
 
@@ -97,7 +97,7 @@ Stella is relicensed from `MIT OR Apache-2.0` to **`AGPL-3.0-only`**, dual-licen
 6. **`OXAGEN_DEBUG` / `OXAGEN_MEDIA_LIVE` are renamed** to `STELLA_*`. The old names still work **for this release only**.
 7. **Extension deny policies now bite** on `build_project`, `run_tests`, `verify_done` and `send_stdin`, which previously bypassed them.
 8. **Downgrading is refused, not silently misread** — `context.db`, `codegraph.db` and the media journal now decline to open a schema newer than the binary knows.
-9. The default TUI accent is gold.
+9. **The TUI palette is bright sky on true black**, and the default accent is `sky`. `/color cyan` still resolves, as an alias.
 
 ```bash
 # Homebrew (macOS / Linux)
