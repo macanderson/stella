@@ -10,10 +10,10 @@ use crate::deck::TraceKind;
 use crate::envelope::AgentStatus;
 use crate::palette;
 
-// ── Stella palette — "bright sky on black" ──────────────────────────────────
+// ── Stella palette — "electric blue on jet black" ───────────────────────────
 //
-// A signal light in the dark. The ground is true black; the sky blue is the
-// light — reserved for brand, active/running, and progress, and for nothing
+// A live wire in the dark. The ground is jet black; the electric blue is the
+// current — reserved for brand, active/running, and progress, and for nothing
 // else. If everything is blue, nothing is: a general-purpose highlight is
 // exactly what this hue must not become.
 //
@@ -69,7 +69,7 @@ pub const TEXT_DIM: Color = palette::TEXT_TERTIARY;
 pub const SUCCESS: Color = palette::SUCCESS;
 /// Success (bright — text / completed fills).
 pub const SUCCESS_BRIGHT: Color = palette::SUCCESS;
-/// Warning (base). Orange — distinct from both the brand sky and danger.
+/// Warning (base). Orange — distinct from both the brand electric and danger.
 pub const WARNING: Color = palette::WARNING;
 /// Warning (bright — text).
 pub const WARNING_BRIGHT: Color = palette::WARNING;
@@ -91,28 +91,29 @@ pub const DANGER_BRIGHT: Color = palette::DANGER;
 /// relations, trace stages, the user's own prompt). Categorical, not the brand
 /// accent.
 pub const VIOLET: Color = Color::Rgb(0xA7, 0x8B, 0xFA);
-/// Amber — the second categorical hue: syntax keywords, file/module graph
-/// nodes. Warm on purpose. Its predecessor was an azure that sat a few dozen
-/// RGB units from the brand sky, which the palette-law test now rejects
-/// outright; retiring gold as the brand freed the warm end of the spectrum,
+/// Magenta — the second categorical hue: syntax keywords, file/module graph
+/// nodes. It replaces the gold amber that survived from the retired
+/// navy-and-gold generation: jet-black-and-electric keeps no gold anywhere,
 /// and a categorical set is only useful to the extent its members cannot be
-/// mistaken for one another or for the accent.
-pub const AMBER: Color = Color::Rgb(0xE3, 0xB3, 0x41);
+/// mistaken for one another or for the accent — fuchsia sits far from the
+/// electric blue, the violet, and every status hue.
+pub const MAGENTA: Color = Color::Rgb(0xE8, 0x79, 0xF9);
 /// Teal — the third categorical hue: media traces and one slot of the
-/// per-agent palette. Blue-green, so it reads apart from both the pale brand
-/// sky and the success green. It replaces a glacier blue (`AGENT_ICE`) and
-/// then a lilac, each of which drifted within confusable range of the accent.
+/// per-agent palette. Blue-green, so it reads apart from both the brand
+/// electric and the success green. It replaces a glacier blue (`AGENT_ICE`)
+/// and then a lilac, each of which drifted within confusable range of the
+/// accent.
 pub const TEAL: Color = Color::Rgb(0x2D, 0xD4, 0xBF);
 
 // ── Role aliases (what the rest of the crate references) ─────────────────────
 // Role names remap onto the palette so call sites read as intent (accent,
 // ink, rule) rather than as a hue that a future recolor would falsify.
 
-/// Stella brand accent — bright sky blue. Brand, active/running, and progress
+/// Stella brand accent — electric blue. Brand, active/running, and progress
 /// only. In the transcript, the tool name and nothing else.
-pub const ACCENT: Color = palette::SKY;
+pub const ACCENT: Color = palette::ELECTRIC;
 /// A deeper accent (gradient / pressed).
-pub const ACCENT_DEEP: Color = palette::SKY_DEEP;
+pub const ACCENT_DEEP: Color = palette::ELECTRIC_DEEP;
 /// Near-white primary text.
 pub const INK: Color = TEXT_PRIMARY;
 /// Dimmed secondary text.
@@ -151,10 +152,12 @@ pub const DIFF_DEL_BG: Color = Color::Rgb(52, 24, 26);
 /// [`DIFF_ADD_BG`]: the whole line is already "added", so this has to read as
 /// a second level of emphasis *within* it rather than a different category.
 pub const DIFF_ADD_BG_EMPH: Color = Color::Rgb(26, 82, 44);
-/// Background behind a live search match. Warm enough to find by eye while
-/// scrolling, muted enough not to outshout the `✗` rail beside it — a match is
-/// something you asked for, not something that went wrong.
-pub const MATCH_BG: Color = Color::Rgb(92, 74, 0);
+/// Background behind a live search match. A dim plum — distinct enough to
+/// find by eye while scrolling, muted enough not to outshout the `✗` rail
+/// beside it — a match is something you asked for, not something that went
+/// wrong. (Its predecessor was a dark gold; jet-black-and-electric keeps no
+/// gold anywhere.)
+pub const MATCH_BG: Color = Color::Rgb(0x4E, 0x1D, 0x52);
 
 /// The removed-line counterpart of [`DIFF_ADD_BG_EMPH`].
 pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(102, 34, 42);
@@ -167,35 +170,35 @@ pub const DIFF_DEL_BG_EMPH: Color = Color::Rgb(102, 34, 42);
 // Every color is chosen to read on all three diff backdrops (add green, del
 // red, and the plain panel), and every one is *categorical*: syntax is not
 // brand, not status, and not activity, so none of these is the brand hue. Keyword
-// takes [`AMBER`], strings a soft spring green, numbers the [`VIOLET`]
+// takes [`MAGENTA`], strings a soft spring green, numbers the [`VIOLET`]
 // anchor, and comments dim toward [`MUTED`].
 
 /// Language keyword (`fn`/`let`/`def`/`import`/`return`…).
-pub const SYNTAX_KEYWORD: Color = AMBER;
+pub const SYNTAX_KEYWORD: Color = MAGENTA;
 /// String / char literal.
 pub const SYNTAX_STRING: Color = Color::Rgb(126, 231, 135);
-/// Numeric literal — violet, the counterpoint to the azure keyword stop.
+/// Numeric literal — violet, the counterpoint to the magenta keyword stop.
 pub const SYNTAX_NUMBER: Color = VIOLET;
 /// Line comment (rendered dimmed + italic).
 pub const SYNTAX_COMMENT: Color = Color::Rgb(118, 124, 134);
 
 // ── Brand gradient (the wordmark sweep and the progress-bar fill) ───────────
 //
-// Two stops, not three: the sweep runs deep sky → sky, left to right. An
-// earlier generation ran two separate gradients — one for brand chrome and a
-// second for the progress bar — which is precisely the split this palette
-// collapses. Progress *is* activity, activity is the brand hue, so one
+// Two stops, not three: the sweep runs deep electric → electric, left to
+// right. An earlier generation ran two separate gradients — one for brand
+// chrome and a second for the progress bar — which is precisely the split this
+// palette collapses. Progress *is* activity, activity is the brand hue, so one
 // gradient serves both.
 
-/// Deep sky — the sweep's leading (left) stop.
-pub const SKY_DEEP: Color = palette::SKY_DEEP;
-/// Sky — the trailing stop; also the non-truecolor fallback fill.
-pub const SKY: Color = palette::SKY;
+/// Deep electric — the sweep's leading (left) stop.
+pub const ELECTRIC_DEEP: Color = palette::ELECTRIC_DEEP;
+/// Electric — the trailing stop; also the non-truecolor fallback fill.
+pub const ELECTRIC: Color = palette::ELECTRIC;
 
-/// The brand gradient's stops, left → right: deep sky → sky. The determinate
-/// progress fill interpolates across these per cell (truecolor only; lesser
-/// terminals collapse to a solid [`SKY`] fill).
-pub const BRAND_STOPS: [Color; 2] = [SKY_DEEP, SKY];
+/// The brand gradient's stops, left → right: deep electric → electric. The
+/// determinate progress fill interpolates across these per cell (truecolor
+/// only; lesser terminals collapse to a solid [`ELECTRIC`] fill).
+pub const BRAND_STOPS: [Color; 2] = [ELECTRIC_DEEP, ELECTRIC];
 
 /// Linear-interpolate two RGB colors at `t ∈ [0, 1]`. Non-RGB inputs return
 /// `a` unchanged (the gradient only ever feeds it `Color::Rgb` stops).
@@ -208,9 +211,9 @@ pub fn lerp_rgb(a: Color, b: Color, t: f64) -> Color {
     Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
 }
 
-/// The brand gradient sampled at `t ∈ [0, 1]`: deep sky at 0, sky at 1,
-/// linearly interpolated across [`BRAND_STOPS`]. This is the run progress
-/// bar's fill and the wordmark sweep.
+/// The brand gradient sampled at `t ∈ [0, 1]`: deep electric at 0, electric
+/// at 1, linearly interpolated across [`BRAND_STOPS`]. This is the run
+/// progress bar's fill and the wordmark sweep.
 pub fn brand_gradient(t: f64) -> Color {
     gradient_at(&BRAND_STOPS, t)
 }
@@ -351,27 +354,31 @@ pub fn detect_color_mode() -> ColorMode {
 const FALLBACKS: &[(Color, u8, u8)] = &[
     (GROUND, 16, 0),
     (SURFACE, 232, 0),
-    (RAISED, 234, 8),
-    (HAIRLINE, 236, 8),
+    (RAISED, 233, 8),
+    (HAIRLINE, 235, 8),
     (TEXT_PRIMARY, 255, 15),
     (TEXT_SECONDARY, 109, 7),
     (TEXT_TERTIARY, 66, 8),
-    // Sky and deep sky take *different* 256 indices (117/81) and different
-    // ANSI-16 indices (bright cyan / cyan) so the progress fill keeps a
-    // readable head-to-tail ramp even where the gradient collapses.
-    (SKY, 117, 14),
-    (SKY_DEEP, 81, 6),
+    // Electric and deep electric take *different* 256 indices (39/27) and
+    // different ANSI-16 indices (bright blue / blue) so the progress fill
+    // keeps a readable head-to-tail ramp even where the gradient collapses.
+    (ELECTRIC, 39, 12),
+    (ELECTRIC_DEEP, 27, 4),
     (SUCCESS, 78, 10),
     (WARNING, 208, 3),
     (DANGER, 204, 9),
-    (VIOLET, 141, 13),
-    (AMBER, 179, 3),
+    // Violet and magenta are both magenta-family: violet keeps the bright
+    // slot's pale 256 entry but drops to base magenta at 16 colors so the
+    // brighter fuchsia can hold the bright-magenta slot — keyword and number
+    // stay tellable apart even on a 16-color console.
+    (VIOLET, 141, 5),
+    (MAGENTA, 177, 13),
     (TEAL, 43, 2),
     (DIFF_ADD_BG, 22, 2),
     (DIFF_DEL_BG, 52, 1),
     (DIFF_ADD_BG_EMPH, 28, 2),
     (DIFF_DEL_BG_EMPH, 88, 1),
-    (MATCH_BG, 58, 3),
+    (MATCH_BG, 53, 5),
     (SYNTAX_STRING, 114, 10),
     (SYNTAX_COMMENT, 244, 8),
 ];
@@ -477,14 +484,14 @@ pub fn status_glyph(status: AgentStatus) -> &'static str {
 
 /// Color a [`crate::graph::GraphNode`] by its `kind`, so the Graph tab's node
 /// list, detail panel, and node-edge sketch all agree on one palette:
-/// function/method violet, struct/enum/trait green, file/module azure —
+/// function/method violet, struct/enum/trait green, file/module magenta —
 /// three distinct categorical hues, none of them the reserved brand hue.
 /// A node kind is a category, not an activity.
 pub fn graph_kind_color(kind: &str) -> Color {
     match kind {
         "function" | "method" => RUN,
         "struct" | "enum" | "trait" => OK,
-        "file" | "module" => AMBER,
+        "file" | "module" => MAGENTA,
         _ => MUTED,
     }
 }
@@ -527,11 +534,11 @@ pub fn spark_glyph(intensity: u8) -> char {
 /// A small rotating palette an agent id is hashed into. The point is
 /// stability, not per-color meaning: the same id always lands on the same
 /// slot, so an agent reads as one consistent color everywhere it appears.
-/// Five distinct categorical hues — violet, amber, green, teal, secondary — none
-/// of them the reserved brand hue (an agent is not "the brand") and none of
-/// them danger (which reads as failure elsewhere, so it never brands a healthy
-/// agent).
-const AGENT_PALETTE: [Color; 5] = [HELD, AMBER, OK, TEXT_SECONDARY, TEAL];
+/// Five distinct categorical hues — violet, magenta, green, teal, secondary —
+/// none of them the reserved brand hue (an agent is not "the brand") and none
+/// of them danger (which reads as failure elsewhere, so it never brands a
+/// healthy agent).
+const AGENT_PALETTE: [Color; 5] = [HELD, MAGENTA, OK, TEXT_SECONDARY, TEAL];
 
 /// A deterministic (not randomized — stable across processes and test runs)
 /// color for one agent id, picked from `AGENT_PALETTE` by hashing the id.
@@ -557,7 +564,7 @@ fn fnv1a(s: &str) -> u64 {
 
 /// A color per [`TraceKind`], for the Traces tab's kind chip. Grouped by
 /// meaning: `RUN` (violet) for process/action events (stage, tool, vcs),
-/// `AMBER`/`TEAL` for produced artifacts (file, media) — categorical, so
+/// `MAGENTA`/`TEAL` for produced artifacts (file, media) — categorical, so
 /// an artifact never reads as "running" — a dim neutral for quiet
 /// memory/context events, and the shared
 /// `OK`/`WARN`/`BAD` semantics for verdicts, spend, and errors. Memory drops
@@ -569,7 +576,7 @@ pub fn trace_kind_color(kind: TraceKind) -> Color {
         TraceKind::Text => INK,
         TraceKind::Reasoning => MUTED,
         TraceKind::Tool => RUN,
-        TraceKind::File => AMBER,
+        TraceKind::File => MAGENTA,
         TraceKind::Budget => WARN,
         TraceKind::Context => TEXT_TERTIARY,
         TraceKind::Verdict => OK,
@@ -631,13 +638,13 @@ mod tests {
         TEXT_PRIMARY,
         TEXT_SECONDARY,
         TEXT_TERTIARY,
-        SKY,
-        SKY_DEEP,
+        ELECTRIC,
+        ELECTRIC_DEEP,
         SUCCESS,
         WARNING,
         DANGER,
         VIOLET,
-        AMBER,
+        MAGENTA,
         TEAL,
         DIFF_ADD_BG,
         DIFF_DEL_BG,
@@ -673,8 +680,8 @@ mod tests {
     #[test]
     fn role_aliases_track_their_palette_token() {
         // Brand roles resolve to the generated palette, not to a local literal.
-        assert_eq!(ACCENT, palette::SKY);
-        assert_eq!(ACCENT_DEEP, palette::SKY_DEEP);
+        assert_eq!(ACCENT, palette::ELECTRIC);
+        assert_eq!(ACCENT_DEEP, palette::ELECTRIC_DEEP);
         assert_eq!(GROUND, palette::GROUND);
         assert_eq!(INK, TEXT_PRIMARY);
         assert_eq!(MUTED, TEXT_SECONDARY);
@@ -686,38 +693,51 @@ mod tests {
         assert_eq!(RUN, VIOLET);
         // Syntax and process hues are categorical -- never the brand accent.
         assert_eq!(SYNTAX_NUMBER, VIOLET);
-        assert_eq!(SYNTAX_KEYWORD, AMBER);
+        assert_eq!(SYNTAX_KEYWORD, MAGENTA);
     }
 
     /// The palette law, in the form a future edit would actually break.
     ///
-    /// The guard has outlived two recolours now (aurora → gold → sky), which is
-    /// the point: each time, the *shape* of the law survived and only the hue
-    /// it names changed. Keep rewriting it rather than deleting it.
+    /// The guard has outlived three recolours now (aurora → gold → sky →
+    /// electric), which is the point: each time, the *shape* of the law
+    /// survived and only the hue it names changed. Keep rewriting it rather
+    /// than deleting it.
     ///
     /// What must hold now:
-    ///   1. The accent is the generated brand sky — not a local literal that
-    ///      drifted, and not one of the retired hues.
-    ///   2. The ground is neutral. A blue accent on a blue-tinted ground loses
-    ///      the separation that makes it read as a signal, so the canvas may
-    ///      not carry a colour cast.
+    ///   1. The accent is the generated brand electric — not a local literal
+    ///      that drifted, and not one of the retired hues.
+    ///   2. The ground is neutral jet black. A blue accent on a blue-tinted
+    ///      ground loses the separation that makes it read as a signal, so
+    ///      the canvas may not carry a colour cast — navy is a retired
+    ///      failure mode, not a ground.
     ///   3. Status hues stay clear of the brand: warning ramps orange and
     ///      success ramps green, so neither can be mistaken for "active".
     ///   4. The brand hue is reserved. No categorical or status role may hold
     ///      it, and no other role may sit close enough to be confused with it.
     #[test]
-    fn palette_law_sky_is_the_brand_and_nothing_else() {
+    fn palette_law_electric_is_the_brand_and_nothing_else() {
         const RETIRED_AURORA_CYAN: Color = Color::Rgb(0x3F, 0xE0, 0xFF);
         const RETIRED_EMBER_FLAME: Color = Color::Rgb(0xFF, 0x7E, 0x5F);
         const RETIRED_EMBER_CRIMSON: Color = Color::Rgb(0xC2, 0x18, 0x5B);
         const RETIRED_GOLD: Color = Color::Rgb(0xFF, 0xDD, 0x00);
         const RETIRED_GOLD_DEEP: Color = Color::Rgb(0xE0, 0xB8, 0x00);
-        /// The old glacier blue, retired *because* it collided with the sky
+        /// The categorical amber that outlived the gold brand by one
+        /// generation — the last gold-family hue in the system, retired when
+        /// jet-black-and-electric banned gold outright.
+        const RETIRED_AMBER: Color = Color::Rgb(0xE3, 0xB3, 0x41);
+        /// The pale sky pair the electric generation replaced.
+        const RETIRED_SKY: Color = Color::Rgb(0x7D, 0xD3, 0xFC);
+        const RETIRED_SKY_DEEP: Color = Color::Rgb(0x38, 0xBD, 0xF8);
+        /// The old glacier blue, retired *because* it collided with the
         /// accent — the exact failure this test's clause 4 now prevents.
         const RETIRED_AGENT_ICE: Color = Color::Rgb(0xA8, 0xC7, 0xF0);
 
         // 1. The accent comes from the palette, not a drifted local literal.
-        assert_eq!(ACCENT, palette::SKY, "the accent must be the brand sky");
+        assert_eq!(
+            ACCENT,
+            palette::ELECTRIC,
+            "the accent must be the brand electric"
+        );
 
         // The retired hues are gone from every token and alias.
         let mut all: Vec<Color> = ALL_RGB_TOKENS.to_vec();
@@ -738,20 +758,27 @@ mod tests {
                 (RETIRED_EMBER_CRIMSON, "ember crimson"),
                 (RETIRED_GOLD, "gold"),
                 (RETIRED_GOLD_DEEP, "deep gold"),
+                (RETIRED_AMBER, "amber"),
+                (RETIRED_SKY, "sky"),
+                (RETIRED_SKY_DEEP, "deep sky"),
                 (RETIRED_AGENT_ICE, "agent ice"),
             ] {
                 assert_ne!(*token, retired, "a token still holds {name}");
             }
         }
 
-        // 2. The ground is neutral — no channel may outrun another, or the
-        //    canvas takes on a cast that competes with the accent.
+        // 2. The ground is neutral jet black — no channel may outrun another,
+        //    or the canvas takes on a cast (navy, the retired failure mode)
+        //    that competes with the accent. The check is symmetric: a red or
+        //    green cast is as much a cast as a blue one.
         for (ground, name) in [(GROUND, "GROUND"), (SURFACE, "SURFACE")] {
-            let Color::Rgb(r, _g, b) = ground else {
+            let Color::Rgb(r, g, b) = ground else {
                 panic!("{name} must be a truecolor token");
             };
+            let spread = [r, g, b].iter().copied().max().unwrap()
+                - [r, g, b].iter().copied().min().unwrap();
             assert!(
-                u32::from(b) - u32::from(r) <= 0x14,
+                spread <= 0x14,
                 "{name} carries a colour cast ({ground:?}); the canvas must stay neutral"
             );
         }
@@ -783,13 +810,16 @@ mod tests {
             (RUN, "RUN"),
             (HELD, "HELD"),
             (VIOLET, "VIOLET"),
-            (AMBER, "AMBER"),
+            (MAGENTA, "MAGENTA"),
             (TEAL, "TEAL"),
             (SYNTAX_KEYWORD, "SYNTAX_KEYWORD"),
             (SYNTAX_STRING, "SYNTAX_STRING"),
             (SYNTAX_NUMBER, "SYNTAX_NUMBER"),
         ] {
-            assert_ne!(role, ACCENT, "{name} must not be the reserved brand sky");
+            assert_ne!(
+                role, ACCENT,
+                "{name} must not be the reserved brand electric"
+            );
             let Color::Rgb(r, g, b) = role else {
                 panic!("{name} must be a truecolor token");
             };
@@ -911,10 +941,10 @@ mod tests {
     #[test]
     fn degrade_buffer_resolves_every_cell_when_degraded() {
         let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 1, 1));
-        buf.content[0].fg = ACCENT; // → 117 (256) / 14 (16)
-        buf.content[0].bg = VIOLET; // → 141 (256) / 13 (16)
+        buf.content[0].fg = ACCENT; // → 39 (256) / 12 (16)
+        buf.content[0].bg = VIOLET; // → 141 (256) / 5 (16)
         degrade_buffer(&mut buf, ColorMode::Ansi256);
-        assert_eq!(buf.content[0].fg, Color::Indexed(117));
+        assert_eq!(buf.content[0].fg, Color::Indexed(39));
         assert_eq!(buf.content[0].bg, Color::Indexed(141));
     }
 
@@ -929,15 +959,15 @@ mod tests {
     }
 
     #[test]
-    fn brand_gradient_spans_deep_sky_to_sky() {
-        assert_eq!(brand_gradient(0.0), SKY_DEEP);
-        assert_eq!(brand_gradient(1.0), SKY);
+    fn brand_gradient_spans_deep_electric_to_electric() {
+        assert_eq!(brand_gradient(0.0), ELECTRIC_DEEP);
+        assert_eq!(brand_gradient(1.0), ELECTRIC);
         // Monotonic, clamped, never panics across the range.
         for i in 0..=20 {
             let _ = brand_gradient(f64::from(i) / 20.0);
         }
-        assert_eq!(brand_gradient(-1.0), SKY_DEEP);
-        assert_eq!(brand_gradient(2.0), SKY);
+        assert_eq!(brand_gradient(-1.0), ELECTRIC_DEEP);
+        assert_eq!(brand_gradient(2.0), ELECTRIC);
     }
 
     #[test]

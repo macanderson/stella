@@ -1045,7 +1045,7 @@ impl Config {
     pub fn print_config(&self, loaded_env: Option<&crate::env_files::Loaded>) {
         println!(
             "{}\n",
-            "Stella — Current Configuration".bright_cyan().bold()
+            "Stella — Current Configuration".bright_blue().bold()
         );
         println!(
             "  Provider:   {}",
@@ -1209,7 +1209,7 @@ impl Config {
         }
         println!(
             "{}\n",
-            "Stella — Available Providers & Models".bright_cyan().bold()
+            "Stella — Available Providers & Models".bright_blue().bold()
         );
         let key_status = |status: &crate::credential_status::CredentialStatus| {
             if status.configured {

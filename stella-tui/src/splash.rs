@@ -280,7 +280,7 @@ fn render_wordmark_or_fallback(area: Rect, buf: &mut Buffer) -> Rect {
     }
 }
 
-/// The full wordmark: a big block-art "STELLA" in Stella amber over a muted
+/// The full wordmark: a big block-art "STELLA" in brand electric over a muted
 /// "command deck" subtitle, vertically centered as one block. Tall terminals
 /// get the full 8-row glyphs; shorter ones the 4-row half-height packing.
 fn render_wordmark(area: Rect, buf: &mut Buffer) -> Rect {

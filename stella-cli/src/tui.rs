@@ -45,20 +45,20 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// Selectable accent palette — `/color` switches the session's accent so
 /// multiple terminal windows running stella are visually distinct at a
 /// glance (see [`set_accent`], and [`rename_tab`] for the `/rename` sibling).
-// Sky first: it is the brand, and so the default. The rest are
+// Electric first: it is the brand, and so the default. The rest are
 // personalisation only — `/color` exists so several terminal windows running
 // stella can be told apart at a glance, which needs hues that are *distinct*
 // rather than on-brand. `colored`'s named ANSI colors are the portable
-// stand-ins: sky≈bright-cyan, cyan≈bright-cyan, azure≈bright-blue,
-// violet≈bright-magenta, magenta≈magenta, mint≈green. `sky` and `cyan` land on
-// the same ANSI code — the brand hue is a light blue and the named set holds no
-// nearer distinct entry — so they are two names for one appearance here; only
-// `sky` is the brand, and `cyan` is kept so an existing `/color cyan` still
-// resolves.
-const PALETTE: [(&str, Color); 6] = [
+// stand-ins: electric≈bright-blue, sky≈bright-cyan, cyan≈bright-cyan,
+// violet≈bright-magenta, magenta≈magenta, mint≈green. `sky`/`cyan` and
+// `electric`/`azure` each land on one ANSI code — the retired names are kept
+// as aliases so an existing `/color sky` or `/color azure` still resolves,
+// but only `electric` is the brand.
+const PALETTE: [(&str, Color); 7] = [
+    ("electric", Color::BrightBlue),
+    ("azure", Color::BrightBlue),
     ("sky", Color::BrightCyan),
     ("cyan", Color::BrightCyan),
-    ("azure", Color::BrightBlue),
     ("violet", Color::BrightMagenta),
     ("magenta", Color::Magenta),
     ("mint", Color::Green),
@@ -66,7 +66,7 @@ const PALETTE: [(&str, Color); 6] = [
 
 static ACCENT: AtomicUsize = AtomicUsize::new(0);
 
-/// The session accent color (defaults to the brand sky, `PALETTE[0]`).
+/// The session accent color (defaults to the brand electric, `PALETTE[0]`).
 pub fn accent() -> Color {
     PALETTE[ACCENT.load(Ordering::Relaxed) % PALETTE.len()].1
 }
@@ -485,15 +485,16 @@ fn compose_wordmark(text: &str) -> Vec<String> {
         .collect()
 }
 
-// Stellar gradient — a single restrained sky sweep, deep sky → sky, left to
-// right across the wordmark. These are the brand tokens `sky-deep` and `sky`
-// from stella-tui/src/palette.rs (the same pair `stella-tui`'s theme::ACCENT_DEEP
-// → ACCENT resolve to), duplicated rather than imported because that crate
-// speaks in ratatui `Color`s and this banner writes raw truecolor. Keep the two
-// in step: `stellar_stops_match_the_brand_tokens` below fails if they drift.
+// Stellar gradient — a single restrained electric sweep, deep electric →
+// electric, left to right across the wordmark. These are the brand tokens
+// `electric-deep` and `electric` from stella-tui/src/palette.rs (the same pair
+// `stella-tui`'s theme::ACCENT_DEEP → ACCENT resolve to), duplicated rather
+// than imported because that crate speaks in ratatui `Color`s and this banner
+// writes raw truecolor. Keep the two in step:
+// `stellar_stops_match_the_brand_tokens` below fails if they drift.
 const STELLAR_STOPS: [(u8, u8, u8); 2] = [
-    (0x38, 0xBD, 0xF8), // sky-deep
-    (0x7D, 0xD3, 0xFC), // sky
+    (0x00, 0x66, 0xFF), // electric-deep
+    (0x00, 0xAA, 0xFF), // electric
 ];
 
 /// Color at horizontal position `t` ∈ `[0,1]` along the stellar gradient.
@@ -598,21 +599,24 @@ mod tests {
     /// The banner writes raw truecolor, so it cannot import stella-tui's
     /// ratatui `Color`s and instead duplicates the two brand stops. This is the
     /// guard that keeps the copy honest: the values must stay exactly the
-    /// `SKY_DEEP` and `SKY` tokens in stella-tui/src/palette.rs.
+    /// `ELECTRIC_DEEP` and `ELECTRIC` tokens in stella-tui/src/palette.rs.
     #[test]
     fn stellar_stops_match_the_brand_tokens() {
-        assert_eq!(STELLAR_STOPS[0], (0x38, 0xBD, 0xF8), "sky-deep");
-        assert_eq!(STELLAR_STOPS[1], (0x7D, 0xD3, 0xFC), "sky");
+        assert_eq!(STELLAR_STOPS[0], (0x00, 0x66, 0xFF), "electric-deep");
+        assert_eq!(STELLAR_STOPS[1], (0x00, 0xAA, 0xFF), "electric");
     }
 
-    /// Sky is the brand, so it is the default accent -- `/color` with no
+    /// Electric is the brand, so it is the default accent -- `/color` with no
     /// argument, and a fresh session, must land on it.
     #[test]
-    fn default_accent_is_sky() {
-        assert_eq!(PALETTE[0].0, "sky");
+    fn default_accent_is_electric() {
+        assert_eq!(PALETTE[0].0, "electric");
         assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
+        assert!(set_accent("electric"));
+        assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "electric");
+        // The retired brand name still resolves — an existing `/color sky`
+        // keeps working as a legacy alias.
         assert!(set_accent("sky"));
-        assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "sky");
     }
 
     #[test]

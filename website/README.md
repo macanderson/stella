@@ -5,13 +5,13 @@ destined for **stella.oxagen.sh**.
 
 Built with [Next.js](https://nextjs.org) (App Router) + [Fumadocs](https://fumadocs.dev)
 (`fumadocs-core` / `fumadocs-ui` / `fumadocs-mdx`) + Tailwind CSS v4. Branded with the
-Stella identity — bright sky on black, a signal light in the dark. `src/app/tokens.css`
+Stella identity — electric blue on jet black, a live wire in the dark. `src/app/tokens.css`
 holds the raw palette (a mirror of `stella-tui/src/palette.rs`; nothing in it is
 mode-aware), `src/app/global.css` maps it onto the light/dark semantic layer, and
 `src/components/brand.tsx` carries the marks the site renders inline. The one rule that
-layer exists to enforce: `--stella-accent` is ink on paper and sky only in dark mode,
-because sky on white is 1.67:1. The retired aurora/Ice tokens survive as a single alias
-(`--stella-azure`) repointed at that accent.
+layer exists to enforce: `--stella-accent` is ink on paper and electric only in dark
+mode, because electric on white is 2.56:1. The retired aurora/Ice tokens survive as a
+single alias (`--stella-azure`) repointed at that accent.
 
 **Brand assets are hand-maintained.** They used to be generated: every SVG under
 `public/brand/`, plus `src/app/icon.svg` and `src/app/tokens.css`, carried a

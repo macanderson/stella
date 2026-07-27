@@ -122,8 +122,8 @@ pub fn render_stars(t: f32, area: Rect, buf: &mut Buffer) {
         let fall = 1.0 + hash_f(i * 3 + 2) * 2.0;
         let y0 = hash_f(i * 3 + 3) * f32::from(area.height);
         let y = (y0 + t * fall) % f32::from(area.height);
-        // Twinkle on a per-star phase; dim tiers dominate, with a few amber
-        // accents so the sky reads on-brand.
+        // Twinkle on a per-star phase; dim tiers dominate, with a few electric
+        // accents so the night sky reads on-brand.
         let phase = ((t * 1.6 + hash_f(i * 7 + 5) * 4.0) % 4.0) as usize;
         let (ch, color) = match hash(i * 5 + 4) % 10 {
             0 => (['✦', '·', '✦', '·'][phase], theme::ACCENT),
