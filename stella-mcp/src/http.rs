@@ -3,7 +3,9 @@
 //! `text/event-stream` (JSON-RPC messages carried as SSE `data:` lines). A
 //! session id assigned by the server in the `Mcp-Session-Id` response header
 //! (typically on `initialize`) is captured and replayed on every subsequent
-//! request.
+//! request, and so is the protocol revision the server named in its
+//! `initialize` result — the `MCP-Protocol-Version` header the 2025-06-18
+//! spec requires after initialization.
 //!
 //! Each POST is self-correlating — one request, one response — so there is no
 //! pending-map here; when the server streams SSE, this transport scans the
@@ -32,6 +34,10 @@ use crate::transport::Transport;
 /// The MCP streamable-HTTP session header.
 const SESSION_HEADER: &str = "Mcp-Session-Id";
 
+/// The protocol-version header the 2025-06-18 streamable-HTTP spec requires on
+/// every request *after* initialization, carrying the negotiated revision.
+const PROTOCOL_VERSION_HEADER: &str = "MCP-Protocol-Version";
+
 /// The largest response body this transport will hold in memory. An MCP
 /// server is untrusted input, and `reqwest`'s own body readers are unbounded:
 /// a server that answers a `tools/call` — or a 500 whose error body we quote
@@ -48,6 +54,12 @@ pub struct HttpTransport {
     url: String,
     base_headers: HeaderMap,
     session_id: Mutex<Option<String>>,
+    /// The protocol revision the server named in its `initialize` result,
+    /// captured off the wire (like the session id) and replayed as the
+    /// [`PROTOCOL_VERSION_HEADER`] on every later request, per the 2025-06-18
+    /// streamable-HTTP spec. `None` until initialization — the `initialize`
+    /// request itself carries the offered version in its body, not a header.
+    protocol_version: Mutex<Option<String>>,
     next_id: AtomicU64,
     server_name: String,
     /// OAuth bearer supplier. Lazy: yields no header until a login is stored
@@ -81,6 +93,7 @@ impl HttpTransport {
             url: url.to_string(),
             base_headers,
             session_id: Mutex::new(None),
+            protocol_version: Mutex::new(None),
             next_id: AtomicU64::new(1),
             server_name: server_name.to_string(),
             bearer: None,
@@ -138,6 +151,15 @@ impl HttpTransport {
                 .body(payload);
             if let Some(session) = self.session_id.lock().await.clone() {
                 builder = builder.header(SESSION_HEADER, session);
+            }
+            // After initialization the spec requires the negotiated revision
+            // on every request; a header value the server chose that is not
+            // header-safe simply is not replayed (it could never have been a
+            // real revision string).
+            if let Some(version) = self.protocol_version.lock().await.clone()
+                && let Ok(value) = HeaderValue::from_str(&version)
+            {
+                builder = builder.header(PROTOCOL_VERSION_HEADER, value);
             }
 
             let response = builder.send().await.map_err(|e| {
@@ -318,6 +340,21 @@ impl Transport for HttpTransport {
                 McpError::Protocol(format!("could not decode JSON-RPC response: {e}"))
             })?
         };
+        // Capture the negotiated protocol revision off the `initialize`
+        // result (the same off-the-wire capture as the session id above) so
+        // every later request can replay it as [`PROTOCOL_VERSION_HEADER`].
+        // Whether the named revision is one this client can speak is the
+        // client layer's decision — an unsupported one aborts the handshake
+        // there, so nothing is ever sent under a version we then rejected.
+        if method == "initialize"
+            && let Some(version) = message
+                .result
+                .as_ref()
+                .and_then(|r| r.get("protocolVersion"))
+                .and_then(Value::as_str)
+        {
+            *self.protocol_version.lock().await = Some(version.to_string());
+        }
         message.into_result()
     }
 

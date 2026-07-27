@@ -8,6 +8,8 @@
 //! - `--protocol-version <v>`: counter-offer `<v>` in the initialize result.
 //! - `--paginate`: return `tools/list` across two cursor pages.
 //! - `--hang`: never answer `tools/call` (exercises the call timeout).
+//! - `--delay-call-ms <n>`: answer `tools/call` after sleeping `<n>` ms — a
+//!   slow-but-working tool (exercises the connect/call timeout split).
 //! - `--die-after <n>`: exit(0) upon the `(n+1)`-th request, before answering
 //!   it (exercises mid-call server death).
 //! - `--garbage`: answer `tools/call` with an unparseable `result`.
@@ -25,6 +27,7 @@ use serde_json::{Value, json};
 
 struct Flags {
     hang: bool,
+    delay_call: Option<Duration>,
     die_after: Option<u64>,
     garbage: bool,
     paginate: bool,
@@ -36,6 +39,7 @@ impl Flags {
     fn parse() -> Self {
         let mut flags = Flags {
             hang: false,
+            delay_call: None,
             die_after: None,
             garbage: false,
             paginate: false,
@@ -53,6 +57,12 @@ impl Flags {
                     i += 1;
                     if i < args.len() {
                         flags.die_after = args[i].parse().ok();
+                    }
+                }
+                "--delay-call-ms" => {
+                    i += 1;
+                    if i < args.len() {
+                        flags.delay_call = args[i].parse().ok().map(Duration::from_millis);
                     }
                 }
                 "--protocol-version" => {
@@ -133,6 +143,10 @@ fn main() {
                     loop {
                         std::thread::sleep(Duration::from_secs(3600));
                     }
+                }
+                // A slow-but-working tool, unlike `--hang`'s never-answering one.
+                if let Some(delay) = flags.delay_call {
+                    std::thread::sleep(delay);
                 }
                 tools_call_response(&id, &params, &flags)
             }

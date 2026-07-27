@@ -86,8 +86,12 @@ surfaced per server through `McpToolSet::health`.
 `Command::env_clear`; only the keys in the server's config `env` reach the
 child, plus `PATH` — the one deliberate exception, because a bare runner
 (`npx`, `uvx`, `docker`) cannot resolve without it, and a config `env` may still
-override it. stderr is `Stdio::null` so a chatty server cannot corrupt the
-JSON-RPC framing on stdout.
+override it. stderr is piped onto its **own** stream — never merged into stdout,
+so a chatty server cannot corrupt the JSON-RPC framing — and continuously
+drained into a small bounded ring of its newest lines (#638). That tail rides
+along on every connection-death error, so a server that dies can say *why* (its
+own last log lines) instead of just "closed the connection before responding";
+nothing from stderr is ever parsed as JSON-RPC.
 
 **OAuth is lazy and its state is secret.** `OAuthManager::source_for` hands
 every HTTP transport a per-server `OAuthTokenSource` unconditionally; a source
@@ -157,9 +161,11 @@ drive the full protocol state machine over `transport::testkit::ScriptedTranspor
 - [`tests/stdio_integration.rs`](tests/stdio_integration.rs) spawns the real
   [`mcp-fixture-server`](src/bin/mcp-fixture-server.rs) binary, located via
   `env!("CARGO_BIN_EXE_mcp-fixture-server")` (cargo builds it automatically).
-  Its flags drive the resilience matrix: `--hang` (call timeout), `--die-after`
-  (mid-call death), `--garbage` (undecodable result), `--paginate` (cursor
-  pagination), `--protocol-version` (negotiation, both accept and reject). The
+  Its flags drive the resilience matrix: `--hang` (call timeout),
+  `--delay-call-ms` (a slow-but-working call — the connect/call timeout split),
+  `--die-after` (mid-call death), `--garbage` (undecodable result),
+  `--paginate` (cursor pagination), `--protocol-version` (negotiation, both
+  accept and reject). The
   `env_probe` fixture tool is what makes the environment scrub testable from
   the outside.
 - [`tests/http_integration.rs`](tests/http_integration.rs) and

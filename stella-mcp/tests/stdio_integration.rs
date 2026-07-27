@@ -254,6 +254,37 @@ async fn toolset_over_stdio_namespaces_and_routes() {
     set.close_all().await;
 }
 
+/// The production shape (`stella-cli`'s `connect_mcp_servers`): a SHORT
+/// connect bound with `with_call_timeout` swapping in the LONG per-call bound
+/// afterwards. `McpToolSet::connect`'s `timeout` doubles as the per-call
+/// timeout *until* overridden, so a constructor path that forgets the override
+/// kills every tool call slower than the connect bound — the regression this
+/// pins.
+#[tokio::test]
+async fn with_call_timeout_lets_a_call_outlive_a_short_connect_bound() {
+    // The handshake answers instantly (well inside the 2s connect bound);
+    // every `tools/call` then takes 3s — over the connect bound, under the
+    // call bound.
+    let cfg = stdio_config("slowcall", &["--delay-call-ms", "3000"], BTreeMap::new());
+    let set = McpToolSet::connect(std::slice::from_ref(&cfg), Duration::from_secs(2))
+        .await
+        .with_call_timeout(Duration::from_secs(20));
+    assert_eq!(set.connected_count(), 1);
+
+    let out = stella_core::ports::ToolExecutor::execute(
+        &set,
+        "mcp__slowcall__echo",
+        &serde_json::json!({}),
+    )
+    .await;
+    assert!(
+        matches!(out, ToolOutput::Ok { .. }),
+        "a call slower than the connect timeout must survive under the longer \
+         call timeout, got {out:?}"
+    );
+    set.close_all().await;
+}
+
 #[tokio::test]
 async fn hung_server_times_out_naming_it_without_poisoning_the_set() {
     let cfg = stdio_config("hangsrv", &["--hang"], BTreeMap::new());
