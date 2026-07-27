@@ -645,6 +645,25 @@ const REPL_RESERVED: &[&str] = &[
     "/rename", "/color", "/goal",
 ];
 
+/// The usage line for an argument-requiring local command invoked bare (or
+/// with only whitespace). These are reserved names, so `expand` never claims
+/// them — without a local answer the bare form would fall through to a paid
+/// model turn. `/goal`'s handler owns its own bare form the same way.
+fn bare_local_command_usage(input: &str) -> Option<&'static str> {
+    let (head, rest) = match input.split_once(char::is_whitespace) {
+        Some((head, rest)) => (head, rest),
+        None => (input, ""),
+    };
+    if !rest.trim().is_empty() {
+        return None;
+    }
+    match head {
+        "/rename" => Some("usage: /rename <name>"),
+        "/color" => Some("usage: /color <name>"),
+        _ => None,
+    }
+}
+
 /// Run an interactive REPL session. `budget_limit` is per-session: the
 /// `BudgetGuard`'s session-scoped total accumulates across every turn in
 /// the conversation, while `BudgetGuard::begin_turn` resets only the
@@ -862,6 +881,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 Err(e) => println!("  {} init failed: {e}", "✗".red()),
             }
             println!();
+            continue;
+        }
+        if let Some(usage) = bare_local_command_usage(input) {
+            println!("  {}\n", usage.dimmed());
             continue;
         }
         if let Some(title) = input.strip_prefix("/rename ") {

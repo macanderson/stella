@@ -107,6 +107,97 @@ fn alias_env_var_resolves_when_the_primary_is_unset() {
     }
 }
 
+/// A set-but-empty alias env var must hard-error even when a lower-precedence
+/// source (here the credentials file) resolves — the same posture
+/// `ApiKey::resolve` takes for the primary var, which errors before it ever
+/// consults the file. This path used to silently return the file hit, so the
+/// two resolution paths disagreed about the same user mistake.
+#[test]
+fn empty_alias_env_var_errors_even_when_the_credentials_file_resolves() {
+    let provider = ProviderConfig {
+        id: "alias-empty-file-test",
+        env_var: "STELLA_TEST_ALIAS_EMPTY_FILE_PRIMARY",
+        env_var_aliases: &["STELLA_TEST_ALIAS_EMPTY_FILE_SECONDARY"],
+        display_name: "Alias Empty Test",
+        default_model: "m",
+        base_url: "",
+        dialect: Dialect::OpenaiCompatible,
+        seeded: false,
+    };
+    // SAFETY: test-only env mutation, unique var names per test — and
+    // serialized behind the binary-wide env lock, because setenv racing
+    // any concurrent getenv is UB on POSIX regardless of var names.
+    let _env = crate::test_env::lock();
+    unsafe {
+        std::env::remove_var("STELLA_TEST_ALIAS_EMPTY_FILE_PRIMARY");
+        std::env::set_var("STELLA_TEST_ALIAS_EMPTY_FILE_SECONDARY", "");
+    }
+    let mut file = CredentialsFile::load(std::env::temp_dir().join(format!(
+        "stella-test-alias-empty-file-credentials-{}.toml",
+        std::process::id()
+    )))
+    .unwrap();
+    file.set("alias-empty-file-test", "sk-from-file");
+
+    let err = resolve_provider_key(&provider, None, None, &file, false).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            stella_model::credential::CredentialError::Empty { env_var }
+                if env_var == "STELLA_TEST_ALIAS_EMPTY_FILE_SECONDARY"
+        ),
+        "expected Empty for the alias, got: {err:?}"
+    );
+
+    unsafe {
+        std::env::remove_var("STELLA_TEST_ALIAS_EMPTY_FILE_SECONDARY");
+    }
+}
+
+/// The nothing-found path's posture, pinned so the two paths cannot drift
+/// apart again: with no other source at all, a set-but-empty alias is the
+/// same hard error.
+#[test]
+fn empty_alias_env_var_errors_when_nothing_else_resolves() {
+    let provider = ProviderConfig {
+        id: "alias-empty-bare-test",
+        env_var: "STELLA_TEST_ALIAS_EMPTY_BARE_PRIMARY",
+        env_var_aliases: &["STELLA_TEST_ALIAS_EMPTY_BARE_SECONDARY"],
+        display_name: "Alias Empty Test",
+        default_model: "m",
+        base_url: "",
+        dialect: Dialect::OpenaiCompatible,
+        seeded: false,
+    };
+    // SAFETY: test-only env mutation, unique var names per test — and
+    // serialized behind the binary-wide env lock, because setenv racing
+    // any concurrent getenv is UB on POSIX regardless of var names.
+    let _env = crate::test_env::lock();
+    unsafe {
+        std::env::remove_var("STELLA_TEST_ALIAS_EMPTY_BARE_PRIMARY");
+        std::env::set_var("STELLA_TEST_ALIAS_EMPTY_BARE_SECONDARY", "");
+    }
+    let file = CredentialsFile::load(std::env::temp_dir().join(format!(
+        "stella-test-alias-empty-bare-credentials-{}.toml",
+        std::process::id()
+    )))
+    .unwrap();
+
+    let err = resolve_provider_key(&provider, None, None, &file, false).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            stella_model::credential::CredentialError::Empty { env_var }
+                if env_var == "STELLA_TEST_ALIAS_EMPTY_BARE_SECONDARY"
+        ),
+        "expected Empty for the alias, got: {err:?}"
+    );
+
+    unsafe {
+        std::env::remove_var("STELLA_TEST_ALIAS_EMPTY_BARE_SECONDARY");
+    }
+}
+
 #[test]
 fn config_debug_never_leaks_the_api_key() {
     // H3: with `api_key: ApiKey`, the whole Config's derived Debug must
