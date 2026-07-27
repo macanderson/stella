@@ -108,6 +108,43 @@ pub struct SessionRecord {
     pub exploring: Vec<String>,
 }
 
+/// A `<id>.json` that is present but unusable — the state
+/// [`SessionRegistry::list`] silently drops.
+///
+/// It is reported rather than repaired because the record cannot be rebuilt:
+/// `id`, `pid` and `started_at_ms` are recoverable from the filename (ids are
+/// self-minted `ses-<ms>-<pid>`), but `workspace` is not held anywhere else on
+/// disk — not in `journal.jsonl`, not in `history.json` — and resuming needs
+/// it. So the honest outcome is to surface the session as damaged, keep its
+/// sidecar, and let a human decide, instead of silently hiding it (today) or
+/// silently deleting it (what #617 item 12 proposed).
+#[derive(Debug, Clone)]
+pub struct DamagedRecord {
+    /// The record's id, taken from the filename.
+    pub id: String,
+    /// The unreadable record file.
+    pub path: PathBuf,
+    /// Why it could not be used — zero-length, or the parse error.
+    pub reason: String,
+    /// Whether a sidecar directory sits beside it. When true there is very
+    /// likely a recoverable `history.json` inside, which is what makes
+    /// deleting this session unacceptable.
+    pub has_sidecar: bool,
+}
+
+/// What [`SessionRegistry::scan`] found, with healthy, damaged, and genuinely
+/// orphaned state kept apart. See that method for why the distinction exists.
+#[derive(Debug, Default)]
+pub struct RegistryScan {
+    /// Records that parsed, newest-started first, liveness downgrade applied.
+    pub healthy: Vec<SessionRecord>,
+    /// Records present on disk but unusable. Their sidecars are intact.
+    pub damaged: Vec<DamagedRecord>,
+    /// Sidecar directory names with no `<id>.json` beside them at all — the
+    /// only state that is safe to reclaim.
+    pub orphan_sidecars: Vec<String>,
+}
+
 impl SessionRecord {
     /// A fresh in-progress record for this process, timestamped now.
     pub fn new(workspace: impl Into<String>, title: impl Into<String>) -> Self {
@@ -196,28 +233,125 @@ impl SessionRegistry {
     /// applied: a live-status record whose pid is gone is shown as `Error`
     /// (the session crashed without writing a terminal status). Unreadable
     /// files are skipped — one corrupt record never hides the rest.
+    ///
+    /// A skipped record is *invisible*, not *absent*: its `<id>.json` is still
+    /// on disk. Anything deciding whether state may be deleted must use
+    /// [`Self::scan`], which keeps the two apart.
     pub fn list(&self) -> Vec<SessionRecord> {
+        self.scan().healthy
+    }
+
+    /// The registry directory as it actually is on disk, with the three states
+    /// [`Self::list`] flattens into one kept apart.
+    ///
+    /// `list` reads `<id>.json` and drops anything that fails to parse, so a
+    /// damaged record and a missing record are indistinguishable through it.
+    /// That conflation is load-bearing for anything destructive: `upsert`'s own
+    /// comment records that a power cut leaves a **zero-length `<id>.json`**,
+    /// which `list` skips — so a sweep that deletes "sidecars `list` doesn't
+    /// account for" deletes the conversation of a session whose record was
+    /// merely truncated, and `history.json` is the only continuable copy
+    /// (#617 item 12).
+    ///
+    /// So the orphan test here is "is there a `<id>.json` at all", answered
+    /// from the directory entry and never from a parse.
+    pub fn scan(&self) -> RegistryScan {
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return Vec::new();
+            return RegistryScan::default();
         };
-        let mut records: Vec<SessionRecord> = entries
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !entry.file_type().ok()?.is_file() {
-                    return None;
+
+        let mut scan = RegistryScan::default();
+        let mut record_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut sidecar_names: Vec<String> = Vec::new();
+
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    sidecar_names.push(name.to_string());
                 }
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                    return None;
+                continue;
+            }
+            if !file_type.is_file() || path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(stem) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            // Recorded BEFORE the parse: the file's existence is what makes a
+            // sidecar non-orphaned, whether or not its bytes are usable.
+            record_names.insert(stem.clone());
+
+            match crate::read_private_to_string(&path)
+                .map_err(|error| error.to_string())
+                .and_then(|text| {
+                    serde_json::from_str::<SessionRecord>(&text).map_err(|error| {
+                        if text.is_empty() {
+                            "record is zero-length (an interrupted write)".to_string()
+                        } else {
+                            error.to_string()
+                        }
+                    })
+                }) {
+                Ok(mut record) => {
+                    record.status = Self::presented_status(&record);
+                    scan.healthy.push(record);
                 }
-                let text = crate::read_private_to_string(&path).ok()?;
-                let mut record: SessionRecord = serde_json::from_str(&text).ok()?;
-                record.status = Self::presented_status(&record);
-                Some(record)
-            })
+                Err(reason) => scan.damaged.push(DamagedRecord {
+                    id: stem,
+                    has_sidecar: path.with_extension("").is_dir(),
+                    reason,
+                    path,
+                }),
+            }
+        }
+
+        scan.orphan_sidecars = sidecar_names
+            .into_iter()
+            .filter(|name| !record_names.contains(name))
             .collect();
-        records.sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
-        records
+
+        scan.healthy
+            .sort_by_key(|r| std::cmp::Reverse(r.started_at_ms));
+        scan.damaged.sort_by(|a, b| a.id.cmp(&b.id));
+        scan.orphan_sidecars.sort();
+        scan
+    }
+
+    /// Delete sidecar directories that have no `<id>.json` beside them at all.
+    ///
+    /// The narrow definition is the safety property: a directory whose record
+    /// exists but cannot be parsed is **not** an orphan and is never touched
+    /// here (see [`Self::scan`]). Returns the ids removed.
+    ///
+    /// This reclaims the case [`Self::upsert`]'s comment calls "strands its
+    /// sidecar" — a record deleted while its directory survived — without
+    /// being able to reach a session whose record is merely damaged.
+    pub fn prune_orphan_sidecars(&self) -> Result<Vec<String>> {
+        let mut removed = Vec::new();
+        for id in self.scan().orphan_sidecars {
+            let dir = self.dir.join(&id);
+            // Re-check under the same name we are about to delete: a session
+            // that started between the scan and here has written its record.
+            if self.dir.join(format!("{id}.json")).exists() {
+                continue;
+            }
+            std::fs::remove_dir_all(&dir).map_err(|error| {
+                StoreError(format!(
+                    "cannot remove orphan session sidecar {}: {error}",
+                    dir.display()
+                ))
+            })?;
+            removed.push(id);
+        }
+        Ok(removed)
     }
 
     /// Read one record (no liveness downgrade — the raw stored state).
@@ -505,6 +639,93 @@ mod tests {
 
         assert!(reg.upsert(&rec).is_err());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "outside");
+    }
+
+    /// #617 item 12, the case that made the sweep unacceptable as filed. A
+    /// power cut leaves a zero-length `<id>.json`; `list` skips it, so the
+    /// session looks accounted-for by nothing. The sweep must still not touch
+    /// it, because `history.json` beside it is the only continuable copy of the
+    /// conversation.
+    #[test]
+    fn a_power_cut_record_is_damaged_not_orphaned_and_survives_the_sweep() {
+        let (dir, reg) = temp_registry("powercut");
+        let rec = SessionRecord::new("/w", "interrupted");
+        reg.upsert(&rec).unwrap();
+
+        // The session had written a conversation snapshot.
+        let sidecar = reg.sidecar_dir(&rec.id);
+        std::fs::create_dir_all(&sidecar).unwrap();
+        let history = sidecar.join(crate::journal::HISTORY_FILE);
+        std::fs::write(&history, b"[{\"role\":\"user\"}]").unwrap();
+
+        // Now the power cut: the record is published but zero-length.
+        std::fs::write(reg.path_for(&rec.id), b"").unwrap();
+
+        // `list` cannot see it — that is the trap.
+        assert!(
+            reg.list().is_empty(),
+            "a zero-length record is invisible to list; that is the premise"
+        );
+
+        // `scan` calls it damaged, NOT an orphan.
+        let scan = reg.scan();
+        assert!(scan.healthy.is_empty());
+        assert_eq!(scan.damaged.len(), 1, "the record is damaged");
+        assert!(
+            scan.damaged[0].reason.contains("zero-length"),
+            "the reason should name the interrupted write, got: {}",
+            scan.damaged[0].reason
+        );
+        assert!(
+            scan.damaged[0].has_sidecar,
+            "the damaged record must be reported as having recoverable state"
+        );
+        assert!(
+            scan.orphan_sidecars.is_empty(),
+            "a sidecar whose record exists is never an orphan, got {:?}",
+            scan.orphan_sidecars
+        );
+
+        // And the sweep leaves the conversation alone.
+        assert!(reg.prune_orphan_sidecars().unwrap().is_empty());
+        assert!(
+            history.exists(),
+            "the sweep deleted a resumable conversation"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The other half: a sidecar with genuinely no record beside it is the
+    /// "stranded sidecar" `upsert`'s comment names, and IS reclaimable.
+    #[test]
+    fn a_sidecar_with_no_record_at_all_is_swept() {
+        let (dir, reg) = temp_registry("orphan");
+        crate::ensure_private_dir(&dir).unwrap();
+
+        let stranded = reg.sidecar_dir("ses-1-1");
+        std::fs::create_dir_all(&stranded).unwrap();
+        std::fs::write(stranded.join(crate::journal::HISTORY_FILE), b"[]").unwrap();
+
+        // A healthy session alongside it must be untouched.
+        let live = SessionRecord::new("/w", "live");
+        reg.upsert(&live).unwrap();
+        let live_sidecar = reg.sidecar_dir(&live.id);
+        std::fs::create_dir_all(&live_sidecar).unwrap();
+
+        let scan = reg.scan();
+        assert_eq!(scan.orphan_sidecars, vec!["ses-1-1".to_string()]);
+        assert!(scan.damaged.is_empty());
+
+        assert_eq!(
+            reg.prune_orphan_sidecars().unwrap(),
+            vec!["ses-1-1".to_string()]
+        );
+        assert!(!stranded.exists(), "the orphan should be reclaimed");
+        assert!(
+            live_sidecar.exists(),
+            "a live session's sidecar is not an orphan"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

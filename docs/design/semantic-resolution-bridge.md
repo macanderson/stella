@@ -75,10 +75,10 @@ strategy (`stella-mcp/tests/`).
   which spends the memory whether or not a resolution query ever arrives.
 - **Invariant fit:** clean on "ports, not concretions" (it *is* an adapter
   behind a trait; `stella-core` never sees it); hostile to dependency-light /
-  no-daemon unless opt-in gated exactly like the shell and web tools
-  (`tools.bash: "on"` — off by default in every scope, `AGENTS.md`;
-  `stella-tools/src/bash.rs:1-12` "Opt-in, never ambient";
-  `stella-cli/src/settings.rs:552` for `web`) and registered conditionally
+  no-daemon unless gated behind a tool switch like the shell and web tools
+  (`tools.bash: "off"` withholds the shell — registered by default in every
+  scope since #710, `AGENTS.md`; `stella-tools/src/bash.rs:1-12`) and
+  registered conditionally
   like `graph_query` (no server, no schema burning tokens).
 - **Rough size:** LSP client core (initialize handshake, capability
   negotiation, document sync, request correlation) plus lifecycle supervision,

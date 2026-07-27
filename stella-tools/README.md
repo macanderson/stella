@@ -43,7 +43,7 @@ the single credential deny-list rather than growing a second one that drifts.
 | [`src/project.rs`](src/project.rs), [`src/scripts.rs`](src/scripts.rs), [`src/diagnostics.rs`](src/diagnostics.rs), [`src/impact.rs`](src/impact.rs) | Build/test/lint/format as thin verbs over the scripts index, structured typecheck output, and the importer-edge blast radius behind `run_tests` `scope: "impacted"`. |
 | [`src/process.rs`](src/process.rs) | The long-running process group (`start_process`/`read_output`/`send_stdin`/`stop_process`) for servers, REPLs, watchers. |
 | [`src/repo.rs`](src/repo.rs), [`src/ci.rs`](src/ci.rs) | Vendor-neutral `repo_*` tools behind the `RepoBackend` port (`GitCli` is the only adapter), and `ci_status` via `gh`. |
-| [`src/bash.rs`](src/bash.rs), [`src/sandbox.rs`](src/sandbox.rs) | The opt-in shell and its opt-in OS confinement (`sandbox-exec` / `bwrap`). |
+| [`src/bash.rs`](src/bash.rs), [`src/sandbox.rs`](src/sandbox.rs) | The default-on shell (withheld with `"tools": {"bash": "off"}`) and its opt-in OS confinement (`sandbox-exec` / `bwrap`, `STELLA_BASH_SANDBOX`, which wraps `bash` only). |
 | [`src/web.rs`](src/web.rs), [`src/web_extract.rs`](src/web_extract.rs) | The opt-in web family, and the pure HTML/CSS extraction behind it (no I/O in `web_extract.rs`, so it unit-tests without a network). |
 | [`src/issues.rs`](src/issues.rs), [`src/issue_ops.rs`](src/issue_ops.rs), [`src/github_rest.rs`](src/github_rest.rs), [`src/tracker_auth.rs`](src/tracker_auth.rs) | Issue-tracker tools, the backend-dispatching operations shared with the Command Deck, a minimal GitHub REST client, and the `stella connect` OAuth store. |
 | [`src/media.rs`](src/media.rs), [`src/media/`](src/media) | `generate_image`/`generate_video`/`poll_video` over `stella-media`'s port, plus the always-on client-side `generate_svg` and the host-attested process-free authority marker. |
@@ -118,11 +118,11 @@ got.
   of the prompt prefix and `HashMap` iteration order is per-process randomized. Prompt caching
   is a byte-level prefix match, so an unsorted list means every process writes a divergent cache
   entry.
-- **`bash` is off by default in every scope** — user, org-managed, and project. It registers only
-  when settings say `tools.bash: "on"`. The `web` family has the same posture, because a fetched
-  page is untrusted input *and* an uncontrolled egress channel. Prefer the genuinely
-  shell-free executors (`run_lint`, `format_code`, `diagnostics`, `repo_*`, the process group),
-  which spawn enumerable argv and never interpret a shell string.
+- **`bash` is registered by default in every scope** — user, org-managed, and project — and is
+  withheld with `tools.bash: "off"` (#710 moved every built-in to on-by-default with a switch;
+  the previous opt-in covered built-ins only, so most operators never found it). Prefer the
+  genuinely shell-free executors (`run_lint`, `format_code`, `diagnostics`, `repo_*`, the
+  process group), which spawn enumerable argv and never interpret a shell string.
 - **Turning `bash` off removes the shell *tool*, not the shell *capability*.** `build_project`
   and `run_tests` take a `command` override, `verify_done` a `test_cmd`, and `run_script` composes
   a line from the scripts index — all four are always-on and all four reach `bash -c` through

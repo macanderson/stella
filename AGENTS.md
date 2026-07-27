@@ -280,7 +280,7 @@ editing Stella's own code should know what lives where:
 | `.stella/memories/*.md` | Durable lessons baked into the byte-stable system prompt prefix. Sorted by filename, loaded once per session. (Write side: the `save_memory` tool.) |
 | `.stella/skills/<slug>/SKILL.md` | Auto-promoted skills from recurring reflection lessons. Never enforced — selected and injected as volatile context. |
 | `.stella/tools/*.toml` | Developer-defined custom script tools. Also scanned at `~/.stella/tools/`. |
-| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.bash: "on"` opts the shell tool in — it is off by default in every scope). Merged per-field with org-managed and user scopes. |
+| `.stella/settings.json` | Project-scope provider config (overrides built-ins or defines new providers) and tool switches (`tools.bash: "off"` withholds the shell tool — every built-in, the shell included, is registered by default since #710). Merged per-field with org-managed and user scopes. |
 | `.stella/mcp.toml` | MCP server config — extra tools merged into the registry at session start. |
 | `.stella/domains.toml` | Domain taxonomy for memory/reflection tagging, inferred by `stella init`. |
 | `.stella/workspace.json` | Durable per-workspace telemetry identity (`workspace_id`), written by `stella cloud register`. Deliberately **outside** `private/` and safe to commit — sharing it makes every clone/machine report under one `workspace_id` to a cloud org. |
