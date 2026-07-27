@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>Agents forget. Fleets drift. Stella doesn't.</strong></p>
+<p align="center"><strong>Fully Autonomous Software Delivery with Deterministic Verification Ladder</strong></p>
 <p align="center">Open Source · Rust · BYOK · No Phone Home</p>
 
 <p align="center">
