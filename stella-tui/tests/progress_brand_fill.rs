@@ -68,7 +68,10 @@ fn progress_bar_fill_rides_the_brand_gradient() {
         }
         fill_cells += 1;
         let Color::Rgb(r, g, b) = cell.fg else {
-            panic!("fill cell at x={x} is not an RGB brand color: {:?}", cell.fg);
+            panic!(
+                "fill cell at x={x} is not an RGB brand color: {:?}",
+                cell.fg
+            );
         };
         let (Color::Rgb(dr, dg, db), Color::Rgb(br, bg, bb)) =
             (theme::BRAND_STOPS[0], theme::BRAND_STOPS[1])
@@ -93,7 +96,11 @@ fn progress_bar_fill_rides_the_brand_gradient() {
         // version this replaced hardcoded "gold is warm, so r > b", which would
         // have had to be inverted by hand — and an assertion maintained by hand
         // against a palette is one that eventually disagrees with it.
-        for (got, lo, chan) in [(r, dr.min(br), "r"), (g, dg.min(bg), "g"), (b, db.min(bb), "b")] {
+        for (got, lo, chan) in [
+            (r, dr.min(br), "r"),
+            (g, dg.min(bg), "g"),
+            (b, db.min(bb), "b"),
+        ] {
             assert!(
                 i32::from(got) >= i32::from(lo) - 1,
                 "fill cell at x={x} is dimmer than the brand gradient: {:?} \

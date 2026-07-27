@@ -670,9 +670,7 @@ fn render_composer(
     } else {
         theme::TEXT_TERTIARY
     });
-    let cursor_style = Style::new()
-        .fg(theme::OK)
-        .add_modifier(Modifier::REVERSED);
+    let cursor_style = Style::new().fg(theme::OK).add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     if blank {
         // Empty composer: the cursor block plus a key hint matched to the
@@ -1194,7 +1192,10 @@ fn entry_body(
                 quiet(),
                 vec![
                     Span::styled(
-                        format!("{} · {tokens} tok", plural(*frames as u64, "frame", "frames")),
+                        format!(
+                            "{} · {tokens} tok",
+                            plural(*frames as u64, "frame", "frames")
+                        ),
                         value(),
                     ),
                     Span::styled(format!("  ·  {cited}"), quiet()),
@@ -1383,7 +1384,10 @@ fn entry_body(
                     Style::new().fg(ci_status_color(*ci)),
                 ));
             }
-            spans.push(Span::styled(url.clone(), Style::new().fg(theme::TEXT_TERTIARY)));
+            spans.push(Span::styled(
+                url.clone(),
+                Style::new().fg(theme::TEXT_TERTIARY),
+            ));
             push_note("⇢ pr", style, spans, width, out);
         }
         TranscriptEntry::TaskUpdate {
