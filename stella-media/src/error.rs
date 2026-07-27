@@ -93,6 +93,16 @@ pub enum MediaError {
     #[error("host journal sidecar race during concurrent first-open: {0}")]
     SidecarRace(String),
 
+    /// The host operation journal could not be opened, configured, or read
+    /// (I/O, a rejected path, a poisoned mutex, a failed statement). Terminal.
+    ///
+    /// Distinct from [`MediaError::Artifact`]: that one names the artifact
+    /// store under `.stella/artifacts/`, this one names the journal sidecar
+    /// database. Both used to surface as `Artifact`, which sent operators
+    /// looking in the wrong directory.
+    #[error("host journal error: {0}")]
+    Journal(String),
+
     /// A non-retryable provider failure not covered above (4xx other than
     /// auth/rate-limit, 5xx that exhausted retries upstream).
     #[error("terminal media provider error: {0}")]
@@ -140,6 +150,7 @@ mod tests {
         // A concurrent-first-open sidecar race is handled internally by the
         // journal's own retry, never by a caller's is_retryable loop.
         assert!(!MediaError::SidecarRace("racing".into()).is_retryable());
+        assert!(!MediaError::Journal("cannot open journal".into()).is_retryable());
     }
 
     #[test]

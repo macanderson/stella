@@ -252,3 +252,57 @@ fn private_state_creation_ignores_an_ambient_zero_umask() {
         0o600
     );
 }
+
+/// The generated `.gitignore` is created with `O_EXCL | O_NOFOLLOW` (#617
+/// item 10), so the exclusive-create path must not become a way to write
+/// *through* a symlink someone planted at that name. `create_new` sees the
+/// existing symlink and reports `AlreadyExists`, and the reader that follows
+/// rejects it with `O_NOFOLLOW` — either way the target is never touched.
+#[cfg(unix)]
+#[test]
+fn generated_ignore_creation_rejects_a_planted_symlink_without_writing_through_it() {
+    let root = tempfile::tempdir().unwrap();
+    let dot = root.path().join(".stella");
+    std::fs::create_dir_all(&dot).unwrap();
+
+    let outside = root.path().join("outside.txt");
+    std::fs::write(&outside, b"untouched\n").unwrap();
+    std::os::unix::fs::symlink(&outside, dot.join(".gitignore")).unwrap();
+
+    let error = match Store::open(root.path()) {
+        Err(error) => error,
+        Ok(_) => panic!("a symlinked generated ignore must be rejected"),
+    };
+    assert!(
+        error.to_string().contains(".gitignore"),
+        "the error should name the offending path, got: {error}"
+    );
+    assert_eq!(
+        std::fs::read(&outside).unwrap(),
+        b"untouched\n",
+        "the symlink target must not be written through"
+    );
+}
+
+/// The mode the exclusive create imposes is the committable one — the file is
+/// meant to be checked in, so it must not land 0600 like private state.
+#[cfg(unix)]
+#[test]
+fn generated_ignore_is_created_world_readable_not_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    Store::open(root.path()).expect("open");
+
+    let ignore = root.path().join(".stella/.gitignore");
+    let mode = std::fs::metadata(&ignore).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o644,
+        "the generated ignore is committable, not private"
+    );
+    let bytes = std::fs::read(&ignore).unwrap();
+    assert!(
+        bytes.split(|b| *b == b'\n').any(|line| line == b"private/"),
+        "the generated ignore must exclude the private dir"
+    );
+}
