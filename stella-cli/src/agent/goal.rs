@@ -399,7 +399,7 @@ pub(crate) async fn run_goal_turn(
         println!(
             "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
              assessment\n",
-            "◆".bright_cyan(),
+            "◆".bright_blue(),
             cfg.provider.id.bright_magenta(),
             judge_id.bright_green(),
         );
@@ -577,7 +577,7 @@ async fn run_goal_pipeline_turn(
         println!(
             "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
              assessment\n",
-            "◆".bright_cyan(),
+            "◆".bright_blue(),
             cfg.provider.id.bright_magenta(),
             judge_id.bright_green(),
         );
@@ -650,8 +650,18 @@ async fn run_goal_pipeline_turn(
 
         for round in 1..=goal_config.max_rounds {
             budget.begin_turn();
+            // Each round is its own receipt turn: worker/pipeline calls take
+            // the even slot, the round's judge the odd slot beside it (the
+            // `+ 1` lives in `Engine::assess`). All rounds share one
+            // execution_id, and receipts key on `(turn_instance, step,
+            // call_seq)` with steps restarting per turn — without this,
+            // every round overwrites the previous round's step manifests.
+            let round_turn = u32::try_from(2 * round.saturating_sub(1)).unwrap_or(u32::MAX);
             let pipeline_config = PipelineConfig {
-                engine: pipeline_engine_config_for(cfg, &wiring.worker_model),
+                engine: EngineConfig {
+                    turn_instance: round_turn,
+                    ..pipeline_engine_config_for(cfg, &wiring.worker_model)
+                },
                 role_overrides: wiring.role_overrides.clone(),
                 headless: true,
                 headless_bypass_scope_review: HEADLESS_SCOPE_REVIEW_BYPASS,
@@ -717,6 +727,7 @@ async fn run_goal_pipeline_turn(
                 name: stella_protocol::StageKind::Judge,
             });
             let (verdict, judge_cost) = match judge_engine
+                .with_turn_instance(round_turn)
                 .assess(judge, goal, messages, budget, &tx, &goal_config)
                 .await
             {

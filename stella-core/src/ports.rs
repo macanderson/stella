@@ -27,11 +27,28 @@ pub trait ToolExecutor: Send + Sync {
 /// time, not just by prompt.
 pub struct ReadOnlyTools<'a> {
     inner: &'a dyn ToolExecutor,
+    /// The inner executor's read-only tool names, resolved once at
+    /// construction. `execute` is on the hot path of every judge/verifier
+    /// tool call, and answering "is this tool read-only?" must not
+    /// re-materialize the full schema list (each schema carries its whole
+    /// JSON parameter document) per call. The view is short-lived — built
+    /// per assessment — so a registry whose tool set changes mid-turn is
+    /// not a case this snapshot needs to chase.
+    read_only_names: std::collections::HashSet<String>,
 }
 
 impl<'a> ReadOnlyTools<'a> {
     pub fn new(inner: &'a dyn ToolExecutor) -> Self {
-        Self { inner }
+        let read_only_names = inner
+            .schemas()
+            .into_iter()
+            .filter(|s| s.read_only)
+            .map(|s| s.name)
+            .collect();
+        Self {
+            inner,
+            read_only_names,
+        }
     }
 }
 
@@ -46,11 +63,7 @@ impl ToolExecutor for ReadOnlyTools<'_> {
     }
 
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
-        let allowed = self
-            .inner
-            .schemas()
-            .iter()
-            .any(|s| s.name == name && s.read_only);
+        let allowed = self.read_only_names.contains(name);
         if !allowed {
             return ToolOutput::Error {
                 message: format!(
