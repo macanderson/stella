@@ -44,7 +44,11 @@ use crate::store::{nodes_missing_embedding, open_connection, store_embedding};
 /// How many nodes are embedded and committed per transaction. Batching bounds
 /// what a kill mid-index loses (`L-L1`) and keeps a backend with a
 /// request-size limit from being handed the whole corpus at once.
-const BATCH: usize = 64;
+///
+/// `pub(crate)` because [`crate::writeback`]'s upsert embeds against the same
+/// backend and had the same unbounded-request problem; one width, not two
+/// (#616 item 8).
+pub(crate) const BATCH: usize = 64;
 
 /// The stop flag shared by a [`crate::ContextStore`] and its background warm
 /// task. Cloneable and cheap; the store holds one, the task the other.

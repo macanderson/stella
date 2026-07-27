@@ -1152,11 +1152,22 @@ impl<'a> Engine<'a> {
                     // than incidental: `complete` owns the gate (and with
                     // it the channel's send half), so the pump can only
                     // finish after `complete` has. Polling `complete`
-                    // first means the `unreachable!` cannot be reached by
-                    // an unlucky randomized poll order (#560).
+                    // first means the pump arm cannot be taken by an
+                    // unlucky randomized poll order (#560).
+                    //
+                    // That arm is believed unreachable, but it reports a
+                    // typed terminal error rather than panicking: this is
+                    // library code on a provider-driven path, where
+                    // invariant 5 (no panics on runtime data) outranks
+                    // asserting a structural claim (#618 item 17).
                     biased;
                     result = bounded_generation(self.config.model_timeout, &mut complete) => result,
-                    _ = &mut pump => unreachable!("the gate keeps the speculation channel open"),
+                    _ = &mut pump => Err(ProviderError::Terminal(
+                        "speculation pump ended before the model call that feeds it; \
+                         the speculation gate holds the channel open for the whole call, \
+                         so this indicates the gate was dropped early"
+                            .into(),
+                    )),
                 };
                 drop(complete);
                 result.map(|result| (result, pump))

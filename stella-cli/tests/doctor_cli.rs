@@ -73,7 +73,11 @@ fn doctor_reports_a_healthy_store_and_exits_zero() {
         stdout.contains("store integrity") && stdout.contains("quick_check"),
         "the check is named and says what it ran: {stdout}"
     );
-    assert!(stdout.contains("1 ok, 0 failed"), "{stdout}");
+    assert!(
+        stdout.contains("fleet ledger"),
+        "the fleet-ledger check is reported too: {stdout}"
+    );
+    assert!(stdout.contains("2 ok, 0 failed"), "{stdout}");
 }
 
 #[test]

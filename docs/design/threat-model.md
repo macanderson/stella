@@ -121,8 +121,10 @@ so managed denial survives explicit repository trust — the witness is
 The agent's tool surface is the blast radius of a successful A2. Two
 sub-boundaries matter and they are frequently conflated:
 
-- **`bash` is opt-in** (`tools.bash: "on"`), and its module doc is explicit
-  that the default surface has no shell at all.
+- **`bash` ships registered** and is withheld with `tools.bash: "off"`. #710
+  moved every built-in to on-by-default with a switch, because the previous
+  posture covered built-ins only and most operators never found the switch.
+  Assume the default surface HAS a shell.
 - **The default surface is nonetheless not execution-free.** `run_script`,
   `start_process`, `repo_commit`/`repo_push`, and workspace custom tools all
   execute code without `bash` ever being enabled. `start_process` spawns argv
@@ -245,10 +247,17 @@ mitigation therefore has a shape the threat does not.
 
 ### R4 — No SSRF guard on web tools, by design
 
-An opted-in session can fetch any http(s) URL the host can reach, including
-`localhost` and cloud metadata endpoints. This is a documented decision: it
-matches the `bash` opt-in and is required for the "fetch my internal dev
-server" use case. The gate is the settings opt-in, not a network allowlist.
+Any session can fetch any http(s) URL the host can reach, including `localhost`
+and cloud metadata endpoints. It is required for the "fetch my internal dev
+server" use case, and there is no network allowlist.
+
+**The compensating control this decision rested on is gone.** The exposure was
+accepted because the web family was opt-in, so reaching a metadata endpoint
+took a deliberate host action. Since #710 the three key-free web tools are
+registered by default and the only gate is an operator who knows to set
+`"web": "off"`. Whether that remains acceptable, or whether the default surface
+needs a loopback/metadata denylist, is an open ruling (#615) — R4 should not be
+read as a still-current risk acceptance.
 
 One sharp edge is recorded in `web.rs`: reqwest strips `Cookie` and
 `Authorization` across a cross-host redirect, but a secret placed in a custom

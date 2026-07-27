@@ -589,7 +589,7 @@ fn sql_error(error: rusqlite::Error) -> MediaError {
 }
 
 fn journal_error(message: impl Into<String>) -> MediaError {
-    MediaError::Artifact(message.into())
+    MediaError::Journal(message.into())
 }
 
 struct PreparedPrivateSqlite {

@@ -77,12 +77,78 @@ fn read_committable_file(path: &Path) -> Result<(Vec<u8>, u32)> {
     Ok((bytes, MODE_SHARED))
 }
 
+/// Create the generated ignore exclusively, or report that someone else won.
+///
+/// `Ok(true)` means this caller created it; `Ok(false)` means it already
+/// existed. The exclusivity is the point: the previous code took
+/// `symlink_metadata` → `NotFound` → [`write_atomic`], so concurrent first
+/// openers of one workspace all observed no file and all renamed over the
+/// target. A rename unlinks the inode it replaces, so a racer that had just
+/// opened the winner's file for validation saw `nlink() == 0` and failed
+/// closed — `Store::open` reported the generated ignore "must be an
+/// owner-controlled single-link regular file" for a file nothing had attacked
+/// (#617 item 10).
+///
+/// `O_NOFOLLOW` alongside `O_EXCL` so this cannot be aimed through a symlink
+/// planted in the window, and [`MODE_SHARED`] because the file is meant to be
+/// committed — the same mode [`write_atomic`] would have imposed.
+#[cfg(unix)]
+fn create_generated_ignore_exclusively(path: &Path) -> Result<bool> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .mode(MODE_SHARED)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(WORKSPACE_GENERATED_IGNORE)
+                .and_then(|_| file.sync_all())
+                .map_err(|e| StoreError(format!("cannot write {}: {e}", path.display())))?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(StoreError(format!(
+            "cannot create generated ignore {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+/// Non-unix has no ownership model to race over, so the pre-existing
+/// check-then-write is kept as-is rather than pretending to be exclusive.
+#[cfg(not(unix))]
+fn create_generated_ignore_exclusively(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            write_atomic(path, WORKSPACE_GENERATED_IGNORE, MODE_SHARED)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 pub(crate) fn ensure_workspace_generated_ignore(dot: &Path) -> Result<()> {
     let path = dot.join(".gitignore");
+    // Try to be the one that creates it. Whoever wins writes content that
+    // already contains `private/`, so every loser falls through to the read
+    // below, finds the entry, and returns without writing — no rename races a
+    // reader in the common case.
+    if create_generated_ignore_exclusively(&path)? {
+        return Ok(());
+    }
     let (mut bytes, mode) = match std::fs::symlink_metadata(&path) {
         Ok(_) => read_committable_file(&path)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return write_atomic(&path, WORKSPACE_GENERATED_IGNORE, MODE_SHARED);
+            // Created and then removed between the two calls. Rare enough to
+            // report rather than loop on.
+            return Err(StoreError(format!(
+                "generated ignore {} vanished while being inspected",
+                path.display()
+            )));
         }
         Err(error) => {
             return Err(StoreError(format!(

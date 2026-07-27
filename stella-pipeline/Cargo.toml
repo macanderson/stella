@@ -19,6 +19,9 @@ thiserror.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
+# Failure fingerprints (witness::airlock): the same SHA-256 the workspace already
+# uses for record_hash, so one hashing primitive covers the tree.
+sha2.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

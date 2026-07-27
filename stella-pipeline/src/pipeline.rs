@@ -78,11 +78,15 @@ use crate::verify::{
     deterministic_fail_evidence, deterministic_pass_evidence, guidance_prompt, heuristic_fallback,
     judge_prompt, ladder_decision, model_verdict_evidence, parse_judge_response,
 };
+use crate::witness::airlock::{
+    DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
+};
 use crate::witness::{
     Witness, parse_test_invocation, parse_witness_command, validate_witness_artifact,
     validate_witness_identity, validate_witness_invocation, witness_identity_matches,
     witness_prompt, witness_repair_prompt,
 };
+mod disclosure;
 mod raw_usage;
 mod run_error;
 mod stage_budget;
@@ -433,6 +437,11 @@ struct CandidateState {
     diff_lines: u32,
     diff_text: String,
     revisions: u32,
+    /// Every deterministic failure this candidate has produced, in order.
+    /// The airlock reads it to tell "stuck on the same thing" from "made
+    /// progress and hit something new" — the signal that decides how much the
+    /// next revision is told (`witness::airlock`).
+    failures: Vec<FailureFingerprint>,
 }
 
 impl CandidateState {
@@ -854,6 +863,22 @@ impl<'a> Pipeline<'a> {
         self.emit(AgentEvent::Stage {
             name: StageKind::Triage,
         });
+        // Deterministic short-circuit, BEFORE the paid call.
+        //
+        // `resolve_conversational` is a disjunction whose first term ignores
+        // the model entirely, so a `true` here with `model_says_chat = false`
+        // means the greeting arm fired — and no triage answer could change the
+        // outcome. Classifying `hi` used to cost a full round-trip plus, on a
+        // wedged provider, up to `triage_latency_ceiling` of dead air, for a
+        // route the module docs already describe as never depending on a model
+        // answer. This is the same assessment the resolution-failure arm below
+        // builds; it just stops paying for it first.
+        if resolve_conversational(false, goal) {
+            return Ok(TaskAssessment {
+                conversational: true,
+                ..TaskAssessment::from_class(resolve_task_class(None, goal))
+            });
+        }
         let resolved = match self.resolve_provider(Role::Triage) {
             Ok(r) => r,
             // Triage resolution failure is soft: fall through to the full path
@@ -1620,6 +1645,7 @@ impl<'a> Pipeline<'a> {
             diff_lines: 0,
             diff_text: String::new(),
             revisions: 0,
+            failures: Vec::new(),
         };
 
         if let Err(reason) = self
@@ -1731,6 +1757,7 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Verify,
         });
         let effective_cmd = self.effective_test_command(witness);
+        let witness_paths = Self::witness_paths(witness);
         loop {
             if let Some(workspace) = surface.workspace
                 && let Err(error) = workspace.seal().await
@@ -1789,6 +1816,17 @@ impl<'a> Pipeline<'a> {
                 diff_budget: self.config.diff_budget_lines,
             };
 
+            // Everything the verification side knows about this round's
+            // failure. Both failing arms disclose from it, and nothing reaches
+            // the worker except through `Pipeline::airlock_forward` or a
+            // `redact` of this value.
+            let sealed = SealedFailure {
+                command: effective_cmd.map_or("", |cmd| cmd.command),
+                invocation: effective_cmd.map(|cmd| cmd.invocation),
+                output: &test_tail,
+                witness_paths: &witness_paths,
+            };
+
             match ladder_decision(&inputs) {
                 LadderDecision::SubmitFast => {
                     // Deterministic pass — judge SKIPPED (L-E11).
@@ -1808,7 +1846,9 @@ impl<'a> Pipeline<'a> {
                 }
                 LadderDecision::Revise => {
                     // Deterministic failure (touched tests red) — no judge.
-                    let evidence = deterministic_fail_evidence(&test_tail);
+                    //
+                    let (evidence, brief) =
+                        Self::deterministic_disclosure(&mut state, &sealed, &test_tail);
                     self.emit(AgentEvent::JudgeVerdict {
                         passed: false,
                         evidence: evidence.clone(),
@@ -1821,10 +1861,10 @@ impl<'a> Pipeline<'a> {
                         );
                     }
                     // Distress trigger: a SECOND consecutive deterministic
-                    // failure means the raw evidence alone didn't steer the
+                    // failure means the evidence alone didn't steer the
                     // worker — spend one judge call on course-correction
                     // (event-triggered, never a fixed midpoint checkpoint).
-                    let mut reason = evidence.summary.clone();
+                    let mut reason = brief.message();
                     if self.config.distress_guidance && state.revisions >= 1 {
                         match self
                             .judge_guidance(
@@ -1837,8 +1877,13 @@ impl<'a> Pipeline<'a> {
                             .await
                         {
                             Ok(Some(guidance)) => {
-                                reason.push_str("\n\nIndependent reviewer course-correction:\n");
-                                reason.push_str(&guidance);
+                                if let Some(text) =
+                                    self.airlock_forward(&guidance, "distress_guidance", &sealed)
+                                {
+                                    reason
+                                        .push_str("\n\nIndependent reviewer course-correction:\n");
+                                    reason.push_str(&text);
+                                }
                             }
                             Ok(None) => {}
                             Err(abort) => {
@@ -1886,6 +1931,20 @@ impl<'a> Pipeline<'a> {
                     );
                 }
                 LadderDecision::ModelJudge => {
+                    // Escalate on evidence, not on prediction. "Inconclusive"
+                    // here can mean two very different things: a real change
+                    // nothing proved, or a change with nothing to prove. The
+                    // diff tells them apart, and the prompt never could — so
+                    // ask it before buying a judge call to confirm the absence
+                    // of a test that was never warranted
+                    // (docs/design/witness-protocol.md §7).
+                    if let Some(evidence) = self.warranted_completion(&state) {
+                        return state.into_verified(
+                            true,
+                            &evidence,
+                            score_from_verification(false, None),
+                        );
+                    }
                     // Inconclusive — escalate to the model judge (judge ≠
                     // worker; a judge-call failure falls back to a heuristic).
                     let evidence_summary = format!(
@@ -1932,15 +1991,15 @@ impl<'a> Pipeline<'a> {
                             score_from_verification(false, Some(false)),
                         );
                     }
+                    // The judge read the deterministic evidence summary, so
+                    // its prose can carry the tail back. A reasoning that
+                    // quotes sealed material degrades to the symptom rather
+                    // than being forwarded (§4.3).
+                    let feedback = self
+                        .airlock_forward(&verdict.reasoning, "judge_reasoning", &sealed)
+                        .unwrap_or_else(|| redact(&sealed, DisclosureGrain::Symptom).message());
                     if let Err(reason) = self
-                        .revise_candidate(
-                            engine,
-                            surface,
-                            budget,
-                            &verdict.reasoning,
-                            total,
-                            &mut state,
-                        )
+                        .revise_candidate(engine, surface, budget, &feedback, total, &mut state)
                         .await
                     {
                         return CandidateResult::aborted(state.messages, reason);

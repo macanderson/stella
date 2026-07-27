@@ -5,18 +5,22 @@
 //! one pass/fail line each, plus the opt-in repair for the one failure that
 //! previously had no way out.
 //!
-//! Today there is exactly one check: the integrity of this workspace's
-//! `.stella/private/store.db`. A corrupt store used to surface as an error at
-//! session start and nothing else — no way to confirm the diagnosis, no way to
-//! fix it — so the store's own [`stella_store::integrity`] answers the first
-//! half and `--repair` the second.
+//! Two checks today:
+//!
+//! - **store integrity** — this workspace's `.stella/private/store.db`. A
+//!   corrupt store used to surface as an error at session start and nothing
+//!   else (no way to confirm the diagnosis, no way to fix it), so the store's
+//!   own [`stella_store::integrity`] answers the first half and `--repair` the
+//!   second.
+//! - **fleet ledger** — rows in `fleet.db` naming a run that is no longer
+//!   recorded. Report-only by design; see [`fleet_ledger_orphans`] for why
+//!   `--repair` must not touch them.
 //!
 //! The shape is a LIST of named checks rather than a single hard-coded probe
 //! because the next environment check (a provider reachable, a `.stella/`
 //! whose permissions leak transcripts, a codegraph index older than its
 //! workspace) should be one entry in [`checks`] and a renderer that already
-//! knows how to print it — not a second command. It is deliberately still one
-//! entry: the surface is only worth what it actually verifies.
+//! knows how to print it — not a second command.
 //!
 //! # Exit codes
 //!
@@ -111,7 +115,85 @@ pub(crate) fn run_doctor_at(workspace_root: &Path, repair: bool) -> Result<(), S
 
 /// Every check this build knows how to run, in the order they are reported.
 fn checks(workspace_root: &Path, repair: bool) -> Vec<Check> {
-    vec![store_integrity(workspace_root, repair)]
+    vec![
+        store_integrity(workspace_root, repair),
+        fleet_ledger_orphans(workspace_root),
+    ]
+}
+
+/// Report `fleet.db` rows whose run is gone (#617 item 5).
+///
+/// This is a **report, not a repair**, and `--repair` deliberately does not act
+/// on it. The rows could only be removed by deleting fleet history — which
+/// tasks ran, what was attempted, what it cost — and nothing reads a row by
+/// orphaned run today, so they are inert. A ledger created by a current build
+/// constrains these columns and cannot acquire new orphans; an older file was
+/// left unconstrained precisely because retrofitting the constraint requires
+/// that deletion. So the honest posture is: show the operator what is there and
+/// let them decide.
+///
+/// A `Pass` either way — orphans are not a fault to fix, and failing the
+/// command over inert rows on an old ledger would make `stella doctor`
+/// unusable on exactly the workspaces that have history worth keeping.
+fn fleet_ledger_orphans(workspace_root: &Path) -> Check {
+    const NAME: &str = "fleet ledger";
+
+    let db_path = workspace_root.join(".stella/private/fleet.db");
+    if !db_path.exists() {
+        return Check::pass(
+            NAME,
+            "no fleet ledger yet — created by the first `stella fleet` run",
+        );
+    }
+    let shown = display_path(workspace_root, &db_path);
+
+    let ledger = match stella_fleet::Ledger::open(&db_path) {
+        Ok(ledger) => ledger,
+        Err(error) => {
+            return Check::fail(NAME, format!("{shown}: could not be opened: {error}"));
+        }
+    };
+    let orphans = match ledger.orphan_rows() {
+        Ok(orphans) => orphans,
+        Err(error) => {
+            return Check::fail(NAME, format!("{shown}: could not be scanned: {error}"));
+        }
+    };
+    let enforced = ledger.enforces_run_references().unwrap_or(false);
+
+    if orphans.is_empty() {
+        return Check::pass(
+            NAME,
+            format!(
+                "{shown}: no rows reference a missing run{}",
+                if enforced {
+                    " (and the schema enforces it)"
+                } else {
+                    ""
+                }
+            ),
+        );
+    }
+
+    let total: i64 = orphans.iter().map(|o| o.count).sum();
+    Check::pass(
+        NAME,
+        format!("{shown}: {total} row(s) reference a run that is no longer recorded"),
+    )
+    .with_details(
+        orphans
+            .iter()
+            .map(|o| format!("{}.{}: {} row(s)", o.table, o.column, o.count))
+            .collect(),
+    )
+    .with_remedy(vec![
+        "nothing to do — these rows are inert (no query resolves a row by its run) and \
+             they are kept because removing them would delete fleet history"
+            .to_string(),
+        "this ledger predates the run-reference constraints; a fleet.db created by this \
+             build cannot acquire new orphans"
+            .to_string(),
+    ])
 }
 
 /// The exit-code contract: `Ok(())` (exit 0) when every check passed, `Err`
@@ -351,14 +433,85 @@ mod tests {
         assert_eq!(run_doctor_at(dir.path(), false), Ok(()));
 
         let checks = checks(dir.path(), false);
-        assert_eq!(checks.len(), 1, "one shipped check: {checks:?}");
-        assert_eq!(checks[0].status, CheckStatus::Pass);
+        assert_eq!(
+            checks.iter().map(|c| c.name).collect::<Vec<_>>(),
+            vec!["store integrity", "fleet ledger"],
+            "the shipped checks, in report order: {checks:?}"
+        );
+        assert!(
+            checks.iter().all(|c| c.status == CheckStatus::Pass),
+            "every check passes on a healthy workspace: {checks:?}"
+        );
         assert!(
             checks[0].summary.contains("quick_check"),
             "the pass says what was run: {}",
             checks[0].summary
         );
         assert!(checks[0].remedy.is_empty(), "a pass advises nothing");
+        // No fleet run has happened in this workspace, so the ledger check has
+        // nothing to open and must say so rather than inventing a file.
+        assert!(
+            checks[1].summary.contains("no fleet ledger yet"),
+            "the ledger check names the absence: {}",
+            checks[1].summary
+        );
+    }
+
+    /// #617 item 5: an old ledger's orphan rows are surfaced, and `--repair`
+    /// leaves them alone — removing them would delete fleet history.
+    #[test]
+    fn doctor_reports_fleet_ledger_orphans_without_repairing_them() {
+        let dir = workspace_with_store();
+        let db = dir.path().join(".stella/private/fleet.db");
+
+        // A ledger in the legacy (unconstrained) shape holding an orphan row.
+        {
+            let ledger = stella_fleet::Ledger::open(&db).expect("open ledger");
+            let _ = ledger;
+        }
+        let conn = rusqlite::Connection::open(&db).expect("raw open");
+        conn.execute_batch(
+            "DROP TABLE tasks;
+             CREATE TABLE tasks (
+                 run_id    TEXT NOT NULL,
+                 task_id   TEXT NOT NULL,
+                 title     TEXT NOT NULL,
+                 isolation TEXT NOT NULL,
+                 PRIMARY KEY (run_id, task_id)
+             );
+             INSERT INTO tasks (run_id, task_id, title, isolation)
+                 VALUES ('deleted-run', 't1', 'orphaned', 'shared');",
+        )
+        .expect("legacy shape with an orphan");
+        drop(conn);
+
+        for repair in [false, true] {
+            let checks = checks(dir.path(), repair);
+            let ledger_check = checks
+                .iter()
+                .find(|c| c.name == "fleet ledger")
+                .expect("the ledger check runs");
+            assert_eq!(
+                ledger_check.status,
+                CheckStatus::Pass,
+                "inert orphans must not fail the command (repair={repair})"
+            );
+            assert!(
+                ledger_check
+                    .details
+                    .iter()
+                    .any(|d| d.contains("tasks.run_id")),
+                "the orphan class is named: {:?}",
+                ledger_check.details
+            );
+        }
+
+        // The row is still there after `--repair`.
+        let conn = rusqlite::Connection::open(&db).expect("raw reopen");
+        let surviving: i64 = conn
+            .query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(surviving, 1, "--repair must not delete fleet history");
     }
 
     #[test]

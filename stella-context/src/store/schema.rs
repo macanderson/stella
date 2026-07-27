@@ -483,16 +483,17 @@ fn restrict_to_owner(_path: &Path) {}
 /// message mirrors the one `stella_store::Store::migrate` already writes — the
 /// fault is an out-of-date binary, not a broken workspace.
 ///
-/// **The version read is outside the transaction.** `unchecked_transaction` is
-/// `DEFERRED`, so two processes opening the same fresh workspace at once (a
-/// fleet run, or a `stella` session next to a `stella stats`) can both read
-/// `user_version = 0` and both try to apply `MIGRATION_V1`; the loser reports
+/// **The version is read inside a `BEGIN IMMEDIATE` transaction**, and that is
+/// load-bearing rather than incidental. Read outside — or inside a `DEFERRED`
+/// transaction, which takes its snapshot before it takes the write lock — two
+/// processes opening the same fresh workspace at once (a fleet run, or a
+/// `stella` session next to a `stella stats`) could both read
+/// `user_version = 0` and both try to apply `MIGRATION_V1`; the loser reported
 /// SQLITE_BUSY or "table node already exists" instead of the "already migrated"
-/// no-op it should. Re-reading `user_version` inside a `BEGIN IMMEDIATE` closes
-/// the window — an audit note, not a fix, because the fix belongs with a test
-/// that opens the same fresh path from two threads.
+/// no-op it should (#617 item 8, matching `stella_store::migrations`).
 pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version > SCHEMA_VERSION {
         return Err(ContextError::SchemaTooNew(format!(
             "context.db is at schema version {version}, but this build only \
@@ -506,7 +507,6 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version == SCHEMA_VERSION {
         return Ok(());
     }
-    let tx = conn.unchecked_transaction()?;
     if version < 1 {
         tx.execute_batch(MIGRATION_V1)?;
     }
