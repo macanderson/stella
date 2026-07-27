@@ -332,12 +332,14 @@ each row links to its reference page on [stella.oxagen.sh](https://stella.oxagen
 | [`connect <cmd>`](https://stella.oxagen.sh/docs/commands/connect)     | Connect GitHub or Linear so the agent gains the issue toolset                                                     |
 | [`memory <cmd>`](https://stella.oxagen.sh/docs/commands/memory)       | Inspect memories through the citation loop; promote one to a project rule                                         |
 | [`stats`](https://stella.oxagen.sh/docs/commands/stats)               | Cost, tokens, and $/resolved task for **this** workspace                                                          |
-| [`usage <cmd>`](https://stella.oxagen.sh/docs/commands)               | The same numbers across **every** project, from the hub at `~/.stella/usage.db`                                   |
+| [`usage <cmd>`](https://stella.oxagen.sh/docs/commands/usage)         | The same numbers across **every** project, from the hub at `~/.stella/usage.db`                                   |
 | [`inspect`](https://stella.oxagen.sh/docs/commands/inspect)           | Replay the exact context a past model call was sent, verified against its digests                                 |
 | [`observe`](https://stella.oxagen.sh/docs/commands/observe)           | Serve the Observatory dashboard over local telemetry — loopback-only, read-only                                   |
-| [`cloud <cmd>`](https://stella.oxagen.sh/docs/commands)               | Show or set the org/workspace identity that scopes replicated telemetry                                           |
+| [`cloud <cmd>`](https://stella.oxagen.sh/docs/commands/cloud)         | Show or set the org/workspace identity that scopes replicated telemetry                                           |
 | [`telemetry <cmd>`](https://stella.oxagen.sh/docs/telemetry)          | Inspect or flush the managed enterprise spool — off unless explicitly enrolled                                    |
 | [`arena`](https://stella.oxagen.sh/docs/commands)                     | [arena-bench](https://github.com/macanderson/arena-bench) harness adapter — for benchmarking Stella, not using it |
+| [`doctor`](https://stella.oxagen.sh/docs/commands/doctor)             | Diagnose the install: config, credentials, toolchain, and workspace state                                         |
+| [`proposals <cmd>`](https://stella.oxagen.sh/docs/commands)           | Review the adaptive-context loop's pending proposals — keep, ignore, or retire                                    |
 | [`version`](https://stella.oxagen.sh/docs/commands/version)           | Print the version and exit                                                                                        |
 
 ### Interactive chat (default)
