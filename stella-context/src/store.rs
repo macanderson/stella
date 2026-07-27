@@ -46,7 +46,9 @@ pub(crate) use domain::{
     domains_by_node, list_domains, node_ids_excluded_by_scope, tag_edge_domains, tag_node_domains,
     upsert_domain,
 };
-pub(crate) use edge::{close_edge, edges_as_of, insert_edge, neighbors};
+pub(crate) use edge::{
+    close_edge, edges_as_of, end_world_validity, insert_edge, neighbors_valid_at, open_anchors,
+};
 pub(crate) use embedding::{
     blob_to_vector, embedding_exists, nodes_missing_embedding, store_embedding, vector_to_blob,
 };

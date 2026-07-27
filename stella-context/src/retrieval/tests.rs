@@ -1206,3 +1206,114 @@ async fn recall_work_is_bounded_by_frame_count_not_corpus_size() {
          {per_node_first:.2} at 50 nodes vs {per_node_last:.2} at 5000: {measured:?}"
     );
 }
+
+/// The load-bearing integration test for memory anchors.
+///
+/// #775 gave the store the ability to say "this stopped being true" without
+/// saying "we were wrong". That was inert on its own: retrieval read belief
+/// time only, so an anchor to a deleted file kept feeding graph adjacency
+/// forever. This asserts the two halves are actually connected — end an
+/// anchor's world validity, and live recall stops traversing it.
+///
+/// The memory is written to be unreachable by every *other* signal: its text
+/// shares no vocabulary with the query, and later memories outrank it on
+/// recency. The graph edge is the only thing that can put it in the result, so
+/// its disappearance is attributable.
+#[tokio::test]
+async fn ending_an_anchor_stops_live_recall_traversing_it() {
+    let clock = FixedClock::shared(1_000);
+    let dir = TempDir::new().unwrap();
+    let store = ContextStore::open_with(
+        dir.path().join("context.db"),
+        Arc::new(HashEmbedder::default()),
+        clock.clone(),
+    )
+    .unwrap();
+
+    // The anchored memory, plus the file it is about.
+    store
+        .upsert(
+            crate::writeback::ContextDelta::new().with_memory(
+                crate::writeback::MemoryInput::reflection(
+                    "zzz quokka marmalade tessellation",
+                    Vec::<String>::new(),
+                )
+                .with_anchors(["src/registry.rs"]),
+            ),
+        )
+        .await
+        .unwrap();
+
+    // A corpus big enough that the frame budget genuinely binds. Without this
+    // the anchored memory is one of a handful and recency alone seats it, so
+    // its presence would prove nothing about the edge.
+    for i in 0..40 {
+        clock.advance(100);
+        store
+            .upsert(crate::writeback::ContextDelta::new().with_memory(
+                crate::writeback::MemoryInput::reflection(
+                    format!("unrelated later note number {i} about deployment rollout"),
+                    Vec::<String>::new(),
+                ),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let mut q = base_query("what do we know here", "deployment note");
+    // Seed the graph expansion at the anchored file. The uri spelling must
+    // match what the write side minted.
+    q.anchors = vec!["file://src/registry.rs".into()];
+    q.max_frames = 3;
+
+    let before = store.recall(&q).await.unwrap();
+    let seen_before = before
+        .frames
+        .iter()
+        .any(|f| f.content.as_deref().unwrap_or_default().contains("quokka"));
+    assert!(
+        seen_before,
+        "the anchor should pull the memory in: {:?}",
+        before
+            .frames
+            .iter()
+            .map(|f| f.content.clone())
+            .collect::<Vec<_>>()
+    );
+
+    // The file is deleted. End world validity — belief untouched.
+    let anchor = store.open_anchors().unwrap().remove(0);
+    clock.advance(1_000);
+    let deleted_at = store.clock().now_rfc3339();
+    assert!(
+        store
+            .end_anchor_validity(anchor.edge_id, &deleted_at)
+            .unwrap()
+    );
+
+    let after = store.recall(&q).await.unwrap();
+    let seen_after = after
+        .frames
+        .iter()
+        .any(|f| f.content.as_deref().unwrap_or_default().contains("quokka"));
+    assert!(
+        !seen_after,
+        "an anchor to a deleted file must stop feeding recall: {:?}",
+        after
+            .frames
+            .iter()
+            .map(|f| f.content.clone())
+            .collect::<Vec<_>>()
+    );
+
+    // And the belief is still there to be audited — this is the whole reason
+    // it is `end_world_validity` and not `close_edge`.
+    assert!(
+        store
+            .facts_as_of(None)
+            .unwrap()
+            .iter()
+            .any(|f| f.predicate == crate::writeback::ANCHOR_REL),
+        "the anchor is still BELIEVED; only the present stops seeing it"
+    );
+}
