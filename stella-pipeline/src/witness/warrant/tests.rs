@@ -145,15 +145,24 @@ fn a_rust_deref_assignment_is_code_not_a_comment() {
 
 #[test]
 fn a_js_private_field_and_c_preprocessor_are_code_not_comments() {
-    let js = diff(&["ui/src/wallet.ts"], "-    #balance = 0;\n+    #balance = 100;\n");
+    let js = diff(
+        &["ui/src/wallet.ts"],
+        "-    #balance = 0;\n+    #balance = 100;\n",
+    );
     assert_eq!(warrant(&js, 1), WitnessWarrant::Required);
-    let c = diff(&["native/buffer.c"], "-#define BUFFER 256\n+#define BUFFER 512\n");
+    let c = diff(
+        &["native/buffer.c"],
+        "-#define BUFFER 256\n+#define BUFFER 512\n",
+    );
     assert_eq!(warrant(&c, 1), WitnessWarrant::Required);
 }
 
 #[test]
 fn a_decrement_is_code_not_a_sql_comment() {
-    let d = diff(&["stella-core/src/driver.rs"], "-    --count;\n+    --count;\n+    step();\n");
+    let d = diff(
+        &["stella-core/src/driver.rs"],
+        "-    --count;\n+    --count;\n+    step();\n",
+    );
     assert_eq!(warrant(&d, 1), WitnessWarrant::Required);
 }
 
