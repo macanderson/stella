@@ -437,7 +437,7 @@ are also accepted case-insensitively.
 | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `read_file` · `write_file` · `edit_file` · `delete_file`                                                                                 | File CRUD with surgical exact-substring edits                                                                                                                                                                                                                                                    |
 | `apply_edits`                                                                                                                            | One transactional batch of exact-substring edits across many files — every edit validates first, and if any fails nothing is written (`dry_run` validates without writing)                                                                                                                       |
-| `bash`                                                                                                                                   | Run a shell command (timeout kill; `trace: true` echoes each line) — **off by default**, registered only with `"tools": {"bash": "on"}` in settings (any scope)                                                                                                                                  |
+| `bash`                                                                                                                                   | Run a shell command (timeout kill; `trace: true` echoes each line) — **registered by default**, withheld with `"tools": {"bash": "off"}` in settings (any scope)                                                                                                                                  |
 | `grep` · `glob`                                                                                                                          | Regex content search (ripgrep) · glob file discovery (fd)                                                                                                                                                                                                                                        |
 | `graph_query`                                                                                                                            | Query the indexed code graph: symbol definitions/references, file imports/importers/neighborhood — auto-built at session start, refreshed live                                                                                                                                                   |
 | `read_symbol`                                                                                                                            | Read a named symbol's exact source span, resolved through the code graph — no line-offset guessing; multiple definitions are listed, never silently picked                                                                                                                                       |
@@ -465,11 +465,17 @@ All file tools are workspace-root-pinned, and every read/write/edit/delete is
 recorded in the Files-Touched ledger (shown per turn as `[C·R·U·D] path`, also
 via `/files`).
 
-**Bash is opt-in.** The default tool surface has no _free-form shell tool_: the
-model works through enumerable-argv tools (build/test/lint/format,
-`run_script`'s project-declared verbs, the process group, the `repo_*` tools).
-Enable `bash` per user, org, or project by adding `"tools": {"bash": "on"}` to
-the corresponding `settings.json` scope (normal per-field merge — project wins).
+**Bash ships on, and switching it off bounds the shell tool rather than every
+path to a shell.** `bash` is registered like every other built-in; withhold it
+per user, org, or project by adding `"tools": {"bash": "off"}` to the
+corresponding `settings.json` scope (normal per-field merge — project wins).
+Prefer the enumerable-argv tools regardless (build/test/lint/format,
+`run_script`'s project-declared verbs, the process group, the `repo_*` tools) —
+they never interpret a shell string. Note that `"bash": "off"` removes the
+free-form shell _tool_, not the shell _capability_: `build_project` and
+`run_tests` take a `command` override, `verify_done` a `test_cmd`, and
+`run_script` composes from the scripts index, so all four still reach `bash -c`
+behind the `command.started` policy fence.
 
 Stated precisely, because a security claim that overreaches is worse than none:
 turning `bash` off removes the tool, not every route to a shell.

@@ -38,7 +38,7 @@ macro_rules! tool_steering {
 
 - Read a definition by name with read_symbol; guessing read_file offsets after a graph_query is the round-trip it exists to remove.
 - A change touching several files is ONE apply_edits call, not a chain of edit_file calls.
-- A tool you cannot see is not available in this session rather than nonexistent. There is no shell unless the workspace enables it ("tools": {"bash": "on"}); issue tracking, web, and media tools register only once their backend is configured (`stella connect github|linear`, an API key, or `gh auth`; ci_status needs the gh CLI). Reach for tool_search before concluding a capability is missing."#
+- A tool you cannot see is not available in this session rather than nonexistent. The shell ships registered and a workspace withholds it with "tools": {"bash": "off"}; issue tracking, web, and media tools register only once their backend is configured (`stella connect github|linear`, an API key, or `gh auth`; ci_status needs the gh CLI). Reach for tool_search before concluding a capability is missing."#
     };
 }
 
@@ -469,7 +469,13 @@ mod tests {
                 // A schema can only describe a tool that IS registered — it
                 // can never explain an absence or how to lift it.
                 "not available in this session",
-                "tools\": {\"bash\": \"on\"}",
+                // The switch's real polarity. Pinned as `off` on purpose:
+                // this sentence read `"bash": "on"` — "there is no shell
+                // unless the workspace enables it" — for every release after
+                // #710 shipped bash registered-by-default, so the prompt told
+                // the model the opposite of the tool surface it had, and this
+                // assertion pinned the false claim in place (#615).
+                "tools\": {\"bash\": \"off\"}",
                 "tool_search",
             ] {
                 assert!(

@@ -35,6 +35,23 @@
 //!   judge's resolution) writes the failing witness test that the flip oracle
 //!   tracks — visible to the worker, integrity-checked by tamper exclusion,
 //!   never hidden. [`witness`].
+//! - **The feedback airlock** — the one channel from verification back to the
+//!   worker. A deterministic failure no longer replays the raw test-runner
+//!   output into the revision prompt: it is disclosed at a grain (`L0`–`L3`)
+//!   that tightens when the same failure repeats, and every model-authored
+//!   text crossing inbound (distress guidance, judge reasoning) is scrubbed
+//!   against the sealed material first. The operator still sees the real
+//!   output; only the worker's prompt is redacted.
+//!   [`witness::airlock`]. Design: `docs/design/witness-protocol.md` §4.
+//! - **Proportionate verification** — escalate on evidence, never on a
+//!   prediction made before any work exists. Deterministic routes resolve
+//!   before the paid triage call rather than after it (a greeting no longer
+//!   buys a classification that cannot change its own answer), and
+//!   [`witness::warrant`] reads the *diff* to decide whether a change needed a
+//!   test at all — recording a stated reason when it did not, the pipeline's
+//!   half of the contract contributors are held to. Fails closed: anything
+//!   mixed or unreadable buys the test. Design:
+//!   `docs/design/witness-protocol.md` §7.
 //! - **L-M4** — triage runs with `max_retries = 0` under a latency ceiling.
 //!   [`pipeline::Pipeline::run`].
 //! - **Distress guidance** — on the second consecutive deterministic
@@ -100,6 +117,11 @@ pub use ports::{
 };
 pub use triage::TaskClass;
 pub use verify::{FlipOracle, FlipState, LadderDecision, LadderInputs};
+pub use witness::airlock::{
+    DisclosureGrain, FailureBrief, FailureFingerprint, LeakKind, SealedFailure, SymptomClass,
+    grain_for_repeats, redact, scrub,
+};
+pub use witness::warrant::{NoWitnessReason, WitnessWarrant, warrant};
 pub use witness::{
     TestInvocationError, Witness, WitnessArtifactError, parse_test_invocation,
     parse_witness_command, validate_witness_artifact, validate_witness_identity,

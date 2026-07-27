@@ -104,10 +104,21 @@ pub(super) fn migrate_store_export_schema(conn: &mut Connection) -> Result<()> {
                 [],
                 |row| row.get(0),
             )?;
+            // `state_exists` is read outside a transaction, so it is an
+            // optimization and not a guarantee: two processes opening the same
+            // store concurrently both see no state row and both insert, and the
+            // loser used to fail the whole open on
+            // `UNIQUE constraint failed: enterprise_export_migration.singleton`
+            // — a fresh-workspace crash, since this runs on every `Store::open`.
+            // `DO NOTHING` rather than the sibling branch's `DO UPDATE`: both
+            // racers computed `is_complete` from the same ledger state, so the
+            // first writer's row is already the row this one would write
+            // (#617 item 8).
             conn.execute(
                 "INSERT INTO enterprise_export_migration
                  (singleton, version, last_rowid, migrated_rows, batches_completed, is_complete)
-                 VALUES (1, 1, 0, 0, 0, ?1)",
+                 VALUES (1, 1, 0, 0, 0, ?1)
+                 ON CONFLICT(singleton) DO NOTHING",
                 params![i64::from(!empty_nonce_exists)],
             )?;
         }

@@ -1076,11 +1076,16 @@ impl ToolRegistry {
     /// resolution failed — the tool returns the named error itself,
     /// ungated).
     ///
-    /// Every tool that reaches `bash -c` MUST ride the same fence as
-    /// `bash`: they sit in the default surface while `bash` is opt-in
-    /// (and `start_process`'s argv[0] may itself be a shell,
-    /// `["bash", "-c", …]`), so leaving any of them out hands ambient shell
-    /// execution to the very posture that turned `bash` off.
+    /// Every tool that reaches `bash -c` MUST ride the same fence as `bash`:
+    /// they stay in the surface when an operator sets `"bash": "off"` (and
+    /// `start_process`'s argv[0] may itself be a shell, `["bash", "-c", …]`),
+    /// so leaving any out hands ambient shell execution to the very posture
+    /// that turned `bash` off. **Known gap (#615):** `screenshot`, `ci_status`
+    /// and (via `checkout_branch`) `start_work_on_issue` compose `bash -c`
+    /// lines through [`crate::exec`] without reaching here, so a policy
+    /// denying command execution cannot see them; all three shell-quote, so it
+    /// is fence completeness, not an RCE. Closing it needs a
+    /// `resolve_command_for_gate` each and makes them newly deniable.
     ///
     /// That covers tools which *compose* a command line. `send_stdin` does
     /// not — it writes into an interpreter someone already started — but the

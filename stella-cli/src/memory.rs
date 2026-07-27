@@ -117,8 +117,6 @@ pub struct ReflectionLesson {
 }
 
 mod reflection;
-#[cfg(test)]
-use reflection::parse_lessons;
 pub use reflection::{
     ReflectionReport, reflect_on_turn, should_reflect_on, turn_warrants_reflection,
 };

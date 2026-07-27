@@ -8,7 +8,7 @@
 //! module live in `Store::migrate` (see the crate docs' "Schema
 //! versioning" section).
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::ddl::{
     AGENT_USES_DDL, CONTEXT_BLOCKS_DDL, EXECUTION_REFLECTION_DDL, EXECUTIONS_DDL, FORGOTTEN_DDL,
@@ -617,16 +617,81 @@ fn migrate_v11_to_v12(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Runs the connection pragmas, absorbing a concurrent first-open's
+/// `SQLITE_BUSY`.
+///
+/// `busy_timeout` is set first so every statement after it can wait, but that
+/// is not enough on its own: converting a fresh rollback-journal database into
+/// WAL needs an exclusive lock, and **SQLite skips the busy handler on that
+/// upgrade** to avoid deadlock. So two processes opening the same new workspace
+/// at once — a fleet run beside a `stella stats`, or four threads in a test —
+/// gave one of them an immediate `database is locked` from `journal_mode=WAL`
+/// itself, which no timeout could absorb, and `Store::open` failed outright.
+/// Backing off lets the loser observe the settled WAL file instead.
+///
+/// Only first opens are affected: once the file is WAL the pragma is a no-op
+/// and takes no lock. `stella-media`'s journal already does exactly this
+/// (`initialize_journal_database`) — the main store never got the same
+/// treatment (#617 item 8).
+///
+/// WAL also means a read-only caller (`stella stats`) is never blocked by a
+/// live session's writes; `synchronous=NORMAL` is the standard WAL pairing,
+/// durability to the last checkpoint rather than one fsync per event insert on
+/// the hot render path.
+pub(crate) fn initialize_store_pragmas(
+    conn: &Connection,
+) -> std::result::Result<(), rusqlite::Error> {
+    const BUSY_ATTEMPTS: u32 = 40;
+    const BUSY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(50);
+
+    let mut attempts = 0;
+    loop {
+        // `execute_batch` tolerates the row `PRAGMA journal_mode` returns (a
+        // plain `pragma_update` errors on it).
+        let result = conn.execute_batch(
+            "PRAGMA busy_timeout=5000;
+             PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA foreign_keys=ON;",
+        );
+        match result {
+            Err(error)
+                if attempts < BUSY_ATTEMPTS
+                    && error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) =>
+            {
+                attempts += 1;
+                std::thread::sleep(BUSY_BACKOFF);
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Run one migration in its own transaction, stamping `user_version` before
 /// commit so version and shape can never disagree on disk. The caller has
 /// already suspended foreign-key enforcement (a no-op inside a
 /// transaction).
+///
+/// The transaction is `IMMEDIATE` and re-reads `user_version` inside it, so
+/// the version the caller decided on is re-confirmed under the write lock.
+/// A `DEFERRED` transaction took its read snapshot before acquiring the
+/// write lock, which let two processes migrating the same file concurrently
+/// both apply the same step — the loser either failing on an already-applied
+/// reshape or, for a non-idempotent step, applying it twice (#617 item 8).
+/// Losing the race is now the no-op it should always have been.
 pub(crate) fn apply_migration(
     conn: &mut Connection,
     migration: Migration,
     target: i64,
 ) -> Result<()> {
-    let tx = conn.transaction()?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    // Re-read under the write lock: another process may have applied this
+    // exact step between the caller's read and this transaction.
+    let current: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if current >= target {
+        tx.commit()?;
+        return Ok(());
+    }
     migration(&tx)?;
     // lang_altertable §7 requires a full FK audit before committing work
     // done with enforcement off. No store table declares foreign keys
@@ -983,5 +1048,73 @@ mod tests {
 
         // Idempotent on a file already at the v16 shape.
         apply_migration(&mut conn, migrate_v15_to_v16, 16).expect("idempotent");
+    }
+
+    /// #617 item 8: losing the migration race is a no-op, not an error. The
+    /// migration body must not run at all when the file is already stamped at
+    /// or past `target` — that is what makes a non-idempotent step (an
+    /// `ALTER TABLE … ADD COLUMN`) safe to add later.
+    #[test]
+    fn apply_migration_skips_a_step_another_process_already_stamped() {
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.pragma_update(None, "user_version", 7).expect("stamp");
+
+        fn must_not_run(_: &rusqlite::Transaction<'_>) -> Result<()> {
+            Err(StoreError(
+                "the migration body ran even though the version was already stamped".into(),
+            ))
+        }
+
+        // Target 7 against a file at 7: the step was applied by someone else.
+        apply_migration(&mut conn, must_not_run, 7).expect("a stamped step is skipped");
+        // And a step already overtaken by a later version is skipped too.
+        apply_migration(&mut conn, must_not_run, 5).expect("an overtaken step is skipped");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("read");
+        assert_eq!(version, 7, "a skipped step must not move the version");
+    }
+
+    /// #617 item 8, the case the issue asked for by name: two processes opening
+    /// the same *fresh* workspace at once. Before the bootstrap read moved
+    /// inside `BEGIN IMMEDIATE`, both could observe `user_version = 0` with no
+    /// tables and both run `create_latest_schema`, and the loser failed with
+    /// "table … already exists" instead of no-opping.
+    #[test]
+    fn concurrent_first_open_of_a_fresh_workspace_both_succeed() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().to_path_buf();
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let root = root.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    // Line the openers up so the version reads genuinely
+                    // interleave rather than serializing by luck of spawn order.
+                    barrier.wait();
+                    crate::Store::open(&root).map(|_| ())
+                })
+            })
+            .collect();
+
+        for (i, handle) in handles.into_iter().enumerate() {
+            handle
+                .join()
+                .expect("opener thread panicked")
+                .unwrap_or_else(|error| {
+                    panic!("opener {i} lost the fresh-open race and failed: {error}")
+                });
+        }
+
+        // The winner's schema is the one on disk, stamped at the current version.
+        let store = crate::Store::open(&root).expect("reopen");
+        let version: i64 = store
+            .lock()
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("read");
+        assert_eq!(version, crate::SCHEMA_VERSION);
     }
 }

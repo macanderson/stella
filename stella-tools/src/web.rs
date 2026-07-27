@@ -1,12 +1,15 @@
-//! The opt-in web family: `web_search`, `web_fetch`, `web_extract_assets`,
+//! The web family: `web_search`, `web_fetch`, `web_extract_assets`,
 //! `web_download`.
 //!
-//! Network egress is never ambient — the whole family registers only when
-//! settings opt in with `"tools": {"web": "on"}` (any scope), mirroring the
-//! `bash` posture: a fetched page is untrusted input *and* an uncontrolled
-//! egress channel, so the host turns it on deliberately. `web_search`
-//! additionally needs a BYOK provider key (`BRAVE_API_KEY` or
+//! **Registered by default, switchable off** with `"tools": {"web": "off"}`
+//! (any scope), matching the `bash` posture since #710 — the three key-free
+//! tools ship on, pinned by `registry`'s
+//! `the_key_free_web_family_is_registered_with_no_options_at_all`.
+//! `web_search` additionally needs a BYOK provider key (`BRAVE_API_KEY` or
 //! `TAVILY_API_KEY`) — no key, no dead schema, exactly like the media tools.
+//! A fetched page is untrusted input *and* an uncontrolled egress channel, so
+//! an operator who wants egress bounded has to switch the family off rather
+//! than decline to switch it on.
 //!
 //! Logged-in fetches ride the user's own sessions via
 //! `~/.stella/web_auth.toml` (override with `STELLA_WEB_AUTH_FILE`):
@@ -25,11 +28,19 @@
 //! a confused deputy the SSRF note below does not cover, because the URL is
 //! chosen by the page rather than by the operator.
 //!
-//! No SSRF guard: an opted-in session can fetch any http(s) URL the host can
-//! reach — including `localhost` and cloud metadata endpoints. This is
-//! deliberate (matching the `bash` opt-in, and required for the "fetch my
-//! internal tool / dev server" use case); the gate is the settings opt-in,
-//! not a network allowlist.
+//! No SSRF guard: a session can fetch any http(s) URL the host can reach —
+//! including `localhost` and cloud metadata endpoints. It is required for the
+//! "fetch my internal tool / dev server" use case, and there is no network
+//! allowlist.
+//!
+//! **The compensating control this used to name is gone.** The exposure was
+//! justified here by the family being opt-in, so that reaching a metadata
+//! endpoint took a deliberate host action; since #710 the family is
+//! registered by default and the only gate is an operator who knows to set
+//! `"web": "off"`. Whether that is acceptable, or whether the default surface
+//! needs a metadata/loopback denylist, is an open ruling (#615) — this note
+//! exists so the next reader does not re-derive the retired guarantee from a
+//! stale comment.
 //!
 //! Fetch/extract are `read_only` (they observe the web, not the workspace);
 //! `web_download` writes through [`crate::resolve_within_root`] and is
