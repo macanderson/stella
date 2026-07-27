@@ -586,7 +586,7 @@ fn parse_lessons_drops_invented_domains_and_caps_at_three() {
             {"lesson": "c", "domains": ["API"]},
             {"lesson": "d", "domains": []}
         ]"#;
-    let lessons = parse_lessons(text, &allowed);
+    let lessons = lessons_with(text, &allowed);
     assert_eq!(lessons.len(), 3, "capped at 3");
     assert_eq!(lessons[0].domains, vec!["cli"], "invented domain dropped");
     assert_eq!(
@@ -599,9 +599,68 @@ fn parse_lessons_drops_invented_domains_and_caps_at_three() {
 
 #[test]
 fn parse_lessons_tolerates_garbage_and_empty_output() {
-    assert!(parse_lessons("no json here", &[]).is_empty());
-    assert!(parse_lessons("[]", &[]).is_empty());
-    assert!(parse_lessons("[{\"lesson\": \"   \"}]", &[]).is_empty());
+    assert!(lessons_of("[]").is_empty());
+    assert!(lessons_of("[{\"lesson\": \"   \"}]").is_empty());
+}
+
+/// An unreadable response and a turn with nothing to learn are different
+/// outcomes and must not report the same way.
+///
+/// Reporting them identically is what let the context lifecycle starve in
+/// silence: a model that narrates instead of answering yields `recorded: 0,
+/// error: null` on every turn, which is indistinguishable from an agent that
+/// keeps getting everything right.
+#[test]
+fn unreadable_reflection_is_distinguished_from_having_nothing_to_say() {
+    use crate::memory::reflection::{ReflectionParse, parse_lessons_checked};
+
+    assert!(
+        matches!(
+            parse_lessons_checked("", &[]),
+            ReflectionParse::Lessons(lessons) if lessons.is_empty()
+        ),
+        "an empty response is a legitimate 'nothing to record'"
+    );
+    assert!(
+        matches!(
+            parse_lessons_checked("no json here", &[]),
+            ReflectionParse::Unreadable(_)
+        ),
+        "prose with no array is a response we failed to read, not an empty one"
+    );
+}
+
+/// The real-world failure: a model that thinks out loud before answering.
+///
+/// The previous first-`[`-to-last-`]` rule broke on exactly this, because the
+/// narration contains brackets of its own. Observed live on
+/// `z-ai/glm-4.7-flash` and `deepseek/deepseek-v4-flash`, both of which
+/// produced zero lessons on every turn.
+#[test]
+fn parse_lessons_reads_an_array_out_of_narrated_output() {
+    let allowed = vec!["cli".to_string()];
+    let narrated = "1. **Analyze the request:**\n   *   Output format: JSON array \
+         (max 3 items).\n   *   Allowed tags: [\"cli\", \"api\"].\n\n\
+         2. Now the answer:\n\n```json\n\
+         [{\"lesson\": \"register handlers in registry.py\", \"domains\": [\"cli\"]}]\n\
+         ```\nHope that helps!";
+    let lessons = lessons_with(narrated, &allowed);
+    assert_eq!(lessons.len(), 1, "the real array is found past the prose");
+    assert_eq!(lessons[0].lesson, "register handlers in registry.py");
+    assert_eq!(lessons[0].domains, vec!["cli"]);
+}
+
+fn lessons_of(text: &str) -> Vec<crate::memory::ReflectionLesson> {
+    lessons_with(text, &[])
+}
+
+fn lessons_with(text: &str, allowed: &[String]) -> Vec<crate::memory::ReflectionLesson> {
+    match crate::memory::reflection::parse_lessons_checked(text, allowed) {
+        crate::memory::reflection::ReflectionParse::Lessons(lessons) => lessons,
+        crate::memory::reflection::ReflectionParse::Unreadable(excerpt) => {
+            panic!("expected a readable lesson array, got unreadable: {excerpt}")
+        }
+    }
 }
 
 #[test]
@@ -908,6 +967,41 @@ fn auto_creation_never_writes_into_a_skills_dir_the_session_may_not_read() {
     assert_eq!(skill_files_on_disk(root).len(), 1);
 }
 
+/// An untrusted workspace withholds the skill FILE, not the whole lifecycle.
+///
+/// The authority gate used to sit on the mining dispatcher, so a workspace
+/// without project trust skipped attribution, retirement, observation
+/// extraction and proposal induction along with the file write. Those write
+/// only to the session's own private store — which the very same turn has
+/// already written reflection memories to — so skipping them protected nothing
+/// and left `context_records` permanently empty in every fresh checkout, every
+/// sandbox, and every CI job. Reflection kept mining lessons that went nowhere,
+/// and nothing reported a problem.
+#[test]
+fn an_untrusted_workspace_still_extracts_observations_even_though_no_skill_lands() {
+    const LESSON: &str = "pin the toolchain version in continuous integration so a floating minor cannot change builds";
+    let dir = tempfile::tempdir().expect("workspace");
+    let root = dir.path();
+    let log = mining_log(root, &[LESSON]);
+
+    mine_in_a_fresh_session(root, &log, false);
+
+    assert!(
+        skill_files_on_disk(root).is_empty(),
+        "the file write stays gated: no skill in a workspace we may not read"
+    );
+
+    let db = stella_store::workspace_private_sqlite_path(root, "context.db").expect("db path");
+    let store = stella_context::ContextStore::open(db).expect("context store opens");
+    let observations = crate::memory::observations::all_observations(&store, 100);
+    assert!(
+        !observations.is_empty(),
+        "the ledger half of the lifecycle must run: an untrusted workspace \
+         still turns reflection lessons into observations, or nothing \
+         downstream of reflection can ever happen"
+    );
+}
+
 /// The guarantees that already held must still hold, now that the guard is fed
 /// a different list: the per-session cap, and the ordinary case of not
 /// clobbering a skill that IS loaded.
@@ -985,4 +1079,93 @@ fn a_forgotten_lesson_still_cannot_return_as_an_auto_created_skill() {
         skill_files_on_disk(root).is_empty(),
         "a tombstoned lesson must not be resurrected as a skill"
     );
+}
+
+/// A lesson carries the session's task boundary, not a per-turn fallback.
+///
+/// Governance promotes only after evidence spans three *distinct tasks*. With
+/// no boundary the count fell back to `turn:<timestamp>`, which miscounts in
+/// both directions: three lessons from one reflection call share a timestamp
+/// and read as one task, while three turns on one task read as three.
+#[test]
+fn lessons_are_stamped_with_the_sessions_task_boundary() {
+    let dir = tempfile::tempdir().expect("workspace");
+    let mut memory = SessionMemory::open(dir.path(), false).expect("memory opens");
+
+    let default_id = memory.task_id_for_test().to_string();
+    assert!(
+        default_id.starts_with("session:"),
+        "the default boundary is session-scoped, got {default_id:?}"
+    );
+
+    memory.set_task_id("proving-ground:eval-03-interest");
+    assert_eq!(memory.task_id_for_test(), "proving-ground:eval-03-interest");
+}
+
+/// A process note is written into the deferred band; a domain fact is not.
+///
+/// This is the wiring assertion, and it is deliberately about the *store*, not
+/// about `LessonKind`. An earlier version of this test compared
+/// `LessonKind::Domain.recall_rank()` against `LessonKind::Process.recall_rank()`
+/// — which restates the function body and passes no matter what the recall path
+/// does. The distinction only means something once it survives the write, so
+/// that is what is asserted here: the tier that comes back off the node row.
+///
+/// The ordering this tier buys is proven end-to-end against a real budget in
+/// `stella-context`'s `a_deferred_memory_loses_the_last_slot_to_a_normal_one`.
+#[tokio::test]
+async fn a_process_lesson_is_stored_in_the_deferred_recall_band() {
+    use crate::memory::LessonKind;
+    use stella_context::RecallTier;
+
+    assert_eq!(LessonKind::Domain.recall_tier(), RecallTier::Normal);
+    assert_eq!(LessonKind::Process.recall_tier(), RecallTier::Deferred);
+    assert_eq!(
+        LessonKind::default(),
+        LessonKind::Process,
+        "unlabelled lessons are not promoted to facts by accident"
+    );
+
+    let dir = tempfile::tempdir().expect("workspace");
+    let memory = SessionMemory::open(dir.path(), false).expect("memory opens");
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![
+                MemoryInput::reflection("money is integer minor units", Vec::<String>::new())
+                    .with_recall_tier(LessonKind::Domain.recall_tier()),
+                MemoryInput::reflection("the agent should not retry blindly", Vec::<String>::new())
+                    .with_recall_tier(LessonKind::Process.recall_tier()),
+            ],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("memories land");
+
+    let tiers: std::collections::HashMap<String, RecallTier> = memory
+        .store
+        .memory_nodes()
+        .expect("memory nodes")
+        .into_iter()
+        .map(|node| (node.content.clone(), node.recall_tier))
+        .collect();
+    assert_eq!(
+        tiers.get("money is integer minor units"),
+        Some(&RecallTier::Normal),
+        "a durable fact competes on rank like any other memory"
+    );
+    assert_eq!(
+        tiers.get("the agent should not retry blindly"),
+        Some(&RecallTier::Deferred),
+        "a note about the turn yields first when the budget binds"
+    );
+}
+
+/// The wire format tolerates a lesson written before `kind` existed.
+#[test]
+fn a_lesson_logged_before_kind_existed_still_parses() {
+    let line = r#"{"lesson":"registry.py is the command registry","domains":[],"occurred_at":7}"#;
+    let parsed: ReflectionLesson = serde_json::from_str(line).expect("legacy line parses");
+    assert_eq!(parsed.kind, crate::memory::LessonKind::Process);
+    assert!(parsed.task_id.is_empty());
 }

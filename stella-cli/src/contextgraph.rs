@@ -680,8 +680,16 @@ pub async fn recall_via_host(host: &Host, query: &ContextQuery) -> HostRecall {
     let mut kept: Vec<AttributedContextFrame> = Vec::new();
     let mut dropped: Vec<HostDroppedFrame> = Vec::new();
     let mut spent_tokens: u32 = 0;
+    //
+    // The ranked band splits again by `RecallTier` for the same reason: the
+    // context plane's packer admits deferred candidates only out of what the
+    // normal ones left, and a precedence honored in one packer and ignored in
+    // the other is not a precedence. `partition` is stable, so within each of
+    // the three bands the score order established above is untouched.
     let (required, ranked): (Vec<_>, Vec<_>) = frames.into_iter().partition(is_required_frame);
-    for (frames, count_limited) in [(required, false), (ranked, true)] {
+    let (ranked, deferred): (Vec<_>, Vec<_>) =
+        ranked.into_iter().partition(|f| !is_deferred_frame(f));
+    for (frames, count_limited) in [(required, false), (ranked, true), (deferred, true)] {
         for frame in frames {
             if !seen.insert((frame.provider.clone(), frame.frame.id.clone())) {
                 continue;
@@ -732,6 +740,22 @@ fn is_required_frame(frame: &AttributedContextFrame) -> bool {
     frame.frame.provenance.iter().any(|entry| {
         entry.kind == stella_context::SELECTION_PROVENANCE_KIND
             && entry.method.as_deref() == Some(stella_context::SelectionReason::Anchored.as_str())
+    })
+}
+
+/// Whether the context plane marked this frame as yielding first when the
+/// budget binds, read back from the provenance chain
+/// (`stella_context::RECALL_TIER_PROVENANCE_KIND`).
+///
+/// A frame that declares no tier is `Normal`, which is the safe default in the
+/// opposite direction from [`is_required_frame`]: there, silence must not let a
+/// provider claim exemption from the budget; here, silence must not let the
+/// host demote a provider's frame it knows nothing about. Both defaults resolve
+/// to "compete on rank like everything else".
+fn is_deferred_frame(frame: &AttributedContextFrame) -> bool {
+    frame.frame.provenance.iter().any(|entry| {
+        entry.kind == stella_context::RECALL_TIER_PROVENANCE_KIND
+            && entry.method.as_deref() == Some(stella_context::RecallTier::Deferred.as_str())
     })
 }
 
