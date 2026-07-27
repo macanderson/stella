@@ -42,6 +42,24 @@ pub trait ToolCallObserver: Send + Sync {
     fn text_delta(&self, delta: &str) {
         let _ = delta;
     }
+
+    /// One fragment of *thinking* arrived on the stream, in order — the
+    /// counterpart to [`Self::text_delta`] for models that stream
+    /// chain-of-thought on a separate channel (OpenRouter's `reasoning`,
+    /// GLM's `reasoning_content`, Anthropic's `thinking_delta`).
+    ///
+    /// Kept a distinct method rather than folded into `text_delta` because
+    /// the two must never be confused downstream: thinking is displayed as
+    /// collapsible, visibly-secondary content, while answer text is the
+    /// reply. Conflating them is exactly the defect that made the adapter
+    /// publish private deliberation as the model's answer.
+    ///
+    /// Same best-effort contract as `text_delta`: lossy, re-streamed on a
+    /// retried attempt, and not called at all by adapters without mid-stream
+    /// visibility. Default no-op so existing observers compile unchanged.
+    fn reasoning_delta(&self, delta: &str) {
+        let _ = delta;
+    }
 }
 
 /// One model provider adapter. `stella-core` drives every call through

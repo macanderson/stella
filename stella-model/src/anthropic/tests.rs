@@ -886,9 +886,9 @@ impl ToolCallObserver for RecordingObserver {
 #[tokio::test]
 async fn complete_observed_streams_answer_deltas_in_order_never_thinking() {
     let server = MockServer::start().await;
-    // Answer fragments interleaved with a thinking delta: the observer
-    // must see exactly the user-visible fragments, in stream order —
-    // thinking deltas parse as `Other` and never reach it.
+    // Answer fragments interleaved with a thinking delta: this channel
+    // carries exactly the user-visible fragments, in stream order. Thinking
+    // rides `reasoning_delta` instead (see `tests::thinking`).
     let sse_body = concat!(
         "event: content_block_delta\n",
         "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"let me think\"}}\n\n",
@@ -1597,3 +1597,5 @@ fn a_caps_flip_degrades_instead_of_aborting_the_turn() {
         );
     }
 }
+
+mod thinking;

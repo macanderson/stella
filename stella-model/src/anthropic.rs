@@ -492,6 +492,12 @@ enum AnthropicDelta {
     InputJsonDelta {
         partial_json: String,
     },
+    /// Extended-thinking content. Announced to the observer on the reasoning
+    /// channel so the transcript can show it live, collapsed and dimmed —
+    /// never folded into the answer text.
+    ThinkingDelta {
+        thinking: String,
+    },
     #[serde(other)]
     Other,
 }
@@ -874,14 +880,20 @@ async fn aggregate_anthropic_stream(
                     }
                 }
                 Ok(AnthropicStreamEvent::ContentBlockDelta { index, delta }) => match delta {
-                    // Only user-visible answer text is announced — thinking
-                    // deltas (`thinking_delta`) deserialize as `Other` and
-                    // never reach the observer.
+                    // Answer text and thinking are announced on separate
+                    // observer channels and never merged: `text` remains the
+                    // reply, while thinking renders as its own collapsible
+                    // transcript entry.
                     AnthropicDelta::TextDelta { text: delta } => {
                         if let Some(observer) = observer {
                             observer.text_delta(&delta);
                         }
                         text.push_str(&delta);
+                    }
+                    AnthropicDelta::ThinkingDelta { thinking } => {
+                        if let Some(observer) = observer {
+                            observer.reasoning_delta(&thinking);
+                        }
                     }
                     AnthropicDelta::InputJsonDelta { partial_json } => {
                         if let Some(acc) = tool_uses.get_mut(&index) {
