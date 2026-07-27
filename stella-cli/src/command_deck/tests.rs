@@ -366,7 +366,7 @@ async fn tap_emits_a_diffless_read_event_for_successful_reads_only() {
 
 #[test]
 fn mcp_outcome_report_lists_connected_servers_by_name() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[]);
     assert_eq!(report, "2 MCP server(s) connected: files, search");
 }
 
@@ -376,7 +376,7 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
         "slow".to_string(),
         "connect timed out after 10000ms".to_string(),
     )];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed, &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: files");
     assert_eq!(
@@ -388,12 +388,55 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
 #[test]
 fn mcp_outcome_report_states_total_failure_outright() {
     let failed = vec![("a".to_string(), "spawn failed".to_string())];
-    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed);
+    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed, &[]);
     assert!(
         report.starts_with("no MCP servers connected"),
         "the degraded mode is stated, not implied: {report}"
     );
     assert!(report.contains("MCP server `a` unavailable: spawn failed"));
+}
+
+/// The witness for #689: before this, an over-advertising server produced no
+/// operator-visible output at all — the signal existed in stella-mcp and had
+/// no consumer, so the model silently had fewer tools than the server offered.
+#[test]
+fn mcp_outcome_report_reports_a_truncated_server_as_connected_not_unavailable() {
+    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &[], &[("greedy", 12)]);
+    let lines: Vec<&str> = report.lines().collect();
+    assert_eq!(lines[0], "1 MCP server(s) connected: greedy");
+    assert!(
+        lines[1].contains("12 tool(s) dropped"),
+        "the operator is told how much surface was lost: {report}"
+    );
+    assert!(
+        lines[1].contains(&stella_mcp::MAX_TOOLS_PER_SERVER.to_string()),
+        "the notice names the cap it hit rather than hard-coding a number: {report}"
+    );
+    // The whole point of the separate channel: this server is up and routing.
+    assert!(
+        !report.contains("unavailable"),
+        "a truncated server is connected and healthy — calling it unavailable \
+         would be false: {report}"
+    );
+}
+
+/// Truncation and connection failure are independent axes, and a server can be
+/// on the wrong side of both lists at once without either notice swallowing
+/// the other.
+#[test]
+fn mcp_outcome_report_carries_truncation_and_failure_together() {
+    let failed = vec![("dead".to_string(), "spawn failed".to_string())];
+    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &failed, &[("greedy", 3)]);
+    assert!(report.contains("MCP server `dead` unavailable: spawn failed"));
+    assert!(report.contains("`greedy` advertised more than"));
+}
+
+/// A well-behaved session says nothing about the cap. A notice that fires at
+/// zero is noise that trains operators to ignore the real one.
+#[test]
+fn mcp_outcome_report_is_silent_when_nothing_was_truncated() {
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[]);
+    assert_eq!(report, "1 MCP server(s) connected: files");
 }
 
 #[test]

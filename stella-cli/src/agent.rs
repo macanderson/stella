@@ -1516,19 +1516,7 @@ pub(crate) async fn connect_mcp(
     let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root)?;
     let set = connect_mcp_servers(&servers, native, usage, None, Some(auth)).await;
     if print_diagnostics {
-        for (name, reason) in set.failed_servers() {
-            eprintln!(
-                "  {} MCP server `{name}` unavailable: {reason}",
-                "!".yellow()
-            );
-        }
-        if set.connected_count() > 0 {
-            println!(
-                "  {} {} MCP server(s) connected",
-                "◆".bright_cyan(),
-                set.connected_count()
-            );
-        }
+        crate::mcp_cmd::print_connect_diagnostics(&set);
     }
     // Arc'd so a pipeline driver can share the same connected set into the
     // Best-of-N candidate tool surface and orchestrator pre-fetch (issue
