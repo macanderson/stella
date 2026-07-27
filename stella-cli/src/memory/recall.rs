@@ -189,16 +189,19 @@ impl SessionMemory {
             as_of: None,
             representation_preferences: vec![],
         };
-        // Two independent suppression sets, read together and applied as one.
-        // Quarantine is *derived* — the model kept calling a memory untruthful;
-        // a tombstone is *stored* — a person read it and said remove it. Both
-        // are fail-closed for the same reason: if the state cannot be read,
-        // surfacing everything is the one outcome that is definitely wrong.
-        let quarantined = match stella_store::Store::open(&self.workspace_root).and_then(|store| {
-            let mut ids = store.quarantined_memory_ids()?;
-            ids.extend(store.forgotten_ids(stella_store::ContextSurface::Memory)?);
-            Ok(ids)
-        }) {
+        // The suppression sets, read together and applied as one. This is a
+        // redundant net behind the provider-internal read — and it goes through
+        // the SAME reader rather than spelling the union out again, because two
+        // copies of "what is suppressed" are two things that can disagree. When
+        // retirement joined the union (#715 deliverable 5) the inline copy that
+        // used to live here would have silently kept serving retired records.
+        //
+        // Fail-closed: if the state cannot be read, surfacing everything is the
+        // one outcome that is definitely wrong.
+        let quarantined = match super::suppression::suppression_reader(
+            &self.workspace_root,
+            self.store.clone(),
+        )() {
             Ok(ids) => ids,
             Err(error) => {
                 report(format!(

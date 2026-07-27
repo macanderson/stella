@@ -54,6 +54,7 @@ mod memory;
 mod memory_cmd;
 mod memory_compact;
 mod memory_index;
+mod memory_retire_cmd;
 mod model_catalog;
 // Phase 3 (#714): the adaptive-context proposal review surface.
 mod proposals_cmd;
@@ -1081,6 +1082,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
                 memory_cmd::MemoryCmd::Edit { id, text } => memory_cmd::run_memory_edit(id, text),
                 memory_cmd::MemoryCmd::Restore { id } => memory_cmd::run_memory_restore(id),
                 memory_cmd::MemoryCmd::Forgotten => memory_cmd::run_memory_forgotten(),
+                memory_cmd::MemoryCmd::Retired => memory_retire_cmd::run_memory_retired(),
+                memory_cmd::MemoryCmd::Retire { id, reason } => {
+                    memory_retire_cmd::run_memory_retire(id, reason)
+                }
+                memory_cmd::MemoryCmd::Reaffirm { id, reason } => {
+                    memory_retire_cmd::run_memory_reaffirm(id, reason)
+                }
                 memory_cmd::MemoryCmd::Compact(args) => memory_compact::run_memory_compact(args),
                 memory_cmd::MemoryCmd::Index(args) => memory_index::run_memory_index(args),
             };

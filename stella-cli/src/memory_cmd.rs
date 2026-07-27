@@ -84,6 +84,38 @@ pub enum MemoryCmd {
     /// List the tombstones in this workspace — what was forgotten, when, and
     /// why.
     Forgotten,
+    /// List the context this workspace has retired — what stopped helping,
+    /// why, and its evidence.
+    ///
+    /// Retirement is not forgetting. A retired memory is excluded from
+    /// automatic recall but stays explicitly retrievable by id and is restored
+    /// by `stella memory reaffirm <id>`. Nothing is deleted, ever.
+    Retired,
+    /// Retire a memory: stop selecting it automatically, reversibly.
+    ///
+    /// Unlike `forget`, this is not a tombstone — the memory stays explicitly
+    /// retrievable by id and comes back with `stella memory reaffirm <id>`.
+    /// Use `forget` when the memory is wrong and should never return; use
+    /// `retire` when it has simply stopped earning its place.
+    Retire {
+        /// The memory's stable id (nod_…) as shown by `stella memory list`
+        id: String,
+        /// Why it is being retired. Recorded on the decision — a retirement
+        /// with no legible cause is not auditable.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Restore a retired memory to automatic selection.
+    ///
+    /// The retirement stays on the ledger, outranked by this decision rather
+    /// than erased — so "why did this come back" is answerable.
+    Reaffirm {
+        /// The memory's stable id (nod_…) as shown by `stella memory retired`
+        id: String,
+        /// Optional note on why it is still needed
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
     /// Reclaim space in .stella/private/context.db by dropping derived index
     /// rows whose owner is already gone: embedding vectors no memory, node or
     /// episode points at (every `memory edit` strands one), and domain tags

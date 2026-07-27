@@ -168,6 +168,29 @@ impl ContextEvaluationMethod {
     pub fn is_agent_self_report(&self) -> bool {
         self.0 == Self::AGENT_SELF_REPORT
     }
+
+    /// Whether a verdict carrying this method may drive automatic retirement
+    /// (Phase 4, #715 — the "pruning-eligibility decision" this type's docs
+    /// defer).
+    ///
+    /// Two exclusions, both from the two-tier policy stated above:
+    ///
+    /// - **`agent_self_report` is recognized but never pruning-eligible.** The
+    ///   agent judging its own context is the one source that can be wrong in a
+    ///   self-reinforcing way — a model that misreads a memory reports it
+    ///   unhelpful, which retires it, which removes the evidence that the
+    ///   reading was wrong. Every other method has something outside the turn
+    ///   to check against.
+    /// - **An unregistered extension is never pruning-eligible.** Host policy
+    ///   has to trust a method before it can suppress anything; an identifier
+    ///   this build has never heard of has not earned that.
+    ///
+    /// This is deliberately a property of the *method*, not of the verdict:
+    /// "which evidence is strong enough to remove context" is a policy question
+    /// with one answer, and putting it here means a caller cannot forget it.
+    pub fn is_pruning_eligible(&self) -> bool {
+        self.is_recognized_core() && !self.is_agent_self_report()
+    }
 }
 
 impl<'de> Deserialize<'de> for ContextEvaluationMethod {
