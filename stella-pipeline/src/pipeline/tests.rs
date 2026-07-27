@@ -214,6 +214,9 @@ struct ScriptedRunner {
     diff: String,
     /// Untracked files this workspace reports, as `(path, added_lines)`.
     untracked: Vec<(String, u32)>,
+    /// What a failing run prints. Configurable so a test can plant a
+    /// distinctive token and assert on where it does — and does not — travel.
+    failure_tail: String,
 }
 impl ScriptedRunner {
     fn new(test_results: Vec<bool>, diff: &str) -> Self {
@@ -221,7 +224,12 @@ impl ScriptedRunner {
             test_results: std::sync::Mutex::new(test_results.into_iter().collect()),
             diff: diff.to_string(),
             untracked: Vec::new(),
+            failure_tail: "test failed".to_string(),
         }
+    }
+    fn with_failure_tail(mut self, tail: &str) -> Self {
+        self.failure_tail = tail.to_string();
+        self
     }
     fn with_untracked(mut self, untracked: Vec<(&str, u32)>) -> Self {
         self.untracked = untracked
@@ -277,7 +285,7 @@ impl TestRunner for ScriptedRunner {
             stderr_tail: if passed {
                 String::new()
             } else {
-                "test failed".into()
+                self.failure_tail.clone()
             },
         }
     }
@@ -1841,6 +1849,10 @@ mod verification_honesty {
     }
 }
 
+/// The feedback airlock (`witness::airlock`) observed end to end: what a
+/// verification failure tells the operator versus what it tells the worker.
+/// A child module, so it reaches the scripted ports above via `super::*`.
+mod airlock;
 mod best_of_n;
 mod chaos;
 /// Golden-trajectory recordings of this pipeline's real event stream — a

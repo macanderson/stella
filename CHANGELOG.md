@@ -26,6 +26,15 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+- The pipeline no longer replays raw test-runner output into a worker's
+  revision prompt. A deterministic verification failure is now disclosed
+  through a **feedback airlock** at one of four grains (`L0`–`L3`), tightening
+  automatically when the same failure repeats, and model-authored text coming
+  back inbound (distress guidance, judge reasoning) is scrubbed against the
+  sealed material before it can reach the worker. Operator-facing output is
+  unchanged — `stella` still shows you the real failure; only the model's
+  prompt is redacted. Design: `docs/design/witness-protocol.md`.
+
 ## [0.5.57] — 2026-07-27
 
 ## [0.5.56] — 2026-07-27

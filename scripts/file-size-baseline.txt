@@ -19,8 +19,8 @@
 1638 stella-model/src/bedrock.rs
 1919 stella-model/src/openai.rs
 1623 stella-model/src/zai/tests.rs
-2476 stella-pipeline/src/pipeline.rs
-2022 stella-pipeline/src/pipeline/tests.rs
+2505 stella-pipeline/src/pipeline.rs
+2034 stella-pipeline/src/pipeline/tests.rs
 2399 stella-protocol/src/event.rs
 2270 stella-store/src/lib.rs
 2170 stella-store/src/tests.rs

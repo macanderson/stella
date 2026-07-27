@@ -33,6 +33,7 @@ which owns the port implementations and the `Router` itself. It builds no binary
 | [`src/plan.rs`](src/plan.rs) | The planner's split context (`build_planner_prompt`) and the JSON-then-numbered-list `parse_plan`. |
 | [`src/scope.rs`](src/scope.rs) | `ScopeThresholds` and the pure `needs_scope_review` / `apply_trim` / `build_proposal`. |
 | [`src/witness.rs`](src/witness.rs) | Witness prompts, the closed test-command vocabulary, and the artifact/invocation/identity validators. |
+| [`src/witness/airlock.rs`](src/witness/airlock.rs) | The feedback airlock: `DisclosureGrain`, `SymptomClass`, `FailureFingerprint`, and the `scrub`/`redact` pair that decide what a failure may tell the worker. |
 | [`src/verify.rs`](src/verify.rs) | `FlipOracle`, `ladder_decision`, judge prompting/parsing, `heuristic_fallback`, `guidance_prompt`. |
 | [`src/candidate.rs`](src/candidate.rs) | `CandidateScore` and `select_best_candidate` — best-of-N selection, pure. |
 | [`src/mcp_prefetch.rs`](src/mcp_prefetch.rs) | `fold`: shared MCP context gathered once at the top of a fan-out instead of N times. |
@@ -94,6 +95,21 @@ observed-green tests, so an outage never degrades to a blanket pass. On the seco
 consecutive deterministic failure, `distress_guidance` buys one judge call for
 course-correction that rides with the next revision prompt — event-triggered, never a fixed
 mid-run checkpoint.
+
+**The feedback airlock decides what a failure may say.** Before it, a deterministic
+failure went back to the worker as the raw `stderr` tail — the assertion, the runtime
+values it compared, and the test's name, replayed on every revision. Now
+[`src/witness/airlock.rs`](src/witness/airlock.rs) builds a `FailureBrief` at a
+`DisclosureGrain`: `L3` (a reproduction) by default, stepping down to `L2` (a
+closed-vocabulary `SymptomClass` sentence), `L1` (the command), and `L0` (that it failed)
+as the same `FailureFingerprint` repeats — a worker that has seen the same brief twice
+is not helped by a third copy, only given more surface to fit. The symptom sentences are
+compile-time literals, so that grain cannot quote the assertion by construction; `scrub`
+covers the rest and **fails closed**, degrading a brief rather than emitting it with a
+hole. Model prose arriving inbound (distress guidance, judge reasoning) goes through the
+same scrub, and a rejection emits `PolicyDecision { kind: Blocked }` carrying a token,
+never content. Two audiences, two texts: the operator's `JudgeVerdict` event keeps the
+real output, because the human is not the adversary.
 
 **Degrade, never do nothing.** `WitnessAbort` splits reasons into `degradable` (no witness
 could be authored) and `rejected` (a budget limit, or an artifact-integrity violation), and
