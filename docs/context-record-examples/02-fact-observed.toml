@@ -32,8 +32,6 @@ lineage_id  = "ctx.acme.web.staging-endpoint"
 record_id   = "rec_staging_endpoint_77de1049ba3c"
 record_hash = "sha256:77de1049ba3c8f21e6570cd4192ab8e3357f0c6d9b41e2a80fd35c7169ae4b28"
 kind        = "fact"
-title       = "Staging API is remote, not local"
-summary     = "Staging lives at api.staging.acme.dev."
 statement   = "The staging API is served from https://api.staging.acme.dev."
 tags        = ["environments"]
 
@@ -44,7 +42,6 @@ tags        = ["environments"]
   force         = "info"
   precedence    = 20
   inject        = "on-match"
-  budget_tokens = 16
   applies_to    = { tasks = ["debug", "integration-test"], keywords = ["staging", "env"] }
 
   [record.enforcement]
@@ -78,8 +75,6 @@ lineage_id  = "ctx.acme.web.no-local-staging"
 record_id   = "rec_no_local_staging_5b2ec8f0d613"
 record_hash = "sha256:5b2ec8f0d61374a9c02e8b15fd3760ea94c1d8b207f6539ae4c0182bb7d95f43"
 kind        = "fact"
-title       = "There is no local staging container"
-summary     = "`docker compose up` starts dev only."
 statement   = "The docker-compose stack defines a dev environment only; it has no staging service."
 tags        = ["environments", "tooling"]
 
@@ -90,7 +85,6 @@ tags        = ["environments", "tooling"]
   force         = "info"
   precedence    = 20
   inject        = "on-match"
-  budget_tokens = 14
   applies_to    = { tasks = ["debug", "integration-test"], keywords = ["staging", "docker"] }
 
   [record.enforcement]

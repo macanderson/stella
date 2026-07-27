@@ -47,8 +47,6 @@ lineage_id  = "ctx.acme.web.capability-contract-format"
 record_id   = "rec_cap_contract_format_9e1d40c7ab52"
 record_hash = "sha256:9e1d40c7ab52f8360b7e4295cd1a83f07be6205d9c4a17f83b0e6cd21947f5aa"
 kind        = "fact"
-title       = "Capability contracts are YAML"
-summary     = "Each agent capability is declared in a YAML contract."
 statement   = "An agent capability's contract is written as a YAML file."
 tags        = ["capabilities", "contracts"]
 
@@ -56,7 +54,6 @@ tags        = ["capabilities", "contracts"]
   force         = "info"
   precedence    = 35
   inject        = "on-match"
-  budget_tokens = 14
   applies_to    = { paths = ["capabilities/**"], tasks = ["add-capability"] }
 
   [record.enforcement]
@@ -78,8 +75,6 @@ lineage_id  = "ctx.acme.web.capability-contract-location"
 record_id   = "rec_cap_contract_loc_2f77b9c318ea"
 record_hash = "sha256:2f77b9c318ea6d05948c1f3b7ea20d64c85e1a97403fb2d68c05a3e719bf4d80"
 kind        = "fact"
-title       = "Capability contracts live in capabilities/contracts/"
-summary     = "Contracts are stored under capabilities/contracts/."
 statement   = "Capability contract files are stored in the capabilities/contracts/ directory."
 tags        = ["capabilities", "contracts"]
 
@@ -87,7 +82,6 @@ tags        = ["capabilities", "contracts"]
   force         = "info"
   precedence    = 35
   inject        = "on-match"
-  budget_tokens = 14
   applies_to    = { paths = ["capabilities/**"], tasks = ["add-capability"] }
 
   [record.enforcement]
@@ -109,8 +103,6 @@ lineage_id  = "ctx.acme.web.ship-a-capability"
 record_id   = "rec_ship_capability_c604af8b1d7e"
 record_hash = "sha256:c604af8b1d7ec2951403d7ba6e8f0257cd913b46a0e7f2185cb39d0ea4715f62"
 kind        = "procedure"
-title       = "Shipping a new agent capability"
-summary     = "Declare a contract, place it with the others, then implement."
 statement   = "To ship an agent capability, write its contract file and place it with the other contracts before implementing the capability."
 tags        = ["capabilities", "contracts"]
 
@@ -118,7 +110,6 @@ tags        = ["capabilities", "contracts"]
   force         = "must"
   precedence    = 70
   inject        = "on-match"
-  budget_tokens = 38
   applies_to    = { paths = ["capabilities/**"], tasks = ["add-capability"] }
 
   [record.enforcement]

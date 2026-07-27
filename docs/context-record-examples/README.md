@@ -10,26 +10,26 @@ against concretely before it is implemented.
 A context record is the smallest quotable unit of agent context. Every record
 carries three orthogonal axes:
 
-| Axis | Answers | Table |
-| --- | --- | --- |
-| **Steering** | how hard does this push behavior, and when is it injected? | `[record.steering]` |
-| **Enforcement** | how is a violation detected, and what happens? | `[record.enforcement]` |
-| **Truth** | is the claim still accurate, and how would you know? | `[record.truth]` |
+| Axis            | Answers                                                    | Table                  |
+| --------------- | ---------------------------------------------------------- | ---------------------- |
+| **Steering**    | how hard does this push behavior, and when is it injected? | `[record.steering]`    |
+| **Enforcement** | how is a violation detected, and what happens?             | `[record.enforcement]` |
+| **Truth**       | is the claim still accurate, and how would you know?       | `[record.truth]`       |
 
 Separating these matters because the current engine conflates the first two —
-enforcement level *is* authority level today, so a rule cannot be strongly
+enforcement level _is_ authority level today, so a rule cannot be strongly
 steering and cheaply checked, or weakly steering and hard-blocked.
 
 ## Files
 
-| File | Demonstrates |
-| --- | --- |
-| `01-constraint-decreed.toml` | Hard constraint, human decree, deny-shaped guard enforcement |
-| `02-fact-observed.toml` | A claim that rots — declarative probe, TTL, `on_expiry` |
-| `03-preference-asserted.toml` | Real steering force, unfalsifiable claim, model-judged rubric |
-| `04-procedure-atomic-set.toml` | One sentence → three atomic records joined by typed links |
-| `05-imported-proposals.toml` | Ingest output: proposals, per-record provenance, quarantined executables, three-valued refutation |
-| `06-lineage-supersession.toml` | Revision identity without allocated version numbers |
+| File                           | Demonstrates                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `01-constraint-decreed.toml`   | Hard constraint, human decree, deny-shaped guard enforcement                                      |
+| `02-fact-observed.toml`        | A claim that rots — declarative probe, TTL, `on_expiry`                                           |
+| `03-preference-asserted.toml`  | Real steering force, unfalsifiable claim, model-judged rubric                                     |
+| `04-procedure-atomic-set.toml` | One sentence → three atomic records joined by typed links                                         |
+| `05-imported-proposals.toml`   | Ingest output: proposals, per-record provenance, quarantined executables, three-valued refutation |
+| `06-lineage-supersession.toml` | Revision identity without allocated version numbers                                               |
 
 ## Rules encoded in these examples
 
@@ -72,8 +72,8 @@ a superseding ADR.
 - `origin` — **frozen**: `user`, `system`, `observed`, `inferred`, `imported`
 - `status` — **frozen**: `active`, `retracted`, `archived`
   (there is deliberately no `superseded` — a replaced record is `archived` and
-  carries `superseded_by`; `retracted` means the claim was *wrong*, `archived`
-  means it was *replaced*)
+  carries `superseded_by`; `retracted` means the claim was _wrong_, `archived`
+  means it was _replaced_)
 - `kind` — `memory`, `fact`, `rule`, `preference`, `constraint`, `procedure`
 - `sharing_scope` — `personal`, `repository`, `organization`
 - `steering.force` — `must`, `should`, `may`, `info`
@@ -94,13 +94,13 @@ to keep the two axes unambiguous when both appear on one record.
 
 A probe answers "does this claim still hold?" without executing arbitrary code:
 
-| `kind` | Checks | Gated? |
-| --- | --- | --- |
-| `path_exists` / `path_absent` | a path in the repo | no |
-| `file_contains` | a pattern in a tracked file | no |
-| `manual` | a human re-verifies on a schedule | no |
-| `command_succeeds` | exit status of a command | **yes** |
-| `http_ok` | an HTTP endpoint responds | **yes** |
+| `kind`                        | Checks                            | Gated?  |
+| ----------------------------- | --------------------------------- | ------- |
+| `path_exists` / `path_absent` | a path in the repo                | no      |
+| `file_contains`               | a pattern in a tracked file       | no      |
+| `manual`                      | a human re-verifies on a schedule | no      |
+| `command_succeeds`            | exit status of a command          | **yes** |
+| `http_ok`                     | an HTTP endpoint responds         | **yes** |
 
 Gated probes are honored **only** when `basis = "decree"` and a human
 `verified_by` is recorded, and **never** on a record whose `origin` is
@@ -133,13 +133,33 @@ mechanism alongside typed links, forces a single parent where a DAG is needed,
 and leaks into selection and retirement semantics ("does retiring a parent
 retire its children?"). Co-derivation is answered by shared provenance
 (`source_uri` + `source_lines` + `ingest_run_id`) for free; genuine
-relationships get typed links. Where hierarchy is real it is *derived* — general
+relationships get typed links. Where hierarchy is real it is _derived_ — general
 versus specific falls out of `applies_to.paths` containment, which cannot go
 stale or contradict itself.
 
 **No `uri` field.** It is fully derivable from `set_id` + `lineage_id` +
 revision, so storing it creates state that can disagree with its own components.
 Compute it at read time.
+
+**No `title` or `summary` — one text field, `statement`.** Atomicity makes both
+redundant: a record that can receive exactly one refutation verdict is already
+one sentence, and there is nothing in one sentence to summarize. Across these
+examples `title` + `summary` cost 987 bytes against 1152 bytes of `statement` —
+an 86% overhead on the text payload for no added meaning.
+
+The cost is not only tokens. A summary that drops a qualifier ("in CI", "for new
+code") changes what the agent does, so two fields that can disagree about what a
+rule says is a correctness hazard, not just duplication. And `docs/context-pr.md`
+§6.2 already excludes presentational `name` / `description` from the canonical
+record — by that logic they are not part of the record's meaning at all.
+
+A display label is a read-time concern: list views can truncate `statement`, and
+the stable handle across revisions is `lineage_id`, which is already present.
+
+**No `budget_tokens`.** Same principle as `uri` — measure the rendered
+`statement` rather than storing an author-declared number that drifts from it.
+If injection cost needs managing, the lever is selecting fewer records, not
+compressing each one.
 
 **No float confidence.** `confidence` is an integer 0–100.
 
@@ -153,5 +173,6 @@ Compute it at read time.
    unrecognized names.
 3. `review_every` (recurring) versus the existing `review_after` (one-shot).
    The recurring form is better, but it is a change to a shipped field.
-4. Should `budget_tokens` be author-declared or measured? A declared number will
-   drift from the real cost of the rendered record.
+4. `tags` overlaps `applies_to`. It is cheap (8 bytes per record here) and aimed
+   at human browsing rather than matching, but if nothing consumes it, it is the
+   next field to cut.

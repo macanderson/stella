@@ -40,8 +40,6 @@ record_id   = "rec_node_version_11a7ce30d482"
 record_hash = "sha256:11a7ce30d4826b0f95e13c8a70df42b6810c95fe2a7d640b3e18cc0592af7b13"
 kind        = "constraint"
 status      = "archived"
-title       = "Pin Node to 20.x"
-summary     = "Development runs on Node 20.x."
 statement   = "Development runs on Node 20.x."
 
 superseded_by = "rec_node_version_84f0b2ed6a95"
@@ -75,8 +73,6 @@ record_id   = "rec_node_version_84f0b2ed6a95"
 record_hash = "sha256:84f0b2ed6a951c73d0e825bf4a6013cc79ed2b8f50a4917e63cb0d21fa8e7c40"
 kind        = "constraint"
 status      = "active"
-title       = "Pin Node to 22.x"
-summary     = "Development runs on Node 22.x."
 statement   = "Development runs on Node 22.x."
 
 supersedes = "rec_node_version_11a7ce30d482"
@@ -89,7 +85,6 @@ supersedes = "rec_node_version_11a7ce30d482"
   force         = "must"
   precedence    = 90
   inject        = "always"
-  budget_tokens = 12
   applies_to    = { paths = ["**"] }
 
   [record.enforcement]

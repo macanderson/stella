@@ -27,8 +27,6 @@ authored_by = "@dana"
 [[record]]
 lineage_id = "ctx.acme.web.pr-descriptions"
 kind       = "preference"
-title      = "PR descriptions lead with the why"
-summary    = "Open a PR description with motivation, not a diff summary."
 statement  = "A PR description's first paragraph states why the change exists and what breaks without it."
 tags       = ["review", "writing"]
 
@@ -36,7 +34,6 @@ tags       = ["review", "writing"]
   force         = "should"
   precedence    = 40
   inject        = "on-match"
-  budget_tokens = 22
   applies_to    = { tasks = ["open-pr", "write-pr-description"] }
 
   [record.enforcement]
@@ -69,8 +66,6 @@ tags       = ["review", "writing"]
 lineage_id    = "ctx.acme.web.my-review-order"
 kind          = "preference"
 sharing_scope = "personal"
-title         = "Review tests before implementation"
-summary       = "Read the test diff first."
 statement     = "When reviewing a PR, read the test changes before the implementation changes."
 
   [record.steering]

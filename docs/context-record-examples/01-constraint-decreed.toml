@@ -35,8 +35,6 @@ lineage_id  = "ctx.acme.web.pkg-manager"
 record_id   = "rec_pkg_manager_a41f9c2b71d4"
 record_hash = "sha256:a41f9c2b71d4e6038f5b1c9270ae4d8813f6c05be2917a4d0cc38e5b74a29f16"
 kind        = "constraint"
-title       = "pnpm is the only package manager"
-summary     = "Use pnpm. Never npm or yarn."
 statement   = "This repository uses pnpm exclusively; npm and yarn must not be used."
 tags        = ["build", "tooling"]
 
@@ -47,7 +45,6 @@ tags        = ["build", "tooling"]
   force         = "must"
   precedence    = 100
   inject        = "always"
-  budget_tokens = 24
   applies_to    = { paths = ["**"], tasks = ["install", "build", "ci"] }
 
   [record.enforcement]
@@ -76,8 +73,6 @@ lineage_id  = "ctx.acme.web.foreign-lockfile-breaks-ci"
 record_id   = "rec_foreign_lockfile_3c80ba17ff29"
 record_hash = "sha256:3c80ba17ff2941d6a0e7c5b83e2149f70dd6a8c41b95e0327fa6d418cc07b2e5"
 kind        = "fact"
-title       = "A foreign lockfile fails CI before any test runs"
-summary     = "package-lock.json or yarn.lock fails the `install` job."
 statement   = "The CI `install` job fails when package-lock.json or yarn.lock is present, before any test job runs."
 tags        = ["build", "ci"]
 
@@ -88,7 +83,6 @@ tags        = ["build", "ci"]
   force         = "info"
   precedence    = 30
   inject        = "on-match"
-  budget_tokens = 18
   applies_to    = { paths = ["**"], tasks = ["ci", "debug"] }
 
   [record.enforcement]
