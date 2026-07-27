@@ -1206,6 +1206,9 @@ fn an_id_less_memory_frame_still_renders_and_does_not_promise_citability() {
         "amounts are integer minor units",
     );
     let section = render_context_section(&[identified]).expect("renders");
-    assert!(section.contains("[nod_6428c2bb9b9b7aa1adc457fa]"), "{section}");
+    assert!(
+        section.contains("[nod_6428c2bb9b9b7aa1adc457fa]"),
+        "{section}"
+    );
     assert!(section.contains("cite_memory"), "{section}");
 }
