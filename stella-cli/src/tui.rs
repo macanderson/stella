@@ -45,14 +45,18 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// Selectable accent palette — `/color` switches the session's accent so
 /// multiple terminal windows running stella are visually distinct at a
 /// glance (see [`set_accent`], and [`rename_tab`] for the `/rename` sibling).
-// Gold first: it is the brand, and so the default. The rest are
+// Sky first: it is the brand, and so the default. The rest are
 // personalisation only — `/color` exists so several terminal windows running
 // stella can be told apart at a glance, which needs hues that are *distinct*
 // rather than on-brand. `colored`'s named ANSI colors are the portable
-// stand-ins: gold≈bright-yellow, cyan≈bright-cyan, azure≈bright-blue,
-// violet≈bright-magenta, magenta≈magenta, mint≈green.
+// stand-ins: sky≈bright-cyan, cyan≈bright-cyan, azure≈bright-blue,
+// violet≈bright-magenta, magenta≈magenta, mint≈green. `sky` and `cyan` land on
+// the same ANSI code — the brand hue is a light blue and the named set holds no
+// nearer distinct entry — so they are two names for one appearance here; only
+// `sky` is the brand, and `cyan` is kept so an existing `/color cyan` still
+// resolves.
 const PALETTE: [(&str, Color); 6] = [
-    ("gold", Color::BrightYellow),
+    ("sky", Color::BrightCyan),
     ("cyan", Color::BrightCyan),
     ("azure", Color::BrightBlue),
     ("violet", Color::BrightMagenta),
@@ -62,7 +66,7 @@ const PALETTE: [(&str, Color); 6] = [
 
 static ACCENT: AtomicUsize = AtomicUsize::new(0);
 
-/// The session accent color (defaults to the brand gold, `PALETTE[0]`).
+/// The session accent color (defaults to the brand sky, `PALETTE[0]`).
 pub fn accent() -> Color {
     PALETTE[ACCENT.load(Ordering::Relaxed) % PALETTE.len()].1
 }
@@ -221,10 +225,15 @@ pub fn tool_call_card(name: &str, input: &serde_json::Value, status: &str) {
         input.to_string()
     };
 
+    // The tool name takes the session accent, matching the deck: it is the one
+    // token in a transcript that carries the brand hue, because the names are
+    // what a reader scans a scrollback *for*. It was `bright_yellow` — this
+    // file's own stand-in for the retired gold — which survived the recolour
+    // because no "gold" string named it.
     println!(
         "  {} {}({})",
         icon,
-        name.bright_yellow(),
+        name.color(accent()),
         input_str.dimmed()
     );
 }
@@ -476,15 +485,15 @@ fn compose_wordmark(text: &str) -> Vec<String> {
         .collect()
 }
 
-// Stellar gradient — a single restrained gold sweep, deep gold → gold, left to
-// right across the wordmark. These are the brand tokens `gold-deep` and `gold`
-// from docs/brand/tokens.json (the same pair `stella-tui`'s theme::ACCENT_DEEP
+// Stellar gradient — a single restrained sky sweep, deep sky → sky, left to
+// right across the wordmark. These are the brand tokens `sky-deep` and `sky`
+// from stella-tui/src/palette.rs (the same pair `stella-tui`'s theme::ACCENT_DEEP
 // → ACCENT resolve to), duplicated rather than imported because that crate
 // speaks in ratatui `Color`s and this banner writes raw truecolor. Keep the two
-// in step: `palette_matches_brand_tokens` below fails if they drift.
+// in step: `stellar_stops_match_the_brand_tokens` below fails if they drift.
 const STELLAR_STOPS: [(u8, u8, u8); 2] = [
-    (0xE0, 0xB8, 0x00), // gold-deep
-    (0xFF, 0xDD, 0x00), // gold
+    (0x38, 0xBD, 0xF8), // sky-deep
+    (0x7D, 0xD3, 0xFC), // sky
 ];
 
 /// Color at horizontal position `t` ∈ `[0,1]` along the stellar gradient.
@@ -589,21 +598,21 @@ mod tests {
     /// The banner writes raw truecolor, so it cannot import stella-tui's
     /// ratatui `Color`s and instead duplicates the two brand stops. This is the
     /// guard that keeps the copy honest: the values must stay exactly the
-    /// `gold-deep` and `gold` tokens in docs/brand/tokens.json.
+    /// `SKY_DEEP` and `SKY` tokens in stella-tui/src/palette.rs.
     #[test]
     fn stellar_stops_match_the_brand_tokens() {
-        assert_eq!(STELLAR_STOPS[0], (0xE0, 0xB8, 0x00), "gold-deep");
-        assert_eq!(STELLAR_STOPS[1], (0xFF, 0xDD, 0x00), "gold");
+        assert_eq!(STELLAR_STOPS[0], (0x38, 0xBD, 0xF8), "sky-deep");
+        assert_eq!(STELLAR_STOPS[1], (0x7D, 0xD3, 0xFC), "sky");
     }
 
-    /// Gold is the brand, so it is the default accent -- `/color` with no
+    /// Sky is the brand, so it is the default accent -- `/color` with no
     /// argument, and a fresh session, must land on it.
     #[test]
-    fn default_accent_is_gold() {
-        assert_eq!(PALETTE[0].0, "gold");
+    fn default_accent_is_sky() {
+        assert_eq!(PALETTE[0].0, "sky");
         assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
-        assert!(set_accent("gold"));
-        assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "gold");
+        assert!(set_accent("sky"));
+        assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "sky");
     }
 
     #[test]
