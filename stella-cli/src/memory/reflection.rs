@@ -79,25 +79,57 @@ pub async fn reflect_on_turn(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // Ask first for facts about the CODEBASE, and only then for notes about
+    // the agent. The order is the point.
+    //
+    // The previous framing asked, on failure, "what should change next time to
+    // avoid repeating this failure?" — a question about the agent. It reliably
+    // got an answer about the agent. Measured over ten mined lessons from a
+    // real run: eight were process self-critique, and *zero* recorded the
+    // repository conventions that decided whether the work actually passed.
+    // The lesson corpus was full of "the agent should be more proactive" and
+    // empty of "money is integer minor units in this repo".
+    //
+    // Nothing downstream could fix that. Retrieval cannot surface a fact that
+    // was never written down, so the whole lifecycle was faithfully
+    // accumulating, ranking and recalling commentary about itself.
     let task_frame = if succeeded {
-        "This turn SUCCEEDED. Identify durable lessons worth remembering for \
-         FUTURE similar tasks: approaches or conventions that worked well, \
-         repo conventions discovered, user style preferences revealed. Most \
-         successful turns have nothing worth recording — an empty list is the \
-         common, correct answer."
+        "This turn SUCCEEDED.\n\
+         FIRST, and most importantly: what did you learn about THIS CODEBASE \
+         that will still be true next week, on a completely different task? \
+         Conventions it enforces, invariants it relies on, where things live, \
+         steps that are required for a change to take effect, types or helpers \
+         you are expected to use. Succeeding by following a convention is the \
+         clearest evidence that the convention exists — record it as a flat \
+         statement of fact about the code, not as a description of what you \
+         did.\n\
+         SECOND, only if something is genuinely worth it: a note about how you \
+         worked. Most successful turns have nothing of this kind worth keeping."
     } else {
-        "This turn FAILED. Identify the root cause and a durable lesson: what \
-         was the most likely cause of failure — a wrong assumption, a missed \
-         file, a bad approach, a misunderstood requirement? What should change \
-         next time to avoid repeating this failure? Focus on actionable, \
-         forward-looking lessons. If the failure was clearly external (network, \
-         timeout), return an empty list."
+        "This turn FAILED.\n\
+         FIRST, and most importantly: what did you learn about THIS CODEBASE \
+         that will still be true next week, on a completely different task? A \
+         failure usually means the code expected something you did not know — \
+         a required registration step, a type it insists on, a helper you were \
+         supposed to call, a place a thing has to be declared. Record that \
+         expectation as a flat statement of fact about the code.\n\
+         SECOND: the root cause in terms of your own approach — a wrong \
+         assumption, a missed file, a bad plan. If the failure was clearly \
+         external (network, timeout), return an empty list."
     };
     let prompt = format!(
         "Review this coding-agent turn transcript and reflect on the agent's \
          performance. {task_frame}\n\n\
-         Respond with ONLY a JSON array (max 3):\n\
-         [{{\"lesson\": \"...\", \"domains\": [\"...\"]}}]\n\
+         Respond with ONLY a JSON array (max 3), most useful first:\n\
+         [{{\"lesson\": \"...\", \"kind\": \"domain\", \"domains\": [\"...\"]}}]\n\
+         `kind` is \"domain\" for a fact about the codebase that holds \
+         independent of this turn, or \"process\" for a note about how you \
+         worked. Prefer domain. A good domain lesson reads like \
+         \"amounts are stored as integer minor units; use money.parse_amount\" \
+         — a fact someone could act on without knowing anything about this \
+         turn. A lesson that begins \"the agent should\" is a process lesson, \
+         and if you cannot state a domain fact, say nothing rather than \
+         padding with one.\n\
          Allowed domain tags (use only these, or []): {}\n\nTranscript:\n{digest}",
         domain_names.join(", ")
     );

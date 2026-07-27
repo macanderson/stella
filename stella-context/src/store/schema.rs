@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 8;
+pub(crate) const SCHEMA_VERSION: i64 = 9;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -416,6 +416,45 @@ fn migrate_v8(tx: &Connection) -> Result<(), ContextError> {
     Ok(())
 }
 
+/// V9 — **`node.recall_tier`**, the precedence band a node competes in once
+/// the recall budget binds ([`crate::retrieval::RecallTier`]).
+///
+/// The reflection lifecycle mines two very different things and, until now,
+/// stored them identically: durable facts about the codebase, and notes about
+/// how the agent went about its turn. A five-frame budget against a corpus that
+/// only grows means the two compete for the same slots, and a note that is true
+/// of one turn was winning slots from a convention that is true next week.
+///
+/// The tier lives on `node` rather than on `memory` because `node` is the table
+/// retrieval actually ranks. `memory.kind` already exists and is already
+/// indexed, but nothing on the recall path reads it: the ranking runs over
+/// [`crate::candidates::live_node_metas`], a whole-corpus scan, and reaching
+/// `memory` from there is a join per turn against a table recall otherwise
+/// never touches. A column on the row being scanned is one more value in a
+/// `SELECT` that already runs.
+///
+/// **`DEFAULT 0` is the whole migration.** `RecallTier::Normal` is 0 and is the
+/// enum's `Default`, so every node written before this — every symbol, every
+/// episode, every memory — keeps competing on rank exactly as it did, and there
+/// is no backfill to get wrong. Only a writer that explicitly asks for
+/// `Deferred` is treated differently, and nothing is ever *promoted* by a tier.
+///
+/// Statement-level idempotent for the reason `migrate_v5` and `migrate_v8` are:
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, and a store whose `user_version`
+/// was rewound — how the migration tests build their fixtures, and what a
+/// partial restore looks like — would otherwise fail on a duplicate column.
+fn migrate_v9(tx: &Connection) -> Result<(), ContextError> {
+    let existing: std::collections::HashSet<String> = {
+        let mut stmt = tx.prepare("PRAGMA table_info(node)")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>("name"))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    if !existing.contains("recall_tier") {
+        tx.execute_batch("ALTER TABLE node ADD COLUMN recall_tier INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    Ok(())
+}
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -530,6 +569,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     }
     if version < 8 {
         migrate_v8(&tx)?;
+    }
+    if version < 9 {
+        migrate_v9(&tx)?;
     }
     // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
     // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its

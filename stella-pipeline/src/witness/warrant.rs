@@ -250,10 +250,10 @@ fn classify_line(line: &str) -> LineRole {
     // `*/` before `*` so a block-comment close is not first stripped to `/…`.
     const DELIMITED_MARKERS: &[&str] = &["#", "*/", "*", "-->", "--", ";"];
     for marker in DELIMITED_MARKERS {
-        if let Some(rest) = trimmed.strip_prefix(marker) {
-            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-                return LineRole::Comment;
-            }
+        if let Some(rest) = trimmed.strip_prefix(marker)
+            && (rest.is_empty() || rest.starts_with(char::is_whitespace))
+        {
+            return LineRole::Comment;
         }
     }
     LineRole::Code

@@ -30,7 +30,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use stella_context::{
     ContextDelta, ContextStore, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
-    HashEmbedder, NodeInput, NodeKind, SystemClock, format_rfc3339,
+    HashEmbedder, NodeInput, NodeKind, RecallTier, SystemClock, format_rfc3339,
 };
 use stella_core::skills::{self, SelectionConfig, Skill};
 
@@ -114,6 +114,68 @@ pub struct ReflectionLesson {
     /// a log-format change.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub task_id: String,
+    /// What sort of lesson this is: a durable fact about the codebase, or a
+    /// note about how the agent behaved.
+    ///
+    /// They are not equally useful and were previously indistinguishable. In a
+    /// measured run of ten mined lessons, eight were process self-critique
+    /// ("the agent should be more proactive", "when summarizing, list the
+    /// files modified") and **none** captured the repository conventions that
+    /// actually decided whether a task passed. Process notes describe one
+    /// turn; domain facts are still true next week, and only the second kind
+    /// can transfer to a task the agent has never seen.
+    #[serde(default)]
+    pub kind: LessonKind,
+}
+
+/// Whether a lesson is a durable fact about the code or a note about the turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LessonKind {
+    /// A convention, invariant, location or required step — true independent
+    /// of this turn, and the only kind that can help on an unseen task.
+    Domain,
+    /// How the agent went about the work. Kept, because a repeated failure
+    /// mode is worth knowing, but ranked below domain facts at recall.
+    #[default]
+    Process,
+}
+
+impl LessonKind {
+    /// The precedence band this lesson's memory competes in once the recall
+    /// budget binds.
+    ///
+    /// Recall budgets are small — `max_frames` defaults to 5, and the measured
+    /// token budget is roughly 0.05% of a turn's input — so when the budget
+    /// binds, the frames that survive should be the ones that can apply to a
+    /// task the agent has not seen.
+    ///
+    /// Note the asymmetry: a domain fact is `Normal`, not promoted. It competes
+    /// on rank with every other memory and every code symbol exactly as it
+    /// always has. It is the *process* note that volunteers to yield, because a
+    /// note about how one turn went is the thing least likely to be true of the
+    /// next one. Ranking commentary *up* would have been a much larger claim —
+    /// that a mined lesson outranks the code it was mined from — and this
+    /// change does not make it.
+    pub fn recall_tier(self) -> RecallTier {
+        match self {
+            LessonKind::Domain => RecallTier::Normal,
+            LessonKind::Process => RecallTier::Deferred,
+        }
+    }
+}
+
+/// A session-scoped task identity, distinct per process.
+///
+/// One `stella run` is one task, so for the headless path this is exactly the
+/// right boundary. For a long REPL session it is an approximation, but a
+/// strictly better one than per-turn.
+fn default_task_id() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("session:{secs}-{}", std::process::id())
 }
 
 mod reflection;
@@ -136,6 +198,17 @@ pub struct SessionMemory {
     workspace_root: PathBuf,
     include_workspace_skills: bool,
     skills_created: usize,
+    /// The task boundary stamped onto every lesson this session mines.
+    ///
+    /// Governance counts *distinct tasks* before promoting anything, and with
+    /// no boundary the count fell back to `turn:<timestamp>`. That is wrong in
+    /// the unsafe direction twice over: three turns spent on one task read as
+    /// three tasks, and three lessons emitted by one reflection call — sharing
+    /// one timestamp — read as one. A session is not a perfect task boundary
+    /// either, but turns within a session are at least plausibly one task,
+    /// which is strictly closer than per-turn. `set_task_id` lets a caller
+    /// that genuinely knows the boundary supply it.
+    task_id: String,
     /// A/B recall control (Proposal 4): when true, recall is suppressed
     /// entirely on this turn so the outcome can be compared against recalled
     /// turns. Set by `maybe_suppress_recall()` from the turn counter below.
@@ -155,6 +228,30 @@ impl SessionMemory {
     /// the store can't open — a session without memory beats no session.
     pub fn open(workspace_root: &Path, warn: bool) -> Option<Self> {
         Self::open_with_workspace_skills(workspace_root, warn, false)
+    }
+
+    /// Override the task boundary lessons are stamped with.
+    ///
+    /// The default is session-scoped, which is exactly right for `stella run`
+    /// (one process, one task) and an approximation for a long REPL session. A
+    /// caller that genuinely knows where one task ends and the next begins —
+    /// a benchmark harness, an issue-driven runner — should say so here, which
+    /// is what makes governance's distinct-task threshold mean anything.
+    ///
+    /// **Test-gated until such a caller exists in this tree.** `stella-cli` is
+    /// a bin-only crate, so there is no external consumer that could call this
+    /// even in principle; leaving it on the production build would be an
+    /// `#[allow(dead_code)]` describing an API nothing can reach. The session
+    /// default is what every shipped path uses today. Drop the gate in the same
+    /// commit that adds the first real caller.
+    #[cfg(test)]
+    pub(crate) fn set_task_id(&mut self, task_id: impl Into<String>) {
+        self.task_id = task_id.into();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn task_id_for_test(&self) -> &str {
+        &self.task_id
     }
 
     /// Open memory with workspace skill injection governed by the session's
@@ -215,6 +312,7 @@ impl SessionMemory {
                     ab_turn: 0,
                     // Phase 3 (#714)
                     lifecycle_enabled: tuning::session_lifecycle_enabled(workspace_root),
+                    task_id: default_task_id(),
                 })
             }
             Err(e) => {

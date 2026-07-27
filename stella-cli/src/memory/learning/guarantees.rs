@@ -56,6 +56,7 @@ fn workspace_with_log(lessons: &[(&str, u64)]) -> tempfile::TempDir {
             domains: vec!["testing".into()],
             occurred_at: *at,
             task_id: String::new(),
+            kind: crate::memory::LessonKind::Process,
         };
         log.push_str(&serde_json::to_string(&lesson).expect("serialize lesson"));
         log.push('\n');

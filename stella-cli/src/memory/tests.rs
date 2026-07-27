@@ -1080,3 +1080,92 @@ fn a_forgotten_lesson_still_cannot_return_as_an_auto_created_skill() {
         "a tombstoned lesson must not be resurrected as a skill"
     );
 }
+
+/// A lesson carries the session's task boundary, not a per-turn fallback.
+///
+/// Governance promotes only after evidence spans three *distinct tasks*. With
+/// no boundary the count fell back to `turn:<timestamp>`, which miscounts in
+/// both directions: three lessons from one reflection call share a timestamp
+/// and read as one task, while three turns on one task read as three.
+#[test]
+fn lessons_are_stamped_with_the_sessions_task_boundary() {
+    let dir = tempfile::tempdir().expect("workspace");
+    let mut memory = SessionMemory::open(dir.path(), false).expect("memory opens");
+
+    let default_id = memory.task_id_for_test().to_string();
+    assert!(
+        default_id.starts_with("session:"),
+        "the default boundary is session-scoped, got {default_id:?}"
+    );
+
+    memory.set_task_id("proving-ground:eval-03-interest");
+    assert_eq!(memory.task_id_for_test(), "proving-ground:eval-03-interest");
+}
+
+/// A process note is written into the deferred band; a domain fact is not.
+///
+/// This is the wiring assertion, and it is deliberately about the *store*, not
+/// about `LessonKind`. An earlier version of this test compared
+/// `LessonKind::Domain.recall_rank()` against `LessonKind::Process.recall_rank()`
+/// — which restates the function body and passes no matter what the recall path
+/// does. The distinction only means something once it survives the write, so
+/// that is what is asserted here: the tier that comes back off the node row.
+///
+/// The ordering this tier buys is proven end-to-end against a real budget in
+/// `stella-context`'s `a_deferred_memory_loses_the_last_slot_to_a_normal_one`.
+#[tokio::test]
+async fn a_process_lesson_is_stored_in_the_deferred_recall_band() {
+    use crate::memory::LessonKind;
+    use stella_context::RecallTier;
+
+    assert_eq!(LessonKind::Domain.recall_tier(), RecallTier::Normal);
+    assert_eq!(LessonKind::Process.recall_tier(), RecallTier::Deferred);
+    assert_eq!(
+        LessonKind::default(),
+        LessonKind::Process,
+        "unlabelled lessons are not promoted to facts by accident"
+    );
+
+    let dir = tempfile::tempdir().expect("workspace");
+    let memory = SessionMemory::open(dir.path(), false).expect("memory opens");
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![
+                MemoryInput::reflection("money is integer minor units", Vec::<String>::new())
+                    .with_recall_tier(LessonKind::Domain.recall_tier()),
+                MemoryInput::reflection("the agent should not retry blindly", Vec::<String>::new())
+                    .with_recall_tier(LessonKind::Process.recall_tier()),
+            ],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("memories land");
+
+    let tiers: std::collections::HashMap<String, RecallTier> = memory
+        .store
+        .memory_nodes()
+        .expect("memory nodes")
+        .into_iter()
+        .map(|node| (node.content.clone(), node.recall_tier))
+        .collect();
+    assert_eq!(
+        tiers.get("money is integer minor units"),
+        Some(&RecallTier::Normal),
+        "a durable fact competes on rank like any other memory"
+    );
+    assert_eq!(
+        tiers.get("the agent should not retry blindly"),
+        Some(&RecallTier::Deferred),
+        "a note about the turn yields first when the budget binds"
+    );
+}
+
+/// The wire format tolerates a lesson written before `kind` existed.
+#[test]
+fn a_lesson_logged_before_kind_existed_still_parses() {
+    let line = r#"{"lesson":"registry.py is the command registry","domains":[],"occurred_at":7}"#;
+    let parsed: ReflectionLesson = serde_json::from_str(line).expect("legacy line parses");
+    assert_eq!(parsed.kind, crate::memory::LessonKind::Process);
+    assert!(parsed.task_id.is_empty());
+}
