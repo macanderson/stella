@@ -128,12 +128,25 @@ the engine's backoff.
 - **Chunked request bodies are not decoded.** A chunked POST parses as an empty
   body and fails validation with a 400. That is safe rather than a smuggling hole
   only because this layer serves one request per connection and then closes.
-- **Every request is capped at 1 MiB, head and body together, and going over it
-  gets no response at all** — `read_request` returns `None` and the connection
-  closes ([`src/http.rs`](src/http.rs)). Two consequences worth sizing for: a
-  turn whose assembled conversation exceeds 1 MiB cannot be created, and a
-  `tool-result` carrying an oversized tool output is dropped silently, leaving
-  the engine step it would have answered parked until the turn is torn down.
+- **Requests are capped separately at the head (64 KiB) and the body (8 MiB),
+  and going over either one is answered `413`** ([`src/http.rs`](src/http.rs)).
+  The head and body caps are split because they are abused differently: no
+  legitimate client sends 64 KiB of headers, while a body legitimately carries an
+  assembled conversation or one tool's whole output (which `stella-tools` caps at
+  100 KB per call). Over-cap used to get no response at all, which meant a
+  `tool-result` one byte too large was indistinguishable from a crashed peer and
+  left the engine step it would have answered parked until teardown.
+- **Reads are bounded by a 30-second deadline**, answered `408`. It applies to
+  the request head and body only — never to the SSE response, which is
+  long-lived by design and would be killed mid-turn by any such deadline.
+- **At most 32 turns may be live at once**; the 33rd `POST /v1/turns` is a `429`
+  with `Retry-After: 5`. Accepted connections are deliberately *not* bounded: an
+  SSE stream would hold a connection permit for the whole turn and starve the
+  result POSTs that same turn must deliver on other connections, deadlocking the
+  reverse-RPC protocol. Turns are the resource that accumulates, so turns are
+  what is capped.
+- **Turn ids are 128 random bits**, not a sequence, so seeing one id in a log or
+  a proxy trace does not make every other live turn addressable.
 - **The SSE stream must not be buffered by anything in front of it.** The
   response carries `X-Accel-Buffering: no` for nginx-family proxies; a proxy that
   buffers anyway deadlocks the protocol rather than merely delaying it, because
