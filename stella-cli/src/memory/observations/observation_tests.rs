@@ -19,6 +19,7 @@ fn write_log(dir: &Path, lessons: &[(&str, u64)]) -> std::path::PathBuf {
                 domains: vec!["testing".into()],
                 occurred_at: *at,
                 task_id: String::new(),
+                kind: crate::memory::LessonKind::Process,
             })
             .expect("serialize"),
         );
@@ -201,6 +202,7 @@ fn an_explicit_task_id_overrides_the_turn_fallback() {
         domains: vec![],
         occurred_at: 100,
         task_id: "goal:fix-the-tenancy-leak".into(),
+        kind: crate::memory::LessonKind::Process,
     };
     assert_eq!(task_id_for(&lesson), "goal:fix-the-tenancy-leak");
 }

@@ -97,6 +97,17 @@ impl SessionMemory {
             }
         };
 
+        // Stamp the session's task boundary onto every lesson before anything
+        // persists it. Governance counts distinct tasks, and an unstamped
+        // lesson falls back to `turn:<timestamp>` — under which three lessons
+        // from one reflection call read as one task and three turns on one task
+        // read as three. Both directions are wrong; the session id is at least
+        // a real boundary for the one-shot path, where one process is one task.
+        let mut lessons = lessons;
+        for lesson in &mut lessons {
+            lesson.task_id = self.task_id.clone();
+        }
+
         // Drop anything the user has already forgotten, BEFORE it reaches any
         // of the three places this function persists to. Matching is by
         // restatement, not equality: the loop re-learns paraphrases, so a

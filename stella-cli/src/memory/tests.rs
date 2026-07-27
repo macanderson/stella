@@ -1081,3 +1081,45 @@ fn a_forgotten_lesson_still_cannot_return_as_an_auto_created_skill() {
         "a tombstoned lesson must not be resurrected as a skill"
     );
 }
+
+/// A lesson carries the session's task boundary, not a per-turn fallback.
+///
+/// Governance promotes only after evidence spans three *distinct tasks*. With
+/// no boundary the count fell back to `turn:<timestamp>`, which miscounts in
+/// both directions: three lessons from one reflection call share a timestamp
+/// and read as one task, while three turns on one task read as three.
+#[test]
+fn lessons_are_stamped_with_the_sessions_task_boundary() {
+    let dir = tempfile::tempdir().expect("workspace");
+    let mut memory = SessionMemory::open(dir.path(), false).expect("memory opens");
+
+    let default_id = memory.task_id_for_test().to_string();
+    assert!(
+        default_id.starts_with("session:"),
+        "the default boundary is session-scoped, got {default_id:?}"
+    );
+
+    memory.set_task_id("proving-ground:eval-03-interest");
+    assert_eq!(memory.task_id_for_test(), "proving-ground:eval-03-interest");
+}
+
+/// A domain fact outranks a process note when the recall budget binds.
+#[test]
+fn domain_lessons_outrank_process_lessons_at_recall() {
+    use crate::memory::LessonKind;
+    assert!(
+        LessonKind::Domain.recall_rank() < LessonKind::Process.recall_rank(),
+        "durable facts about the code must survive a budget that drops \
+         commentary about the agent"
+    );
+    assert_eq!(LessonKind::default(), LessonKind::Process, "unlabelled lessons are not promoted to facts by accident");
+}
+
+/// The wire format tolerates a lesson written before `kind` existed.
+#[test]
+fn a_lesson_logged_before_kind_existed_still_parses() {
+    let line = r#"{"lesson":"registry.py is the command registry","domains":[],"occurred_at":7}"#;
+    let parsed: ReflectionLesson = serde_json::from_str(line).expect("legacy line parses");
+    assert_eq!(parsed.kind, crate::memory::LessonKind::Process);
+    assert!(parsed.task_id.is_empty());
+}
