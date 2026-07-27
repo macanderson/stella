@@ -283,6 +283,52 @@ the ledger (Phase 3) to have something to attribute to.
 - Protected categories are provably never retired.
 - Retirement decisions carry a human-readable reason.
 
+### Status — shipped 2026-07-26 (#715)
+
+All five deliverables landed, and the gate is met. What is worth knowing
+beyond the checklist:
+
+**Use records live in `context.db`, not `store.db`.** `memory_citations` is in
+`DEPENDENT_TABLES`, so `stella stats prune` deletes citation rows with their
+execution — an aggregate folded over them is *not* rebuildable across a prune,
+and the first gate criterion would have been false the first time anyone
+pruned. `context_records` is append-only enforced by SQLite triggers and is
+never pruned. The consequence is an ordering dependency, stated rather than
+hidden: extraction must reach an execution before a prune does.
+
+**Retirement never writes `superseded_at`.** `node_by_public_id` filters on
+that column, so routing retirement through `supersede_node` would have made a
+retired record impossible to fetch by id — failing "still explicitly
+retrievable" outright. Retirement is instead a derived projection over
+`promotion_event`s (`Retired`/`Reverted`, folded last-write-wins exactly as
+keep/ignore already are) that joins the union the suppression reader already
+computes. No second suppression mechanism, per §5.7.
+
+**Two of the five protected categories do not exist and are documented as
+absent rather than faked.** `DirectivePriority::Critical` is carried on no
+record and set by no path; there is no pin concept for memory or context
+records at all. Both are guarded by `protection_for` being the single predicate
+every retirement passes through, so each check has exactly one home when the
+concept becomes real.
+
+**The pruning-eligibility tier is now enforced, and it is the load-bearing
+correctness result.** The type layer always said `agent_self_report` is
+recognized but may never drive pruning; nothing implemented it. `cite_memory`
+is the *agent* judging context the agent was given, so citation-derived
+verdicts are recorded as `agent_self_report` and are deliberately **not**
+pruning-eligible — a self-report that can retire its own subject is
+self-reinforcing, because a model that misreads a memory reports it unhelpful,
+retires it, and destroys the evidence that the reading was wrong. Selection
+health therefore carries two populations: everything assessed (what is known)
+and the pruning-eligible subset (what may remove). Only the latter decides
+`failing`.
+
+That has a deliberate consequence: **automatic retirement does not fire on
+citation evidence alone.** Today a human is the pruning-eligible source, via
+`stella memory retire <id> --reason`. Wiring a deterministic source — the
+anchor check behind `stella memory validate` is the obvious candidate — is
+tracked separately and is what makes the sweep autonomous.
+
 ---
 
 ## Sequencing and decisions

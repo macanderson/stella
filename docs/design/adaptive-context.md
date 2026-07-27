@@ -116,9 +116,24 @@ remaining gap. That ordering drives the plan.
 closed all four defects: candidate generation is bounded by the requested frame
 count, the point-in-time cutoff reaches every signal, supersede and tombstone
 live in the plane that owns the records, and a memory's identity is its lineage
-so an edit revises rather than duplicates. The five remaining rows are gaps, and
-Phases 2–4 build them. The table is left as written — it is the analysis the
-plan was ordered by.
+so an edit revises rather than duplicates. The table is left as written — it is
+the analysis the plan was ordered by.
+
+**All nine rows are now closed.** Phase 2
+([#713](https://github.com/macanderson/stella/issues/713)) decomposed the recall
+block and gave the frame a deterministic identity; Phase 3
+([#714](https://github.com/macanderson/stella/issues/714)) made proposals typed
+and auditable; Phase 4
+([#715](https://github.com/macanderson/stella/issues/715)) added context-use
+records, opportunity-aware attribution, derived selection health, and reversible
+retirement. The loop in §7 runs end to end.
+
+One qualification, because §5.5 asks for gaps to be declared where a caller can
+see them rather than only in prose: the final step, *retired*, is reached today
+by a human decision or by any pruning-eligible evidence source. Citations are
+`agent_self_report` and are deliberately excluded from driving suppression, so
+the sweep does not yet retire anything on its own. That is a missing *evidence
+source*, not a missing mechanism.
 
 ## 5. Invariants
 

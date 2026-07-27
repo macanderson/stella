@@ -47,6 +47,9 @@ use stella_pipeline::{ContextRecallPort, RecalledFrame};
 #[cfg(test)]
 use stella_protocol::{CompletionMessage, MessageRole};
 
+// Phase 4 (#715): the citation and tool-outcome evidence sources, which turn
+// explicit citation from *the* evidence source into one of several.
+mod evidence;
 mod learning;
 // Phase 3 (#714): typed observation extraction and proposal induction
 // into the lifecycle ledger.
@@ -57,11 +60,16 @@ pub(crate) mod proposals;
 #[cfg(test)]
 mod quarantine_tests;
 mod recall;
+// Phase 4 (#715): reversible retirement of context that stops helping.
+pub(crate) mod retirement;
 pub(crate) mod rules_mining;
 #[path = "memory/skills.rs"]
 mod skill_files;
 mod suppression;
-mod tuning;
+pub(crate) mod tuning;
+// Phase 4 (#715): context-use extraction — what a finished turn's frame
+// carried, and what the turn then said about it.
+pub(crate) mod uses;
 use private_state::resolve_context_db_path;
 #[cfg(test)]
 use projection::{is_suppressed_local_frame, project_recalled_frame};
@@ -195,7 +203,7 @@ impl SessionMemory {
                     store.clone(),
                     domains.names(),
                     workspace_root.to_path_buf(),
-                    suppression::suppression_reader(workspace_root),
+                    suppression::suppression_reader(workspace_root, store.clone()),
                 );
                 Some(Self {
                     store,

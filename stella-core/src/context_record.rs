@@ -64,6 +64,7 @@ pub mod lifecycle;
 pub mod outcome;
 pub mod representation;
 pub mod scope;
+pub mod selection_health;
 pub mod temporal;
 
 pub use context_use::{
@@ -95,6 +96,7 @@ pub use representation::{
     Representation, validate_directive_minimum_fidelity,
 };
 pub use scope::{Scope, SharingScope};
+pub use selection_health::{SelectionHealth, SelectionHealthPolicy, fold_selection_health};
 pub use temporal::{TemporalInterval, TemporalQuery};
 
 /// A `0..=100` confidence score. The newtype makes the range invariant
