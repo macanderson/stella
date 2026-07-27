@@ -123,10 +123,6 @@ hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
 docs: ## Build rustdoc for the workspace (skip dep docs)
 	cargo doc --workspace --no-deps
 
-.PHONY: brand
-brand: ## Regenerate every brand asset from docs/brand/build.py
-	python3 docs/brand/build.py
-
 .PHONY: llms-txt
 llms-txt: ## Regenerate docs/llms.txt from the documentation site content
 	node website/scripts/build-llms-txt.mjs

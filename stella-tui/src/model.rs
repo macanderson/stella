@@ -287,14 +287,36 @@ pub struct InlineDiffRef {
 /// Live HUD numbers, all folded from the event stream.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Hud {
+    /// Spend as the budget guard reports it on every `BudgetTick`.
+    ///
+    /// Note this is **cumulative for the life of the guard**, not per turn: the
+    /// deck builds one `BudgetGuard` for the whole session and never calls
+    /// `begin_turn`, so this only ever rises. Use [`Hud::turn_spent_usd`] for
+    /// the number a reader would call "what this turn cost".
     pub spent_usd: f64,
     pub limit_usd: Option<f64>,
     pub budget_mode: Option<BudgetMode>,
     pub stage: Option<StageKind>,
     pub model: Option<String>,
+    /// [`Hud::spent_usd`] as it stood when the current turn began, so live turn
+    /// cost is the difference. Snapshotted in [`SessionModel::push_user_prompt`]
+    /// — the earliest signal a turn has started.
+    pub turn_start_spent_usd: f64,
     /// The final turn cost, set once a `Complete` event lands.
     pub final_cost_usd: Option<f64>,
     pub complete: bool,
+}
+
+impl Hud {
+    /// What the turn in flight has cost so far.
+    ///
+    /// Once the turn settles this yields to `Complete`'s own `cost_usd`, which
+    /// is authoritative — the driver totals it directly rather than differencing
+    /// a cumulative gauge, so it also catches spend that never produced a tick.
+    pub fn turn_spent_usd(&self) -> f64 {
+        self.final_cost_usd
+            .unwrap_or_else(|| (self.spent_usd - self.turn_start_spent_usd).max(0.0))
+    }
 }
 
 impl SessionModel {
@@ -453,14 +475,25 @@ impl SessionModel {
                 mode,
                 ..
             } => {
+                // Gauge only — deliberately *not* pushed to the transcript.
+                //
+                // A tick fires after every model call that spends money, which
+                // for one ordinary turn means four or five of them, each
+                // printing a number that differs from the last by a fraction of
+                // a cent and none of which is the turn's cost (see
+                // `Hud::spent_usd` — this gauge is cumulative). The transcript
+                // is the record of what *happened*; a budget gauge moving is
+                // not an event, it is a reading. It belongs where a reading
+                // belongs — live next to the composer, updating in place — and
+                // the transcript gets the one line that is actually news: the
+                // settled cost, once, at `Complete`.
+                //
+                // The `TranscriptEntry::BudgetTick` variant is kept: a log
+                // replayed from an older stella may still carry the rows, and
+                // dropping the variant would silently reshape that history.
                 self.hud.spent_usd = *spent_usd;
                 self.hud.limit_usd = *limit_usd;
                 self.hud.budget_mode = Some(*mode);
-                self.transcript.push(TranscriptEntry::BudgetTick {
-                    spent_usd: *spent_usd,
-                    limit_usd: *limit_usd,
-                    mode: *mode,
-                });
             }
             AgentEvent::ProviderFallback { from, to, reason } => {
                 self.transcript.push(TranscriptEntry::ProviderFallback {
@@ -690,6 +723,10 @@ impl SessionModel {
     pub fn push_user_prompt(&mut self, text: &str) {
         self.hud.complete = false;
         self.hud.final_cost_usd = None;
+        // Rebase the live turn-cost readout. `spent_usd` is cumulative for the
+        // session, so without this the composer's cost cell would open every
+        // turn already showing the session total.
+        self.hud.turn_start_spent_usd = self.hud.spent_usd;
         // A preview surviving into the next turn could only be stale — the
         // prior turn either committed (cleared on `Text`) or aborted.
         self.streaming_text.clear();
@@ -1125,7 +1162,7 @@ mod tests {
     }
 
     #[test]
-    fn budget_tick_folds_into_hud_and_transcript() {
+    fn budget_tick_folds_into_the_hud_gauge_but_never_the_transcript() {
         let mut model = SessionModel::new();
         model.apply(&AgentEvent::BudgetTick {
             spent_usd: 0.42,
@@ -1137,10 +1174,15 @@ mod tests {
         assert_eq!(model.hud.spent_usd, 0.42);
         assert_eq!(model.hud.limit_usd, Some(2.0));
         assert_eq!(model.hud.budget_mode, Some(BudgetMode::Enforced));
-        assert!(matches!(
-            model.transcript.last(),
-            Some(TranscriptEntry::BudgetTick { .. })
-        ));
+        // A tick is a gauge reading, not an event. It fires after every model
+        // call that spends, so admitting it to the transcript meant four or
+        // five near-identical spend rows per turn — the exact noise the
+        // composer's live cost cell and the single `✓ cost` line replaced.
+        assert!(
+            model.transcript.is_empty(),
+            "a budget tick must not push a transcript row: {:?}",
+            model.transcript
+        );
     }
 
     #[test]

@@ -127,6 +127,18 @@ const MAX_EMPHASIS_DEPTH: usize = 8;
 /// Supports `**bold**`, `*italic*`, `_italic_`, `__bold__`, `` `code` ``,
 /// `[text](url)`, and `~~strike~~`. Unmatched delimiters pass through as
 /// literal text.
+/// The style plain prose renders in: an explicit white, never the terminal's
+/// default foreground.
+///
+/// `Span::raw` was the old default here, which leaves `fg` as `Color::Reset`.
+/// That reads correctly only by coincidence — the deck paints its own black
+/// ground onto the frame, so a reader whose terminal profile is light gets our
+/// background under their dark default text. Prose is the transcript's primary
+/// voice; it is entitled to say what colour it is.
+fn body() -> Style {
+    Style::new().fg(theme::INK)
+}
+
 fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
     parse_inline_spans_at(text, 0)
 }
@@ -136,7 +148,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
 /// further.
 fn parse_inline_spans_at(text: &str, depth: usize) -> Vec<Span<'static>> {
     if depth >= MAX_EMPHASIS_DEPTH {
-        return vec![Span::raw(text.to_string())];
+        return vec![Span::styled(text.to_string(), body())];
     }
     let chars: Vec<char> = text.chars().collect();
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -145,7 +157,7 @@ fn parse_inline_spans_at(text: &str, depth: usize) -> Vec<Span<'static>> {
 
     let flush = |buf: &mut String, spans: &mut Vec<Span<'static>>| {
         if !buf.is_empty() {
-            spans.push(Span::raw(std::mem::take(buf)));
+            spans.push(Span::styled(std::mem::take(buf), body()));
         }
     };
 
@@ -298,16 +310,16 @@ fn strip_numbered(lead: &str) -> Option<(&str, &str)> {
 
 /// Build a heading line with level-appropriate styling.
 ///
-/// The hierarchy is gold → gold → white, all bold:
-/// * **H1** is a filled brand-gold pill — near-black [`theme::GROUND`] text on
+/// The hierarchy is sky → sky → white, all bold:
+/// * **H1** is a filled brand-sky pill — near-black [`theme::GROUND`] text on
 ///   an [`theme::ACCENT`] background, with a space of padding each side so
 ///   it reads as a solid title bar. This is the deliberate high-contrast
 ///   replacement for the old washed-out heading.
-/// * **H2** is bold brand-gold text (no fill).
+/// * **H2** is bold brand-sky text (no fill).
 /// * **H3+** is bold primary-ink text.
 fn heading_line(content: &str, level: usize) -> Line<'static> {
     if level == 1 {
-        // One span so the gold fill is a single unbroken pill behind the text.
+        // One span so the sky fill is a single unbroken pill behind the text.
         let pill = Style::new()
             .bg(theme::ACCENT)
             .fg(theme::GROUND)
@@ -464,13 +476,13 @@ mod tests {
     }
 
     #[test]
-    fn h1_is_a_high_contrast_gold_pill() {
+    fn h1_is_a_high_contrast_sky_pill() {
         // The exact fix the user asked for: the H1 must be a bold, filled,
-        // high-contrast bar — near-black ink on brand gold — never washed-out
+        // high-contrast bar — near-black ink on brand sky — never washed-out
         // or a light-text-on-pale-background combination.
         let lines = render("# Rust Async Patterns");
         let span = &lines[0].spans[0];
-        assert_eq!(span.style.bg, Some(theme::ACCENT), "gold fill");
+        assert_eq!(span.style.bg, Some(theme::ACCENT), "sky fill");
         assert_eq!(span.style.fg, Some(theme::GROUND), "near-black text");
         assert!(span.style.add_modifier.contains(Modifier::BOLD), "bold");
     }

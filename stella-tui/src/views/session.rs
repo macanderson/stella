@@ -587,7 +587,12 @@ fn render_header(agent: &AgentEntry, now_ms: u64, area: Rect, buf: &mut Buffer) 
             Style::new().fg(theme::status_color(st)),
         ),
         Span::raw("   "),
-        Span::styled(fmt_hms(agent.turn_clock_ms(now_ms)), theme::accent()),
+        // The clock is a reading, not a brand mark — dim it so the header's
+        // one accent is the agent's name.
+        Span::styled(
+            fmt_hms(agent.turn_clock_ms(now_ms)),
+            Style::new().fg(theme::TEXT_TERTIARY),
+        ),
     ]);
     Paragraph::new(line).render(area, buf);
 }

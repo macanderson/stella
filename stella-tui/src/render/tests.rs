@@ -64,9 +64,11 @@ fn hud_and_transcript_render_the_event_content() {
 /// than [`BODY`] and that is correct: the label *is* the note's rail, opening
 /// with its own glyph in column 0. What must never happen is a row that
 /// begins with bare unstyled text at the left margin.
-#[test]
-fn every_transcript_entry_renders_on_a_rail() {
-    let samples = vec![
+/// One of every [`TranscriptEntry`] variant that renders as an entry, for the
+/// tests that must cover the whole enum. `Evicted` is deliberately absent —
+/// it is a note *about* the transcript rather than an entry in it.
+fn sample_entries() -> Vec<TranscriptEntry> {
+    vec![
         TranscriptEntry::User("hi".into()),
         TranscriptEntry::Stage(StageKind::Execute),
         TranscriptEntry::Text("ok".into()),
@@ -170,7 +172,12 @@ fn every_transcript_entry_renders_on_a_rail() {
             model: "glm-5.2".into(),
             cost_usd: 0.1,
         },
-    ];
+    ]
+}
+
+#[test]
+fn every_transcript_entry_renders_on_a_rail() {
+    let samples = sample_entries();
     for entry in &samples {
         // Exhaustive on purpose: adding a `TranscriptEntry` variant fails
         // to compile here — add a sample above and render the new arm
@@ -1156,6 +1163,37 @@ fn eviction_marker_renders_as_a_one_line_system_note() {
     assert_eq!(text, "… 1234 earlier entries evicted");
 }
 
+/// Every colour a transcript row emits must come from the palette.
+///
+/// The palette exists so a recolour is one edit, and a `Color::Cyan` written
+/// inline is invisible to it — it survives every recolour looking deliberate.
+/// That is not hypothetical: the SESSION tab shipped with 312 cells of literal
+/// ANSI cyan in its HUD and scope card, untouched by two palette generations,
+/// because nothing asserted this. `ratatui`'s named variants are the whole
+/// failure mode, so the check is simply that no span carries one.
+///
+/// `Reset` is allowed: it is the deliberate "no colour" for the glyph-less
+/// prose rail and for spacer runs, and under `NO_COLOR` every cell becomes it.
+#[test]
+fn no_transcript_row_carries_a_raw_ansi_colour() {
+    for entry in sample_entries() {
+        let mut lines = Vec::new();
+        entry_lines(&entry, &[], true, true, 80, &mut lines);
+        for line in &lines {
+            for span in &line.spans {
+                for (slot, colour) in [("fg", span.style.fg), ("bg", span.style.bg)] {
+                    let Some(colour) = colour else { continue };
+                    assert!(
+                        matches!(colour, Color::Rgb(..) | Color::Reset),
+                        "{entry:?} renders {slot} {colour:?} — a named ANSI colour, \
+                         which no recolour can reach. Use a `theme::` role.",
+                    );
+                }
+            }
+        }
+    }
+}
+
 // ---- Transcript prefix colors (gold gutter + violet user prompt) ----
 
 /// The user prompt is the single exception to the gold gutter: its
@@ -1272,15 +1310,19 @@ fn transcript_prefix_colors_stay_in_the_brand_family() {
         Some(theme::DANGER),
         "failed tool-result prefix is crimson",
     );
-    // The stage marker moved off raw cyan onto deep gold.
+    // A stage is a section rule, not a row (see `row::push_rule`), so its
+    // first column is the rule's own hairline rather than a status glyph. This
+    // is the one entry whose left edge is deliberately structural: a phase
+    // boundary should recede until you scroll for it, and four bolded `◇ stage`
+    // rows in twenty lines is what it looked like when it did not.
     assert_eq!(
         prefix_fg(&TranscriptEntry::Stage(StageKind::Execute)),
-        Some(theme::ACCENT_DEEP),
-        "stage prefix is deep gold",
+        Some(theme::HAIRLINE),
+        "a stage opens a hairline section rule",
     );
     // A prompt is the strongest landmark in the scrollback — where a reader
     // re-orients when scrolling back — and rides the interactive-chrome
-    // violet shared with the composer, never the reserved brand gold.
+    // violet shared with the composer, never the reserved brand accent.
     assert_eq!(
         prefix_fg(&TranscriptEntry::User("hi".into())),
         Some(theme::VIOLET),

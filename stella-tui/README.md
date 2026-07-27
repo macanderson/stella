@@ -66,7 +66,7 @@ names TUI rendering as the case where a witness is "genuinely impractical" —
 you cannot assert on a real terminal. The fold/render split is how this crate
 gets one anyway: fold synthetic events into a model, render into a
 `ratatui::backend::TestBackend`, and assert on the flattened **cell buffer**,
-never on ANSI bytes. [`tests/progress_gold.rs`](tests/progress_gold.rs) is the
+never on ANSI bytes. [`tests/progress_brand_fill.rs`](tests/progress_brand_fill.rs) is the
 shape to copy — its header states the goal, why it failed before the change,
 and what it asserts after. The determinism this rests on is itself
 property-tested: `replaying_a_log_renders_identical_buffers`
@@ -160,7 +160,7 @@ have one); four modules grew large enough to split theirs into a sibling
 Two integration tests sit in [`tests/`](tests): `deck_snapshot.rs` renders every
 tab through the real `render_deck` and writes a human-readable text "screenshot"
 to `CARGO_TARGET_TMPDIR` (deliberately outside the source tree, so a test run
-never dirties the working tree), and `progress_gold.rs` is a single-assertion
+never dirties the working tree), and `progress_brand_fill.rs` is a single-assertion
 witness. `proptest` covers the two determinism-critical modules,
 `src/scroll.rs` and `src/render/`. No fixtures, env vars, or feature flags are
 needed. The one uncovered path is `shell::run` itself: its smoke test is
