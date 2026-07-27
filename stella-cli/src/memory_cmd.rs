@@ -1056,6 +1056,7 @@ mod tests {
             uri: None,
             valid_from: None,
             recorded_at: "2026-01-01T00:00:00Z".into(),
+            recall_tier: stella_context::RecallTier::Normal,
         }
     }
 

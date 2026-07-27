@@ -21,6 +21,7 @@ fn candidate(id: &str, token_cost: u32) -> Ranked {
             content_bytes: (token_cost as usize) * 4,
             content_blank: false,
             recorded_at: "2026-01-01T00:00:00Z".into(),
+            recall_tier: RecallTier::Normal,
         },
         relevance: 0.5,
         selection_reason: SelectionReason::Ranked,
@@ -33,6 +34,13 @@ fn required(id: &str, token_cost: u32) -> Ranked {
         selection_reason: SelectionReason::Anchored,
         ..candidate(id, token_cost)
     }
+}
+
+/// A candidate that yields to every `Normal` one when the budget binds.
+fn deferred(id: &str, token_cost: u32) -> Ranked {
+    let mut c = candidate(id, token_cost);
+    c.meta.recall_tier = RecallTier::Deferred;
+    c
 }
 
 #[test]
@@ -53,6 +61,7 @@ fn node_row(id: i64, content: &str) -> NodeRow {
         uri: None,
         valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
+        recall_tier: RecallTier::Normal,
     }
 }
 
@@ -67,6 +76,7 @@ fn node_meta(id: i64, content: &str) -> NodeMeta {
         content_bytes: content.len(),
         content_blank: content.trim().is_empty(),
         recorded_at: "2026-01-01T00:00:00Z".into(),
+        recall_tier: RecallTier::Normal,
     }
 }
 
@@ -254,6 +264,65 @@ fn packing_skips_an_oversized_frame_but_fits_a_later_small_one() {
     assert_eq!(dropped[0].reason, DropReason::TokenBudget);
 }
 
+// ── Deferred items yield the budget, and nothing else ───────────────────────
+
+/// The gate criterion for the tier. The deferred candidate ranks FIRST — it
+/// would win under a strictly rank-ordered packer — and there is exactly one
+/// slot, so this fails on any implementation that reads the tier as a tiebreak
+/// or ignores it.
+#[test]
+fn a_deferred_item_yields_its_slot_to_a_lower_ranked_normal_one() {
+    let frames = vec![deferred("process_note", 1), candidate("domain_fact", 1)];
+    let (kept, dropped) = pack_to_budget(frames, 1000, 1);
+    let ids: Vec<&str> = kept.iter().map(|k| k.meta.public_id.as_str()).collect();
+    assert_eq!(ids, vec!["domain_fact"], "kept: {ids:?}");
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].id, "process_note");
+    assert_eq!(dropped[0].reason, DropReason::FrameCount);
+}
+
+/// The negative that makes the test above mean something: a tier is not a
+/// score. With room for everyone the deferred candidate is admitted, so what
+/// the assertion above measures is the *budget binding*, not a general demotion
+/// that would quietly cost recall a frame on every uncontended turn.
+#[test]
+fn a_deferred_item_is_admitted_whenever_the_budget_has_room() {
+    let frames = vec![deferred("process_note", 1), candidate("domain_fact", 1)];
+    let (kept, dropped) = pack_to_budget(frames, 1000, 5);
+    let ids: HashSet<&str> = kept.iter().map(|k| k.meta.public_id.as_str()).collect();
+    assert!(ids.contains("process_note"), "kept: {ids:?}");
+    assert!(ids.contains("domain_fact"), "kept: {ids:?}");
+    assert!(dropped.is_empty(), "dropped: {dropped:?}");
+}
+
+/// Rank still decides everything *within* a band — the tier partitions, it does
+/// not re-sort. Two deferred candidates compete with each other in the order
+/// ranking put them in, so the stronger one takes the leftover slot.
+#[test]
+fn rank_order_still_decides_among_deferred_items() {
+    let frames = vec![
+        candidate("normal", 1),
+        deferred("stronger", 1),
+        deferred("weaker", 1),
+    ];
+    let (kept, _) = pack_to_budget(frames, 1000, 2);
+    let ids: Vec<&str> = kept.iter().map(|k| k.meta.public_id.as_str()).collect();
+    assert_eq!(ids, vec!["normal", "stronger"], "kept: {ids:?}");
+}
+
+/// A deferred item never outranks a *required* one. The required pass runs
+/// before either ranked band, so the precedence is required → normal →
+/// deferred, and adding the tier did not open a path around the ADR 0006
+/// guarantee.
+#[test]
+fn a_deferred_item_cannot_displace_a_required_one() {
+    let frames = vec![deferred("process_note", 1), required("anchored", 1)];
+    let (kept, dropped) = pack_to_budget(frames, 1000, 0);
+    let ids: Vec<&str> = kept.iter().map(|k| k.meta.public_id.as_str()).collect();
+    assert_eq!(ids, vec!["anchored"], "kept: {ids:?}");
+    assert_eq!(dropped[0].id, "process_note");
+}
+
 // ── Required items survive ranking pressure (#713 deliverable 5) ────────────
 
 #[test]
@@ -328,8 +397,16 @@ fn the_selection_reason_crosses_the_cgp_seam_on_the_frames_provenance() {
     // recorded anywhere but on the frame is a reason a CGP consumer never
     // sees. Provenance is the channel; this pins that it is actually written.
     let node = node_row(1, "some content");
-    let frame =
-        frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Anchored).expect("frame");
+    let frame = frame_from_node(
+        &node,
+        0.5,
+        "fp",
+        false,
+        &[],
+        SelectionReason::Anchored,
+        RecallTier::Normal,
+    )
+    .expect("frame");
     let reason = frame
         .provenance
         .iter()
@@ -337,8 +414,16 @@ fn the_selection_reason_crosses_the_cgp_seam_on_the_frames_provenance() {
         .and_then(|p| p.method.clone());
     assert_eq!(reason.as_deref(), Some("anchored"));
 
-    let frame =
-        frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Ranked).expect("frame");
+    let frame = frame_from_node(
+        &node,
+        0.5,
+        "fp",
+        false,
+        &[],
+        SelectionReason::Ranked,
+        RecallTier::Normal,
+    )
+    .expect("frame");
     let reason = frame
         .provenance
         .iter()
@@ -370,8 +455,18 @@ fn missing_citation_is_a_constructor_error() {
         uri: None,
         valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
+        recall_tier: RecallTier::Normal,
     };
-    let err = frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Ranked).unwrap_err();
+    let err = frame_from_node(
+        &node,
+        0.5,
+        "fp",
+        false,
+        &[],
+        SelectionReason::Ranked,
+        RecallTier::Normal,
+    )
+    .unwrap_err();
     assert!(matches!(err, ContextError::MissingCitation { .. }));
 }
 
@@ -387,6 +482,7 @@ fn lexical_frames_are_labeled_in_provenance() {
         uri: None,
         valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
+        recall_tier: RecallTier::Normal,
     };
     let frame = frame_from_node(
         &node,
@@ -395,14 +491,23 @@ fn lexical_frames_are_labeled_in_provenance() {
         true,
         &["billing".to_string()],
         SelectionReason::Ranked,
+        RecallTier::Normal,
     )
     .unwrap();
     assert!(
         is_lexical_fallback(&frame),
         "fallback frames must be labeled"
     );
-    let graph_frame =
-        frame_from_node(&node, 0.5, "fp", false, &[], SelectionReason::Ranked).unwrap();
+    let graph_frame = frame_from_node(
+        &node,
+        0.5,
+        "fp",
+        false,
+        &[],
+        SelectionReason::Ranked,
+        RecallTier::Normal,
+    )
+    .unwrap();
     assert!(!is_lexical_fallback(&graph_frame));
 }
 

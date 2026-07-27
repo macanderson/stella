@@ -34,6 +34,22 @@ fn frame(id: &str, score: f32, token_cost: u32) -> ContextFrame {
     }
 }
 
+/// The same frame, marked by the context plane as yielding first when the
+/// budget binds — built through the provenance channel the host actually reads,
+/// not by setting a field the seam would drop.
+fn deferred_frame(id: &str, score: f32, token_cost: u32) -> ContextFrame {
+    let mut f = frame(id, score, token_cost);
+    f.provenance.push(contextgraph_types::Provenance {
+        kind: stella_context::RECALL_TIER_PROVENANCE_KIND.into(),
+        uri: None,
+        range: None,
+        digest: None,
+        method: Some(stella_context::RecallTier::Deferred.as_str().to_string()),
+        by: Some("stella-context/test".into()),
+    });
+    f
+}
+
 /// A scripted provider for merge tests.
 struct Scripted {
     id: &'static str,
@@ -257,6 +273,52 @@ async fn selection_still_prefers_the_highest_scoring_frames() {
         kept[0].frame.id, "zzz",
         "the budget must be spent on the most relevant frame, not the alphabetically first"
     );
+}
+
+/// A frame the context plane deferred yields at the *host* budget too.
+///
+/// The same failure the required-item pass had before #713: a precedence
+/// honored by `pack_to_budget` and ignored by the cross-provider merge is a
+/// precedence that survives one packer and is undone by the next. The deferred
+/// frame scores HIGHER here, so it wins the merge sort outright and only the
+/// tier can dislodge it.
+#[tokio::test]
+async fn a_deferred_frame_yields_the_merge_budget_to_a_normal_one() {
+    let mut host = Host::new();
+    host.register(scripted("p", vec![deferred_frame("process", 0.9, 600)]));
+    host.register(scripted("d", vec![frame("domain", 0.1, 600)]));
+    let kept = recall_via_host(&host, &query(10, 1_000)).await.frames;
+    assert_eq!(kept.len(), 1, "only one frame fits the budget");
+    assert_eq!(
+        kept[0].frame.id, "domain",
+        "a deferred frame must not take the last slot from a normal one"
+    );
+}
+
+/// The negative: with room for both, the deferred frame is still served. The
+/// tier costs recall nothing until the budget actually binds.
+#[tokio::test]
+async fn a_deferred_frame_is_served_when_the_merge_budget_has_room() {
+    let mut host = Host::new();
+    host.register(scripted("p", vec![deferred_frame("process", 0.9, 100)]));
+    host.register(scripted("d", vec![frame("domain", 0.1, 100)]));
+    let kept = recall_via_host(&host, &query(10, 1_000)).await.frames;
+    let ids: Vec<&str> = kept.iter().map(|k| k.frame.id.as_str()).collect();
+    assert_eq!(ids.len(), 2, "both frames fit: {ids:?}");
+    assert!(ids.contains(&"process"), "{ids:?}");
+    assert!(ids.contains(&"domain"), "{ids:?}");
+}
+
+/// A provider that declares no tier competes normally — the host must not
+/// demote a frame it knows nothing about.
+#[tokio::test]
+async fn a_frame_declaring_no_tier_competes_normally() {
+    let mut host = Host::new();
+    host.register(scripted("q", vec![frame("quiet", 0.9, 600)]));
+    host.register(scripted("d", vec![deferred_frame("process", 0.8, 600)]));
+    let kept = recall_via_host(&host, &query(10, 1_000)).await.frames;
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].frame.id, "quiet");
 }
 
 #[tokio::test]

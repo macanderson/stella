@@ -9,19 +9,20 @@
 //! dressing weak context up as grounding (`L-C6`).
 //!
 //! The scoring/fusion/packing steps are plain synchronous functions over owned
-//! data. Brute-force top-k cosine is the default and stays the default: it is
-//! exact, it is fine at CLI-local scale, and an approximation that changes which
-//! frames a turn recalls is not something to switch on for someone. The IVF
-//! accelerator in [`crate::ann`] is opt-in through [`RecallTuning::ann_enabled`]
-//! and announces itself on [`RecallResult::used_ann_index`] when it fires. They
-//! are property-tested at the bottom of the file.
+//! data, and live in [`ranking`] — this module owns the I/O and the pipeline
+//! that sequences them. Brute-force top-k cosine is the default and stays the
+//! default: it is exact, it is fine at CLI-local scale, and an approximation
+//! that changes which frames a turn recalls is not something to switch on for
+//! someone. The IVF accelerator in [`crate::ann`] is opt-in through
+//! [`RecallTuning::ann_enabled`] and announces itself on
+//! [`RecallResult::used_ann_index`] when it fires. They are property-tested in
+//! [`tests`].
 
 use std::collections::{HashMap, HashSet};
 
 use contextgraph_types::frame::FrameEmbedding;
 use contextgraph_types::{
-    BYTES_PER_BUDGET_TOKEN, ContextFrame, ContextQuery, ContextQueryResult, Provenance,
-    Representation,
+    ContextFrame, ContextQuery, ContextQueryResult, Provenance, Representation,
 };
 use rusqlite::Connection;
 
@@ -51,6 +52,11 @@ pub(crate) const LEXICAL_FALLBACK_METHOD: &str = "stella-context/lexical-fallbac
 /// seam — Phase 2 (#713). The `method` field holds
 /// [`SelectionReason::as_str`].
 pub const SELECTION_PROVENANCE_KIND: &str = "selection";
+/// Provenance `kind` carrying a frame's [`RecallTier`] across the CGP seam.
+/// The `method` field holds [`RecallTier::as_str`]. Written only for a frame
+/// that is *not* [`RecallTier::Normal`], so the overwhelmingly common frame
+/// gains no bytes and every existing frame's provenance chain is unchanged.
+pub const RECALL_TIER_PROVENANCE_KIND: &str = "recall_tier";
 
 /// Reciprocal-rank-fusion constant (the standard 60).
 pub const DEFAULT_RRF_K: f64 = 60.0;
@@ -304,6 +310,75 @@ impl SelectionReason {
             SelectionReason::Anchored => "anchored",
             SelectionReason::Ranked => "ranked",
             SelectionReason::LexicalFallback => "lexical_fallback",
+        }
+    }
+}
+
+/// Which precedence band a candidate competes in once the budget binds.
+///
+/// This is deliberately **not** a score. Scores are query-dependent and already
+/// fully expressed by the fused ranking; a tier says something the query cannot
+/// know — that a whole *class* of frame is worth less than the others when, and
+/// only when, something has to be dropped. Within a tier the ranking still
+/// decides everything.
+///
+/// The vocabulary has exactly two entries, and the asymmetry is the point.
+/// [`Normal`](RecallTier::Normal) is the default for every node the store has
+/// ever written, so adding this changes nothing for code symbols, episodes, or
+/// ordinary memories. [`Deferred`](RecallTier::Deferred) has to be asked for.
+/// Nothing is *promoted* by a tier — a frame can only volunteer to yield first
+/// — which is what keeps a writer from buying rank by relabeling its own
+/// content.
+///
+/// Its one caller today is the reflection lifecycle: a lesson about how the
+/// agent went about its work (`LessonKind::Process`) is written `Deferred`, so
+/// that a five-frame budget spends its slots on facts about the codebase before
+/// it spends them on commentary about the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
+pub enum RecallTier {
+    /// Competes on rank alone. Every node written before this existed, and
+    /// every node whose writer says nothing about tiering.
+    #[default]
+    Normal,
+    /// Admitted only after every `Normal` candidate has taken what it needs.
+    /// Still ranked, still citable, still recalled whenever the budget has
+    /// room — it simply loses every tie against a frame that is not deferred.
+    Deferred,
+}
+
+impl RecallTier {
+    /// The stable wire spelling, for provenance and drop reports.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RecallTier::Normal => "normal",
+            RecallTier::Deferred => "deferred",
+        }
+    }
+
+    /// How the tier is stored on the `node` row. `Normal` is 0 so the column's
+    /// `DEFAULT 0` and this enum's `Default` are the same value, and the v9
+    /// backfill is a no-op.
+    #[must_use]
+    pub fn as_i64(self) -> i64 {
+        match self {
+            RecallTier::Normal => 0,
+            RecallTier::Deferred => 1,
+        }
+    }
+
+    /// Read a tier back from storage or from the wire.
+    ///
+    /// An unrecognized value reads as `Normal` rather than failing: a tier is a
+    /// de-prioritization hint, and the safe direction for an unknown one is to
+    /// leave the frame competing normally. A newer stella's tiers cannot reach
+    /// here anyway — [`crate::store::schema::migrate`] rejects a store stamped
+    /// by a newer binary.
+    #[must_use]
+    pub fn from_i64(value: i64) -> Self {
+        match value {
+            1 => RecallTier::Deferred,
+            _ => RecallTier::Normal,
         }
     }
 }
@@ -950,6 +1025,7 @@ fn recall_blocking(
                 .unwrap_or(&no_domains)
                 .as_slice(),
             candidate.selection_reason,
+            candidate.meta.recall_tier,
         )?);
     }
 
@@ -993,17 +1069,6 @@ fn ann_min_candidates(q: &RecallInputs) -> usize {
         .saturating_mul(crate::ann::PROBE_OVERFETCH)
 }
 
-/// `budget_tokens` over a byte count instead of the bytes themselves.
-///
-/// `contextgraph_types::budget_tokens` is `ceil(content.len() /
-/// BYTES_PER_BUDGET_TOKEN)` over the UTF-8 byte length, so a node's declared
-/// cost is computable from `NodeMeta::content_bytes` with no body in hand — and
-/// is equal to it by construction, not by approximation. Pinned by
-/// `byte_derived_token_cost_matches_the_protocol_function`.
-fn budget_tokens_for_bytes(bytes: usize) -> u32 {
-    bytes.div_ceil(BYTES_PER_BUDGET_TOKEN) as u32
-}
-
 /// Domain tags for the candidate ids, in one shape whichever arm asked.
 ///
 /// A domain-scoped recall already loaded the corpus-wide map for the overlap
@@ -1035,6 +1100,7 @@ pub(crate) fn frame_from_node(
     lexical: bool,
     domains: &[String],
     selection_reason: SelectionReason,
+    recall_tier: RecallTier,
 ) -> Result<ContextFrame, ContextError> {
     let label = node.display_name.trim();
     if label.is_empty() {
@@ -1064,6 +1130,23 @@ pub(crate) fn frame_from_node(
         method: Some(selection_reason.as_str().to_string()),
         by: Some(PROVIDER_ID.into()),
     });
+    // The tier rides the same channel and for the same reason: the host packs
+    // a second time across providers, and a precedence the context plane
+    // honored but the host could not read would be undone there exactly as the
+    // required-item guarantee was before #713. Written only when the frame is
+    // deferred — a `Normal` frame is the default on both sides of the seam, so
+    // saying so would add a provenance entry to every frame ever recalled and
+    // change the bytes of prompts whose frames did not.
+    if recall_tier != RecallTier::Normal {
+        provenance.push(Provenance {
+            kind: RECALL_TIER_PROVENANCE_KIND.into(),
+            uri: None,
+            range: None,
+            digest: None,
+            method: Some(recall_tier.as_str().to_string()),
+            by: Some(PROVIDER_ID.into()),
+        });
+    }
     if lexical {
         provenance.push(Provenance {
             kind: "derivation".into(),
@@ -1145,289 +1228,6 @@ pub fn is_lexical_fallback(frame: &ContextFrame) -> bool {
         .any(|p| p.method.as_deref() == Some(LEXICAL_FALLBACK_METHOD))
 }
 
-/// Cosine similarity, guarding zero-norm vectors (defined as 0 similarity).
-pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    #[cfg(test)]
-    crate::cost_counters::add_cosine();
-    if a.len() != b.len() {
-        return 0.0;
-    }
-    let mut dot = 0.0f32;
-    let mut na = 0.0f32;
-    let mut nb = 0.0f32;
-    for (x, y) in a.iter().zip(b.iter()) {
-        dot += x * y;
-        na += x * x;
-        nb += y * y;
-    }
-    if na == 0.0 || nb == 0.0 {
-        return 0.0;
-    }
-    dot / (na.sqrt() * nb.sqrt())
-}
-
-/// [`cosine`] against an *undecoded* little-endian f32 BLOB.
-///
-/// The whole-corpus similarity pass reads each stored vector exactly once, so
-/// decoding it into an owned `Vec<f32>` first bought nothing and cost one heap
-/// allocation per live node per turn. The accumulation order is identical to
-/// [`cosine`]'s, so the two agree bit for bit — pinned by
-/// `blob_cosine_matches_the_decoded_one`. A length that does not match the query
-/// (including a blob that is not a whole number of f32s) scores 0.0, the same
-/// answer [`cosine`] gives for mismatched lengths.
-pub(crate) fn cosine_blob(a: &[f32], blob: &[u8]) -> f32 {
-    #[cfg(test)]
-    crate::cost_counters::add_cosine();
-    if blob.len() != a.len() * 4 {
-        return 0.0;
-    }
-    let mut dot = 0.0f32;
-    let mut na = 0.0f32;
-    let mut nb = 0.0f32;
-    for (x, chunk) in a.iter().zip(blob.chunks_exact(4)) {
-        let y = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        dot += x * y;
-        na += x * x;
-        nb += y * y;
-    }
-    if na == 0.0 || nb == 0.0 {
-        return 0.0;
-    }
-    dot / (na.sqrt() * nb.sqrt())
-}
-
-/// Mean of the top-k positive cosine values — the goal-coverage estimate.
-fn coverage_score(cos_sorted: &[(i64, f32)], topk: usize) -> f32 {
-    if cos_sorted.is_empty() {
-        return 0.0;
-    }
-    let k = topk.max(1).min(cos_sorted.len());
-    let sum: f32 = cos_sorted.iter().take(k).map(|(_, c)| c.max(0.0)).sum();
-    sum / k as f32
-}
-
-/// Reciprocal-rank fusion over several ranked id lists, each contributing
-/// `weight / (k + rank + 1)`.
-///
-/// The weights exist because RRF is deliberately *flat*: with `k = 60`, rank 1
-/// scores 1/61 and rank 100 scores 1/161 — barely a 2.6× spread across the
-/// whole corpus. A list added at weight 1.0 is therefore not a hint, it is a
-/// peer that can single-handedly decide the top of the result. See
-/// [`DEFAULT_RECENCY_WEIGHT`].
-fn rrf_fuse(lists: &[(Vec<i64>, f64)], k: f64) -> HashMap<i64, f64> {
-    let mut scores: HashMap<i64, f64> = HashMap::new();
-    for (list, weight) in lists {
-        for (rank, &id) in list.iter().enumerate() {
-            *scores.entry(id).or_insert(0.0) += weight / (k + rank as f64 + 1.0);
-        }
-    }
-    scores
-}
-
-/// The dedup key for [`dedup_by_content_hash`]. Genuinely-identical non-empty
-/// content collapses under `Content`, while every empty-content node keeps its
-/// own identity under `Distinct`.
-#[derive(PartialEq, Eq, Hash)]
-enum DedupKey<'a> {
-    /// Real content: distinct nodes that share this hash are true duplicates
-    /// and collapse to the strongest one.
-    Content(&'a str),
-    /// Empty (or whitespace-only) content: these nodes all share `sha256("")`
-    /// yet are distinct identities — code-graph and taxonomy nodes routinely
-    /// carry no text. Keying on the node id keeps each as its own candidate so
-    /// the graph/taxonomy portion of recall is not silently collapsed.
-    Distinct(i64),
-}
-
-/// Collapse fused scores to one entry per content hash (keep the strongest),
-/// returning `(node_id, fused_score)` sorted by score descending. Dedup by
-/// content hash is step 4. Empty-content nodes are exempt from hash dedup —
-/// they share `sha256("")` despite being distinct identities, so merging them
-/// would destroy graph/taxonomy recall on any initialized workspace.
-fn dedup_by_content_hash(
-    fused: &HashMap<i64, f64>,
-    meta_by_id: &HashMap<i64, &NodeMeta>,
-) -> Vec<(i64, f64)> {
-    // dedup key -> (best node_id, best score)
-    let mut best: HashMap<DedupKey, (i64, f64)> = HashMap::new();
-    for (&id, &score) in fused {
-        let Some(meta) = meta_by_id.get(&id) else {
-            continue;
-        };
-        let key = if meta.content_blank {
-            DedupKey::Distinct(id)
-        } else {
-            DedupKey::Content(meta.content_hash.as_str())
-        };
-        let entry = best.entry(key).or_insert((id, f64::MIN));
-        // The lower id wins an exact tie: `fused` is a `HashMap`, so which of
-        // two equally-scored duplicates is visited first varies run to run,
-        // and the survivor is the frame the prompt actually cites.
-        if score > entry.1 || (score == entry.1 && id < entry.0) {
-            *entry = (id, score);
-        }
-    }
-    let mut out: Vec<(i64, f64)> = best.into_values().collect();
-    // Same reason: sort by score, then by id, so identical fused scores yield
-    // one stable order rather than whatever the map drained.
-    out.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-    out
-}
-
-/// One candidate for the MMR pass.
-///
-/// The vector is **borrowed** from the candidate-vector map. It used to be an
-/// owned `Option<Vec<f32>>`, which meant a full heap copy of every candidate's
-/// embedding purely so the item could own it, for a struct that never outlives
-/// the function that builds it.
-struct MmrItem<'a> {
-    relevance: f32,
-    vector: Option<&'a [f32]>,
-}
-
-/// Maximal-marginal-relevance selection. Greedily picks the item maximizing
-/// `λ·relevance − (1−λ)·max_similarity_to_already_selected`. Items without a
-/// vector are treated as maximally diverse (similarity 0), so graph/recency-
-/// only hits are never penalized for lacking an embedding. Returns indices in
-/// selection order.
-///
-/// The diversity penalty is a running maximum folded forward once per pick,
-/// not a rescan of the selected set for every remaining candidate: `max` is
-/// associative, so the two are numerically identical, but the rescan cost
-/// `Θ(n³)` cosines.
-///
-/// This pass is `Θ(n²)` in the candidates handed to it, which is why the caller
-/// bounds them to [`DEFAULT_MMR_CANDIDATE_MULTIPLE`] x `max_frames` first. It used to be
-/// fed *every live node* — the recency ranking contributes all of them — so
-/// recall was quadratic in lifetime memory size and ran to exhaustion selecting
-/// candidates the budget pass then threw away.
-fn mmr_select(items: &[MmrItem<'_>], lambda: f32) -> Vec<usize> {
-    let n = items.len();
-    let mut selected: Vec<usize> = Vec::with_capacity(n);
-    let mut remaining: Vec<usize> = (0..n).collect();
-    // penalty[i] == max cosine between item i and anything already selected,
-    // floored at 0.0 (the fold's identity) so a vector-less item scores as
-    // maximally diverse.
-    let mut penalty: Vec<f32> = vec![0.0; n];
-    while !remaining.is_empty() {
-        let mut best_pos = 0usize;
-        let mut best_score = f32::MIN;
-        for (pos, &idx) in remaining.iter().enumerate() {
-            let mmr = lambda * items[idx].relevance - (1.0 - lambda) * penalty[idx];
-            if mmr > best_score {
-                best_score = mmr;
-                best_pos = pos;
-            }
-        }
-        let picked = remaining.remove(best_pos);
-        selected.push(picked);
-        // Fold the new pick into every still-unselected candidate's penalty.
-        if let Some(picked_vec) = items[picked].vector {
-            for &idx in &remaining {
-                if let Some(v) = items[idx].vector {
-                    penalty[idx] = penalty[idx].max(cosine(v, picked_vec));
-                }
-            }
-        }
-    }
-    selected
-}
-
-/// Pack frames (already in priority order) into the token and count budgets,
-/// returning `(kept, dropped)`. **Invariants (property-tested):** kept token
-/// sum ≤ `max_tokens`, `kept.len()` ≤ `max_frames`, and `kept + dropped` is a
-/// partition of the input (nothing vanishes silently — `L-C5`). A frame that
-/// individually exceeds the remaining budget is dropped, but packing continues
-/// so a smaller later frame can still fit.
-///
-/// **Required items are admitted first** — Phase 2 (#713) deliverable 5.
-/// [`SelectionReason::is_required`] marks a candidate the caller asked for by
-/// name (today: a goal that names a file verbatim), and ADR 0006 says ranking
-/// may not evict one. A required item is therefore charged against the token
-/// budget before any ranked candidate competes for it, and **`max_frames`
-/// bounds the ranked admissions only**. Counting required items against the
-/// frame budget would let it evict one for `FrameCount`, which is exactly the
-/// eviction the ADR forbids — so a query for five frames that anchors two
-/// files yields up to seven, and the caller gets what it asked for plus what
-/// it named. The result stays bounded: anchors are capped where they are
-/// extracted, and the token budget still applies to every one of them.
-///
-/// The two passes exist purely to reserve budget; **the kept set is emitted in
-/// the original candidate order**, so the ranking's ordering — and with it the
-/// byte-stability of the rendered block — is untouched. A packer that returned
-/// required-first would reorder the prompt whenever an anchor appeared, which
-/// is a cache-prefix change (spec §5.1) bought for nothing.
-///
-/// The one way a required item is dropped is that it exceeds `max_tokens`
-/// alone, in which case no ordering could have admitted it. That is reported
-/// as [`DropReason::RequiredOverBudget`] — an explicit, named decision rather
-/// than a rank it happened to lose.
-pub(crate) fn pack_to_budget(
-    candidates: Vec<Ranked>,
-    max_tokens: u32,
-    max_frames: u32,
-) -> (Vec<Ranked>, Vec<DroppedFrame>) {
-    let mut spent: u64 = 0;
-    let mut dropped = Vec::new();
-    // Pass 1: required items take their budget first. A required item is
-    // measured against the WHOLE budget, not the remainder, because nothing
-    // ranked has been charged yet — so "it does not fit" here really means it
-    // could never fit.
-    let mut admitted = vec![false; candidates.len()];
-    for (index, candidate) in candidates.iter().enumerate() {
-        if !candidate.is_required() {
-            continue;
-        }
-        let cost = budget_tokens_for_bytes(candidate.meta.content_bytes);
-        if spent + cost as u64 > max_tokens as u64 {
-            dropped.push(dropped_from(
-                &candidate.meta,
-                DropReason::RequiredOverBudget,
-            ));
-            continue;
-        }
-        spent += cost as u64;
-        admitted[index] = true;
-    }
-    // Pass 2: everything else competes for what is left, in rank order.
-    // `max_frames` bounds the RANKED admissions only — see the doc comment:
-    // counting required items against it would let the count budget evict one,
-    // which is precisely what ADR 0006 forbids.
-    let mut ranked_kept = 0usize;
-    for (index, candidate) in candidates.iter().enumerate() {
-        if candidate.is_required() {
-            continue;
-        }
-        let cost = budget_tokens_for_bytes(candidate.meta.content_bytes);
-        if ranked_kept as u32 >= max_frames {
-            dropped.push(dropped_from(&candidate.meta, DropReason::FrameCount));
-            continue;
-        }
-        if spent + cost as u64 > max_tokens as u64 {
-            dropped.push(dropped_from(&candidate.meta, DropReason::TokenBudget));
-            continue;
-        }
-        spent += cost as u64;
-        ranked_kept += 1;
-        admitted[index] = true;
-    }
-    let kept = candidates
-        .into_iter()
-        .zip(&admitted)
-        .filter_map(|(candidate, keep)| keep.then_some(candidate))
-        .collect();
-    (kept, dropped)
-}
-
-fn dropped_from(meta: &NodeMeta, reason: DropReason) -> DroppedFrame {
-    DroppedFrame {
-        id: meta.public_id.clone(),
-        title: meta.display_name.clone(),
-        token_cost: budget_tokens_for_bytes(meta.content_bytes),
-        reason,
-    }
-}
-
 /// Lowercased query terms (length > 2) for lexical fallback.
 fn query_terms(q: &ContextQuery) -> Vec<String> {
     let text = q.query_text.clone().unwrap_or_else(|| q.goal.clone());
@@ -1471,6 +1271,17 @@ fn lexical_search(
     scored.truncate(limit);
     Ok(scored)
 }
+
+mod ranking;
+
+pub(crate) use ranking::{
+    MmrItem, cosine, cosine_blob, coverage_score, dedup_by_content_hash, mmr_select,
+    pack_to_budget, rrf_fuse,
+};
+// Only the packer itself spends this now that packing moved to `ranking`; the
+// tests still assert the byte-derived cost equals the protocol's own count.
+#[cfg(test)]
+pub(crate) use ranking::budget_tokens_for_bytes;
 
 #[cfg(test)]
 mod tests;
