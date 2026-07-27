@@ -115,6 +115,7 @@ fn config_debug_never_leaks_the_api_key() {
     let cfg = Config {
         provider: PROVIDERS[0].clone(),
         model_id: "glm-5.2".to_string(),
+        model_pinned_by_flag: false,
         api_key: ApiKey::new(secret),
         workspace_root: std::path::PathBuf::from("/tmp/ws"),
         base_url_override: None,
@@ -299,6 +300,53 @@ fn benchmark_mode_skips_malformed_filesystem_credentials_but_keeps_engine_overri
         cfg.engine_settings
             .and_then(|settings| settings.default_model),
         Some("openrouter/deepseek/deepseek-v4-pro".to_string())
+    );
+}
+
+#[test]
+fn model_pinned_by_flag_records_whether_the_flag_or_settings_answered() {
+    // `load_with_settings` folds `--model` and the settings-configured
+    // default into one `Option<&str>` before resolution. That fold is the
+    // last point where the two are distinguishable, and the pipeline wiring
+    // needs the distinction to stop `pipeline_worker_model` from overriding
+    // an explicit flag. If this provenance is ever dropped, the wiring guard
+    // silently becomes unreachable and the flag stops working again.
+    let settings = settings_from(
+        r#"{
+            "providers": {"openrouter": {"api_key": "sk-or-test"}},
+            "agent_engine_config": {"default_model": "openrouter/from-settings"}
+        }"#,
+    );
+
+    let _env = crate::test_env::lock();
+
+    let flagged = Config::load_with_settings(
+        Some("openrouter/from-the-flag"),
+        None,
+        None,
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .expect("an explicit --model resolves");
+    assert_eq!(flagged.model_id, "from-the-flag");
+    assert!(
+        flagged.model_pinned_by_flag,
+        "an explicit --model must be recorded as a flag pin"
+    );
+
+    let unflagged = Config::load_with_settings(
+        None,
+        None,
+        None,
+        &settings,
+        std::path::PathBuf::from("/tmp/ws"),
+    )
+    .expect("the settings default resolves");
+    assert_eq!(unflagged.model_id, "from-settings");
+    assert!(
+        !unflagged.model_pinned_by_flag,
+        "a settings-provided default is NOT a flag pin — it must stay \
+         overridable by pipeline_worker_model (#276)"
     );
 }
 

@@ -372,8 +372,8 @@ impl RecallTier {
     /// An unrecognized value reads as `Normal` rather than failing: a tier is a
     /// de-prioritization hint, and the safe direction for an unknown one is to
     /// leave the frame competing normally. A newer stella's tiers cannot reach
-    /// here anyway — [`crate::store::schema::migrate`] rejects a store stamped
-    /// by a newer binary.
+    /// here anyway — the schema migration rejects a store stamped by a newer
+    /// binary.
     #[must_use]
     pub fn from_i64(value: i64) -> Self {
         match value {
