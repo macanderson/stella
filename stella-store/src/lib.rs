@@ -45,9 +45,6 @@
 //! - **file_locks** — schema + API for cooperative file claims in
 //!   multi-agent work, acquired by the fleet dispatcher and the deck's
 //!   sub-session claim-on-first-write path (see # Concurrency below).
-//! - **graph_nodes / graph_edges** — schema reserved as a future seam for a
-//!   context plane; not written by any shipping command today (`stella-context`
-//!   and `stella-graph` currently use their own stores).
 //!
 //! # Concurrency
 //!
@@ -233,18 +230,6 @@ impl From<rusqlite::Error> for StoreError {
 }
 
 type Result<T> = std::result::Result<T, StoreError>;
-
-/// Reject graph `properties` that are not a valid JSON document before they
-/// reach a plain SQLite `TEXT` column. Under the previous DuckDB backend the
-/// column was JSON-typed and refused malformed input at the DB boundary;
-/// SQLite silently persists arbitrary bytes, so unparseable data would only
-/// surface later, when a JSON-expecting reader chokes on it. The empty
-/// default `"{}"` is valid JSON and passes.
-fn validate_json_properties(properties: &str) -> Result<()> {
-    serde_json::from_str::<serde_json::Value>(properties)
-        .map(|_| ())
-        .map_err(|e| StoreError(format!("graph properties are not valid JSON: {e}")))
-}
 
 fn sqlite_i64(name: &str, value: u64) -> Result<i64> {
     i64::try_from(value).map_err(|_| StoreError(format!("{name} exceeds SQLite INTEGER range")))
@@ -1156,23 +1141,6 @@ impl Store {
         Ok(())
     }
 
-    /// Per-tool-name call counts across all executions, most-used first —
-    /// the histogram behind "you grep symbols N times but never call
-    /// graph_query". Deterministic ordering (count desc, then name).
-    pub fn tool_call_name_counts(&self) -> Result<Vec<(String, i64)>> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT name, COUNT(*) AS n FROM tool_calls \
-             GROUP BY name ORDER BY n DESC, name ASC",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
-    }
-
     /// Record (or replace) the agent's self-review for one turn, 1:1 with its
     /// execution.
     pub fn record_execution_reflection(
@@ -1216,7 +1184,12 @@ impl Store {
     /// already-persisted `events` stream (`tool_start` + `tool_result`). Rows
     /// are emitted in call order; a `tool_start` with no matching result (turn
     /// cut off mid-tool) is recorded as an incomplete, failed call so the count
-    /// stays honest. Idempotent (INSERT OR REPLACE on seq). Returns the count.
+    /// stays honest. A re-emitted `tool_start` for an already-seen call_id
+    /// folds into that call's one row (first announcement keeps the position,
+    /// the last one's payload wins — the same newest-record keep-rule the
+    /// v0 → v1 dedup applies), because one call_id is one call no matter how
+    /// many times the stream announced it. Idempotent (INSERT OR REPLACE on
+    /// seq). Returns the count.
     pub fn materialize_tool_calls(&self, execution_id: i64) -> Result<usize> {
         let payloads: Vec<String> = {
             let conn = self.lock();
@@ -1253,7 +1226,13 @@ impl Store {
                     } else {
                         "native"
                     };
-                    order.push(call.call_id.clone());
+                    // One position per call_id: pushing every announcement
+                    // would mint a second row (and double the call count)
+                    // for a re-emitted start, and its result — keyed by
+                    // call_id alone — would attach to both.
+                    if !starts.contains_key(&call.call_id) {
+                        order.push(call.call_id.clone());
+                    }
                     starts.insert(call.call_id, (call.name, surface.into(), args_json));
                 }
                 AgentEvent::ToolResult {
@@ -1330,10 +1309,15 @@ impl Store {
                 params![execution_id],
                 |r| r.get::<_, i64>(0),
             )? > 0;
+            // "output-token limit" is the phrase every truncation emitter
+            // shares (stella-core's empty-turn abort, stella-model's
+            // truncated tool-input error); no wider net — a bare "truncated"
+            // substring also matched unrelated failures that merely mention
+            // the word (a torn fixture, a cut-short MCP tool list).
             let truncated: bool = conn.query_row(
                 "SELECT COUNT(*) FROM events \
                  WHERE execution_id = ?1 AND event_type = 'error' \
-                   AND (payload LIKE '%output-token limit%' OR payload LIKE '%truncated%')",
+                   AND payload LIKE '%output-token limit%'",
                 params![execution_id],
                 |r| r.get::<_, i64>(0),
             )? > 0;
@@ -1844,14 +1828,6 @@ impl Store {
         Ok(())
     }
 
-    /// Delete one extension-authored rule; returns whether a row existed.
-    pub fn delete_rule(&self, rule_id: &str) -> Result<bool> {
-        let deleted = self
-            .lock()
-            .execute("DELETE FROM rules WHERE rule_id = ?", params![rule_id])?;
-        Ok(deleted > 0)
-    }
-
     /// Every stored rule, ordered by rule id — deterministic, so the rules
     /// section assembled from these into a session's system prompt stays
     /// byte-stable (the prompt-cache contract).
@@ -1869,43 +1845,6 @@ impl Store {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
-    }
-
-    /// Upsert a graph node — the context plane's write seam.
-    ///
-    /// `properties` must be a valid JSON document. The old DuckDB backend
-    /// stored it in a JSON-typed column that rejected malformed input at the
-    /// DB boundary; SQLite's `TEXT` column would silently accept arbitrary
-    /// bytes, so the JSON-validity invariant is re-asserted here before the
-    /// INSERT rather than let unparseable data reach JSON-expecting readers.
-    pub fn upsert_graph_node(&self, id: &str, label: &str, properties: &str) -> Result<()> {
-        validate_json_properties(properties)?;
-        self.lock().execute(
-            "INSERT INTO graph_nodes (id, label, properties) VALUES (?, ?, ?) \
-             ON CONFLICT (id) DO UPDATE SET label = excluded.label, \
-             properties = excluded.properties",
-            params![id, label, properties],
-        )?;
-        Ok(())
-    }
-
-    /// Insert a graph edge.
-    ///
-    /// `properties` must be a valid JSON document — see [`Store::upsert_graph_node`]
-    /// for why the invariant is enforced here rather than by the column type.
-    pub fn insert_graph_edge(
-        &self,
-        src: &str,
-        dst: &str,
-        edge_type: &str,
-        properties: &str,
-    ) -> Result<()> {
-        validate_json_properties(properties)?;
-        self.lock().execute(
-            "INSERT INTO graph_edges (src, dst, edge_type, properties) VALUES (?, ?, ?, ?)",
-            params![src, dst, edge_type, properties],
-        )?;
-        Ok(())
     }
 
     /// Count helper — currently exercised only by tests; kept `pub` for
@@ -2005,12 +1944,25 @@ impl Store {
         Ok(out)
     }
 
-    /// Dump every table's raw rows as JSON arrays — the data behind
-    /// `/export`. Each entry is `(table_name, json_array_string)`. The JSON is
-    /// constructed in Rust (not by SQLite's json1 extension, which may be
-    /// absent from a bundled build), so the shape is stable across platforms.
-    /// Rows are ordered by the table's natural key; the exact order per table
-    /// is documented in the module-level schema comments.
+    /// Dump the telemetry tables as JSON arrays — the data behind `/export`.
+    /// Each entry is `(table_name, json_array_string)`.
+    ///
+    /// This is the analytics export, not a database dump: it covers exactly
+    /// the nine telemetry tables the export archive bundles — `executions`,
+    /// `telemetry`, `tool_calls`, `files_touched`, `mcp_usage`, `agent_uses`,
+    /// `skill_usage`, `execution_reflection`, and `reflections`. The rest of
+    /// the store stays out deliberately: `events` and the receipts plane
+    /// (`context_blocks` / `step_manifest` / `step_receipt`) carry full
+    /// payloads and reconstruction preimages the archive must not ship, and
+    /// the state tables (`rules`, `file_locks`, `memory_citations`,
+    /// `forgotten`, `tasks`, `pull_requests`) are live workspace state, not
+    /// session telemetry.
+    ///
+    /// The JSON is constructed in Rust (not by SQLite's json1 extension,
+    /// which may be absent from a bundled build), so the shape is stable
+    /// across platforms. Rows are ordered by the table's natural key; the
+    /// exact order per table is documented in the module-level schema
+    /// comments.
     pub fn export_all_json(&self) -> Result<Vec<(&'static str, String)>> {
         let conn = self.lock();
         let mut out: Vec<(&'static str, String)> = Vec::new();
