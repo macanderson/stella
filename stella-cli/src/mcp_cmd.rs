@@ -135,7 +135,7 @@ pub(crate) fn print_connect_diagnostics(set: &stella_mcp::McpToolSet) {
     if set.connected_count() > 0 {
         println!(
             "  {} {} MCP server(s) connected",
-            "◆".bright_blue(),
+            "◆".bright_cyan(),
             set.connected_count()
         );
     }
@@ -462,7 +462,7 @@ fn run_install(workspace_root: &Path, name: &str, alias: Option<String>) -> Resu
     install(workspace_root, &alias, option.transport)?;
     println!(
         "  {} installed {} as {} ({})",
-        "◆".bright_blue(),
+        "◆".bright_cyan(),
         name.bright_magenta(),
         alias.bright_magenta(),
         option.label.dimmed()
@@ -488,7 +488,7 @@ fn run_install(workspace_root: &Path, name: &str, alias: Option<String>) -> Resu
 
 fn run_remove(workspace_root: &Path, name: &str) -> Result<(), String> {
     if remove(workspace_root, name)? {
-        println!("  {} removed {}", "◆".bright_blue(), name.bright_magenta());
+        println!("  {} removed {}", "◆".bright_cyan(), name.bright_magenta());
         Ok(())
     } else {
         Err(format!("no configured MCP server named `{name}`"))
@@ -505,7 +505,7 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
             stella_mcp::LoginEvent::AuthorizeUrl(url) => {
                 println!(
                     "  {} approve access in your browser (opened automatically):",
-                    "◆".bright_blue()
+                    "◆".bright_cyan()
                 );
                 println!("    {}", url.bright_magenta());
             }
@@ -513,7 +513,7 @@ fn run_login(workspace_root: &Path, name: &str) -> Result<(), String> {
     ))?;
     println!(
         "  {} logged in — tokens in {} (auto-refreshed; `stella mcp logout {name}` to forget)",
-        "◆".bright_blue(),
+        "◆".bright_cyan(),
         oauth_store_path(workspace_root)?.display()
     );
     Ok(())
@@ -523,7 +523,7 @@ fn run_logout(workspace_root: &Path, name: &str) -> Result<(), String> {
     if oauth_logout(workspace_root, name)? {
         println!(
             "  {} logged out of {}",
-            "◆".bright_blue(),
+            "◆".bright_cyan(),
             name.bright_magenta()
         );
         Ok(())

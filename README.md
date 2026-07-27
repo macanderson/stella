@@ -11,9 +11,9 @@
 <p align="center">
   <a href="https://github.com/macanderson/stella/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/macanderson/stella/ci.yml?branch=main&style=flat-square&logo=github&label=ci" alt="CI status"></a>
   <a href="https://github.com/macanderson/stella/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/macanderson/stella/release.yml?style=flat-square&logo=github&label=release" alt="Release status"></a>
-  <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-000000?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/rust-1.90%2B-000000?style=flat-square&logo=rust&logoColor=00AAFF" alt="Rust 1.90+">
-  <img src="https://img.shields.io/badge/providers-9%20%2B%20local-000000?style=flat-square" alt="9 providers + local">
+  <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-080D1A?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/rust-1.90%2B-080D1A?style=flat-square&logo=rust&logoColor=FFDD00" alt="Rust 1.90+">
+  <img src="https://img.shields.io/badge/providers-9%20%2B%20local-080D1A?style=flat-square" alt="9 providers + local">
 </p>
 
 <p align="center">

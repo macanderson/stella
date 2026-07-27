@@ -56,7 +56,7 @@ pub fn dissolve_out(ms: u32) -> Effect {
     fx::dissolve(EffectTimer::from_ms(ms, Interpolation::QuadIn)).with_rng(SimpleRng::new(FX_SEED))
 }
 
-/// A brisk deep-electric sweep for tab / view switches in the deck shell: the new
+/// A brisk deep-sky sweep for tab / view switches in the deck shell: the new
 /// content sweeps in left-to-right out of the brand accent color and lands
 /// on its real style over `ms`.
 ///

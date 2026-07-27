@@ -10,8 +10,8 @@ import {
  * The social card, generated at build time (next/og) so it stays in sync with
  * the brand and carries no static binary.
  *
- * It is the brand lockup on the deepest ground: an electric mark beside a
- * paper wordmark on jet black. That split is the palette's rule 4 — the wordmark stays
+ * It is the brand lockup on the deepest ground: a sky mark beside a paper
+ * wordmark on navy. That split is the palette's rule 4 — the wordmark stays
  * ink/paper, the mark carries the hue — and it is what makes the card read as
  * Stella at thumbnail size, where the tagline is illegible anyway.
  *
@@ -20,7 +20,7 @@ import {
  *
  * Colours are literals rather than CSS vars because Satori resolves no
  * cascade; they are the tokens from docs/brand/tokens.json, named inline.
- * Measured on `night` #000000: wordmark 19.40:1, mark 8.19:1, tagline 8.50:1,
+ * Measured on `night` #000000: wordmark 19.40:1, mark 12.60:1, tagline 8.50:1,
  * footer 4.71:1. Keep the markup inside Satori's supported subset — plain
  * <path> fills only, no gradients, masks, or filters.
  */
@@ -50,26 +50,26 @@ export default function OpengraphImage() {
               display: "flex",
               alignItems: "center",
               gap: "14px",
-              border: "1px solid #26262e", // hairline
+              border: "1px solid #22304c", // hairline
               borderRadius: "9999px",
               padding: "12px 26px",
               fontSize: "28px",
               color: "#98a6ba", // text-secondary
             }}
           >
-            <span style={{ color: "#00aaff", fontWeight: 700 }}>{">_"}</span>
+            <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{">_"}</span>
             <span>a terminal coding agent</span>
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          {/* The lockup: electric mark, paper wordmark. */}
+          {/* The lockup: sky mark, paper wordmark. */}
           <div style={{ display: "flex", alignItems: "center", gap: "36px" }}>
             <svg
               viewBox={MARK_VIEW_BOX}
               width={132}
               height={132}
-              fill="#00aaff" // electric — the mark is the one place the hue lives
+              fill="#7dd3fc" // sky — the mark is the one place the hue lives
             >
               <path d={MARK_PATH} />
             </svg>

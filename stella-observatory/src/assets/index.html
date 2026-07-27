@@ -13,24 +13,23 @@
    `dashboard_html_has_no_external_references` test in ../../lib.rs).           */
 :root{
   /* BEGIN brand palette — mirrors stella-tui/src/palette.rs */
-  --night:#000000; --ground:#000000; --surface:#0A0A0B;
-  --raised:#151519; --hairline:#26262E;
-  --electric:#00AAFF; --electric-deep:#0066FF;
+  --night:#000000; --ground:#000000; --surface:#0A0E14;
+  --raised:#141C26; --hairline:#24313F;
+  --sky:#7DD3FC; --sky-deep:#38BDF8;
   --text:#F3F6FA; --text-2:#98A6BA; --text-3:#6C7B90;
   --ok:#4ADE80; --warn:#FF8A1F; --bad:#FF5C7A;
   /* Semantic alias. The dashboard is dark-only, so this resolves once.
      Only ONE alias, and only for brand/active/progress: the page's quiet
      structural labels take --text-3. An `--accent-2` here would just be a
      licence to paint everything blue, which is what rule 3 forbids. */
-  --accent:var(--electric);
+  --accent:var(--sky);
   /* END generated brand palette */
-  --hairline-dim:rgba(38,38,46,.55);
+  --hairline-dim:rgba(36,49,63,.55);
   /* Data-mark palette — categorical, deliberately NOT the brand hue: data
-     marks must not read as "active". `--c1` moved off its old gold amber when
-     jet-black-and-electric banned gold outright; a fuchsia reads apart from
-     the accent, the violet `--c2`, and the rose `--c3` alike. Validated on
-     the black ground. */
-  --c1:#E879F9; --c2:#8F70E8; --c3:#E4408F; --c4:#2FD3C6;
+     marks must not read as "active". `--c1` moved off its old azure when the
+     brand took the pale-blue end of the spectrum; an amber reads apart from
+     the accent where a second blue did not. Validated on the black ground. */
+  --c1:#E3B341; --c2:#8F70E8; --c3:#E4408F; --c4:#2FD3C6;
   --mono:"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
 }
@@ -1361,7 +1360,7 @@ function drawGraph() {
     else if (q) { ctx.globalAlpha = 0.06; }
     else { ctx.globalAlpha = lit ? 0.75 : 0.16; }
     if (lit) ctx.globalAlpha = 0.75;
-    ctx.strokeStyle = lit ? "#00AAFF" : "#98A6BA";
+    ctx.strokeStyle = lit ? "#7DD3FC" : "#98A6BA";
     ctx.lineWidth = (lit ? 1.6 : 0.7) / k;
     ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
@@ -1374,7 +1373,7 @@ function drawGraph() {
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.fill();
     if (n.i === graph.selected || n.i === graph.hover) {
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = "#00AAFF"; ctx.lineWidth = 2 / k;
+      ctx.strokeStyle = "#7DD3FC"; ctx.lineWidth = 2 / k;
       ctx.beginPath(); ctx.arc(n.x, n.y, r + 2 / k, 0, 2 * Math.PI); ctx.stroke();
     }
   }

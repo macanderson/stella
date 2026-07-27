@@ -1,7 +1,6 @@
 //! The `stella init` cinematic — a tiny terminal animation that plays while
-//! the workspace is being indexed: an electric-blue starfield drifting by,
-//! crossed by stella's mascot-grade absurdity, a turtle on a jetpack
-//! skateboard.
+//! the workspace is being indexed: a sky-blue starfield drifting by, crossed by
+//! stella's mascot-grade absurdity, a turtle on a jetpack skateboard.
 //!
 //! Rendering discipline mirrors the deck's fx rules:
 //!
@@ -17,9 +16,8 @@
 //!   exactly as before.
 //!
 //! Colors come from the brand palette (stella-tui/src/palette.rs) and are
-//! enforced by this module's tests: the two star/flame inks are the
-//! `ELECTRIC_DEEP` and `ELECTRIC` brand tokens, and the shell takes the
-//! deck's categorical violet.
+//! enforced by this module's tests: the two star/flame inks are the `SKY_DEEP`
+//! and `SKY` brand tokens, and the shell takes the deck's categorical violet.
 //! This module used to carry a private palette of its own that tracked nothing;
 //! it now takes the brand tokens directly, so the cinematic and the deck agree
 //! by construction instead of merely coinciding.
@@ -165,11 +163,11 @@ fn truncate_width(row: &mut String, width: usize) {
 /// palette-law test must check the *choice*, not the escape bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Ink {
-    /// Deep electric — jetpack flames and the skateboard deck.
+    /// Deep sky — jetpack flames and the skateboard deck.
     Flame,
     /// Muted — the dimmer twinkle of a star.
     Star,
-    /// Brand electric — the brighter twinkle of a star.
+    /// Brand sky — the brighter twinkle of a star.
     StarBright,
     /// Violet — the turtle's shell linework. Categorical, not brand.
     Shell,
@@ -183,11 +181,11 @@ impl Ink {
     /// The truecolor RGB this ink renders as, or `None` for dim/plain.
     fn rgb(self) -> Option<(u8, u8, u8)> {
         match self {
-            // electric-deep, text-tertiary, electric, and the deck's
-            // categorical violet — see stella-tui/src/palette.rs.
-            Ink::Flame => Some((0x00, 0x66, 0xFF)),
+            // sky-deep, text-tertiary, sky, and the deck's categorical
+            // violet — see stella-tui/src/palette.rs.
+            Ink::Flame => Some((0x38, 0xBD, 0xF8)),
             Ink::Star => Some((0x6C, 0x7B, 0x90)),
-            Ink::StarBright => Some((0x00, 0xAA, 0xFF)),
+            Ink::StarBright => Some((0x7D, 0xD3, 0xFC)),
             Ink::Shell => Some((0xA7, 0x8B, 0xFA)),
             Ink::Dim | Ink::Plain => None,
         }
@@ -209,8 +207,8 @@ fn ink_for(ch: char, is_caption: bool) -> Ink {
     }
 }
 
-/// Colorize one plain row for display: flames electric, shell violet, stars
-/// alternating electric/dim, everything else muted. Row-level heuristics keep
+/// Colorize one plain row for display: flames sky, shell violet, stars
+/// alternating sky/dim, everything else muted. Row-level heuristics keep
 /// this trivially safe — a colored row is never structurally different from
 /// its plain form.
 fn paint(row: &str, is_caption: bool) -> String {
@@ -448,15 +446,11 @@ mod tests {
             }
         }
         // The cinematic's two brand inks are the brand tokens themselves, not
-        // a look-alike blue that drifted. These are `ELECTRIC` and
-        // `ELECTRIC_DEEP` from stella-tui/src/palette.rs; if that file
-        // changes, this fails and points at the copy that needs regenerating.
-        assert_eq!(Ink::StarBright.rgb(), Some((0x00, 0xAA, 0xFF)), "electric");
-        assert_eq!(
-            Ink::Flame.rgb(),
-            Some((0x00, 0x66, 0xFF)),
-            "electric-deep"
-        );
+        // a look-alike blue that drifted. These are `SKY` and `SKY_DEEP` from
+        // stella-tui/src/palette.rs; if that file changes, this fails and points
+        // at the copy that needs regenerating.
+        assert_eq!(Ink::StarBright.rgb(), Some((0x7D, 0xD3, 0xFC)), "sky");
+        assert_eq!(Ink::Flame.rgb(), Some((0x38, 0xBD, 0xF8)), "sky-deep");
         // And the star/flame pair stays cool — blue-dominant — so the cinematic
         // can never drift back to the retired warm accent while still passing.
         for ink in [Ink::Flame, Ink::StarBright] {

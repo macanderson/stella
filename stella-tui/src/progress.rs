@@ -18,7 +18,7 @@
 //!   the **pulsing head** are the *only* indeterminate cues, and they signal
 //!   liveness (`AgentStatus::Running`) — never progress. They ride *on top of*
 //!   the determinate fill and never advance it.
-//! - The fill rides the brand **electric** gradient (deep electric → electric)
+//! - The fill rides the brand **sky** gradient (deep sky → sky)
 //!   — the deck's one deliberately warm run, so its sole activity indicator
 //!   is unmistakable against the cool aurora chrome everywhere else.
 //! - **tok/s** is the focused agent's real `tokens_out / elapsed`; it is omitted
@@ -222,7 +222,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
 }
 
 /// The label chunk (`✓ plan · ▸ execute · verify`) as styled spans, plus its
-/// display width. Done = success green, Active = electric (matches the fill),
+/// display width. Done = success green, Active = sky (matches the fill),
 /// Pending = dim.
 fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
     let mut spans = Vec::new();
@@ -235,7 +235,7 @@ fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
         let (glyph, color, bold) = match state.segments[i] {
             SegState::Done => ("✓", theme::SUCCESS_BRIGHT, false),
             SegState::Active if state.phase == RunPhase::Error => ("✗", theme::DANGER, true),
-            SegState::Active => ("▸", theme::ELECTRIC, true),
+            SegState::Active => ("▸", theme::SKY, true),
             SegState::Pending => ("·", theme::TEXT_DIM, false),
         };
         let mut style = Style::default().fg(color);
@@ -407,7 +407,7 @@ fn render_track(
             let mut fg = if truecolor {
                 theme::brand_gradient(t)
             } else {
-                theme::ELECTRIC
+                theme::SKY
             };
 
             // Shimmer: two light bands (a bright leader and a dimmer trailing
@@ -428,7 +428,7 @@ fn render_track(
                         fg = theme::lighten(fg, 0.2 * (1.0 - de / 1.5));
                     }
                 } else if i == center.round() as usize {
-                    fg = theme::ELECTRIC;
+                    fg = theme::SKY;
                 }
             }
 
@@ -440,7 +440,7 @@ fn render_track(
                 } else if truecolor {
                     fg = theme::lighten(fg, pulse);
                 } else {
-                    fg = theme::ELECTRIC;
+                    fg = theme::SKY;
                 }
             }
 
@@ -676,8 +676,8 @@ mod tests {
         // cleanly — an interpolated gradient RGB has no indexed fallback.
         render_track(&state, 1234, ColorMode::Ansi256, 0, 0, 40, &mut buf);
         let allowed = [
-            theme::ELECTRIC,
-            theme::ELECTRIC,
+            theme::SKY,
+            theme::SKY,
             theme::TEXT_DIM,
             theme::HAIRLINE,
             ratatui::style::Color::Reset,

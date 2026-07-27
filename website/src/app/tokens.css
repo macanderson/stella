@@ -3,7 +3,7 @@
  * global.css maps these onto the light/dark semantic layer, the same way
  * stella-tui's theme.rs maps palette.rs.
  *
- * The identity is electric blue on jet black: a live wire in the dark.
+ * The identity is bright sky on black: a signal light in the dark.
  *
  * This file mirrors stella-tui/src/palette.rs, which is the normative source;
  * the two must be edited together. (The header used to claim generation from
@@ -11,17 +11,17 @@
  */
 
 :root {
-  /* Ground (dark) — Jet black, so the vivid accent keeps its contrast. */
+  /* Ground (dark) — True black, so the pale accent keeps its contrast. */
   --stella-night: #000000;
   --stella-ground: #000000;
-  --stella-surface: #0a0a0b;
-  --stella-raised: #151519;
-  --stella-hairline: #26262e;
+  --stella-surface: #0a0e14;
+  --stella-raised: #141c26;
+  --stella-hairline: #24313f;
 
-  /* Brand — Electric blue. */
-  --stella-electric: #00aaff;
-  --stella-electric-deep: #0066ff;
-  --stella-electric-ink: #0a3d91;
+  /* Brand — Bright sky blue. */
+  --stella-sky: #7dd3fc;
+  --stella-sky-deep: #38bdf8;
+  --stella-sky-ink: #0b4a6f;
 
   /* Text (dark ground) — Cool neutrals for the dark canvas. */
   --stella-text-primary: #f3f6fa;

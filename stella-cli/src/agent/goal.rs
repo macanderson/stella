@@ -399,7 +399,7 @@ pub(crate) async fn run_goal_turn(
         println!(
             "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
              assessment\n",
-            "◆".bright_blue(),
+            "◆".bright_cyan(),
             cfg.provider.id.bright_magenta(),
             judge_id.bright_green(),
         );
@@ -577,7 +577,7 @@ async fn run_goal_pipeline_turn(
         println!(
             "  {} cross-family judge: {} worker · {} judge — independent, bias-resistant \
              assessment\n",
-            "◆".bright_blue(),
+            "◆".bright_cyan(),
             cfg.provider.id.bright_magenta(),
             judge_id.bright_green(),
         );

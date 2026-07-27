@@ -3,7 +3,7 @@
 //! names (accent, ink, rule, status) see [`crate::theme`], which is the
 //! only module that should be referencing these directly.
 //!
-//! The identity is electric blue on jet black: a live wire in the dark.
+//! The identity is bright sky on black: a signal light in the dark.
 //!
 //! Mirrored by `website/src/app/tokens.css` (`--stella-*`); the two must be
 //! edited together.
@@ -12,11 +12,11 @@ use ratatui::style::Color;
 
 // ── Ground (dark) ───────────────────────────────────────────────
 //
-// Jet black, not a tinted navy. The accent is a vivid, high-chroma blue, and
+// True black, not a tinted navy. The accent is a light, high-chroma blue, and
 // a blue-tinted ground robs it of the contrast that makes it read as a signal
 // rather than as decoration -- so the canvas is neutral and the only colour on
 // screen is colour that means something. `surface` and `raised` step up for
-// cards and popovers as neutral greys, never as navy.
+// cards and popovers.
 
 /// Deepest ground -- full-bleed backdrops, the splash, OG art.
 pub const NIGHT: Color = Color::Rgb(0x00, 0x00, 0x00);
@@ -25,29 +25,29 @@ pub const NIGHT: Color = Color::Rgb(0x00, 0x00, 0x00);
 pub const GROUND: Color = Color::Rgb(0x00, 0x00, 0x00);
 
 /// Card / panel surface, one step above ground.
-pub const SURFACE: Color = Color::Rgb(0x0A, 0x0A, 0x0B);
+pub const SURFACE: Color = Color::Rgb(0x0A, 0x0E, 0x14);
 
 /// Raised surface -- popovers, selected rows, hovered cells.
-pub const RAISED: Color = Color::Rgb(0x15, 0x15, 0x19);
+pub const RAISED: Color = Color::Rgb(0x14, 0x1C, 0x26);
 
 /// Seam / rule. Deliberately low-contrast on ground: decorative only, never
 /// the sole carrier of structure.
-pub const HAIRLINE: Color = Color::Rgb(0x26, 0x26, 0x2E);
+pub const HAIRLINE: Color = Color::Rgb(0x24, 0x31, 0x3F);
 
 // ── Brand ───────────────────────────────────────────────────────
 //
-// Electric blue. Reserved for brand, active/running, and progress -- never a
+// Bright sky blue. Reserved for brand, active/running, and progress -- never a
 // general-purpose highlight. In the transcript this means exactly one thing
 // carries it: the name of the tool being called.
 
 /// The brand hue. On dark ground only, or as a fill under an ink label.
-pub const ELECTRIC: Color = Color::Rgb(0x00, 0xAA, 0xFF);
+pub const SKY: Color = Color::Rgb(0x7D, 0xD3, 0xFC);
 
 /// Pressed / gradient-deep stop, and the leading stop of the progress fill.
-pub const ELECTRIC_DEEP: Color = Color::Rgb(0x00, 0x66, 0xFF);
+pub const SKY_DEEP: Color = Color::Rgb(0x38, 0xBD, 0xF8);
 
-/// The ONLY brand text tone permitted on a light ground -- 10.0:1 on paper.
-pub const ELECTRIC_INK: Color = Color::Rgb(0x0A, 0x3D, 0x91);
+/// The ONLY brand text tone permitted on a light ground -- 8.6:1 on paper.
+pub const SKY_INK: Color = Color::Rgb(0x0B, 0x4A, 0x6F);
 
 // ── Text (dark ground) ──────────────────────────────────────────
 //
@@ -96,7 +96,7 @@ pub const DANGER_INK: Color = Color::Rgb(0xC8, 0x10, 0x2E);
 
 // ── Ground (light) ──────────────────────────────────────────────
 //
-// The paper mode. Accent text here is ink, never the bright electric.
+// The paper mode. Accent text here is ink, never the bright sky.
 
 /// Light background.
 pub const PAPER: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
@@ -104,7 +104,7 @@ pub const PAPER: Color = Color::Rgb(0xFF, 0xFF, 0xFF);
 /// Light surface, one step in from paper.
 pub const SNOW: Color = Color::Rgb(0xF4, 0xF4, 0xF5);
 
-/// Primary text on paper. Also the label laid over an electric fill.
+/// Primary text on paper. Also the label laid over a sky fill.
 pub const INK: Color = Color::Rgb(0x0A, 0x0A, 0x0A);
 
 /// Secondary text on paper.
@@ -120,9 +120,9 @@ pub const ALL: [(&str, Color); 21] = [
     ("surface", SURFACE),
     ("raised", RAISED),
     ("hairline", HAIRLINE),
-    ("electric", ELECTRIC),
-    ("electric-deep", ELECTRIC_DEEP),
-    ("electric-ink", ELECTRIC_INK),
+    ("sky", SKY),
+    ("sky-deep", SKY_DEEP),
+    ("sky-ink", SKY_INK),
     ("text-primary", TEXT_PRIMARY),
     ("text-secondary", TEXT_SECONDARY),
     ("text-tertiary", TEXT_TERTIARY),

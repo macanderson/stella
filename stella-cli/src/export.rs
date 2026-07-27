@@ -266,19 +266,19 @@ fn render_dashboard(
        file a user mails around, so the tokens are inlined rather than
        imported; keep them in step with palette.rs. */
     --bg: #000000;
-    --surface: #0a0a0b;
-    --raised: #151519;
+    --surface: #0a0e14;
+    --raised: #141c26;
     --text: #f3f6fa;
     --text2: #98a6ba;
     --text3: #6c7b90;
-    --electric: #00aaff;
-    --electric-deep: #0066ff;
+    --sky: #7dd3fc;
+    --sky-deep: #38bdf8;
     --violet: #a78bfa;
-    --magenta: #e879f9;
+    --azure: #4d9fff;
     --success: #4ade80;
     --warn: #ff8a1f;
     --danger: #ff5c7a;
-    --rule: #26262e;
+    --rule: #24313f;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
@@ -287,7 +287,7 @@ fn render_dashboard(
     line-height: 1.5; padding: 24px; max-width: 1280px; margin: 0 auto;
   }}
   h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--text); }}
-  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--electric); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
+  h2 {{ font-size: 1.25rem; margin: 32px 0 12px; color: var(--sky); border-bottom: 1px solid var(--rule); padding-bottom: 8px; }}
   .watermark {{ color: var(--text3); font-size: 0.85rem; margin-bottom: 24px; font-family: monospace; }}
   .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 8px; }}
   .kpi {{
@@ -318,8 +318,8 @@ fn render_dashboard(
   .pie-legend {{ display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 0.8rem; }}
   .pie-legend span {{ display: flex; align-items: center; gap: 4px; }}
   .dot {{ width: 10px; height: 10px; border-radius: 2px; display: inline-block; }}
-  .insight {{ background: var(--surface); border-left: 3px solid var(--electric); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
-  .insight .insight-label {{ color: var(--electric); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  .insight {{ background: var(--surface); border-left: 3px solid var(--sky); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 8px; font-size: 0.9rem; }}
+  .insight .insight-label {{ color: var(--sky); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }}
   .footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--text3); font-size: 0.75rem; }}
 </style>
 </head>
@@ -482,7 +482,7 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
     .map(f=>({{label:f.path, value:(f.lines_added||0)+(f.lines_removed||0), display:'+'+(f.lines_added||0)+'/-'+(f.lines_removed||0)}}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,15);
-  barChart('file-chart', data, '--magenta');
+  barChart('file-chart', data, '--azure');
 }})();
 
 // ── Execution outcomes ──────────────────────────────────────────────────
