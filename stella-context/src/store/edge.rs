@@ -11,17 +11,6 @@ use crate::error::ContextError;
 
 use super::sha256_hex;
 
-/// 1-hop neighbors of `seeds` over currently-believed fact edges, as
-/// `(neighbor_id, edge_weight)`. `as_of` (transaction time) pins which beliefs
-/// are visible: `None` = currently believed (`superseded_at IS NULL`).
-pub(crate) fn neighbors(
-    conn: &Connection,
-    seeds: &[i64],
-    as_of: Option<&str>,
-) -> Result<Vec<(i64, f64)>, ContextError> {
-    neighbors_valid_at(conn, seeds, as_of, None)
-}
-
 /// 1-hop neighbours over edges believed at `as_of` **and** holding in the
 /// world at `valid_at`.
 ///
@@ -182,10 +171,6 @@ pub(crate) fn close_edge(
 /// reports the edge as believed. `valid_at` is what hides it from the present.
 ///
 /// Never deletes (`L-C3`): "what was true at T1" must still answer.
-// The staleness scan that calls this lands next; the primitive and its
-// semantics are separable from the policy that decides which anchors are
-// stale, and the semantics are the part worth pinning first.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn end_world_validity(
     conn: &Connection,
     edge_id: i64,
@@ -196,6 +181,52 @@ pub(crate) fn end_world_validity(
         params![edge_id, valid_to],
     )?;
     Ok(changed > 0)
+}
+
+/// One anchor edge that is still open on both axes, with the target it names.
+#[derive(Debug, Clone)]
+pub(crate) struct OpenAnchor {
+    /// Edge rowid — what [`end_world_validity`] takes.
+    pub edge_id: i64,
+    /// The anchored node's `uri`, e.g. `file://stella-cli/src/agent.rs`.
+    pub uri: String,
+    /// The anchoring memory's content, for reporting which memory goes stale.
+    pub memory: String,
+}
+
+/// Every `rel` anchor still believed *and* still holding in the world.
+///
+/// Both axes are filtered, and for different reasons: a superseded anchor is
+/// one we no longer believe and must not re-end, and an anchor whose world
+/// validity already ended is one a previous scan already handled — re-ending it
+/// is not merely wasted work, it would move the date the file actually
+/// disappeared if `end_world_validity` were ever made unconditional.
+///
+/// Returned in edge-id order so a scan's report is stable between runs.
+pub(crate) fn open_anchors(conn: &Connection, rel: &str) -> Result<Vec<OpenAnchor>, ContextError> {
+    let mut stmt = conn.prepare(
+        "SELECT e.id, dst.uri, src.content
+         FROM edge e
+         JOIN node dst ON dst.id = e.dst_id
+         JOIN node src ON src.id = e.src_id
+         WHERE e.rel = ?1
+           AND e.superseded_at IS NULL
+           AND e.valid_to IS NULL
+           AND dst.uri IS NOT NULL
+         ORDER BY e.id",
+    )?;
+    let rows = stmt.query_map(params![rel], |r| {
+        Ok(OpenAnchor {
+            edge_id: r.get(0)?,
+            uri: r.get(1)?,
+            memory: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 /// Fact edges as believed at a transaction-time instant. `as_of = None` means

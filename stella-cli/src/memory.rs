@@ -47,6 +47,11 @@ use stella_pipeline::{ContextRecallPort, RecalledFrame};
 #[cfg(test)]
 use stella_protocol::{CompletionMessage, MessageRole};
 
+// Which files a memory is about — shared by the reflection write path and by
+// `stella memory validate`, which must agree on what counts as an anchor.
+pub(crate) mod anchors;
+// The policy half: which anchors have gone stale, and recording that they did.
+pub(crate) mod anchor_scan;
 // Phase 4 (#715): the citation and tool-outcome evidence sources, which turn
 // explicit citation from *the* evidence source into one of several.
 mod evidence;

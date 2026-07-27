@@ -15,11 +15,20 @@ use sha2::{Digest, Sha256};
 use crate::error::ContextError;
 use crate::retrieval::RecallTier;
 use crate::store::{
-    ContextStore, NodeInput, NodeKind, close_edge, edges_as_of, embedding_exists, insert_edge,
-    insert_episode, insert_memory, node_by_id, sha256_hex, store_embedding, tag_edge_domains,
-    tag_node_domains, to_hex, upsert_domain, upsert_node,
+    ContextStore, NodeInput, NodeKind, close_edge, edges_as_of, embedding_exists,
+    end_world_validity, insert_edge, insert_episode, insert_memory, node_by_id, open_anchors,
+    sha256_hex, store_embedding, tag_edge_domains, tag_node_domains, to_hex, upsert_domain,
+    upsert_node,
 };
 use crate::warm;
+
+/// `edge.rel` for a memory-to-file anchor: *this memory is about that file*.
+///
+/// One string, exported, because three planes have to agree on it — the write
+/// side in [`ContextStore::upsert`], the staleness scan that ends its world
+/// validity, and any future recall that traverses it. A literal repeated in
+/// three crates is a rename away from anchors that silently stop matching.
+pub const ANCHOR_REL: &str = "observed_in";
 
 /// How an episode turned out. Stored as its `as_str` form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,6 +276,23 @@ pub struct MemoryInput {
     /// lifecycle writes process notes as [`RecallTier::Deferred`] so a durable
     /// fact about the codebase is not evicted by commentary about the turn.
     pub recall_tier: RecallTier,
+    /// Workspace-relative paths of the files this memory is *about*.
+    ///
+    /// Each becomes an `observed_in` edge from the memory's mirror node to a
+    /// [`NodeKind::File`] node, which is what turns *"what does the agent know
+    /// about `registry.py`"* into an edge traversal rather than an embedding
+    /// guess.
+    ///
+    /// The edges are written with an open `valid_from`/`valid_to`: we do not
+    /// claim to know when the memory *started* being about the file, only that
+    /// it is now. When the file is deleted, the staleness scan ends the world
+    /// validity — the belief is never retracted, because it was not wrong (see
+    /// `store::edge::end_world_validity`).
+    ///
+    /// Anchors are a claim about the *subject* of the memory, not a log of what
+    /// the turn happened to touch. A turn edits a dozen files; the lesson is
+    /// usually about one.
+    pub anchors: Vec<String>,
 }
 
 impl MemoryInput {
@@ -283,7 +309,19 @@ impl MemoryInput {
             salience: 0.0,
             lineage: None,
             recall_tier: RecallTier::Normal,
+            anchors: Vec::new(),
         }
+    }
+
+    /// Anchor this memory to the files it is about. See [`MemoryInput::anchors`].
+    #[must_use]
+    pub fn with_anchors<I, S>(mut self, anchors: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.anchors = anchors.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Ask for a non-default precedence band at recall. See [`RecallTier`].
@@ -302,6 +340,7 @@ impl MemoryInput {
             salience: 0.0,
             lineage: None,
             recall_tier: RecallTier::Normal,
+            anchors: Vec::new(),
         }
     }
 
@@ -481,6 +520,27 @@ pub struct UpsertReceipt {
     pub embeddings_reused: usize,
     /// New domain-tag associations written across all records this batch.
     pub domain_tags_added: usize,
+    /// `observed_in` anchor edges inserted from a memory to a file it is about.
+    /// Re-asserting an anchor that is already open on both time axes inserts
+    /// nothing and is not counted; an anchor whose world validity was ended by
+    /// the staleness scan *is* re-opened, because a file that came back is a
+    /// new fact about the world rather than a duplicate of the old one.
+    pub anchors_written: usize,
+}
+
+/// An open memory→file anchor, as the staleness scan sees it.
+#[derive(Debug, Clone)]
+pub struct AnchorView {
+    /// Edge rowid — pass to [`ContextStore::end_anchor_validity`].
+    pub edge_id: i64,
+    /// The anchored node's full uri, e.g. `file://stella-cli/src/agent.rs`.
+    pub uri: String,
+    /// The uri with its `file://` scheme stripped: the workspace-relative path
+    /// to test for existence. Anchors are written relative (matching
+    /// `record_taxonomy`), so this joins onto the workspace root directly.
+    pub path: String,
+    /// The anchoring memory's text, so a report can name what goes stale.
+    pub memory: String,
 }
 
 /// A fact resolved to human labels for point-in-time queries (`L-C4`: cite by
@@ -646,6 +706,44 @@ impl ContextStore {
             receipt.domain_tags_added += tag_node_domains(&tx, id, &node.domains, &now)?;
             receipt.nodes_upserted += 1;
             receipt.memories_written += 1;
+
+            // Anchor the memory to the files it is about. Written here rather
+            // than left to the caller as a `FactAssertion` because the mirror
+            // node's identity is minted in this loop — a caller would have to
+            // reconstruct `memory://{lineage}` by hand and would silently
+            // anchor to nothing the day that spelling changed.
+            for path in &memory.anchors {
+                let file = NodeInput::new(NodeKind::File, path.as_str())
+                    .with_uri(format!("file://{path}"))
+                    .with_domains(memory.domains.clone());
+                let dst = upsert_node(&tx, &file, &now)?;
+                receipt.domain_tags_added += tag_node_domains(&tx, dst, &file.domains, &now)?;
+                receipt.nodes_upserted += 1;
+                // Open on BOTH axes, not merely un-superseded: an anchor whose
+                // file was deleted has `valid_to` set and `superseded_at` null,
+                // and re-learning the same lesson after the file comes back
+                // must open a new interval rather than be swallowed as a
+                // duplicate. `live_triple_exists` checks belief only, which is
+                // right for `apply_fact` and wrong here.
+                if !open_anchor_exists(&tx, id, ANCHOR_REL, dst)? {
+                    insert_edge(
+                        &tx,
+                        ANCHOR_REL,
+                        id,
+                        dst,
+                        1.0,
+                        &serde_json::json!({}),
+                        // No `valid_from`: we know the memory is about this
+                        // file now, not when that started being true. NULL is
+                        // "unbounded in the past", which is the honest claim.
+                        None,
+                        None,
+                        &now,
+                        None,
+                    )?;
+                    receipt.anchors_written += 1;
+                }
+            }
         }
 
         for fact in &delta.facts {
@@ -663,6 +761,39 @@ impl ContextStore {
 
         tx.commit()?;
         Ok(receipt)
+    }
+
+    /// Every memory→file anchor still believed and still holding in the world.
+    ///
+    /// This is deliberately a *reader*, not a scan. The store knows which
+    /// anchors are open; it does not know which files exist, and it must not
+    /// learn — a workspace walk in here would put filesystem policy behind the
+    /// database's back and make the store untestable without a real tree. The
+    /// caller pairs this with [`ContextStore::end_anchor_validity`].
+    pub fn open_anchors(&self) -> Result<Vec<AnchorView>, ContextError> {
+        let conn = self.conn();
+        Ok(open_anchors(&conn, ANCHOR_REL)?
+            .into_iter()
+            .map(|a| AnchorView {
+                edge_id: a.edge_id,
+                path: a.uri.strip_prefix("file://").unwrap_or(&a.uri).to_string(),
+                uri: a.uri,
+                memory: a.memory,
+            })
+            .collect())
+    }
+
+    /// Record that an anchor stopped holding in the world at `valid_to`.
+    ///
+    /// Ends world validity only: the memory is not retracted and `as_of`
+    /// queries still report the anchor as believed, because it was never wrong
+    /// — the file simply went away. Returns `false` if the anchor had already
+    /// been ended, so a second scan cannot move the date the file disappeared.
+    ///
+    /// See `store::edge::end_world_validity` for why this is not `close_edge`.
+    pub fn end_anchor_validity(&self, edge_id: i64, valid_to: &str) -> Result<bool, ContextError> {
+        let conn = self.conn();
+        end_world_validity(&conn, edge_id, valid_to)
     }
 
     /// Fact edges as believed at a transaction-time instant, resolved to human
@@ -822,6 +953,29 @@ fn live_triple_exists(
     let n: i64 = conn.query_row(
         "SELECT COUNT(*) FROM edge
          WHERE src_id = ?1 AND rel = ?2 AND dst_id = ?3 AND superseded_at IS NULL",
+        rusqlite::params![src, rel, dst],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Does an anchor exist that is open on **both** time axes?
+///
+/// The belief-only test ([`live_triple_exists`]) is the right idempotence check
+/// for [`apply_fact`], where ending world validity is not a thing that happens.
+/// It is the wrong one for anchors: the staleness scan sets `valid_to` and
+/// deliberately leaves `superseded_at` null, so a deleted-then-restored file
+/// would look "live" forever and never regain an anchor.
+fn open_anchor_exists(
+    conn: &rusqlite::Connection,
+    src: i64,
+    rel: &str,
+    dst: i64,
+) -> Result<bool, ContextError> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM edge
+         WHERE src_id = ?1 AND rel = ?2 AND dst_id = ?3
+           AND superseded_at IS NULL AND valid_to IS NULL",
         rusqlite::params![src, rel, dst],
         |r| r.get(0),
     )?;
@@ -1069,6 +1223,127 @@ mod tests {
             beliefs.len(),
             2,
             "both dependencies are concurrently believed"
+        );
+    }
+
+    /// A memory carrying anchors writes one `observed_in` edge per file, and
+    /// the store reports them as open.
+    #[tokio::test]
+    async fn a_memory_anchors_to_the_files_it_is_about() {
+        let clock = FixedClock::shared(1_000);
+        let (_dir, store) = store_at(clock.clone());
+
+        let receipt = store
+            .upsert(
+                ContextDelta::new().with_memory(
+                    MemoryInput::reflection("handlers register in registry.rs", ["core"])
+                        .with_anchors(["src/registry.rs", "src/main.rs"]),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(receipt.anchors_written, 2);
+        let open = store.open_anchors().unwrap();
+        let mut paths: Vec<String> = open.iter().map(|a| a.path.clone()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["src/main.rs", "src/registry.rs"]);
+        assert!(
+            open.iter().all(|a| a.memory.contains("registry.rs")),
+            "each anchor names the memory it came from, so a scan can report it"
+        );
+    }
+
+    /// Re-learning the same lesson must not grow the graph. The reflection loop
+    /// re-mines paraphrases constantly, so an anchor that duplicated per turn
+    /// would make one file accumulate hundreds of identical edges.
+    #[tokio::test]
+    async fn re_anchoring_the_same_file_writes_nothing_new() {
+        let clock = FixedClock::shared(1_000);
+        let (_dir, store) = store_at(clock.clone());
+
+        let delta = || {
+            ContextDelta::new().with_memory(
+                MemoryInput::reflection("handlers register in registry.rs", ["core"])
+                    .with_anchors(["src/registry.rs"]),
+            )
+        };
+        let first = store.upsert(delta()).await.unwrap();
+        clock.advance(1_000);
+        let second = store.upsert(delta()).await.unwrap();
+
+        assert_eq!(first.anchors_written, 1);
+        assert_eq!(second.anchors_written, 0, "the anchor already held");
+        assert_eq!(store.open_anchors().unwrap().len(), 1);
+    }
+
+    /// The distinction `live_triple_exists` cannot make.
+    ///
+    /// A deleted file ends the anchor's world validity but leaves it believed.
+    /// A belief-only idempotence check therefore sees it as "already there"
+    /// forever, and a file that comes back would never regain an anchor.
+    #[tokio::test]
+    async fn an_anchor_reopens_after_its_file_comes_back() {
+        let clock = FixedClock::shared(1_000);
+        let (_dir, store) = store_at(clock.clone());
+
+        let delta = || {
+            ContextDelta::new().with_memory(
+                MemoryInput::reflection("handlers register in registry.rs", ["core"])
+                    .with_anchors(["src/registry.rs"]),
+            )
+        };
+        store.upsert(delta()).await.unwrap();
+        let anchor = store.open_anchors().unwrap().remove(0);
+
+        // The file is deleted: world validity ends, belief is untouched.
+        clock.advance(1_000);
+        let deleted_at = store.clock().now_rfc3339();
+        assert!(
+            store
+                .end_anchor_validity(anchor.edge_id, &deleted_at)
+                .unwrap()
+        );
+        assert!(
+            store.open_anchors().unwrap().is_empty(),
+            "an ended anchor is not open"
+        );
+
+        // The file comes back and the lesson is re-learned.
+        clock.advance(1_000);
+        let again = store.upsert(delta()).await.unwrap();
+        assert_eq!(
+            again.anchors_written, 1,
+            "a file that returned is a new fact about the world, not a duplicate"
+        );
+        assert_eq!(store.open_anchors().unwrap().len(), 1);
+    }
+
+    /// Ending an anchor twice must not move the date the file disappeared.
+    #[tokio::test]
+    async fn ending_an_anchor_twice_keeps_the_first_date() {
+        let clock = FixedClock::shared(1_000);
+        let (_dir, store) = store_at(clock.clone());
+        store
+            .upsert(
+                ContextDelta::new().with_memory(
+                    MemoryInput::reflection("about registry.rs", ["core"])
+                        .with_anchors(["src/registry.rs"]),
+                ),
+            )
+            .await
+            .unwrap();
+        let anchor = store.open_anchors().unwrap().remove(0);
+
+        clock.advance(1_000);
+        let first = store.clock().now_rfc3339();
+        assert!(store.end_anchor_validity(anchor.edge_id, &first).unwrap());
+
+        clock.advance(10_000);
+        let later = store.clock().now_rfc3339();
+        assert!(
+            !store.end_anchor_validity(anchor.edge_id, &later).unwrap(),
+            "a second scan reports no change rather than re-dating the deletion"
         );
     }
 }

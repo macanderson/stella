@@ -134,12 +134,23 @@ impl SessionMemory {
         // identical reflection memories, so the taxonomy existed on disk in
         // `reflections.jsonl` and meant nothing to the ranking that actually
         // decides what reaches a prompt.
+        // Anchor each lesson to the files it names, so "what do we know about
+        // `registry.py`" becomes an edge traversal rather than an embedding
+        // guess. Resolved against the tree as it is now: only files that exist
+        // are anchored, and an ambiguous bare filename is skipped rather than
+        // guessed (see `anchors::resolve_anchors`). A lesson that names no file
+        // simply gets no anchors, which is the common case for process notes
+        // and is exactly right — they are not about a file.
         let delta = ContextDelta {
             memories: lessons
                 .iter()
                 .map(|l| {
                     MemoryInput::reflection(&l.lesson, l.domains.iter().cloned())
                         .with_recall_tier(l.kind.recall_tier())
+                        .with_anchors(crate::memory::anchors::resolve_anchors(
+                            &self.workspace_root,
+                            &l.lesson,
+                        ))
                 })
                 .collect(),
             ..Default::default()

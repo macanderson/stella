@@ -684,9 +684,12 @@ fn edge_pairs(conn: &Connection, as_of: Option<&str>) -> Vec<(i64, i64)> {
     v
 }
 
-/// Sorted neighbor ids of `seed` visible to `neighbors` at `as_of`.
+/// Sorted neighbor ids of `seed` believed at `as_of`, with **no** world-time
+/// filter — `valid_at = None` is the legacy behaviour these tests pin, and
+/// spelling it out here is what makes `as_of_ignores_world_validity_valid_from_valid_to`
+/// a statement about belief time rather than an accident of a wrapper's default.
 fn neighbor_ids(conn: &Connection, seed: i64, as_of: Option<&str>) -> Vec<i64> {
-    let mut v: Vec<i64> = neighbors(conn, &[seed], as_of)
+    let mut v: Vec<i64> = neighbors_valid_at(conn, &[seed], as_of, None)
         .unwrap()
         .into_iter()
         .map(|(n, _)| n)
@@ -1366,7 +1369,6 @@ fn v8_creates_the_ledger_empty() {
     );
 }
 
-
 /// A deleted file ends an anchor's world validity WITHOUT unbelieving it.
 ///
 /// The requirement this pins: a memory whose file was deleted is not wrong and
@@ -1380,14 +1382,24 @@ fn ending_world_validity_hides_the_present_and_preserves_the_past() {
     let (memory, file) = (concept(&conn, "memory"), concept(&conn, "file"));
     let props = serde_json::json!({});
     let edge = insert_edge(
-        &conn, "observed_in", memory, file, 1.0, &props,
-        Some(T0), None, T0, None,
+        &conn,
+        "observed_in",
+        memory,
+        file,
+        1.0,
+        &props,
+        Some(T0),
+        None,
+        T0,
+        None,
     )
     .unwrap();
 
     // Believed and world-valid: recalled now.
     assert_eq!(
-        neighbors_valid_at(&conn, &[memory], None, Some(T1_5)).unwrap().len(),
+        neighbors_valid_at(&conn, &[memory], None, Some(T1_5))
+            .unwrap()
+            .len(),
         1,
         "an open anchor is recallable"
     );
@@ -1397,13 +1409,17 @@ fn ending_world_validity_hides_the_present_and_preserves_the_past() {
 
     // The present no longer recalls it...
     assert!(
-        neighbors_valid_at(&conn, &[memory], None, Some(T3)).unwrap().is_empty(),
+        neighbors_valid_at(&conn, &[memory], None, Some(T3))
+            .unwrap()
+            .is_empty(),
         "after the file is gone the anchor must not be recalled"
     );
 
     // ...but it was true before, and still answers as of then.
     assert_eq!(
-        neighbors_valid_at(&conn, &[memory], None, Some(T1_5)).unwrap().len(),
+        neighbors_valid_at(&conn, &[memory], None, Some(T1_5))
+            .unwrap()
+            .len(),
         1,
         "the past is preserved: the anchor held at T1_5 and must still say so"
     );
@@ -1423,15 +1439,34 @@ fn ending_world_validity_twice_keeps_the_first_end_date() {
     let conn = store.conn();
     let (a, b) = (concept(&conn, "a"), concept(&conn, "b"));
     let props = serde_json::json!({});
-    let edge = insert_edge(&conn, "observed_in", a, b, 1.0, &props, Some(T0), None, T0, None).unwrap();
+    let edge = insert_edge(
+        &conn,
+        "observed_in",
+        a,
+        b,
+        1.0,
+        &props,
+        Some(T0),
+        None,
+        T0,
+        None,
+    )
+    .unwrap();
 
-    assert!(end_world_validity(&conn, edge, T1).unwrap(), "first close wins");
+    assert!(
+        end_world_validity(&conn, edge, T1).unwrap(),
+        "first close wins"
+    );
     assert!(
         !end_world_validity(&conn, edge, T3).unwrap(),
         "a second close must not move the date a file actually disappeared"
     );
     // Still invisible at T3, and the recorded end is T1 rather than T3.
-    assert!(neighbors_valid_at(&conn, &[a], None, Some(T2)).unwrap().is_empty());
+    assert!(
+        neighbors_valid_at(&conn, &[a], None, Some(T2))
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// The default path is byte-for-byte the old behaviour.
@@ -1442,7 +1477,19 @@ fn valid_at_none_ignores_world_validity_exactly_as_before() {
     let (a, b) = (concept(&conn, "a"), concept(&conn, "b"));
     let props = serde_json::json!({});
     // World validity closed in the past, still believed.
-    insert_edge(&conn, "relates_to", a, b, 1.0, &props, Some(T0), Some(T1), T1, None).unwrap();
+    insert_edge(
+        &conn,
+        "relates_to",
+        a,
+        b,
+        1.0,
+        &props,
+        Some(T0),
+        Some(T1),
+        T1,
+        None,
+    )
+    .unwrap();
     assert_eq!(
         neighbors_valid_at(&conn, &[a], None, None).unwrap().len(),
         1,

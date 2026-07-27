@@ -87,8 +87,8 @@ pub use store::{
     MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow,
 };
 pub use writeback::{
-    ContextDelta, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion, FactView, MemoryInput,
-    MemoryKind, UpsertReceipt,
+    ANCHOR_REL, AnchorView, ContextDelta, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
+    FactView, MemoryInput, MemoryKind, UpsertReceipt,
 };
 
 // Re-export the CGP wire types callers pass in/out, so a consumer needs only

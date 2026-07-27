@@ -17,6 +17,8 @@ use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use serde::Serialize;
 use stella_context::{ContextStore, NodeKind, NodeRow};
+
+use crate::memory::anchors::{extract_path_anchors, workspace_file_names};
 use stella_core::rules::{self, PromoteStatus, RuleCandidate};
 use stella_store::{ContextSurface, MemoryCitationStats, PROMOTION_CITATIONS_REQUIRED, Store};
 
@@ -46,7 +48,19 @@ pub enum MemoryCmd {
     /// checks whether those paths still exist, and flags stale ones. A stale
     /// memory is one whose referenced path no longer exists — a strong signal
     /// the memory is about refactored-away code and may mislead.
-    Validate,
+    ///
+    /// Also walks the stored `observed_in` anchor edges, which is the same
+    /// question asked of the graph rather than of the text.
+    Validate {
+        /// Record that anchors pointing at deleted files stopped holding.
+        ///
+        /// Ends each stale anchor's *world validity* — the memory keeps being
+        /// believed and `as_of` queries still return it, because it was not
+        /// wrong; the file simply went away. Live recall stops traversing it.
+        /// Without this flag the scan only reports.
+        #[arg(long)]
+        end_stale: bool,
+    },
     /// Forget a memory: stop it steering the agent, and stop the reflection
     /// loop re-learning it. Reversible with `stella memory restore <id>`.
     ///
@@ -390,7 +404,7 @@ struct MemoryValidationRow {
 /// `stella-cli/src/agent.rs`), checks whether those paths still exist, and
 /// reports stale memories — ones whose referenced files have been moved or
 /// deleted, a strong signal the memory is about refactored-away code.
-pub fn run_memory_validate() -> Result<(), String> {
+pub fn run_memory_validate(end_stale: bool) -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
     let rows = validate_memories(&workspace_root)?;
@@ -435,6 +449,7 @@ pub fn run_memory_validate() -> Result<(), String> {
         );
     }
     report_duplicate_lineages(&workspace_root)?;
+    crate::memory::anchor_scan::scan_stale_anchors(&workspace_root, end_stale)?;
     Ok(())
 }
 
@@ -766,96 +781,6 @@ fn memory_text(workspace_root: &std::path::Path, id: &str) -> Result<Option<Stri
         .node_by_public_id(id)
         .map_err(|e| format!("cannot read memory `{id}`: {e}"))?;
     Ok(node.map(|n| n.content))
-}
-
-/// Source extensions a token must end in to count as a file reference.
-const ANCHOR_EXTS: &[&str] = &[
-    "rs", "py", "ts", "tsx", "js", "jsx", "go", "md", "sql", "toml",
-];
-
-/// Extract file anchors from memory text. Two shapes count:
-///
-/// * **Rooted paths** — `word/word[/word…]` with a recognized source
-///   extension, e.g. `stella-cli/src/agent.rs`, `docs/context-reuse.md`.
-///   These resolve against the workspace root directly.
-/// * **Bare filenames** — a name with a recognized extension and no
-///   directory at all, e.g. `slash_models_witness.rs`, `Cargo.toml`.
-///
-/// Bare filenames matter because that is how reflections actually name
-/// files: a lesson mined from a turn says "in `slash_models_witness.rs`",
-/// not "in `stella-cli/tests/slash_models_witness.rs`". Requiring a slash
-/// meant the memories most likely to rot — the ones naming a single test
-/// file that later got deleted — were reported as `no-anchors` and never
-/// checked, which is the failure this function exists to catch.
-fn extract_path_anchors(text: &str) -> Vec<String> {
-    text.split(|c: char| !(c.is_alphanumeric() || c == '/' || c == '.' || c == '-' || c == '_'))
-        .filter_map(|tok| {
-            // Trim trailing dots — a sentence like "see src/lib.rs." would
-            // otherwise produce token "src/lib.rs." with extension "rs.".
-            let tok = tok.trim_end_matches('.');
-            if tok.len() > 256 || tok.starts_with('/') || tok.split('/').any(|seg| seg == "..") {
-                return None;
-            }
-            let (stem, ext) = tok.rsplit_once('.')?;
-            // A bare `.rs` has no stem and names nothing; `graph_snapshot`
-            // has no extension. Both must stay out.
-            if stem.is_empty() || !ANCHOR_EXTS.contains(&ext) {
-                return None;
-            }
-            Some(tok.to_string())
-        })
-        .collect()
-}
-
-/// Directories that never hold source a memory would meaningfully anchor to,
-/// and that dominate the walk cost when present.
-const ANCHOR_WALK_SKIP: &[&str] = &[
-    ".git",
-    ".stella",
-    "target",
-    "node_modules",
-    ".next",
-    ".venv",
-    "venv",
-    "dist",
-    "build",
-    "__pycache__",
-];
-
-/// Every file name present anywhere under the workspace, for resolving
-/// bare-filename anchors — they carry no directory to join onto the root, so
-/// existence is a "does the tree contain a file by this name" question.
-///
-/// Built once per `validate` run and bounded: a pathological or symlinked
-/// tree must not stall an inspection command.
-fn workspace_file_names(root: &std::path::Path) -> std::collections::HashSet<String> {
-    const MAX_FILES: usize = 200_000;
-    let mut names = std::collections::HashSet::new();
-    let mut queue = std::collections::VecDeque::from([root.to_path_buf()]);
-    while let Some(dir) = queue.pop_front() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // `is_dir`/`is_file` on the entry type does not follow symlinks,
-            // so a self-referential link cannot re-enter the walk.
-            if kind.is_dir() {
-                if !ANCHOR_WALK_SKIP.contains(&name.as_str()) {
-                    queue.push_back(entry.path());
-                }
-            } else if kind.is_file() {
-                names.insert(name);
-                if names.len() >= MAX_FILES {
-                    return names;
-                }
-            }
-        }
-    }
-    names
 }
 
 /// Validate all memories in a workspace against the current file tree.
@@ -1229,39 +1154,6 @@ mod tests {
             "uncited rows show `-`, not fake zeros: {out}"
         );
     }
-
-    #[test]
-    fn extract_path_anchors_finds_source_paths() {
-        let text = "graph_snapshot() in stella-cli/src/agent.rs computes the \
-                    neighborhood. See also docs/hooks.md and src/lib.rs.";
-        let anchors = extract_path_anchors(text);
-        assert!(anchors.contains(&"stella-cli/src/agent.rs".to_string()));
-        assert!(anchors.contains(&"docs/hooks.md".to_string()));
-        assert!(anchors.contains(&"src/lib.rs".to_string()));
-        // No false positives from bare words.
-        assert!(!anchors.iter().any(|a| a == "graph_snapshot"));
-    }
-
-    #[test]
-    fn extract_path_anchors_finds_bare_filenames() {
-        // The shape reflections actually use: a file named with no directory.
-        let text = "In stella-cli witness tests (slash_models_witness.rs), prefer \
-                    updating assertions rather than changing the renderer.";
-        let anchors = extract_path_anchors(text);
-        assert!(
-            anchors.contains(&"slash_models_witness.rs".to_string()),
-            "bare filenames must anchor: {anchors:?}"
-        );
-    }
-
-    #[test]
-    fn extract_path_anchors_rejects_non_files() {
-        // A bare extension has no stem, version strings have no source
-        // extension, and prose words have no extension at all.
-        let anchors = extract_path_anchors("the .rs files in v0.4.47 use cargo test -- --exact");
-        assert!(anchors.is_empty(), "no false anchors: {anchors:?}");
-    }
-
     #[test]
     fn validate_flags_stale_bare_filename_anchors() {
         // Regression: a memory naming a deleted test file by bare name was

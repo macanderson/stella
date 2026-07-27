@@ -1075,7 +1075,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             return match cmd {
                 memory_cmd::MemoryCmd::List { format } => memory_cmd::run_memory_list(*format),
                 memory_cmd::MemoryCmd::Promote { id } => memory_cmd::run_memory_promote(id),
-                memory_cmd::MemoryCmd::Validate => memory_cmd::run_memory_validate(),
+                memory_cmd::MemoryCmd::Validate { end_stale } => {
+                    memory_cmd::run_memory_validate(*end_stale)
+                }
                 memory_cmd::MemoryCmd::Forget { id, reason } => {
                     memory_cmd::run_memory_forget(id, reason)
                 }

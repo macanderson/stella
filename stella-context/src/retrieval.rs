@@ -32,8 +32,8 @@ use crate::candidates::{
 };
 use crate::error::ContextError;
 use crate::store::{
-    ContextStore, NodeRow, domains_by_node, lock_conn, neighbors, node_ids_excluded_by_scope,
-    node_ids_for_uris,
+    ContextStore, NodeRow, domains_by_node, lock_conn, neighbors_valid_at,
+    node_ids_excluded_by_scope, node_ids_for_uris,
 };
 
 /// Provenance `kind` marking a frame's domain tag, so a citation view can show
@@ -621,6 +621,9 @@ impl ContextStore {
         let inputs = RecallInputs {
             anchors: q.anchors.clone(),
             as_of: q.as_of.clone(),
+            // Live recall asks "what holds now"; an `as_of` query asks "what did
+            // we believe then" and must keep answering it unfiltered.
+            valid_at: q.as_of.is_none().then(|| self.clock().now_rfc3339()),
             excluded_ids: excluded_ids.clone(),
             tuning: self.tuning(),
             max_frames: q.max_frames,
@@ -679,6 +682,21 @@ struct RecallInputs {
     anchors: Vec<String>,
     /// Transaction-time pin for which fact edges are visible.
     as_of: Option<String>,
+    /// World-time pin for which edges still *hold*, as distinct from which are
+    /// still *believed* (`as_of`).
+    ///
+    /// `Some(now)` on the live path, so an anchor to a file that has since been
+    /// deleted stops feeding graph adjacency the moment the staleness scan ends
+    /// its validity. Every edge written before anchors existed has
+    /// `valid_from`/`valid_to` NULL, and NULL is unbounded on both ends, so this
+    /// is a no-op for all of them — it excludes exactly the edges something
+    /// deliberately ended, and nothing else.
+    ///
+    /// `None` when the caller pinned `as_of`, which is the time-travel/audit
+    /// path: reconstructing a past belief set must not be filtered by today's
+    /// world, and that is the behaviour `as_of_ignores_world_validity_valid_from_valid_to`
+    /// pins.
+    valid_at: Option<String>,
     /// Frame-count budget — also what bounds the candidate cut.
     max_frames: u32,
     /// Token budget the packer enforces.
@@ -904,7 +922,9 @@ fn recall_blocking(
             // mentioned symbol), so they enter the list with a base weight.
             *graph_weight.entry(s).or_insert(0.0) += 1.0;
         }
-        for (neighbor, weight) in neighbors(conn, &seeds, q.as_of.as_deref())? {
+        for (neighbor, weight) in
+            neighbors_valid_at(conn, &seeds, q.as_of.as_deref(), q.valid_at.as_deref())?
+        {
             *graph_weight.entry(neighbor).or_insert(0.0) += weight;
         }
         let mut graph_scored: Vec<(i64, f64)> = graph_weight.into_iter().collect();

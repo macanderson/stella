@@ -10631,6 +10631,32 @@ Re-validate old memories against the current codebase. It scans each memory for 
 stella memory validate
 ```
 
+It also walks the **anchor edges** the reflection loop writes — the same question
+asked of the graph rather than of the text. When a lesson names a file, that file
+becomes an `observed_in` edge, so *"what do we know about `registry.py`"* is a
+traversal instead of an embedding guess.
+
+```bash
+stella memory validate --end-stale
+```
+
+`--end-stale` records that anchors pointing at deleted files stopped holding.
+This is the one write the command can make, and it is narrower than it looks:
+
+- The memory is **not retracted**. It was not wrong — the file simply went away.
+  `as_of` queries still return it, and `stella memory list` still shows it.
+- Only *world validity* ends, so live recall stops traversing that edge while
+  "what was true last March" keeps answering.
+- Running it twice is safe: the second pass reports no change rather than moving
+  the date the file disappeared.
+
+> **Note**
+>
+> An anchor is only written for a file that exists at the time the lesson is
+> learned, and a bare filename matching several files (`mod.rs`) is skipped rather
+> than guessed. A confidently wrong edge teaches the graph something false; a
+> missing one only costs a little recall precision.
+
 ### `stella memory forget <id>`
 
 Stop a memory steering the agent — and stop the reflection loop re-learning it.
