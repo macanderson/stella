@@ -1,0 +1,315 @@
+//! Which model actually runs, and who wins when several things pin one.
+//!
+//! Split out of `agent_tests.rs` when it grew past its file-size ceiling
+//! (#629). The guard's rule is that new code goes in its own module rather
+//! than onto the end of an already-oversized file, and these tests were the
+//! growth that tripped it. They are one subject — `resolve_engine_wiring`'s
+//! precedence order — so they move together with the two groups they belong
+//! with: the `pipeline_worker_model` routing they extend, and the
+//! `worker_model_*` fallbacks they share `cfg_with_engine` with.
+//!
+//! Everything here reaches `cfg_for`, `Config`, `Role`, and `ModelRef` through
+//! the parent's `use super::*`, exactly as `usage_completeness` does.
+
+use super::*;
+
+/// A `Config` selecting `provider_id` at its default model, carrying
+/// `engine_settings` — the `agent_engine_config` variant of [`cfg_for`] for
+/// `resolve_engine_wiring` tests.
+fn cfg_with_engine(provider_id: &str, engine_settings_json: &str) -> Config {
+    let mut cfg = cfg_for(provider_id);
+    cfg.engine_settings =
+        Some(serde_json::from_str(engine_settings_json).expect("valid agent_engine_config json"));
+    cfg
+}
+
+#[test]
+fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
+    // Issue #276: `pipeline_worker_model` (and `agents.worker.*`) must
+    // actually change what `Role::Worker` resolves to — previously the
+    // worker always rode `worker_ref` (the session default), no matter what
+    // this setting said.
+    let cfg = cfg_with_engine(
+        "zai", // session default: zai/glm-5.2
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
+    );
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    let overridden = ModelRef::new("anthropic", "claude-fable-5");
+    assert_eq!(
+        wiring.worker_model, overridden,
+        "the wiring's own worker_model must reflect the pipeline_worker_model override"
+    );
+    assert_eq!(
+        wiring.pins.get(Role::Worker),
+        Some(&overridden),
+        "Role::Worker must be pinned to the configured worker model"
+    );
+    assert_eq!(
+        wiring.pins.get(Role::Plan),
+        Some(&overridden),
+        "Role::Plan shares the worker's tier and must follow the override too, or plan/witness \
+         turns would silently keep running on the session default"
+    );
+    assert!(
+        wiring
+            .extra_providers
+            .iter()
+            .any(|(model_ref, _)| *model_ref == overridden),
+        "an adapter for the overridden worker model must be built"
+    );
+
+    // The full round trip through the actual router (what `resolve_provider`
+    // in `stella-pipeline` calls) must resolve BOTH roles to the override,
+    // not just the raw pin table.
+    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
+    assert_eq!(
+        router.resolve(Role::Worker).unwrap().model_ref,
+        overridden,
+        "the router must actually route worker turns to the override"
+    );
+    assert_eq!(
+        router.resolve(Role::Plan).unwrap().model_ref,
+        overridden,
+        "the router must actually route plan turns to the override"
+    );
+}
+
+#[test]
+fn an_explicit_model_flag_outranks_pipeline_worker_model() {
+    // An explicit `--model` is a per-invocation pin of the WORKER model —
+    // that is the flag's whole documented job. Before this,
+    // `pipeline_worker_model` was applied unconditionally on top of the
+    // already-resolved session default, so `--model zai/glm-5.2` silently ran
+    // (and billed for) `anthropic/claude-fable-5` instead.
+    let mut cfg = cfg_with_engine(
+        "zai", // --model zai/glm-5.2
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
+    );
+    cfg.model_pinned_by_flag = true;
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(
+        wiring.worker_model, model_ref,
+        "the flag-pinned model must be what the worker role resolves to"
+    );
+    let overridden = ModelRef::new("anthropic", "claude-fable-5");
+    assert_ne!(
+        wiring.pins.get(Role::Worker),
+        Some(&overridden),
+        "settings must not pin the worker over an explicit --model"
+    );
+    assert!(
+        !wiring
+            .extra_providers
+            .iter()
+            .any(|(model_ref, _)| *model_ref == overridden),
+        "no adapter for the suppressed worker override should be built"
+    );
+
+    // The round trip through the real router is the claim that matters: the
+    // pin table being empty is only useful if resolution lands on the flag.
+    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
+    assert_eq!(
+        router.resolve(Role::Worker).unwrap().model_ref,
+        model_ref,
+        "worker turns must run on the flag-pinned model"
+    );
+    assert_eq!(
+        router.resolve(Role::Plan).unwrap().model_ref,
+        model_ref,
+        "plan/witness turns ride the worker and must follow the flag too"
+    );
+
+    // Silently dropping a configured setting is its own bug — say so.
+    assert!(
+        wiring
+            .notices
+            .iter()
+            .any(|n| n.contains("anthropic/claude-fable-5") && n.contains("--model")),
+        "a notice must explain that --model suppressed the configured worker \
+         model, got: {:?}",
+        wiring.notices
+    );
+}
+
+#[test]
+fn an_explicit_model_flag_leaves_triage_and_judge_pins_alone() {
+    // `--model` says nothing about the triage/judge roles, so their own
+    // settings must keep applying — suppressing them too would make the flag
+    // a blunt instrument that silently un-configures the rest of the pipeline.
+    let mut cfg = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5",
+             "pipeline_triage_model": "deepseek/deepseek-chat",
+             "pipeline_judge_model": "openai/gpt-5.5" }"#,
+    );
+    cfg.model_pinned_by_flag = true;
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![
+        configured_provider("zai"),
+        configured_provider("anthropic"),
+        configured_provider("deepseek"),
+        configured_provider("openai"),
+    ];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(wiring.worker_model, model_ref, "worker follows the flag");
+    assert_eq!(
+        wiring.pins.get(Role::Triage),
+        Some(&ModelRef::new("deepseek", "deepseek-chat")),
+        "the configured triage model must survive an explicit --model"
+    );
+    assert_eq!(
+        wiring.pins.get(Role::Judge),
+        Some(&ModelRef::new("openai", "gpt-5.5")),
+        "the configured judge model must survive an explicit --model"
+    );
+}
+
+#[test]
+fn without_a_model_flag_pipeline_worker_model_still_wins() {
+    // The guard must key off the FLAG, not merely the presence of a worker
+    // setting: with no `--model`, issue #276's behavior is unchanged.
+    let cfg = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
+    );
+    assert!(!cfg.model_pinned_by_flag);
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(
+        wiring.worker_model,
+        ModelRef::new("anthropic", "claude-fable-5"),
+        "an unpinned run must still honor pipeline_worker_model (#276)"
+    );
+    assert!(
+        wiring.notices.is_empty(),
+        "no --model means nothing was suppressed, so no notice: {:?}",
+        wiring.notices
+    );
+}
+
+#[test]
+fn worker_model_unset_falls_back_to_the_session_default() {
+    // No `pipeline_worker_model`/`agents.worker.*` configured at all: the
+    // worker must behave exactly as before this fix — riding the session
+    // default, no pin, no extra adapter.
+    let cfg = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_judge_model": "anthropic/claude-fable-5" }"#,
+    );
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(
+        wiring.worker_model, model_ref,
+        "with no worker override, worker_model falls back to the session default"
+    );
+    assert!(
+        wiring.pins.get(Role::Worker).is_none(),
+        "no worker pin is recorded when unconfigured"
+    );
+    assert!(
+        wiring.pins.get(Role::Plan).is_none(),
+        "no plan pin is recorded when unconfigured"
+    );
+}
+
+#[test]
+fn worker_model_with_no_resolvable_credential_falls_back_and_notices() {
+    // The configured worker provider has no credential available: the
+    // override must degrade to the session default (soft failure), with a
+    // human-readable notice — never a hard error, matching triage/judge's
+    // existing posture. An explicit `agents.worker.provider` pin (rather
+    // than a flat-key `provider/slug` string) is what exercises this path:
+    // an unconfigured provider named only inside a flat-key string is not
+    // even recognized as a provider prefix (`model_spec_for`'s `is_provider`
+    // gate), so it never reaches `pin_role`'s credential lookup at all.
+    let cfg = cfg_with_engine(
+        "zai",
+        r#"{ "agents": { "worker": { "provider": "anthropic" } } }"#,
+    );
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai")]; // anthropic NOT configured
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(
+        wiring.worker_model, model_ref,
+        "an unroutable worker override must fall back to the session default"
+    );
+    assert!(wiring.pins.get(Role::Worker).is_none());
+    assert!(
+        wiring
+            .notices
+            .iter()
+            .any(|n| n.contains("worker") && n.contains("anthropic")),
+        "a skipped worker override must be reported: {:?}",
+        wiring.notices
+    );
+}
+
+#[test]
+fn worker_override_equal_to_the_session_default_still_pins_without_a_duplicate_adapter() {
+    // Configuring the worker to the SAME model the session already defaults
+    // to must not build a redundant second adapter (mirrors the existing
+    // triage/judge "same instance" optimization) — but the pin is still
+    // recorded, matching that established behavior.
+    let cfg = cfg_with_engine("zai", r#"{ "pipeline_worker_model": "zai/glm-5.2" }"#);
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(wiring.worker_model, model_ref);
+    assert_eq!(wiring.pins.get(Role::Worker), Some(&model_ref));
+    assert!(
+        wiring.extra_providers.is_empty(),
+        "no extra adapter is needed when the override equals the session default"
+    );
+}
+
+#[test]
+fn worker_override_shifts_the_judges_cross_family_comparison() {
+    // Issue #276's router-correctness corollary: once the worker is
+    // overridden, auto-mode judge selection (and the router's own unpinned-
+    // judge cross-family fallback) must compare against the model the
+    // worker ACTUALLY resolves to, not the stale session default — else a
+    // judge could silently collapse to the same family as the real worker.
+    let cfg = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5",
+             "auto_mode": "on",
+             "allowed_models": ["anthropic/claude-fable-5", "zai/glm-5.2"] }"#,
+    );
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    // The worker now runs on Anthropic; auto-mode must pick the cross-family
+    // candidate (zai) as judge, not Anthropic again (which the STALE
+    // "worker family = zai" comparison would have wrongly treated as
+    // cross-family).
+    assert_eq!(
+        wiring.pins.get(Role::Judge),
+        Some(&ModelRef::new("zai", "glm-5.2")),
+        "auto-mode judge selection must be cross-family from the OVERRIDDEN worker, not the \
+         session default"
+    );
+}

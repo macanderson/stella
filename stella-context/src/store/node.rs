@@ -237,8 +237,8 @@ pub struct NodeRow {
     pub recorded_at: String,
     /// Which precedence band this node competes in once a recall budget binds.
     /// Read back so the inspection surface can show why a memory keeps losing
-    /// its slot; the ranking itself reads the same column off
-    /// [`crate::candidates::NodeMeta`], without the body.
+    /// its slot; the ranking itself reads the same column off the crate's
+    /// internal `NodeMeta` projection, without the body.
     pub recall_tier: RecallTier,
 }
 
