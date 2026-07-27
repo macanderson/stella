@@ -3,6 +3,10 @@
 
 BUMP ?= patch
 
+# `make record-demo` knobs — see scripts/record-demo.sh for the full set.
+LIMIT ?= 0
+TARGET ?= 60
+
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*##' Makefile | \
@@ -68,6 +72,10 @@ record-golden: ## Re-record the golden replay trajectories (review the fixture d
 	@git --no-pager diff --stat -- stella-pipeline/tests/fixtures/golden || true
 	@echo "Golden trajectories re-recorded. A non-empty diff above is a change to"
 	@echo "the observable event contract — review it as such before committing."
+
+.PHONY: record-demo
+record-demo: ## Record a terminal timelapse (LIMIT=mins TARGET=secs CMD="..."; defaults to the multi-hour marathon)
+	./scripts/record-demo.sh --limit $(LIMIT) --target $(TARGET) $(if $(CMD),-- bash -c '$(CMD)',)
 
 .PHONY: bench-test
 bench-test: ## Test the Python benchmark tooling (TB2.1 adapter + analyzer)
