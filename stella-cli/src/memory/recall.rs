@@ -313,13 +313,27 @@ pub(super) fn render_context_section(frames: &[RecalledFrame]) -> Option<String>
     let mut citable = false;
     for f in frames {
         let label = &f.citation_label;
-        if f.kind == "memory" {
-            citable = true;
-            if let Some(id) = &f.id {
+        match (f.kind.as_str(), &f.id) {
+            // A memory with an id: citable, and the id is what the model
+            // hands back to `cite_memory`.
+            ("memory", Some(id)) => {
+                citable = true;
                 lines.push(format!("- [{id}] {label} — {}", f.content.trim()));
             }
-        } else {
-            lines.push(format!("- {} — {}", label, f.content.trim()));
+            // A memory WITHOUT an id still has content worth recalling, and
+            // the recall budget has already been spent fetching it.
+            //
+            // This arm used to be missing: an id-less memory flipped `citable`
+            // and then pushed no line at all, so its content vanished from the
+            // block while the model was still told to cite `[nod_…]` lines
+            // that might not exist anywhere in it. `RecalledFrame` documents
+            // `id: None` as a legitimate state for a not-yet-materialized
+            // frame (`stella-pipeline/src/ports.rs`), so this was reachable by
+            // contract even though the only production projection happens to
+            // always set `Some`. Render it as grounding — it cannot be cited,
+            // so it must not claim to be.
+            ("memory", None) => lines.push(format!("- {label} — {}", f.content.trim())),
+            _ => lines.push(format!("- {label} — {}", f.content.trim())),
         }
     }
     if lines.is_empty() {
