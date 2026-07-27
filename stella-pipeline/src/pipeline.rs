@@ -81,6 +81,7 @@ use crate::verify::{
 use crate::witness::airlock::{
     DisclosureGrain, FailureFingerprint, SealedFailure, grain_for_repeats, redact, scrub,
 };
+use crate::witness::warrant::warrant;
 use crate::witness::{
     Witness, parse_test_invocation, parse_witness_command, validate_witness_artifact,
     validate_witness_identity, validate_witness_invocation, witness_identity_matches,
@@ -95,7 +96,7 @@ use raw_usage::{RawCall, RawCallError};
 use run_error::RoleResolveError;
 pub use run_error::{PipelineError, PipelineRunError};
 use stage_budget::{PipelineBudgetAbort, budget_abort};
-use witness_stage::BoundHookRunner;
+use witness_stage::{BoundHookRunner, WitnessAuthoring};
 /// Make a diff that verification hands downstream *incapable of lying*.
 ///
 /// An empty diff is ambiguous: it can mean the agent genuinely changed
@@ -378,6 +379,16 @@ struct CandidateResult {
     score: CandidateScore,
     diff_lines: u32,
     revisions: u32,
+    /// Workspace-relative paths of the witness artifact this candidate had
+    /// grafted into it, withheld from adoption unless
+    /// [`PipelineConfig::keep_witness`]. Empty when no witness was warranted,
+    /// which under demand-driven authoring is the common case.
+    ///
+    /// These ride on the result rather than beside the workspace because
+    /// authoring now happens *inside* the candidate, after execution: the
+    /// paths are an output of the run, and the caller indexes them by the same
+    /// index it already uses to find the workspace.
+    witness_paths: Vec<String>,
 }
 
 impl CandidateResult {
@@ -405,6 +416,7 @@ impl CandidateResult {
             score: CandidateScore::Failed,
             diff_lines: 0,
             revisions: 0,
+            witness_paths: Vec::new(),
         }
     }
 
@@ -437,6 +449,10 @@ struct CandidateState {
     diff_lines: u32,
     diff_text: String,
     revisions: u32,
+    /// Paths of the witness artifact grafted into this candidate, if the
+    /// warrant bought one after execution. Empty until then, and empty forever
+    /// when the change had nothing to prove.
+    witness_paths: Vec<String>,
     /// Every deterministic failure this candidate has produced, in order.
     /// The airlock reads it to tell "stuck on the same thing" from "made
     /// progress and hit something new" — the signal that decides how much the
@@ -462,6 +478,7 @@ impl CandidateState {
             score,
             diff_lines: self.diff_lines,
             revisions: self.revisions,
+            witness_paths: self.witness_paths,
         }
     }
 
@@ -476,6 +493,7 @@ impl CandidateState {
             score: CandidateScore::Unverified,
             diff_lines: self.diff_lines,
             revisions: self.revisions,
+            witness_paths: self.witness_paths,
         }
     }
 }
@@ -492,21 +510,6 @@ struct CandidateSurface<'c> {
     cwd: Option<&'c str>,
     hook_runner: Option<&'c dyn HookRunner>,
     workspace: Option<&'c dyn CandidateWorkspace>,
-}
-
-/// One candidate's live workspace plus the witness paths authored inside it.
-///
-/// They travel together because adoption needs both and indexes by candidate:
-/// a parallel `Vec<Vec<String>>` would have to be kept aligned by hand at
-/// every early `continue` in the candidate loop, and a single missed push
-/// would silently shift every later candidate's witness onto the wrong
-/// workspace. Pairing them makes that misalignment unrepresentable.
-struct CandidateSlot {
-    workspace: Box<dyn CandidateWorkspace>,
-    /// Workspace-relative paths of the accepted witness artifact(s). Withheld
-    /// from adoption unless [`PipelineConfig::keep_witness`]; empty when the
-    /// candidate authored no witness.
-    witness_paths: Vec<String>,
 }
 
 /// The staged orchestrator. Holds only borrowed ports + an owned event sender
@@ -723,7 +726,6 @@ impl<'a> Pipeline<'a> {
                     &base_messages,
                     plan.as_deref(),
                     assessment,
-                    None,
                     &worker,
                     1,
                     budget,
@@ -1240,7 +1242,6 @@ impl<'a> Pipeline<'a> {
             base_messages,
             plan,
             assessment,
-            None,
             &worker,
             1,
             budget,
@@ -1260,7 +1261,6 @@ impl<'a> Pipeline<'a> {
         base_messages: &[CompletionMessage],
         plan: Option<&[PlanStep]>,
         assessment: TaskAssessment,
-        witness: Option<&Witness>,
         worker: &ResolvedRole<'a>,
         n: u32,
         budget: &mut BudgetGuard,
@@ -1294,7 +1294,10 @@ impl<'a> Pipeline<'a> {
                     base_messages,
                     plan,
                     assessment,
-                    witness,
+                    // A shared-tree run has no workspace to graft into and no
+                    // pristine snapshot to author blind in, so it never buys a
+                    // witness — exactly as before, when it was passed `None`.
+                    None,
                     &engine,
                     surface,
                     budget,
@@ -1366,7 +1369,6 @@ impl<'a> Pipeline<'a> {
                     base_messages,
                     plan,
                     assessment,
-                    None,
                     &worker,
                     n,
                     budget,
@@ -1423,11 +1425,12 @@ impl<'a> Pipeline<'a> {
         };
 
         let mut candidates: Vec<CandidateResult> = Vec::with_capacity(n as usize);
-        // The witness paths ride WITH their workspace rather than in a parallel
-        // vector: adoption indexes by candidate, and every early `continue`
-        // below would otherwise have to remember to keep a second vector
-        // aligned. Carrying them together makes drift unrepresentable.
-        let mut workspaces: Vec<Option<CandidateSlot>> = Vec::with_capacity(n as usize);
+        // Index-aligned with `candidates` — every path below pushes to both, so
+        // adoption can pair a workspace with the result that produced it (and
+        // with the witness paths that result carries). `None` marks a candidate
+        // that never got a workspace.
+        let mut workspaces: Vec<Option<Box<dyn CandidateWorkspace>>> =
+            Vec::with_capacity(n as usize);
         for i in 0..n {
             let ws = match port.create().await {
                 Ok(ws) => ws,
@@ -1444,7 +1447,7 @@ impl<'a> Pipeline<'a> {
                     continue;
                 }
             };
-            let (result, witness_paths) = {
+            let result = {
                 let bound_hook_runner = self.hooks.map(|(_, runner)| BoundHookRunner {
                     inner: runner,
                     cwd: ws.root(),
@@ -1459,48 +1462,16 @@ impl<'a> Pipeline<'a> {
                         .map(|runner| runner as &dyn HookRunner),
                     workspace: Some(ws.as_ref()),
                 };
-                let witness = if author_witness {
-                    let author = witness_author
+                // Handed to the candidate rather than spent here: whether this
+                // run buys a witness is not knowable until the candidate has
+                // executed and its diff can be read.
+                let authoring = author_witness.then(|| WitnessAuthoring {
+                    port,
+                    author: witness_author
                         .as_ref()
-                        .expect("authored witness identity is resolved before dispatch");
-                    match self
-                        .witness_stage(goal, frames, author, surface, budget, total)
-                        .await
-                    {
-                        Ok(witness) => witness,
-                        Err(abort) => {
-                            // A witness that couldn't be AUTHORED degrades to a
-                            // bare run (the task needs no witness). An
-                            // artifact-INTEGRITY violation stays fail-closed,
-                            // so a poisoned witness is surfaced, never silently
-                            // traded for an unverified run.
-                            let candidate = if abort.degradable {
-                                CandidateResult::setup_aborted(base_messages.to_vec(), abort.reason)
-                            } else {
-                                CandidateResult::aborted(base_messages.to_vec(), abort.reason)
-                            };
-                            candidates.push(candidate);
-                            // No accepted witness, so nothing to withhold. This
-                            // candidate cannot be adopted anyway (adoption
-                            // requires a passing verdict, and this one aborted),
-                            // but the slot must still be pushed to keep indices
-                            // aligned with `candidates`.
-                            workspaces.push(Some(CandidateSlot {
-                                workspace: ws,
-                                witness_paths: Vec::new(),
-                            }));
-                            continue;
-                        }
-                    }
-                } else {
-                    None
-                };
-                // Captured before `witness` is handed to the candidate: these
-                // are the paths withheld from adoption unless `keep_witness`.
-                let witness_paths: Vec<String> = witness
-                    .as_ref()
-                    .map(|w| w.files.keys().cloned().collect())
-                    .unwrap_or_default();
+                        .expect("authored witness identity is resolved before dispatch"),
+                    frames,
+                });
                 let mut engine = Engine::with_sleeper(
                     worker.provider,
                     ws.tools(),
@@ -1513,26 +1484,24 @@ impl<'a> Pipeline<'a> {
                 if let Some(steering) = self.steering {
                     engine = engine.with_steering(steering);
                 }
-                let result = self
-                    .run_candidate(
-                        goal,
-                        base_messages,
-                        plan,
-                        assessment,
-                        witness.as_ref(),
-                        &engine,
-                        surface,
-                        budget,
-                        total,
-                    )
-                    .await;
-                (result, witness_paths)
+                self.run_candidate(
+                    goal,
+                    base_messages,
+                    plan,
+                    assessment,
+                    authoring,
+                    &engine,
+                    surface,
+                    budget,
+                    total,
+                )
+                .await
             };
+            // Pushed together, always: adoption pairs `candidates[i]` with
+            // `workspaces[i]`, and the witness paths now ride on the result,
+            // so a candidate can never be matched to another one's artifact.
             candidates.push(result);
-            workspaces.push(Some(CandidateSlot {
-                workspace: ws,
-                witness_paths,
-            }));
+            workspaces.push(Some(ws));
         }
 
         let best_idx = best_index(&candidates);
@@ -1543,11 +1512,7 @@ impl<'a> Pipeline<'a> {
         // aborted best-of-N run leaves the real tree untouched.
         let mut adopt_failure: Option<WorkspaceError> = None;
         for (i, slot) in workspaces.into_iter().enumerate() {
-            let Some(CandidateSlot {
-                workspace: ws,
-                witness_paths,
-            }) = slot
-            else {
+            let Some(ws) = slot else {
                 continue;
             };
             if i == best_idx
@@ -1562,7 +1527,7 @@ impl<'a> Pipeline<'a> {
                 let withhold: &[String] = if self.config.keep_witness {
                     &[]
                 } else {
-                    &witness_paths
+                    &candidates[best_idx].witness_paths
                 };
                 match ws.adopt(withhold).await {
                     Ok(adopted) => {
@@ -1605,7 +1570,7 @@ impl<'a> Pipeline<'a> {
         base_messages: &[CompletionMessage],
         plan: Option<&[PlanStep]>,
         assessment: TaskAssessment,
-        witness: Option<&Witness>,
+        authoring: Option<WitnessAuthoring<'_>>,
         engine: &Engine<'_>,
         surface: CandidateSurface<'_>,
         budget: &mut BudgetGuard,
@@ -1616,14 +1581,17 @@ impl<'a> Pipeline<'a> {
         // fail→pass flip (L-E11). Simple lookups skip the baseline — they are
         // only verified at all if the zero-diff guard trips, and then the
         // absence of a baseline correctly leaves the oracle unflipped.
-        // The baseline runs per candidate even though the witness stage
-        // already saw its command fail once: the observation must come from
-        // this candidate's own surface (its isolated snapshot under
-        // best-of-N, or a shared tree an earlier candidate may have
-        // modified), and a seeded observation would be a fabricated one.
+        //
+        // This is the *configured* command only. A user who names a test
+        // command names one that exists now, so its baseline is a real
+        // observation of this candidate's own surface, taken here. An authored
+        // witness has no command at this point — it is not written until after
+        // execution, once the warrant has established there is something to
+        // prove — and its baseline is observed where it is written, in a
+        // pristine snapshot of this same pre-execution tree.
         let mut oracle = FlipOracle::new();
         if assessment.class.verifies_unconditionally()
-            && let Some(cmd) = self.effective_test_command(witness)
+            && let Some(cmd) = self.effective_test_command(None)
         {
             let pre = surface.tests.run_test(cmd.invocation).await;
             oracle.observe(cmd.command, pre.passed());
@@ -1645,6 +1613,7 @@ impl<'a> Pipeline<'a> {
             diff_lines: 0,
             diff_text: String::new(),
             revisions: 0,
+            witness_paths: Vec::new(),
             failures: Vec::new(),
         };
 
@@ -1671,8 +1640,26 @@ impl<'a> Pipeline<'a> {
             return state.into_unverified();
         }
 
+        // Buy the witness now, or not at all. Everything above this line has
+        // already happened, so the diff is evidence rather than a prediction —
+        // which is the whole reason authoring waits until here.
+        let witness = match self
+            .witness_on_demand(goal, authoring, surface, &mut state, budget, total)
+            .await
+        {
+            Ok(witness) => witness,
+            Err(reason) => return CandidateResult::aborted(state.messages, reason),
+        };
+
         self.verify_candidate(
-            goal, assessment, witness, engine, surface, budget, total, state,
+            goal,
+            assessment,
+            witness.as_ref(),
+            engine,
+            surface,
+            budget,
+            total,
+            state,
         )
         .await
     }

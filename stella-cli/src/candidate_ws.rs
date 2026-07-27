@@ -800,6 +800,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
         self.adopt_inner(withhold).await
     }
 
+    async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError> {
+        witness_tools::graft(&self.root, &self.dir, source_root, path).await
+    }
+
     async fn remove(&self) {
         cleanup(&self.toplevel, &self.dir).await;
     }

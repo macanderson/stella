@@ -340,6 +340,10 @@ struct FakeWorkspace {
     repo_status: SeqRepoStatus,
     adopt_result: Result<Vec<AdoptedChange>, WorkspaceError>,
     sealed_unchanged: bool,
+    /// Canned outcome for the one artifact copy between workspaces. `Err`
+    /// stands in for the real failures: the worker already wrote a file at
+    /// that path, or the parent directory is absent.
+    graft_result: Result<(), WorkspaceError>,
     log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -358,12 +362,38 @@ impl FakeWorkspace {
             repo_status: SeqRepoStatus::new(vec![]),
             adopt_result,
             sealed_unchanged: true,
+            graft_result: Ok(()),
             log,
         }
     }
 
     fn with_repo_status(mut self, repo_status: SeqRepoStatus) -> Self {
         self.repo_status = repo_status;
+        self
+    }
+
+    /// Untracked files this workspace reports, as `(path, added_lines)` —
+    /// what a diff gather bills to the turn unless the path was already known.
+    fn with_untracked(mut self, untracked: Vec<(&str, u32)>) -> Self {
+        self.diagnostics =
+            std::mem::replace(&mut self.diagnostics, ScriptedRunner::new(vec![], ""))
+                .with_untracked(untracked);
+        self
+    }
+
+    /// The diff this workspace reports after execution — what the warrant
+    /// reads to decide whether a witness is worth buying.
+    fn with_diff(mut self, diff: &str) -> Self {
+        self.diagnostics.diff = diff.to_string();
+        self
+    }
+
+    fn with_graft_failure(mut self, reason: &str) -> Self {
+        self.graft_result = Err(WorkspaceError::Graft {
+            reason: reason.into(),
+            path: "tests/witness.rs".into(),
+            workspace: "/candidate/workspace".into(),
+        });
         self
     }
 
@@ -416,6 +446,16 @@ impl CandidateWorkspace for FakeWorkspace {
             format!("adopt:{}:withhold={}", self.id, withhold.join(","))
         });
         self.adopt_result.clone()
+    }
+    async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError> {
+        // Logged with the source so a test can prove the artifact came from a
+        // *different* workspace than the one it lands in — the whole point of
+        // authoring blind in a pristine snapshot.
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("graft:{}:{source_root}:{path}", self.id));
+        self.graft_result.clone()
     }
     async fn remove(&self) {
         self.log.lock().unwrap().push(format!("remove:{}", self.id));
@@ -1244,20 +1284,25 @@ fn assemble_user_message_is_just_the_goal_when_no_recall() {
 /// the run submits fast on deterministic evidence — judge skipped.
 #[tokio::test]
 async fn witness_authored_command_arms_the_flip_oracle_and_submits_fast() {
-    // triage → "single"; witness author turn → marker line; worker → done.
+    // triage → "single"; worker → done; THEN the witness author, because the
+    // warrant only has a diff to read once the worker has produced one.
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
-        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
         text_result("done"),
+        text_result("wrote the test.\nTEST_COMMAND: cargo test --test witness witness -- --exact"),
     ]);
-    // Test-command pops: witness fail-check (fail), per-candidate baseline
-    // (fail), post-execute observation (pass) → a genuine flip.
+    // The two halves of the flip now come from two trees. Candidate (id 0):
+    // the post-execute observation passes. Baseline (id 1): the same command
+    // fails on the pre-execution code, which is what makes it a flip rather
+    // than one tree observed twice.
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let workspace =
-        FakeWorkspace::new(0, vec![false, false, true], Ok(vec![]), log.clone()).with_repo_status(
-            SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
-        );
-    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log);
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let baseline = FakeWorkspace::new(1, vec![false], Ok(vec![]), log.clone()).with_repo_status(
+        SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
+    );
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log);
     let (outcome, events, _) = run_isolated(
         &provider,
         &port,
@@ -1371,30 +1416,41 @@ async fn single_model_config_degrades_to_unauthored_witness_instead_of_aborting(
     assert!(warned, "the degradation is announced once: {events:?}");
 }
 
-/// A witness whose test passes on the unmodified code proves nothing: one
-/// bounded repair retry, and if it still passes the contaminated candidate is
-/// discarded rather than letting author-written files reach adoption.
+/// A witness whose test passes on the pre-execution code proves nothing: one
+/// bounded repair retry, and if it still passes the run finishes without one.
+///
+/// What changed with demand-driven authoring is the *cost* of that outcome.
+/// While authoring ran first, a useless witness discarded the whole candidate
+/// and `run` degraded to a fresh bare worker turn — the task was executed
+/// twice because scaffolding failed. Now the work already exists when the
+/// author is asked, so a useless witness costs only the authoring calls and
+/// the candidate finishes on the unauthored ladder. The artifact never leaves
+/// the authoring snapshot, so nothing the author wrote can reach adoption
+/// either way.
 #[tokio::test]
-async fn a_witness_that_never_fails_aborts_and_removes_the_candidate() {
+async fn a_witness_that_never_fails_finishes_the_run_without_re_executing_it() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
+        text_result("done"), // worker
         text_result("TEST_COMMAND: cargo test --test witness always_green -- --exact"),
         // The repair attempt also yields a command that passes -> useless.
         text_result("TEST_COMMAND: cargo test --test witness still_green -- --exact"),
-        // Then the run degrades to a bare worker turn (+ its verification),
-        // so give the fallback generous responses.
-        text_result("done"),
+        // The candidate then finishes on the unauthored ladder, so give the
+        // fallback generous responses.
         text_result("PASS looks right"),
         text_result("done"),
         text_result("PASS looks right"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let workspace =
-        FakeWorkspace::new(0, vec![true, true], Ok(vec![]), log.clone()).with_repo_status(
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    // Both the author's command and its repair PASS on the pre-execution
+    // code, so neither proves anything.
+    let baseline =
+        FakeWorkspace::new(1, vec![true, true], Ok(vec![]), log.clone()).with_repo_status(
             SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
         );
-    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log.clone());
-    let (outcome, events) = run_degrade_over_working_session(
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log.clone());
+    let (outcome, events, _) = run_isolated(
         &provider,
         &port,
         PipelineConfig::default(),
@@ -1412,64 +1468,29 @@ async fn a_witness_that_never_fails_aborts_and_removes_the_candidate() {
         events.iter().any(|e| matches!(
             e,
             AgentEvent::Error { message, retryable: true }
-                if message.contains("running a bare worker turn")
+                if message.contains("continuing without an authored witness")
         )),
         "the degradation announces itself: {events:?}"
     );
-}
-
-/// Tamper exclusion: the worker modified the witness test file after it
-/// was authored, so the candidate hard-fails without judge override.
-#[tokio::test]
-async fn a_tampered_witness_file_hard_fails_before_judge_evaluation() {
-    let provider = ScriptedProvider::new(vec![
-        text_result("single"),
-        text_result("TEST_COMMAND: cargo test --test witness witness -- --exact"),
-        text_result("done"),                     // worker
-        text_result("FAIL the test was edited"), // must remain unused
-    ]);
-    // witness check (fail), baseline (fail), post-execute (pass) → the
-    // oracle flips — but the tamper check below must hard-fail the candidate.
-    // untracked_fingerprints call order: witness-before (empty),
-    // witness-after (test authored at w1 → watchlist), candidate
-    // untracked_before, gather_diff after execute, tamper check — where
-    // the file now reads w2: TAMPERED.
-    let repo_status = SeqRepoStatus::new(vec![
-        vec![],
-        vec![("tests/witness.rs", "w1")],
-        vec![("tests/witness.rs", "w1")],
-        vec![("tests/witness.rs", "w1")],
-        vec![("tests/witness.rs", "w2")],
-    ])
-    .with_artifact_identities(vec![
-        Some(ArtifactIdentity {
-            fingerprint: "w1".into(),
-            kind: ArtifactKind::Regular,
-            mode: 0o100644,
-            link_count: 1,
-        }),
-        Some(ArtifactIdentity {
-            fingerprint: "w2".into(),
-            kind: ArtifactKind::Regular,
-            mode: 0o100644,
-            link_count: 1,
-        }),
-    ]);
-    let config = PipelineConfig {
-        max_revisions: 0, // judge FAIL ends the run — keeps the script short
-        ..PipelineConfig::default()
-    };
-    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let workspace = FakeWorkspace::new(0, vec![false, false, true], Ok(vec![]), log.clone())
-        .with_repo_status(repo_status);
-    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log);
-    let (outcome, events, _) = run_isolated(&provider, &port, config, "Fix the retry bug").await;
-    let outcome = outcome.expect("run succeeds");
-
-    assert!(matches!(outcome.status, PipelineStatus::Aborted { .. }));
+    // The verdict is not deterministic: with no witness there was no flip, so
+    // the ladder had to buy the judge. Nothing is scored as proven.
+    let verdict = outcome.verdict.expect("verified");
     assert!(
-        !stages(&events).contains(&StageKind::Judge),
-        "tamper is not eligible for judge override"
+        !verdict.deterministic,
+        "an unauthored run has no deterministic evidence: {}",
+        verdict.summary
+    );
+    // One candidate workspace and one authoring snapshot — NOT a second
+    // execution. The old behavior re-ran the whole task here.
+    let log = log.lock().unwrap().clone();
+    assert_eq!(
+        log.iter().filter(|entry| *entry == "create").count(),
+        2,
+        "one candidate + one authoring snapshot: {log:?}"
+    );
+    assert!(
+        !log.iter().any(|entry| entry.starts_with("graft:")),
+        "a rejected witness is never grafted into the candidate: {log:?}"
     );
 }
 
@@ -1660,53 +1681,6 @@ async fn a_setup_failure_degrades_to_a_bare_execution_instead_of_aborting() {
         "the degradation announces itself once: {events:?}"
     );
 }
-
-/// Like [`run_unisolated_with_router`] but WITH a candidate workspace port,
-/// for exercising the setup-failure -> bare-execution degrade: the candidate
-/// path fails, and the bare fallback must run over these WORKING session
-/// ports (unlike `run_isolated`, whose session ports panic on touch).
-async fn run_degrade_over_working_session(
-    provider: &ScriptedProvider,
-    port: &FakeWorkspacePort,
-    config: PipelineConfig,
-    goal: &str,
-) -> (Result<PipelineOutcome, PipelineRunError>, Vec<AgentEvent>) {
-    let resolver = OneProvider(provider);
-    let runner = ScriptedRunner::new(vec![], "@@ -1 +1 @@\n-a\n+b");
-    let repo_status = SeqRepoStatus::new(vec![vec![]]);
-    let tools = EmptyTools;
-    let recall = NoContextRecall;
-    let repo = NoRepoStructure;
-    let approvals = AutoApproveGate;
-    let sleeper = NoopSleeper;
-    let router = router();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let pipeline = Pipeline::new(
-        PipelinePorts {
-            router: &router,
-            providers: &resolver,
-            tools: &tools,
-            recall: &recall,
-            repo: &repo,
-            repo_status: &repo_status,
-            diagnostics: &runner,
-            tests: &runner,
-            approvals: &approvals,
-            sleeper: &sleeper,
-            hooks: None,
-            candidate_workspaces: Some(port),
-            mcp_prefetch: None,
-            steering: None,
-        },
-        tx,
-        config,
-    );
-    let mut messages = vec![CompletionMessage::system("sys")];
-    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
-    let outcome = pipeline.run(goal, &mut messages, &mut budget).await;
-    (outcome, drain(&mut rx))
-}
-
 async fn run_unisolated_with_router(
     provider: &ScriptedProvider,
     config: PipelineConfig,

@@ -366,6 +366,17 @@ pub enum WorkspaceError {
         paths: Vec<String>,
         workspace: String,
     },
+    /// An accepted witness artifact could not be copied out of the pristine
+    /// authoring snapshot into the candidate that executed. The candidate is
+    /// left exactly as the worker made it and the run degrades to the
+    /// unauthored ladder: a witness that cannot be placed proves nothing, but
+    /// the work it would have pinned is real and already done.
+    #[error("could not graft witness artifact `{path}` into `{workspace}`: {reason}")]
+    Graft {
+        reason: String,
+        path: String,
+        workspace: String,
+    },
 }
 
 /// One isolated best-of-N candidate workspace: a snapshot of the working
@@ -415,6 +426,25 @@ pub trait CandidateWorkspace: Send + Sync {
     /// user asked for, so by default it dies with the workspace instead of
     /// being copied into the real tree. Empty means adopt everything.
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError>;
+    /// Copy one accepted witness artifact from another workspace's root into
+    /// this one at the same relative `path`, and fail if anything is already
+    /// there.
+    ///
+    /// Witness authoring runs in a *pristine* sibling snapshot so the author
+    /// never reads the implementation it is meant to pin (see
+    /// [`crate::witness`]). The artifact it produces has to end up in the
+    /// candidate that executed, because that is the tree the flip oracle
+    /// observes the pass in. This is the one byte-for-byte crossing between
+    /// the two, and it carries exactly one already-validated file.
+    ///
+    /// Create-only, and no link is followed on either side. A destination that
+    /// already exists is [`WorkspaceError::Graft`], never an overwrite: the
+    /// worker may legitimately have written a test at that path, and silently
+    /// replacing it would destroy the candidate's own work to make room for
+    /// scaffolding. The caller re-validates the identity of the *written* copy
+    /// against the candidate's own repo status, so the bytes tamper exclusion
+    /// pins are the bytes that will actually run.
+    async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError>;
     /// Remove the workspace. Best-effort and infallible — the cleanup
     /// discipline is the pipeline's (every workspace is removed on every
     /// path, except a winner whose adoption failed, which is preserved for
