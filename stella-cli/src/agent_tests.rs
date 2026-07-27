@@ -734,6 +734,10 @@ fn cfg_for(provider_id: &str) -> Config {
     Config {
         provider,
         model_id,
+        // The default posture for these tests is "no --model given", so the
+        // settings-driven wiring under test is the thing exercised. The
+        // flag-pinned case sets this explicitly.
+        model_pinned_by_flag: false,
         api_key: ApiKey::new("dummy-key-unused-offline"),
         credential_source: None,
         workspace_root: std::path::PathBuf::from("/tmp"),
@@ -1436,6 +1440,129 @@ fn pipeline_worker_model_is_inert_without_the_fix_but_routes_with_it() {
         router.resolve(Role::Plan).unwrap().model_ref,
         overridden,
         "the router must actually route plan turns to the override"
+    );
+}
+
+#[test]
+fn an_explicit_model_flag_outranks_pipeline_worker_model() {
+    // An explicit `--model` is a per-invocation pin of the WORKER model —
+    // that is the flag's whole documented job. Before this,
+    // `pipeline_worker_model` was applied unconditionally on top of the
+    // already-resolved session default, so `--model zai/glm-5.2` silently ran
+    // (and billed for) `anthropic/claude-fable-5` instead.
+    let mut cfg = cfg_with_engine(
+        "zai", // --model zai/glm-5.2
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
+    );
+    cfg.model_pinned_by_flag = true;
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(
+        wiring.worker_model, model_ref,
+        "the flag-pinned model must be what the worker role resolves to"
+    );
+    let overridden = ModelRef::new("anthropic", "claude-fable-5");
+    assert_ne!(
+        wiring.pins.get(Role::Worker),
+        Some(&overridden),
+        "settings must not pin the worker over an explicit --model"
+    );
+    assert!(
+        !wiring
+            .extra_providers
+            .iter()
+            .any(|(model_ref, _)| *model_ref == overridden),
+        "no adapter for the suppressed worker override should be built"
+    );
+
+    // The round trip through the real router is the claim that matters: the
+    // pin table being empty is only useful if resolution lands on the flag.
+    let breaker = CircuitBreaker::new(Box::new(SystemClock::new()));
+    let router = Router::new(wiring.pins.clone(), wiring.profiles.clone(), breaker);
+    assert_eq!(
+        router.resolve(Role::Worker).unwrap().model_ref,
+        model_ref,
+        "worker turns must run on the flag-pinned model"
+    );
+    assert_eq!(
+        router.resolve(Role::Plan).unwrap().model_ref,
+        model_ref,
+        "plan/witness turns ride the worker and must follow the flag too"
+    );
+
+    // Silently dropping a configured setting is its own bug — say so.
+    assert!(
+        wiring
+            .notices
+            .iter()
+            .any(|n| n.contains("anthropic/claude-fable-5") && n.contains("--model")),
+        "a notice must explain that --model suppressed the configured worker \
+         model, got: {:?}",
+        wiring.notices
+    );
+}
+
+#[test]
+fn an_explicit_model_flag_leaves_triage_and_judge_pins_alone() {
+    // `--model` says nothing about the triage/judge roles, so their own
+    // settings must keep applying — suppressing them too would make the flag
+    // a blunt instrument that silently un-configures the rest of the pipeline.
+    let mut cfg = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5",
+             "pipeline_triage_model": "deepseek/deepseek-chat",
+             "pipeline_judge_model": "openai/gpt-5.5" }"#,
+    );
+    cfg.model_pinned_by_flag = true;
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![
+        configured_provider("zai"),
+        configured_provider("anthropic"),
+        configured_provider("deepseek"),
+        configured_provider("openai"),
+    ];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(wiring.worker_model, model_ref, "worker follows the flag");
+    assert_eq!(
+        wiring.pins.get(Role::Triage),
+        Some(&ModelRef::new("deepseek", "deepseek-chat")),
+        "the configured triage model must survive an explicit --model"
+    );
+    assert_eq!(
+        wiring.pins.get(Role::Judge),
+        Some(&ModelRef::new("openai", "gpt-5.5")),
+        "the configured judge model must survive an explicit --model"
+    );
+}
+
+#[test]
+fn without_a_model_flag_pipeline_worker_model_still_wins() {
+    // The guard must key off the FLAG, not merely the presence of a worker
+    // setting: with no `--model`, issue #276's behavior is unchanged.
+    let cfg = cfg_with_engine(
+        "zai",
+        r#"{ "pipeline_worker_model": "anthropic/claude-fable-5" }"#,
+    );
+    assert!(!cfg.model_pinned_by_flag);
+    let model_ref = ModelRef::new(cfg.provider.id, cfg.model_id.clone());
+    let configured = vec![configured_provider("zai"), configured_provider("anthropic")];
+
+    let wiring = resolve_engine_wiring(&cfg, &model_ref, &configured);
+
+    assert_eq!(
+        wiring.worker_model,
+        ModelRef::new("anthropic", "claude-fable-5"),
+        "an unpinned run must still honor pipeline_worker_model (#276)"
+    );
+    assert!(
+        wiring.notices.is_empty(),
+        "no --model means nothing was suppressed, so no notice: {:?}",
+        wiring.notices
     );
 }
 

@@ -26,6 +26,21 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+- `--model` now actually pins the model on the pipeline path. A configured
+  `pipeline_worker_model` (or `agents.worker.*`) used to be applied on top of
+  the flag, so `stella --model z-ai/glm-4.7-flash run "…"` silently executed —
+  and billed for — whatever the settings file named instead. The flag now
+  outranks those settings for the worker role, and when it suppresses one the
+  run says so on stderr rather than dropping it silently. An explicitly
+  configured **judge or triage** is unchanged: `--model` says nothing about
+  those roles, so cross-family setups keep working.
+- The `--output-format json` envelope's `model` key now reports the model that
+  **actually ran** the worker turns, not the one that was requested. When those
+  differed, the envelope named a model that never ran a turn and never billed a
+  cent while `cost_usd` sat right beside it — backwards for the spend
+  attribution the key exists to serve. The text cost summary and the
+  `stream-json` terminal `Complete` frame carried the same stale value and are
+  fixed with it.
 - Short work costs less. A greeting no longer pays for a triage model call: the
   conversational route was always resolved deterministically, but the paid
   classification went out first and could not change the answer. `hi` now costs
