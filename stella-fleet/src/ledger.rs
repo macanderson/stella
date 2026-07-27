@@ -125,6 +125,60 @@ impl Ledger {
         Self::init(conn)
     }
 
+    /// Rows whose `run_id` names a run that is no longer in `runs`, per table.
+    ///
+    /// Only ever non-empty on a ledger created before `FRESH_SCHEMA`, which
+    /// constrains these four columns; existing files were deliberately left
+    /// unconstrained because retrofitting them can only be done by deleting
+    /// this history (#617 item 5). Reporting is therefore the whole remedy:
+    /// nothing reads a row by orphaned run today, so the rows are inert, but an
+    /// operator should be able to see them rather than have them silently
+    /// removed. Surfaced by `stella doctor`.
+    ///
+    /// Classes with a zero count are omitted, so an empty result means clean.
+    pub fn orphan_rows(&self) -> Result<Vec<OrphanRows>, LedgerError> {
+        let mut found = Vec::new();
+        for (table, column) in RUN_REFERENCES {
+            // The table list is a compile-time constant, never user input.
+            let count: i64 = self.conn.query_row(
+                &format!(
+                    "SELECT count(*) FROM {table}
+                     WHERE {column} NOT IN (SELECT id FROM runs)"
+                ),
+                [],
+                |row| row.get(0),
+            )?;
+            if count > 0 {
+                found.push(OrphanRows {
+                    table,
+                    column,
+                    count,
+                });
+            }
+        }
+        Ok(found)
+    }
+
+    /// Whether this ledger's `tasks.run_id` carries the `REFERENCES runs (id)`
+    /// constraint — i.e. whether it was created by `FRESH_SCHEMA` rather than the
+    /// legacy migration ladder.
+    ///
+    /// Read from `sqlite_master` rather than tracked in `user_version`, because
+    /// version alone cannot answer it: both variants are v2.
+    pub fn enforces_run_references(&self) -> Result<bool, LedgerError> {
+        let ddl: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(ddl
+            .map(|sql| sql.contains("REFERENCES runs"))
+            .unwrap_or(false))
+    }
+
     fn init(conn: Connection) -> Result<Self, LedgerError> {
         // execute_batch tolerates the row PRAGMA journal_mode returns (a
         // plain pragma_update errors on it).
@@ -395,6 +449,14 @@ fn migrate(conn: &Connection) -> Result<(), LedgerError> {
     if version >= SCHEMA_VERSION {
         return Ok(());
     }
+    // A genuinely fresh file gets the referential integrity an existing one
+    // cannot be given — see [`FRESH_SCHEMA`].
+    if version == 0 && !any_fleet_table_exists(&tx)? {
+        tx.execute_batch(FRESH_SCHEMA)?;
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        tx.commit()?;
+        return Ok(());
+    }
     if version < 1 {
         tx.execute_batch(MIGRATION_V1)?;
     }
@@ -405,6 +467,114 @@ fn migrate(conn: &Connection) -> Result<(), LedgerError> {
     tx.commit()?;
     Ok(())
 }
+
+/// Whether any ledger table is already present — the fresh-vs-legacy probe,
+/// since `user_version = 0` means both "brand new file" and "created before
+/// versioning existed".
+fn any_fleet_table_exists(conn: &Connection) -> Result<bool, LedgerError> {
+    let count: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table'
+         AND name IN ('runs', 'tasks', 'attempts', 'commits', 'lineage', 'spend')",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// One orphan class: rows in `table` whose `column` names a run that is not in
+/// `runs`. Produced by [`Ledger::orphan_rows`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrphanRows {
+    pub table: &'static str,
+    pub column: &'static str,
+    pub count: i64,
+}
+
+/// The four `run_id` columns that a fresh file constrains and an existing one
+/// does not. Kept beside `FRESH_SCHEMA` so the report and the constraints
+/// cannot drift apart.
+const RUN_REFERENCES: [(&str, &str); 4] = [
+    ("tasks", "run_id"),
+    ("attempts", "run_id"),
+    ("lineage", "parent_run_id"),
+    ("spend", "run_id"),
+];
+
+/// The schema a **brand-new** `fleet.db` is created with: the current shape
+/// (post-v2 `lineage`) plus the `REFERENCES runs (id)` constraints that
+/// `tasks`, `attempts`, `lineage` and `spend` have always been missing.
+///
+/// **Why fresh files only** (#617 item 5). Retrofitting these constraints onto
+/// a deployed `fleet.db` is a table rebuild, and `apply_migration`-style
+/// runners abort on `pragma_foreign_key_check` — so on any file that already
+/// holds a row naming a deleted run, the migration fails and the ledger stops
+/// opening. The only way through is deleting those rows, which is deleting a
+/// user's fleet history: which tasks ran, what was attempted, what it cost.
+/// The issue filed this as a routine schema tidy-up and did not say that.
+/// So new files get enforcement, existing files are left exactly as they are,
+/// and [`Ledger::orphan_rows`] reports what an unconstrained file holds
+/// (surfaced by `stella doctor`).
+///
+/// **Consequence a future migration author must know:** `SCHEMA_VERSION` no
+/// longer determines shape by itself. Two files can both be at v2 — one with
+/// these constraints and one without. A step that rebuilds any of these four
+/// tables has to reproduce the right variant, or read the existing DDL from
+/// `sqlite_master` rather than assuming. The alternative was worse: silently
+/// deleting history, or leaving new databases unconstrained forever.
+const FRESH_SCHEMA: &str = "\
+CREATE TABLE runs (
+    id              TEXT PRIMARY KEY,
+    root_task_count INTEGER NOT NULL,
+    created_at_ms   INTEGER NOT NULL
+);
+CREATE TABLE tasks (
+    run_id    TEXT NOT NULL REFERENCES runs (id),
+    task_id   TEXT NOT NULL,
+    title     TEXT NOT NULL,
+    isolation TEXT NOT NULL,
+    PRIMARY KEY (run_id, task_id)
+);
+CREATE TABLE attempts (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id         TEXT NOT NULL REFERENCES runs (id),
+    task_id        TEXT NOT NULL,
+    worktree_path  TEXT NOT NULL,
+    branch         TEXT NOT NULL,
+    started_at_ms  INTEGER NOT NULL,
+    finished_at_ms INTEGER,
+    success        INTEGER,
+    summary        TEXT
+);
+CREATE INDEX attempts_by_task ON attempts (run_id, task_id);
+CREATE TABLE commits (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempt_id   INTEGER NOT NULL REFERENCES attempts (id),
+    run_id       TEXT NOT NULL,
+    task_id      TEXT NOT NULL,
+    sha          TEXT NOT NULL,
+    branch       TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    timestamp_ms INTEGER NOT NULL
+);
+CREATE INDEX commits_by_task ON commits (run_id, task_id);
+CREATE TABLE lineage (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_run_id  TEXT NOT NULL REFERENCES runs (id),
+    child_task_id  TEXT NOT NULL,
+    recorded_at_ms INTEGER NOT NULL,
+    UNIQUE (parent_run_id, child_task_id)
+);
+CREATE INDEX lineage_by_parent ON lineage (parent_run_id);
+CREATE TABLE spend (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id         TEXT NOT NULL REFERENCES runs (id),
+    task_id        TEXT NOT NULL,
+    attempt_id     INTEGER NOT NULL REFERENCES attempts (id),
+    cost_usd       REAL NOT NULL,
+    recorded_at_ms INTEGER NOT NULL
+);
+CREATE INDEX spend_by_run ON spend (run_id);
+";
 
 /// v1 — the schema as it originally shipped (unversioned). Every statement is
 /// `IF NOT EXISTS`, so this doubles as the retrofit step for files created
@@ -492,6 +662,95 @@ CREATE INDEX IF NOT EXISTS lineage_by_parent ON lineage (parent_run_id);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #617 item 5: a brand-new ledger enforces the run references, so no new
+    /// orphan can ever be created.
+    #[test]
+    fn a_fresh_ledger_enforces_run_references_and_rejects_an_unknown_run() {
+        let ledger = Ledger::open_in_memory().expect("open");
+        assert!(ledger.enforces_run_references().expect("ddl"));
+        assert!(ledger.orphan_rows().expect("scan").is_empty());
+
+        // Inserting a task for a run that does not exist must now fail.
+        let err = ledger.conn.execute(
+            "INSERT INTO tasks (run_id, task_id, title, isolation)
+             VALUES ('ghost', 't1', 'title', 'shared')",
+            [],
+        );
+        assert!(
+            err.is_err(),
+            "a fresh ledger must reject a task naming an unknown run"
+        );
+    }
+
+    /// The other half of the ruling: a ledger that came up the legacy ladder is
+    /// left unconstrained — opening it must NOT fail, and must not delete the
+    /// orphan history it already holds. It is reported instead.
+    #[test]
+    fn a_legacy_ledger_keeps_its_orphans_and_reports_them() {
+        // Build a v0 file the old way, with an orphan row already in it.
+        let conn = Connection::open_in_memory().expect("conn");
+        conn.execute_batch(MIGRATION_V1).expect("legacy schema");
+        conn.execute(
+            "INSERT INTO tasks (run_id, task_id, title, isolation)
+             VALUES ('deleted-run', 't1', 'orphaned', 'shared')",
+            [],
+        )
+        .expect("orphan row is accepted by the legacy shape");
+        // `spend.attempt_id` has always been a real foreign key, so the attempt
+        // has to exist — its own `run_id` is the orphaned part.
+        conn.execute(
+            "INSERT INTO attempts (run_id, task_id, worktree_path, branch, started_at_ms)
+             VALUES ('deleted-run', 't1', '/w', 'fleet/t1', 0)",
+            [],
+        )
+        .expect("orphan attempt row");
+        let attempt_id: i64 = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO spend (run_id, task_id, attempt_id, cost_usd, recorded_at_ms)
+             VALUES ('deleted-run', 't1', ?1, 1.0, 0)",
+            params![attempt_id],
+        )
+        .expect("orphan spend row");
+
+        // Now let the ledger take it through migrate() as a deployed file.
+        let ledger = Ledger::init(conn).expect("a legacy file with orphans still opens");
+
+        assert!(
+            !ledger.enforces_run_references().expect("ddl"),
+            "an existing file is left unconstrained on purpose"
+        );
+
+        let orphans = ledger.orphan_rows().expect("scan");
+        assert_eq!(
+            orphans,
+            vec![
+                OrphanRows {
+                    table: "tasks",
+                    column: "run_id",
+                    count: 1
+                },
+                OrphanRows {
+                    table: "attempts",
+                    column: "run_id",
+                    count: 1
+                },
+                OrphanRows {
+                    table: "spend",
+                    column: "run_id",
+                    count: 1
+                },
+            ],
+            "every orphan class is reported, none deleted"
+        );
+
+        // And the history is still there.
+        let surviving: i64 = ledger
+            .conn
+            .query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(surviving, 1, "the orphan row must not have been deleted");
+    }
 
     fn task(id: &str) -> Task {
         Task::new(id, format!("title {id}"), "prompt")
