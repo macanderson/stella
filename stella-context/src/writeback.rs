@@ -18,6 +18,7 @@ use crate::store::{
     insert_episode, insert_memory, node_by_id, sha256_hex, store_embedding, tag_edge_domains,
     tag_node_domains, to_hex, upsert_domain, upsert_node,
 };
+use crate::warm;
 
 /// How an episode turned out. Stored as its `as_str` form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,9 +557,20 @@ impl ContextStore {
             // of a large delta (a full-workspace first index is exactly the
             // case where the bodies are biggest).
             let (hashes, texts): (Vec<String>, Vec<String>) = missing.into_iter().unzip();
-            let embeddings = self.embedder().embed(&texts).await?;
-            for (hash, emb) in hashes.into_iter().zip(embeddings) {
-                new_vectors.push((hash, emb.vector));
+            // One request per `warm::BATCH` bodies rather than one request for
+            // the whole delta — a full-workspace first index handed a backend
+            // with a request-size limit the entire corpus in a single call.
+            // Same width as the warm indexer so there is one number to tune
+            // (#616 item 8). `chunks` borrows the bodies, so the peak-memory
+            // property the split above protects is preserved; only the short
+            // hash strings are copied per chunk.
+            for (hash_chunk, text_chunk) in
+                hashes.chunks(warm::BATCH).zip(texts.chunks(warm::BATCH))
+            {
+                let embeddings = self.embedder().embed(text_chunk).await?;
+                for (hash, emb) in hash_chunk.iter().zip(embeddings) {
+                    new_vectors.push((hash.clone(), emb.vector));
+                }
             }
         }
 

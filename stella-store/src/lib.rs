@@ -87,7 +87,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use base64::Engine as _;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use stella_protocol::{AgentEvent, TaskItem, TaskStatus, ToolOutput};
 
@@ -164,6 +164,7 @@ use ddl::TABLES;
 use integrity::corrupt_store_error;
 use migrations::{
     MIGRATIONS, SCHEMA_VERSION, any_store_table_exists, apply_migration, create_latest_schema,
+    initialize_store_pragmas,
 };
 
 pub use cache_gaps::CacheCallGap;
@@ -666,13 +667,9 @@ impl Store {
         // This batch is also the first statement to touch page 1, so it is
         // where an unreadable file announces itself — mapped here, before the
         // blanket `From<rusqlite::Error>` flattens the error code away.
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             PRAGMA busy_timeout=5000;
-             PRAGMA foreign_keys=ON;",
-        )
-        .map_err(|error| corrupt_store_error(error, db_path))?;
+        // The batch absorbs a concurrent first-open's `SQLITE_BUSY`; see
+        // [`initialize_store_pragmas`].
+        initialize_store_pragmas(&conn).map_err(|error| corrupt_store_error(error, db_path))?;
         let store = Self {
             conn: Mutex::new(conn),
             root,
@@ -705,7 +702,16 @@ impl Store {
     /// (version stamped inside it — see [`apply_migration`]).
     fn migrate(&self) -> Result<()> {
         let mut conn = self.lock();
-        let mut version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        // The fresh-file decision is made under a write lock, because
+        // "user_version is 0 AND no store table exists" is only true until
+        // someone else acts on it. Read outside a transaction — or inside a
+        // DEFERRED one, which snapshots before it locks — two processes
+        // opening the same fresh workspace (a fleet run beside a
+        // `stella stats`) both saw a fresh file and both ran
+        // `create_latest_schema`; the loser failed with "table … already
+        // exists" instead of no-opping (#617 item 8).
+        let bootstrap = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut version: i64 = bootstrap.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version < 0 {
             // `user_version` is whatever is in the file header, and the header
             // is not ours to trust: a negative stamp would index MIGRATIONS
@@ -732,13 +738,17 @@ impl Store {
                  this workspace."
             )));
         }
-        if version == 0 && !any_store_table_exists(&conn)? {
-            let tx = conn.transaction()?;
-            create_latest_schema(&tx)?;
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-            tx.commit()?;
+        if version == 0 && !any_store_table_exists(&bootstrap)? {
+            create_latest_schema(&bootstrap)?;
+            bootstrap.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            bootstrap.commit()?;
             return Ok(());
         }
+        // Not a fresh file: release the write lock before the step loop, which
+        // has to toggle `PRAGMA foreign_keys` between steps and so cannot run
+        // inside this transaction. Each step re-confirms the version under its
+        // own IMMEDIATE lock (see `apply_migration`).
+        drop(bootstrap);
         while version < SCHEMA_VERSION {
             let target = version + 1;
             // PRAGMA foreign_keys is silently ignored inside a transaction

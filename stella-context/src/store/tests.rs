@@ -288,6 +288,9 @@ fn kill_mid_index_rolls_back_to_a_consistent_store() {
 struct CountingEmbedder {
     inner: crate::embed::HashEmbedder,
     embedded: std::sync::atomic::AtomicUsize,
+    /// The largest single `embed` request seen — proves the caller batches
+    /// rather than handing the backend a whole delta at once (#616 item 8).
+    max_request: std::sync::atomic::AtomicUsize,
 }
 
 impl CountingEmbedder {
@@ -295,11 +298,16 @@ impl CountingEmbedder {
         Arc::new(Self {
             inner: crate::embed::HashEmbedder::with_revision(revision),
             embedded: std::sync::atomic::AtomicUsize::new(0),
+            max_request: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
     fn count(&self) -> usize {
         self.embedded.load(Ordering::SeqCst)
+    }
+
+    fn max_request(&self) -> usize {
+        self.max_request.load(Ordering::SeqCst)
     }
 }
 
@@ -313,8 +321,51 @@ impl crate::embed::Embedder for CountingEmbedder {
         texts: &[String],
     ) -> Result<Vec<crate::embed::Embedding>, crate::embed::EmbedError> {
         self.embedded.fetch_add(texts.len(), Ordering::SeqCst);
+        self.max_request.fetch_max(texts.len(), Ordering::SeqCst);
         self.inner.embed(texts).await
     }
+}
+
+/// #616 item 8: `upsert` embeds in `warm::BATCH`-sized requests. It used to
+/// hand the embedder every missing body in one call, so a full-workspace first
+/// index put the entire corpus in a single request — the exact shape a backend
+/// with a request-size limit rejects, and the reason the warm indexer has
+/// batched since it shipped.
+#[tokio::test]
+async fn upsert_embeds_in_bounded_batches_not_one_request_for_the_whole_delta() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let embedder = CountingEmbedder::new("1");
+    let store = ContextStore::open_with(&path, embedder.clone(), Arc::new(SystemClock)).unwrap();
+
+    // Comfortably more than one batch, with distinct content so nothing is
+    // deduped away before it reaches the embedder.
+    let nodes = crate::warm::BATCH * 2 + 5;
+    let mut delta = crate::writeback::ContextDelta::new();
+    for i in 0..nodes {
+        delta = delta.with_node(
+            NodeInput::new(NodeKind::Concept, format!("node-{i}"))
+                .with_content(format!("distinct body number {i}")),
+        );
+    }
+    store.upsert(delta).await.unwrap();
+
+    assert_eq!(
+        embedder.count(),
+        nodes,
+        "every distinct body is embedded exactly once"
+    );
+    assert!(
+        embedder.max_request() <= crate::warm::BATCH,
+        "no single embed request may exceed warm::BATCH ({}), saw {}",
+        crate::warm::BATCH,
+        embedder.max_request()
+    );
+    assert!(
+        embedder.max_request() > 1,
+        "batches should be filled, not sent one text at a time (saw {})",
+        embedder.max_request()
+    );
 }
 
 #[tokio::test]

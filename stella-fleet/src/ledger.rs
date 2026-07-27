@@ -374,23 +374,27 @@ const SCHEMA_VERSION: i64 = 2;
 /// error for anyone who downgrades and belongs in a deliberate change with a
 /// migration story, not here.
 ///
-/// **The version is read before the transaction opens**, which two processes
-/// opening the same un-migrated `fleet.db` at once can both observe. The
-/// transaction is DEFERRED, so the second one takes its read snapshot first and
-/// then tries to write — in WAL that is `SQLITE_BUSY_SNAPSHOT`, which
-/// `busy_timeout` does not retry, so one `open` can fail outright on that race.
-/// It only bites on the first open of a file (an already-stamped ledger takes
-/// the early return above and never opens a transaction), and today's steps
-/// happen to be replay-safe. A step that is NOT replay-safe — an
-/// `ALTER TABLE … ADD COLUMN`, say — must not be added without first moving the
-/// version read inside an IMMEDIATE transaction, or the loser of the race
-/// applies it twice.
+/// **The version is read inside an IMMEDIATE transaction**, so two processes
+/// opening the same un-migrated `fleet.db` at once cannot both observe the
+/// pre-migration version and both apply the ladder. That race previously
+/// surfaced as `SQLITE_BUSY_SNAPSHOT` on one of the two opens — which
+/// `busy_timeout` does not retry — and it is also what made appending a
+/// non-replay-safe step (an `ALTER TABLE … ADD COLUMN`) unsafe, because the
+/// loser applied it twice. Both are closed (#617 item 8).
 fn migrate(conn: &Connection) -> Result<(), LedgerError> {
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    // IMMEDIATE, and the version is read inside it: a DEFERRED transaction
+    // snapshots before it locks, so two processes opening the same
+    // un-migrated `fleet.db` could both read the same version and both apply
+    // the ladder — in WAL the loser hits SQLITE_BUSY_SNAPSHOT, which
+    // `busy_timeout` does not retry, so one `open` failed outright. This is
+    // also what makes a non-replay-safe step (an `ALTER TABLE … ADD COLUMN`)
+    // safe to append below; before, it would have been applied twice
+    // (#617 item 8).
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version >= SCHEMA_VERSION {
         return Ok(());
     }
-    let tx = conn.unchecked_transaction()?;
     if version < 1 {
         tx.execute_batch(MIGRATION_V1)?;
     }
