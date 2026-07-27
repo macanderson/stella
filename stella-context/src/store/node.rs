@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use contextgraph_types::FrameKind;
 
 use crate::error::ContextError;
+use crate::retrieval::RecallTier;
 
 use super::{sha256_hex, to_hex};
 
@@ -122,6 +123,10 @@ pub struct NodeInput {
     /// Workspace domain tags (e.g. `["auth", "billing"]`). One or more; stored
     /// via the `node_domains` junction (indexable), never a JSON blob.
     pub domains: Vec<String>,
+    /// Which precedence band this node competes in once a recall budget binds.
+    /// Defaults to [`RecallTier::Normal`] — competing on rank alone — which is
+    /// what every writer but the reflection lifecycle wants.
+    pub recall_tier: RecallTier,
 }
 
 impl NodeInput {
@@ -134,7 +139,16 @@ impl NodeInput {
             uri: None,
             properties: serde_json::json!({}),
             domains: Vec::new(),
+            recall_tier: RecallTier::Normal,
         }
+    }
+
+    /// Ask for a non-default precedence band. See [`RecallTier`] — a tier can
+    /// only make a node yield sooner, never win a slot it did not rank for.
+    #[must_use]
+    pub fn with_recall_tier(mut self, tier: RecallTier) -> Self {
+        self.recall_tier = tier;
+        self
     }
 
     /// Attach retrievable content.
@@ -221,6 +235,11 @@ pub struct NodeRow {
     /// not a modification time — which is exactly what recall's recency
     /// ranking sorts on.
     pub recorded_at: String,
+    /// Which precedence band this node competes in once a recall budget binds.
+    /// Read back so the inspection surface can show why a memory keeps losing
+    /// its slot; the ranking itself reads the same column off
+    /// [`crate::candidates::NodeMeta`], without the body.
+    pub recall_tier: RecallTier,
 }
 
 fn node_public_id(kind: NodeKind, natural_key: &str) -> String {
@@ -247,14 +266,18 @@ pub(crate) fn upsert_node(
     let content_hash = sha256_hex(&node.content);
     let props = serde_json::to_string(&node.properties)?;
     let id: i64 = conn.query_row(
-        "INSERT INTO node (public_id, kind, display_name, content, content_hash, uri, properties, recorded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        // `recall_tier` updates on touch like the rest of the mutable columns:
+        // a lesson rewritten under a corrected kind must land in the band its
+        // new kind asks for, not keep the one its first write happened to pick.
+        "INSERT INTO node (public_id, kind, display_name, content, content_hash, uri, properties, recorded_at, recall_tier)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(public_id) DO UPDATE SET
              display_name = excluded.display_name,
              content      = excluded.content,
              content_hash = excluded.content_hash,
              uri          = excluded.uri,
-             properties   = excluded.properties
+             properties   = excluded.properties,
+             recall_tier  = excluded.recall_tier
          RETURNING id",
         params![
             node.public_id(),
@@ -264,7 +287,8 @@ pub(crate) fn upsert_node(
             content_hash,
             node.uri,
             props,
-            now
+            now,
+            node.recall_tier.as_i64()
         ],
         |r| r.get(0),
     )?;
@@ -289,6 +313,7 @@ pub(crate) fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow>
         uri: row.get("uri")?,
         valid_from: row.get("valid_from")?,
         recorded_at: row.get("recorded_at")?,
+        recall_tier: RecallTier::from_i64(row.get("recall_tier")?),
     })
 }
 
@@ -312,7 +337,7 @@ pub(crate) fn node_ids_for_uris(
 pub(crate) fn node_by_id(conn: &Connection, id: i64) -> Result<Option<NodeRow>, ContextError> {
     let row = conn
         .query_row(
-            "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at
+            "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at, recall_tier
              FROM node WHERE id = ?1",
             params![id],
             map_node_row,

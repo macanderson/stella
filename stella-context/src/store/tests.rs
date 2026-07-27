@@ -461,6 +461,96 @@ async fn open_and_warm_catches_up_embeddings_in_the_background() {
     assert!(!result.frames.is_empty());
 }
 
+/// End-to-end: a deferred memory loses the last slot to a normal one, through
+/// a real store — real migration, real embedder, real ranking, real packer.
+///
+/// The unit test in `retrieval/tests.rs` builds `Ranked` values directly, so it
+/// cannot catch the tier being dropped on the way to disk or left out of the
+/// candidate scan — which is exactly where the reflection lifecycle lost the
+/// distinction before: the taxonomy existed in the write path and never reached
+/// the ranking.
+///
+/// **The deferred memory is the one that should win on rank.** The query is its
+/// text verbatim, so it is the stronger match by construction and the tier is
+/// the only thing that can dislodge it. An earlier version of this test queried
+/// something both memories matched loosely; the durable fact won on similarity
+/// alone, so the test passed with the tiering removed entirely and proved
+/// nothing. Verified by mutation: reverting `pack_to_budget` to a single ranked
+/// band fails this test.
+#[tokio::test]
+async fn a_deferred_memory_loses_the_last_slot_to_a_normal_one() {
+    const PROCESS_NOTE: &str = "the agent should not retry the same command twice";
+    const DOMAIN_FACT: &str = "money is stored as integer minor units";
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("context.db");
+    let store = ContextStore::open_with(
+        &path,
+        std::sync::Arc::new(crate::embed::HashEmbedder::default()),
+        crate::clock::FixedClock::shared(1_000),
+    )
+    .unwrap();
+
+    store
+        .upsert(
+            crate::writeback::ContextDelta::new()
+                .with_memory(crate::writeback::MemoryInput::reflection(
+                    DOMAIN_FACT,
+                    Vec::<String>::new(),
+                ))
+                .with_memory(
+                    crate::writeback::MemoryInput::reflection(PROCESS_NOTE, Vec::<String>::new())
+                        .with_recall_tier(crate::retrieval::RecallTier::Deferred),
+                ),
+        )
+        .await
+        .unwrap();
+
+    // The query IS the process note, so ranking prefers it outright.
+    let one_slot = contextgraph_types::ContextQuery {
+        goal: PROCESS_NOTE.into(),
+        query_text: Some(PROCESS_NOTE.into()),
+        embedding: None,
+        kinds: vec![],
+        anchors: vec![],
+        max_frames: 1,
+        max_tokens: 2000,
+        as_of: None,
+        representation_preferences: vec![],
+    };
+    let result = store.recall(&one_slot).await.unwrap();
+    assert_eq!(
+        result.frames.len(),
+        1,
+        "the budget allows exactly one frame"
+    );
+    let content = result.frames[0].content.as_deref().unwrap_or_default();
+    assert_eq!(
+        content, DOMAIN_FACT,
+        "the durable fact must take the only slot even though the deferred \
+         note is the better match"
+    );
+
+    // The negative: widen the budget and the deferred memory comes back. Without
+    // this, an implementation that simply never recalled deferred memories would
+    // pass the assertion above.
+    let two_slots = contextgraph_types::ContextQuery {
+        max_frames: 2,
+        ..one_slot
+    };
+    let widened = store.recall(&two_slots).await.unwrap();
+    let bodies: Vec<&str> = widened
+        .frames
+        .iter()
+        .map(|f| f.content.as_deref().unwrap_or_default())
+        .collect();
+    assert_eq!(bodies.len(), 2, "both memories fit a two-frame budget");
+    assert!(
+        bodies.contains(&PROCESS_NOTE),
+        "a deferred memory is still recalled when there is room, got {bodies:?}"
+    );
+}
+
 #[tokio::test]
 async fn scoped_recall_keeps_untagged_nodes_and_drops_out_of_scope_ones() {
     // Regression: the post-`stella init` failure mode. A workspace
@@ -747,6 +837,42 @@ pub(crate) fn open_legacy(path: &std::path::Path, version: i64) -> Connection {
     conn
 }
 
+/// Insert a node the way a legacy binary would — the v1 column list, and
+/// nothing a later migration added.
+///
+/// The fixtures below used [`upsert_node`] for this, which is the *current*
+/// writer: it names every column the current schema has, so the first node
+/// column added after v1 (`recall_tier`, v9) made three "does a v1 db migrate"
+/// tests fail on the fixture rather than on the migration. A legacy row was
+/// never written by a current binary, so writing one that way was the mistake.
+/// Kept deliberately literal — this statement should not follow the schema.
+pub(crate) fn insert_legacy_node(
+    conn: &Connection,
+    kind: NodeKind,
+    display_name: &str,
+    content: &str,
+    uri: Option<&str>,
+    now: &str,
+) -> i64 {
+    let public_id = format!("nod_legacy_{display_name}");
+    conn.query_row(
+        "INSERT INTO node (public_id, kind, display_name, content, content_hash, uri, properties, recorded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, '{}', ?7)
+         RETURNING id",
+        params![
+            public_id,
+            kind.as_str(),
+            display_name,
+            content,
+            sha256_hex(content),
+            uri,
+            now
+        ],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
 /// A store stamped by a *newer* stella must be refused, not opened as-is:
 /// episodic memory and the fact graph are not rebuildable, so an older
 /// binary writing into a schema it does not know is unrecoverable data
@@ -782,9 +908,9 @@ fn migrates_v1_context_db_preserving_bitemporal_edges() {
     let (a, b, c) = {
         let conn = open_legacy(&path, 1);
         let props = serde_json::json!({});
-        let a = upsert_node(&conn, &NodeInput::new(NodeKind::Concept, "a"), T1).unwrap();
-        let b = upsert_node(&conn, &NodeInput::new(NodeKind::Concept, "b"), T1).unwrap();
-        let c = upsert_node(&conn, &NodeInput::new(NodeKind::Concept, "c"), T1).unwrap();
+        let a = insert_legacy_node(&conn, NodeKind::Concept, "a", "", None, T1);
+        let b = insert_legacy_node(&conn, NodeKind::Concept, "b", "", None, T1);
+        let c = insert_legacy_node(&conn, NodeKind::Concept, "c", "", None, T1);
         // A belief a->b that was later corrected away (superseded at T2).
         let e_ab =
             insert_edge(&conn, "relates_to", a, b, 1.0, &props, None, None, T1, None).unwrap();
@@ -857,14 +983,14 @@ fn migrates_v2_context_db_preserving_memories() {
             params![mem_public, "reflection", "prefer rg over grep", 0.5, T1],
         )
         .unwrap();
-        upsert_node(
+        insert_legacy_node(
             &conn,
-            &NodeInput::new(NodeKind::Memory, "prefer rg over grep")
-                .with_content("prefer rg over grep")
-                .with_uri(format!("memory://{mem_public}")),
+            NodeKind::Memory,
+            "prefer rg over grep",
+            "prefer rg over grep",
+            Some(&format!("memory://{mem_public}")),
             T1,
-        )
-        .unwrap();
+        );
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
@@ -918,14 +1044,14 @@ fn migrates_v3_context_db_preserving_memories() {
             ],
         )
         .unwrap();
-        upsert_node(
+        insert_legacy_node(
             &conn,
-            &NodeInput::new(NodeKind::Memory, "the deploy needs the migration first")
-                .with_content("the deploy needs the migration first")
-                .with_uri(format!("memory://{mem_public}")),
+            NodeKind::Memory,
+            "the deploy needs the migration first",
+            "the deploy needs the migration first",
+            Some(&format!("memory://{mem_public}")),
             T1,
-        )
-        .unwrap();
+        );
     }
 
     let store = ContextStore::open(&path).unwrap();

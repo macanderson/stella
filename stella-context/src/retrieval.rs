@@ -51,6 +51,11 @@ pub(crate) const LEXICAL_FALLBACK_METHOD: &str = "stella-context/lexical-fallbac
 /// seam — Phase 2 (#713). The `method` field holds
 /// [`SelectionReason::as_str`].
 pub const SELECTION_PROVENANCE_KIND: &str = "selection";
+/// Provenance `kind` carrying a frame's [`RecallTier`] across the CGP seam.
+/// The `method` field holds [`RecallTier::as_str`]. Written only for a frame
+/// that is *not* [`RecallTier::Normal`], so the overwhelmingly common frame
+/// gains no bytes and every existing frame's provenance chain is unchanged.
+pub const RECALL_TIER_PROVENANCE_KIND: &str = "recall_tier";
 
 /// Reciprocal-rank-fusion constant (the standard 60).
 pub const DEFAULT_RRF_K: f64 = 60.0;
@@ -304,6 +309,75 @@ impl SelectionReason {
             SelectionReason::Anchored => "anchored",
             SelectionReason::Ranked => "ranked",
             SelectionReason::LexicalFallback => "lexical_fallback",
+        }
+    }
+}
+
+/// Which precedence band a candidate competes in once the budget binds.
+///
+/// This is deliberately **not** a score. Scores are query-dependent and already
+/// fully expressed by the fused ranking; a tier says something the query cannot
+/// know — that a whole *class* of frame is worth less than the others when, and
+/// only when, something has to be dropped. Within a tier the ranking still
+/// decides everything.
+///
+/// The vocabulary has exactly two entries, and the asymmetry is the point.
+/// [`Normal`](RecallTier::Normal) is the default for every node the store has
+/// ever written, so adding this changes nothing for code symbols, episodes, or
+/// ordinary memories. [`Deferred`](RecallTier::Deferred) has to be asked for.
+/// Nothing is *promoted* by a tier — a frame can only volunteer to yield first
+/// — which is what keeps a writer from buying rank by relabeling its own
+/// content.
+///
+/// Its one caller today is the reflection lifecycle: a lesson about how the
+/// agent went about its work (`LessonKind::Process`) is written `Deferred`, so
+/// that a five-frame budget spends its slots on facts about the codebase before
+/// it spends them on commentary about the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
+pub enum RecallTier {
+    /// Competes on rank alone. Every node written before this existed, and
+    /// every node whose writer says nothing about tiering.
+    #[default]
+    Normal,
+    /// Admitted only after every `Normal` candidate has taken what it needs.
+    /// Still ranked, still citable, still recalled whenever the budget has
+    /// room — it simply loses every tie against a frame that is not deferred.
+    Deferred,
+}
+
+impl RecallTier {
+    /// The stable wire spelling, for provenance and drop reports.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RecallTier::Normal => "normal",
+            RecallTier::Deferred => "deferred",
+        }
+    }
+
+    /// How the tier is stored on the `node` row. `Normal` is 0 so the column's
+    /// `DEFAULT 0` and this enum's `Default` are the same value, and the v9
+    /// backfill is a no-op.
+    #[must_use]
+    pub fn as_i64(self) -> i64 {
+        match self {
+            RecallTier::Normal => 0,
+            RecallTier::Deferred => 1,
+        }
+    }
+
+    /// Read a tier back from storage or from the wire.
+    ///
+    /// An unrecognized value reads as `Normal` rather than failing: a tier is a
+    /// de-prioritization hint, and the safe direction for an unknown one is to
+    /// leave the frame competing normally. A newer stella's tiers cannot reach
+    /// here anyway — [`crate::store::schema::migrate`] rejects a store stamped
+    /// by a newer binary.
+    #[must_use]
+    pub fn from_i64(value: i64) -> Self {
+        match value {
+            1 => RecallTier::Deferred,
+            _ => RecallTier::Normal,
         }
     }
 }
@@ -950,6 +1024,7 @@ fn recall_blocking(
                 .unwrap_or(&no_domains)
                 .as_slice(),
             candidate.selection_reason,
+            candidate.meta.recall_tier,
         )?);
     }
 
@@ -1035,6 +1110,7 @@ pub(crate) fn frame_from_node(
     lexical: bool,
     domains: &[String],
     selection_reason: SelectionReason,
+    recall_tier: RecallTier,
 ) -> Result<ContextFrame, ContextError> {
     let label = node.display_name.trim();
     if label.is_empty() {
@@ -1064,6 +1140,23 @@ pub(crate) fn frame_from_node(
         method: Some(selection_reason.as_str().to_string()),
         by: Some(PROVIDER_ID.into()),
     });
+    // The tier rides the same channel and for the same reason: the host packs
+    // a second time across providers, and a precedence the context plane
+    // honored but the host could not read would be undone there exactly as the
+    // required-item guarantee was before #713. Written only when the frame is
+    // deferred — a `Normal` frame is the default on both sides of the seam, so
+    // saying so would add a provenance entry to every frame ever recalled and
+    // change the bytes of prompts whose frames did not.
+    if recall_tier != RecallTier::Normal {
+        provenance.push(Provenance {
+            kind: RECALL_TIER_PROVENANCE_KIND.into(),
+            uri: None,
+            range: None,
+            digest: None,
+            method: Some(recall_tier.as_str().to_string()),
+            by: Some(PROVIDER_ID.into()),
+        });
+    }
     if lexical {
         provenance.push(Provenance {
             kind: "derivation".into(),
@@ -1393,23 +1486,33 @@ pub(crate) fn pack_to_budget(
     // `max_frames` bounds the RANKED admissions only — see the doc comment:
     // counting required items against it would let the count budget evict one,
     // which is precisely what ADR 0006 forbids.
+    //
+    // The pass runs once per precedence band, `Normal` before `Deferred`, so a
+    // deferred candidate is admitted only out of what the normal ones left. The
+    // walk within a band is still strict rank order, and a band is not a score:
+    // with budget to spare every candidate is admitted exactly as before, and
+    // the tier decides nothing until something has to be dropped. Two passes
+    // over a shortlist that `max_frames * mmr_candidate_multiple` already
+    // bounded, so the extra walk is not a cost worth avoiding.
     let mut ranked_kept = 0usize;
-    for (index, candidate) in candidates.iter().enumerate() {
-        if candidate.is_required() {
-            continue;
+    for band in [RecallTier::Normal, RecallTier::Deferred] {
+        for (index, candidate) in candidates.iter().enumerate() {
+            if candidate.is_required() || candidate.meta.recall_tier != band {
+                continue;
+            }
+            let cost = budget_tokens_for_bytes(candidate.meta.content_bytes);
+            if ranked_kept as u32 >= max_frames {
+                dropped.push(dropped_from(&candidate.meta, DropReason::FrameCount));
+                continue;
+            }
+            if spent + cost as u64 > max_tokens as u64 {
+                dropped.push(dropped_from(&candidate.meta, DropReason::TokenBudget));
+                continue;
+            }
+            spent += cost as u64;
+            ranked_kept += 1;
+            admitted[index] = true;
         }
-        let cost = budget_tokens_for_bytes(candidate.meta.content_bytes);
-        if ranked_kept as u32 >= max_frames {
-            dropped.push(dropped_from(&candidate.meta, DropReason::FrameCount));
-            continue;
-        }
-        if spent + cost as u64 > max_tokens as u64 {
-            dropped.push(dropped_from(&candidate.meta, DropReason::TokenBudget));
-            continue;
-        }
-        spent += cost as u64;
-        ranked_kept += 1;
-        admitted[index] = true;
     }
     let kept = candidates
         .into_iter()

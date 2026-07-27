@@ -1102,19 +1102,62 @@ fn lessons_are_stamped_with_the_sessions_task_boundary() {
     assert_eq!(memory.task_id_for_test(), "proving-ground:eval-03-interest");
 }
 
-/// A domain fact outranks a process note when the recall budget binds.
-#[test]
-fn domain_lessons_outrank_process_lessons_at_recall() {
+/// A process note is written into the deferred band; a domain fact is not.
+///
+/// This is the wiring assertion, and it is deliberately about the *store*, not
+/// about `LessonKind`. An earlier version of this test compared
+/// `LessonKind::Domain.recall_rank()` against `LessonKind::Process.recall_rank()`
+/// — which restates the function body and passes no matter what the recall path
+/// does. The distinction only means something once it survives the write, so
+/// that is what is asserted here: the tier that comes back off the node row.
+///
+/// The ordering this tier buys is proven end-to-end against a real budget in
+/// `stella-context`'s `a_deferred_memory_loses_the_last_slot_to_a_normal_one`.
+#[tokio::test]
+async fn a_process_lesson_is_stored_in_the_deferred_recall_band() {
     use crate::memory::LessonKind;
-    assert!(
-        LessonKind::Domain.recall_rank() < LessonKind::Process.recall_rank(),
-        "durable facts about the code must survive a budget that drops \
-         commentary about the agent"
-    );
+    use stella_context::RecallTier;
+
+    assert_eq!(LessonKind::Domain.recall_tier(), RecallTier::Normal);
+    assert_eq!(LessonKind::Process.recall_tier(), RecallTier::Deferred);
     assert_eq!(
         LessonKind::default(),
         LessonKind::Process,
         "unlabelled lessons are not promoted to facts by accident"
+    );
+
+    let dir = tempfile::tempdir().expect("workspace");
+    let memory = SessionMemory::open(dir.path(), false).expect("memory opens");
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![
+                MemoryInput::reflection("money is integer minor units", Vec::<String>::new())
+                    .with_recall_tier(LessonKind::Domain.recall_tier()),
+                MemoryInput::reflection("the agent should not retry blindly", Vec::<String>::new())
+                    .with_recall_tier(LessonKind::Process.recall_tier()),
+            ],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("memories land");
+
+    let tiers: std::collections::HashMap<String, RecallTier> = memory
+        .store
+        .memory_nodes()
+        .expect("memory nodes")
+        .into_iter()
+        .map(|node| (node.content.clone(), node.recall_tier))
+        .collect();
+    assert_eq!(
+        tiers.get("money is integer minor units"),
+        Some(&RecallTier::Normal),
+        "a durable fact competes on rank like any other memory"
+    );
+    assert_eq!(
+        tiers.get("the agent should not retry blindly"),
+        Some(&RecallTier::Deferred),
+        "a note about the turn yields first when the budget binds"
     );
 }
 

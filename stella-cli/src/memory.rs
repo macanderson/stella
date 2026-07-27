@@ -30,7 +30,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use stella_context::{
     ContextDelta, ContextStore, DomainInput, EpisodeInput, EpisodeOutcome, FactAssertion,
-    HashEmbedder, NodeInput, NodeKind, SystemClock, format_rfc3339,
+    HashEmbedder, NodeInput, NodeKind, RecallTier, SystemClock, format_rfc3339,
 };
 use stella_core::skills::{self, SelectionConfig, Skill};
 
@@ -142,14 +142,25 @@ pub enum LessonKind {
 }
 
 impl LessonKind {
-    /// Domain facts sort first. Recall budgets are small — measured at roughly
-    /// 0.05% of a turn's input tokens — so when the budget binds, the frames
-    /// that survive should be the ones that can apply to a task the agent has
-    /// not seen.
-    pub fn recall_rank(self) -> u8 {
+    /// The precedence band this lesson's memory competes in once the recall
+    /// budget binds.
+    ///
+    /// Recall budgets are small — `max_frames` defaults to 5, and the measured
+    /// token budget is roughly 0.05% of a turn's input — so when the budget
+    /// binds, the frames that survive should be the ones that can apply to a
+    /// task the agent has not seen.
+    ///
+    /// Note the asymmetry: a domain fact is `Normal`, not promoted. It competes
+    /// on rank with every other memory and every code symbol exactly as it
+    /// always has. It is the *process* note that volunteers to yield, because a
+    /// note about how one turn went is the thing least likely to be true of the
+    /// next one. Ranking commentary *up* would have been a much larger claim —
+    /// that a mined lesson outranks the code it was mined from — and this
+    /// change does not make it.
+    pub fn recall_tier(self) -> RecallTier {
         match self {
-            LessonKind::Domain => 0,
-            LessonKind::Process => 1,
+            LessonKind::Domain => RecallTier::Normal,
+            LessonKind::Process => RecallTier::Deferred,
         }
     }
 }
@@ -226,7 +237,15 @@ impl SessionMemory {
     /// caller that genuinely knows where one task ends and the next begins —
     /// a benchmark harness, an issue-driven runner — should say so here, which
     /// is what makes governance's distinct-task threshold mean anything.
-    pub fn set_task_id(&mut self, task_id: impl Into<String>) {
+    ///
+    /// **Test-gated until such a caller exists in this tree.** `stella-cli` is
+    /// a bin-only crate, so there is no external consumer that could call this
+    /// even in principle; leaving it on the production build would be an
+    /// `#[allow(dead_code)]` describing an API nothing can reach. The session
+    /// default is what every shipped path uses today. Drop the gate in the same
+    /// commit that adds the first real caller.
+    #[cfg(test)]
+    pub(crate) fn set_task_id(&mut self, task_id: impl Into<String>) {
         self.task_id = task_id.into();
     }
 

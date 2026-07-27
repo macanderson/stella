@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::ContextError;
+use crate::retrieval::RecallTier;
 use crate::store::{
     ContextStore, NodeInput, NodeKind, close_edge, edges_as_of, embedding_exists, insert_edge,
     insert_episode, insert_memory, node_by_id, sha256_hex, store_embedding, tag_edge_domains,
@@ -261,6 +262,11 @@ pub struct MemoryInput {
     /// live, with its old text and its own vector, competing for slots in every
     /// future recall.
     pub lineage: Option<String>,
+    /// Which precedence band this memory's mirror node competes in once a
+    /// recall budget binds. Defaults to [`RecallTier::Normal`]; the reflection
+    /// lifecycle writes process notes as [`RecallTier::Deferred`] so a durable
+    /// fact about the codebase is not evicted by commentary about the turn.
+    pub recall_tier: RecallTier,
 }
 
 impl MemoryInput {
@@ -276,7 +282,15 @@ impl MemoryInput {
             domains: domains.into_iter().map(Into::into).collect(),
             salience: 0.0,
             lineage: None,
+            recall_tier: RecallTier::Normal,
         }
+    }
+
+    /// Ask for a non-default precedence band at recall. See [`RecallTier`].
+    #[must_use]
+    pub fn with_recall_tier(mut self, tier: RecallTier) -> Self {
+        self.recall_tier = tier;
+        self
     }
 
     /// A memory of an explicit kind.
@@ -287,6 +301,7 @@ impl MemoryInput {
             domains: Vec::new(),
             salience: 0.0,
             lineage: None,
+            recall_tier: RecallTier::Normal,
         }
     }
 
@@ -349,6 +364,7 @@ impl MemoryInput {
             .with_uri(format!("memory://{}", self.lineage_id()))
             .with_content(self.content.clone())
             .with_domains(self.domains.clone())
+            .with_recall_tier(self.recall_tier)
     }
 }
 

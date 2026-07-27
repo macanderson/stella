@@ -129,10 +129,18 @@ impl SessionMemory {
         // best-effort (a failed reflection never fails the turn), but the
         // outcome is kept so the "remembered" line below can't claim success
         // for lessons that never landed in the store.
+        // The lesson's `kind` rides along as a recall tier. Without it this was
+        // the line the distinction died on: both kinds were written as
+        // identical reflection memories, so the taxonomy existed on disk in
+        // `reflections.jsonl` and meant nothing to the ranking that actually
+        // decides what reaches a prompt.
         let delta = ContextDelta {
             memories: lessons
                 .iter()
-                .map(|l| MemoryInput::reflection(&l.lesson, l.domains.iter().cloned()))
+                .map(|l| {
+                    MemoryInput::reflection(&l.lesson, l.domains.iter().cloned())
+                        .with_recall_tier(l.kind.recall_tier())
+                })
                 .collect(),
             ..Default::default()
         };

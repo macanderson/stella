@@ -20,6 +20,7 @@
 use rusqlite::{Connection, params};
 
 use crate::error::ContextError;
+use crate::retrieval::RecallTier;
 use crate::store::{NodeRow, blob_to_vector, map_node_row};
 
 /// The bitemporal liveness predicate every reader here shares. Bound parameter
@@ -75,6 +76,11 @@ pub struct NodeMeta {
     pub content_blank: bool,
     /// Transaction time the row was first written; recall's recency sort key.
     pub recorded_at: String,
+    /// Which precedence band this node competes in once the budget binds. Read
+    /// here rather than joined later because it is consumed by
+    /// [`crate::retrieval::pack_to_budget`], which runs over exactly this
+    /// struct and never touches the body.
+    pub recall_tier: RecallTier,
 }
 
 /// Record body bytes crossing the SQLite boundary (test builds only). Counted
@@ -114,7 +120,7 @@ pub(crate) fn live_node_metas(
     // char(32,9,10,13,11,12) = space, tab, LF, CR, VT, FF — Rust's
     // `char::is_whitespace` over the ASCII range.
     let mut stmt = conn.prepare(&format!(
-        "SELECT id, public_id, display_name, content_hash, recorded_at,
+        "SELECT id, public_id, display_name, content_hash, recorded_at, recall_tier,
                 length(CAST(content AS BLOB)) AS content_bytes,
                 trim(content, char(32) || char(9) || char(10) || char(13) || char(11) || char(12)) = ''
                     AS content_blank
@@ -129,6 +135,7 @@ pub(crate) fn live_node_metas(
             content_bytes: row.get::<_, i64>("content_bytes")?.max(0) as usize,
             content_blank: row.get::<_, i64>("content_blank")? != 0,
             recorded_at: row.get("recorded_at")?,
+            recall_tier: RecallTier::from_i64(row.get("recall_tier")?),
         })
     })?;
     let mut out = Vec::new();
@@ -194,7 +201,7 @@ pub(crate) fn nodes_by_ids(
         .join(",");
     let sql = format!(
         "SELECT n.id, n.public_id, n.kind, n.display_name, n.content, n.content_hash, n.uri,
-                n.valid_from, n.recorded_at
+                n.valid_from, n.recorded_at, n.recall_tier
          FROM node n WHERE {NODE_AS_OF} AND n.id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
