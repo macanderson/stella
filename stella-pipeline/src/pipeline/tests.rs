@@ -214,6 +214,9 @@ struct ScriptedRunner {
     diff: String,
     /// Untracked files this workspace reports, as `(path, added_lines)`.
     untracked: Vec<(String, u32)>,
+    /// What a failing run prints. Configurable so a test can plant a
+    /// distinctive token and assert on where it does — and does not — travel.
+    failure_tail: String,
 }
 impl ScriptedRunner {
     fn new(test_results: Vec<bool>, diff: &str) -> Self {
@@ -221,7 +224,12 @@ impl ScriptedRunner {
             test_results: std::sync::Mutex::new(test_results.into_iter().collect()),
             diff: diff.to_string(),
             untracked: Vec::new(),
+            failure_tail: "test failed".to_string(),
         }
+    }
+    fn with_failure_tail(mut self, tail: &str) -> Self {
+        self.failure_tail = tail.to_string();
+        self
     }
     fn with_untracked(mut self, untracked: Vec<(&str, u32)>) -> Self {
         self.untracked = untracked
@@ -277,7 +285,7 @@ impl TestRunner for ScriptedRunner {
             stderr_tail: if passed {
                 String::new()
             } else {
-                "test failed".into()
+                self.failure_tail.clone()
             },
         }
     }
@@ -900,18 +908,18 @@ async fn clean_lookup_skips_plan_verify_and_judge() {
     assert!(!s.contains(&StageKind::Judge));
 }
 
-/// A greeting (triage → `chat`) takes the conversational fast path: one plain
-/// completion, no plan / witness / execute / verify / judge. This is the fix
-/// for "typing `hi` authored a witness test". The scripted provider serves
-/// exactly two calls — triage and the conversational reply — so if any work
-/// stage tried to run, the provider would be exhausted and the run would error.
+/// A greeting takes the conversational fast path: **one** plain completion, no
+/// triage call, no plan / witness / execute / verify / judge. This is the fix
+/// for "typing `hi` authored a witness test", and now also for "typing `hi`
+/// paid for a classification that could not change the answer".
+///
+/// The scripted provider serves exactly ONE call. If triage still called the
+/// model — or any work stage ran — the queue would be exhausted and the run
+/// would error, so the fixture size is itself the assertion.
 #[tokio::test]
 async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
-    // triage → "chat"; then the single conversational reply. No third call.
-    let provider = ScriptedProvider::new(vec![
-        text_result("chat"),
-        text_result("Hi! How can I help with your codebase?"),
-    ]);
+    let provider =
+        ScriptedProvider::new(vec![text_result("Hi! How can I help with your codebase?")]);
     let resolver = OneProvider(&provider);
     let runner = ScriptedRunner::new(vec![], "");
     let tools = EmptyTools;
@@ -955,6 +963,12 @@ async fn a_greeting_takes_the_conversational_path_and_skips_all_work() {
     assert_eq!(outcome.final_text, "Hi! How can I help with your codebase?");
     assert!(outcome.verdict.is_none(), "no verification for a greeting");
     assert_eq!(outcome.revisions, 0);
+    // Exactly one model call: the reply. A greeting resolves deterministically,
+    // so paying a triage round-trip to be told so is pure latency.
+    assert!(
+        provider.script.lock().await.is_empty(),
+        "the greeting spent exactly the one scripted call"
+    );
 
     // The assistant turn is adopted into the trajectory for follow-up context.
     assert!(matches!(
@@ -1841,6 +1855,10 @@ mod verification_honesty {
     }
 }
 
+/// The feedback airlock (`witness::airlock`) observed end to end: what a
+/// verification failure tells the operator versus what it tells the worker.
+/// A child module, so it reaches the scripted ports above via `super::*`.
+mod airlock;
 mod best_of_n;
 mod chaos;
 /// Golden-trajectory recordings of this pipeline's real event stream — a
@@ -1854,6 +1872,10 @@ mod mcp_prefetch;
 mod scope_gate_interactive;
 mod terminal_outcomes;
 mod usage;
+/// Proportionate verification: changes with nothing to prove complete with a
+/// stated reason rather than escalating. A child module, so it reaches the
+/// scripted ports above via `super::*`.
+mod warrant;
 mod witness_isolation;
 
 /// The headless approval port is `AlwaysAbortGate`, so "bypass scope review"

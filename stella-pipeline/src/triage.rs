@@ -319,6 +319,12 @@ pub fn resolve_witness(model_opinion: Option<bool>, class: TaskClass, goal: &str
 ///
 /// Note this only turns off the *authored witness*. The verification ladder and
 /// the judge still run — deleting the wrong file stays a reviewable mistake.
+///
+/// This is the **pre-execution** half of the question, and it has to guess from
+/// wording because no diff exists yet. [`crate::witness::warrant`] answers the
+/// same question **after** execution, from the change itself, where the answer
+/// is evidence rather than a guess. The two are complementary: this one can
+/// spare the authoring call, that one can spare the review call.
 fn is_pure_deletion(goal: &str) -> bool {
     let lower = goal.to_ascii_lowercase();
 
