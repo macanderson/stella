@@ -21,15 +21,13 @@ use crate::sse::SseDecoder;
 
 /// International endpoint. `open.bigmodel.cn` (mainland) is the same wire
 /// shape behind a different base URL — `with_base_url` covers both without
-/// a second adapter.
-///
-/// When the `ZAI_GLM_CODING_PLAN` environment variable is set to `1`, the
-/// coding plan endpoint (`/api/coding/paas/v4`) is used instead of the
-/// standard endpoint (`/api/paas/v4`).
+/// a second adapter, as does the GLM Coding Plan endpoint
+/// (`/api/coding/paas/v4`). Base-URL *policy* — including the
+/// `ZAI_GLM_CODING_PLAN=1` toggle — lives in one place,
+/// `stella-cli`'s `Config::effective_base_url`; a copy here would silently
+/// drift from it, and the factory overrides the constructor's default with
+/// the resolved URL on every build anyway.
 const DEFAULT_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
-
-/// GLM Coding Plan endpoint. Activated when `ZAI_GLM_CODING_PLAN=1` is set.
-const CODING_PLAN_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
 
 pub struct ZaiProvider {
     client: reqwest::Client,
@@ -93,16 +91,10 @@ impl ZaiProvider {
         // identity it switches to, for exactly the same reason.
         let catalog = Catalog::current();
         let pricing = catalog.resolve_for("zai", &model).ok().map(|e| e.pricing);
-        // Use the coding plan endpoint when ZAI_GLM_CODING_PLAN=1 is set
-        let base_url = if std::env::var("ZAI_GLM_CODING_PLAN").as_deref() == Ok("1") {
-            CODING_PLAN_BASE_URL
-        } else {
-            DEFAULT_BASE_URL
-        };
         Self {
             client: http::client(),
             api_key,
-            base_url: base_url.to_string(),
+            base_url: DEFAULT_BASE_URL.to_string(),
             model,
             pricing,
             id: "zai".to_string(),

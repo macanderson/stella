@@ -33,12 +33,16 @@
 //! `std::fs::read` — synchronous, on whatever runtime thread is building the
 //! request — so a large attachment blocks a tokio worker for the length of
 //! the read. And because the conversation replays every turn, a
-//! `AttachmentSource::Path` attachment is re-read AND re-base64-encoded on
-//! every model call for the rest of the session, not once. Neither is a
-//! problem at the sizes a pasted screenshot or a PDF hits; both scale badly
-//! with a video-sized payload on a long session, and the fix (hydrate once
-//! into a session-scoped cache keyed by path+mtime, off the runtime thread)
-//! belongs here rather than in any one adapter.
+//! `AttachmentSource::Path` attachment would be re-read AND re-base64-encoded
+//! on every model call for the rest of the session; [`PATH_CACHE`] exists so
+//! that transform runs once per file *version* instead — an unchanged file
+//! costs a `stat` per turn, an edited one re-hydrates on its next turn. The
+//! first hydration of each version still blocks the runtime thread.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -122,10 +126,105 @@ pub(crate) fn wire_parts(attachments: &[Attachment], caps: DialectCaps) -> Vec<W
         .collect()
 }
 
+/// A payload hydrated into the one wire form its kind consumes: inlined
+/// (lossy UTF-8) content for text-like files, base64 for the binary kinds.
+/// Hydrating straight to the consumed form is what lets [`PATH_CACHE`] pay:
+/// the expensive transform (read + encode) is what gets memoized, not just
+/// the raw bytes.
+#[derive(Clone)]
+enum HydratedBody {
+    Text(String),
+    Base64(String),
+}
+
+/// One cached path payload, valid while the file's `(mtime, len)`
+/// fingerprint holds.
+struct CachedPayload {
+    modified: Option<SystemTime>,
+    len: u64,
+    body: HydratedBody,
+}
+
+/// Process-wide cache of hydrated [`AttachmentSource::Path`] payloads. The
+/// conversation replays every turn, so without it every model call re-read
+/// and re-encoded every path attachment for the rest of the session —
+/// invisible for a screenshot, pathological for a large payload on a long
+/// session. Keyed by path and validated against the file's `(mtime, len)` on
+/// every lookup, so an edited file re-hydrates on its next turn. Bounded by
+/// what the user actually attaches: one live entry per distinct path,
+/// replaced in place when the file changes.
+static PATH_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedPayload>>> = OnceLock::new();
+
+/// The path cache's guard. A poisoned lock is recovered rather than
+/// propagated — the worst a poisoned cache can hold is a stale entry the
+/// fingerprint check re-validates anyway, and this module's contract is that
+/// an attachment never aborts a turn.
+fn path_cache() -> std::sync::MutexGuard<'static, HashMap<PathBuf, CachedPayload>> {
+    let cache = PATH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Hydrate a path payload in the form `want_text` selects, through
+/// [`PATH_CACHE`]. IO errors propagate for the caller to degrade to a note.
+fn hydrate_path(path: &str, want_text: bool) -> std::io::Result<HydratedBody> {
+    let meta = std::fs::metadata(path)?;
+    let modified = meta.modified().ok();
+    let len = meta.len();
+    if let Some(entry) = path_cache().get(Path::new(path)) {
+        // The stored form must also be the one this kind consumes — the same
+        // path re-attached under a different media type recomputes.
+        let fresh = entry.modified == modified
+            && entry.len == len
+            && matches!(
+                (&entry.body, want_text),
+                (HydratedBody::Text(_), true) | (HydratedBody::Base64(_), false)
+            );
+        if fresh {
+            return Ok(entry.body.clone());
+        }
+    }
+    let bytes = std::fs::read(path)?;
+    let body = if want_text {
+        HydratedBody::Text(String::from_utf8_lossy(&bytes).into_owned())
+    } else {
+        HydratedBody::Base64(BASE64.encode(&bytes))
+    };
+    path_cache().insert(
+        PathBuf::from(path),
+        CachedPayload {
+            modified,
+            len,
+            body: body.clone(),
+        },
+    );
+    Ok(body)
+}
+
 fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
-    let bytes = match &attachment.source {
-        AttachmentSource::Path { path } => match std::fs::read(path) {
-            Ok(bytes) => bytes,
+    let kind = attachment.kind();
+    let ingestible = match kind {
+        AttachmentKind::Text => true,
+        AttachmentKind::Image => caps.images,
+        AttachmentKind::Pdf => caps.pdfs,
+        AttachmentKind::Audio => caps.audio,
+        AttachmentKind::Video => caps.video,
+        AttachmentKind::Binary => false,
+    };
+    // A kind this dialect cannot carry degrades before any hydration: the
+    // note describes what was attached, which needs no payload — reading and
+    // encoding bytes only to discard them would be pure waste on every turn.
+    if !ingestible {
+        return WirePart::Text {
+            text: degrade_note(attachment, kind),
+        };
+    }
+    let want_text = matches!(kind, AttachmentKind::Text);
+    let body = match &attachment.source {
+        AttachmentSource::Path { path } => match hydrate_path(path, want_text) {
+            Ok(body) => body,
             Err(err) => {
                 return WirePart::Text {
                     text: format!(
@@ -136,8 +235,16 @@ fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
                 };
             }
         },
+        // An inline `Data` source already carries the caller's base64: the
+        // decode runs as validation (and, for text kinds, produces the
+        // content), and the binary kinds forward the caller's string verbatim
+        // instead of paying a decode+re-encode round trip. Never cached —
+        // the payload is already in memory on the message.
         AttachmentSource::Data { base64 } => match BASE64.decode(base64) {
-            Ok(bytes) => bytes,
+            Ok(bytes) if want_text => {
+                HydratedBody::Text(String::from_utf8_lossy(&bytes).into_owned())
+            }
+            Ok(_) => HydratedBody::Base64(base64.clone()),
             Err(err) => {
                 return WirePart::Text {
                     text: format!(
@@ -149,37 +256,30 @@ fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
             }
         },
     };
-    // The base64 the binary kinds put on the wire. For an inline `Data`
-    // source that is *already* the caller's string — the decode above ran
-    // purely as validation — so forward it verbatim instead of paying a second
-    // full-payload transform to reproduce it. The conversation replays every
-    // turn, so this is per attachment per turn on the path the deck uses for
-    // pasted images.
-    let encoded = || match &attachment.source {
-        AttachmentSource::Data { base64 } => base64.clone(),
-        AttachmentSource::Path { .. } => BASE64.encode(&bytes),
-    };
-    match attachment.kind() {
-        AttachmentKind::Text => WirePart::Text {
-            text: inline_text(attachment, &bytes),
+    match (kind, body) {
+        (AttachmentKind::Text, HydratedBody::Text(content)) => WirePart::Text {
+            text: inline_text(attachment, &content),
         },
-        AttachmentKind::Image if caps.images => WirePart::Image {
+        (AttachmentKind::Image, HydratedBody::Base64(base64)) => WirePart::Image {
             media_type: attachment.media_type.clone(),
-            base64: encoded(),
+            base64,
         },
-        AttachmentKind::Pdf if caps.pdfs => WirePart::Pdf {
+        (AttachmentKind::Pdf, HydratedBody::Base64(base64)) => WirePart::Pdf {
             name: attachment.name.clone(),
-            base64: encoded(),
+            base64,
         },
-        AttachmentKind::Audio if caps.audio => WirePart::Audio {
+        (AttachmentKind::Audio, HydratedBody::Base64(base64)) => WirePart::Audio {
             media_type: attachment.media_type.clone(),
-            base64: encoded(),
+            base64,
         },
-        AttachmentKind::Video if caps.video => WirePart::Video {
+        (AttachmentKind::Video, HydratedBody::Base64(base64)) => WirePart::Video {
             media_type: attachment.media_type.clone(),
-            base64: encoded(),
+            base64,
         },
-        kind => WirePart::Text {
+        // The form is chosen from the kind above, so these pairs cannot
+        // happen — stay total anyway: a note is a fine answer, an abort is
+        // not.
+        (kind, _) => WirePart::Text {
             text: degrade_note(attachment, kind),
         },
     }
@@ -187,8 +287,7 @@ fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
 
 /// A text-like file inlined in full, framed so the model knows what it is
 /// looking at and where it ends.
-fn inline_text(attachment: &Attachment, bytes: &[u8]) -> String {
-    let content = String::from_utf8_lossy(bytes);
+fn inline_text(attachment: &Attachment, content: &str) -> String {
     format!(
         "[attached file: {}]\n<attached-file name=\"{}\">\n{}\n</attached-file>",
         attachment.label(),
@@ -325,6 +424,62 @@ mod tests {
         };
         assert!(text.contains("could not be read"), "{text}");
         assert!(text.contains("gone.png"), "{text}");
+    }
+
+    /// The conversation replays every turn, so a path payload must hydrate
+    /// once per file VERSION, not once per model call. Witness: with the
+    /// `(mtime, len)` fingerprint pinned, a content change is served from the
+    /// cache (the read+encode demonstrably did not run again); changing the
+    /// fingerprint re-hydrates to the new content.
+    #[test]
+    fn path_payloads_hydrate_once_per_file_version() {
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("frame.png");
+        let pinned = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let write_pinned = |payload: &[u8]| {
+            std::fs::write(&path, payload).expect("write payload");
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("reopen payload")
+                .set_modified(pinned)
+                .expect("pin mtime");
+        };
+        let att = Attachment::from_path("frame.png", "image/png", 4, path.to_string_lossy());
+        let encoded = |att: &Attachment| match &wire_parts(std::slice::from_ref(att), ALL)[0] {
+            WirePart::Image { base64, .. } => base64.clone(),
+            other => panic!("expected image part, got {other:?}"),
+        };
+
+        write_pinned(b"aaaa");
+        assert_eq!(encoded(&att), BASE64.encode(b"aaaa"));
+        // Identical fingerprint (same len, pinned mtime): served from cache.
+        write_pinned(b"bbbb");
+        assert_eq!(encoded(&att), BASE64.encode(b"aaaa"));
+        // A different length breaks the fingerprint: re-hydrated.
+        std::fs::write(&path, b"cccccc").expect("rewrite payload");
+        assert_eq!(encoded(&att), BASE64.encode(b"cccccc"));
+    }
+
+    /// The cache stores the one form a kind consumes; the same path attached
+    /// under another media type must recompute the other form, never serve
+    /// base64 where inlined text belongs (or vice versa).
+    #[test]
+    fn a_cached_payload_recomputes_when_the_kind_wants_the_other_form() {
+        let (as_image, _guard) = file_attachment("shot.png", "image/png", b"hello body");
+        let parts = wire_parts(std::slice::from_ref(&as_image), ALL);
+        assert!(matches!(&parts[0], WirePart::Image { .. }), "{parts:?}");
+
+        let AttachmentSource::Path { path } = &as_image.source else {
+            panic!("file_attachment builds a path source");
+        };
+        let as_text = Attachment::from_path("shot.txt", "text/plain", 10, path.clone());
+        let parts = wire_parts(std::slice::from_ref(&as_text), ALL);
+        let WirePart::Text { text } = &parts[0] else {
+            panic!("expected inlined text, got {parts:?}");
+        };
+        assert!(text.contains("hello body"), "{text}");
     }
 
     #[test]

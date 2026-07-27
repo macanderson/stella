@@ -225,12 +225,15 @@ impl CacheWarmth {
 /// 0`), so the whole prefix was re-billed at the write rate rather than read
 /// back. This is the exact event [`CacheCause::IdleBeyondTtl`] names and
 /// TTL-aware scheduling exists to prevent; counting it makes the heuristic's
-/// savings measurable (the `cache_expired_rewrite` counter). The strict `>`
-/// mirrors the provider contract that a prefix is still readable *at* the TTL
-/// boundary, cold only past it.
+/// savings measurable (the `cache_expired_rewrite` counter). A gap of exactly
+/// the TTL counts as expired — the conservative read shared with
+/// [`CacheWarmth::from_elapsed`] (which reports `expired: true` at the
+/// boundary): eviction timing is not observable from here, so the two callers
+/// must at least agree, and assuming the prefix is already gone at the
+/// boundary can only under-count savings, never invent them.
 #[must_use]
 pub fn is_cache_expired_rewrite(gap_secs: u64, cache_write_tokens: u64, ttl_secs: u64) -> bool {
-    gap_secs > ttl_secs && cache_write_tokens > 0
+    gap_secs >= ttl_secs && cache_write_tokens > 0
 }
 
 #[cfg(test)]
@@ -469,7 +472,26 @@ mod tests {
         assert!(!is_cache_expired_rewrite(600, 0, 300));
         // Wrote the cache but well within the TTL → a healthy warm write.
         assert!(!is_cache_expired_rewrite(30, 40_000, 300));
-        // Exactly at the boundary is still warm (strict `>`).
-        assert!(!is_cache_expired_rewrite(300, 40_000, 300));
+        // Just under the boundary is still warm; exactly at it is expired —
+        // the conservative semantic `CacheWarmth` also reports.
+        assert!(!is_cache_expired_rewrite(299, 40_000, 300));
+        assert!(is_cache_expired_rewrite(300, 40_000, 300));
+    }
+
+    /// The two TTL-boundary consumers must agree on when a prefix is cold:
+    /// `CacheWarmth` drives the scheduler/deck countdown and
+    /// `is_cache_expired_rewrite` scores what the countdown failed to prevent.
+    /// A gap between them (warm on one side, expired on the other) made a
+    /// turn at exactly the TTL both "still warm" and "already expired".
+    #[test]
+    fn warmth_and_rewrite_agree_at_the_ttl_boundary() {
+        const TTL: u64 = 300;
+        for gap in [0, 1, 299, 300, 301, 10_000] {
+            assert_eq!(
+                CacheWarmth::from_elapsed(gap, TTL).expired,
+                is_cache_expired_rewrite(gap, 1, TTL),
+                "gap {gap}s: warmth and rewrite disagree on expiry"
+            );
+        }
     }
 }
