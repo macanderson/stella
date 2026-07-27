@@ -8,10 +8,16 @@ name: auto-tag
 #   'release.minor: …'   minor bump    0.1.3 -> 0.2.0   (patch reset to 0)
 #   'release:major …'    major bump    0.1.3 -> 1.0.0   (minor + patch reset)
 #
-# Put the prefix at the start of the PR title — a squash-merge uses the PR
-# title as the commit subject. `release.minor`/`release:minor` and
-# `release:major`/`release.major` are both accepted. Add `[skip release]` to
-# the title to land a change without cutting a release (docs/chore merges).
+# Put the prefix at the START of the PR title — a squash-merge uses the PR
+# title as the commit subject, and the marker is only recognized there (see
+# "Read the bump marker from EVERY commit" below for why it is anchored).
+# `release.minor`/`release:minor` and `release:major`/`release.major` are both
+# accepted. Add `[skip release]` to the title to land a change without cutting
+# a release (docs/chore merges).
+#
+# The marker is read from every commit since the last tag, not just the one
+# being tagged, so a release whose own merge never triggered this job is
+# picked up by the next one instead of being silently downgraded to a patch.
 #
 # The tag is cut on the exact commit CI validated — nothing is force-pushed to
 # main. release.yml injects the tag's version into the build so
@@ -44,6 +50,9 @@ name: auto-tag
 # exactly how a non-compiling commit shipped as a tag before this gate).
 # Because `ci` is path-ignored for docs-only changes, those merges never run
 # `ci` and so never trigger a release either — previously they tagged blindly.
+# A docs-only merge therefore does not release *at the moment it lands*; if it
+# carried a bump marker, the range scan above hands that marker to the next
+# release instead. The bump is deferred, never dropped.
 
 on:
   workflow_run:
@@ -104,15 +113,40 @@ jobs:
           if [ -z "$last" ]; then
             base="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
             base="${base:-0.0.0}"
+            range="HEAD"
           else
             base="${last#v}"
+            range="${last}..HEAD"
           fi
           IFS=. read -r major minor patch <<< "$base"
           major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
 
-          if printf '%s' "$msg" | grep -qiE '(^|[^[:alnum:]])release[.:]major'; then
+          # Read the bump marker from EVERY commit this tag is about to
+          # release, not just HEAD. A marker rides on one commit's subject,
+          # but that commit's own `ci` run may never happen: `ci` is
+          # path-ignored for `docs/**`, `website/**` and `*.md`, so a
+          # release-marker PR that only edits release notes produces no
+          # `workflow_run` completion and never reaches this job at all. When
+          # the next code merge finally does, reading only `git log -1` sees
+          # that unrelated subject, cuts a patch bump, and the intended minor
+          # release is gone for good — exactly how `release.minor: v0.6.0`
+          # (#758, #761) was swallowed twice while tags marched 0.5.55→0.5.59.
+          #
+          # Scanning `${last}..HEAD` makes the intent durable rather than
+          # instantaneous: a marker that misses its own release is honored by
+          # the next one. It cannot re-fire, because cutting the tag moves
+          # `last` past the marker and out of the range.
+          #
+          # Subjects only, anchored: squash-merge subjects are PR titles, and
+          # the convention documented above is that the prefix leads the
+          # title. Matching mid-message across a whole range would let a
+          # commit that merely *mentions* release.major cut a major release.
+          subjects="$(git log --format=%s "$range")"
+          printf 'Commit subjects since %s:\n%s\n\n' "${last:-<no tag>}" "$subjects"
+
+          if printf '%s\n' "$subjects" | grep -qiE '^release[.:]major'; then
             major=$((major + 1)); minor=0; patch=0; kind="major"
-          elif printf '%s' "$msg" | grep -qiE '(^|[^[:alnum:]])release[.:]minor'; then
+          elif printf '%s\n' "$subjects" | grep -qiE '^release[.:]minor'; then
             minor=$((minor + 1)); patch=0; kind="minor"
           else
             patch=$((patch + 1)); kind="patch"
