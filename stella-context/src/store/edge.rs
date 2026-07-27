@@ -19,6 +19,48 @@ pub(crate) fn neighbors(
     seeds: &[i64],
     as_of: Option<&str>,
 ) -> Result<Vec<(i64, f64)>, ContextError> {
+    neighbors_valid_at(conn, seeds, as_of, None)
+}
+
+/// 1-hop neighbours over edges believed at `as_of` **and** holding in the
+/// world at `valid_at`.
+///
+/// Two axes, two parameters, deliberately independent. `as_of` answers "what
+/// did we believe then"; `valid_at` answers "what was true then". Collapsing
+/// them into one would make it impossible to ask the question this exists for
+/// — *we still believe the anchor was correct, and it stopped being true in
+/// March* — which is precisely a memory whose file has since been deleted.
+///
+/// `valid_at = None` preserves the historical behaviour exactly: world
+/// validity is ignored, which is what every existing caller and
+/// `as_of_ignores_world_validity_valid_from_valid_to` expect.
+pub(crate) fn neighbors_valid_at(
+    conn: &Connection,
+    seeds: &[i64],
+    as_of: Option<&str>,
+    valid_at: Option<&str>,
+) -> Result<Vec<(i64, f64)>, ContextError> {
+    if let Some(at) = valid_at {
+        // Half-open [valid_from, valid_to), matching the belief-time interval
+        // convention pinned by the supersession tests.
+        let sql = "SELECT CASE WHEN src_id = ?1 THEN dst_id ELSE src_id END AS other, weight
+             FROM edge
+             WHERE (src_id = ?1 OR dst_id = ?1)
+               AND (?3 IS NULL OR (recorded_at <= ?3 AND (superseded_at IS NULL OR superseded_at > ?3)))
+               AND (?3 IS NOT NULL OR superseded_at IS NULL)
+               AND (valid_from IS NULL OR valid_from <= ?2)
+               AND (valid_to IS NULL OR valid_to > ?2)";
+        let mut out = Vec::new();
+        let mut stmt = conn.prepare(sql)?;
+        for &seed in seeds {
+            for r in stmt.query_map(params![seed, at, as_of], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+            })? {
+                out.push(r?);
+            }
+        }
+        return Ok(out);
+    }
     let mut out = Vec::new();
     // Undirected 1-hop: a seed on either endpoint pulls in the other.
     let sql = match as_of {
@@ -124,6 +166,36 @@ pub(crate) fn close_edge(
         params![edge_id, superseded_at, valid_to],
     )?;
     Ok(())
+}
+
+/// End an edge's **world validity** without touching belief.
+///
+/// The distinction is the whole point of storing two axes. Superseding says
+/// "we were wrong, or we replaced this"; ending world validity says "this was
+/// true, and then the world changed". A memory anchored to a file that has
+/// since been deleted is the second case: the anchor was never a mistake, it
+/// simply stopped holding at the moment the file went away. Recording it as a
+/// supersession would erase a true past.
+///
+/// `superseded_at` is deliberately left alone, so `as_of` — which reads belief
+/// time only (see `as_of_ignores_world_validity_valid_from_valid_to`) — still
+/// reports the edge as believed. `valid_at` is what hides it from the present.
+///
+/// Never deletes (`L-C3`): "what was true at T1" must still answer.
+// The staleness scan that calls this lands next; the primitive and its
+// semantics are separable from the policy that decides which anchors are
+// stale, and the semantics are the part worth pinning first.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn end_world_validity(
+    conn: &Connection,
+    edge_id: i64,
+    valid_to: &str,
+) -> Result<bool, ContextError> {
+    let changed = conn.execute(
+        "UPDATE edge SET valid_to = ?2 WHERE id = ?1 AND valid_to IS NULL",
+        params![edge_id, valid_to],
+    )?;
+    Ok(changed > 0)
 }
 
 /// Fact edges as believed at a transaction-time instant. `as_of = None` means
