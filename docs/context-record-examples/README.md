@@ -30,6 +30,7 @@ steering and cheaply checked, or weakly steering and hard-blocked.
 | `04-procedure-atomic-set.toml` | One sentence → three atomic records joined by typed links                                         |
 | `05-imported-proposals.toml`   | Ingest output: proposals, per-record provenance, quarantined executables, three-valued refutation |
 | `06-lineage-supersession.toml` | Revision identity without allocated version numbers                                               |
+| `07-agent-projection.md`       | What the model actually receives (~16% of the record), and how a handle closes the feedback loop   |
 
 ## Rules encoded in these examples
 
