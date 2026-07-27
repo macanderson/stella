@@ -253,6 +253,49 @@ pub(crate) fn warn_store_write_failed(what: &str) {
     );
 }
 
+/// Why an event's accounting came out incomplete — the distinction the old
+/// bare `bool` collapsed.
+///
+/// `persist_event` folds two unrelated conditions together: whether our own
+/// rows hit disk, and whether the *provider* reported a terminal usage frame.
+/// A stream that dies mid-turn (a gateway 5xx, a cancelled call) leaves usage
+/// unreported even though every INSERT succeeded — and the deck then told the
+/// user "store write failed", sending them to look at a database that was
+/// perfectly fine. Splitting them lets each surface say what actually
+/// happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PersistOutcome {
+    /// Rows written and usage fully reported.
+    Complete,
+    /// An INSERT failed — a real persistence problem.
+    StoreWriteFailed,
+    /// Everything was written, but the provider never delivered final usage,
+    /// so token/cost accounting for this turn is short.
+    UsageIncomplete,
+}
+
+impl PersistOutcome {
+    pub(crate) fn is_complete(self) -> bool {
+        matches!(self, PersistOutcome::Complete)
+    }
+
+    /// The user-facing sentence for this outcome, or `None` when complete.
+    pub(crate) fn message(self, what: &str) -> Option<String> {
+        match self {
+            PersistOutcome::Complete => None,
+            PersistOutcome::StoreWriteFailed => {
+                Some(format!("store write failed — {what} could not be written"))
+            }
+            PersistOutcome::UsageIncomplete => Some(format!(
+                "provider reported no final usage — token and cost accounting for {what} is \
+                 incomplete (the work itself is unaffected)"
+            )),
+        }
+    }
+}
+
+/// Thin `bool` face of [`persist_event_detailed`], kept for call sites that
+/// only care whether accounting was complete.
 pub(crate) fn persist_event(
     store: &Store,
     execution_id: i64,
@@ -260,6 +303,16 @@ pub(crate) fn persist_event(
     event: &AgentEvent,
     legacy_provider_id: &str,
 ) -> bool {
+    persist_event_detailed(store, execution_id, seq, event, legacy_provider_id).is_complete()
+}
+
+pub(crate) fn persist_event_detailed(
+    store: &Store,
+    execution_id: i64,
+    seq: u64,
+    event: &AgentEvent,
+    legacy_provider_id: &str,
+) -> PersistOutcome {
     let recorded = store.record_event(execution_id, seq, event).is_ok();
     let mut telemetry_ok = true;
     let mut usage_complete = true;
@@ -394,7 +447,15 @@ pub(crate) fn persist_event(
     if !complete {
         let _ = store.mark_execution_usage_incomplete(execution_id);
     }
-    complete
+    // A failed write outranks unreported usage: it is the more serious of the
+    // two and the only one that points at the store.
+    if !recorded || !telemetry_ok {
+        PersistOutcome::StoreWriteFailed
+    } else if !usage_complete {
+        PersistOutcome::UsageIncomplete
+    } else {
+        PersistOutcome::Complete
+    }
 }
 
 #[cfg(test)]

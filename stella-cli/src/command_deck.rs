@@ -92,8 +92,8 @@ use stella_tools::issue_ops::{CreateParams, IssueFilters, IssueSummary, LabelInf
 use stella_tools::issues::IssueBackend;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityField, EntityHit, Inbound, IssueAction,
-    IssueRow, SkillOp, SkillScope, SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput,
-    WorkspaceInput, run_deck,
+    IssueRow, ScopeDecision as DeckScopeDecision, SkillOp, SkillScope, SkillSearchHit, SkillsView,
+    SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -104,11 +104,13 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRe
 
 mod authoring;
 mod forwarder;
+mod scope_gate;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::handle_agent_create;
 pub(crate) use forwarder::spawn_forwarder;
+use scope_gate::DeckApprovalGate;
 
 /// The lead agent's id — the one conversation this driver runs.
 const LEAD: &str = "lead";
@@ -394,6 +396,8 @@ pub async fn run_deck_session(
     let (deck_tx, deck_rx) = mpsc::unbounded_channel::<Inbound>();
     let (sub_tx, mut sub_rx) = mpsc::unbounded_channel::<WorkspaceInput>();
     let (ask_tx, ask_rx) = mpsc::unbounded_channel::<String>();
+    // Scope review's answer path — same shape as `ask_tx`/`ask_rx` above.
+    let (scope_tx, scope_rx) = mpsc::unbounded_channel::<DeckScopeDecision>();
     // The supervisor channel: `task_assign` spawn requests (tap → driver)
     // and sub-session endings (worker → driver). See `crate::subsession`.
     let (sup_tx, mut sup_rx) = mpsc::unbounded_channel::<SupervisorMsg>();
@@ -543,6 +547,7 @@ pub async fn run_deck_session(
         inbound: in_tx.clone(),
         answers: Arc::new(tokio::sync::Mutex::new(ask_rx)),
     };
+    let scope_gate = DeckApprovalGate::new(LEAD.to_string(), in_tx.clone(), scope_rx);
 
     // The deck drives turns through the staged pipeline by default (triage →
     // recall → plan → scope → witness → execute → verify → judge); `/pipeline`
@@ -1314,6 +1319,7 @@ pub async fn run_deck_session(
                         files_before,
                         &in_tx,
                         &ask_io,
+                        &scope_gate,
                         &sup_tx,
                         &lead_holder,
                         &discovery_activation,
@@ -1631,16 +1637,20 @@ pub async fn run_deck_session(
                         ) => {
                             handle_issues_input(&input, cfg, &issue_backend_cache, &in_tx);
                         }
-                        // Scope review is not engine-driven yet, and
-                        // lead-lane pause/resume/restart still need a
+                        // Scope review IS engine-driven now: the pipeline's
+                        // `DeckApprovalGate` parks on this channel, so the
+                        // card's a/t/x keypress becomes its `ScopeDecision`.
+                        Some(WorkspaceInput::ToAgent {
+                            input: UserInput::ScopeDecision(decision), ..
+                        }) => {
+                            let _ = scope_tx.send(decision);
+                        }
+                        // Lead-lane pause/resume/restart still need a
                         // staged-pipeline boundary gate (the PipelinePorts
                         // follow-up; the fleet layer's own per-task verbs
                         // exist now, but fleet tasks are not deck lanes
-                        // yet) — named seams, no-ops here.
-                        Some(WorkspaceInput::ToAgent {
-                            input: UserInput::ScopeDecision(_), ..
-                        })
-                        | Some(WorkspaceInput::Control { .. }) => {}
+                        // yet) — a named seam, no-op here.
+                        Some(WorkspaceInput::Control { .. }) => {}
                     },
                 }
             }
@@ -3893,10 +3903,11 @@ async fn run_deck_command(
             let _ = in_tx.send(Inbound::Pipeline(*pipeline_on));
             say(if *pipeline_on {
                 "staged pipeline ON — turns now run triage → recall → (plan → scope review) → \
-                 witness → execute → verify → judge, with bounded revision. The witness stage \
-                 authors a failing test that must flip to green before work counts as done; \
-                 large plans stop with a named scope-review error until a deck-native host \
-                 approval gate is available. \
+                 witness → execute → verify → judge, with bounded revision. Triage already \
+                 right-sizes each turn: chat answers in one completion, and only genuinely \
+                 multi-step goals plan at all. The witness stage authors a failing test that \
+                 must flip to green before work counts as done; a large plan raises the scope \
+                 card and waits for you (a approve · t trim · x abort). \
                  `/pipeline` again to return to the raw engine loop."
                     .to_string()
             } else {
@@ -4150,15 +4161,7 @@ async fn run_lead_turn(
             cost,
             persistence_complete,
         ) {
-            let _ = in_tx.send(Inbound::Event {
-                agent: LEAD.to_string(),
-                event: AgentEvent::Error {
-                    message: "store write failed — the audit record (files touched / \
-                              memory citations / outcome) for this execution is incomplete"
-                        .to_string(),
-                    retryable: true,
-                },
-            });
+            forwarder::warn_audit_record_incomplete(in_tx, LEAD, persistence_complete);
             // That warning lands AFTER the turn's Complete event, and the
             // deck's status fold maps a retryable Error back to Running — so
             // without this re-assert a finished turn would show as running
@@ -4186,10 +4189,10 @@ async fn run_lead_turn(
 /// place of the raw `Engine::run_turn`.
 ///
 /// Deck-mode seams, all named:
-/// - **Scope review fails closed.** The deck cannot block a turn on a stdio
-///   gate (the alternate screen owns the terminal), so a large plan returns
-///   `ScopeReviewRequiredHeadless`. Deck-native host approval remains the
-///   follow-up; output/event rendering is never treated as authority.
+/// - **Scope review is interactive** ([`DeckApprovalGate`]). A plan over the
+///   thresholds raises the deck's approval card and the turn parks until the
+///   user answers (a/t/x) — the deck runs `headless: false` because it *can*
+///   ask. It fails closed only if the deck itself goes away mid-gate.
 /// - **The session's system prompt stays.** It was assembled once at deck
 ///   startup (byte-stable for the cache prefix, L-E8); toggling `/pipeline`
 ///   must not rewrite history. The pipeline's stage prompts (witness, judge,
@@ -4213,6 +4216,7 @@ async fn run_lead_pipeline_turn(
     files_before: usize,
     in_tx: &UnboundedSender<Inbound>,
     ask_io: &DeckAskUserIo,
+    scope_gate: &DeckApprovalGate,
     sup_tx: &UnboundedSender<SupervisorMsg>,
     claim_holder: &str,
     activated: &crate::discovery::ActivatedTools,
@@ -4299,7 +4303,7 @@ async fn run_lead_pipeline_turn(
             repo_status: &ws_ports.repo_status,
             diagnostics: &ws_ports.diagnostic_runner,
             tests: &ws_ports.test_runner,
-            approvals: &agent::HEADLESS_APPROVAL_GATE,
+            approvals: scope_gate,
             sleeper: &TokioSleeper,
             hooks: cfg
                 .hooks
@@ -4317,8 +4321,12 @@ async fn run_lead_pipeline_turn(
         let config = PipelineConfig {
             engine: agent::pipeline_engine_config_for(cfg, &wiring.worker_model),
             role_overrides: wiring.role_overrides.clone(),
-            headless: true,
-            headless_bypass_scope_review: agent::HEADLESS_SCOPE_REVIEW_BYPASS,
+            // Not headless: the deck has a real approval surface, so scope
+            // review asks instead of returning `ScopeReviewRequiredHeadless`.
+            // The bypass flag is deliberately left off — it only exists to let
+            // a run with *nobody to ask* proceed, and this run has someone.
+            headless: false,
+            headless_bypass_scope_review: false,
             ..PipelineConfig::default()
         };
         let pipeline = Pipeline::new(ports, tx.clone(), config);
@@ -4339,15 +4347,7 @@ async fn run_lead_pipeline_turn(
             cost,
             persistence_complete,
         ) {
-            let _ = in_tx.send(Inbound::Event {
-                agent: LEAD.to_string(),
-                event: AgentEvent::Error {
-                    message: "store write failed — the audit record (files touched / \
-                              memory citations / outcome) for this execution is incomplete"
-                        .to_string(),
-                    retryable: true,
-                },
-            });
+            forwarder::warn_audit_record_incomplete(in_tx, LEAD, persistence_complete);
             // Same re-assert as run_lead_turn: the retryable warning above
             // folds the lead back to Running, so restate the terminal state.
             let _ = in_tx.send(Inbound::Status {
