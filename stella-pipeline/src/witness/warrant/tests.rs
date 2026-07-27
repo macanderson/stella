@@ -129,6 +129,49 @@ fn a_removal_that_adds_real_code_is_a_rewrite() {
 }
 
 #[test]
+fn a_rust_deref_assignment_is_code_not_a_comment() {
+    // `*counter = …` starts with `*`, the block-comment continuation marker,
+    // but writes through a pointer. It must not read as comments-only.
+    let d = diff(
+        &["stella-core/src/driver.rs"],
+        "-    *counter = 0;\n+    *counter = 1;\n",
+    );
+    assert_eq!(
+        warrant(&d, 1),
+        WitnessWarrant::Required,
+        "a deref assignment is a behavior change, not a comment"
+    );
+}
+
+#[test]
+fn a_js_private_field_and_c_preprocessor_are_code_not_comments() {
+    let js = diff(&["ui/src/wallet.ts"], "-    #balance = 0;\n+    #balance = 100;\n");
+    assert_eq!(warrant(&js, 1), WitnessWarrant::Required);
+    let c = diff(&["native/buffer.c"], "-#define BUFFER 256\n+#define BUFFER 512\n");
+    assert_eq!(warrant(&c, 1), WitnessWarrant::Required);
+}
+
+#[test]
+fn a_decrement_is_code_not_a_sql_comment() {
+    let d = diff(&["stella-core/src/driver.rs"], "-    --count;\n+    --count;\n+    step();\n");
+    assert_eq!(warrant(&d, 1), WitnessWarrant::Required);
+}
+
+#[test]
+fn block_and_sql_comments_still_read_as_comments() {
+    // The delimited markers must still recognize genuine comments: a
+    // block-comment continuation, a block close, and a spaced SQL comment.
+    let d = diff(
+        &["stella-core/src/driver.rs"],
+        "+ * a doc line\n+ */\n+-- a note\n+# a python note\n",
+    );
+    assert_eq!(
+        warrant(&d, 1),
+        WitnessWarrant::NotRequired(NoWitnessReason::CommentsOnly)
+    );
+}
+
+#[test]
 fn an_unrecognized_path_buys_the_test() {
     let d = diff(&["some/unknown/thing.zz"], "+data\n");
     assert_eq!(warrant(&d, 1), WitnessWarrant::Required);

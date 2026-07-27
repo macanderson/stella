@@ -222,17 +222,39 @@ fn changed_lines(diff: &str) -> (Vec<String>, Vec<String>) {
 /// Classify one changed line. Language-agnostic on purpose: the comment
 /// markers below cover every language Stella's test-runner vocabulary spans,
 /// and anything unrecognized is [`LineRole::Code`] so the rule fails closed.
+///
+/// The markers split in two. Some *only* ever open a comment — nothing
+/// executable in any language Stella supports begins with `//`, `/*`, or
+/// `<!--`, so those match on prefix alone. The rest are ambiguous: they open a
+/// comment in one language and real code in another. `*` continues a
+/// block-comment line but also writes through a Rust/C pointer (`*p = 1;`);
+/// `#` opens a shell/Python comment but also a Rust attribute (`#[derive]`), a
+/// C preprocessor directive (`#define X`), or a JS private field
+/// (`#balance = 0`); `--`/`;` open SQL/Lisp comments but also spell a decrement
+/// or a statement. For those, a marker fused to a token is code; only a bare
+/// marker or one trailed by whitespace is prose. Fusing the check to a
+/// delimiter keeps the rule failing closed — an ambiguous line reads as
+/// [`LineRole::Code`] and buys the test rather than silently waiving it.
 fn classify_line(line: &str) -> LineRole {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return LineRole::Blank;
     }
-    const COMMENT_MARKERS: &[&str] = &["//", "#", "/*", "*/", "*", "<!--", "-->", "--", ";"];
-    if COMMENT_MARKERS
+    const UNAMBIGUOUS_MARKERS: &[&str] = &["//", "/*", "<!--"];
+    if UNAMBIGUOUS_MARKERS
         .iter()
         .any(|marker| trimmed.starts_with(marker))
     {
         return LineRole::Comment;
+    }
+    // `*/` before `*` so a block-comment close is not first stripped to `/…`.
+    const DELIMITED_MARKERS: &[&str] = &["#", "*/", "*", "-->", "--", ";"];
+    for marker in DELIMITED_MARKERS {
+        if let Some(rest) = trimmed.strip_prefix(marker) {
+            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                return LineRole::Comment;
+            }
+        }
     }
     LineRole::Code
 }
