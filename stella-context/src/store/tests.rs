@@ -10,6 +10,7 @@ use super::schema::{
     SCHEMA_VERSION,
 };
 use super::*;
+use crate::store::edge::{end_world_validity, neighbors_valid_at};
 use tempfile::TempDir;
 
 fn tmp_store() -> (TempDir, ContextStore) {
@@ -1362,5 +1363,89 @@ fn v8_creates_the_ledger_empty() {
     assert!(
         store.record_counts().unwrap().is_empty(),
         "a fresh ledger holds nothing — records are born, never migrated in"
+    );
+}
+
+
+/// A deleted file ends an anchor's world validity WITHOUT unbelieving it.
+///
+/// The requirement this pins: a memory whose file was deleted is not wrong and
+/// must not be retracted. It was true, and then the world changed. So the
+/// present must stop recalling it while the past still answers — which needs
+/// the two axes to move independently.
+#[test]
+fn ending_world_validity_hides_the_present_and_preserves_the_past() {
+    let (_dir, store) = tmp_store();
+    let conn = store.conn();
+    let (memory, file) = (concept(&conn, "memory"), concept(&conn, "file"));
+    let props = serde_json::json!({});
+    let edge = insert_edge(
+        &conn, "observed_in", memory, file, 1.0, &props,
+        Some(T0), None, T0, None,
+    )
+    .unwrap();
+
+    // Believed and world-valid: recalled now.
+    assert_eq!(
+        neighbors_valid_at(&conn, &[memory], None, Some(T1_5)).unwrap().len(),
+        1,
+        "an open anchor is recallable"
+    );
+
+    // The file is deleted at T2. World validity ends; belief is untouched.
+    assert!(end_world_validity(&conn, edge, T2).unwrap());
+
+    // The present no longer recalls it...
+    assert!(
+        neighbors_valid_at(&conn, &[memory], None, Some(T3)).unwrap().is_empty(),
+        "after the file is gone the anchor must not be recalled"
+    );
+
+    // ...but it was true before, and still answers as of then.
+    assert_eq!(
+        neighbors_valid_at(&conn, &[memory], None, Some(T1_5)).unwrap().len(),
+        1,
+        "the past is preserved: the anchor held at T1_5 and must still say so"
+    );
+
+    // And we never stopped BELIEVING it — this is not a retraction.
+    assert_eq!(
+        neighbor_ids(&conn, memory, None),
+        vec![file],
+        "ending world validity must not supersede: the belief was never wrong"
+    );
+}
+
+/// Ending world validity is idempotent and never moves an existing end.
+#[test]
+fn ending_world_validity_twice_keeps_the_first_end_date() {
+    let (_dir, store) = tmp_store();
+    let conn = store.conn();
+    let (a, b) = (concept(&conn, "a"), concept(&conn, "b"));
+    let props = serde_json::json!({});
+    let edge = insert_edge(&conn, "observed_in", a, b, 1.0, &props, Some(T0), None, T0, None).unwrap();
+
+    assert!(end_world_validity(&conn, edge, T1).unwrap(), "first close wins");
+    assert!(
+        !end_world_validity(&conn, edge, T3).unwrap(),
+        "a second close must not move the date a file actually disappeared"
+    );
+    // Still invisible at T3, and the recorded end is T1 rather than T3.
+    assert!(neighbors_valid_at(&conn, &[a], None, Some(T2)).unwrap().is_empty());
+}
+
+/// The default path is byte-for-byte the old behaviour.
+#[test]
+fn valid_at_none_ignores_world_validity_exactly_as_before() {
+    let (_dir, store) = tmp_store();
+    let conn = store.conn();
+    let (a, b) = (concept(&conn, "a"), concept(&conn, "b"));
+    let props = serde_json::json!({});
+    // World validity closed in the past, still believed.
+    insert_edge(&conn, "relates_to", a, b, 1.0, &props, Some(T0), Some(T1), T1, None).unwrap();
+    assert_eq!(
+        neighbors_valid_at(&conn, &[a], None, None).unwrap().len(),
+        1,
+        "without a world-time argument the closed interval is ignored, as it always was"
     );
 }
