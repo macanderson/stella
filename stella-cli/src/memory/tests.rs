@@ -1169,3 +1169,43 @@ fn a_lesson_logged_before_kind_existed_still_parses() {
     assert_eq!(parsed.kind, crate::memory::LessonKind::Process);
     assert!(parsed.task_id.is_empty());
 }
+
+/// An id-less memory frame keeps its content and does not claim citability.
+///
+/// The render arm for `("memory", None)` was missing: such a frame set the
+/// citable flag and then pushed no line, so the recall budget was spent
+/// fetching content that never reached the model, while the block still
+/// instructed it to cite `[nod_…]` ids that might appear nowhere in it.
+/// `RecalledFrame` documents `id: None` as a legitimate state, so this was
+/// reachable by contract.
+#[test]
+fn an_id_less_memory_frame_still_renders_and_does_not_promise_citability() {
+    let mut anonymous = frame(
+        "ignored",
+        contextgraph_types::FrameKind::Memory,
+        "house convention",
+        "amounts are integer minor units",
+    );
+    anonymous.id = None;
+
+    let section = render_context_section(&[anonymous]).expect("a frame with content renders");
+    assert!(
+        section.contains("amounts are integer minor units"),
+        "content the recall budget already paid for must reach the model: {section}"
+    );
+    assert!(
+        !section.contains("cite_memory"),
+        "nothing here is citable, so the block must not ask for a citation: {section}"
+    );
+
+    // The control: the same frame WITH an id is citable and says so.
+    let identified = frame(
+        "nod_6428c2bb9b9b7aa1adc457fa",
+        contextgraph_types::FrameKind::Memory,
+        "house convention",
+        "amounts are integer minor units",
+    );
+    let section = render_context_section(&[identified]).expect("renders");
+    assert!(section.contains("[nod_6428c2bb9b9b7aa1adc457fa]"), "{section}");
+    assert!(section.contains("cite_memory"), "{section}");
+}
