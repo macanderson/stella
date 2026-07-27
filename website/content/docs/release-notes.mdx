@@ -13,6 +13,102 @@ itemized here. For what changed in one specific tag, read that tag's
 [GitHub Release](https://github.com/macanderson/stella/releases) — every one
 carries its full commit-level log.
 
+## 0.6.0
+
+The `0.6.x` line opens with the feature the `0.5.x` series was building toward: **Stella now learns from working in your codebase, and shows its work.** The adaptive context lifecycle is complete and on by default. Alongside it, this release gathers a large security and reliability pass, streaming on every provider that supports it, a rebuilt transcript, and a relicense.
+
+### Adaptive context — the loop closes
+
+Stella has always recalled memories. What it could not do was tell you *why* a memory was chosen, whether it helped, or stop selecting one that never did. All four phases of that work landed in this line.
+
+- **Every turn is accountable.** The step manifest is now a compiled context frame with a deterministic identity and a content hash, and recall is decomposed into one block per item instead of a single undifferentiated blob. For any past turn you can see exactly which memories entered it, in what order, at what token cost, and where each came from.
+- **`stella inspect`** reconstructs the exact message array any past model call was sent, verified against the digests taken at emission, and reports coverage gaps and digest mismatches separately rather than papering over them. `Ctrl-G` opens the same view inside the deck.
+- **Proposals are typed, governed, and reviewable.** What the loop wants to make durable now lands in an append-only ledger with the evidence behind it. `stella proposals list / keep / edit / ignore` is the review surface; every decision is an immutable event, so the history replays exactly and Ignore is reversible rather than permanent. A proposal must recur across **distinct tasks**, not merely many times in one.
+- **Context that stops helping gets retired — reversibly.** Selection health is derived from immutable use and feedback records and rebuilds exactly; nothing is a stored counter that can drift. `stella memory retire` / `reaffirm` / `retired` manage it. A retired memory is excluded from automatic recall but stays explicitly retrievable by id, and **nothing is ever deleted**.
+- **The agent cannot talk itself into forgetting.** Citation feedback is recorded as `agent_self_report` and, by design, may inform selection health but never drive retirement — a self-report that can retire its own subject is self-reinforcing, because a model that misreads a memory reports it unhelpful, retires it, and destroys the evidence that the reading was wrong. Retirement requires a human or a deterministic source.
+- **`stella memory` grew a full lifecycle:** `forget` / `restore` / `forgotten` (a tombstone that survives re-learning, because the reflection loop re-mines paraphrases), `edit` (a new revision of the same id, so recall stops serving the old words), `compact`, and `index`.
+
+`context.lifecycle.enabled: false` in `settings.json` restores every pre-adaptive behavior wholesale.
+
+### Retrieval got much faster and much more relevant
+
+- **Recall no longer loads the whole corpus to answer a five-frame query.** It is two-phase: corpus-wide passes read a body-free projection computed in SQL, and bodies, vectors and domain tags are fetched only for the handful of rows that can still become frames. Ranking output is unchanged by construction — only what it costs to produce it.
+- **Recency stopped hijacking recall.** It was fused at full weight, so the newest rows could take every slot regardless of the query — one run's leftovers were being handed to the next, unrelated run.
+- **~1,000 tokens off every model call.** Both system prompts opened with a hand-maintained tool catalogue restating what each tool's generated schema already carries, shown to the model twice on every call for the life of the session.
+- **The cached system prefix is byte-stable again.** Relative ages ("2 hours ago") and draft lines naming a live pid made the ~15–20k-token prefix change every call, missing the provider prompt cache *and* paying the cache-write premium on the whole thing.
+- Context blocks are hashed once per turn rather than once per step, and an optional IVF approximate-similarity index is available behind `stella memory index`.
+
+### Every tool ships on
+
+`bash` and the key-free web tools are now registered in every session. The `"tools"` block in `settings.json` became an open map — any tool, group, or `*` → `on`/`off` — covering MCP and custom tools too, with a matching editor in the deck's SETTINGS tab. `stella tools` names the key that withheld each tool. Org-managed denials render locked.
+
+### Providers
+
+- **Streaming now works on OpenAI, Gemini and Vertex.** Only Anthropic and zai implemented the observed-completion path; everywhere else the deck rendered nothing until the whole turn finished.
+- **Bedrock stopped burning four paid generations per turn** — a shared per-read timeout was bounding the entire unary generation, so anything slower failed as retryable and was reissued three more times.
+- Transient gateway 5xx are retried again (OpenRouter reports upstream status in a field the error type wasn't reading, so a retryable 502 classified as terminal), a truncated Gemini/Vertex stream is retried rather than committed as a silently half-complete answer, and per-turn cost is priced against the right provider.
+- **Chain-of-thought is no longer published as the answer** on tool-calling turns via OpenRouter.
+
+### Terminal UI
+
+- **The transcript was rebuilt for reading.** Rows open on a fixed-width rail — `●` call, `⎿` result, `✗` failure, `▌` prompt — giving back 18 columns the old right-aligned tags spent on chrome. Collapsed output anchors on the first failing line rather than line 1, and a failure never collapses to one line.
+- **Navigation:** `Ctrl-F` incremental find that searches the *full* tool output rather than the drawn preview, `Ctrl-N`/`Ctrl-P` to jump between failures, `Ctrl-Z` to fold a finished turn to one line.
+- **The deck prompts on large plans instead of dead-ending.** Scope review was hardcoded headless with an always-abort gate, and the advice it printed named a key only `stella run` reads. `Trim` keeps the largest prefix under the thresholds and says what it dropped.
+- **Live fleet dashboard** with supervisor verbs — pause, resume, and stop the focused task, with stop requiring two keystrokes.
+- **The default accent moved cyan → gold.** Four rival palettes collapsed into one gold-on-navy system generated from tokens with WCAG-AA contrast contracts enforced at build time. `/color` keeps cyan, azure, violet, magenta and mint as personalisation.
+
+### Security
+
+- **`git clone && stella` is no longer arbitrary code execution.** A repo's `.env` could set `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, `BASH_ENV`, `GIT_SSH_COMMAND` or a redirected `PATH`. Loader, interpreter and config-redirect names are refused from project `.env` files and printed on stderr; a live shell env still wins, so `LD_PRELOAD=… stella …` works when a human means it.
+- **Ambient authority scrubbed from model-controlled subprocesses**, including git's config/SSH/proxy hooks and `SSH_AUTH_SOCK`. Escape hatch: `STELLA_SUBPROCESS_ENV_ALLOW`.
+- Secrets are zeroized on drop and no longer dumpable via `{:?}`; files Stella creates are owner-only; `run_tests`' `filter` is quoted per token, closing a command-injection path; a stored-XSS hole in the exported dashboard is closed; MCP servers are bounded on every axis (an MCP server streaming without a newline used to OOM-kill Stella).
+- **Releases carry build-provenance attestation** covering both the tarballs and `SHA256SUMS`, and `install.sh` verifies it. A *contradicted* attestation always aborts; set `STELLA_REQUIRE_PROVENANCE=1` to make *unverifiable* abort too.
+- A new [threat model](https://github.com/macanderson/stella/blob/main/docs/design/threat-model.md) records nine residual risks — including that "bash is off" was never the same claim as "the agent cannot run code."
+
+### Reliability
+
+- **Cancelling a turn actually kills the work.** Esc, the tool-timeout backstop and a fleet stop now kill the process group; before, the child kept running and kept editing your tree. Ctrl-C works headlessly for the first time, with exit codes **130** / **143**.
+- **Source writes survive a crash.** `write_file`, `edit_file`, `apply_edits` and `save_memory` used to truncate the target directly, so a crash mid-write left your file truncated with the replacement nowhere. Writes are now durable and in-place, preserving mode, owner and hard links.
+- **Loop detection works during compaction again** — its evidence was keyed off tool-result content compaction had already replaced, so the primary stuck-turn defense was off exactly when it was needed. On Gemini and Vertex it was effectively off entirely, because their per-step `call_{ordinal}` ids made three different outputs compare equal.
+- A crashed fleet run no longer wedges a workspace with a lock naming a dead run id; media downloads, SSE buffers and tool output are all bounded; deeply nested sources no longer crash the indexer; sessions survive a power cut.
+- **New default ceilings:** 10 minutes per model call, 15 minutes per tool dispatch, 5 seconds for recall.
+
+### Retention & cost
+
+- **`stella stats prune`** gives `store.db` a retention path — it holds full prompts, event payloads, tool arguments and context blocks and previously had none across 21 tables. `stella usage prune` bounds the hub. Both support `--dry-run`.
+- **Cache-write tokens are now priced.** They were reported end-to-end and priced at $0 by nothing, understating the budget meter and every receipt. **Reported costs go up for identical workloads** — a correction, not a price change.
+- Every JSON envelope leads with `schema_version`, and `AgentEvent` gained an `Unknown` variant so an older binary no longer fails a whole stream on one unrecognized event.
+
+### Docs
+
+A mobile-first overhaul turned reference tables into card grids and added diagrams for the credential chain, settings cascade, permission gate and telemetry flow. Building it surfaced three real defects, fixed in the same pass — `--model openrouter/auto` was documented and broken, `enable_recap` never reached the runtime, and one flag's help described the opposite of what it did. New: a `stella doctor` page, `CHANGELOG.md`, a README per crate, and `docs/llms.txt` (all docs as one file for pasting into a model's context).
+
+### Licensing
+
+Stella is relicensed from `MIT OR Apache-2.0` to **`AGPL-3.0-only`**, dual-licensed with commercial licenses from Oxagen, Inc. Two carve-outs worth stating plainly: **using Stella to write proprietary code does not make that code AGPL**, and **releases up to v0.5.14 remain perpetually available under MIT/Apache**, including the right to fork from that point. Contributions now require a CLA. The Context Graph Protocol stays Apache-2.0.
+
+### Upgrading — what changes under you
+
+1. **`bash` and the key-free web tools are on by default.** Turn off with `"tools": {"bash": "off"}`.
+2. **The adaptive context lifecycle is on by default.** `"context": {"lifecycle": {"enabled": false}}` restores previous behavior.
+3. **Reported costs rise** for identical workloads, because cache-write tokens are now priced.
+4. **Witness test files are no longer written into your tree.** `stella run --keep-witness` restores it.
+5. **The deck now blocks on an approval card** for plans over 5 steps / 8 files / $1.00, where it previously aborted.
+6. **`OXAGEN_DEBUG` / `OXAGEN_MEDIA_LIVE` are renamed** to `STELLA_*`. The old names still work **for this release only**.
+7. **Extension deny policies now bite** on `build_project`, `run_tests`, `verify_done` and `send_stdin`, which previously bypassed them.
+8. **Downgrading is refused, not silently misread** — `context.db`, `codegraph.db` and the media journal now decline to open a schema newer than the binary knows.
+9. The default TUI accent is gold.
+
+```bash
+# Homebrew (macOS / Linux)
+brew upgrade stella
+
+# From a release tarball — pick your target
+# https://github.com/macanderson/stella/releases/latest
+```
+
+Prebuilt binaries are published for `aarch64`/`x86_64` macOS and Linux. Verify a download against the `SHA256SUMS` attached to the release.
+
 ## 0.5.0
 
 The first minor release of the `0.5.x` line. It gathers the stabilization and
