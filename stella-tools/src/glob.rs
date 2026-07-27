@@ -119,13 +119,7 @@ impl Tool for Glob {
             }
             crate::exec::Captured::Unavailable => {
                 // fd not installed — fall back to find (same pinned dir).
-                let mut find = Command::new("find");
-                find.arg(&search_dir);
-                find.arg("-type").arg("f");
-                find.arg("-name").arg(pattern);
-                crate::subprocess_env::scrub_sensitive_env(&mut find);
-                find.stdout(std::process::Stdio::piped());
-                find.stderr(std::process::Stdio::piped());
+                let find = find_command(&search_dir, pattern);
                 // Same cancellation backstop as the fd arm above.
 
                 match crate::exec::run_captured(find, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
@@ -157,6 +151,37 @@ impl Tool for Glob {
             }
         }
     }
+}
+
+/// Build the `find` fallback for `pattern` under `search_dir`.
+///
+/// `-name` matches basenames only, so a slash-carrying glob — including the
+/// schema's own `**/*.rs` example — matched nothing through it. Those
+/// patterns go through `-path` against the full path instead, prefixed with
+/// the search dir (the strings `find` prints all start with it). `find`'s
+/// glob has no `**`, but its `*` already crosses `/` (fnmatch without
+/// FNM_PATHNAME), so `**` collapses to `*`: `**/*.rs` → `<dir>/*.rs`,
+/// `src/**/*.ts` → `<dir>/src/*.ts`. The same slash-crossing `*` makes a
+/// mid-pattern `a/**/b.rs` also match `a/xb.rs` — in a search tool a
+/// slightly wide match beats silently missing files.
+fn find_command(search_dir: &std::path::Path, pattern: &str) -> Command {
+    let mut find = Command::new("find");
+    find.arg(search_dir);
+    find.arg("-type").arg("f");
+    if pattern.contains('/') {
+        let mut translated = pattern.replace("**/", "*");
+        while translated.contains("**") {
+            translated = translated.replace("**", "*");
+        }
+        find.arg("-path")
+            .arg(format!("{}/{translated}", search_dir.display()));
+    } else {
+        find.arg("-name").arg(pattern);
+    }
+    crate::subprocess_env::scrub_sensitive_env(&mut find);
+    find.stdout(std::process::Stdio::piped());
+    find.stderr(std::process::Stdio::piped());
+    find
 }
 
 /// Render the backend's match lines as workspace-relative paths, capped at
@@ -290,6 +315,67 @@ mod tests {
             rendered.contains(&format!("showing first {MAX_RESULTS} files")),
             "{rendered}"
         );
+    }
+
+    /// Slash-carrying globs must not go through `-name` (basenames only) —
+    /// through it the schema's own `**/*.rs` example matched nothing.
+    #[test]
+    fn find_fallback_routes_slash_globs_through_path_matching() {
+        let dir = std::path::Path::new("/ws");
+        let args = |pattern: &str| -> Vec<String> {
+            find_command(dir, pattern)
+                .as_std()
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        // Basename patterns keep `-name` semantics (parity with `fd --glob`).
+        assert!(args("*.rs").windows(2).any(|w| w == ["-name", "*.rs"]));
+        // `**` collapses to `*` — `find`'s `*` already crosses `/`.
+        assert!(args("**/*.rs").windows(2).any(|w| w == ["-path", "/ws/*.rs"]));
+        assert!(
+            args("src/**/*.ts")
+                .windows(2)
+                .any(|w| w == ["-path", "/ws/src/*.ts"])
+        );
+    }
+
+    /// Run the real `find` through the fallback builder: `**/*.rs` matches at
+    /// every depth, `src/**/*.ts` stays anchored under `src/`.
+    #[tokio::test]
+    async fn find_fallback_matches_recursive_globs_end_to_end() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("src/deep")).expect("mkdir");
+        std::fs::write(dir.path().join("top.rs"), "").expect("write");
+        std::fs::write(dir.path().join("src/deep/inner.rs"), "").expect("write");
+        std::fs::write(dir.path().join("src/a.ts"), "").expect("write");
+        std::fs::write(dir.path().join("src/deep/b.ts"), "").expect("write");
+        std::fs::write(dir.path().join("stray.ts"), "").expect("write");
+
+        let run = |pattern: &str| {
+            let cmd = find_command(dir.path(), pattern);
+            async move {
+                match crate::exec::run_captured(cmd, crate::grep::FALLBACK_SEARCH_TIMEOUT_SECS)
+                    .await
+                {
+                    crate::exec::Captured::Done(out) => {
+                        String::from_utf8_lossy(&out.stdout).into_owned()
+                    }
+                    crate::exec::Captured::Unavailable => panic!("find must be installed"),
+                    crate::exec::Captured::TimedOut => panic!("find timed out"),
+                }
+            }
+        };
+
+        let rs = run("**/*.rs").await;
+        assert!(rs.contains("top.rs"), "{rs}");
+        assert!(rs.contains("inner.rs"), "{rs}");
+        assert!(!rs.contains(".ts"), "{rs}");
+
+        let ts = run("src/**/*.ts").await;
+        assert!(ts.contains("src/a.ts"), "{ts}");
+        assert!(ts.contains("src/deep/b.ts"), "{ts}");
+        assert!(!ts.contains("stray.ts"), "anchored under src/: {ts}");
     }
 
     #[tokio::test]

@@ -319,6 +319,47 @@ async fn github_rest_backend_lists_creates_and_mutates_issues() {
     assert_eq!(members[0].handle, "@octocat");
 }
 
+/// A query drives `/search/issues` (full text, like `gh issue list
+/// --search`) — the returned issue's title does NOT contain the query, so a
+/// client-side title filter would wrongly drop it.
+#[tokio::test]
+async fn github_rest_backend_searches_full_text_not_title_substrings() {
+    let server = MockServer::start().await;
+    let root = git_workspace_with_origin().await;
+    let backend = IssueBackend::GitHubApi {
+        token: "gho_test".into(),
+        api_base: server.uri(),
+    };
+    Mock::given(method("GET"))
+        .and(path("/search/issues"))
+        .and(query_param("q", "repo:octo/repo is:issue state:open flaky"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total_count": 1,
+            "items": [{
+                "number": 3, "title": "CI goes red overnight", "state": "open",
+                "labels": [], "assignees": [],
+                "html_url": "https://github.com/octo/repo/issues/3",
+                "updated_at": "2026-07-18T00:00:00Z"
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let issues = ops::list_issues(
+        &backend,
+        root.path(),
+        &IssueFilters {
+            query: Some("flaky".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("search");
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].key, "#3");
+    assert_eq!(issues[0].title, "CI goes red overnight");
+}
+
 #[tokio::test]
 async fn github_rest_401_names_the_reconnect_fix() {
     let server = MockServer::start().await;

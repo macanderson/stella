@@ -13,6 +13,15 @@ use crate::exec;
 use crate::exec::shell_quote;
 use crate::registry::Tool;
 
+const DEFAULT_TIMEOUT_SECS: u64 = 120;
+
+/// `ci_status`'s `timeout_secs`, through the crate-wide clamp
+/// ([`crate::exec::timeout_from`]): an unclamped model-supplied u64 would
+/// disable the hang backstop for every `gh` sub-call (u64::MAX ≈ never).
+fn ci_timeout(input: &Value) -> u64 {
+    crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS)
+}
+
 pub struct CiStatus;
 
 #[async_trait]
@@ -39,10 +48,7 @@ impl Tool for CiStatus {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let timeout_secs = input
-            .get("timeout_secs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(120);
+        let timeout_secs = ci_timeout(input);
         let wait = input.get("wait").and_then(|v| v.as_bool()).unwrap_or(false);
 
         if exec::run_github("command -v gh", root, 10)
@@ -183,6 +189,22 @@ mod tests {
         );
         // …and an empty request defaults to main, still scoped (not global).
         assert_eq!(gh_run_scope(&serde_json::json!({})), "--branch 'main'");
+    }
+
+    #[test]
+    fn timeout_is_clamped_to_the_exec_backstop() {
+        assert_eq!(ci_timeout(&serde_json::json!({})), DEFAULT_TIMEOUT_SECS);
+        // 0 means default (custom.rs's convention), not an instant timeout.
+        assert_eq!(
+            ci_timeout(&serde_json::json!({ "timeout_secs": 0 })),
+            DEFAULT_TIMEOUT_SECS
+        );
+        assert_eq!(ci_timeout(&serde_json::json!({ "timeout_secs": 30 })), 30);
+        // A u64::MAX request must not disable the hang backstop.
+        assert_eq!(
+            ci_timeout(&serde_json::json!({ "timeout_secs": u64::MAX })),
+            crate::exec::MAX_TIMEOUT_SECS
+        );
     }
 
     #[test]

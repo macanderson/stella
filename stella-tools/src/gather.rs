@@ -241,13 +241,24 @@ async fn stale_paths(root: &Path, manifest: &BTreeMap<String, String>) -> Vec<St
 }
 
 /// Render a section body under the cap, eliding loudly, never silently.
+/// The cap counts CHARS, so the gate must too: `len()` is bytes, and gating
+/// on it alone stamped a false "elided" marker on multibyte bodies that were
+/// over the cap in bytes but had nothing cut. It survives only as the cheap
+/// pre-filter (chars ≤ bytes, so under the cap in bytes is under it in
+/// chars); `char_indices` then finds the boundary-safe cut, or proves the
+/// body fits.
 fn cap_section(body: &str) -> String {
     if body.len() <= MAX_SECTION_CHARS {
         return body.to_string();
     }
-    let mut capped: String = body.chars().take(MAX_SECTION_CHARS).collect();
-    capped.push_str("\n… (section elided — narrow the sweep for full detail)");
-    capped
+    match body.char_indices().nth(MAX_SECTION_CHARS) {
+        Some((cut, _)) => {
+            let mut capped = body[..cut].to_string();
+            capped.push_str("\n… (section elided — narrow the sweep for full detail)");
+            capped
+        }
+        None => body.to_string(),
+    }
 }
 
 /// Strip the canonical workspace root prefix from a path that a sub-tool
@@ -1118,6 +1129,32 @@ mod tests {
             a.request_key(),
             b.request_key(),
             "the same logical sweep must be the same pack identity"
+        );
+    }
+
+    /// The elision marker must appear exactly when chars were cut: a
+    /// multibyte body over the cap in BYTES but not in chars used to get the
+    /// marker with nothing elided.
+    #[test]
+    fn cap_section_gates_and_cuts_by_the_same_measure() {
+        let ascii = "x".repeat(MAX_SECTION_CHARS);
+        assert_eq!(cap_section(&ascii), ascii, "at the cap: untouched");
+
+        // MAX_SECTION_CHARS chars, 2×MAX_SECTION_CHARS bytes.
+        let multibyte = "é".repeat(MAX_SECTION_CHARS);
+        assert_eq!(
+            cap_section(&multibyte),
+            multibyte,
+            "nothing was cut, so nothing may claim to be elided"
+        );
+
+        let over = "é".repeat(MAX_SECTION_CHARS + 10);
+        let capped = cap_section(&over);
+        assert!(capped.contains("section elided"), "{}", capped.len());
+        assert_eq!(
+            capped.chars().take_while(|c| *c == 'é').count(),
+            MAX_SECTION_CHARS,
+            "cut lands on the char cap, on a char boundary"
         );
     }
 

@@ -37,7 +37,11 @@ impl HookRunner for ShellHookRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        crate::subprocess_env::scrub_sensitive_env(&mut command);
+        // Full spawn policy: a hook running from inside a git hook must not
+        // inherit the outer repo's GIT_DIR, and its stdout is parsed (block
+        // decisions), so forced-color overrides go too — same families
+        // `exec::drive` removes.
+        crate::subprocess_env::scrub_spawn_env(&mut command);
         // Own process group, exactly like every other spawn in this crate: a
         // hook that backgrounds work (`some-watcher &`) leaves grandchildren
         // that `kill_on_drop` cannot reach, and a timed-out hook must not
@@ -171,6 +175,23 @@ mod tests {
             .await
             .expect("hook runs");
         crate::subprocess_env::test_support::assert_scrubbed(&out.stdout);
+    }
+
+    /// The hook runner used to apply only the credential scrub — a hook
+    /// spawned from inside a git hook inherited the outer repo's GIT_DIR.
+    #[tokio::test]
+    async fn hook_scrubs_git_repo_and_forced_color_env() {
+        let _fixture = crate::subprocess_env::test_support::SpawnHygieneFixture::install();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = ShellHookRunner
+            .run(
+                &action(crate::subprocess_env::test_support::SPAWN_HYGIENE_PROBE_COMMAND),
+                "{}",
+                &dir.path().display().to_string(),
+            )
+            .await
+            .expect("hook runs");
+        crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(&out.stdout);
     }
 
     #[tokio::test]

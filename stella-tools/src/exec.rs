@@ -33,32 +33,11 @@ pub(crate) fn timeout_from(input: &serde_json::Value, default: u64) -> u64 {
         .min(MAX_TIMEOUT_SECS)
 }
 
-/// Environment variables that re-target git at a specific repository. Tool
-/// subprocesses always run against their explicit working dir; when Stella
-/// itself was spawned from inside a git hook (which exports `GIT_DIR` et
-/// al.), letting them leak through would silently aim every git invocation
-/// at the OUTER repo instead — `git init` in a scratch dir re-initing the
-/// host repo, `verify_done` diffing against the wrong HEAD. Scrub these from
-/// every subprocess that shells out with an explicit dir.
-pub const GIT_REPO_ENV_VARS: [&str; 8] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_NAMESPACE",
-    "GIT_PREFIX",
-];
-
-/// Environment variables that force CLIs to colorize even when piped.
-/// Everything spawned here writes to a captured pipe that is parsed
-/// (`gh … --json` into serde) or fed to the model — never a terminal — so
-/// an inherited `CLICOLOR_FORCE=1` from the user's shell wraps `gh`'s JSON
-/// in ANSI escapes and every parse dies with "expected value at line 1
-/// column 1". Scrubbing only the *force* overrides restores standard
-/// pipe detection; tools stay colorless on pipes, as they'd be anywhere.
-pub const FORCED_COLOR_ENV_VARS: [&str; 3] = ["CLICOLOR_FORCE", "FORCE_COLOR", "GH_FORCE_TTY"];
+// The canonical spawn-env policy (git-repo retargeting, forced color, and
+// the credential scrub) lives in `subprocess_env` so every spawn path shares
+// one helper; these re-exports keep the historical `exec::` paths valid for
+// the callers that scrub ad-hoc `Command`s themselves.
+pub use crate::subprocess_env::{FORCED_COLOR_ENV_VARS, GIT_REPO_ENV_VARS};
 
 /// Compatibility facade for callers added on `main`; the canonical policy
 /// lives in `subprocess_env` so every subprocess shares one monotonic registry.
@@ -273,13 +252,7 @@ async fn drive(
     preserved_sensitive_env: &[&str],
 ) -> Result<(i32, String), String> {
     cmd.current_dir(dir);
-    for var in GIT_REPO_ENV_VARS {
-        cmd.env_remove(var);
-    }
-    for var in FORCED_COLOR_ENV_VARS {
-        cmd.env_remove(var);
-    }
-    crate::subprocess_env::scrub_sensitive_env_except(&mut cmd, preserved_sensitive_env);
+    crate::subprocess_env::scrub_spawn_env_except(&mut cmd, preserved_sensitive_env);
     // No stdin: everything driven through here is non-interactive, and an
     // inherited stdin is the TUI's terminal — a build or test that prompts
     // would consume the user's keystrokes and then hang until the timeout

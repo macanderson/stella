@@ -80,15 +80,12 @@ fn tail(s: &str) -> &str {
 
 /// A `git` command aimed at `dir` and ONLY `dir`: repo-targeting env vars a
 /// surrounding git hook may have exported are scrubbed so they cannot
-/// redirect the invocation at the outer repository
-/// ([`crate::exec::GIT_REPO_ENV_VARS`]).
+/// redirect the invocation at the outer repository — the shared spawn policy
+/// ([`crate::subprocess_env::scrub_spawn_env`]).
 fn git_in(dir: &std::path::Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(dir);
-    for var in crate::exec::GIT_REPO_ENV_VARS {
-        cmd.env_remove(var);
-    }
-    crate::subprocess_env::scrub_sensitive_env(&mut cmd);
+    crate::subprocess_env::scrub_spawn_env(&mut cmd);
     cmd
 }
 
@@ -202,13 +199,20 @@ impl Tool for VerifyDone {
         // subdirectory that corresponds to the workspace root. Assuming
         // root == toplevel produced a false verdict (a false WITNESS CONFIRMED
         // or false VACUOUS) whenever verify_done ran from a repo subdirectory.
-        let canon_toplevel = match run("git rev-parse --show-toplevel", root, 30).await {
-            Ok((0, out)) => {
-                let p = std::path::PathBuf::from(out.trim());
-                p.canonicalize().unwrap_or(p)
+        // Parsed from stdout ALONE ([`crate::exec::run_captured`]): the shared
+        // `run` merges stderr into its output, so any git chatter on stderr
+        // (GIT_TRACE, advice hints) corrupted the parsed path.
+        let canon_toplevel = {
+            let mut cmd = git_in(root);
+            cmd.args(["rev-parse", "--show-toplevel"]);
+            match crate::exec::run_captured(cmd, 30).await {
+                crate::exec::Captured::Done(out) if out.status.success() => {
+                    let p = std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+                    p.canonicalize().unwrap_or(p)
+                }
+                // Not a git repo (or older git): the HEAD check below reports it.
+                _ => canon_root.clone(),
             }
-            // Not a git repo (or older git): the HEAD check below reports it.
-            _ => canon_root.clone(),
         };
         let root_rel = canon_root
             .strip_prefix(&canon_toplevel)
@@ -247,15 +251,38 @@ impl Tool for VerifyDone {
             }
         }
 
-        // The previous version is git HEAD — a repo is required.
-        let head = match run("git rev-parse HEAD", root, 30).await {
-            Ok((0, out)) => out.trim().to_string(),
-            _ => {
-                return ToolOutput::Error {
-                    message: "verify_done requires a git repository: the previous version of \
-                              the code is defined as git HEAD"
-                        .into(),
-                };
+        // The previous version is git HEAD — a repo is required. Same
+        // stdout-only capture as the toplevel above: stderr chatter appended
+        // to the SHA made every downstream git call fail on a garbage ref.
+        let head = {
+            let mut cmd = git_in(root);
+            cmd.args(["rev-parse", "HEAD"]);
+            match crate::exec::run_captured(cmd, 30).await {
+                crate::exec::Captured::Done(out) if out.status.success() => {
+                    String::from_utf8_lossy(&out.stdout).trim().to_string()
+                }
+                other => {
+                    // stderr is kept for diagnostics — it says WHY (no repo,
+                    // no commits yet) without polluting the parsed value.
+                    let detail = match &other {
+                        crate::exec::Captured::Done(out) => {
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            let stderr = stderr.trim();
+                            if stderr.is_empty() {
+                                String::new()
+                            } else {
+                                format!("\n--- git stderr ---\n{}", tail(stderr))
+                            }
+                        }
+                        _ => String::new(),
+                    };
+                    return ToolOutput::Error {
+                        message: format!(
+                            "verify_done requires a git repository: the previous version of \
+                             the code is defined as git HEAD{detail}"
+                        ),
+                    };
+                }
             }
         };
 
@@ -458,6 +485,36 @@ mod tests {
                 assert!(content.contains("WITNESS CONFIRMED"), "{content}")
             }
             other => panic!("expected confirmation, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// git chatter on stderr (here GIT_TRACE, in the wild advice/warning
+    /// hints) must not corrupt the parsed toplevel path or HEAD SHA: both
+    /// used to come from the shared runner's MERGED stdout+stderr, so the
+    /// trace lines rode along into `git worktree add <garbage-ref>`.
+    #[tokio::test]
+    async fn stderr_chatter_does_not_corrupt_rev_parse_results() {
+        let root = scaffold("chatter").await;
+        std::fs::write(root.join("impl.txt"), "new behavior\n").unwrap();
+        std::fs::write(root.join("witness.sh"), "grep -q 'new behavior' impl.txt\n").unwrap();
+
+        let _trace = crate::subprocess_env::test_support::ScopedEnvVar::set("GIT_TRACE", "1");
+        let out = VerifyDone
+            .execute(
+                &serde_json::json!({
+                    "test_cmd": "bash witness.sh",
+                    "test_files": ["witness.sh"],
+                    "timeout_secs": 60
+                }),
+                &root,
+            )
+            .await;
+        match &out {
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("WITNESS CONFIRMED"), "{content}")
+            }
+            other => panic!("stderr chatter broke the verdict: {other:?}"),
         }
         std::fs::remove_dir_all(&root).ok();
     }

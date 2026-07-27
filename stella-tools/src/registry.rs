@@ -503,7 +503,9 @@ impl ToolRegistry {
         // A save_exploration's staleness manifest is built from the map's
         // actual evidence: pass the session's read paths from the file-touch
         // ledger through the internal input key (spec §3d). The model never
-        // authors this field; a value it did author is replaced.
+        // authors this field; a value it did author is replaced — and when
+        // the session recorded no reads, removed, or it would flow into the
+        // manifest as fabricated evidence.
         let mut ledger_augmented: Option<Value> = None;
         if name == "save_exploration"
             && let Value::Object(map) = input
@@ -520,6 +522,10 @@ impl ToolRegistry {
                     crate::exploration::LEDGER_FILES_KEY.to_string(),
                     serde_json::json!(read_paths),
                 );
+                ledger_augmented = Some(Value::Object(map));
+            } else if map.contains_key(crate::exploration::LEDGER_FILES_KEY) {
+                let mut map = map.clone();
+                map.remove(crate::exploration::LEDGER_FILES_KEY);
                 ledger_augmented = Some(Value::Object(map));
             }
         }
@@ -1585,6 +1591,35 @@ mod tests {
         match &saved {
             ToolOutput::Ok { content } => {
                 assert!(content.contains("1 files tracked"), "{content}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The ledger key is the registry's channel, never the model's: with
+    /// zero session reads a model-authored `_session_read_files` used to
+    /// pass through untouched and hash fabricated evidence into the
+    /// manifest.
+    #[tokio::test]
+    async fn model_authored_ledger_key_is_dropped_when_the_session_read_nothing() {
+        let (root, reg) = bare_registry(None);
+        std::fs::write(root.path().join("sneaky.rs"), "fn planted() {}").unwrap();
+
+        let saved = reg
+            .execute(
+                "save_exploration",
+                &serde_json::json!({
+                    "slice": "fab", "title": "Fab", "summary": "s", "content": "map",
+                    crate::exploration::LEDGER_FILES_KEY: ["sneaky.rs"]
+                }),
+            )
+            .await;
+        match &saved {
+            ToolOutput::Ok { content } => {
+                assert!(
+                    content.contains("0 files tracked"),
+                    "no session reads means no ledger evidence: {content}"
+                );
             }
             other => panic!("{other:?}"),
         }
