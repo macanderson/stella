@@ -87,7 +87,15 @@ async fn get_json(
     url: &str,
     headers: &[(&str, &str)],
 ) -> Result<String, String> {
-    get_json_bounded(client, label, url, headers, MAX_LISTING_BYTES, LISTING_TIMEOUT).await
+    get_json_bounded(
+        client,
+        label,
+        url,
+        headers,
+        MAX_LISTING_BYTES,
+        LISTING_TIMEOUT,
+    )
+    .await
 }
 
 /// [`get_json`] with the bounds as parameters, so tests can exercise the cap
@@ -122,7 +130,10 @@ async fn get_json_bounded(
                 max_bytes / (1024 * 1024)
             )
         };
-        if response.content_length().is_some_and(|len| len > max_bytes as u64) {
+        if response
+            .content_length()
+            .is_some_and(|len| len > max_bytes as u64)
+        {
             return Err(oversized());
         }
         // Cap the pre-allocation by the declared length so a lying
@@ -844,7 +855,10 @@ mod tests {
         )
         .await
         .expect_err("a stalled listing must time out");
-        assert!(err.contains("Gemini") && err.contains("did not answer"), "{err}");
+        assert!(
+            err.contains("Gemini") && err.contains("did not answer"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

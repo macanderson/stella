@@ -198,7 +198,10 @@ fn a_go_package_path_does_not_seal_but_its_run_filter_does() {
 #[test]
 fn a_pytest_node_id_still_seals_the_command() {
     let paths: Vec<String> = Vec::new();
-    let inv = invocation_for("pytest", &["tests/test_payment.py::test_refund_rounds_down"]);
+    let inv = invocation_for(
+        "pytest",
+        &["tests/test_payment.py::test_refund_rounds_down"],
+    );
     let failure = sealed(
         "pytest tests/test_payment.py::test_refund_rounds_down",
         ASSERTION_TAIL,

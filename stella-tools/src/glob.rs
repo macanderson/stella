@@ -332,7 +332,11 @@ mod tests {
         // Basename patterns keep `-name` semantics (parity with `fd --glob`).
         assert!(args("*.rs").windows(2).any(|w| w == ["-name", "*.rs"]));
         // `**` collapses to `*` — `find`'s `*` already crosses `/`.
-        assert!(args("**/*.rs").windows(2).any(|w| w == ["-path", "/ws/*.rs"]));
+        assert!(
+            args("**/*.rs")
+                .windows(2)
+                .any(|w| w == ["-path", "/ws/*.rs"])
+        );
         assert!(
             args("src/**/*.ts")
                 .windows(2)

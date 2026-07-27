@@ -568,7 +568,10 @@ fn materialize_folds_a_reemitted_tool_start_into_one_call() {
         args, r#"{"pattern":"final"}"#,
         "the last announcement's payload wins (newest-record keep-rule)"
     );
-    assert_eq!(ok, 1, "the result attached instead of minting a failed twin");
+    assert_eq!(
+        ok, 1,
+        "the result attached instead of minting a failed twin"
+    );
 }
 
 #[test]
