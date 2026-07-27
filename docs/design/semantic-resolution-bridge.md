@@ -23,8 +23,8 @@ The graph indexes symbols and import edges only
 / `code_graph_imports`; there is no call-edge table). No LSP, type-checker, or
 rust-analyzer integration exists anywhere in the workspace; the sole mention of
 language servers is a competitor trade-off note in
-`docs/papers/stella-defensible-position.md:590-592`. Four capabilities are
-blocked, all by the same missing ingredient:
+`docs/papers/stella-defensible-position.md` §11 (vs. Cursor / Windsurf). Four
+capabilities are blocked, all by the same missing ingredient:
 
 | Blocked capability | Today's behavior | Evidence |
 |---|---|---|
@@ -193,7 +193,7 @@ speculative.
 
 | Claim | Where |
 |---|---|
-| Only language-server mention in the repo is a competitor trade-off note; no LSP/rust-analyzer code or doc exists | `docs/papers/stella-defensible-position.md:590-592`; repo-wide search finds no other genuine hit |
+| Only language-server mention in the repo is a competitor trade-off note; no LSP/rust-analyzer code or doc exists | `docs/papers/stella-defensible-position.md` §11 (vs. Cursor / Windsurf); repo-wide search finds no other genuine hit |
 | Graph schema is files + symbols + imports (+ storage objects); no call-edge table | `stella-graph/src/store.rs:42-91` |
 | `references` is a capped textual whole-word scan | `stella-graph/src/frames.rs:39-40,65-109,400-425` |
 | Query surface is exactly `definitions/references/imports/importers/neighbors` | `stella-tools/src/graph.rs:70` |

@@ -110,4 +110,45 @@ EOF
 if [ "$status" -eq 0 ]; then
   echo "check-doc-citations: OK — all $checked docs/*.md citations in Rust source resolve."
 fi
+
+# ---------------------------------------------------------------------------
+# Second guard: no markdown document may cite another by LINE NUMBER (#561).
+#
+# `file.md §7` survives an edit; a line number does not. Inserting a paragraph
+# above the cited line silently repoints the citation at unrelated prose, and
+# both the old and the new target render as ordinary text, so nothing surfaces
+# the drift — the citation still reads as authority. That is strictly worse
+# than no citation, which is why this is a hard failure rather than a warning.
+#
+# Not hypothetical: every one of the five citations this guard was written to
+# retire had ALREADY drifted by 16-27 lines. `docs/adr/0009` cited
+# `context-frame-spec.md:96` for the portable Origin values, which had moved to
+# :123 — out of "§3. System model" and into "§4. Common types" entirely.
+#
+# Scope is markdown-to-markdown on purpose. A `.rs:NN` citation is checked by
+# the compiler's own blast radius and moves with the code in the same PR; a
+# prose document has neither property.
+md_files="$(git ls-files '*.md' || true)"
+if [ -n "$md_files" ]; then
+  # `docs/llms.txt` is generated from the website MDX (`make llms-txt`), so a
+  # hit there is an artifact of the source, not an editable citation.
+  # shellcheck disable=SC2086
+  linerefs="$(grep -nE '[A-Za-z0-9._/-]+\.md:[0-9]+' $md_files 2>/dev/null \
+    | grep -v '^docs/llms\.txt:' || true)"
+
+  if [ -n "$linerefs" ]; then
+    echo "" >&2
+    echo "check-doc-citations: FAILED — markdown cited by line number." >&2
+    printf '%s\n' "$linerefs" | sed 's/^/  /' >&2
+    echo "" >&2
+    echo "     Cite the section instead: '§7' for a document with numbered" >&2
+    echo "     headings, or the heading itself for one without —" >&2
+    echo "     'docs/adr/0001-semantic-taxonomy.md § Open questions'." >&2
+    echo "     See docs/README.md. A line number is not a stable address." >&2
+    status=1
+  else
+    echo "check-doc-citations: OK — no markdown document cites another by line number."
+  fi
+fi
+
 exit "$status"

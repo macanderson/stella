@@ -58,8 +58,9 @@ ratified edge reaches it. The code already self-flags this gap
 `informational` is defined as "Inform reviewers without adding an enforcement
 expectation" (`metadata.rs:32`) — passive, no enforcement — which is
 semantically identical to `observe` ("Record matches and outcomes; do not
-interrupt", `context-prs-spec.md:304`). `observe → advisory` is a ratified ADR
-0007 edge, and by elimination `informational` cannot map to `blocking`.
+interrupt", `docs/design/context-prs-spec.md` §11). `observe → advisory` is a
+ratified ADR 0007 edge, and by elimination `informational` cannot map to
+`blocking`.
 
 **Ratified: `informational → advisory`.** No spec names `informational`, so this
 was a genuine decision, not a reading of the spec; the owner ratified the
@@ -73,7 +74,8 @@ The flag reported that the directive schema enumerates origin as four values
 (`user, system, inferred, imported`), narrowing a ratified uniform-5 `Origin`.
 
 **This is resolved and the premise is partly mistaken.** ADR 0001
-(`docs/adr/0001-semantic-taxonomy.md:47-54`, spec-verified 2026-07-23):
+(`docs/adr/0001-semantic-taxonomy.md` § Open questions, spec-verified
+2026-07-23):
 
 > `Origin` has the **five** portable values `user, system, observed, inferred,
 > imported` for **all** record families, including directives … The §8.6
@@ -82,11 +84,12 @@ The flag reported that the directive schema enumerates origin as four values
 > 5-value enum in Phase 1.
 
 Corroborated by lifecycle:628 ("Portable Origin values are user, system,
-observed, inferred, and imported") and `context-frame-spec.md:96`. The code
-already implements the 5-value set (`stella-core/src/context_record/kind.rs:147-155`).
-The four-value list at `directive-schema.md:37` is on the *superseded* schema;
-its neighbour `source: "observed" | "imported"` at line 318 belongs to a
-different type (`Observation`), not to directives.
+observed, inferred, and imported") and `docs/design/context-frame-spec.md` §4.
+The code already implements the 5-value set
+(`stella-core/src/context_record/kind.rs:147-155`). The four-value list in
+`docs/design/directive-schema.md` § Type definition is on the *superseded*
+schema; its neighbour `source: "observed" | "imported"` in § End-user
+observations belongs to a different type (`Observation`), not to directives.
 
 **Follow-up (not a decision):** the "deferred per-family validator" comments in
 `stella-core/src/context_record.rs:42-46` and `kind.rs:143-146` are now **stale**
@@ -173,7 +176,7 @@ distinct fields sharing one value set**, not one-vs-two enums:
 
 `validation_status` is contract-level (lifecycle:1726), `requirement_status` is
 per-result (lifecycle:1730); "Validation statuses are passed, failed, error, and
-skipped" (lifecycle:1828). Ignore `context-frame-spec.md:893-908`, whose
+skipped" (lifecycle:1828). Ignore `docs/design/context-frame-spec.md` §16, whose
 `needs_review`/`not_run` tokens are stale.
 
 ## Decision 6 — Procedure step `order` semantics (RESOLVED by plan:502)

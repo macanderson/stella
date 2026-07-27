@@ -49,3 +49,14 @@ its replacement rather than leaving two live specs to disagree. Notes for
 features whose site docs fully replaced them (pipeline, hooks, file-touch
 telemetry, memory citations, code graph, schema gate) were removed; recover them
 from git history if needed.
+
+**Cite a document by section, never by line number.** `file §7` survives an
+edit; `file.md:LINE` does not. A markdown line number is not a stable address —
+inserting a paragraph anywhere above the cited line silently repoints the
+citation at unrelated prose, and because both the old and the new target render
+as ordinary text, nothing surfaces the drift. The citation still *looks*
+authoritative, which is what makes it worse than no citation at all. For a
+document with numbered headings use `§N`; for one without, name the heading
+(`docs/adr/0001-semantic-taxonomy.md § Open questions`). This is enforced —
+`scripts/check-doc-citations.sh` fails the gate on a `path.md:N` citation in any
+tracked markdown file.
