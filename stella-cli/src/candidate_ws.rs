@@ -94,7 +94,7 @@ use crate::agent::{
 };
 
 mod witness_tools;
-use witness_tools::WitnessToolExecutor;
+use witness_tools::{WitnessToolExecutor, normalized_candidate_path};
 
 /// The commit identity for snapshot plumbing commits (which exist only
 /// inside the shadow and are discarded with it) — the user's repo may have
@@ -798,6 +798,10 @@ impl CandidateWorkspace for GitCandidateWorkspace {
 
     async fn adopt(&self, withhold: &[String]) -> Result<Vec<AdoptedChange>, WorkspaceError> {
         self.adopt_inner(withhold).await
+    }
+
+    async fn graft_witness(&self, source_root: &str, path: &str) -> Result<(), WorkspaceError> {
+        witness_tools::graft(&self.root, &self.dir, source_root, path).await
     }
 
     async fn remove(&self) {

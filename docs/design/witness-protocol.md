@@ -261,11 +261,53 @@ scores `Unverified`, never `DeterministicPass`: it is honestly complete, and a
 change with nothing to prove must not outrank a flip-verified sibling in
 best-of-N.
 
-### 7.3 What this does not do yet
+### 7.3 Authoring is demand-driven
 
-Witness *authoring* still runs before execute, because a witness must fail on
-the old code. So the warrant can spare a judge call but not the authoring call
-that preceded it. Moving authoring after execution is possible —
-`stella-tools`' `verify_done` already validates a test against `HEAD` in a
-detached shadow worktree — and that reorder is what would make verification
-cost fully demand-driven. It is not in this change.
+The warrant reads a diff, so it can only answer after execution. While
+authoring ran *before* execute, that left the saving half-collected: the
+warrant spared the judge call but not the author call that had already been
+paid. A docs edit still bought a test for prose.
+
+Authoring now runs after execution, gated on the warrant. A change with
+nothing to prove dispatches no author turn at all, and `NotRequired` is
+answered from the diff rather than from the prompt.
+
+**The hazard this creates.** After execution an implementation exists, and an
+author allowed to read it writes a test that restates it. Such a test fails on
+the old code and passes on the new, so the flip oracle confirms it — while
+proving only that the code equals itself. Reordering naively would have kept
+the ceremony and hollowed out the evidence.
+
+**Two trees, not one.** The author works in a *second*
+`CandidateWorkspacePort::create` snapshot, taken when the warrant asks for a
+witness. Because a candidate's edits never leave its own workspace until
+adoption, that snapshot sees the pre-execution tree — so the author's input is
+byte-identical to what it was when this stage ran first: the goal, the recalled
+frames, and the unmodified code. The reorder buys cost, never leverage.
+
+That snapshot is also where the artifact must FAIL. The accepted file is then
+grafted into the candidate that executed — create-only, following no link on
+either side, one file — and re-fingerprinted there, so tamper exclusion pins
+the bytes that will actually run. The pass is observed in the candidate. Fail
+in the pre-execution tree, pass in the post-execution one: a flip across two
+code states rather than one tree observed twice.
+
+**What the reorder costs.** A witnessed candidate now takes two snapshots
+instead of one. A snapshot is a `git worktree add` and a patch apply; an author
+turn is a model call. So the trade is a cheap local operation *only when a
+witness is warranted*, against a model call *whenever it is not* — and prose,
+comments, config, and no-op turns are common enough on real work to make that
+lopsided in the right direction.
+
+**What it changes about failure.** Because the work already exists when the
+author is asked, a witness that cannot be *produced* no longer discards it. A
+useless witness, an unavailable author, or an artifact that cannot be grafted
+leaves the candidate on the unauthored ladder — where previously the whole
+candidate was thrown away and the task re-executed from scratch. Fail-closed is
+unchanged for artifacts that cannot be *trusted*: a tracked-file mutation, a
+symlink artifact, or a runner mismatch still aborts, now after the worker's
+turn rather than before it.
+
+`resolve_witness` still runs before execution and still guesses from wording.
+It is the deterministic ceiling on whether authoring is *permitted*; the
+warrant is the evidence-based gate on whether it is *bought*.

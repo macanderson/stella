@@ -57,6 +57,23 @@ impl WitnessAbort {
     }
 }
 
+/// Everything one candidate needs to buy itself a witness *after* it has
+/// executed and the warrant has read the resulting diff.
+///
+/// Carried as one optional value rather than three loose parameters so the
+/// invariant is structural: a candidate either can author (isolation port,
+/// resolved independent author, and the frames to prompt with — all present)
+/// or cannot (`None`). There is no state where it holds a port but no author.
+#[derive(Clone, Copy)]
+pub(super) struct WitnessAuthoring<'c> {
+    /// Snapshots the *pre-execution* tree for the author to work blind in.
+    /// The same port that made the executing candidate, called a second time.
+    pub(super) port: &'c dyn CandidateWorkspacePort,
+    /// The independent author — resolved as a different model from the worker.
+    pub(super) author: &'c ResolvedRole<'c>,
+    pub(super) frames: &'c [RecalledFrame],
+}
+
 impl<'a> Pipeline<'a> {
     pub(super) fn engine_config_for(&self, surface: CandidateSurface<'_>) -> EngineConfig {
         let mut config = self.config.engine.clone();
@@ -66,14 +83,38 @@ impl<'a> Pipeline<'a> {
         config
     }
 
-    /// Author one failing witness inside the same disposable candidate that
-    /// will execute, revise, verify, and (only on pass) adopt it.
+    /// Author one failing witness in `baseline` — a pristine snapshot of the
+    /// tree as it stood *before* execution — and graft the artifact it accepts
+    /// into `candidate`, the tree that actually did the work.
+    ///
+    /// # Why two trees
+    ///
+    /// This stage runs *after* execution, so that the warrant
+    /// ([`crate::witness::warrant`]) can read the diff and skip authoring
+    /// entirely when the change has nothing to prove. That ordering creates a
+    /// hazard the pre-execution version did not have: by now an implementation
+    /// exists, and an author allowed to read it will write a test that restates
+    /// it. Such a test still fails on the old code and passes on the new, so the
+    /// flip oracle would confirm it — while proving only that the code equals
+    /// itself.
+    ///
+    /// The fix is to keep the author's *input* byte-identical to what it was
+    /// when this stage ran first: the goal, the recalled frames, and the
+    /// unmodified tree. `baseline` is a second [`CandidateWorkspacePort::create`]
+    /// snapshot, which sees the pre-execution tree because a candidate's edits
+    /// never leave its own workspace until adoption. So the author is blind to
+    /// the implementation, and moving this call later buys cost, never leverage.
+    ///
+    /// `baseline` is also where the artifact must FAIL, which is what makes the
+    /// later pass in `candidate` a genuine fail→pass flip across two code
+    /// states rather than one tree observed twice.
     pub(super) async fn witness_stage(
         &self,
         goal: &str,
         frames: &[RecalledFrame],
         author: &ResolvedRole<'a>,
-        surface: CandidateSurface<'_>,
+        baseline: CandidateSurface<'_>,
+        candidate: CandidateSurface<'_>,
         budget: &mut BudgetGuard,
         total: &mut f64,
     ) -> Result<Option<Witness>, WitnessAbort> {
@@ -81,17 +122,17 @@ impl<'a> Pipeline<'a> {
             name: StageKind::Witness,
         });
 
-        let tracked_before = surface.repo_status.tracked_fingerprints().await;
-        let untracked_before = surface.repo_status.untracked_fingerprints().await;
+        let tracked_before = baseline.repo_status.tracked_fingerprints().await;
+        let untracked_before = baseline.repo_status.untracked_fingerprints().await;
         let structure = self.repo.structure_summary().await;
-        let witness_tools = surface
+        let baseline_workspace = baseline
             .workspace
-            .expect("witness authoring requires a candidate workspace")
-            .witness_tools();
+            .expect("witness authoring requires a pristine baseline workspace");
+        let witness_tools = baseline_workspace.witness_tools();
         let engine = Engine::with_sleeper(
             author.provider,
             witness_tools,
-            self.engine_config_for(surface),
+            self.engine_config_for(baseline),
             self.sleeper,
         )
         .with_call_role(stella_protocol::ModelCallRole::WitnessAuthor);
@@ -130,12 +171,12 @@ impl<'a> Pipeline<'a> {
                 "witness author produced an unsafe or unsupported test command `{command}`"
             )));
         };
-        if surface.tests.run_test(&invocation).await.passed() {
+        if baseline.tests.run_test(&invocation).await.passed() {
             messages.push(CompletionMessage::user(witness_repair_prompt(&command)));
             let repair_engine = Engine::with_sleeper(
                 author.provider,
                 witness_tools,
-                self.engine_config_for(surface),
+                self.engine_config_for(baseline),
                 self.sleeper,
             )
             .with_call_role(stella_protocol::ModelCallRole::WitnessRepair);
@@ -164,15 +205,15 @@ impl<'a> Pipeline<'a> {
                 )));
             };
             invocation = repaired_invocation;
-            if surface.tests.run_test(&invocation).await.passed() {
+            if baseline.tests.run_test(&invocation).await.passed() {
                 return Err(WitnessAbort::degradable(
                     "witness test still passes on the unmodified code after one repair".to_string(),
                 ));
             }
         }
 
-        let tracked_after = surface.repo_status.tracked_fingerprints().await;
-        let untracked_after = surface.repo_status.untracked_fingerprints().await;
+        let tracked_after = baseline.repo_status.tracked_fingerprints().await;
+        let untracked_after = baseline.repo_status.untracked_fingerprints().await;
         let fingerprints = validate_witness_artifact(
             &tracked_before,
             &tracked_after,
@@ -186,7 +227,30 @@ impl<'a> Pipeline<'a> {
             .expect("validated witness artifact contains exactly one path");
         validate_witness_invocation(path, &invocation)
             .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
-        let identity = surface.repo_status.artifact_identity(path).await;
+        // Accept the artifact where it was written before copying it anywhere:
+        // a symlink or multiply-linked file must be rejected in the snapshot
+        // that produced it, never resolved by a copy.
+        let authored = baseline.repo_status.artifact_identity(path).await;
+        validate_witness_identity(path, &fingerprints[path], authored.as_ref())
+            .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
+
+        // Cross into the tree that executed. A failure here is degradable: the
+        // candidate's work is untouched and already done, so it falls through
+        // to the unauthored ladder rather than being discarded for want of
+        // scaffolding.
+        candidate
+            .workspace
+            .expect("witness grafting requires the candidate workspace")
+            .graft_witness(baseline_workspace.root(), path)
+            .await
+            .map_err(|error| WitnessAbort::degradable(error.to_string()))?;
+
+        // Re-pin against the *grafted* copy. Tamper exclusion runs against the
+        // candidate's repo status for the rest of the run, so the baseline it
+        // compares to has to be the identity of the bytes that will actually
+        // execute — not the identity of the original in a snapshot that is
+        // about to be deleted.
+        let identity = candidate.repo_status.artifact_identity(path).await;
         validate_witness_identity(path, &fingerprints[path], identity.as_ref())
             .map_err(|error| WitnessAbort::rejected(error.to_string()))?;
         let files = HashMap::from([(
@@ -198,5 +262,107 @@ impl<'a> Pipeline<'a> {
             invocation,
             files,
         }))
+    }
+
+    /// Author a witness for this candidate only if its diff warrants one.
+    ///
+    /// The saving this exists for: [`crate::witness::warrant`] answers from the
+    /// change itself, so a docs edit, a comment fix, or a turn that touched
+    /// nothing returns here having spent zero model calls. Before authoring
+    /// moved after execution, that same run paid for an author turn (and
+    /// sometimes a repair turn) to produce a test for a change with nothing to
+    /// prove, and only afterwards discovered the warrant.
+    ///
+    /// `Err` is reserved for fail-closed integrity rejections. Everything else
+    /// — no isolation port for the baseline, an author that got stuck, an
+    /// artifact that could not be grafted — returns `Ok(None)` and lets the
+    /// candidate finish on the unauthored ladder. That asymmetry is new and
+    /// deliberate: the work is already done by the time this runs, so a witness
+    /// that cannot be *produced* must not throw away a real change, while a
+    /// witness that cannot be *trusted* must still stop the run.
+    pub(super) async fn witness_on_demand(
+        &self,
+        goal: &str,
+        authoring: Option<WitnessAuthoring<'_>>,
+        surface: CandidateSurface<'_>,
+        state: &mut CandidateState,
+        budget: &mut BudgetGuard,
+        total: &mut f64,
+    ) -> Result<Option<Witness>, String> {
+        let Some(authoring) = authoring else {
+            return Ok(None);
+        };
+        if !warrant(&state.diff_text, state.file_changes).is_required() {
+            // No Witness stage is emitted, because none runs. The reason is
+            // not lost: `warranted_completion` reads the same warrant during
+            // verification and records the sentence on the verdict, which is
+            // the run's half of "a witness test, or a stated reason there
+            // isn't one".
+            return Ok(None);
+        }
+
+        // A second snapshot of the same untouched tree. The candidate's edits
+        // live only in the candidate's own workspace until adoption, so this
+        // sees exactly the pre-execution state the author used to be given.
+        let baseline = match authoring.port.create().await {
+            Ok(baseline) => baseline,
+            Err(e) => {
+                self.warn(format!("witness authoring skipped: {e}"));
+                return Ok(None);
+            }
+        };
+        let baseline_surface = CandidateSurface {
+            diagnostics: baseline.diagnostics(),
+            tests: baseline.tests(),
+            repo_status: baseline.repo_status(),
+            cwd: Some(baseline.root()),
+            // No hooks in the baseline: nothing there is the user's work, and
+            // an authoring snapshot must not fire the project's lifecycle.
+            hook_runner: None,
+            workspace: Some(baseline.as_ref()),
+        };
+        let authored = self
+            .witness_stage(
+                goal,
+                authoring.frames,
+                authoring.author,
+                baseline_surface,
+                surface,
+                budget,
+                total,
+            )
+            .await;
+        baseline.remove().await;
+
+        let witness = match authored {
+            Ok(Some(witness)) => witness,
+            Ok(None) => return Ok(None),
+            Err(abort) if abort.degradable => {
+                self.warn(format!(
+                    "continuing without an authored witness: {}",
+                    abort.reason
+                ));
+                return Ok(None);
+            }
+            Err(abort) => return Err(abort.reason),
+        };
+
+        // The artifact failed in the baseline — `witness_stage` cannot return
+        // it otherwise — and that snapshot was created for this candidate from
+        // this candidate's own pre-execution tree. So this records an
+        // observation that was made, not one that is assumed.
+        state.oracle.observe(&witness.command, false);
+        // The graft added an untracked file after the pre-execution snapshot
+        // was taken. Enrolling it as pre-existing keeps every later diff
+        // gather (each revision re-gathers) from reading the scaffolding as
+        // the worker's work — the same exclusion authoring-before-execute got
+        // for free by writing the file before this map was built.
+        for (path, identity) in &witness.files {
+            state
+                .untracked_before
+                .insert(path.clone(), identity.fingerprint.clone());
+        }
+        state.witness_paths = witness.files.keys().cloned().collect();
+        Ok(Some(witness))
     }
 }

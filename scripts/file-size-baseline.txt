@@ -8,9 +8,9 @@
 # never silent — it lands as a visible diff here, to be justified in
 # review like any other change.
 1881 stella-cli/src/agent_tests.rs
-2255 stella-cli/src/agent.rs
-1623 stella-cli/src/candidate_ws.rs
-4604 stella-cli/src/command_deck.rs
+2243 stella-cli/src/agent.rs
+1627 stella-cli/src/candidate_ws.rs
+4600 stella-cli/src/command_deck.rs
 2095 stella-core/src/bus.rs
 2098 stella-core/src/driver.rs
 2819 stella-core/src/driver/tests.rs
@@ -19,10 +19,10 @@
 1638 stella-model/src/bedrock.rs
 1919 stella-model/src/openai.rs
 1623 stella-model/src/zai/tests.rs
-2535 stella-pipeline/src/pipeline.rs
-2044 stella-pipeline/src/pipeline/tests.rs
+2522 stella-pipeline/src/pipeline.rs
+2018 stella-pipeline/src/pipeline/tests.rs
 2399 stella-protocol/src/event.rs
-2283 stella-store/src/lib.rs
+2280 stella-store/src/lib.rs
 2170 stella-store/src/tests.rs
 1884 stella-store/src/usage.rs
 1556 stella-tools/src/media.rs

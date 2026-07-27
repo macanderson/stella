@@ -15,7 +15,7 @@ fn usage_events(events: &[AgentEvent]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn usage_roles(events: &[AgentEvent]) -> Vec<String> {
+pub(super) fn usage_roles(events: &[AgentEvent]) -> Vec<String> {
     usage_events(events)
         .into_iter()
         .filter_map(|event| event.get("role")?.as_str().map(str::to_owned))
@@ -233,21 +233,20 @@ async fn plan_and_plan_repair_each_emit_one_paid_call_envelope() {
 async fn witness_author_and_repair_are_individually_metered_before_degrade() {
     let provider = ScriptedProvider::new(vec![
         text_result("single"),
+        text_result("done"), // worker executes before the author is asked
         text_result("TEST_COMMAND: cargo test --test witness always_green -- --exact"),
         text_result("TEST_COMMAND: cargo test --test witness still_green -- --exact"),
-        // The useless witness degrades to a bare worker turn (+ verification).
-        text_result("done"),
-        text_result("PASS looks right"),
-        text_result("done"),
+        // The useless witness leaves the candidate on the unauthored ladder.
         text_result("PASS looks right"),
     ]);
     let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let workspace =
-        FakeWorkspace::new(0, vec![true, true], Ok(vec![]), log.clone()).with_repo_status(
+    let candidate = FakeWorkspace::new(0, vec![true], Ok(vec![]), log.clone());
+    let baseline =
+        FakeWorkspace::new(1, vec![true, true], Ok(vec![]), log.clone()).with_repo_status(
             SeqRepoStatus::new(vec![vec![], vec![("tests/witness.rs", "w1")]]),
         );
-    let port = FakeWorkspacePort::new(vec![Ok(workspace)], log);
-    let (outcome, events) = run_degrade_over_working_session(
+    let port = FakeWorkspacePort::new(vec![Ok(candidate), Ok(baseline)], log);
+    let (outcome, events, _) = run_isolated(
         &provider,
         &port,
         PipelineConfig::default(),
@@ -255,11 +254,13 @@ async fn witness_author_and_repair_are_individually_metered_before_degrade() {
     )
     .await;
     // The witness author and its repair are each metered individually, even
-    // though the useless witness then degrades rather than aborts.
+    // though the useless witness then degrades rather than aborts. The worker
+    // now sits between triage and the author, because authoring is demand-
+    // driven: it is only bought once there is a diff worth proving.
     let roles = usage_roles(&events);
     assert_eq!(
-        &roles[..3],
-        ["triage", "witness_author", "witness_repair"],
+        &roles[..4],
+        ["triage", "worker", "witness_author", "witness_repair"],
         "author and repair are individually metered: {roles:?}"
     );
     assert!(

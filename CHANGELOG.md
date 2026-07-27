@@ -39,6 +39,15 @@ record of *changes*, curated by the person who made them.
   their independent reviewer, because deleting the wrong thing is a mistake a
   reader catches and no test would have. Design:
   `docs/design/witness-protocol.md` §7.
+- Verification cost is now fully demand-driven: a change with nothing to prove
+  no longer pays for a **witness test** either. Authoring runs after execution
+  and only when the diff warrants it, so a docs or comment edit dispatches no
+  author call at all — previously it bought one before any work existed, then
+  discovered the change was prose. The author still never sees the
+  implementation (it works in a pristine pre-execution snapshot), so a witness
+  proves the same thing it always did. A witness that cannot be produced now
+  leaves the completed work alone instead of discarding the candidate and
+  re-running the task. Design: `docs/design/witness-protocol.md` §7.3.
 
 - The pipeline no longer replays raw test-runner output into a worker's
   revision prompt. A deterministic verification failure is now disclosed

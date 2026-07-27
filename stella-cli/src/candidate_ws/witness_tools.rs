@@ -1,11 +1,12 @@
 //! Capability-minimal tool surface for candidate-local witness authoring.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use stella_core::ToolExecutor;
+use stella_pipeline::ports::WorkspaceError;
 use stella_protocol::{ToolOutput, ToolSchema};
 
 /// Candidate-root executor built specifically for witness authoring. Reads
@@ -166,7 +167,7 @@ impl ToolExecutor for WitnessToolExecutor {
     }
 }
 
-fn normalized_candidate_path(raw: &str) -> Option<String> {
+pub(super) fn normalized_candidate_path(raw: &str) -> Option<String> {
     let slash = raw.replace('\\', "/");
     if slash.is_empty() || slash.as_bytes().get(1) == Some(&b':') || Path::new(&slash).is_absolute()
     {
@@ -407,4 +408,106 @@ mod tests {
             .count();
         assert_eq!(created, 1);
     }
+}
+
+/// Copy one accepted witness artifact from the authoring snapshot into
+/// this workspace, create-only and following no link on either side.
+///
+/// The source is read with `O_NOFOLLOW` and the destination opened
+/// `create_new` + `O_NOFOLLOW`, so neither end can be redirected by a
+/// symlink planted between acceptance and this copy. Bytes are moved
+/// rather than the file being hard-linked or reflinked: the pipeline
+/// re-fingerprints the destination immediately afterwards and pins tamper
+/// exclusion to it, and a shared inode would let the authoring snapshot's
+/// teardown change what the candidate is about to run.
+///
+/// Only the file is created. A missing parent directory is an error rather
+/// than an implicit `create_dir_all`: the artifact path was validated as a
+/// recognized test path inside a *tree that already had that directory*,
+/// so a parent that is absent here means the two trees disagree about
+/// layout, and inventing directories in the candidate would paper over it.
+pub(super) async fn graft(
+    candidate_root: &str,
+    workspace_dir: &Path,
+    source_root: &str,
+    path: &str,
+) -> Result<(), WorkspaceError> {
+    let fail = |reason: String| WorkspaceError::Graft {
+        reason,
+        path: path.to_string(),
+        workspace: workspace_dir.display().to_string(),
+    };
+    let Some(rel) = normalized_candidate_path(path) else {
+        return Err(fail("the path must stay within the candidate root".into()));
+    };
+    let source = Path::new(source_root).join(&rel);
+    let bytes = read_nofollow(&source)
+        .await
+        .map_err(|e| fail(format!("could not read the authored artifact: {e}")))?;
+
+    let root = Path::new(candidate_root)
+        .canonicalize()
+        .map_err(|e| fail(format!("the candidate root is unavailable: {e}")))?;
+    let joined = root.join(&rel);
+    let parent = joined
+        .parent()
+        .ok_or_else(|| fail("the artifact has no parent directory".into()))?
+        .canonicalize()
+        .map_err(|e| fail(format!("the parent directory must already exist: {e}")))?;
+    if !parent.starts_with(&root) {
+        return Err(fail(
+            "the canonical parent escapes the candidate root".into(),
+        ));
+    }
+    let name = joined
+        .file_name()
+        .ok_or_else(|| fail("the artifact has no file name".into()))?;
+    let target = parent.join(name);
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = options.open(&target).map_err(|e| {
+        // `AlreadyExists` is the interesting one: the worker wrote its own
+        // file at the artifact's path. Overwriting would delete real work
+        // to make room for scaffolding, so the graft fails and the run
+        // finishes on the unauthored ladder.
+        fail(format!("exclusive file creation failed: {e}"))
+    })?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|e| {
+            drop(file);
+            let _ = std::fs::remove_file(&target);
+            fail(format!("writing the grafted artifact failed: {e}"))
+        })
+}
+
+/// Read a file's bytes without following a final-component symlink.
+///
+/// Used for the one file that crosses between candidate workspaces. The
+/// pipeline has already accepted this path as a regular, singly-linked file in
+/// the tree that authored it; opening `O_NOFOLLOW` here keeps that acceptance
+/// meaningful by refusing to resolve a link swapped in afterwards.
+async fn read_nofollow(src: &Path) -> std::io::Result<Vec<u8>> {
+    let src = src.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let mut file = options.open(&src)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+    .await
+    .unwrap_or_else(|e| Err(std::io::Error::other(e)))
 }
