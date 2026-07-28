@@ -570,10 +570,7 @@ impl Tool for StartWorkOnIssue {
         };
         match self.0.as_ref() {
             IssueBackend::GitHub => {
-                let mut cmd = format!("gh issue develop {} --checkout", quote(&issue));
-                if let Some(branch) = input.get("branch").and_then(|v| v.as_str()) {
-                    cmd.push_str(&format!(" --name {}", quote(branch)));
-                }
+                let cmd = develop_command(&issue, input);
                 match exec::run_github(&cmd, root, 60).await {
                     Ok((0, output)) => ToolOutput::Ok { content: output },
                     Ok((code, output)) => ToolOutput::Error {
@@ -655,15 +652,55 @@ impl Tool for StartWorkOnIssue {
             }
         }
     }
+
+    // A `bash -c` composer joins the `command.started` fence (#804), per
+    // backend: the `gh issue develop` line, or the local checkout line. A
+    // Linear call without an explicit `branch` resolves the canonical name
+    // via API mid-execute — unresolvable up front, so it stays ungated for
+    // that call (the shipped best-effort posture).
+    async fn command_for_gate(&self, input: &Value, _root: &std::path::Path) -> Option<String> {
+        let issue = require_issue_ref(input).ok()?;
+        match self.0.as_ref() {
+            IssueBackend::GitHub => Some(develop_command(&issue, input)),
+            IssueBackend::GitHubApi { .. } => {
+                let number = issue.trim_start_matches('#');
+                let branch = match input.get("branch").and_then(|v| v.as_str()) {
+                    Some(branch) => branch.to_string(),
+                    None => format!("issue-{number}"),
+                };
+                Some(checkout_command(&branch))
+            }
+            IssueBackend::Linear { .. } => input
+                .get("branch")
+                .and_then(|v| v.as_str())
+                .map(checkout_command),
+        }
+    }
+}
+
+/// The `gh issue develop` line for one call — shared by execute and the
+/// `command.started` gate so the fence sees exactly the line that runs.
+fn develop_command(issue: &str, input: &Value) -> String {
+    let mut cmd = format!("gh issue develop {} --checkout", quote(issue));
+    if let Some(branch) = input.get("branch").and_then(|v| v.as_str()) {
+        cmd.push_str(&format!(" --name {}", quote(branch)));
+    }
+    cmd
+}
+
+/// The create-or-checkout line [`checkout_branch`] runs — shared with the
+/// `command.started` gate, like [`develop_command`].
+fn checkout_command(branch: &str) -> String {
+    format!(
+        "git checkout -b {b} 2>/dev/null || git checkout {b}",
+        b = quote(branch)
+    )
 }
 
 /// Create-or-checkout a branch, gating on the exit code — a failed checkout
 /// (dirty tree, protected branch) must not be silently ignored.
 async fn checkout_branch(branch: &str, root: &std::path::Path) -> Result<(), String> {
-    let checkout = format!(
-        "git checkout -b {b} 2>/dev/null || git checkout {b}",
-        b = quote(branch)
-    );
+    let checkout = checkout_command(branch);
     match exec::run(&checkout, root, 30).await {
         Ok((0, _)) => Ok(()),
         Ok((code, output)) => Err(format!(

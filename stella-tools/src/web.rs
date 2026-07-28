@@ -649,7 +649,10 @@ impl Tool for WebFetch {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize)
             .unwrap_or(DEFAULT_MAX_LENGTH)
-            .clamp(200, 400_000);
+            // The upper clamp is what a context window can actually absorb
+            // (#616): 120k chars ≈ 30k tokens. The old 400k ceiling let one
+            // page displace most of a session's budget.
+            .clamp(200, 120_000);
 
         let fetched = match fetch_raw(url, auth, FETCH_CAP_BYTES, None).await {
             Ok(f) => f,

@@ -527,6 +527,13 @@ impl Tool for RepoStatusTool {
             },
         }
     }
+
+    // The repo family's git argv joins the `command.started` fence (#804):
+    // each tool reports the primary line of the sequence [`GitCli`] — the
+    // only shipped backend — runs, joined argv-style like `start_process`.
+    async fn command_for_gate(&self, _input: &Value, _root: &Path) -> Option<String> {
+        Some("git status --porcelain".into())
+    }
 }
 
 /// Render a [`RepoDiff`] as a compact per-file summary followed by the raw
@@ -635,6 +642,26 @@ impl Tool for RepoDiffTool {
             },
         }
     }
+
+    // See [`RepoStatusTool::command_for_gate`].
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        let mut line = String::from("git diff --no-color --no-ext-diff --no-textconv");
+        if input
+            .get("staged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            line.push_str(" --staged");
+        }
+        if let Some(paths) = input.get("paths").and_then(|v| v.as_array()) {
+            let named: Vec<&str> = paths.iter().filter_map(|v| v.as_str()).collect();
+            if !named.is_empty() {
+                line.push_str(" -- ");
+                line.push_str(&named.join(" "));
+            }
+        }
+        Some(line)
+    }
 }
 
 /// `repo_commit` — pathspec-explicit commit; see the module doc.
@@ -682,6 +709,18 @@ impl Tool for RepoCommit {
                 message: e.to_string(),
             },
         }
+    }
+
+    // See [`RepoStatusTool::command_for_gate`]. Both mutating steps of the
+    // sequence are shown; a structurally invalid input resolves `None` and
+    // returns the tool's own refusal at execute time, ungated.
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        let message = input.get("message").and_then(|v| v.as_str())?;
+        let paths = required_paths(input, "repo_commit", "commits").ok()?;
+        let joined = paths.join(" ");
+        Some(format!(
+            "git add -- {joined} && git commit -m {message} -- {joined}"
+        ))
     }
 }
 
@@ -771,6 +810,18 @@ impl Tool for RepoPush {
             },
         }
     }
+
+    // See [`RepoStatusTool::command_for_gate`]. Without a named branch the
+    // refspec resolves from the checkout mid-execute; the gate then sees the
+    // line minus the refspec — still enough for a policy denying pushes.
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        Some(match input.get("branch").and_then(|v| v.as_str()) {
+            Some(branch) => {
+                format!("git push --set-upstream origin refs/heads/{branch}:refs/heads/{branch}")
+            }
+            None => "git push --set-upstream origin".to_string(),
+        })
+    }
 }
 
 /// `repo_pull` — fast-forward only; see the module doc.
@@ -797,6 +848,11 @@ impl Tool for RepoPull {
                 message: e.to_string(),
             },
         }
+    }
+
+    // See [`RepoStatusTool::command_for_gate`].
+    async fn command_for_gate(&self, _input: &Value, _root: &Path) -> Option<String> {
+        Some("git pull --ff-only".into())
     }
 }
 
@@ -834,6 +890,12 @@ impl Tool for RepoRollback {
                 message: e.to_string(),
             },
         }
+    }
+
+    // See [`RepoStatusTool::command_for_gate`].
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        let paths = required_paths(input, "repo_rollback", "restores").ok()?;
+        Some(format!("git checkout HEAD -- {}", paths.join(" ")))
     }
 }
 

@@ -18,6 +18,43 @@ use crate::exec;
 use crate::exec::shell_quote;
 use crate::registry::Tool;
 
+/// The capture target for one call: `.stella/screenshots/<stamp>-<label>.png`
+/// with the label sanitized to a path-safe slug. Shared by execute and the
+/// `command.started` gate so both compose the same shape; the stamp is taken
+/// at each composition, so the two paths may differ by the seconds between
+/// them — the command around the path is identical.
+fn capture_file(input: &Value, root: &std::path::Path) -> std::path::PathBuf {
+    let label = input
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("capture")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(48)
+        .collect::<String>();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    root.join(".stella/screenshots")
+        .join(format!("{stamp}-{label}.png"))
+}
+
+/// The platform capture chain over one already-shell-quoted output path:
+/// macOS `screencapture`; Linux `grim` (Wayland) then `import`
+/// (X11/ImageMagick). Each is silent + non-interactive. Needs a shell (the
+/// `||` fallbacks), which is why the path arrives quoted, not as argv.
+fn capture_command(quoted_path: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("screencapture -x {quoted_path}")
+    } else {
+        format!(
+            "grim {quoted_path} 2>/dev/null || import -window root {quoted_path} 2>/dev/null || \
+             (echo 'no capture backend (grim or imagemagick import)' >&2; exit 1)"
+        )
+    }
+}
+
 pub struct Screenshot;
 
 #[async_trait]
@@ -39,42 +76,22 @@ impl Tool for Screenshot {
     }
 
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput {
-        let label = input
-            .get("label")
-            .and_then(|v| v.as_str())
-            .unwrap_or("capture")
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-            .take(48)
-            .collect::<String>();
-        let dir = root.join(".stella/screenshots");
+        let file = capture_file(input, root);
+        let dir = file
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
         if let Err(e) = tokio::fs::create_dir_all(&dir).await {
             return ToolOutput::Error {
                 message: format!("could not create {}: {e}", dir.display()),
             };
         }
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let file = dir.join(format!("{stamp}-{label}.png"));
         // The capture chain needs a shell (the `||` fallbacks), so the path
         // is quoted rather than passed as argv. The workspace root is not
         // ours to assume well-formed: a directory named `it's mine` would
         // otherwise close the literal and hand the remainder to `bash -c`
         // as code.
-        let path = shell_quote(&file.to_string_lossy());
-
-        // Platform capture chain: macOS screencapture; Linux grim (Wayland)
-        // then import (X11/ImageMagick). Each is silent + non-interactive.
-        let command = if cfg!(target_os = "macos") {
-            format!("screencapture -x {path}")
-        } else {
-            format!(
-                "grim {path} 2>/dev/null || import -window root {path} 2>/dev/null || \
-                 (echo 'no capture backend (grim or imagemagick import)' >&2; exit 1)"
-            )
-        };
+        let command = capture_command(&shell_quote(&file.to_string_lossy()));
         match exec::run(&command, root, 30).await {
             Ok((0, _)) => {
                 let size = tokio::fs::metadata(&file)
@@ -101,6 +118,13 @@ impl Tool for Screenshot {
             },
             Err(e) => ToolOutput::Error { message: e },
         }
+    }
+
+    // A `bash -c` composer joins the `command.started` fence (#804): the
+    // gate sees the same composed chain execute runs (stamp aside).
+    async fn command_for_gate(&self, input: &Value, root: &std::path::Path) -> Option<String> {
+        let file = capture_file(input, root);
+        Some(capture_command(&shell_quote(&file.to_string_lossy())))
     }
 }
 

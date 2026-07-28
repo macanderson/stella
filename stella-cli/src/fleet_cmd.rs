@@ -502,6 +502,15 @@ impl FleetWorker for EngineWorker {
 
         let worker_dash = self.dash.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
+        // The cancellation seam (#803): if this dispatch future is dropped
+        // (Ctrl-C, a `select!` losing the race), stella-fleet's `ClaimGuard`
+        // releases the task's durable file claims on the same unwind — but
+        // the worker below is a detached OS thread that would keep writing
+        // under claims it no longer holds. `abandon_tx` is held across the
+        // await, so that unwind closes this channel first (this future's
+        // state drops before the dispatch frame's earlier-declared guard),
+        // and `stop_or_abandoned` reads the closure as stop.
+        let (abandon_tx, abandon_rx) = tokio::sync::oneshot::channel::<()>();
         std::thread::spawn(move || {
             let result = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -516,6 +525,7 @@ impl FleetWorker for EngineWorker {
                         &root,
                         &claim_holder,
                         controls,
+                        abandon_rx,
                         worker_dash,
                     ))
                 });
@@ -534,6 +544,9 @@ impl FleetWorker for EngineWorker {
             Ok(Err(e)) => failed(format!("worker error: {e}")),
             Err(_) => failed("worker thread died before reporting".to_string()),
         };
+        // Only now may the abandon line close: the worker has already
+        // reported, so the closure signals nothing.
+        drop(abandon_tx);
         // The worker's own verdict is the authoritative terminal state — more
         // reliable than inferring done/failed from the event stream.
         if let Some(d) = &self.dash {
@@ -576,6 +589,36 @@ impl stella_core::ports::TurnGate for WatchGate {
     }
 }
 
+/// The composite stop line for one worker attempt. Resolves when the
+/// supervisor signals an explicit stop (`Fleet::stop_task`) — or when the
+/// dispatch future was dropped and its `abandon_tx` went with it, which
+/// means stella-fleet's `ClaimGuard` is releasing this task's durable file
+/// claims on that same unwind and the worker must stop writing (#803).
+///
+/// The two closed-channel cases deliberately read in opposite directions.
+/// A dropped *supervisor* sender means "the fleet settled this handle — no
+/// one will ever signal", so that line parks forever and the work wins
+/// (mirroring `subsession.rs::run_worker`). A dropped *abandon* sender is
+/// the signal itself: nothing ever sends on it, its closure is the drop of
+/// the dispatch frame that owned the claims.
+async fn stop_or_abandoned(
+    stop: tokio::sync::oneshot::Receiver<()>,
+    abandoned: tokio::sync::oneshot::Receiver<()>,
+) {
+    let explicit_stop = async {
+        if stop.await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    };
+    let dispatch_dropped = async {
+        let _ = abandoned.await;
+    };
+    tokio::select! {
+        _ = explicit_stop => {}
+        _ = dispatch_dropped => {}
+    }
+}
+
 /// One worker turn in `root`, on the calling thread's runtime. When
 /// `use_pipeline` is true (the default), the turn runs through the staged
 /// pipeline (triage → recall → plan → witness → execute → verify → judge);
@@ -589,6 +632,7 @@ async fn run_task(
     root: &Path,
     claim_holder: &str,
     controls: WorkerControls,
+    abandoned: tokio::sync::oneshot::Receiver<()>,
     dash: Option<mpsc::UnboundedSender<FleetMsg>>,
 ) -> Result<WorkerOutcome, String> {
     // Snapshot where this workspace starts so the commit report is
@@ -682,17 +726,12 @@ async fn run_task(
         ),
     };
 
-    // The task's control lines (stella-fleet's `WorkerControls`). The stop
-    // wait mirrors `subsession.rs::run_worker` exactly: a dropped sender
-    // (the fleet settled this task's handle — no supervisor will ever
-    // signal) must not read as a stop, so the wait parks forever on a
-    // closed channel and the work always wins the race.
+    // The task's control lines (stella-fleet's `WorkerControls`), composed
+    // with the dispatch-drop line from `EngineWorker::run` — see
+    // `stop_or_abandoned` for why the two closed-channel cases read in
+    // opposite directions.
     let WorkerControls { pause, stop } = controls;
-    let stop_wait = async move {
-        if stop.await.is_err() {
-            std::future::pending::<()>().await;
-        }
-    };
+    let stop_wait = stop_or_abandoned(stop, abandoned);
     /// How a raced future resolved — `subsession.rs`'s `RacedTurn` shape,
     /// generic because the two paths race different outcome types.
     enum Raced<T> {
@@ -1047,6 +1086,40 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The #803 cancellation seam, pinned from both directions: dropping the
+    /// dispatch's abandon sender IS a stop (the claims are being released;
+    /// the worker must stop writing), while dropping the supervisor's stop
+    /// sender is NOT (the fleet settled the handle; the work wins).
+    #[tokio::test(start_paused = true)]
+    async fn a_dropped_dispatch_future_stops_the_worker_a_settled_handle_does_not() {
+        use tokio::sync::oneshot;
+
+        // Dispatch dropped → the stop line resolves.
+        let (stop_tx, stop_rx) = oneshot::channel::<()>();
+        let (abandon_tx, abandon_rx) = oneshot::channel::<()>();
+        drop(abandon_tx);
+        stop_or_abandoned(stop_rx, abandon_rx).await;
+        drop(stop_tx);
+
+        // Explicit supervisor stop → resolves too.
+        let (stop_tx, stop_rx) = oneshot::channel::<()>();
+        let (_abandon_tx, abandon_rx) = oneshot::channel::<()>();
+        stop_tx.send(()).expect("receiver is live");
+        stop_or_abandoned(stop_rx, abandon_rx).await;
+
+        // Settled handle (supervisor sender dropped), dispatch still live →
+        // must park forever, not read as a stop.
+        let (stop_tx, stop_rx) = oneshot::channel::<()>();
+        drop(stop_tx);
+        let (_abandon_tx, abandon_rx) = oneshot::channel::<()>();
+        let parked = tokio::time::timeout(
+            std::time::Duration::from_secs(3600),
+            stop_or_abandoned(stop_rx, abandon_rx),
+        )
+        .await;
+        assert!(parked.is_err(), "a settled handle must never stop the work");
+    }
 
     #[test]
     fn positional_prompts_become_independent_isolated_tasks() {

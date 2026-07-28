@@ -371,7 +371,11 @@ docs(readme): correct provider table
 ci(release): sign macOS binaries
 ```
 
-Commits must be **DCO-signed** (`git commit -s`). One logical change per PR.
+One logical change per PR. There is **no per-commit DCO sign-off** — this
+project uses the CLA instead (see CONTRIBUTING.md's "Sign the CLA once"; the
+CLA's license grant is what lets a contribution ship in commercial builds,
+which a DCO sign-off cannot do). A `Signed-off-by` trailer is harmless but
+carries no meaning here.
 
 ### Closing the issue on merge
 

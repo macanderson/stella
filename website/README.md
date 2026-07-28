@@ -113,9 +113,12 @@ the production domain to `stella.oxagen.sh` and the **Root Directory to `website
 that is where the manifest and lockfile live. `pnpm-workspace.yaml` (in this directory)
 approves the `esbuild` / `sharp` build scripts so `pnpm install` exits cleanly in CI.
 
-**No deploy step lives in this repository.** `.github/workflows/docs.yml`
-typechecks and builds the site on every PR that touches it, but nothing
-publishes: production is wired up outside version control, in the hosting
-provider's dashboard. A contributor therefore cannot tell from the repo how a
-merged docs change reaches stella.oxagen.sh, and nobody but the account holder
-can redeploy it.
+**The deploy step lives in `.github/workflows/docs.yml`** (#561): its `deploy`
+job publishes to Vercel production on every push to `main` that touches the
+site (and on manual dispatch), through the GitHub `production` environment so
+each deployment is auditable and revocable. One-time setup: create a Vercel
+account token and run `vercel link` in `website/` to get the org and project
+ids, then add them as the `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and
+`VERCEL_PROJECT_ID` repository secrets. Until the secrets exist the job skips
+with a warning rather than failing — but nothing publishes, so the dashboard
+wiring remains the fallback.

@@ -39,6 +39,7 @@
 //! variant. Both mean the record is wrong, not merely newer.
 
 pub mod golden;
+pub mod reference_adapter;
 
 use stella_protocol::{AgentEvent, StageKind};
 

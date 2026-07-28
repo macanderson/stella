@@ -486,6 +486,38 @@ mod tests {
             .is_some()
     }
 
+    /// #803: the reference scan visits a bounded corpus — a miss costs a
+    /// bounded read, never a full synchronous sweep of every indexed file.
+    #[test]
+    fn reference_scan_visits_a_bounded_corpus() {
+        let ws = TempDir::new().unwrap();
+        let dbdir = TempDir::new().unwrap();
+        for name in ["a.rs", "b.rs", "c.rs"] {
+            std::fs::write(
+                ws.path().join(name),
+                "pub fn uses() { bounded_needle(); }\n",
+            )
+            .unwrap();
+        }
+        let graph = CodeGraph::open(ws.path(), &dbdir.path().join("context.db")).unwrap();
+        graph.index_all().unwrap();
+
+        let conn = graph.inner.read_guard();
+        let frames =
+            crate::frames::references_bounded(&conn, ws.path(), "bounded_needle", 2).unwrap();
+        let mut files: Vec<&str> = frames
+            .iter()
+            .filter_map(|f| f.id.split(':').nth(2))
+            .collect();
+        files.sort();
+        files.dedup();
+        assert_eq!(
+            files.len(),
+            2,
+            "only the first two indexed files may be visited: {files:?}"
+        );
+    }
+
     /// Reproduces the mount-vs-shutdown race deterministically: `shutdown()`
     /// runs first (flag set, slot cleared), then the racing mount task — having
     /// already passed its pre-install shutdown check — tries to install its

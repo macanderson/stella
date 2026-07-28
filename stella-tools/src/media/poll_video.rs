@@ -18,6 +18,11 @@ use stella_protocol::tool::{ToolOutput, ToolSchema};
 use super::authority::{open_jobs, open_store, reconciliation_required};
 use crate::registry::Tool;
 
+/// How long past `submitted_at` a non-terminal job stays pollable: 30 minutes
+/// (#616), several times the longest observed provider render, far under a
+/// session. See the deadline arm in [`PollVideo`]'s `execute`.
+const VIDEO_TERMINAL_DEADLINE_SECS: u64 = 30 * 60;
+
 pub struct PollVideo {
     provider: Arc<dyn MediaProvider>,
     operation_journal: Option<Arc<dyn MediaOperationJournal>>,
@@ -135,6 +140,32 @@ impl Tool for PollVideo {
                 }
             }
             MediaJobState::Queued | MediaJobState::Running => {
+                // The deadline for a provider that never reports a terminal
+                // status (#616): the adapter deliberately maps unrecognized
+                // statuses to Running so a live job stays pollable, and
+                // points the age bound here — only the caller knows what a
+                // reasonable wait is. Past the bound the handle is dropped
+                // and the failure named, so a future "CANCELLED"/"EXPIRED"
+                // cannot make the job immortal and the poll loop burn model
+                // round trips forever.
+                let age_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+                    .saturating_sub(job.submitted_at);
+                if age_secs > VIDEO_TERMINAL_DEADLINE_SECS {
+                    if let Err(error) = jobs.remove(job_id) {
+                        return reconciliation_required(job_id, error);
+                    }
+                    return ToolOutput::Error {
+                        message: format!(
+                            "video job `{job_id}` never reached a terminal status within \
+                             {} minutes — abandoning the poll (the provider may still \
+                             complete it; re-submit if the video is still wanted)",
+                            VIDEO_TERMINAL_DEADLINE_SECS / 60
+                        ),
+                    };
+                }
                 let state = match status.state {
                     MediaJobState::Queued => "queued",
                     _ => "running",

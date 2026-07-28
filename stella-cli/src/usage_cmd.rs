@@ -93,6 +93,35 @@ pub enum CloudCmd {
         #[arg(long)]
         workspace_id: Option<String>,
     },
+    /// Drain staged telemetry to the org intake configured in
+    /// ~/.stella/cloud.json's `drain` block. No-op when unregistered or
+    /// unconfigured — nothing is ever sent without an org and an endpoint
+    Sync,
+    /// Sign out: destroy the stored credentials and remove the drain config
+    /// (halting upload). Registration and local hub telemetry are retained
+    Logout,
+    /// Return this installation to unregistered: logout plus clearing the
+    /// org id. Hub rows keep the org they were captured under; un-synced
+    /// rows for the old org stop draining and stay local (destroy them
+    /// explicitly with `stella usage prune --force` if that is intended)
+    Deregister,
+}
+
+/// The org-change ruling (#465), pinned as one function so `register` cannot
+/// drift from it: an installation registered to one org must be explicitly
+/// deregistered before registering to a different one. Capture-time org
+/// stamps are never rewritten, a drain for the old org cannot be assumed
+/// deliverable, and orphaning its rows silently would be indistinguishable
+/// from data loss — so the switch is loud and two-step. Re-registering the
+/// same org is idempotent and allowed.
+fn register_transition(current: Option<&str>, requested: &str) -> Result<(), String> {
+    match current {
+        Some(existing) if existing != requested => Err(format!(
+            "already registered to org `{existing}` — run `stella cloud deregister` first; \
+             rows captured under `{existing}` keep that org and stop draining"
+        )),
+        _ => Ok(()),
+    }
 }
 
 pub fn run_usage(cmd: Option<UsageCmd>) -> Result<(), String> {
@@ -470,6 +499,18 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             println!("{}   {}", "project:".bold(), scope.project_id);
             if let Some(org) = scope.org_id.as_deref() {
                 print_quarantine(org);
+                // Drain state (#464): is telemetry actually reaching the org?
+                // Best-effort like the quarantine report — status answers
+                // about identity first, an unopenable hub degrades to a note.
+                let registration = identity::cloud_registration();
+                match UsageStore::open_default() {
+                    Ok(hub) => crate::cloud_drain::print_drain_status(
+                        &hub,
+                        org,
+                        registration.drain.is_some(),
+                    ),
+                    Err(e) => println!("drain:       (hub unavailable: {e})"),
+                }
             }
             if scope.org_id.is_none() {
                 println!(
@@ -480,12 +521,103 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             }
             Ok(())
         }
+        CloudCmd::Sync => {
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            let scope = identity::TelemetryScope::resolve(&cwd);
+            let Some(org) = scope.org_id else {
+                println!("(not registered) — `stella cloud register --org <org-id>` first");
+                return Ok(());
+            };
+            let registration = identity::cloud_registration();
+            let Some(drain) = registration.drain.clone() else {
+                println!(
+                    "no drain configured — add a `drain` block to ~/.stella/cloud.json, e.g.\n  \
+                     {{\"org_id\": \"{org}\", \"drain\": {{\"url\": \"https://intake.example/v1/telemetry\"}}}}"
+                );
+                return Ok(());
+            };
+            // The format discriminator fails closed (#404): a typo stops the
+            // drain with a clear error instead of guessing. Both formats ride
+            // the same pager → POST → ack loop (#427); only the encoding
+            // differs, inside the intake adapter.
+            let format = drain.wire_format()?;
+            let hub = open_hub()?;
+            let bearer = crate::cloud_drain::resolve_bearer(&registration, &drain);
+            let intake = crate::cloud_drain::HttpCloudIntake::new(&drain.url, bearer, format)?;
+            let outcome = crate::cloud_drain::drain_once(&hub, &org, &intake, drain.batch_size)?;
+            println!(
+                "delivered {} row(s) in {} batch(es), {} quarantined",
+                outcome.delivered, outcome.batches, outcome.quarantined
+            );
+            match outcome.stopped_by {
+                None => Ok(()),
+                Some(rejection) => Err(format!(
+                    "drain stopped: {}{} — {}",
+                    rejection
+                        .http_status
+                        .map(|s| format!("HTTP {s}: "))
+                        .unwrap_or_default(),
+                    rejection.detail,
+                    if rejection.class.is_retryable() {
+                        "transient; re-run `stella cloud sync`"
+                    } else {
+                        "needs an operator (credentials/endpoint/version)"
+                    }
+                )),
+            }
+        }
+        CloudCmd::Logout => {
+            let mut reg = identity::cloud_registration();
+            let had_token =
+                reg.oauth_token.is_some() || reg.drain.as_ref().is_some_and(|d| d.token.is_some());
+            let had_drain = reg.drain.is_some();
+            reg.oauth_token = None;
+            reg.drain = None;
+            identity::save_cloud_registration(&reg).map_err(|e| e.to_string())?;
+            if had_token {
+                println!(
+                    "credentials destroyed locally (server-side revocation arrives with \
+                     the login flow, #405)"
+                );
+            }
+            if had_drain {
+                println!("drain config removed — upload is halted");
+            }
+            match reg.org_id {
+                Some(org) => println!(
+                    "still registered to org {} — `stella cloud deregister` clears that too",
+                    org.bold()
+                ),
+                None => println!("logged out"),
+            }
+            Ok(())
+        }
+        CloudCmd::Deregister => {
+            let mut reg = identity::cloud_registration();
+            let was = reg.org_id.take();
+            reg.oauth_token = None;
+            reg.drain = None;
+            identity::save_cloud_registration(&reg).map_err(|e| e.to_string())?;
+            match was {
+                Some(org) => println!(
+                    "deregistered from org {} — new telemetry captures unscoped (NULL org). \
+                     Rows already stamped `{org}` keep it and stop draining; \
+                     `stella usage prune --force` destroys un-synced ones if that is intended.",
+                    org.bold()
+                ),
+                None => println!("already unregistered"),
+            }
+            Ok(())
+        }
         CloudCmd::Register { org, workspace_id } => {
             let org = org.trim().to_string();
             if org.is_empty() {
                 return Err("--org must not be empty".into());
             }
             let mut reg = identity::cloud_registration();
+            // The org-change ruling (#465): switching orgs is an explicit
+            // two-step, never an in-place overwrite.
+            register_transition(reg.org_id.as_deref(), &org)?;
             reg.org_id = Some(org.clone());
             identity::save_cloud_registration(&reg).map_err(|e| e.to_string())?;
             let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -497,6 +629,25 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             );
             println!("workspace id {ws} written to .stella/workspace.json");
             println!("commit .stella/workspace.json so every clone reports as this workspace");
+            // History replicated before this registration landed in the hub
+            // with NULL org and would otherwise stay invisible to org
+            // reporting and the cloud drain forever — re-stamp it now (#406),
+            // after first merging rows keyed by the pre-registration path
+            // hash under the workspace's stable id (#408). Best-effort:
+            // registration itself already succeeded, so an unopenable hub
+            // degrades to a note rather than failing.
+            let path_id = stella_store::usage::project_id_for(&cwd);
+            let scope = identity::TelemetryScope::resolve(&cwd);
+            match UsageStore::open_default().and_then(|hub| {
+                hub.adopt_project_identity(&path_id, &scope.project_id)?;
+                hub.backfill_scope(&scope.project_id, &org, Some(&ws))
+            }) {
+                Ok(0) => {}
+                Ok(n) => {
+                    println!("backfilled {n} pre-registration telemetry row(s) into org scope")
+                }
+                Err(e) => println!("note: could not backfill pre-registration telemetry: {e}"),
+            }
             Ok(())
         }
     }
@@ -504,7 +655,21 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{checkout_is_deleted, parse_age_window};
+    use super::{checkout_is_deleted, parse_age_window, register_transition};
+
+    /// The org-change ruling (#465): same org is idempotent, a different org
+    /// is refused until an explicit deregister, unregistered registers freely.
+    #[test]
+    fn switching_orgs_requires_an_explicit_deregister() {
+        assert!(register_transition(None, "acme").is_ok());
+        assert!(register_transition(Some("acme"), "acme").is_ok());
+        let err = register_transition(Some("acme"), "globex").unwrap_err();
+        assert!(err.contains("deregister"), "{err}");
+        assert!(
+            err.contains("acme"),
+            "the refusal names the current org: {err}"
+        );
+    }
 
     #[test]
     fn age_window_units_map_to_sqlite_modifiers() {
