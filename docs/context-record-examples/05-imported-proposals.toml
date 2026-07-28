@@ -62,7 +62,7 @@ eligibility   = "explicit_instruction"
     [proposal.record.enforcement]
     mode               = "hard"
     guard_tool         = "Bash"
-    guard_deny_command = "npm install*|npm ci*|yarn *"
+    guard_deny_command = "npm *"
 
     [proposal.record.truth]
     basis      = "decree"

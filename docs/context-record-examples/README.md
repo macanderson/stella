@@ -31,6 +31,7 @@ steering and cheaply checked, or weakly steering and hard-blocked.
 | `05-imported-proposals.toml`   | Ingest output: proposals, per-record provenance, quarantined executables, three-valued refutation |
 | `06-lineage-supersession.toml` | Revision identity without allocated version numbers                                               |
 | `07-agent-projection.md`       | What the model actually receives (~16% of the record), and how a handle closes the feedback loop   |
+| `08-witness.toml`              | Enforceable context ships with a test — bidirectional guard tables, and the mutation check         |
 
 ## Rules encoded in these examples
 

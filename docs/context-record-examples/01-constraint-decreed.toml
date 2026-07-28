@@ -50,7 +50,12 @@ tags        = ["build", "tooling"]
   [record.enforcement]
   mode               = "hard"
   guard_tool         = "Bash"
-  guard_deny_command = "npm install*|npm ci*|yarn *"
+  # `*` is the matcher's only wildcard — every other character is a literal
+  # (stella-core/src/glob.rs). There is no alternation, so this cannot also
+  # cover yarn; that needs its own record. An earlier draft of this file used
+  # "npm install*|npm ci*|yarn *", which is syntactically fine, reads correctly,
+  # renders as [enforced], and matches no real command. See 08-witness.toml.
+  guard_deny_command = "npm *"
   severity           = "error"
   on_violation       = "Use pnpm. If a foreign lockfile was created, delete it and run `pnpm install`."
 
