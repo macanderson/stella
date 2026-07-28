@@ -352,7 +352,12 @@ impl RepoBackend for GitCli {
             patch_args.push("--");
             patch_args.extend(&path_refs);
         }
-        let patch = Self::git_ok(root, "repo_diff", &patch_args).await?;
+        // stdout alone, like the numstat read above (#801's last missed call
+        // site): the patch is rendered verbatim AND its emptiness is what
+        // makes a clean tree say "no changes" — stderr chatter (advice
+        // hints, `GIT_TRACE` lines) merged into it polluted the shown diff
+        // and turned a clean tree into "0 files changed" plus noise.
+        let patch = Self::git_ok_stdout(root, "repo_diff", &patch_args).await?;
         Ok(RepoDiff { files, patch })
     }
 
@@ -1314,6 +1319,43 @@ mod tests {
         assert!(
             out.status.success(),
             "feature/traced must exist on the remote"
+        );
+    }
+
+    /// The flake #801's chatter test exposed in CI: with `GIT_TRACE` set
+    /// (process-global, so ANY concurrent test leaking it counts), the diff
+    /// patch was read from the MERGED stream — a clean tree's empty diff
+    /// came back as trace chatter, `render_diff` skipped its "no changes"
+    /// branch, and the report read "0 files changed" plus noise. Both the
+    /// clean and dirty answers must be chatter-proof.
+    #[tokio::test]
+    async fn stderr_chatter_never_pollutes_the_diff_patch() {
+        if !git_available().await {
+            eprintln!("skipping repo_diff trace test: `git` not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let ws = fixture(dir.path()).await;
+        let _trace = crate::subprocess_env::test_support::ScopedEnvVar::set("GIT_TRACE", "1");
+
+        let clean = RepoDiffTool(backend()).execute(&Value::Null, &ws).await;
+        let ToolOutput::Ok { content } = clean else {
+            panic!("clean diff must succeed: {clean:?}");
+        };
+        assert!(
+            content.contains("no unstaged changes"),
+            "a clean tree stays clean under chatter: {content}"
+        );
+
+        std::fs::write(ws.join("README.md"), "traced edit\n").unwrap();
+        let dirty = RepoDiffTool(backend()).execute(&Value::Null, &ws).await;
+        let ToolOutput::Ok { content } = dirty else {
+            panic!("dirty diff must succeed: {dirty:?}");
+        };
+        assert!(content.contains("+traced edit"), "{content}");
+        assert!(
+            !content.contains("trace:"),
+            "the shown patch must be stdout alone: {content}"
         );
     }
 

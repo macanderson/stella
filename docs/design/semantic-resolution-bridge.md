@@ -1,6 +1,8 @@
 # Semantic-resolution bridge — evaluation
 
-**Status:** proposed (evaluation, decision-ready). **Date:** 2026-07-23.
+**Status:** B2 shipped (#443 — `stella-graph/src/rust_resolve.rs`, plus the
+`run_tests` `scope:"impacted"` cargo `-p` mapping); B1 and the held Option A
+remain as written. **Date:** 2026-07-23, status updated 2026-07-28.
 **Owner:** Mac Anderson. **Issue:** #335 (parent #336; the Rust slice of #334
 is gated on this). Citations re-verified against the working tree at `fef8e4b`
 (§ appendix).

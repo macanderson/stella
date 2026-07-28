@@ -234,12 +234,17 @@ fn extract_rust_imports(query: &Query, root: Node, src: &[u8]) -> Vec<ImportSpec
     let mut matches = cursor.matches(query, root, src);
     while let Some(m) = matches.next() {
         for cap in m.captures {
-            if names[cap.index as usize] == "use"
-                && let Ok(text) = cap.node.utf8_text(src)
-            {
-                out.push(ImportSpec::RustUse {
+            let Ok(text) = cap.node.utf8_text(src) else {
+                continue;
+            };
+            match names[cap.index as usize] {
+                "use" => out.push(ImportSpec::RustUse {
                     specifier: text.to_string(),
-                });
+                }),
+                "mod" => out.push(ImportSpec::RustMod {
+                    name: text.to_string(),
+                }),
+                _ => {}
             }
         }
     }
@@ -1119,6 +1124,7 @@ mod added_language_tests {
                 | ImportSpec::PyAbsolute { specifier }
                 | ImportSpec::RustUse { specifier } => specifier.clone(),
                 ImportSpec::PyRelative { text, .. } => text.clone(),
+                ImportSpec::RustMod { name } => format!("mod {name}"),
             })
             .collect()
     }

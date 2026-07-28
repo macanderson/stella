@@ -2,9 +2,11 @@
 //! relative specifiers to actual files.
 //!
 //! Python **relative** imports (`from . import x`, `from ..pkg import y`) resolve to
-//! real files, and TS/JS relative specifiers (`./x`, `../y`) resolve through
-//! the usual extension/`index.*` candidate ladder. Bare package specifiers
-//! (`react`, `os.path`, a Rust `use` path) are recorded **unresolved** — the
+//! real files, TS/JS relative specifiers (`./x`, `../y`) resolve through
+//! the usual extension/`index.*` candidate ladder, and Rust `use` paths /
+//! `mod` declarations resolve through the workspace module tree
+//! ([`crate::rust_resolve`], #443). Bare package specifiers (`react`,
+//! `os.path`, an external-crate `use`) are recorded **unresolved** — the
 //! edge is preserved even when its target is outside the indexed tree.
 
 use std::ffi::OsString;
@@ -75,9 +77,13 @@ pub(crate) enum ImportSpec {
         names: Vec<String>,
         text: String,
     },
-    /// A Rust `use` path — recorded unresolved (module→file resolution is
-    /// out of scope, see [`crate::queries::RUST_IMPORTS`]).
+    /// A Rust `use` path — expanded (brace groups, renames, wildcards) and
+    /// resolved through the module tree by [`crate::rust_resolve`] (#443);
+    /// external-crate paths stay unresolved.
     RustUse { specifier: String },
+    /// A declaration-only Rust `mod name;` — a dependency edge from the
+    /// declaring file to `name.rs` / `name/mod.rs`.
+    RustMod { name: String },
     /// A literal file path resolved against the importing file's directory:
     /// C's quoted `#include "x.h"`, PHP's `require`/`include`. Distinct from
     /// [`Self::TsRelative`] only in name — the resolution is the same — so
@@ -87,8 +93,14 @@ pub(crate) enum ImportSpec {
 
 /// Resolve a file's raw import specifiers to edges. `root` must already be
 /// canonicalized (see [`crate::graph::CodeGraph`]); `file_abs` is the
-/// importing file's absolute path.
-pub(crate) fn resolve(specs: Vec<ImportSpec>, root: &Path, file_abs: &Path) -> Vec<ImportEdge> {
+/// importing file's absolute path. `rust_layout` is the per-pass lazy crate
+/// layout — first Rust file pays the manifest scan, non-Rust passes never do.
+pub(crate) fn resolve(
+    specs: Vec<ImportSpec>,
+    root: &Path,
+    file_abs: &Path,
+    rust_layout: &std::cell::OnceCell<crate::rust_resolve::RustLayout>,
+) -> Vec<ImportEdge> {
     let file_dir = file_abs.parent().unwrap_or(root);
     let mut edges = Vec::with_capacity(specs.len());
     for spec in specs {
@@ -96,8 +108,33 @@ pub(crate) fn resolve(specs: Vec<ImportSpec>, root: &Path, file_abs: &Path) -> V
             ImportSpec::Bare { specifier } => {
                 edges.push(ImportEdge::unresolved(specifier, ImportKind::Bare));
             }
-            ImportSpec::PyAbsolute { specifier } | ImportSpec::RustUse { specifier } => {
+            ImportSpec::PyAbsolute { specifier } => {
                 edges.push(ImportEdge::unresolved(specifier, ImportKind::Absolute));
+            }
+            // One raw `use` argument may expand to several paths
+            // (`use crate::{a, b}`); each gets its own edge, resolved when
+            // it stays inside the workspace's module tree (#443). The kind
+            // remains `Absolute` — that classifies the specifier form, and
+            // resolution now fills `to_path` where it can.
+            ImportSpec::RustUse { specifier } => {
+                let layout =
+                    rust_layout.get_or_init(|| crate::rust_resolve::RustLayout::load(root));
+                for path in crate::rust_resolve::expand_use_groups(&specifier) {
+                    let to_path = crate::rust_resolve::resolve_use(layout, &path, root, file_abs);
+                    edges.push(ImportEdge {
+                        specifier: path,
+                        to_path,
+                        kind: ImportKind::Absolute,
+                    });
+                }
+            }
+            ImportSpec::RustMod { name } => {
+                let to_path = crate::rust_resolve::resolve_mod_decl(&name, root, file_abs);
+                edges.push(ImportEdge {
+                    specifier: format!("mod {name}"),
+                    to_path,
+                    kind: ImportKind::Relative,
+                });
             }
             ImportSpec::TsRelative { specifier } | ImportSpec::PathRelative { specifier } => {
                 let to_path = resolve_ts_relative(&specifier, file_dir, root);
