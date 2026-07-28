@@ -497,6 +497,21 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             );
             println!("workspace id {ws} written to .stella/workspace.json");
             println!("commit .stella/workspace.json so every clone reports as this workspace");
+            // History replicated before this registration landed in the hub
+            // with NULL org and would otherwise stay invisible to org
+            // reporting and the cloud drain forever — re-stamp it now (#406).
+            // Best-effort: registration itself already succeeded, so an
+            // unopenable hub degrades to a note rather than failing.
+            let scope = identity::TelemetryScope::resolve(&cwd);
+            match UsageStore::open_default()
+                .and_then(|hub| hub.backfill_scope(&scope.project_id, &org, Some(&ws)))
+            {
+                Ok(0) => {}
+                Ok(n) => {
+                    println!("backfilled {n} pre-registration telemetry row(s) into org scope")
+                }
+                Err(e) => println!("note: could not backfill pre-registration telemetry: {e}"),
+            }
             Ok(())
         }
     }
