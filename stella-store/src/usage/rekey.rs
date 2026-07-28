@@ -20,13 +20,15 @@ use rusqlite::params;
 
 use super::{Result, UsageStore};
 
-/// Every hub table with a `project_id` column. A new table with one must be
-/// added here — the witness test creates rows in each and asserts none are
-/// left under the old id.
+/// The hub tables with a `project_id` column whose rows are *identical*
+/// under both identities by construction (they came from the same source
+/// rowids), so a key conflict resolves by keeping the new-id copy. A new
+/// project-keyed table must be added here or handled explicitly like
+/// `tool_usage_rollup` — whose buckets are additive counts and merge by
+/// summing instead.
 const PROJECT_KEYED_TABLES: &[&str] = &[
     "projects",
     "execution_rollup",
-    "tool_usage_rollup",
     "telemetry",
     "cloud_quarantine",
 ];
@@ -59,6 +61,22 @@ impl UsageStore {
                 params![old_project_id],
             )?;
         }
+        // Tool-usage buckets are additive per (tool, surface, day): a bucket
+        // present under both identities merges by summing, or the merged
+        // project would silently under-count.
+        moved += tx.execute(
+            "INSERT INTO tool_usage_rollup (project_id, tool, surface, day, calls, errors) \
+             SELECT ?1, tool, surface, day, calls, errors \
+               FROM tool_usage_rollup WHERE project_id = ?2 \
+             ON CONFLICT(project_id, tool, surface, day) DO UPDATE SET \
+               calls = calls + excluded.calls, \
+               errors = errors + excluded.errors",
+            params![new_project_id, old_project_id],
+        )? as u64;
+        tx.execute(
+            "DELETE FROM tool_usage_rollup WHERE project_id = ?1",
+            params![old_project_id],
+        )?;
         // The cursor merges by MAX so replication continues from wherever
         // either identity had reached — never a rewind, never a re-replication.
         moved += tx.execute(
@@ -151,6 +169,35 @@ mod tests {
             0
         );
         assert_eq!(hub.adopt_project_identity("x", "x").unwrap(), 0);
+    }
+
+    /// Tool-usage buckets are additive counts: one present under both
+    /// identities must merge by summing, never by dropping either side.
+    #[test]
+    fn tool_usage_buckets_merge_by_addition() {
+        let hub = UsageStore::in_memory().unwrap();
+        {
+            let conn = hub.lock();
+            for (project, calls, errors) in [("old", 3i64, 1i64), ("new", 2, 0)] {
+                conn.execute(
+                    "INSERT INTO tool_usage_rollup \
+                     (project_id, tool, surface, day, calls, errors) \
+                     VALUES (?1, 'grep', 'cli', '2026-07-28', ?2, ?3)",
+                    rusqlite::params![project, calls, errors],
+                )
+                .unwrap();
+            }
+        }
+        hub.adopt_project_identity("old", "new").unwrap();
+        let (calls, errors): (i64, i64) = hub
+            .lock()
+            .query_row(
+                "SELECT calls, errors FROM tool_usage_rollup WHERE project_id = 'new'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((calls, errors), (5, 1), "buckets sum instead of dropping");
     }
 
     /// Rows already present under the new id win their key conflict; the

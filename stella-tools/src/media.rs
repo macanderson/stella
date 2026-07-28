@@ -716,7 +716,7 @@ mod tests {
                 kind: MediaKind::Video,
                 model: "ordered-video".into(),
                 estimated_cost_usd: self.video_price.unwrap_or_default() * 5.0,
-                submitted_at: 1_700_000_000,
+                submitted_at: unix_now(),
                 label: req.label,
             })
         }
@@ -1156,7 +1156,7 @@ mod tests {
                 kind: MediaKind::Video,
                 model: "fake-video-1".into(),
                 estimated_cost_usd,
-                submitted_at: 1_700_000_000,
+                submitted_at: unix_now(),
                 label: req.label,
             })
         }

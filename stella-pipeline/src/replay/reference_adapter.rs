@@ -22,7 +22,8 @@
 //! # What the adapter supplies that the wire lacks
 //!
 //! - **Typed stages.** The reference emits a free-text `label`; this maps the
-//!   known labels onto [`StageKind`] via [`stage_kind_for_label`].
+//!   known labels onto [`StageKind`] via the module's label table
+//!   (`stage_kind_for_label`).
 //! - **Tool pairing.** The reference has no `call_id` on either phase, so the
 //!   pairing invariant is unrepresentable on its wire. The adapter synthesizes
 //!   deterministic ids (`ref-1`, `ref-2`, …) and pairs each `phase:"end"` to
