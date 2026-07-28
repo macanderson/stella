@@ -3278,7 +3278,6 @@ name = "stella-observatory"
 version = "0.5.61"
 dependencies = [
  "rusqlite",
- "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -3379,7 +3378,6 @@ dependencies = [
  "png",
  "proptest",
  "ratatui",
- "serde",
  "serde_json",
  "stella-protocol",
  "stella-tools",

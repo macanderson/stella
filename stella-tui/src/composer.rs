@@ -335,15 +335,6 @@ impl Composer {
         self.cursor = next_start + byte_at_char_col(next_line, col);
     }
 
-    /// The on-screen input line: chip displays joined with the live buffer.
-    pub fn display_line(&self) -> String {
-        let mut parts: Vec<String> = self.chips.iter().map(ComposerEntry::display).collect();
-        if !self.buffer.is_empty() || parts.is_empty() {
-            parts.push(self.buffer.clone());
-        }
-        parts.join(" ")
-    }
-
     /// Attach a multimodal input as a chip ahead of the live buffer. Text
     /// typed before the attach point is committed first so ordering is
     /// preserved on submit, mirroring [`Composer::paste`]'s chip path.
@@ -733,7 +724,8 @@ mod tests {
         let payload = "a\nb\nc\nd\ne";
         c.paste(payload);
         assert_eq!(c.chips().len(), 1);
-        assert_eq!(c.display_line(), "[pasted: 5 lines]");
+        // The real display path (what the renderers draw) shows the chip form.
+        assert_eq!(layout(&c, 80).rows, vec!["[pasted: 5 lines] ".to_string()]);
         // The full payload survives to submission.
         let msg = c.take_submission().unwrap().text;
         assert_eq!(msg, payload);
@@ -758,7 +750,7 @@ mod tests {
     fn display_never_leaks_the_raw_payload() {
         let mut c = Composer::with_paste_threshold(2);
         c.paste("secret-line-1\nsecret-line-2\nsecret-line-3");
-        let shown = c.display_line();
+        let shown = layout(&c, 200).rows.join("\n");
         assert!(
             !shown.contains("secret"),
             "chip must hide the payload: {shown}"
@@ -779,7 +771,7 @@ mod tests {
         for ch in "what broke?".chars() {
             c.insert_char(ch);
         }
-        let shown = c.display_line();
+        let shown = layout(&c, 200).rows.join("\n");
         assert!(shown.contains("[image: shot.png"), "{shown}");
         let submission = c.take_submission().unwrap();
         assert_eq!(submission.text, "see \nwhat broke?");

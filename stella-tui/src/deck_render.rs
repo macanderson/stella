@@ -595,7 +595,7 @@ fn render_context_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         .title(" session context ");
     Paragraph::new(lines)
         .block(block)
-        .scroll((ui.context_scroll as u16, 0))
+        .scroll((u16::try_from(ui.context_scroll).unwrap_or(u16::MAX), 0))
         .render(popup, buf);
 }
 
@@ -761,9 +761,12 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         .borders(Borders::ALL)
         .border_style(theme::accent())
         .title(title);
+    // Saturate, never `as`-cast: a reconstructed context can run past 65 535
+    // lines, and a wrapped u16 would snap the overlay back to the top.
+    let scroll_row = u16::try_from(ui.inspect_scroll).unwrap_or(u16::MAX);
     Paragraph::new(lines)
         .block(block)
-        .scroll((ui.inspect_scroll as u16, 0))
+        .scroll((scroll_row, 0))
         .render(popup, buf);
 }
 

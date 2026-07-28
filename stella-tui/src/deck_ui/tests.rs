@@ -1081,6 +1081,95 @@ fn focused_scope_gate_routes_decision_to_that_agent() {
 }
 
 #[test]
+fn scope_decision_latches_until_a_fresh_review_rearms() {
+    let scope_review = Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::ScopeReview {
+            proposal: stella_protocol::ScopeProposal {
+                summary: "big".into(),
+                steps: vec![],
+                estimated_files: 3,
+                estimated_cost_usd: None,
+            },
+        },
+    };
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&scope_review, &mut model, &mut ui);
+
+    assert_eq!(
+        handle_deck_key(ch('a'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::ToAgent {
+            agent: "lead".into(),
+            input: UserInput::ScopeDecision(ScopeDecision::Approve),
+        })
+    );
+    // The gate stays pending until the engine's follow-on event, but the
+    // latch keeps a second press from re-sending — it types instead.
+    assert!(model.agents[0].model.pending_scope_review.is_some());
+    handle_deck_key(ch('a'), &model, &mut ui);
+    assert_eq!(ui.composer.buffer(), "a", "second press types, never re-sends");
+
+    // A FRESH review re-arms the decision keys.
+    handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    ingest_inbound(&scope_review, &mut model, &mut ui);
+    assert_eq!(
+        handle_deck_key(ch('x'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::ToAgent {
+            agent: "lead".into(),
+            input: UserInput::ScopeDecision(ScopeDecision::Abort),
+        }),
+        "a new card re-arms the decision keys"
+    );
+}
+
+#[test]
+fn ask_user_answer_latches_until_a_fresh_question_rearms() {
+    let ask = Inbound::Event {
+        agent: "lead".into(),
+        event: AgentEvent::AskUser {
+            id: "call_ask_1".into(),
+            question: "which db?".into(),
+            options: vec!["postgres".into(), "sqlite".into()],
+        },
+    };
+    let mut model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ingest_inbound(&ask, &mut model, &mut ui);
+
+    assert_eq!(
+        handle_deck_key(ch('1'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::ToAgent {
+            agent: "lead".into(),
+            input: UserInput::AskUserAnswer {
+                id: "call_ask_1".into(),
+                answer: "postgres".into(),
+            },
+        })
+    );
+    // The question stays pending until its ToolResult lands; a second digit
+    // must type into the composer, not answer the question again.
+    assert!(model.agents[0].model.pending_ask_user.is_some());
+    handle_deck_key(ch('2'), &model, &mut ui);
+    assert_eq!(ui.composer.buffer(), "2", "second press types, never re-sends");
+
+    // A FRESH question re-arms the quick-pick.
+    handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    ingest_inbound(&ask, &mut model, &mut ui);
+    assert_eq!(
+        handle_deck_key(ch('2'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::ToAgent {
+            agent: "lead".into(),
+            input: UserInput::AskUserAnswer {
+                id: "call_ask_1".into(),
+                answer: "sqlite".into(),
+            },
+        }),
+        "a new question re-arms the quick-pick"
+    );
+}
+
+#[test]
 fn set_tab_stamps_the_switch_moment_only_on_change() {
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();

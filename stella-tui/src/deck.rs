@@ -170,6 +170,12 @@ pub struct AgentEntry {
     /// turn begins. `None` before any turn has finished, so the header clock
     /// reads zero at rest.
     pub last_turn_ms: Option<u64>,
+    /// [`Self::tokens_out`] as it stood when the live turn began — snapshotted
+    /// with `turn_started_ms` so the progress bar's tok/s divides only the
+    /// turn's own output by the turn's own elapsed (cumulative session tokens
+    /// over agent lifetime is an average, not a rate). The token twin of
+    /// [`crate::model::Hud::turn_start_spent_usd`].
+    pub turn_start_tokens_out: u64,
 }
 
 impl AgentEntry {
@@ -196,6 +202,7 @@ impl AgentEntry {
             activity: ActivitySpark::new(ACTIVITY_WINDOW),
             turn_started_ms: None,
             last_turn_ms: None,
+            turn_start_tokens_out: 0,
         }
     }
 
@@ -392,6 +399,7 @@ impl WorkspaceModel {
                     // to the live count.
                     self.agents[idx].turn_started_ms = Some(ts);
                     self.agents[idx].last_turn_ms = None;
+                    self.agents[idx].turn_start_tokens_out = self.agents[idx].tokens_out;
                     // Flip to Running now so the progress bar reads in-progress
                     // from the instant of submission — a driver command (e.g.
                     // `/init`) emits no stage events, and the prior turn may have
@@ -437,6 +445,7 @@ impl WorkspaceModel {
                     entry.budget_ticked = false;
                     entry.turn_started_ms = None;
                     entry.last_turn_ms = None;
+                    entry.turn_start_tokens_out = 0;
                 }
             }
             // The driver flipped staged-pipeline routing (`/pipeline`) — the
