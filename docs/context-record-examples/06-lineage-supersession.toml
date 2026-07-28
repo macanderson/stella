@@ -1,0 +1,113 @@
+# Revision identity without an allocated version counter.
+#
+# Both records below share one `lineage_id` and differ in `record_id`, which is
+# derived from each revision's own content hash. Nothing had to read the store
+# to decide "this is version 2" — which is what keeps extraction idempotent:
+# re-ingesting unchanged content recomputes the same `record_id`, and the
+# ledger's append becomes a no-op instead of a duplicate.
+#
+# That property is the entire refresh story. Re-running ingest IS refresh:
+#
+#   unchanged claim → same record_id → append no-ops
+#   edited claim    → new record_id, same lineage_id → superseding revision
+#   removed claim   → absent from extraction → status archived, never deleted
+#
+# Nothing is ever deleted, so `ut_` use records, `pev_` promotion events, and
+# proposals' supporting-observation references never dangle.
+#
+# Note there is no `superseded` status: RecordStatus is frozen at active /
+# retracted / archived. A replaced record is `archived` and points forward with
+# `superseded_by`. `retracted` is reserved for a claim that was *wrong* — the
+# distinction matters, because an archived record was true for its window and
+# `as_of` queries should still return it.
+
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+sharing_scope = "repository"
+origin        = "user"
+
+[defaults.provenance]
+source_kind = "authored"
+repo        = "git@github.com:acme/web.git"
+
+
+# ── The superseded revision, retained so old citations still resolve ─────────
+[[record]]
+lineage_id  = "ctx.acme.web.node-version"
+record_id   = "rec_node_version_11a7ce30d482"
+record_hash = "sha256:11a7ce30d4826b0f95e13c8a70df42b6810c95fe2a7d640b3e18cc0592af7b13"
+kind        = "constraint"
+status      = "archived"
+statement   = "Development runs on Node 20.x."
+
+superseded_by = "rec_node_version_84f0b2ed6a95"
+archived_at   = 2026-06-02T00:00:00Z
+
+  [record.provenance]
+  commit      = "3ab77e1"
+  authored_by = "@dana"
+
+  [record.steering]
+  force      = "must"
+  precedence = 90
+  applies_to = { paths = ["**"] }
+
+  [record.enforcement]
+  mode = "none"             # an archived record enforces nothing
+
+  [record.truth]
+  basis       = "decree"
+  confidence  = 100
+  verified_by = "@dana"
+  valid_from  = 2025-04-18T00:00:00Z
+  valid_until = 2026-06-02T00:00:00Z   # exclusive: true right up to this instant
+
+
+# ── The live revision ────────────────────────────────────────────────────────
+[[record]]
+lineage_id  = "ctx.acme.web.node-version"
+record_id   = "rec_node_version_84f0b2ed6a95"
+record_hash = "sha256:84f0b2ed6a951c73d0e825bf4a6013cc79ed2b8f50a4917e63cb0d21fa8e7c40"
+kind        = "constraint"
+status      = "active"
+statement   = "Development runs on Node 22.x."
+
+supersedes = "rec_node_version_11a7ce30d482"
+
+  [record.provenance]
+  commit      = "9f2c1ab"
+  authored_by = "@dana"
+
+  [record.steering]
+  force         = "must"
+  precedence    = 90
+  applies_to    = { paths = ["**"] }
+
+  [record.enforcement]
+  mode         = "soft"
+  check        = "model"
+  rubric       = "Toolchain references target Node 22.x."
+  severity     = "warn"
+  on_violation = "Update the toolchain reference to Node 22.x."
+
+  [record.truth]
+  basis        = "decree"
+  confidence   = 100
+  verified_by  = "@dana"
+  verified_at  = 2026-06-02T00:00:00Z
+  valid_from   = 2026-06-02T00:00:00Z
+  review_every = "P180D"
+
+    [record.truth.probe]
+    kind    = "file_contains"
+    path    = ".nvmrc"
+    pattern = "^22\\."
+
+  # Records the governance decision that replaced the old revision. The
+  # corresponding immutable `pev_` promotion event carries actor, reason, and
+  # timestamp; this link is the projection of it that lives in git.
+  [[record.link]]
+  relation = "supports"
+  target   = "evidence:pev_01J7Y2N8C4Q1XR5M0B3KD9WE6T"

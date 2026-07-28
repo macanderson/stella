@@ -1,0 +1,105 @@
+# A fact: weak steering, no enforcement — but it rots, so the truth axis does
+# the work. This is the class of record that makes ingest dangerous: a stale
+# fact from a two-year-old CLAUDE.md reads exactly like a fresh one.
+#
+# `http_ok` would be the natural probe here and is deliberately NOT used: this
+# record's origin is `imported`, and a gated probe is never honored on an
+# imported record. What is checked instead is the tracked infrastructure file
+# that would have to change if the endpoint moved — weaker, but safe and still
+# genuinely falsifying.
+
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+sharing_scope = "repository"
+status        = "active"
+origin        = "imported"
+
+[defaults.provenance]
+source_kind   = "document"
+source_uri    = "CLAUDE.md"
+source_digest = "sha256:6b1f9d0e4a7c8823b5e1f00d92aa41c7cc55e1930b2d7f4a6e88c1029dd3c021"
+repo          = "git@github.com:acme/web.git"
+commit        = "9f2c1ab"
+ingest_run_id = "ing_01J8XQ4M2K7ZP3VN5T0R9WB6HC"
+extracted_at  = 2026-07-27T09:00:00Z
+extractor     = "claude-opus-5"
+
+
+[[record]]
+lineage_id  = "ctx.acme.web.staging-endpoint"
+record_id   = "rec_staging_endpoint_77de1049ba3c"
+record_hash = "sha256:77de1049ba3c8f21e6570cd4192ab8e3357f0c6d9b41e2a80fd35c7169ae4b28"
+kind        = "fact"
+statement   = "The staging API is served from https://api.staging.acme.dev."
+tags        = ["environments"]
+
+  [record.provenance]
+  source_lines = [61, 62]
+
+  [record.steering]
+  force         = "info"
+  precedence    = 20
+  applies_to    = { tasks = ["debug", "integration-test"], keywords = ["staging", "env"] }
+
+  [record.enforcement]
+  mode = "none"
+
+  [record.truth]
+  basis        = "measured"
+  confidence   = 90
+  verified_at  = 2026-07-25T11:30:00Z
+  ttl          = "P14D"
+  on_expiry    = "stale"    # stale = keep citing, with a warning | drop | block
+  review_every = "P14D"
+
+    # Ungated. The endpoint is declared in tracked Terraform, so the repo can
+    # falsify this claim without touching the network.
+    [record.truth.probe]
+    kind    = "file_contains"
+    path    = "infra/terraform/staging.tf"
+    pattern = "api.staging.acme.dev"
+
+  [[record.link]]
+  relation = "supports"
+  target   = "evidence:infra/terraform/staging.tf#L42"
+
+
+# The second half of the original sentence — "there is no local staging
+# container" — is a separate claim about docker-compose that can rot on its own
+# schedule, so it is a separate record with its own probe.
+[[record]]
+lineage_id  = "ctx.acme.web.no-local-staging"
+record_id   = "rec_no_local_staging_5b2ec8f0d613"
+record_hash = "sha256:5b2ec8f0d61374a9c02e8b15fd3760ea94c1d8b207f6539ae4c0182bb7d95f43"
+kind        = "fact"
+statement   = "The docker-compose stack defines a dev environment only; it has no staging service."
+tags        = ["environments", "tooling"]
+
+  [record.provenance]
+  source_lines = [62, 63]
+
+  [record.steering]
+  force         = "info"
+  precedence    = 20
+  applies_to    = { tasks = ["debug", "integration-test"], keywords = ["staging", "docker"] }
+
+  [record.enforcement]
+  mode = "none"
+
+  [record.truth]
+  basis        = "measured"
+  confidence   = 85
+  verified_at  = 2026-07-25T11:30:00Z
+  review_every = "P30D"
+
+    [record.truth.probe]
+    kind    = "file_contains"
+    path    = "docker-compose.yml"
+    pattern = "^\\s*staging:"
+    expect  = "absent"
+
+  [[record.link]]
+  relation = "refines"
+  target   = "ctx.acme.web.staging-endpoint"
