@@ -62,10 +62,20 @@ coupling — any record may override.
 call, never cause one. Truth probes use a closed, declarative vocabulary rather
 than arbitrary shell. See "Probe kinds" below.
 
-**Substrate follows `sharing_scope`.** `personal` records live only in
-`.stella/private/context.db` and are never materialized to a file.
-`repository` and `organization` records are git-tracked TOML. The record type is
-universal; scope alone decides where the bytes land.
+**Memories live in the database. Context records live in files.** One place
+each, and no record is stored twice.
+
+A memory is fetched per turn by relevance and is not cached. A context record is
+a file: the project's git tree for `repository` and `organization` scope,
+`~/.stella/rules/` for `personal` scope — which the loader already reads
+(`rule_search_dirs`, `stella-core/src/rules.rs:345`). `sharing_scope` chooses
+*which* file location, not whether it is a file at all.
+
+Promotion is how a memory becomes a context record.
+
+An earlier draft of this file said personal records stay in the database. That
+was wrong: it would have meant one record type stored two different ways, and a
+personal record that could never be cached.
 
 ## Vocabularies
 
