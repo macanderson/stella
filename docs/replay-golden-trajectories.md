@@ -131,29 +131,47 @@ format fixed, a reference stream would have to align stage-for-stage with the
 Rust stack's — and the reference emits no `Witness`, `ScopeReview`, `Reflect`,
 or `ContextWrite` stage at all.
 
-### What an adapter has to supply
+### The adapter
 
-To produce a `reference` golden, an adapter must:
+The adapter is `stella-pipeline/src/replay/reference_adapter.rs`
+(`adapt_reference_stream`, manifest id `replay::reference_adapter@v1`). It
+discharges the obligations `reference_conformance.rs` states — a typed
+`StageKind` per known stage label, synthesized `ref-N` call ids with FIFO
+pairing (the only order the id-less wire can support), and a terminal
+`Complete` translated from `result` — and it **fails closed** on everything
+else: an unmapped stage label, an unknown event kind, or an unpaired tool
+phase is a typed error naming the line, never a guess. Extending the label
+table is a reviewed change; that is where the fidelity of a reference
+trajectory actually lives, which is why the manifest names the adapter and
+its version.
 
-1. Map the reference's free-text stage label onto a typed `StageKind`, and
-   decide what to emit for the stages this protocol has and the reference does
-   not (and vice versa).
-2. Synthesize a `call_id`, split `phase:"start"` into `tool_start`, and pair
-   `phase:"end"` back to the same id, mapping `ok` onto a `ToolOutput`.
-3. Translate the `result` envelope into a terminal `Complete` event.
-4. Emit the result as JSONL and record it with
-   `"source": {"kind": "reference", "engine": "...", "adapter": "..."}`.
+The reference transmits no tool arguments, so `ToolCall::input` is an empty
+object in adapted streams: a reference golden asserts stage order, tool
+identity/pairing, and termination — not arguments. `structural_diff` is also
+*positional*, and the reference emits no `Witness`, `ScopeReview`, `Reflect`,
+or `ContextWrite` stage at all, so a reference golden is only comparable
+against runs whose configuration skips those stages (e.g. a `--test-command`
+run that never authors a witness).
 
-`reference_conformance.rs` is the executable statement of items 1–3; when an
-adapter lands, that file is where its output should be proven to satisfy the
-contract before any recording is committed.
-
-### The second blocker: provenance
+### Provenance of reference recordings — the settled policy
 
 The reference engine lives in a **private** repository and its one-shot path
-routes model calls through a private platform (or a gateway API key). A public
-OSS repo's CI therefore cannot regenerate a reference fixture, so any such
-recording would be a committed artifact nobody downstream can reproduce or
-refresh. That needs an explicit decision before recordings land, not after —
-whether the adapter output is checked in as an opaque artifact, or the
-reference runs are reproduced some other way.
+routes model calls through a private platform (or a gateway API key), so a
+public OSS repo's CI can never regenerate a reference fixture. The policy
+(#462):
+
+- **Reference recordings are committed opaque artifacts.** They are recorded
+  by whoever can run the reference engine, adapted through the versioned
+  adapter above, and checked in like any other fixture.
+- **CI re-validates, never regenerates.** The loader's gates (manifest count,
+  structural invariants, provenance kind) run on every load, so a committed
+  reference golden is continuously proven well-formed even though it cannot
+  be reproduced downstream.
+- **Refresh is attributed, not automated.** A refreshed recording lands as an
+  ordinary reviewed change whose manifest names the engine and adapter
+  version that produced it; drift between adapter versions is visible in the
+  manifest diff.
+
+`STELLA_REFRESH_GOLDEN=1` and `make record-golden` remain the *rust-stack*
+refresh path only — a reference fixture can never be refreshed from this
+repo, by construction.

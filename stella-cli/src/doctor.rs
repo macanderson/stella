@@ -118,7 +118,64 @@ fn checks(workspace_root: &Path, repair: bool) -> Vec<Check> {
     vec![
         store_integrity(workspace_root, repair),
         fleet_ledger_orphans(workspace_root),
+        orphan_session_sidecars(&stella_store::SessionRegistry::open_default(), repair),
     ]
+}
+
+/// Report — and with `--repair`, reap — session sidecar directories whose
+/// `.json` record is gone (#617's last open sweep, wired here to match the
+/// `fleet_ledger_orphans` precedent: `SessionRegistry::prune` is age-gated on
+/// a record an orphan doesn't have, so the sweep belongs to an explicit
+/// operator action, not a background loop).
+///
+/// The safety property lives in the registry, not here:
+/// `prune_orphan_sidecars` sweeps only `sidecar_names − record_names`, and a
+/// record that exists but cannot be parsed is *damaged*, never an orphan —
+/// so a power-cut session's conversation history is unreachable by this
+/// sweep. Damaged records are surfaced for visibility and deliberately have
+/// no repair.
+fn orphan_session_sidecars(registry: &stella_store::SessionRegistry, repair: bool) -> Check {
+    const NAME: &str = "session sidecars";
+
+    let scan = registry.scan();
+    let damaged_note = (!scan.damaged.is_empty()).then(|| {
+        format!(
+            "{} damaged record(s) left untouched — damaged is not orphaned",
+            scan.damaged.len()
+        )
+    });
+    if scan.orphan_sidecars.is_empty() {
+        return Check::pass(
+            NAME,
+            match damaged_note {
+                Some(note) => format!("no orphan sidecars ({note})"),
+                None => "every sidecar directory has its session record".to_string(),
+            },
+        );
+    }
+    if repair {
+        return match registry.prune_orphan_sidecars() {
+            Ok(removed) => Check::pass(
+                NAME,
+                format!("reaped {} orphan sidecar director(ies)", removed.len()),
+            )
+            .with_details(removed),
+            Err(error) => Check::fail(NAME, format!("orphan sweep failed: {error}")),
+        };
+    }
+    Check::pass(
+        NAME,
+        format!(
+            "{} sidecar director(ies) have no session record",
+            scan.orphan_sidecars.len()
+        ),
+    )
+    .with_details(scan.orphan_sidecars.clone())
+    .with_remedy(vec![
+        "run `stella doctor --repair` to remove them — an orphan holds no session record, \
+         only a directory a deleted record left behind"
+            .to_string(),
+    ])
 }
 
 /// Report `fleet.db` rows whose run is gone (#617 item 5).
@@ -435,7 +492,7 @@ mod tests {
         let checks = checks(dir.path(), false);
         assert_eq!(
             checks.iter().map(|c| c.name).collect::<Vec<_>>(),
-            vec!["store integrity", "fleet ledger"],
+            vec!["store integrity", "fleet ledger", "session sidecars"],
             "the shipped checks, in report order: {checks:?}"
         );
         assert!(
@@ -454,6 +511,34 @@ mod tests {
             checks[1].summary.contains("no fleet ledger yet"),
             "the ledger check names the absence: {}",
             checks[1].summary
+        );
+    }
+
+    /// #617's last open sweep: an orphan sidecar is reported without
+    /// `--repair` and reaped with it, while a damaged record's sidecar is
+    /// never touched.
+    #[test]
+    fn doctor_reaps_orphan_sidecars_only_under_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = stella_store::SessionRegistry::open(dir.path());
+        // An orphan: a sidecar directory with no record.
+        std::fs::create_dir_all(dir.path().join("sess-orphan")).unwrap();
+        std::fs::write(dir.path().join("sess-orphan/journal.jsonl"), "{}\n").unwrap();
+        // A damaged record: unparsable JSON, sidecar present.
+        std::fs::write(dir.path().join("sess-damaged.json"), "{ not json").unwrap();
+        std::fs::create_dir_all(dir.path().join("sess-damaged")).unwrap();
+
+        let report = super::orphan_session_sidecars(&registry, false);
+        assert_eq!(report.status, super::CheckStatus::Pass);
+        assert!(report.summary.contains("1 sidecar"), "{}", report.summary);
+        assert!(dir.path().join("sess-orphan").exists());
+
+        let repaired = super::orphan_session_sidecars(&registry, true);
+        assert_eq!(repaired.status, super::CheckStatus::Pass);
+        assert!(!dir.path().join("sess-orphan").exists(), "orphan reaped");
+        assert!(
+            dir.path().join("sess-damaged").exists(),
+            "a damaged record's sidecar is never an orphan"
         );
     }
 

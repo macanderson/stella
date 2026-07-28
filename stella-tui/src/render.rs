@@ -143,8 +143,9 @@ pub fn render(model: &SessionModel, ui: &mut UiState, frame: &mut Frame) {
     } else {
         let selected = ui.selected_file;
         let focus = ui.focus;
+        let evicted = model.files_evicted;
         guarded_panel(frame, right_area, "files", |buf| {
-            render_files(&model.files, selected, focus, right_area, buf)
+            render_files(&model.files, evicted, selected, focus, right_area, buf)
         });
         (0, 0)
     };
@@ -397,12 +398,19 @@ pub(crate) fn render_transcript_window(
 
 fn render_files(
     files: &[FileState],
+    evicted: u32,
     selected: usize,
     focus: PanelFocus,
     area: Rect,
     buf: &mut Buffer,
 ) {
-    let title = format!(" files touched · {} ", files.len());
+    // The evicted count keeps a capped ledger honest: `MAX_TRACKED_FILES`
+    // eviction must never read as "only this many files were touched".
+    let title = if evicted > 0 {
+        format!(" files touched · {} (+{evicted} evicted) ", files.len())
+    } else {
+        format!(" files touched · {} ", files.len())
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::rule())

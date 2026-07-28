@@ -101,15 +101,30 @@ pub(crate) struct EdgeView {
 /// Sequence disambiguating two facts asserted within the same clock second,
 /// which would otherwise hash to the same edge `public_id`.
 ///
-/// It is **process-local**, so two stella processes writing the same workspace
-/// db concurrently can still mint the same `edg_…` id; `edge.public_id` carries
-/// no UNIQUE constraint, so those rows coexist silently. Nothing reads an edge
-/// by public id today, which is why this is tolerable rather than a bug — a
-/// reader would first need the id made collision-proof: a mint that cannot
-/// collide across processes (random bytes, or a sequence persisted in the db
-/// rather than this static), enforced by a UNIQUE constraint on
-/// `edge.public_id`. Neither exists yet, deliberately.
+/// It is process-local, so the hash also folds in [`process_nonce`] — two
+/// stella processes writing the same workspace db in the same second mint
+/// from different keyspaces — and schema v10 backs the whole thing with a
+/// `UNIQUE` index on `edge.public_id` (#617), so a collision that somehow
+/// survived both would surface as a loud constraint error instead of two
+/// rows coexisting silently.
 static EDGE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A per-process value folded into every edge id mint, so the process-local
+/// [`EDGE_SEQ`] cannot collide across processes. Pid plus first-use subsecond
+/// nanos plus the static's ASLR-randomized address — not cryptographic, just
+/// distinct per process, which is all the v10 `UNIQUE` constraint needs
+/// backing for.
+fn process_nonce() -> u64 {
+    static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *NONCE.get_or_init(|| {
+        let pid = u64::from(std::process::id());
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| u64::from(d.subsec_nanos()))
+            .unwrap_or(0);
+        (pid << 32) ^ nanos ^ (&NONCE as *const _ as u64)
+    })
+}
 
 /// Insert a fact edge. `supersedes` links to the edge this one replaced (the
 /// `SUPERSEDES` relation of), or `None` for a
@@ -128,9 +143,10 @@ pub(crate) fn insert_edge(
     supersedes: Option<i64>,
 ) -> Result<i64, ContextError> {
     let seq = EDGE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let nonce = process_nonce();
     let public_id = format!(
         "edg_{}",
-        &sha256_hex(&format!("{rel}:{src_id}:{dst_id}:{now}:{seq}"))[..24]
+        &sha256_hex(&format!("{rel}:{src_id}:{dst_id}:{now}:{nonce}:{seq}"))[..24]
     );
     let props = serde_json::to_string(properties)?;
     let id: i64 = conn.query_row(

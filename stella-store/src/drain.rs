@@ -66,6 +66,9 @@ use serde::{Deserialize, Serialize};
 use crate::Result;
 use crate::usage::{CloudTelemetryEvent, QuarantineReason, UsageStore};
 
+// The OTLP (`format = "otel"`) encoding of the same staged rows (#427).
+pub mod otel;
+
 /// The native drain wire-format version this build speaks. Increment on any
 /// change to [`DrainRow`]'s field set or a field's semantics (see the module
 /// docs' bump-on-change discipline).

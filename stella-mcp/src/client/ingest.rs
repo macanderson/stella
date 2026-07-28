@@ -37,12 +37,15 @@ const MAX_TOOL_PAGES: usize = 1000;
 // compaction runs — on a LATER turn — so the cap has to live at ingest, in
 // this crate.
 //
-// The numbers below are deliberately conservative starting points, not
-// ratified product values: they are sized to be invisible to every
-// well-behaved server we know of while still bounding a hostile one. Wiring
-// them to configuration would change this crate's public entry points
-// (`McpToolSet::connect`, `McpClient::connect`), which is an owner API
-// decision — see #551's own "Not applied" note.
+// The numbers below are RATIFIED as shipped (#616): sized to be invisible to
+// every well-behaved server we know of while still bounding a hostile one.
+// They are deliberately NOT configurable — no server has been observed to
+// need more, and a config knob for a cap nobody hits is permanent public
+// surface (entry-point signatures, settings schema, docs) bought for
+// nothing. If a real server ever needs a higher cap, raise the const with
+// that server named in the commit, or add the knob then, with the demand in
+// hand. The same ruling covers `MAX_TOOL_PAGES` (1000) and the SSE
+// `MAX_BUFFERED_BYTES` (8 MiB): existing deliberate limits, kept.
 
 /// Byte budget for one rendered `tools/call` result, applied middle-out
 /// (head and tail kept, with an explicit elision marker between them).

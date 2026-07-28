@@ -2063,3 +2063,51 @@ async fn the_context_recall_event_carries_the_cgp_usage_report() {
     );
     assert_eq!(memory.token_cost, 90);
 }
+
+/// #616: recall is clamped at the source — per-frame truncation with an
+/// in-content marker, and a dropped tail summarized in a marker frame — so a
+/// mis-tuned recall port cannot silently inflate every subsequent turn.
+#[test]
+fn recalled_frames_are_bounded_with_visible_markers() {
+    let frame = |label: &str, content: String| crate::ports::RecalledFrame {
+        citation_label: label.into(),
+        provider: "test".into(),
+        source: "test".into(),
+        kind: "memory".into(),
+        uri: None,
+        method: None,
+        content,
+        token_cost: 0,
+        id: None,
+        content_digest: None,
+    };
+
+    // One oversized frame is truncated, visibly.
+    let bounded = super::bound_recalled_frames(vec![frame("big", "x".repeat(10_000))]);
+    assert_eq!(bounded.len(), 1);
+    assert!(bounded[0].content.len() < 5_000);
+    assert!(
+        bounded[0]
+            .content
+            .contains("truncated during recall budgeting")
+    );
+
+    // A pile of frames past the total budget is cut, with the tail counted.
+    let many: Vec<_> = (0..20)
+        .map(|i| frame(&format!("f{i}"), "y".repeat(3_000)))
+        .collect();
+    let bounded = super::bound_recalled_frames(many);
+    let last = bounded.last().expect("frames survive");
+    assert_eq!(last.citation_label, "recall-budget");
+    assert!(last.content.contains("dropped"), "{}", last.content);
+    let kept_content: usize = bounded.iter().map(|f| f.content.len()).sum();
+    assert!(
+        kept_content < super::RECALL_PROMPT_BUDGET_CHARS + 4_000 + 200,
+        "cumulative content stays near the budget, got {kept_content}"
+    );
+
+    // Under budget: untouched, no marker.
+    let small = super::bound_recalled_frames(vec![frame("s", "ok".into())]);
+    assert_eq!(small.len(), 1);
+    assert_eq!(small[0].content, "ok");
+}
