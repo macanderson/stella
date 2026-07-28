@@ -3320,6 +3320,7 @@ name = "stella-serve"
 version = "0.5.61"
 dependencies = [
  "async-trait",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "stella-core",

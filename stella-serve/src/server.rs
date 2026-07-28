@@ -38,10 +38,10 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use stella_core::{BudgetGuard, EngineConfig};
 use stella_protocol::{BudgetMode, CompletionMessage, ToolSchema};
@@ -50,7 +50,9 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::accept::{self, AcceptAction, AcceptBackoff};
 use crate::frame::{ProviderOutcomeIn, ProviderResultIn, ServerFrame, ToolResultIn};
-use crate::http::{read_request, write_json, write_sse_frame, write_sse_head};
+use crate::http::{
+    ReadOutcome, read_request, write_json, write_json_with_headers, write_sse_frame, write_sse_head,
+};
 use crate::pending::Pending;
 use crate::session::{Session, SessionSpec};
 
@@ -147,6 +149,28 @@ fn validate_reverse_request_timeout(requested_ms: u64) -> Option<Duration> {
     (requested_ms > 0).then(|| Duration::from_millis(requested_ms).min(MAX_REVERSE_REQUEST_TIMEOUT))
 }
 
+/// Ceiling on turns registered at once.
+///
+/// Every live turn owns an OS thread and a pending-request slot for as long as
+/// the host keeps answering it, and nothing reclaimed a turn the host simply
+/// abandoned — so an authenticated caller could register turns until the process
+/// ran out of threads. 32 concurrent turns is far past any real host (each one
+/// is a whole agentic conversation in flight) while keeping the thread count
+/// bounded by a number an operator can reason about.
+///
+/// This is a const rather than a [`ServeConfig`] field on purpose, matching
+/// [`MAX_SERVED_STEPS`] and [`MAX_REVERSE_REQUEST_TIMEOUT`]: these are the
+/// server's own safety backstops, not host-tunable policy. A host that could
+/// raise the cap could remove it, which is exactly what it exists to prevent.
+const MAX_LIVE_TURNS: usize = 32;
+
+/// How long a rejected caller is told to wait before retrying, in seconds.
+///
+/// Turns end when the host finishes streaming them, so the queue drains on the
+/// order of a turn's length; 5 seconds is short enough to keep a well-behaved
+/// host responsive without inviting a tight retry loop.
+const RETRY_AFTER_SECS: &str = "5";
+
 /// One registered turn. `pending` answers reverse requests (shared, always
 /// available); `session` is taken exactly once by the SSE stream.
 struct Entry {
@@ -158,7 +182,6 @@ struct Entry {
 struct ServerState {
     token: String,
     turns: Mutex<HashMap<String, Arc<Entry>>>,
-    counter: AtomicU64,
     unauthorized: Mutex<TokenBucket>,
 }
 
@@ -247,12 +270,21 @@ impl TokenBucket {
 /// This is a sidecar for one trusted host, not an internet-facing server, and
 /// the deployment must supply what it deliberately omits:
 ///
-/// - **No admission control.** Connections and turns are both unbounded; a
-///   turn holds an OS thread from `POST /v1/turns` until its stream ends.
-/// - **Turn ids are sequential**, so they are guessable by anyone holding the
-///   token — the token is the only tenancy boundary, one process per tenant.
-/// - **No read timeout**, so a peer that dribbles a request head holds a
-///   connection open. Front it with a proxy or a private network.
+/// - **Turns are capped, connections are not.** At most 32 may be registered at
+///   once — past that, `POST /v1/turns` answers `429` with a `Retry-After` —
+///   because each one holds an OS thread until its stream ends.
+///   Accepted *connections* are still unbounded: a semaphore over them is not
+///   the right tool here, because a permit would be held for the whole lifetime
+///   of a long-lived SSE stream and would starve the `tool-result` and
+///   `provider-result` POSTs that the very same turn must deliver over separate
+///   connections — the reverse-RPC protocol would deadlock against itself.
+///   Bounding turns bounds the resource that actually accumulates.
+/// - **Turn ids are unguessable** (128 random bits), so learning one id does not
+///   hand over the namespace. The token remains the only tenancy boundary, one
+///   process per tenant.
+/// - **Reads are bounded** by a deadline and by separate head and body caps; a
+///   peer that dribbles a request head is dropped rather than parked forever.
+///   The response says which bound was hit (`408`, `413`, `400`).
 ///
 /// Reverse requests *are* bounded (see [`SessionSpec::reverse_request_timeout`]),
 /// and a turn can be ended early with `POST /v1/turns/{id}/cancel`.
@@ -262,7 +294,6 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
     let state = Arc::new(ServerState {
         token: config.token,
         turns: Mutex::new(HashMap::new()),
-        counter: AtomicU64::new(0),
         unauthorized: Mutex::new(TokenBucket::new()),
     });
     let mut backoff = AcceptBackoff::new();
@@ -306,8 +337,34 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
 }
 
 async fn handle_conn(mut stream: TcpStream, state: Arc<ServerState>) -> std::io::Result<()> {
-    let Some(req) = read_request(&mut stream).await? else {
-        return Ok(());
+    let req = match read_request(&mut stream).await? {
+        ReadOutcome::Request(req) => req,
+        // A peer that never sent anything is owed nothing.
+        ReadOutcome::Hangup => return Ok(()),
+        ReadOutcome::TooLarge => {
+            return write_json(
+                &mut stream,
+                "413 Payload Too Large",
+                &error_body("request exceeded the server's size limit"),
+            )
+            .await;
+        }
+        ReadOutcome::Malformed => {
+            return write_json(
+                &mut stream,
+                "400 Bad Request",
+                &error_body("malformed HTTP request"),
+            )
+            .await;
+        }
+        ReadOutcome::Timeout => {
+            return write_json(
+                &mut stream,
+                "408 Request Timeout",
+                &error_body("request was not completed in time"),
+            )
+            .await;
+        }
     };
     let path = req.path.split('?').next().unwrap_or(&req.path);
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -409,16 +466,60 @@ async fn handle_create(
         reverse_request_timeout,
     };
 
-    let session = Session::start(spec);
-    let id = format!("turn-{}", state.counter.fetch_add(1, Ordering::Relaxed));
-    let entry = Arc::new(Entry {
-        pending: session.pending(),
-        session: Mutex::new(Some(session)),
-    });
-    state.turns().insert(id.clone(), entry);
+    // Admission and registration happen under one lock hold. Checking the
+    // count, then starting the session, then inserting would let two concurrent
+    // creates both observe `len() < MAX_LIVE_TURNS` and both insert, so the cap
+    // could be exceeded by exactly the number of racing callers. `Session::start`
+    // is synchronous (it spawns a thread and returns), so holding the lock across
+    // it is sound — there is no await inside this block.
+    let id = {
+        let mut turns = state.turns();
+        if turns.len() >= MAX_LIVE_TURNS {
+            None
+        } else {
+            let session = Session::start(spec);
+            let id = new_turn_id();
+            turns.insert(
+                id.clone(),
+                Arc::new(Entry {
+                    pending: session.pending(),
+                    session: Mutex::new(Some(session)),
+                }),
+            );
+            Some(id)
+        }
+    };
+    let Some(id) = id else {
+        return write_json_with_headers(
+            stream,
+            "429 Too Many Requests",
+            &[("Retry-After", RETRY_AFTER_SECS)],
+            &error_body("too many live turns; retry after in-flight turns finish"),
+        )
+        .await;
+    };
 
     let body = serde_json::to_vec(&TurnCreated { turn_id: &id }).unwrap_or_default();
     write_json(stream, "200 OK", &body).await
+}
+
+/// Mint a turn id that cannot be guessed from another turn's id.
+///
+/// These were `turn-0`, `turn-1`, … from a process counter. The bearer token is
+/// still the actual auth gate, but a sequential id makes every *other* live turn
+/// addressable to anyone who learns one — a turn id in a log line, an error
+/// report, or a proxy access log hands over the whole namespace. 128 bits from
+/// the OS CSPRNG removes that second, accidental way in.
+fn new_turn_id() -> String {
+    let mut bytes = [0_u8; 16];
+    rand::rng().fill_bytes(&mut bytes);
+    let mut id = String::with_capacity(5 + 32);
+    id.push_str("turn-");
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(id, "{byte:02x}");
+    }
+    id
 }
 
 async fn handle_events(

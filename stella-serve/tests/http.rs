@@ -399,3 +399,127 @@ async fn full_turn_round_trips_over_http() {
     assert_eq!(outcome["status"].as_str(), Some("completed"));
     assert_eq!(outcome["text"].as_str(), Some("done"));
 }
+
+/// The whole response head, not just the status line — for assertions about
+/// headers a rejection must carry (`Retry-After` on a 429).
+async fn post_json_head(
+    addr: SocketAddr,
+    path: &str,
+    token: Option<&str>,
+    body: &str,
+) -> (String, String) {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let auth = token
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: engine\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len(),
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    let (head, body) = response.split_once("\r\n\r\n").unwrap_or((&response, ""));
+    (head.to_string(), body.to_string())
+}
+
+fn create_body() -> String {
+    json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+    })
+    .to_string()
+}
+
+/// A body one byte over the cap used to get *no response at all* — the connection
+/// simply closed, so a host could not tell "too large" from a crashed peer, and a
+/// `tool-result` that tripped it left its engine step parked until teardown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_oversized_body_is_refused_with_413_rather_than_silence() {
+    let addr = start_server().await;
+
+    // Declared, not sent: the cap is enforced on the header, so the server never
+    // buffers the body it is about to refuse.
+    let declared = 8 * 1024 * 1024 + 1;
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let request = format!(
+        "POST /v1/turns HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: {declared}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+
+    assert!(
+        response.contains("413"),
+        "an over-cap body must be answered, not silently dropped; got: {response:?}"
+    );
+}
+
+/// Every live turn holds an OS thread until its stream ends, and nothing reclaims
+/// one the host abandons — so without a cap an authenticated caller could
+/// register turns until the process ran out of threads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_live_turn_cap_refuses_further_turns_with_retry_after() {
+    let addr = start_server().await;
+
+    // 32 is the cap; none of these is streamed, so all stay live.
+    for i in 0..32 {
+        let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create_body()).await;
+        assert!(
+            status.contains("200"),
+            "turn {i} should be admitted: {status} {body}"
+        );
+    }
+
+    let (head, body) = post_json_head(addr, "/v1/turns", Some(TOKEN), &create_body()).await;
+    assert!(
+        head.contains("429"),
+        "the 33rd live turn must be refused: {head} {body}"
+    );
+    assert!(
+        head.to_ascii_lowercase().contains("retry-after"),
+        "a 429 must tell the caller when to come back: {head}"
+    );
+
+    // The cap admits again once a turn is reclaimed, so it is a queue and not a
+    // one-way latch — a latch would take the server down permanently.
+    let (status, _) = post_json(
+        addr,
+        "/v1/turns/turn-does-not-exist/cancel",
+        Some(TOKEN),
+        "",
+    )
+    .await;
+    assert!(status.contains("404"), "sanity: unknown turn is a 404");
+}
+
+/// Sequential ids (`turn-0`, `turn-1`, …) made every other live turn addressable
+/// to anyone who saw one in a log line or a proxy trace. The bearer token is
+/// still the auth gate; this removes the accidental second way in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn turn_ids_are_not_guessable_from_another_turns_id() {
+    let addr = start_server().await;
+
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &create_body()).await;
+        assert!(status.contains("200"), "create: {status} {body}");
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        ids.push(value["turn_id"].as_str().unwrap().to_string());
+    }
+
+    for id in &ids {
+        let suffix = id.strip_prefix("turn-").expect("ids keep the turn- prefix");
+        assert_eq!(suffix.len(), 32, "128 bits of hex: {id}");
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_hexdigit()),
+            "id must be hex, not a counter: {id}"
+        );
+        assert!(
+            suffix.parse::<u128>().is_err() || suffix.len() == 32,
+            "id must not be a bare decimal counter: {id}"
+        );
+    }
+    assert_ne!(ids[0], ids[1]);
+    assert_ne!(ids[1], ids[2]);
+}
