@@ -602,90 +602,136 @@ impl ToolRegistry {
             })
             .collect();
 
-        // Storage gate (docs/design/storage-map.md §8): if the target is a
-        // storage-definition file, parse the proposed content with the SAME
-        // adapter extraction the indexer uses and judge it against the live
-        // storage map before the write/edit lands. Objects the target file
-        // already defines on disk are exempt — rewriting an existing
-        // migration in place is not a duplicate.
-        let mut pending_storage: Option<crate::schema_gate::GatePass> = None;
+        // Storage gate (docs/design/storage-map.md §8): if the call targets
+        // storage-definition files, parse each proposed post-write content
+        // with the SAME adapter extraction the indexer uses and judge it
+        // against the live storage map before anything lands. Objects a
+        // target file already defines on disk are exempt — rewriting an
+        // existing migration in place is not a duplicate. `write_file` /
+        // `edit_file` carry one target; an `apply_edits` batch may carry
+        // several (#442), each judged with the same check, so the
+        // transactional path is not a way around the gate. `storage_intent`
+        // is per CALL: one declaration covers every object the batch lands,
+        // exactly as it covers a whole `write_file`.
+        let mut pending_storage: Vec<crate::schema_gate::GatePass> = Vec::new();
         let mut declared_intent: Option<String> = None;
-        if let Some(path) = input.get("path").and_then(|v| v.as_str())
-            && matches!(name, "write_file" | "edit_file")
-            && crate::schema_gate::is_schema_file(path)
-            && let Some(extractor) = crate::schema_gate::extractor()
-        {
-            // write_file carries the full file in `content`. For edit_file
-            // the post-edit file is simulated (current content with the
-            // replacement applied) so whole-file adapters see the resulting
-            // definitions — a Prisma model gaining a field is invisible in
-            // `new_string` alone. Falls back to the fragment when the edit
-            // cannot be simulated (the tool itself will then error anyway).
-            let current = crate::resolve_within_root(&self.root, path)
-                .and_then(|p| std::fs::read_to_string(p).ok());
-            let proposed_src: Option<String> = match name {
-                "write_file" => input
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                _ => {
-                    let new_string = input.get("new_string").and_then(|v| v.as_str());
-                    let old_string = input.get("old_string").and_then(|v| v.as_str());
-                    match (new_string, old_string, &current) {
-                        (Some(new), Some(old), Some(cur))
-                            if !old.is_empty() && cur.contains(old) =>
-                        {
-                            let replace_all = input
-                                .get("replace_all")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            Some(if replace_all {
-                                cur.replace(old, new)
-                            } else {
-                                cur.replacen(old, new, 1)
-                            })
-                        }
-                        (Some(new), _, _) => Some(new.to_string()),
-                        _ => None,
+        if let Some(extractor) = crate::schema_gate::extractor() {
+            // (path, current on-disk content, simulated post-write source).
+            // The post-write file is simulated — for edit_file the current
+            // content with the replacement applied, for apply_edits the
+            // batch's composed edits (`apply_edits::simulate_batch`, the
+            // validate phase's own composition) — so whole-file adapters see
+            // the resulting definitions; a Prisma model gaining a field is
+            // invisible in `new_string` alone. A failed simulation falls
+            // back to the fragment / stays unjudged: the tool itself then
+            // returns the named error and writes nothing.
+            let mut targets: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+            match name {
+                "write_file" | "edit_file" => {
+                    if let Some(path) = input.get("path").and_then(|v| v.as_str())
+                        && crate::schema_gate::is_schema_file(path)
+                    {
+                        let current = crate::resolve_within_root(&self.root, path)
+                            .and_then(|p| std::fs::read_to_string(p).ok());
+                        let proposed_src: Option<String> = match name {
+                            "write_file" => input
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                            _ => {
+                                let new_string = input.get("new_string").and_then(|v| v.as_str());
+                                let old_string = input.get("old_string").and_then(|v| v.as_str());
+                                match (new_string, old_string, &current) {
+                                    (Some(new), Some(old), Some(cur))
+                                        if !old.is_empty() && cur.contains(old) =>
+                                    {
+                                        let replace_all = input
+                                            .get("replace_all")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
+                                        Some(if replace_all {
+                                            cur.replace(old, new)
+                                        } else {
+                                            cur.replacen(old, new, 1)
+                                        })
+                                    }
+                                    (Some(new), _, _) => Some(new.to_string()),
+                                    _ => None,
+                                }
+                            }
+                        };
+                        targets.push((path.to_string(), current, proposed_src));
                     }
                 }
-            };
-            let proposed = proposed_src
-                .as_deref()
-                .map(|src| extractor.extract(path, src))
-                .unwrap_or_default();
-            if !proposed.is_empty() {
-                let own = current
+                "apply_edits" => {
+                    let mut seen = HashSet::new();
+                    for path in input
+                        .get("edits")
+                        .and_then(|v| v.as_array())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| e.get("path").and_then(|v| v.as_str()))
+                    {
+                        if !crate::schema_gate::is_schema_file(path)
+                            || !seen.insert(path.to_string())
+                        {
+                            continue;
+                        }
+                        let current = crate::resolve_within_root(&self.root, path)
+                            .and_then(|p| std::fs::read_to_string(p).ok());
+                        let proposed_src = current
+                            .as_deref()
+                            .and_then(|cur| crate::apply_edits::simulate_batch(input, path, cur));
+                        targets.push((path.to_string(), current, proposed_src));
+                    }
+                }
+                _ => {}
+            }
+            // The persisted snapshot opens SQLite, so it goes to the blocking
+            // pool (#549) — loaded once for the whole call, and only when a
+            // target actually extracts definitions. The `.await` happens
+            // BEFORE the overlay merge takes the `storage_index` std mutex —
+            // a guard held across an await would make this future non-`Send`.
+            let mut snapshot: Option<stella_graph::StorageSnapshot> = None;
+            for (path, current, proposed_src) in targets {
+                let proposed = proposed_src
                     .as_deref()
-                    .map(|content| extractor.extract(path, content))
+                    .map(|src| extractor.extract(&path, src))
                     .unwrap_or_default();
-                // The persisted half opens SQLite, so it goes to the blocking
-                // pool (#549). The `.await` happens BEFORE the overlay merge
-                // takes the `storage_index` std mutex — a guard held across an
-                // await would make this future non-`Send`.
-                let persisted = {
-                    let root = self.root.clone();
-                    tokio::task::spawn_blocking(move || crate::graph::load_storage_snapshot(&root))
+                if proposed.is_empty() {
+                    continue;
+                }
+                if snapshot.is_none() {
+                    let persisted = {
+                        let root = self.root.clone();
+                        tokio::task::spawn_blocking(move || {
+                            crate::graph::load_storage_snapshot(&root)
+                        })
                         .await
                         .unwrap_or_else(|_| Err("the storage map load was cancelled".into()))
-                };
-                let snapshot = match persisted {
-                    Ok(persisted) => self.merge_storage_overlay(persisted),
-                    Err(message) => return ToolOutput::Error { message },
-                };
-                let manifest_layer = crate::schema_gate::manifest_layer_for(&self.root, path);
+                    };
+                    snapshot = match persisted {
+                        Ok(persisted) => Some(self.merge_storage_overlay(persisted)),
+                        Err(message) => return ToolOutput::Error { message },
+                    };
+                }
+                let own = current
+                    .as_deref()
+                    .map(|content| extractor.extract(&path, content))
+                    .unwrap_or_default();
+                let manifest_layer = crate::schema_gate::manifest_layer_for(&self.root, &path);
                 let intent = input.get("storage_intent").and_then(|v| v.as_str());
                 match crate::schema_gate::check(&crate::schema_gate::GateRequest {
-                    path,
+                    path: &path,
                     manifest_layer: manifest_layer.as_deref(),
                     proposed: &proposed,
                     own: &own,
-                    snapshot: &snapshot,
+                    snapshot: snapshot.as_ref().expect("loaded above"),
                     storage_intent: intent,
                 }) {
                     Ok(pass) => {
                         declared_intent = intent.map(str::to_string);
-                        pending_storage = Some(pass);
+                        pending_storage.push(pass);
                     }
                     Err(message) => return ToolOutput::Error { message },
                 }
@@ -756,9 +802,10 @@ impl ToolRegistry {
         if !output.is_error() {
             // The write landed, so the objects it creates now exist: grow
             // the session overlay so a duplicate later this session
-            // conflicts even before any re-index from the code graph.
-            if let Some(pass) = pending_storage {
-                self.record_storage_objects(&pass, declared_intent.as_deref());
+            // conflicts even before any re-index from the code graph. One
+            // pass per gated file — a batch records each (#442).
+            for pass in &pending_storage {
+                self.record_storage_objects(pass, declared_intent.as_deref());
             }
             for (pending, pre_content) in pending_ops.into_iter().zip(pre_contents) {
                 self.record_touch(pending, pre_content, name, input, bus.as_ref());
@@ -1544,6 +1591,10 @@ mod private_state_tests;
 mod fence_tests;
 
 #[cfg(test)]
+#[path = "registry/gate_batch_tests.rs"]
+mod gate_batch_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2112,7 +2163,9 @@ mod tests {
 
     /// A baseline snapshot with the given tables in the implicit `sql`
     /// layer, `default` namespace — the shape `stella init` would seed.
-    fn seeded_snapshot(tables: &[&str]) -> stella_graph::StorageSnapshot {
+    /// `pub(super)` so the batch-gate witnesses (`gate_batch_tests`) reuse
+    /// the same fixture instead of growing a drifting copy.
+    pub(super) fn seeded_snapshot(tables: &[&str]) -> stella_graph::StorageSnapshot {
         stella_graph::StorageSnapshot {
             layers: vec![],
             relations: tables
