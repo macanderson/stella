@@ -66,7 +66,8 @@ plane.
 ## Also in the box
 
 An **offline tree-sitter code graph** queried instead of grepping (`stella
-graph`, the `graph_query` tool; Rust/TS/JS/Python/SQL, no key needed) ·
+graph`, the `graph_query` tool; Rust/TS/TSX/JS/Python/Go/Java/C/PHP/SQL, no
+key needed) ·
 **prompt-cache-native memory** that loads once into a byte-stable system prompt
 at ~0.1× input cost · a **fleet mode** that fans a task DAG out to
 wave-scheduled workers — one shared tree under cooperative file claims by

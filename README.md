@@ -42,8 +42,9 @@ below. It is built in Rust as a workspace of focused crates.
   swarm.
 - **Prompt-cache-native memory** — Lessons saved with `save_memory` load once at
   session start into a byte-stable system prompt (~0.1× input cost).
-- **Code graph** — A tree-sitter symbol/import index (Rust, TS/JS, Python, SQL)
-  queried by the agent and the `stella graph` command instead of grepping.
+- **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
+  Go, Java, C, PHP, SQL) queried by the agent and the `stella graph` command
+  instead of grepping.
 - **Local-first telemetry** — Executions, events, token/cost telemetry, and the
   files-touched ledger stay canonical in `.stella/private/store.db`.
   Community/default sends none of it anywhere. Only explicitly enrolled Oxagen
@@ -233,10 +234,11 @@ The engine runs four configurable agents — **default** (the interactive /
 step-loop agent) and the pipeline's **worker**, **judge**, and **triage**.
 The `agent_engine_config` object in the same `settings.json` scope chain
 configures each one's model, gateway, system prompt, reasoning, and sampling
-parameters — and in the Command Deck, `/engine` opens an editor popup for
-all of it (`s` saves to user scope, `S` to project scope; `/model-worker`,
-`/model-judge`, `/model-triage`, `/model-default` jump straight to a model
-picker driven by `allowed_models`).
+parameters — and in the Command Deck, `/settings` opens the SETTINGS tab,
+whose engine-config editor covers all of it (`s` saves to user scope, `S` to
+project scope; the per-agent model pickers offer `allowed_models`, falling
+back to the catalog when that list is empty). There are no per-agent slash
+commands — the SETTINGS tab is the one place models are configured.
 
 ```jsonc
 {
@@ -352,17 +354,22 @@ On a TTY this opens the **Command Deck** — a tabbed TUI (Session · Agents ·
 Traces · Graph · Files · Skills · MCP) with PR-style diffs and an editable prompt
 queue. `--plain` (or `STELLA_PLAIN=1`, or piped stdio) falls back to the line REPL.
 
-**In-chat commands:**
+**In-chat commands** — the Command Deck and the line REPL each implement their
+own vocabulary, so the surface column says where a command actually works:
 
-| Command                          | Does                                                                                                                                |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `/goal <text>`                   | Work in judged rounds until the goal is met                                                                                         |
-| `/files`                         | Show the Files-Touched panel — `[C·R·U·D] path` per file                                                                            |
-| `/models` `/config`              | List providers/models · show resolved configuration                                                                                 |
-| `/rename <name>` `/color <name>` | Rename the tab · switch accent color                                                                                                |
-| `/pipeline`                      | Toggle witness-verified staged turns (Command Deck; see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)) |
-| `/clear` `/help`                 | Clear history · show help                                                                                                           |
-| `/exit` or `Ctrl-D`              | Exit                                                                                                                                |
+| Command                                                                                  | Surface     | Does                                                                                                                                |
+| ---------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `/help` `/clear`                                                                         | Deck + REPL | Show help · clear history                                                                                                           |
+| `/models`                                                                                | Deck + REPL | List providers/models (`/models refresh` re-syncs the catalog)                                                                      |
+| `/init` `/agents`                                                                        | Deck + REPL | Reindex the workspace · the installed custom agents (a tab in the deck)                                                             |
+| `/files`                                                                                 | Deck + REPL | The Files-Touched ledger — `[C·R·U·D] path` per file (a panel in the REPL, the Files tab in the deck)                               |
+| `/goal <text>`                                                                           | REPL only   | Work in judged rounds until the goal is met                                                                                         |
+| `/config`                                                                                | REPL only   | Show resolved configuration                                                                                                         |
+| `/rename <name>` `/color <name>`                                                         | REPL only   | Rename the tab · switch accent color                                                                                                |
+| `/pipeline`                                                                              | Deck only   | Toggle witness-verified staged turns (see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline))               |
+| `/settings` `/diff` `/graph` `/skills` `/mcp` `/mcp-search` `/sessions` `/context` `/inspect` `/inbox` | Deck only | Open the corresponding tab or overlay (`/settings` includes the engine-config editor)                             |
+| `/export`                                                                                | Deck only   | Export session telemetry to a ZIP + HTML dashboard                                                                                  |
+| `/exit` or `Ctrl-D`                                                                      | REPL only   | Exit (the deck exits with `Ctrl-C`)                                                                                                 |
 
 ### One-shot run
 
@@ -455,7 +462,7 @@ are also accepted case-insensitively.
 | `search_skills` · `install_skill` · `skill_search` · `tool_search` · `mcp_search`                                                        | Discovery at the session layer: search the public skills registry and install from it (with confirmation), search the skills already installed, or rank this session's tools / MCP servers instead of carrying all of them in the prompt                                                         |
 | `ci_status`                                                                                                                              | CI runs + failure logs via `gh`                                                                                                                                                                                                                                                                  |
 | `screenshot`                                                                                                                             | Capture the screen as verification evidence                                                                                                                                                                                                                                                      |
-| `web_fetch` · `web_extract_assets` · `web_download` · `web_search`                                                                       | Read a URL as markdown/text/HTML · mine a page's stylesheets, scripts, and design tokens · download an asset into the workspace · ranked search results — **off by default**, opt in with `"tools": {"web": "on"}`; `web_search` additionally needs your own `BRAVE_API_KEY` or `TAVILY_API_KEY` |
+| `web_fetch` · `web_extract_assets` · `web_download` · `web_search`                                                                       | Read a URL as markdown/text/HTML · mine a page's stylesheets, scripts, and design tokens · download an asset into the workspace · ranked search results — **registered by default**, withheld with `"tools": {"web": "off"}` in settings (any scope); `web_search` additionally needs your own `BRAVE_API_KEY` or `TAVILY_API_KEY` |
 | `generate_svg`                                                                                                                           | Validate, sanitize, and save an agent-authored SVG under `.stella/artifacts/` — scripts, handlers, and external references stripped                                                                                                                                                              |
 | `generate_image` · `generate_video` · `poll_video`                                                                                       | Text-to-image/video via your provider key, saved under `.stella/artifacts/` — registered only when a media-capable key is set (video is behind a cost confirmation)                                                                                                                              |
 | `ask_user`                                                                                                                               | Put a 2–6 option multiple-choice question to you when the decision is genuinely yours; a headless run gets a named error instead of a hang                                                                                                                                                       |
@@ -508,12 +515,14 @@ prerequisites, these tools are not registered. `graph_query` is **not**
 conditional despite needing an index — it builds one on first use, and gating
 it on the index existing would hide exactly the tool meant to create it.
 
-**The web tools are opt-in too.** `web_fetch`, `web_extract_assets`, and
-`web_download` register only with `"tools": {"web": "on"}` in a `settings.json`
-scope; `web_search` additionally needs your own `BRAVE_API_KEY` or
-`TAVILY_API_KEY`. They are the only built-ins that talk to a host other than
-your model provider, which is why they are off until you say otherwise. See
-[the web tools](https://stella.oxagen.sh/docs/agent-tools#web-opt-in).
+**The web tools ship on, and switch off as a family.** `web_fetch`,
+`web_extract_assets`, and `web_download` are registered by default like every
+other built-in; withhold all three with `"tools": {"web": "off"}` in any
+`settings.json` scope. `web_search` additionally needs your own
+`BRAVE_API_KEY` or `TAVILY_API_KEY` — no key, no tool. They are the only
+built-ins that talk to a host other than your model provider — a fetched page
+is untrusted input and an egress channel — which is why the family off-switch
+exists. See [the web tools](https://stella.oxagen.sh/docs/agent-tools#web-opt-in).
 
 ## Memory and context
 
@@ -614,7 +623,7 @@ flowchart TD
       ENG["step driver · goal loop · budget<br/>retry · compaction · loop-detection · router"]
     end
     CORE -->|Provider port| MODEL["stella-model — adapters<br/>anthropic · openai · gemini · vertex · bedrock · zai<br/>(+ any OpenAI-compatible: xai · deepseek · openrouter · local)"]
-    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>CRUD · grep · glob · build · test · lint · scripts · processes · repo · verify_done · issues · CI · opt-in bash"]
+    CORE -->|ToolExecutor port| TOOLS["stella-tools<br/>CRUD · grep · glob · build · test · lint · scripts · processes · repo · verify_done · issues · CI · bash"]
     MCP["stella-mcp<br/>external MCP servers"] -.->|merges tools into registry| TOOLS
     CORE -->|emits AgentEvent stream| STORE["stella-store<br/>SQLite: executions · events · telemetry"]
     U -->|"recall · episodes · bi-temporal facts"| CTX["stella-context — context plane<br/>recall · embeddings · memory"]
@@ -659,7 +668,7 @@ extending it.
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`stella-cli`](stella-cli/README.md)                 | CLI binary — clap surface + agent loop wiring                                                                                                                                                                                          |
 | [`stella-core`](stella-core/README.md)               | The step-driver engine (no I/O): parallel tools, goal loop, budget, retry, compaction, loop detection, router                                                                                                                          |
-| [`stella-tools`](stella-tools/README.md)             | The built-in tools (CRUD, `grep`/`glob`, build/test/lint/format, `run_script`, the process group, the `repo_*` tools, `verify_done`, issues, CI — plus the opt-in `bash`)                                                              |
+| [`stella-tools`](stella-tools/README.md)             | The built-in tools (CRUD, `grep`/`glob`, build/test/lint/format, `run_script`, the process group, the `repo_*` tools, `verify_done`, issues, CI, `bash` — every one registered by default, each withholdable via `tools` switches)                                                              |
 | [`stella-model`](stella-model/README.md)             | The `Provider` port's adapters: anthropic, openai, gemini, vertex, bedrock, zai (SSE, tool-call dialects, SigV4, pricing)                                                                                                              |
 | [`stella-store`](stella-store/README.md)             | SQLite persistence — executions, events, telemetry, files-touched                                                                                                                                                                      |
 | [`stella-mcp`](stella-mcp/README.md)                 | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry                                                                                                                                              |
@@ -679,10 +688,9 @@ Alongside the Rust workspace, the documentation site
 Fumadocs) as a **self-contained** package: its own `package.json`,
 `pnpm-lock.yaml`, and pnpm settings all sit in that directory, and the repo
 root is pure cargo. The two toolchains share no code — the only thing that
-crosses between them is the brand palette, and that is generated by
-`docs/brand/build.py` (`make brand`), which writes both
-`stella-tui/src/palette.rs` and `website/src/app/tokens.css` and needs Python,
-not Node.
+crosses between them is the brand palette: `stella-tui/src/palette.rs` is the
+hand-maintained normative source, mirrored by `website/src/app/tokens.css`
+(`--stella-*`), and the two must be edited together.
 
 ## Development
 
@@ -750,7 +758,7 @@ commercial license removes those obligations. Contact <licensing@oxagen.sh>.
 
 [`LICENSING.md`](LICENSING.md) explains which track you are on and why. The
 [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
-is a separate project and stays **Apache-2.0** — depending on it does not put
-your project under the AGPL.
+is a separate project and stays permissive — **MIT OR Apache-2.0**, at your
+option — so depending on it does not put your project under the AGPL.
 
 Contributions require a [CLA](CLA.md); you keep your copyright.

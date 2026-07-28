@@ -57,6 +57,12 @@ DEFAULT_OUTPUT_DIR = "bench/results"
 # Fields required to run an instance. A subset of the full SWE-bench schema.
 REQUIRED_FIELDS = ("instance_id", "repo", "base_commit", "problem_statement")
 
+# Working-tree state the harness (or Stella's own bookkeeping) writes into the
+# checkout, always excluded from the collected diff: `.stella/` is per-workspace
+# agent state (memories, settings, telemetry), never part of the model's fix.
+# Git pathspecs match by directory prefix, so one entry covers the whole tree.
+HARNESS_EXCLUDES = (".stella",)
+
 # The top-level total cost key of Stella's --output-format json envelope. It
 # precedes the nested per-step usage events, so the first match is the total.
 _COST_RE = re.compile(r'"cost_usd"\s*:\s*([0-9]+(?:\.[0-9]+)?)')
@@ -170,7 +176,7 @@ def load_hf_instances(dataset_name: str, split: str) -> list[dict[str, Any]]:
     except ImportError as exc:
         raise SystemExit(
             "error: the `datasets` package is required to load from HuggingFace.\n"
-            "       Install it with `pip install -r bench/requirements.txt`,\n"
+            "       Install it with `pip install datasets`,\n"
             "       or pass a local file with --instances <path.jsonl>."
         ) from exc
     log(f"loading HuggingFace dataset {dataset_name} (split={split}) ...")
@@ -270,15 +276,13 @@ def prepare_workdir(
 def collect_patch(workdir: str, exclude_paths: list[str]) -> str:
     """Return the unified diff of the working tree relative to HEAD (base_commit).
 
-    New files are included by staging everything first. Optional pathspec
-    exclusions (e.g. agent scratch files) can be dropped from the diff.
+    New files are included by staging everything first. ``HARNESS_EXCLUDES``
+    (Stella's own ``.stella/`` workspace state) is always dropped from the
+    diff; ``exclude_paths`` adds optional caller pathspecs on top.
     """
     run_cmd(["git", "-C", workdir, "add", "-A"])
-    diff_cmd = ["git", "-C", workdir, "--no-pager", "diff", "--cached", "--no-color"]
-    if exclude_paths:
-        diff_cmd.append("--")
-        diff_cmd.append(".")
-        diff_cmd.extend(f":(exclude){p}" for p in exclude_paths)
+    diff_cmd = ["git", "-C", workdir, "--no-pager", "diff", "--cached", "--no-color", "--", "."]
+    diff_cmd.extend(f":(exclude){p}" for p in (*HARNESS_EXCLUDES, *exclude_paths))
     rc, out = run_cmd(diff_cmd)
     if rc != 0:
         log(f"  warning: `git diff` returned {rc} in {workdir}")
@@ -531,7 +535,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         dest="exclude_paths",
         default=[],
         metavar="PATHSPEC",
-        help="Pathspec to exclude from the collected diff (repeatable).",
+        help="Pathspec to exclude from the collected diff, on top of the "
+        "always-excluded .stella/ harness state (repeatable).",
     )
 
     p.add_argument(

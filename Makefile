@@ -110,7 +110,7 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 	@./scripts/smoke-serve-image.sh stella-serve:ci
 
 .PHONY: gate
-gate: no-scratch doc-citations invariants file-size doc-warnings format-check lint test ## Full CI gate: no-scratch + doc-citations + invariants + file-size + rustdoc + fmt-check + clippy + test
+gate: no-scratch action-pins doc-citations invariants file-size doc-warnings format-check lint test ## Full CI gate: no-scratch + action-pins + doc-citations + invariants + file-size + rustdoc + fmt-check + clippy + test
 
 .PHONY: check
 check: no-scratch action-pins invariants file-size format-check lint ## Fast pre-push check (scratch + pins + invariants + file-size + fmt + clippy, no tests)
@@ -120,7 +120,8 @@ hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
 	git config core.hooksPath .githooks
 	@chmod +x .githooks/* 2>/dev/null || true
 	@printf '\033[32m✔ hooks installed\033[0m — pre-push now runs the fmt+clippy+test gate.\n'
-	@printf '  Needed because org Actions is billing-locked and never runs the gate itself.\n'
+	@printf '  Catches a red gate on your machine, and is the only gate running when\n'
+	@printf '  Actions is unavailable (an org billing hold has happened before).\n'
 	@printf '  Bypass in emergencies: \033[36mSKIP_GATE=1 git push\033[0m (or \033[36mgit push --no-verify\033[0m).\n'
 
 .PHONY: docs
@@ -204,6 +205,10 @@ reap-agents: ## List orphaned stella agents/tool-subprocesses idle 20m+ (dry run
 reap-agents-kill: ## Kill orphaned stella agents/tool-subprocesses idle 20m+ (asks first)
 	scripts/reap-agents.sh
 
+# The supply-chain steps gate on the TOOL being present, not on its exit code:
+# a missing cargo-deny/cargo-audit soft-skips with a message, but a real
+# advisory/license/vulnerability failure from an installed tool fails the
+# target. (The old `cmd || printf` form swallowed genuine failures too.)
 .PHONY: audit
 audit: ## Run full codebase audit (clippy, tests, supply-chain, dead-code scan)
 	@printf '\033[1m=== Clippy ===\033[0m\n'
@@ -211,8 +216,16 @@ audit: ## Run full codebase audit (clippy, tests, supply-chain, dead-code scan)
 	@printf '\n\033[1m=== Tests ===\033[0m\n'
 	cargo test --workspace
 	@printf '\n\033[1m=== Supply chain ===\033[0m\n'
-	cargo deny check advisories bans sources licenses 2>/dev/null || printf '  \033[33mcargo-deny not installed — skipping\033[0m\n'
-	cargo audit 2>/dev/null || printf '  \033[33mcargo-audit not installed — skipping\033[0m\n'
+	@if command -v cargo-deny >/dev/null 2>&1; then \
+		cargo deny check advisories bans sources licenses; \
+	else \
+		printf '  \033[33mcargo-deny not installed — skipping (cargo install cargo-deny)\033[0m\n'; \
+	fi
+	@if command -v cargo-audit >/dev/null 2>&1; then \
+		cargo audit; \
+	else \
+		printf '  \033[33mcargo-audit not installed — skipping (cargo install cargo-audit)\033[0m\n'; \
+	fi
 	@printf '\n\033[1m=== Unused dependencies ===\033[0m\n'
 	cargo udeps --workspace 2>/dev/null || printf '  \033[33mcargo-udeps not installed — run: cargo install cargo-udeps\033[0m\n'
 	@printf '\n\033[32m✔ Audit complete.\033[0m\n'
