@@ -154,3 +154,6 @@ verifications/
 # generated SVG/PNG assets it writes ARE tracked.
 docs/brand/.cache/
 docs/brand/__pycache__/
+
+# Terminal recordings (scripts/record-demo.sh)
+/recordings/

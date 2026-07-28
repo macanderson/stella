@@ -16,7 +16,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+# Turn ids must be unguessable, not merely unique: a sequential id makes every
+# other live turn addressable to anyone who sees one in a log. Already a
+# workspace dependency (stella-core, stella-store, stella-tools, stella-mcp).
+rand.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
+# `test-util` gives the paused clock, which is what makes the 30s read deadline
+# assertable in microseconds instead of thirty real seconds of CI time.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net", "io-util", "test-util"] }

@@ -39,6 +39,8 @@ mod global;
 use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -62,6 +64,23 @@ const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
 /// `style-src` would silently strip the layout. `frame-ancestors 'none'`
 /// complements the existing Host check: a rebound page cannot frame the
 /// dashboard either.
+/// How long a peer has to deliver a complete request head.
+///
+/// Without it, a connection that opens and then says nothing occupies a task
+/// forever. Ten seconds is generous for a request head from a browser on
+/// loopback, and the dashboard has no long-lived response for this to endanger
+/// — every route answers once and closes.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Connections served at once.
+///
+/// A semaphore is safe here in a way it is not in `stella-serve`: nothing the
+/// observatory serves is a long-lived stream, so a permit is held for one
+/// request rather than for a whole turn, and bounding connections cannot
+/// deadlock a protocol against itself. 64 is far past what one dashboard page
+/// opens while keeping the blocking-pool fan-out bounded.
+const MAX_LIVE_CONNECTIONS: usize = 64;
+
 const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; \
      style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; \
      base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -199,6 +218,14 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
     };
     match result {
         Ok(value) => Response::json(value),
+        // Ruling (#615): the 500 body **keeps its detail**. The alternative —
+        // a generic string, with the real error logged — assumes an audience
+        // split between "the attacker who sees the response" and "the operator
+        // who reads the log". Here there is no such split: the listener is
+        // loopback-only, read-only, and Host-gated against DNS rebinding, so
+        // the only party who can read this body is the person whose workspace
+        // it describes. Redacting would make the dashboard undiagnosable for
+        // its sole reader while denying an attacker who cannot reach it.
         Err(e) => Response::error("500 Internal Server Error", &e.to_string()),
     }
 }
@@ -274,6 +301,7 @@ pub async fn serve(
         .map_err(|source| ServeError::Bind { port, source })?;
     let addr = listener.local_addr().map_err(ServeError::Accept)?;
     on_ready(addr);
+    let connections = Arc::new(tokio::sync::Semaphore::new(MAX_LIVE_CONNECTIONS));
     let mut backoff = AcceptBackoff::new();
     loop {
         let stream = match listener.accept().await {
@@ -300,11 +328,22 @@ pub async fn serve(
                 AcceptAction::Fatal => return Err(ServeError::Accept(err)),
             },
         };
+        // Bounded concurrency. Unlike `stella-serve`, nothing here is a
+        // long-lived stream — every response is one shot and closes — so a
+        // permit is held for a single request and a semaphore cannot starve a
+        // protocol against itself. A connection that cannot get a permit waits
+        // rather than being refused: the dashboard is a local tool, and a brief
+        // queue is a better answer than an error the page has to render.
+        let permit = Arc::clone(&connections)
+            .acquire_owned()
+            .await
+            .expect("connection semaphore is never closed");
         let root = workspace_root.clone();
         tokio::spawn(async move {
             // Per-connection errors (bad request line, client hangup) only
             // affect that connection; the accept loop keeps serving.
             let _ = handle(stream, &root).await;
+            drop(permit);
         });
     }
 }
@@ -341,8 +380,19 @@ fn host_is_local(head: &str) -> bool {
         || hostname == "localhost"
 }
 
-/// Read one request head, answer it, close. GET only, 8 KiB head cap.
-async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
+/// Read one request head, answer it, close. GET only, 8 KiB head cap,
+/// [`READ_TIMEOUT`] to deliver it.
+async fn handle(stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
+    match tokio::time::timeout(READ_TIMEOUT, handle_inner(stream, workspace_root)).await {
+        Ok(result) => result,
+        // The peer never finished its head. Dropping the connection is the whole
+        // remedy: there is nobody to tell, because a client that cannot send a
+        // request head in ten seconds is not waiting for a status code.
+        Err(_elapsed) => Ok(()),
+    }
+}
+
+async fn handle_inner(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
     let mut buf = vec![0_u8; 8192];
     let mut read = 0;
     let mut head_complete = false;
@@ -389,7 +439,17 @@ async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result
         // carries the attacker's hostname in Host; refuse anything non-loopback.
         Response::error("403 Forbidden", "forbidden Host header")
     } else if method == "GET" {
-        respond(workspace_root, path)
+        // `respond` opens SQLite and walks the workspace tree — blocking work
+        // that would otherwise hold a reactor worker for the whole query, and
+        // the dashboard polls. The semaphore above bounds how many of these can
+        // be on the blocking pool at once.
+        let root = workspace_root.to_path_buf();
+        let route = path.to_string();
+        tokio::task::spawn_blocking(move || respond(&root, &route))
+            .await
+            .unwrap_or_else(|_| {
+                Response::error("500 Internal Server Error", "dashboard query failed")
+            })
     } else {
         Response::error("405 Method Not Allowed", "GET only")
     };

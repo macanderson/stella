@@ -1,0 +1,225 @@
+# Enforceable context ships with a witness.
+#
+# Stella's definition of done, from .github/PULL_REQUEST_TEMPLATE.md, is "a test
+# that fails on the old code and passes on the new." A Context PR that promotes a
+# rule to `blocking` is shipping enforcement logic, so it is held to the same bar.
+#
+# This file exists because the guard in 01-constraint-decreed.toml was wrong when
+# it was written, and nothing could have told us. It said:
+#
+#     guard_deny_command = "npm install*|npm ci*|yarn *"
+#
+# stella-core's matcher supports `*` and nothing else — "every other character is
+# a literal" (stella-core/src/glob.rs:1-6). So `|` is a literal pipe, and that
+# pattern matches no real command. The rule advertised Tier 2 enforcement, showed
+# up in the prompt marked [enforced], and blocked exactly zero tool calls. A
+# two-line witness would have caught it before it was ever committed.
+#
+# The witness is safe to require even on ingested records: evaluate_guards is a
+# pure function over ProposedAction { tool, path, command }, so a guard witness is
+# a table of inputs and expected verdicts, not a script. Checking one executes no
+# shell and touches no network.
+
+schema = "context-witness/v0.1"
+set_id = "acme.web"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A. A correct, bidirectional witness
+#
+# Both directions are mandatory. A witness that only asserts the deny case is
+# worthless — an over-broad glob passes it while blocking the world (see C).
+# ─────────────────────────────────────────────────────────────────────────────
+[[record]]
+lineage_id = "ctx.acme.web.pkg-manager"
+statement  = "This repository uses pnpm exclusively; npm and yarn must not be used."
+
+  [record.enforcement]
+  mode               = "hard"
+  guard_tool         = "Bash"
+  guard_deny_command = "npm *"
+
+  # Positive: the thing the rule exists to stop.
+  [[record.witness]]
+  tool    = "Bash"
+  command = "npm install --save-dev typescript"
+  expect  = "blocked"
+
+  [[record.witness]]
+  tool    = "Bash"
+  command = "npm ci"
+  expect  = "blocked"
+
+  # Negative: the thing the rule must not stop. Without these, C passes.
+  [[record.witness]]
+  tool    = "Bash"
+  command = "pnpm install"
+  expect  = "allowed"
+
+  [[record.witness]]
+  tool    = "Bash"
+  command = "pnpm add -D typescript"
+  expect  = "allowed"
+
+  # A different tool entirely must be unaffected by a Bash guard.
+  [[record.witness]]
+  tool   = "Edit"
+  path   = "package.json"
+  expect = "allowed"
+
+  # Known gap, asserted rather than left to chance: `npm *` requires the trailing
+  # space, so a bare `npm` is not blocked. Writing it down as an expectation means
+  # a future glob change that "fixes" this fails the witness and gets reviewed,
+  # instead of silently widening enforcement.
+  [[record.witness]]
+  tool    = "Bash"
+  command = "npm"
+  expect  = "allowed"
+
+  # Yarn needs its own record. The matcher has no alternation, so one guard
+  # cannot express "npm or yarn" — a constraint that is invisible until you try
+  # to write the witness for it.
+  [record.coverage]
+  note = "yarn is not covered by this record; see ctx.acme.web.no-yarn"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B. The inert guard, caught
+#
+# This is 01's original pattern. It is syntactically fine, reads correctly to a
+# human, renders as [enforced], and matches nothing.
+# ─────────────────────────────────────────────────────────────────────────────
+[[broken]]
+lineage_id = "ctx.acme.web.pkg-manager"
+failure    = "inert_guard"
+reason     = "`|` is a literal character; the matcher's only wildcard is `*`."
+
+  [broken.enforcement]
+  guard_tool         = "Bash"
+  guard_deny_command = "npm install*|npm ci*|yarn *"
+
+  [[broken.witness]]
+  tool     = "Bash"
+  command  = "npm install --save-dev typescript"
+  expect   = "blocked"
+  actual   = "allowed"     # ← the witness fails here, which is the point
+
+  [[broken.witness]]
+  tool     = "Bash"
+  command  = "yarn add typescript"
+  expect   = "blocked"
+  actual   = "allowed"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. Over-broad guard: passes its positive case, fails its negative one
+#
+# This is why one-directional witnesses are worthless. Every deny assertion below
+# passes. The rule still blocks every Bash call in the repository.
+# ─────────────────────────────────────────────────────────────────────────────
+[[broken]]
+lineage_id = "ctx.acme.web.no-force-push"
+failure    = "over_broad_guard"
+reason     = "A bare `*` command glob blocks the tool entirely, not just force pushes."
+
+  [broken.enforcement]
+  guard_tool         = "Bash"
+  guard_deny_command = "*"
+
+  [[broken.witness]]
+  tool    = "Bash"
+  command = "git push --force origin main"
+  expect  = "blocked"
+  actual  = "blocked"      # positive case passes — and proves nothing
+
+  [[broken.witness]]
+  tool    = "Bash"
+  command = "cargo test"
+  expect  = "allowed"
+  actual  = "blocked"      # ← only the negative case exposes it
+
+  [[broken.witness]]
+  tool    = "Bash"
+  command = "git push origin main"
+  expect  = "allowed"
+  actual  = "blocked"
+
+  # The correct pattern, with the witness it would need.
+  [broken.suggested]
+  guard_deny_command = "git push --force*"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. The mutation check
+#
+# A witness that passes with the rule removed is not testing the rule. Normally
+# mutation testing is expensive; here the mutation is dropping one element from
+# the rule slice before calling evaluate_guards, so the engine can run this
+# automatically on every Context PR.
+#
+# Run each `blocked` expectation twice: once with the record present, once with
+# it removed. The second run must fail.
+# ─────────────────────────────────────────────────────────────────────────────
+[mutation]
+applies_to = "every witness case with expect = \"blocked\""
+rule       = "with the record removed from the rule slice, the case must NOT be blocked"
+rationale  = "otherwise some other record is doing the blocking and this witness proves nothing about this record"
+
+  # A witness that survives its own mutation — the failure this catches.
+  [[mutation.example]]
+  lineage_id = "ctx.acme.web.no-npm-audit"
+  guard_deny_command = "npm audit*"
+  case       = "npm audit fix"
+  with_record    = "blocked"
+  without_record = "blocked"   # ← ctx.acme.web.pkg-manager's `npm *` already blocks it
+  verdict    = "witness_not_discriminating"
+  note       = "The record is redundant with an existing broader guard. Merge or drop it."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. `required` rules: a fixture set, and a weaker guarantee
+#
+# A `required` rule is Tier 1 plus a completion check. It is not guard-evaluable,
+# so its witness cannot be a pure-function table — it is a graded fixture set
+# judged by a model.
+#
+# That is evidence, not proof, and it is labelled as such for the same reason
+# `unfalsifiable` is a visible verdict rather than a hidden one: a weaker
+# guarantee that looks like a strong one is worse than no guarantee.
+# ─────────────────────────────────────────────────────────────────────────────
+[[record]]
+lineage_id = "ctx.acme.web.pr-descriptions"
+statement  = "A PR description's first paragraph states why the change exists and what breaks without it."
+
+  [record.enforcement]
+  mode     = "soft"
+  check    = "model"
+  rubric   = "First paragraph states motivation or consequence-of-inaction, not a file list."
+
+  [record.witness]
+  kind      = "fixture_set"
+  guarantee = "evidence"      # never "proof" — a model grades these
+  agreement_threshold = 80    # % of fixtures the grader must classify correctly
+
+    [[record.witness.fixture]]
+    label  = "motivation-first"
+    text   = "Refund webhooks silently drop retries, so customers see duplicate charges. This adds idempotency keys."
+    expect = "pass"
+
+    [[record.witness.fixture]]
+    label  = "file-list"
+    text   = "Updates refunds.ts, adds a test, bumps the changelog."
+    expect = "fail"
+
+    [[record.witness.fixture]]
+    label  = "consequence-of-inaction"
+    text   = "Without this, the nightly job keeps timing out and on-call gets paged."
+    expect = "pass"
+
+    # The adversarial fixture. A grader that pattern-matches on the word
+    # "because" rather than reading for motivation passes the first three and
+    # fails this one.
+    [[record.witness.fixture]]
+    label  = "because-but-still-a-file-list"
+    text   = "Because we needed to, this changes refunds.ts, refunds.test.ts, and the changelog."
+    expect = "fail"

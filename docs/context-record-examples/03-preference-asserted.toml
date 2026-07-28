@@ -1,0 +1,84 @@
+# A preference: real steering force, but nothing in the repository can refute
+# it. "PR descriptions should lead with the why" has no fact of the matter to
+# check — only compliance to measure.
+#
+# This is the honest shape for the majority of useful steering, and the reason
+# the refutation verdict must be three-valued. A refuter that returned
+# pass/fail here would return "pass" for a claim it never examined.
+#
+# Hand-authored: `record_id` and `record_hash` are absent on purpose. The loader
+# computes and stamps them on first validation. A later semantic edit whose
+# stored hash no longer matches the recomputed one creates a new revision rather
+# than silently overwriting the old record.
+
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+sharing_scope = "repository"
+status        = "active"
+origin        = "user"
+
+[defaults.provenance]
+source_kind = "authored"
+authored_by = "@dana"
+
+
+[[record]]
+lineage_id = "ctx.acme.web.pr-descriptions"
+kind       = "preference"
+statement  = "A PR description's first paragraph states why the change exists and what breaks without it."
+tags       = ["review", "writing"]
+
+  [record.steering]
+  force         = "should"
+  precedence    = 40
+  applies_to    = { tasks = ["open-pr", "write-pr-description"] }
+
+  [record.enforcement]
+  mode     = "soft"
+  check    = "model"
+  rubric   = "First paragraph states motivation or consequence-of-inaction, not a file list."
+  severity = "warn"
+  on_violation = "Rewrite the opening paragraph to lead with intent."
+
+  [record.truth]
+  basis      = "asserted"
+  confidence = 80
+  owner      = "@dana"
+  valid_from = 2026-03-11T00:00:00Z
+
+    # The only honest probe for a normative claim. `unfalsifiable` is a verdict,
+    # not a failure — it tells a reviewer this record's accuracy was never
+    # machine-checked and never will be.
+    [record.truth.probe]
+    kind    = "manual"
+    verdict = "unfalsifiable"
+    note    = "Normative preference. Measure compliance over merged PRs; do not attempt refutation."
+
+
+# A personal record, in the same shape. `sharing_scope = "personal"` is the only
+# thing that keeps it out of git — it lives in .stella/private/context.db and is
+# never materialized to a file. It appears here only to show that the record
+# type is universal and scope alone decides the substrate.
+[[record]]
+lineage_id    = "ctx.acme.web.my-review-order"
+kind          = "preference"
+sharing_scope = "personal"
+statement     = "When reviewing a PR, read the test changes before the implementation changes."
+
+  [record.steering]
+  force      = "may"
+  precedence = 10
+  applies_to = { tasks = ["review-pr"] }
+
+  [record.enforcement]
+  mode = "none"
+
+  [record.truth]
+  basis      = "asserted"
+  confidence = 70
+
+    [record.truth.probe]
+    kind    = "manual"
+    verdict = "unfalsifiable"

@@ -62,19 +62,48 @@ jobs:
     # Bundled SQLite (stella-store, rusqlite) and tree-sitter grammars are
     # heavy C compiles on a cold cache; rust-cache keeps warm runs fast.
     timeout-minutes: 60
+    # Every gate below reports independently. A step here is a *verdict*, not a
+    # prerequisite for the next one: fmt failing tells you nothing about clippy,
+    # and the 1500-line ratchet tells you nothing about either. GitHub's default
+    # — abort the job at the first non-zero exit — collapses all of them into
+    # whichever happened to be ordered first, so a one-line baseline overage
+    # ended a run in 9s with fmt, clippy, doc, test and the release smoke never
+    # having run. You fix that, push, and only then learn what else was red:
+    # one round trip per failure, serialized, at ~10 min a lap.
+    #
+    # So every gate carries `if: !cancelled()`, which runs it whether or not an
+    # earlier gate failed. The job still goes red — these are not
+    # `continue-on-error`, each failure is still a failure and `fmt + clippy +
+    # test` is a required context — you just get the whole list in one run.
+    #
+    # Not `always()`: this workflow sets cancel-in-progress for pull_request
+    # (see the concurrency block), and `always()` would keep a superseded run
+    # grinding through the release build after a newer push had cancelled it.
+    # `!cancelled()` respects cancellation and differs from `always()` only
+    # there.
+    #
+    # Setup steps are the exception, and stay real prerequisites: the guards are
+    # meaningless without a checkout, and the cargo gates are meaningless
+    # without a toolchain — an ubuntu-latest runner ships a preinstalled Rust,
+    # so a failed `Install Rust stable` would otherwise let fmt and clippy run
+    # green on the wrong toolchain. Hence the explicit `steps.<id>.outcome`
+    # guards rather than a bare `!cancelled()` on those.
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Cheap and toolchain-free, so it runs before the Rust setup: a tracked
       # file that matches .gitignore means agent scratch reached the remote
       # (#448), or an ignore rule is too broad to ever accept new files.
       - name: no tracked file is gitignored
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-no-scratch.sh
 
       # Also toolchain-free, so it runs before the Rust setup: a floating
       # `uses:` ref lets the action's owner change what runs with this job's
       # secrets. Pinning is only durable if something re-checks it (#648).
       - name: every workflow action is pinned to a commit SHA
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-action-pins.sh
 
       # Also toolchain-free. Three fleet plans asserted a 1500-line file ratchet
@@ -83,31 +112,40 @@ jobs:
       # grandfathered with per-file ceilings; this blocks new bloat and any
       # further growth of the known ones.
       - name: no new .rs file over the 1500-line ratchet
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-file-size.sh
 
       - name: Install Rust stable
+        id: rust
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: cargo fmt --check
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo fmt --check
 
       - name: cargo clippy -D warnings
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       # Nothing gated rustdoc, so its warning count only grew — one crate's doc
       # link to a private fn had made `cargo doc` a hard failure, unnoticed
       # (#634). Gating is what stops it regrowing.
       - name: cargo doc -D warnings
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
       - name: cargo test
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo test --workspace
 
       - name: cargo build (release smoke, thin LTO)
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo build --workspace --release --config 'profile.release.lto="thin"' --config 'profile.release.codegen-units=16'
 
   supply-chain:

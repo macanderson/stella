@@ -1,0 +1,71 @@
+# record-demo.yml — record a terminal timelapse of stella in the cloud.
+#
+# Manually dispatched. Runs a command (default: the multi-hour marathon in
+# scripts/demo-scenario.sh) under asciinema on a fresh runner, renders it
+# into a timelapse gif/mp4 via scripts/record-demo.sh, and uploads the
+# .cast/.gif/.mp4 as a build artifact.
+#
+# The recorder's --limit is deliberately set below the job timeout so the
+# render + upload steps always run before GitHub reclaims the runner; for a
+# short video, dispatch with a small limit_minutes (e.g. 10) and a small
+# target_seconds. The .cast grows with output, not wall-clock time, so even
+# a full-length run produces a small artifact.
+
+name: record-demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: Command to record
+        required: false
+        default: scripts/demo-scenario.sh
+      limit_minutes:
+        description: Wall-clock cap in minutes (must stay below the job timeout)
+        required: false
+        default: "320"
+      target_seconds:
+        description: Rendered video length in seconds
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Install recording tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends asciinema ffmpeg
+
+      # The recorded command is passed through the environment, not
+      # interpolated into the shell line, so quoting in the dispatch input
+      # can't break (or become) the script.
+      - name: Record and render
+        env:
+          RECORD_CMD: ${{ inputs.command }}
+          LIMIT: ${{ inputs.limit_minutes }}
+          TARGET: ${{ inputs.target_seconds }}
+        run: |
+          scripts/record-demo.sh \
+            --name demo \
+            --limit "$LIMIT" \
+            --target "$TARGET" \
+            -- bash -c "$RECORD_CMD"
+
+      - name: Upload recording
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: stella-demo-recording
+          path: recordings/
+          if-no-files-found: error

@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>Agents forget. Fleets drift. Stella doesn't.</strong></p>
+<p align="center"><strong>Fully Autonomous Software Delivery with Deterministic Verification Ladder</strong></p>
 <p align="center">Open Source · Rust · BYOK · No Phone Home</p>
 
 <p align="center">
@@ -22,12 +22,13 @@
   <a href="https://stella.oxagen.sh/docs/getting-started/installation"><b>Quickstart</b></a>
 </p>
 
-Stella is an open-source, bring-your-own-key (BYOK) coding agent that runs in
-your terminal. It supports nine hosted model providers plus any local
-OpenAI-compatible server, keeps canonical telemetry in a local SQLite database,
-and enforces a hard per-run budget. Community/default installs have zero
-telemetry egress. An explicitly enrolled Oxagen Enterprise managed install may
-export only a minimal operational rollup under the governed boundary described
+Ship deterministically verified code fully autonomously with Stella, a self-improving
+next generation coding agent. Stella is an open-source, bring-your-own-key (BYOK)
+coding agent that runs in your terminal. It supports nine hosted model
+providers plus any local OpenAI-compatible server, keeps canonical telemetry
+in a local SQLite database, and enforces a hard per-run budget. Community/default
+installs have zero telemetry egress. An explicitly enrolled Oxagen Enterprise
+managed install may export only a minimal operational rollup under the governed boundary described
 below. It is built in Rust as a workspace of focused crates.
 
 ## Features
@@ -444,7 +445,7 @@ are also accepted case-insensitively.
 | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `read_file` · `write_file` · `edit_file` · `delete_file`                                                                                 | File CRUD with surgical exact-substring edits                                                                                                                                                                                                                                                    |
 | `apply_edits`                                                                                                                            | One transactional batch of exact-substring edits across many files — every edit validates first, and if any fails nothing is written (`dry_run` validates without writing)                                                                                                                       |
-| `bash`                                                                                                                                   | Run a shell command (timeout kill; `trace: true` echoes each line) — **registered by default**, withheld with `"tools": {"bash": "off"}` in settings (any scope)                                                                                                                                  |
+| `bash`                                                                                                                                   | Run a shell command (timeout kill; `trace: true` echoes each line) — **registered by default**, withheld with `"tools": {"bash": "off"}` in settings (any scope)                                                                                                                                 |
 | `grep` · `glob`                                                                                                                          | Regex content search (ripgrep) · glob file discovery (fd)                                                                                                                                                                                                                                        |
 | `graph_query`                                                                                                                            | Query the indexed code graph: symbol definitions/references, file imports/importers/neighborhood — auto-built at session start, refreshed live                                                                                                                                                   |
 | `read_symbol`                                                                                                                            | Read a named symbol's exact source span, resolved through the code graph — no line-offset guessing; multiple definitions are listed, never silently picked                                                                                                                                       |

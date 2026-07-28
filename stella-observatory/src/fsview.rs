@@ -12,6 +12,7 @@
 //!    sensitive-looking key (and every value under `env`/`headers` maps)
 //!    before the JSON is serialized into a response.
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -80,7 +81,9 @@ fn frontmatter_fields(text: &str) -> (Option<String>, Option<String>) {
 
 /// One skill entry from a markdown file.
 fn skill_entry(path: &Path, scope: &str, learned: bool) -> Option<Value> {
-    let text = std::fs::read_to_string(path).ok()?;
+    // Only the frontmatter block is read out of this, so a bounded head read is
+    // equivalent for any file whose frontmatter is not itself 64 KiB.
+    let text = read_head(path)?;
     let (name, description) = frontmatter_fields(&text);
     let stem = path
         .file_stem()
@@ -111,13 +114,13 @@ fn scan_skills_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    for entry in entries.flatten() {
+    for entry in entries.flatten().take(MAX_DIR_ENTRIES) {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
             if name == "learned" {
                 if let Ok(learned) = std::fs::read_dir(&path) {
-                    for file in learned.flatten() {
+                    for file in learned.flatten().take(MAX_DIR_ENTRIES) {
                         let p = file.path();
                         if p.extension().is_some_and(|e| e == "md") {
                             out.extend(skill_entry(&p, scope, true));
@@ -181,16 +184,19 @@ fn markdown_cards(dir: &Path, snippet_len: usize) -> Vec<Value> {
     };
     let mut rows: Vec<Value> = entries
         .flatten()
+        .take(MAX_DIR_ENTRIES)
         .filter_map(|entry| {
             let path = entry.path();
             if path.extension().is_none_or(|e| e != "md") {
                 return None;
             }
-            let text = std::fs::read_to_string(&path).ok()?;
+            let text = read_head(&path)?;
             Some(json!({
                 "name": path.file_stem().map(|s| s.to_string_lossy().into_owned())?,
                 "snippet": snippet(&text, snippet_len),
-                "bytes": text.len(),
+                // From metadata, not from `text.len()`: the read is capped but
+                // the size the dashboard displays must stay the real one.
+                "bytes": file_len(&path),
                 "modified_unix": mtime_unix(&path),
             }))
         })
@@ -539,6 +545,60 @@ pub fn config(workspace_root: &Path) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The card read is bounded, but `bytes` must still be the file's real
+    /// size — otherwise bounding the read would silently start lying to the
+    /// dashboard about how big a memory is, which is the objection that
+    /// deferred this row in the first place.
+    #[test]
+    fn a_huge_card_is_read_bounded_but_still_reports_its_true_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = "x".repeat(300 * 1024);
+        std::fs::write(dir.path().join("huge.md"), &big).unwrap();
+
+        let rows = markdown_cards(dir.path(), 40);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0]["bytes"].as_u64(),
+            Some(big.len() as u64),
+            "reported size comes from metadata, not from the capped read"
+        );
+        let snippet = rows[0]["snippet"].as_str().unwrap();
+        assert!(
+            snippet.chars().count() <= 41,
+            "snippet stays capped: {} chars",
+            snippet.chars().count()
+        );
+    }
+
+    /// A directory that has grown pathological must degrade the dashboard, not
+    /// stall the request that walks it synchronously.
+    #[test]
+    fn a_pathological_directory_scan_stops_at_the_entry_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..(MAX_DIR_ENTRIES + 50) {
+            std::fs::write(dir.path().join(format!("m{i:04}.md")), "body").unwrap();
+        }
+        let rows = markdown_cards(dir.path(), 40);
+        assert!(
+            rows.len() <= MAX_DIR_ENTRIES,
+            "scan must stop at the bound, got {} rows",
+            rows.len()
+        );
+    }
+
+    #[test]
+    fn a_bounded_read_never_exceeds_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.md");
+        std::fs::write(&path, "y".repeat(500 * 1024)).unwrap();
+        let text = read_head(&path).unwrap();
+        assert!(
+            text.len() as u64 <= MAX_SNIPPET_READ_BYTES,
+            "read {} bytes, cap is {MAX_SNIPPET_READ_BYTES}",
+            text.len()
+        );
+    }
 
     #[test]
     fn frontmatter_extracts_name_and_description() {

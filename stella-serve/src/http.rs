@@ -7,7 +7,9 @@
 //! SSE writer that streams frames until the turn ends and then closes. Enough
 //! for a governed sidecar behind the host, not a general-purpose server.
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::time::Duration;
+
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// Cap applied to the request head and to the body, **each** — `read_request`
@@ -50,17 +52,38 @@ impl Request {
     }
 }
 
-/// Read and parse one request (head + `Content-Length` body). Returns `None` on
-/// a clean early hangup or a malformed/over-cap request — the caller closes the
-/// connection without a response, exactly as the observatory does.
+/// What one read attempt produced.
 ///
-/// Note the cost of that silence on the over-cap path: a host whose POST exceeds
-/// [`MAX_REQUEST_BYTES`] sees a bare connection close, not a 413, so it cannot
-/// distinguish "too large" from a crashed peer — and if the POST was a
-/// `tool-result`, the engine step it would have answered stays parked. Callers
-/// sizing a turn body (an assembled conversation) or a tool output against this
-/// cap should treat it as a hard limit, not a soft one.
-pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
+/// The point of this enum is that the caller can tell these apart. They used to
+/// collapse into a bare `None`, so a host whose POST was one byte over the cap
+/// got the same silent connection close as a crashed peer — and if that POST was
+/// a `tool-result`, the engine step it would have answered stayed parked with no
+/// way to learn why.
+pub(crate) enum ReadOutcome {
+    /// A complete, parseable request.
+    Request(Box<Request>),
+    /// The peer closed before sending a complete head. No response is owed.
+    Hangup,
+    /// Head or body exceeded its cap — answer 413.
+    TooLarge,
+    /// Bytes arrived but do not form a request line — answer 400.
+    Malformed,
+    /// The peer did not finish within [`READ_TIMEOUT`] — answer 408.
+    Timeout,
+}
+
+/// Read and parse one request (head + `Content-Length` body), bounded by
+/// [`READ_TIMEOUT`], [`MAX_HEAD_BYTES`] and [`MAX_BODY_BYTES`].
+pub(crate) async fn read_request<S: AsyncRead + Unpin>(
+    stream: &mut S,
+) -> std::io::Result<ReadOutcome> {
+    match tokio::time::timeout(READ_TIMEOUT, read_request_inner(stream)).await {
+        Ok(result) => result,
+        Err(_elapsed) => Ok(ReadOutcome::Timeout),
+    }
+}
+
+async fn read_request_inner<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<ReadOutcome> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0_u8; 8192];
     // Rescanning the whole buffer after every read would be quadratic in the
@@ -71,13 +94,20 @@ pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Opti
         if let Some(pos) = find_head_end(&buf[scanned..]) {
             break scanned + pos;
         }
-        if buf.len() > MAX_REQUEST_BYTES {
-            return Ok(None);
+        if buf.len() > MAX_HEAD_BYTES {
+            return Ok(ReadOutcome::TooLarge);
         }
         scanned = buf.len().saturating_sub(3);
         let n = stream.read(&mut chunk).await?;
         if n == 0 {
-            return Ok(None);
+            // Nothing at all means a probe or a dropped connection: no response
+            // is owed. Bytes that stop mid-head are a truncated request, which
+            // the peer should be told about.
+            return Ok(if buf.is_empty() {
+                ReadOutcome::Hangup
+            } else {
+                ReadOutcome::Malformed
+            });
         }
         buf.extend_from_slice(&chunk[..n]);
     };
@@ -87,7 +117,7 @@ pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Opti
     let request_line = lines.next().unwrap_or_default();
     let mut req_parts = request_line.split_whitespace();
     let (Some(method), Some(path)) = (req_parts.next(), req_parts.next()) else {
-        return Ok(None);
+        return Ok(ReadOutcome::Malformed);
     };
 
     let mut headers = Vec::new();
@@ -107,8 +137,8 @@ pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Opti
         .find(|(k, _)| k == "content-length")
         .and_then(|(_, v)| v.parse::<usize>().ok())
         .unwrap_or(0);
-    if content_length > MAX_REQUEST_BYTES {
-        return Ok(None);
+    if content_length > MAX_BODY_BYTES {
+        return Ok(ReadOutcome::TooLarge);
     }
 
     let body_start = head_end + 4;
@@ -122,12 +152,12 @@ pub(crate) async fn read_request(stream: &mut TcpStream) -> std::io::Result<Opti
     }
     body.truncate(content_length);
 
-    Ok(Some(Request {
+    Ok(ReadOutcome::Request(Box::new(Request {
         method: method.to_string(),
         path: path.to_string(),
         headers,
         body,
-    }))
+    })))
 }
 
 fn find_head_end(buf: &[u8]) -> Option<usize> {
@@ -140,10 +170,28 @@ pub(crate) async fn write_json(
     status: &str,
     body: &[u8],
 ) -> std::io::Result<()> {
-    let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+    write_json_with_headers(stream, status, &[], body).await
+}
+
+/// [`write_json`] plus caller-supplied headers, for the responses that carry one
+/// (`Retry-After` on a 429). Each pair is emitted verbatim as `name: value`.
+pub(crate) async fn write_json_with_headers(
+    stream: &mut TcpStream,
+    status: &str,
+    extra: &[(&str, &str)],
+    body: &[u8],
+) -> std::io::Result<()> {
+    let mut head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n",
         body.len(),
     );
+    for (name, value) in extra {
+        head.push_str(name);
+        head.push_str(": ");
+        head.push_str(value);
+        head.push_str("\r\n");
+    }
+    head.push_str("\r\n");
     stream.write_all(head.as_bytes()).await?;
     stream.write_all(body).await?;
     stream.shutdown().await
@@ -202,5 +250,109 @@ mod tests {
         assert_eq!(request_with_auth("Basic dXNlcjpwdw==").bearer(), None);
         assert_eq!(request_with_auth("Bearer").bearer(), None);
         assert_eq!(request_with_auth("").bearer(), None);
+    }
+
+    /// A reader that accepts the connection and then never produces a byte —
+    /// the "slowloris" shape the read deadline exists to bound.
+    struct NeverReady;
+
+    impl AsyncRead for NeverReady {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    /// A peer that opens a connection and then says nothing used to hold the
+    /// spawned task forever — and `server.rs` spawns that task *before* auth, so
+    /// it cost nothing to do at scale. The paused clock makes the 30s deadline
+    /// assertable in microseconds: [`NeverReady`] never becomes ready, so the
+    /// runtime idles and auto-advances virtual time to the timer.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_that_never_finishes_its_head_is_timed_out() {
+        let mut silent = NeverReady;
+        let outcome = read_request(&mut silent).await.expect("read");
+        assert!(
+            matches!(outcome, ReadOutcome::Timeout),
+            "a silent peer must hit the read deadline, not park forever",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_clean_hangup_is_owed_no_response() {
+        let mut nothing = &b""[..];
+        assert!(matches!(
+            read_request(&mut nothing).await.expect("read"),
+            ReadOutcome::Hangup
+        ));
+    }
+
+    /// Bytes that stop mid-head are a truncated request, not a probe: the peer
+    /// is still there and can be told. Collapsing this into `Hangup` is what made
+    /// a dropped `tool-result` indistinguishable from a crashed host.
+    #[tokio::test]
+    async fn a_truncated_head_is_malformed_rather_than_a_hangup() {
+        let mut truncated = &b"POST /v1/turns HTTP/1.1\r\nHost: engine"[..];
+        assert!(matches!(
+            read_request(&mut truncated).await.expect("read"),
+            ReadOutcome::Malformed
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_request_line_without_a_path_is_malformed() {
+        let mut garbage = &b"NOTHTTP\r\n\r\n"[..];
+        assert!(matches!(
+            read_request(&mut garbage).await.expect("read"),
+            ReadOutcome::Malformed
+        ));
+    }
+
+    /// The declared body size is rejected on the header, before a single body
+    /// byte is buffered — otherwise the cap would be enforced by first paying it.
+    #[tokio::test]
+    async fn an_over_cap_content_length_is_too_large_and_is_never_buffered() {
+        let declared = MAX_BODY_BYTES + 1;
+        let head = format!(
+            "POST /v1/turns HTTP/1.1\r\nHost: engine\r\nContent-Length: {declared}\r\n\r\n"
+        );
+        let mut stream = head.as_bytes();
+        assert!(matches!(
+            read_request(&mut stream).await.expect("read"),
+            ReadOutcome::TooLarge
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_over_cap_head_is_too_large() {
+        let mut head = String::from("GET / HTTP/1.1\r\n");
+        while head.len() <= MAX_HEAD_BYTES {
+            head.push_str("X-Filler: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n");
+        }
+        let mut stream = head.as_bytes();
+        assert!(matches!(
+            read_request(&mut stream).await.expect("read"),
+            ReadOutcome::TooLarge
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_well_formed_request_still_parses_with_its_body() {
+        let body = r#"{"provider_id":"mock"}"#;
+        let raw = format!(
+            "POST /v1/turns HTTP/1.1\r\nHost: engine\r\nAuthorization: Bearer tok\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len(),
+        );
+        let mut stream = raw.as_bytes();
+        let ReadOutcome::Request(req) = read_request(&mut stream).await.expect("read") else {
+            panic!("a well-formed request must parse");
+        };
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/v1/turns");
+        assert_eq!(req.bearer(), Some("tok"));
+        assert_eq!(req.body, body.as_bytes());
     }
 }
