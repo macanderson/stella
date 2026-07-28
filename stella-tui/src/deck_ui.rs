@@ -637,8 +637,25 @@ pub struct DeckUi {
     /// runs before the prompt the hold returned to the queue. Cleared the
     /// moment that submission is sent.
     pub dispatch_held: bool,
+    /// Agents whose current scope-review card has been answered. The pending
+    /// gate clears only when the ENGINE's follow-on event lands, so without
+    /// this latch the decision keys stay live for the whole round-trip and a
+    /// second press re-sends the decision. Cleared by [`ingest_inbound`] on a
+    /// fresh `ScopeReview` — the per-agent mirror of the single-session
+    /// shell's `scope_answered` (see `crate::ui`).
+    pub scope_answered: std::collections::HashSet<String>,
+    /// The same latch for a pending `ask_user` question (cleared on a fresh
+    /// `AskUser`).
+    pub ask_answered: std::collections::HashSet<String>,
     /// The Session tab's incremental transcript fold cache.
     pub session_fold: crate::views::session::SessionFold,
+    /// The Session tab's memoized fold plan: the whole-transcript turn walk
+    /// reruns only when its [`crate::views::session::FoldPlanKey`] moves,
+    /// not on every frame of the ~30fps draw loop.
+    pub session_plan: Option<(
+        crate::views::session::FoldPlanKey,
+        crate::views::session::FoldPlan,
+    )>,
     /// The terminal's color depth, detected once at startup. Render-time-visible
     /// so the progress bar can emit a per-cell ember gradient on truecolor and a
     /// solid flame fill otherwise (an interpolated RGB has no `FALLBACKS` entry,
@@ -753,7 +770,10 @@ impl Default for DeckUi {
             fold_rev: 0,
             esc_armed_at: None,
             dispatch_held: false,
+            scope_answered: std::collections::HashSet::new(),
+            ask_answered: std::collections::HashSet::new(),
             session_fold: crate::views::session::SessionFold::default(),
+            session_plan: None,
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,
             sessions_open: false,
@@ -1200,6 +1220,19 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         }
         clamp(model, ui);
         return;
+    }
+    // A fresh gate re-arms its decision keys: the answered latch guards the
+    // CURRENT card only (the deck mirror of `crate::ui::ingest`'s reset).
+    if let Inbound::Event { agent, event } = inbound {
+        match event {
+            stella_protocol::AgentEvent::ScopeReview { .. } => {
+                ui.scope_answered.remove(agent);
+            }
+            stella_protocol::AgentEvent::AskUser { .. } => {
+                ui.ask_answered.remove(agent);
+            }
+            _ => {}
+        }
     }
     model.apply_inbound(inbound);
     clamp(model, ui);
@@ -3223,8 +3256,15 @@ fn handle_focused_gates(
     let entry = model.agents.get(ui.focused)?;
     let composer_empty = ui.composer.buffer().is_empty();
 
-    // Scope review: a/t/x/Esc decide it (only when nothing is typed).
-    if entry.model.pending_scope_review.is_some() && composer_empty {
+    // Scope review: a/t/x/Esc decide it (only when nothing is typed, and only
+    // while UNANSWERED — the pending gate clears on the engine's follow-on
+    // event, so the latch is what stops a second press re-sending the
+    // decision during that round-trip; the card reads "decision sent" until
+    // then and the keys type into the composer as usual).
+    if entry.model.pending_scope_review.is_some()
+        && !ui.scope_answered.contains(agent)
+        && composer_empty
+    {
         let decision = match key.code {
             KeyCode::Char('a') => Some(ScopeDecision::Approve),
             KeyCode::Char('t') => Some(ScopeDecision::Trim),
@@ -3232,6 +3272,7 @@ fn handle_focused_gates(
             _ => None,
         };
         if let Some(decision) = decision {
+            ui.scope_answered.insert(agent.clone());
             return Some(DeckAction::Send(WorkspaceInput::ToAgent {
                 agent: agent.clone(),
                 input: UserInput::ScopeDecision(decision),
@@ -3240,17 +3281,21 @@ fn handle_focused_gates(
     }
 
     // Ask-user: digit quick-pick when nothing typed; Enter submits free text.
-    if let Some(prompt) = &entry.model.pending_ask_user {
+    // Same latch: the answer returns as the tool's own ToolResult, and until
+    // it lands a second digit/Enter must not re-answer the question.
+    if let Some(prompt) = &entry.model.pending_ask_user
+        && !ui.ask_answered.contains(agent)
+    {
         match key.code {
             KeyCode::Char(d @ '1'..='9') if composer_empty => {
                 let idx = (d as usize) - ('1' as usize);
                 if let Some(option) = prompt.options.get(idx) {
+                    let answer = option.clone();
+                    let id = prompt.id.clone();
+                    ui.ask_answered.insert(agent.clone());
                     return Some(DeckAction::Send(WorkspaceInput::ToAgent {
                         agent: agent.clone(),
-                        input: UserInput::AskUserAnswer {
-                            id: prompt.id.clone(),
-                            answer: option.clone(),
-                        },
+                        input: UserInput::AskUserAnswer { id, answer },
                     }));
                 }
             }
@@ -3264,10 +3309,12 @@ fn handle_focused_gates(
                     && !ui.composer.buffer().trim_start().starts_with('!') =>
             {
                 if let Some(submission) = ui.composer.take_submission() {
+                    let id = prompt.id.clone();
+                    ui.ask_answered.insert(agent.clone());
                     return Some(DeckAction::Send(WorkspaceInput::ToAgent {
                         agent: agent.clone(),
                         input: UserInput::AskUserAnswer {
-                            id: prompt.id.clone(),
+                            id,
                             answer: submission.text,
                         },
                     }));

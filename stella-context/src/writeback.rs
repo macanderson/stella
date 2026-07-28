@@ -1319,6 +1319,62 @@ mod tests {
         assert_eq!(store.open_anchors().unwrap().len(), 1);
     }
 
+    /// Re-learning a forgotten memory must revive its mirror node.
+    /// `insert_memory` already resurrects the record row (`superseded_at =
+    /// NULL` on conflict); a mirror node left tombstoned would keep the
+    /// lineage invisible to every candidate reader, so the re-learn would be
+    /// a write with no recallable effect.
+    #[tokio::test]
+    async fn re_learning_a_forgotten_memory_revives_its_mirror_node() {
+        let clock = FixedClock::shared(1_000);
+        let (_dir, store) = store_at(clock.clone());
+        let delta = || {
+            ContextDelta::new().with_memory(MemoryInput::reflection(
+                "the build system is bazel, not make",
+                ["build"],
+            ))
+        };
+        store.upsert(delta()).await.unwrap();
+        let node = store.memory_nodes().unwrap().remove(0);
+
+        clock.advance(1_000);
+        assert!(store.supersede_node(&node.public_id).unwrap());
+        assert!(
+            store.node_by_public_id(&node.public_id).unwrap().is_none(),
+            "the forgotten memory is hidden from every live reader"
+        );
+
+        clock.advance(1_000);
+        store.upsert(delta()).await.unwrap();
+        assert!(
+            store.node_by_public_id(&node.public_id).unwrap().is_some(),
+            "re-learning must lift the mirror node's tombstone"
+        );
+
+        // And recall actually serves it again — the whole point of the write.
+        let q = contextgraph_types::ContextQuery {
+            goal: "what is the build system".into(),
+            query_text: Some("the build system is bazel, not make".into()),
+            embedding: None,
+            kinds: vec![],
+            anchors: vec![],
+            max_frames: 5,
+            max_tokens: 2000,
+            as_of: None,
+            representation_preferences: vec![],
+        };
+        let result = store.recall(&q).await.unwrap();
+        assert!(
+            result.frames.iter().any(|f| f.id == node.public_id),
+            "a re-learned memory must be recallable, got {:?}",
+            result
+                .frames
+                .iter()
+                .map(|f| f.id.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
     /// Ending an anchor twice must not move the date the file disappeared.
     #[tokio::test]
     async fn ending_an_anchor_twice_keeps_the_first_date() {

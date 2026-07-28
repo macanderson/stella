@@ -1348,8 +1348,15 @@ pub(crate) fn resolve_provider_key(
         // var, or a settings.json literal, still outranks the file.
         Ok((key, source)) => {
             for alias in provider.env_var_aliases {
-                if let Ok(alias_key) = ApiKey::from_env(alias) {
-                    return Ok((alias_key, CredentialSource::EnvVar));
+                match ApiKey::from_env(alias) {
+                    Ok(alias_key) => return Ok((alias_key, CredentialSource::EnvVar)),
+                    // An explicitly-set-but-empty alias is a user mistake
+                    // worth surfacing, same posture as the primary var —
+                    // which `ApiKey::resolve` hard-errors on before it ever
+                    // consults the file, so a lower-precedence hit must not
+                    // paper over it here either.
+                    Err(err @ CredentialError::Empty { .. }) => return Err(err),
+                    Err(_) => {}
                 }
             }
             if let Some(settings_key) = settings_key.filter(|k| !k.is_empty()) {

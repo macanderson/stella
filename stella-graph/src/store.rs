@@ -262,10 +262,10 @@ pub(crate) fn apply_changes(
     let generated_filter = GeneratedFilter::load(root);
     let tx = conn.transaction()?;
     for abs in changed {
-        if Language::from_path(abs).is_none() && !storage::indexes_without_language(abs) {
-            continue;
-        }
         if abs.is_file() {
+            if Language::from_path(abs).is_none() && !storage::indexes_without_language(abs) {
+                continue;
+            }
             index_one(
                 &tx,
                 root,
@@ -276,9 +276,18 @@ pub(crate) fn apply_changes(
                 &mut stats,
             )?;
         } else {
+            // A vanished path may have been a file OR a directory, and the
+            // event does not say which. A removed directory has no extension
+            // for the language filter to accept — which is why the prune arm
+            // sits ahead of that filter — and its indexed children are only
+            // reachable by prefix, so the exact match and the prefix match
+            // run as one delete. `ON DELETE CASCADE` clears symbols and
+            // imports either way.
             let rel = rel_path(root, abs);
-            stats.files_pruned +=
-                tx.execute("DELETE FROM code_graph_files WHERE path = ?1", params![rel])?;
+            stats.files_pruned += tx.execute(
+                "DELETE FROM code_graph_files WHERE path = ?1 OR path LIKE ?2 ESCAPE '\\'",
+                params![rel, format!("{}/%", escape_like(&rel))],
+            )?;
         }
     }
     tx.commit()?;
@@ -858,6 +867,15 @@ fn import_kind_from_tag(tag: &str) -> ImportKind {
 }
 
 // small helpers
+/// Escape SQL `LIKE` wildcards in a literal path so it can serve as the fixed
+/// part of a prefix pattern. Paths legally contain `%` and `_`; without the
+/// escape a directory named `a_b` would prune `axb/…` too.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 /// Forward-slash path of `abs` relative to `root` (falls back to the whole
 /// path if `abs` is somehow not under `root`).
 fn rel_path(root: &Path, abs: &Path) -> String {

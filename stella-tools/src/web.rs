@@ -69,6 +69,11 @@ const DOWNLOAD_CAP_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_MAX_LENGTH: usize = 30_000;
 /// Stylesheets fetched per `web_extract_assets` call by default.
 const DEFAULT_MAX_STYLESHEETS: usize = 8;
+/// In-flight stylesheet fetches per `web_extract_assets` call. The sheets
+/// were fetched one at a time — up to 24 serial round-trips to what is
+/// usually one origin; bounded so a large `max_stylesheets` is not also a
+/// 24-connection burst.
+const STYLESHEET_FETCH_CONCURRENCY: usize = 6;
 /// Per-stylesheet and per-`<meta>` lines rendered by `web_extract_assets`.
 /// The manifest lists EVERY sheet and meta tag the page declares, and the
 /// page chooses how many it declares — every other section here is already
@@ -791,21 +796,34 @@ impl Tool for WebExtractAssets {
         for inline in &manifest.inline_css {
             css.add_css(inline, Some(&fetched.final_url));
         }
+        // Fetched concurrently (bounded — one slow CDN must not serialize
+        // the rest), then folded in manifest order so notes and token
+        // accumulation stay deterministic. Same-origin only: the stylesheet
+        // list comes from the FETCHED PAGE, so a hostile page could
+        // otherwise point Stella's stored credentials at an internal host
+        // of its choosing.
+        use futures_util::StreamExt as _;
+        let page_url = &fetched.final_url;
+        let results: Vec<(String, Result<Fetched, String>)> = futures_util::stream::iter(
+            manifest
+                .stylesheets
+                .iter()
+                .take(max_stylesheets)
+                .cloned()
+                .map(|sheet_url| async move {
+                    let result = fetch_raw(&sheet_url, auth, FETCH_CAP_BYTES, Some(page_url)).await;
+                    (sheet_url, result)
+                }),
+        )
+        .buffered(STYLESHEET_FETCH_CONCURRENCY)
+        .collect()
+        .await;
         let mut sheet_notes: Vec<String> = Vec::new();
-        for (idx, sheet_url) in manifest.stylesheets.iter().enumerate() {
-            if idx >= max_stylesheets {
-                sheet_notes.push(format!(
-                    "- {sheet_url} (not fetched — over `max_stylesheets`)"
-                ));
-                continue;
-            }
-            // Same-origin only: the stylesheet list comes from the FETCHED
-            // PAGE, so a hostile page could otherwise point Stella's stored
-            // credentials at an internal host of its choosing.
-            match fetch_raw(sheet_url, auth, FETCH_CAP_BYTES, Some(&fetched.final_url)).await {
+        for (sheet_url, result) in results {
+            match result {
                 Ok(sheet) => {
                     let text = String::from_utf8_lossy(&sheet.bytes);
-                    if let Ok(sheet_base) = Url::parse(sheet_url) {
+                    if let Ok(sheet_base) = Url::parse(&sheet_url) {
                         css.add_css(&text, Some(&sheet_base));
                     } else {
                         css.add_css(&text, Some(&fetched.final_url));
@@ -817,6 +835,11 @@ impl Tool for WebExtractAssets {
                 }
                 Err(e) => sheet_notes.push(format!("- {sheet_url} (fetch failed: {e})")),
             }
+        }
+        for sheet_url in manifest.stylesheets.iter().skip(max_stylesheets) {
+            sheet_notes.push(format!(
+                "- {sheet_url} (not fetched — over `max_stylesheets`)"
+            ));
         }
         let tokens = css.finish();
 

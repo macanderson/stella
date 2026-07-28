@@ -150,15 +150,31 @@ impl Session {
     pub fn cancel(&self) {
         self.pending.cancel();
     }
+
+    /// Whether the session thread has finished — i.e. the turn has produced
+    /// its terminal frame, delivered or still buffered for a stream that never
+    /// opened. `true` also when the thread could not be spawned, since the
+    /// aborted terminal frame is buffered from the start. This is what lets
+    /// the server's turn registry tell a finished-but-unstreamed turn (safe to
+    /// evict under memory pressure) from a live one (never evicted).
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // Unblock any parked reverse request so the engine turn aborts cleanly
-        // and the thread can finish, rather than leaking a thread wedged on a
-        // host that will never answer. We do not join (a still-running turn
-        // could take arbitrarily long) — the thread detaches and drains itself.
-        self.pending.clear();
+        // Cancel, not merely clear: clearing alone wakes a parked reverse
+        // request with a *retryable* transport error, so a turn torn down
+        // mid-step would burn its provider retries — and their backoff sleeps —
+        // against a registry nobody answers anymore. Latching the cancel flag
+        // makes the woken step observe `Cancelled` (not retryable), so the
+        // turn aborts within one engine step and the thread can finish, rather
+        // than leaking a thread wedged on a host that will never answer. We do
+        // not join (a still-running turn could take arbitrarily long) — the
+        // thread detaches and drains itself.
+        self.pending.cancel();
         drop(self.thread.take());
     }
 }

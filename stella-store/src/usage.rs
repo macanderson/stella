@@ -145,8 +145,11 @@ CREATE TABLE IF NOT EXISTS execution_rollup (
     started_at      TEXT NOT NULL,
     PRIMARY KEY (project_id, execution_id)
 );
-CREATE INDEX IF NOT EXISTS execution_rollup_by_model
-    ON execution_rollup(model, project_id);
+-- Convergence works for removals too: the batch replays on every open, so a
+-- DROP here reaches existing hubs the same way a new table would. The
+-- by-model index served no query (every execution_rollup reader keys on
+-- project_id, which the primary key already covers).
+DROP INDEX IF EXISTS execution_rollup_by_model;
 CREATE TABLE IF NOT EXISTS tool_usage_rollup (
     project_id TEXT NOT NULL,
     tool       TEXT NOT NULL,
@@ -183,6 +186,9 @@ CREATE TABLE IF NOT EXISTS telemetry (
 );
 CREATE INDEX IF NOT EXISTS telemetry_by_org
     ON telemetry(org_id, recorded_at);
+-- The observatory's per-(provider, model) hub rollup groups this table by
+-- exactly these columns; the index is what lets that GROUP BY scan in index
+-- order instead of sorting the whole hub.
 CREATE INDEX IF NOT EXISTS telemetry_by_model
     ON telemetry(provider, model);
 CREATE TABLE IF NOT EXISTS telemetry_sync_cursors (

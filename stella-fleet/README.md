@@ -186,12 +186,12 @@ Adding a ledger column, table or constraint — the case with a real footgun:
    in place without losing rows — `an_unversioned_ledger_migrates_in_place_without_losing_data`
    is the template. Downgrades are unguarded by design: a file stamped by a
    newer binary is opened as-is.
-4. Keep the step **replay-safe** (`IF NOT EXISTS`, or a rebuild like
-   `MIGRATION_V2`). `migrate` reads `PRAGMA user_version` *before* it opens its
-   transaction, so two processes first-opening the same `fleet.db` can both
-   decide to apply the same step. A step that would fail on a second
-   application — `ALTER TABLE … ADD COLUMN` is the obvious one — needs that
-   read moved inside an IMMEDIATE transaction first.
+4. Steps do **not** need to be replay-safe: `migrate` reads
+   `PRAGMA user_version` *inside* its IMMEDIATE transaction, so two processes
+   first-opening the same `fleet.db` serialize — the loser waits (under
+   `busy_timeout`), re-reads the stamped version and applies nothing. A step
+   that would fail on a second application — `ALTER TABLE … ADD COLUMN` is the
+   obvious one — is therefore safe to append (#617 item 8).
 
 A new `git`/`gh` interaction goes on `WorktreeManager`/`Monitor` and through
 the existing `GitCli`/`GhCli::run`, never as a fresh `Command` — that is what

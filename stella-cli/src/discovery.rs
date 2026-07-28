@@ -18,7 +18,7 @@
 //!   to install.
 //! - **`mcp_search`** — find MCP servers: the workspace's configured servers
 //!   (`.stella/mcp.toml`) and their tools, and/or the public MCP registry
-//!   for servers worth installing (`stella mcp add <name>`).
+//!   for servers worth installing (`stella mcp install <name>`).
 //!
 //! # Lean frontloading (opt-in)
 //!
@@ -280,7 +280,7 @@ impl<'a> DiscoveryToolSet<'a> {
                               'workspace' (default): servers configured in .stella/mcp.toml and \
                               their connected mcp__<server>__<tool> tools. scope 'registry': the \
                               public MCP server registry — servers you could install with \
-                              `stella mcp add <name>`. scope 'all': both."
+                              `stella mcp install <name>`. scope 'all': both."
                     .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
@@ -719,7 +719,7 @@ impl<'a> DiscoveryToolSet<'a> {
                 .map(|s| format!(" [{s}]"))
                 .unwrap_or_default();
             out.push_str(&format!(
-                "{}. {}{version}{status} — {}\n   install: stella mcp add {}\n",
+                "{}. {}{version}{status} — {}\n   install: stella mcp install {}\n",
                 i + 1,
                 entry.server.name,
                 clip_line(
@@ -1157,7 +1157,7 @@ mod tests {
         );
         assert!(out.contains("io.github.acme/postgres-mcp"), "got: {out}");
         assert!(
-            out.contains("stella mcp add io.github.acme/postgres-mcp"),
+            out.contains("stella mcp install io.github.acme/postgres-mcp"),
             "an install hint must be present: {out}"
         );
     }

@@ -17,7 +17,6 @@ stella-store = { path = "../stella-store" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 async-trait.workspace = true
 reqwest.workspace = true
 roxmltree.workspace = true
@@ -31,4 +30,7 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Runtime for `#[tokio::test]` only — no non-test code in this crate touches
+# tokio directly (reqwest brings its own).
+tokio.workspace = true
 wiremock.workspace = true

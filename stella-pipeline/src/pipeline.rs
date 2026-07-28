@@ -1,6 +1,6 @@
 //! The orchestrator: the staged turn flow that sits
 //! *above* `stella-core::Engine`. It sequences evaluate → enhance → route →
-//! witness → execute → verify → judge → revise over the injected ports,
+//! execute → witness → verify → judge → revise over the injected ports,
 //! emitting a `Stage` event at every boundary and owning terminal
 //! success-or-failure signaling for outcome-producing runs (`Complete` or a
 //! non-retryable `Error`). Hard infrastructure failures return out of band as
@@ -200,7 +200,8 @@ pub struct PipelineConfig {
     /// Whether this run is headless (no interactive approver available).
     pub headless: bool,
     /// If headless and a plan crosses the scope-review thresholds, this must
-    /// be explicitly `true` to proceed (via [`crate::ports::AutoApproveGate`]);
+    /// be explicitly `true` to proceed. The bypass skips the gate outright —
+    /// `Pipeline::scope_review` never consults the approval port for it —
     /// otherwise the run is a named error rather than a silent auto-approve.
     pub headless_bypass_scope_review: bool,
     /// The test command the flip oracle tracks (run before and after execute).

@@ -71,6 +71,15 @@ const MAX_LIVE_PROCESSES: usize = 16;
 /// grow without limit across a long session; the oldest handle is forgotten
 /// first, and a forgotten handle degrades to the unknown-handle error.
 const MAX_TOMBSTONES: usize = 64;
+/// How many exited-but-unread entries the table retains. Exited entries are
+/// exempt from [`MAX_LIVE_PROCESSES`] on purpose (a finished process must
+/// never block a new start), but reaping only happens on `read_output` — so
+/// without a bound of their own, a start/exit loop that never reads pins a
+/// `Child` plus up to [`MAX_BUFFER_BYTES`] per iteration for the rest of the
+/// session. 32 keeps twice the live cap's worth of recently finished output
+/// (~6.4 MB worst case) while bounding the table; the excess is evicted into
+/// a tombstone, so the handle still answers with its exit code.
+const MAX_EXITED_ENTRIES: usize = 32;
 
 /// The shared process table — held by the registry's four process tool
 /// instances, so it lives exactly as long as the registry and its `Drop`
@@ -123,6 +132,12 @@ struct ProcessEntry {
     /// Taken out of `child` at spawn so `send_stdin` can write without
     /// holding the table lock across an await; `None` once closed.
     stdin: Option<ChildStdin>,
+    /// Latched (under the table lock) when `stop_process` closes stdin. A
+    /// `send_stdin` that had already taken the handle out for a write holds
+    /// the pipe open past that close; without the latch its put-back
+    /// resurrects the stdin the stop deliberately closed — revoking the EOF
+    /// that lets a SIGTERM-ignoring REPL exit during the grace window.
+    stdin_closed: bool,
     output: Arc<Mutex<OutputBuffer>>,
     /// Pumps still attached to this process's pipes. Zero means both pipes
     /// hit EOF, so no further byte can ever arrive — the precondition for
@@ -165,6 +180,11 @@ struct ProcessTombstone {
     name: Option<String>,
     display: String,
     exit_code: i32,
+    /// Buffered output the model never read, discarded at reap time. Zero on
+    /// the ordinary drain-then-reap path; non-zero only when the exited-entry
+    /// cap evicted the entry — counted so the tombstone can say so instead of
+    /// pretending the buffer was drained.
+    discarded_bytes: u64,
 }
 
 /// The session's process table. Handles are `proc-N`, N monotonic.
@@ -208,18 +228,29 @@ impl ProcessTable {
 
     /// Drop `handle`'s entry, leaving a tombstone so `read_output` /
     /// `stop_process` can still explain it. Callers must have established
-    /// [`ProcessEntry::is_reapable`].
+    /// [`ProcessEntry::is_reapable`] — except [`Self::enforce_exited_cap`],
+    /// whose evictions knowingly discard an unread buffer and record the
+    /// discard on the tombstone.
     fn reap(&mut self, handle: &str) {
         let Some(mut entry) = self.entries.remove(handle) else {
             return;
         };
         let exit_code = entry.poll_exit().unwrap_or(-1);
+        let discarded_bytes = {
+            let (bytes, dropped) = entry
+                .output
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take();
+            bytes.len() as u64 + dropped
+        };
         self.tombstones.insert(
             handle.to_string(),
             ProcessTombstone {
                 name: entry.name.take(),
                 display: std::mem::take(&mut entry.display),
                 exit_code,
+                discarded_bytes,
             },
         );
         // Forget the oldest handle first — `proc-N` is monotonic, so the
@@ -238,6 +269,34 @@ impl ProcessTable {
                 break;
             };
             self.tombstones.remove(&oldest);
+        }
+    }
+
+    /// Evict exited entries beyond [`MAX_EXITED_ENTRIES`] into tombstones.
+    /// Runs at the table's one growth point (`start_process`), which bounds
+    /// total entries at the cap plus the live limit. Only entries whose exit
+    /// has been observed are candidates — a running process is NEVER evicted.
+    /// Oldest handle first (`proc-N` is monotonic), the same rule the
+    /// tombstone bound uses: the smallest N is the least likely to still be
+    /// polled.
+    fn enforce_exited_cap(&mut self) {
+        let mut exited: Vec<String> = Vec::new();
+        for (handle, entry) in self.entries.iter_mut() {
+            if entry.poll_exit().is_some() {
+                exited.push(handle.clone());
+            }
+        }
+        if exited.len() <= MAX_EXITED_ENTRIES {
+            return;
+        }
+        exited.sort_unstable_by_key(|h| {
+            h.strip_prefix("proc-")
+                .and_then(|n| n.parse::<u64>().ok())
+                .unwrap_or(u64::MAX)
+        });
+        let excess = exited.len() - MAX_EXITED_ENTRIES;
+        for handle in exited.iter().take(excess) {
+            self.reap(handle);
         }
     }
 }
@@ -348,6 +407,9 @@ impl Tool for StartProcess {
         // MAX_BUFFER_BYTES until it is stopped.
         {
             let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
+            // Bound the exited-but-unread backlog before growing the table —
+            // see [`ProcessTable::enforce_exited_cap`].
+            table.enforce_exited_cap();
             let live = table.live_count();
             if live >= MAX_LIVE_PROCESSES {
                 return ToolOutput::Error {
@@ -364,7 +426,10 @@ impl Tool for StartProcess {
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]);
         cmd.current_dir(root);
-        crate::subprocess_env::scrub_sensitive_env(&mut cmd);
+        // Full spawn policy: git-repo retargeting and forced-color overrides
+        // are scrubbed along with credentials, exactly like `exec::drive` —
+        // a server's output lands in the captured buffer, never a terminal.
+        crate::subprocess_env::scrub_spawn_env(&mut cmd);
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -409,6 +474,7 @@ impl Tool for StartProcess {
                 display: display.clone(),
                 child,
                 stdin,
+                stdin_closed: false,
                 output,
                 pumps,
                 pid,
@@ -461,10 +527,20 @@ impl Tool for ReadOutput {
             .unwrap_or(false);
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(tomb) = table.tombstones.get(handle) {
+            // Discarded bytes are reported, never silent — same contract as
+            // the ring buffer's drop flag.
+            let note = if tomb.discarded_bytes > 0 {
+                format!(
+                    "[{} unread bytes were discarded when this exited process was reaped to \
+                     bound the table]",
+                    tomb.discarded_bytes
+                )
+            } else {
+                "[no new output — the process was reaped after its output was drained]".into()
+            };
             return ToolOutput::Ok {
                 content: format!(
-                    "{handle} `{}`{}: exited (code {})\n[no new output — the process was \
-                     reaped after its output was drained]",
+                    "{handle} `{}`{}: exited (code {})\n{note}",
                     tomb.display,
                     tomb.name
                         .as_deref()
@@ -593,7 +669,13 @@ impl Tool for SendStdin {
             },
         };
         let mut table = self.0.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(entry) = table.entries.get_mut(handle) {
+        // Put the handle back ONLY if no stop_process closed stdin while the
+        // write was in flight — re-inserting after a stop would keep the pipe
+        // open and revoke the EOF the stop delivered. Dropping it here closes
+        // our end instead.
+        if let Some(entry) = table.entries.get_mut(handle)
+            && !entry.stdin_closed
+        {
             entry.stdin = Some(stdin);
         }
         result
@@ -642,6 +724,9 @@ impl Tool for StopProcess {
                 return unknown_handle_error(&table, handle);
             };
             entry.stdin = None;
+            // Latch the close so a send_stdin holding the handle out for an
+            // in-flight write cannot put it back afterwards.
+            entry.stdin_closed = true;
             if let Some(code) = entry.poll_exit() {
                 return ToolOutput::Ok {
                     content: format!("{handle} had already exited (code {code})"),
@@ -820,6 +905,43 @@ mod tests {
         ] {
             assert!(!content.contains(forbidden), "credential leaked: {content}");
         }
+    }
+
+    /// `start_process` used to apply only the credential scrub — a
+    /// hook-exported GIT_DIR or forced-color override reached the child.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn start_process_scrubs_git_repo_and_forced_color_env() {
+        let _fixture = crate::subprocess_env::test_support::SpawnHygieneFixture::install();
+        let (table, root) = tools();
+        let command = format!(
+            "{}; echo; sleep 30",
+            crate::subprocess_env::test_support::SPAWN_HYGIENE_PROBE_COMMAND
+        );
+        let handle = start(&table, &root, &["sh", "-c", &command]).await;
+
+        let mut observed = String::new();
+        for _ in 0..50 {
+            let out = ReadOutput(table.clone())
+                .execute(&serde_json::json!({"handle": handle}), &root)
+                .await;
+            let ToolOutput::Ok { content } = out else {
+                panic!("read_output failed");
+            };
+            // Exact-line match: the header echoes the probe command itself,
+            // which also contains `|`.
+            if let Some(line) = content.lines().find(|line| *line == "unset|unset") {
+                observed = line.to_string();
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(&observed);
+
+        let stopped = StopProcess(table)
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+        assert!(!stopped.is_error(), "{stopped:?}");
     }
 
     #[tokio::test]
@@ -1021,6 +1143,149 @@ mod tests {
                 .execute(&serde_json::json!({"handle": handle}), &root)
                 .await;
         }
+    }
+
+    /// Exited entries are exempt from the live cap, so before the exited-entry
+    /// bound a start/exit loop that never called read_output pinned a `Child`
+    /// and up to 200 KB of buffer per iteration for the rest of the session.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn exited_unread_entries_are_evicted_oldest_first_never_running_ones() {
+        let (table, root) = tools();
+        // A process that stays alive across every eviction below.
+        let keeper = start(&table, &root, &["cat"]).await;
+
+        let mut echo_handles = Vec::new();
+        for _ in 0..MAX_EXITED_ENTRIES + 2 {
+            let handle = start(&table, &root, &["sh", "-c", "echo unread_output"]).await;
+            // Wait until the exit is observable and the pump has delivered
+            // the output, so an eviction demonstrably discards unread bytes.
+            for _ in 0..250 {
+                let ready = {
+                    let mut t = table.lock().unwrap_or_else(|p| p.into_inner());
+                    match t.entries.get_mut(&handle) {
+                        Some(e) => {
+                            e.poll_exit().is_some()
+                                && !e
+                                    .output
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .data
+                                    .is_empty()
+                        }
+                        None => true,
+                    }
+                };
+                if ready {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            echo_handles.push(handle);
+        }
+
+        // The next start enforces the cap at the table's growth point.
+        let extra = start(&table, &root, &["cat"]).await;
+        {
+            let mut t = table.lock().unwrap_or_else(|p| p.into_inner());
+            let mut exited = 0;
+            for entry in t.entries.values_mut() {
+                if entry.poll_exit().is_some() {
+                    exited += 1;
+                }
+            }
+            assert!(
+                exited <= MAX_EXITED_ENTRIES,
+                "{exited} exited entries retained beyond the {MAX_EXITED_ENTRIES} cap"
+            );
+            assert!(
+                t.entries.contains_key(&keeper),
+                "a still-running process must never be evicted"
+            );
+            assert!(
+                !t.entries.contains_key(&echo_handles[0]),
+                "the oldest exited entry must be evicted first"
+            );
+            assert!(
+                t.entries.contains_key(echo_handles.last().unwrap()),
+                "the newest exited entry survives"
+            );
+        }
+
+        // The evicted handle still answers, and the discard is reported.
+        let evicted = ReadOutput(table.clone())
+            .execute(&serde_json::json!({"handle": echo_handles[0]}), &root)
+            .await;
+        let ToolOutput::Ok { content } = evicted else {
+            panic!("an evicted handle must still answer: {evicted:?}");
+        };
+        assert!(content.contains("exited (code 0)"), "{content}");
+        assert!(content.contains("discarded"), "{content}");
+
+        for handle in [keeper, extra] {
+            let _ = StopProcess(table.clone())
+                .execute(&serde_json::json!({"handle": handle}), &root)
+                .await;
+        }
+    }
+
+    /// A send_stdin whose write was in flight when stop_process closed stdin
+    /// used to put the handle back afterwards — resurrecting the pipe and
+    /// revoking the EOF the stop had just delivered.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_concurrent_send_stdin_cannot_resurrect_a_stopped_stdin() {
+        let (table, root) = tools();
+        // `sleep` never reads stdin: a payload well past the OS pipe buffer
+        // parks the write in flight, with the stdin handle taken out.
+        let handle = start(&table, &root, &["sleep", "30"]).await;
+        let text = "x".repeat(4 * 1024 * 1024);
+        let send_table = table.clone();
+        let send_handle = handle.clone();
+        let send_root = root.clone();
+        let writer = tokio::spawn(async move {
+            SendStdin(send_table)
+                .execute(
+                    &serde_json::json!({"handle": send_handle, "text": text}),
+                    &send_root,
+                )
+                .await
+        });
+        // The write is in flight once the entry's stdin slot is empty.
+        let mut taken = false;
+        for _ in 0..250 {
+            if table
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .entries
+                .get(&handle)
+                .is_some_and(|e| e.stdin.is_none())
+            {
+                taken = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(taken, "send_stdin never took the stdin handle out");
+
+        let stopped = StopProcess(table.clone())
+            .execute(&serde_json::json!({"handle": handle}), &root)
+            .await;
+        assert!(!stopped.is_error(), "{stopped:?}");
+        // The killed process closes the pipe's read end, failing the write.
+        let write_result = writer.await.expect("send task");
+        assert!(write_result.is_error(), "{write_result:?}");
+
+        let resurrected = table
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entries
+            .get(&handle)
+            .is_some_and(|e| e.stdin.is_some());
+        assert!(
+            !resurrected,
+            "send_stdin re-inserted a stdin handle stop_process had closed"
+        );
     }
 
     #[cfg(unix)]

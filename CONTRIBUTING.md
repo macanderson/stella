@@ -68,20 +68,24 @@ A red gate is an automatic "not yet":
 
 ```bash
 ./scripts/check-no-scratch.sh
+./scripts/check-action-pins.sh
 ./scripts/check-doc-citations.sh
+./scripts/check-invariants.sh
+./scripts/check-file-size.sh
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Or just `make gate`, which is the five of them in order.
+Or just `make gate`, which is the nine of them in order.
 
-CI runs all five and two more that need no local toolchain:
-`scripts/check-action-pins.sh` (in `ci.yml`, asserting every workflow `uses:`
-is pinned to a commit SHA) and `scripts/check-normative-home.sh` (in
-`normative-home.yml`, asserting the pinned CGP revision in `docs/**` still
-matches the `contextgraph-*` git rev in `stella-cli/Cargo.toml`). Run those two
-by hand if you touched `.github/workflows/` or a `NORMATIVE-HOME:` document.
+CI enforces the same steps (split across `ci.yml` and `normative-home.yml`,
+plus a release smoke build) and one more that needs no local toolchain:
+`scripts/check-normative-home.sh` (in `normative-home.yml`, asserting the
+pinned CGP revision in `docs/**` still matches the `contextgraph-*` git rev in
+`stella-cli/Cargo.toml`). Run that one by hand if you touched a
+`NORMATIVE-HOME:` document.
 
 **Run `make hooks` once per clone.** It points `core.hooksPath` at `.githooks`,
 whose `pre-push` hook runs `make gate` and aborts the push if it fails — so a

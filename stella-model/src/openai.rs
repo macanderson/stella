@@ -110,19 +110,19 @@ impl OpenAiProvider {
 // ── Wire types (OpenAI Responses API) ────────────────────────────────────
 
 /// The Responses API request body.
-///
-/// One field is conspicuously absent: `store`. The Responses API defaults it
-/// to `true`, so every request — the whole replayed conversation, which for
-/// this agent means the user's source files, tool output, and system prompt —
-/// is retained server-side and listed in the org's dashboard. Nothing here
-/// opts out, so an OpenAI-routed session inherits that default. Sending
-/// `store: false` is the fix; it is a wire change, and a deliberate one,
-/// because it also disables the encrypted-reasoning-item round-trip that a
-/// later multi-turn reasoning optimization would want.
 #[derive(Serialize)]
 struct OpenAiRequest<'a> {
     model: &'a str,
     input: Vec<OpenAiInputItem>,
+    /// Always `false`. The Responses API defaults `store` to `true`, which
+    /// retains every request server-side — the whole replayed conversation:
+    /// the user's source files, tool output, and system prompt — and lists it
+    /// in the org's dashboard. A BYOK agent must not leave that residue by
+    /// default, so every request opts out explicitly. The cost is deliberate:
+    /// `store: false` also disables the encrypted-reasoning-item round-trip a
+    /// later multi-turn reasoning optimization would want; that optimization
+    /// must find another shape, not quietly re-enable retention.
+    store: bool,
     /// The Responses API's dedicated system/developer-prompt field. We pick
     /// this over framing the system prompt as an `input` item with
     /// `role: "system"` — both are accepted, but `instructions` is the
@@ -581,6 +581,7 @@ impl OpenAiProvider {
         let body = OpenAiRequest {
             model: &self.model,
             input,
+            store: false,
             instructions: instructions.as_deref(),
             stream: true,
             max_output_tokens: req.max_output_tokens,
@@ -1811,6 +1812,34 @@ mod tests {
         for key in ["top_p", "service_tier", "verbosity", "\"reasoning\""] {
             assert!(!body.contains(key), "unexpected `{key}` in: {body}");
         }
+    }
+
+    /// The Responses API defaults `store` to `true`, retaining the whole
+    /// replayed conversation server-side. A BYOK agent must opt out on every
+    /// request — the wire body has to carry `store: false` explicitly, since
+    /// omitting the field IS the retention default.
+    #[tokio::test]
+    async fn every_request_opts_out_of_server_side_storage() {
+        let server = MockServer::start().await;
+        mock_ok(&server).await;
+
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.5").with_base_url(server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let body = first_request_body(&server).await;
+        assert!(body.contains("\"store\":false"), "{body}");
     }
 
     /// The engine branches on `finish_reason` (the driver's truncation

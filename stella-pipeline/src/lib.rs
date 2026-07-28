@@ -3,9 +3,10 @@
 
 //! `stella-pipeline` — the orchestration plane that sits *above*
 //! `stella-core::Engine`. It drives one prompt
-//! through the staged turn flow — **evaluate → enhance → route → witness →
-//! execute → verify → judge → revise** — over injected ports, emitting an
-//! `AgentEvent` at every stage boundary.
+//! through the staged turn flow — **evaluate → enhance → route → execute →
+//! witness → verify → judge → revise** (the witness is authored on demand,
+//! after execution, once the warrant has read the diff) — over injected
+//! ports, emitting an `AgentEvent` at every stage boundary.
 //!
 //! # What lives here vs. the engine
 //!
@@ -70,7 +71,7 @@
 //!
 //! The always-present ports each have a no-op default here
 //! ([`NoContextRecall`], [`NoRepoStructure`], [`NoRepoStatus`],
-//! [`AutoApproveGate`]/[`AlwaysAbortGate`]) so the pipeline runs before every
+//! [`AlwaysAbortGate`]) so the pipeline runs before every
 //! subsystem is wired; the two *optional* ones — candidate isolation and MCP
 //! pre-fetch — are `Option` fields on [`PipelinePorts`] instead, because
 //! "unavailable" changes what the run does (it degrades) rather than being a
@@ -88,7 +89,6 @@
 //! [`NoContextRecall`]: ports::NoContextRecall
 //! [`NoRepoStructure`]: ports::NoRepoStructure
 //! [`NoRepoStatus`]: ports::NoRepoStatus
-//! [`AutoApproveGate`]: ports::AutoApproveGate
 //! [`AlwaysAbortGate`]: ports::AlwaysAbortGate
 //! [`PipelinePorts`]: ports::PipelinePorts
 
@@ -108,7 +108,7 @@ pub use pipeline::{
     PipelineRunError, PipelineStatus, RoleCallOverrides, Verdict,
 };
 pub use ports::{
-    AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind, AutoApproveGate,
+    AdoptedChange, AlwaysAbortGate, ApprovalGate, ArtifactIdentity, ArtifactKind,
     CandidateWorkspace, CandidateWorkspacePort, CmdOutcome, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, McpPrefetchPort, NoContextRecall, NoRepoStatus,
     NoRepoStructure, PipelinePorts, ProviderResolver, Recall, RecalledFrame, RepoStatusPort,

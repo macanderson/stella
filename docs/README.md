@@ -18,12 +18,12 @@ rather than authored — see the table below.
 | [`adr/`](adr/README.md) | Architecture Decision Records for the adaptive-context work — the ratified answers the specs below are built on. |
 | [`design/`](design/) | Design specifications and RFCs: the context frame, directive schema, storage map, Context PR workflow, telemetry receipts, the serve surface, and [adaptive context](design/adaptive-context.md). |
 | [`papers/`](papers/README.md) | The research notes behind Stella's design: [The Deterministic Engine](papers/deterministic-engine.md) and [Stella's Defensible Position](papers/stella-defensible-position.md). The live site links to these at their exact paths — don't move or rename them. |
-| [`brand/`](brand/README.md) | Logo, mark, wordmark, and icon assets, plus the `build.py` generator and `tokens.json` every downstream copy is derived from (`make brand`). |
+| [`brand/`](brand/README.md) | Logo, mark, wordmark, and icon assets, plus the design tokens under `tokens/`. The UI palette itself is not generated from here: `stella-tui/src/palette.rs` is the hand-maintained normative source, mirrored by `website/src/app/tokens.css` — edit the two together. |
 | [`context-reuse.md`](context-reuse.md) | **Vendored, do not edit.** The Context Graph Protocol's normative contract for context identity, usage reports, consent, and verification — the document 46 rustdoc citations point at. Re-sync from upstream rather than patching it. |
 | [`why-stella.md`](why-stella.md) | The technical overview, written for someone evaluating Stella rather than contributing to it. |
 | [`context-pr.md`](context-pr.md) | The canonical Context PR specification: how durable steering is proposed, reviewed, published, and retired through Git. |
 | [`replay-golden-trajectories.md`](replay-golden-trajectories.md) | How the golden-trajectory replay fixtures are recorded and refreshed. |
-| [`llms.txt`](llms.txt) | **Generated, do not edit.** All 78 documentation-site pages as one Markdown file, for pasting into a model's context whole. Rebuild with `make llms-txt` after changing `website/content/docs/`; `node website/scripts/build-llms-txt.mjs --check` fails if it is stale. |
+| [`llms.txt`](llms.txt) | **Generated, do not edit.** Every documentation-site page as one Markdown file (the file's own header carries the current page count), for pasting into a model's context whole. Rebuild with `make llms-txt` after changing `website/content/docs/`; `node website/scripts/build-llms-txt.mjs --check` fails if it is stale. |
 
 Three documents — [`design/context-frame-spec.md`](design/context-frame-spec.md),
 [`design/directive-schema.md`](design/directive-schema.md), and the vendored

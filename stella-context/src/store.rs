@@ -344,15 +344,6 @@ impl ContextStore {
         Ok(store)
     }
 
-    /// Alias for [`Self::open_and_warm`] matching the spec's `mount()` verb.
-    pub fn mount(
-        path: impl AsRef<Path>,
-        embedder: Arc<dyn Embedder>,
-        clock: Arc<dyn Clock>,
-    ) -> Result<Self, ContextError> {
-        Self::open_and_warm(path, embedder, clock)
-    }
-
     /// Join the background warm task if one was spawned, returning the number
     /// of vectors it computed.
     ///

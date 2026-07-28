@@ -72,11 +72,18 @@ pub(crate) fn store_embedding(
     Ok(changed > 0)
 }
 
-/// Live nodes lacking a vector under `fingerprint`, as `(content_hash, content)`.
-/// Deduplicated by content hash so identical content is embedded once.
+/// Up to `limit` live nodes lacking a vector under `fingerprint`, as
+/// `(content_hash, content)`. Deduplicated by content hash so identical
+/// content is embedded once.
+///
+/// The `NOT EXISTS` predicate is its own cursor: a caller that embeds and
+/// commits what this returned, then asks again, gets the *next* rows — the
+/// committed ones no longer match. That is what lets the warm loop hold at
+/// most one batch of bodies in memory instead of the whole backlog.
 pub(crate) fn nodes_missing_embedding(
     conn: &Connection,
     fingerprint: &str,
+    limit: usize,
 ) -> Result<Vec<(String, String)>, ContextError> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT n.content_hash, n.content
@@ -86,9 +93,10 @@ pub(crate) fn nodes_missing_embedding(
            AND NOT EXISTS (
                SELECT 1 FROM embedding e
                WHERE e.content_hash = n.content_hash AND e.fingerprint = ?1
-           )",
+           )
+         LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![fingerprint], |r| {
+    let rows = stmt.query_map(params![fingerprint, limit as i64], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
     })?;
     let mut out = Vec::new();

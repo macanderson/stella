@@ -116,9 +116,14 @@ the engine's backoff.
   treat them as global handles.
 - **A turn's event stream is exclusive and one-shot.** The second
   `GET /v1/turns/{id}/events` gets 409, and the registry entry is removed when a
-  stream ends — or when the turn is cancelled. A turn created and never streamed
-  keeps its entry and its thread until one of those happens, so `cancel` is how a
-  caller reclaims one it decided not to stream.
+  stream ends — or when the turn is cancelled. A *live* turn created and never
+  streamed keeps its entry and its thread, so `cancel` is how a caller reclaims
+  one it decided not to stream. Once such a turn finishes on its own (deadline,
+  budget, completion) it is retained for a late stream, but it is no longer
+  protected: when the registry is full, finished-unstreamed turns are reclaimed
+  oldest-first to admit a new one, and a reclaimed id answers 404. That is what
+  keeps the 32-turn cap a queue rather than a one-way latch — a host that
+  abandons turns cannot wedge the server into refusing every later create.
 - **`max_steps` from the wire is validated, not trusted.** `0` is a 400 (it would
   produce a zero-iteration turn that aborts with the misleading "reached the step
   cap (0)"), and anything above `MAX_SERVED_STEPS` (10 000, fifty times

@@ -127,13 +127,14 @@ impl Ledger {
 
     /// Rows whose `run_id` names a run that is no longer in `runs`, per table.
     ///
-    /// Only ever non-empty on a ledger created before `FRESH_SCHEMA`, which
-    /// constrains these four columns; existing files were deliberately left
-    /// unconstrained because retrofitting them can only be done by deleting
-    /// this history (#617 item 5). Reporting is therefore the whole remedy:
-    /// nothing reads a row by orphaned run today, so the rows are inert, but an
-    /// operator should be able to see them rather than have them silently
-    /// removed. Surfaced by `stella doctor`.
+    /// Scans every column in `RUN_REFERENCES`. `FRESH_SCHEMA` constrains four
+    /// of them (`commits.run_id` is denormalized and unconstrained on every
+    /// file); existing files were deliberately left unconstrained because
+    /// retrofitting them can only be done by deleting this history (#617
+    /// item 5). Reporting is therefore the whole remedy: nothing reads a row
+    /// by orphaned run today, so the rows are inert, but an operator should
+    /// be able to see them rather than have them silently removed. Surfaced
+    /// by `stella doctor`.
     ///
     /// Classes with a zero count are omitted, so an empty result means clean.
     pub fn orphan_rows(&self) -> Result<Vec<OrphanRows>, LedgerError> {
@@ -490,12 +491,15 @@ pub struct OrphanRows {
     pub count: i64,
 }
 
-/// The four `run_id` columns that a fresh file constrains and an existing one
-/// does not. Kept beside `FRESH_SCHEMA` so the report and the constraints
-/// cannot drift apart.
-const RUN_REFERENCES: [(&str, &str); 4] = [
+/// Every column that names a run, and so can hold an orphan: the four a
+/// fresh file constrains and an existing one does not, plus `commits.run_id`,
+/// which is denormalized beside its real `attempt_id` foreign key and
+/// unconstrained on every file. Kept beside `FRESH_SCHEMA` so the report and
+/// the schema cannot drift apart.
+const RUN_REFERENCES: [(&str, &str); 5] = [
     ("tasks", "run_id"),
     ("attempts", "run_id"),
+    ("commits", "run_id"),
     ("lineage", "parent_run_id"),
     ("spend", "run_id"),
 ];
@@ -706,6 +710,14 @@ mod tests {
         )
         .expect("orphan attempt row");
         let attempt_id: i64 = conn.last_insert_rowid();
+        // `commits.attempt_id` has always been a real foreign key too; its
+        // denormalized `run_id` is the orphaned part.
+        conn.execute(
+            "INSERT INTO commits (attempt_id, run_id, task_id, sha, branch, message, timestamp_ms)
+             VALUES (?1, 'deleted-run', 't1', 'abc', 'fleet/t1', 'work', 0)",
+            params![attempt_id],
+        )
+        .expect("orphan commit row");
         conn.execute(
             "INSERT INTO spend (run_id, task_id, attempt_id, cost_usd, recorded_at_ms)
              VALUES ('deleted-run', 't1', ?1, 1.0, 0)",
@@ -732,6 +744,11 @@ mod tests {
                 },
                 OrphanRows {
                     table: "attempts",
+                    column: "run_id",
+                    count: 1
+                },
+                OrphanRows {
+                    table: "commits",
                     column: "run_id",
                     count: 1
                 },

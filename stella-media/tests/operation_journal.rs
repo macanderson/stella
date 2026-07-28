@@ -289,10 +289,16 @@ fn child_claim_helper() {
     let Some(path) = std::env::var_os("STELLA_TEST_MEDIA_JOURNAL") else {
         return;
     };
+    // Expiry is part of the claim's identity (see claim_at), so the parent
+    // pins one value and both processes must claim with exactly it.
+    let expires_at: u64 = std::env::var("STELLA_TEST_MEDIA_EXPIRY")
+        .unwrap()
+        .parse()
+        .unwrap();
     let journal = SqliteMediaOperationJournal::open(path, config(3600, 100)).unwrap();
     assert_eq!(
         journal
-            .claim("mop_child", MediaKind::Video, "fake", unix_now() + 3600,)
+            .claim("mop_child", MediaKind::Video, "fake", expires_at)
             .unwrap(),
         MediaOperationClaim::New
     );
@@ -302,9 +308,11 @@ fn child_claim_helper() {
 fn child_process_pending_claim_survives_reopen_without_a_lock_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = journal_path(&dir);
+    let expires_at = unix_now() + 3600;
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "child_claim_helper", "--nocapture"])
         .env("STELLA_TEST_MEDIA_JOURNAL", &path)
+        .env("STELLA_TEST_MEDIA_EXPIRY", expires_at.to_string())
         .status()
         .unwrap();
     assert!(status.success());
@@ -312,7 +320,7 @@ fn child_process_pending_claim_survives_reopen_without_a_lock_file() {
     let journal = SqliteMediaOperationJournal::open(&path, config(3600, 100)).unwrap();
     assert_eq!(
         journal
-            .claim("mop_child", MediaKind::Video, "fake", unix_now() + 3600,)
+            .claim("mop_child", MediaKind::Video, "fake", expires_at)
             .unwrap(),
         MediaOperationClaim::Existing(MediaOperationState::Pending)
     );

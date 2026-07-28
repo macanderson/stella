@@ -361,6 +361,33 @@ impl<'a> Engine<'a> {
         self
     }
 
+    /// A shallow copy of this engine whose receipts key against
+    /// `turn_instance`. Context receipts are persisted under
+    /// `(execution_id, turn_instance, step, call_seq)` and every `run_turn`
+    /// restarts `step` at 0 — so a caller that drives several turns inside
+    /// one execution (the goal loop's judged rounds, each round's judge
+    /// assessment) must give each of them its own turn instance or the
+    /// later manifests silently overwrite the earlier ones in the store.
+    /// Everything else about the engine (provider, tools, hooks, gates,
+    /// calibration, role) is carried over unchanged.
+    #[must_use]
+    pub fn with_turn_instance(&self, turn_instance: u32) -> Engine<'a> {
+        Engine {
+            provider: self.provider,
+            tools: self.tools,
+            sleeper: self.sleeper,
+            config: EngineConfig {
+                turn_instance,
+                ..self.config.clone()
+            },
+            call_role: self.call_role,
+            hooks: self.hooks,
+            calibration: self.calibration,
+            gate: self.gate,
+            steering: self.steering,
+        }
+    }
+
     /// Attach lifecycle hooks (`crate::hooks`) to an engine, opt-in. Kept a
     /// builder so [`Engine::with_sleeper`] retains its signature and every
     /// existing call site is unchanged — an engine
@@ -2065,12 +2092,6 @@ impl SummarizerHealth {
     }
 }
 
-/// Prefix of the engine-injected stuck-loop steering message
-/// ([`Engine::check_loop_detection`]). User-role on the wire like every
-/// steer, but engine-generated, not a real user turn — treating it as a
-/// window boundary would erase the very evidence that triggered it, and
-/// the abort-on-re-detection would need a whole fresh threshold's worth of
-/// looping instead of one more no-progress call.
 /// What one compaction pass did: what it cost, and whether it rewrote the
 /// transcript in place.
 ///
@@ -2088,6 +2109,12 @@ struct CompactionPass {
     rewrote: bool,
 }
 
+/// Prefix of the engine-injected stuck-loop steering message
+/// ([`Engine::check_loop_detection`]). User-role on the wire like every
+/// steer, but engine-generated, not a real user turn — treating it as a
+/// window boundary would erase the very evidence that triggered it, and
+/// the abort-on-re-detection would need a whole fresh threshold's worth of
+/// looping instead of one more no-progress call.
 pub(crate) const LOOP_STEER_PREFIX: &str = "[stuck-loop warning";
 /// The [`TurnOutcome::Aborted`] reason of a user-requested soft stop —
 /// callers match on this to render "stopped" rather than "failed", and to

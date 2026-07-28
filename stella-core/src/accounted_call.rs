@@ -180,6 +180,10 @@ pub async fn run_accounted_call(
     // as a cost line: without this the prompt it actually sent is unrecoverable.
     // A fresh ledger per call is correct — these are one-shot contexts, so every
     // block is first-seen and registers with its bytes.
+    // The step this call rides, for both the receipt and the usage event
+    // below: consumers pair the two by step, so they must agree. A
+    // receipt-less call has no step loop to key against and stays at 0.
+    let step = call.receipt.as_ref().map_or(0, |receipt| receipt.step);
     if let Some(receipt) = call.receipt {
         // One-shot context: no prior estimate exists for these messages, so the
         // ledger computes it. The step loop passes its own in instead.
@@ -197,7 +201,7 @@ pub async fn run_accounted_call(
             );
     }
     let _ = events.send(AgentEvent::StepUsage {
-        step: 0,
+        step,
         role: call.role,
         provider: provider.to_string(),
         // Every role routed through here is a management or compaction call —

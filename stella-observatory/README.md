@@ -13,7 +13,7 @@ opens an outbound connection, writes a file, or answers a method other than
 
 ## Where it sits
 
-A leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde`, `serde_json`,
+A leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
 `sha2`, `thiserror`, `tokio` (the `net` feature only) and `toml` — no `stella-*`
 dependency at all. That is deliberate: `stella_store::Store::open` creates
 `.stella/` and runs schema migrations, and an observer that migrates what it
@@ -23,8 +23,8 @@ observes is not an observer. The price is two acknowledged copies —
 exploration manifests itself.
 
 Only [`stella-cli`](../stella-cli) depends on it: `run_observe`
-([`../stella-cli/src/main.rs:950`](../stella-cli/src/main.rs)) preflights the
-private store paths and calls `serve` (`--port`, default `7787`; `0` picks a
+([`../stella-cli/src/storage_cmd.rs:47`](../stella-cli/src/storage_cmd.rs))
+preflights the private store paths and calls `serve` (`--port`, default `7787`; `0` picks a
 free one). This crate builds no binary —
 [`examples/serve.rs`](examples/serve.rs) is the dev harness. It reads two tiers:
 `<root>/.stella/private/{store,fleet,codegraph}.db` per workspace, and

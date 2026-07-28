@@ -62,7 +62,7 @@ use ingest::{decode_call_result, fetch_all_tools};
 // move; the crate-internal ingest budgets are addressed as
 // `crate::client::ingest::*` (only `error` and tests want them).
 pub use health::{HealthState, ServerHealth};
-pub use ingest::{MAX_TOOLS_PER_SERVER, McpToolInfo, render_content};
+pub use ingest::{MAX_TOOLS_PER_SERVER, McpToolInfo};
 
 /// Rebuilds a fresh (pre-handshake) transport for a server whose connection
 /// dropped. Boxed so a [`McpClient`] can carry it without naming the concrete

@@ -178,11 +178,9 @@ pub(crate) async fn linear_graphql(
     query: &str,
     variables: Value,
 ) -> Result<Value, String> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
+    // Same pooled client as the GitHub REST backend — building one per
+    // request paid a fresh pool and TLS handshake on every operation.
+    let client = crate::github_rest::shared_client()?;
     let response = client
         .post(api_url)
         .header("Authorization", api_key)
@@ -473,6 +471,31 @@ fn linear_issue_summary(node: &Value) -> IssueSummary {
 const LINEAR_SUMMARY_FIELDS: &str = "identifier title url updatedAt \
      state { name } assignee { name displayName } labels { nodes { name } }";
 
+/// The `/search/issues` qualifier string for the REST backend's query path —
+/// the same search syntax `gh issue list --search` sends, so both GitHub
+/// backends match full text (title, body, comments). The label value is
+/// quoted (labels may carry spaces); the free text rides unmodified so
+/// user-supplied qualifiers keep working. URL-escaping is the caller's job.
+fn github_search_query(slug: &str, filters: &IssueFilters) -> String {
+    let mut q = format!("repo:{slug} is:issue");
+    match filters.state() {
+        "all" => {}
+        "closed" => q.push_str(" state:closed"),
+        _ => q.push_str(" state:open"),
+    }
+    if let Some(assignee) = &filters.assignee {
+        q.push_str(&format!(" assignee:{}", assignee.trim_start_matches('@')));
+    }
+    if let Some(label) = &filters.label {
+        q.push_str(&format!(" label:\"{label}\""));
+    }
+    if let Some(query) = &filters.query {
+        q.push(' ');
+        q.push_str(query);
+    }
+    q
+}
+
 // ── Operations ──────────────────────────────────────────────────────────────
 
 /// List or search issues, with optional state/assignee/label filters.
@@ -510,6 +533,26 @@ pub async fn list_issues(
         IssueBackend::GitHubApi { token, api_base } => {
             let client = GitHubRest::with_base(token, api_base);
             let slug = repo_slug(root).await?;
+            if filters.query.is_some() {
+                // Full-text parity with the CLI backend: `gh issue list
+                // --search` drives this same endpoint. The plain issues
+                // listing cannot full-text filter, and the title-substring
+                // fallback that stood in here silently missed every body
+                // and comment match.
+                let q = github_search_query(&slug, filters);
+                let path = format!("/search/issues?q={}&per_page={limit}", urlencode(&q));
+                let data = client.request(reqwest::Method::GET, &path, None).await?;
+                return Ok(data["items"]
+                    .as_array()
+                    .map(|nodes| {
+                        nodes
+                            .iter()
+                            .filter(|n| n.get("pull_request").is_none())
+                            .map(github_issue_summary)
+                            .collect()
+                    })
+                    .unwrap_or_default());
+            }
             let mut path = format!(
                 "/repos/{slug}/issues?state={}&per_page={limit}",
                 match filters.state() {
@@ -531,7 +574,7 @@ pub async fn list_issues(
                 path.push_str(&format!("&labels={}", urlencode(label)));
             }
             let nodes = client.request(reqwest::Method::GET, &path, None).await?;
-            let mut issues: Vec<IssueSummary> = nodes
+            let issues: Vec<IssueSummary> = nodes
                 .as_array()
                 .map(|nodes| {
                     nodes
@@ -542,9 +585,6 @@ pub async fn list_issues(
                         .collect()
                 })
                 .unwrap_or_default();
-            if let Some(query) = &filters.query {
-                issues.retain(|i| contains_ci(&i.title, query));
-            }
             Ok(issues)
         }
         IssueBackend::Linear { api_key, api_url } => {
@@ -1416,5 +1456,32 @@ mod tests {
         assert_eq!(urlencode("good first issue"), "good%20first%20issue");
         assert_eq!(urlencode("a&b#c"), "a%26b%23c");
         assert_eq!(urlencode("plain-name_1.0~x"), "plain-name_1.0~x");
+    }
+
+    /// The REST backend's query path drives `/search/issues` with the same
+    /// qualifier syntax `gh issue list --search` sends — full-text parity,
+    /// not the title-substring degradation it used to silently apply.
+    #[test]
+    fn github_search_queries_carry_repo_state_and_filter_qualifiers() {
+        let filters = IssueFilters {
+            query: Some("flaky retry".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            github_search_query("octo/repo", &filters),
+            "repo:octo/repo is:issue state:open flaky retry"
+        );
+
+        let filters = IssueFilters {
+            query: Some("timeout".into()),
+            state: Some("all".into()),
+            assignee: Some("@octocat".into()),
+            label: Some("good first issue".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            github_search_query("octo/repo", &filters),
+            "repo:octo/repo is:issue assignee:octocat label:\"good first issue\" timeout"
+        );
     }
 }

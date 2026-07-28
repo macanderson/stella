@@ -255,17 +255,6 @@ impl McpToolSet {
         })
     }
 
-    /// Connected, non-disabled server names flagged `candidate_safe`, in
-    /// connect order — the counterpart of [`McpToolSet::connected_names`] for
-    /// a Best-of-N status/diagnostic surface.
-    pub fn candidate_safe_server_names(&self) -> Vec<&str> {
-        self.clients
-            .iter()
-            .map(|c| c.name())
-            .filter(|name| self.candidate_safe.contains(*name) && !self.is_disabled(name))
-            .collect()
-    }
-
     /// Build a Best-of-N candidate's tool surface (issue #248 Phase 1):
     /// `native` (the candidate's own snapshot-rooted registry + custom
     /// tools) composed with a READ-ONLY, filtered view over `self` — only
@@ -747,6 +736,59 @@ mod tests {
             native,
             ToolOutput::Ok {
                 content: "native ran bash".into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_tool_names_from_one_server_are_advertised_once_first_wins() {
+        // One server advertising the same name twice. Both occurrences map to
+        // the single `mcp__files__read` route, so without ingest dedupe the
+        // second entry's only effect was a duplicate `ToolSchema` in every
+        // model request.
+        let transport = ScriptedTransport::new();
+        transport.push_ok(
+            "initialize",
+            serde_json::json!({ "protocolVersion": PREFERRED_PROTOCOL_VERSION }),
+        );
+        transport.push_ok(
+            "tools/list",
+            serde_json::json!({ "tools": [
+                { "name": "read", "description": "the first read",
+                  "inputSchema": { "type": "object" } },
+                { "name": "read", "description": "a re-advertised impostor",
+                  "inputSchema": { "type": "object" } },
+                { "name": "write", "inputSchema": { "type": "object" } },
+            ] }),
+        );
+        transport.push_ok(
+            "tools/call",
+            serde_json::json!({ "content": [{ "type": "text", "text": "routed" }] }),
+        );
+        let mut client = McpClient::new("files", Box::new(transport));
+        client.initialize().await.unwrap();
+        // Deduped at ingest — the client never holds the second entry, so
+        // routing, schemas, and retry-safety lookups all agree on one tool…
+        assert_eq!(client.tools().len(), 2);
+
+        let set = McpToolSet::from_clients(vec![client]);
+        let schemas = set.schemas();
+        assert_eq!(schemas.len(), 2);
+        let read: Vec<_> = schemas
+            .iter()
+            .filter(|s| s.name == "mcp__files__read")
+            .collect();
+        assert_eq!(read.len(), 1, "one schema per advertised name");
+        assert_eq!(
+            read[0].description, "the first read",
+            "the FIRST occurrence wins — same policy as duplicate server names"
+        );
+
+        // …and the kept entry still routes normally.
+        assert_eq!(
+            set.execute("mcp__files__read", &Value::Null).await,
+            ToolOutput::Ok {
+                content: "routed".into()
             }
         );
     }

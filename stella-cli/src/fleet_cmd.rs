@@ -310,8 +310,9 @@ pub async fn run_fleet(
 }
 
 /// Build the plan: an explicit `--plan` file (JSON or TOML, deserializing
-/// straight into `stella_fleet::Plan`), or one independent isolated task per
-/// positional prompt.
+/// straight into `stella_fleet::Plan`), or one independent shared-tree task
+/// per positional prompt (`Task::new` shares by default; a worktree per task
+/// is a plan-file opt-in).
 fn load_plan(prompts: &[String], plan_file: Option<&Path>) -> Result<Plan, String> {
     if let Some(path) = plan_file {
         let raw = std::fs::read_to_string(path)

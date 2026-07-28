@@ -57,27 +57,26 @@ make watch-lint          # re-run clippy on every save
 A red gate is an automatic "not yet":
 
 ```bash
-make gate                # = no-scratch + doc-citations + fmt --check + clippy -D warnings + test --workspace
+make gate                # = no-scratch + action-pins + doc-citations + invariants
+                         #   + file-size + rustdoc -D warnings + fmt --check
+                         #   + clippy -D warnings + test --workspace
 ```
 
-`/.github/workflows/ci.yml` runs those five in one required job, plus
-`scripts/check-action-pins.sh` and a release smoke build (thin LTO).
-`normative-home.yml` is the second doc-facing job: it re-runs
-`check-doc-citations.sh` and adds `check-normative-home.sh`, which asserts the
-CGP revision pinned in `docs/**` still matches the `contextgraph-*` git rev in
-`stella-cli/Cargo.toml`. Neither of those two scripts needs a Rust toolchain,
-so run them by hand after touching `.github/workflows/` or a `NORMATIVE-HOME:`
-document.
+CI enforces the same nine steps split across two workflows:
+`/.github/workflows/ci.yml`'s required job runs everything except
+`doc-citations` and `invariants` and adds a release smoke build (thin LTO);
+`normative-home.yml` runs those two plus `check-normative-home.sh`, which
+asserts the CGP revision pinned in `docs/**` still matches the
+`contextgraph-*` git rev in `stella-cli/Cargo.toml`. `check-normative-home.sh`
+needs no Rust toolchain and is the one check the gate does not cover, so run
+it by hand after touching a `NORMATIVE-HOME:` document.
 
 `doc-citations` is the guard that keeps a rustdoc comment from citing a
 `docs/**.md` path — or a `§N` inside one — that does not exist (#652). Adding
 a citation to a document you have not written yet fails the build, by design.
 
-For a faster pre-push sanity check (no tests): `make check`. **Known break:**
-that target's prerequisite list names an `action-pins` rule the `Makefile` never
-defines, so it dies with *"No rule to make target 'action-pins'"* before running
-anything — until it is defined, run `./scripts/check-action-pins.sh` alongside
-`make no-scratch format-check lint`.
+For a faster pre-push sanity check (no tests): `make check` — scratch + pins +
+invariants + file-size + fmt + clippy.
 
 `no-scratch` runs first because it costs milliseconds: it asserts no tracked
 file matches a `.gitignore` rule. **Session scratch must never reach the
@@ -242,7 +241,7 @@ changing code inside a crate you don't already know.
 |---|---|---|
 | Change the agent loop (plan / retry / compact / budget / loop-detect / hooks / skills / rules) | [`stella-core`](stella-core/README.md) | **No I/O allowed.** Decision logic only. |
 | Add/fix a model provider (SSE, tool-call dialect, pricing) | [`stella-model`](stella-model/README.md) | One file per adapter (`anthropic.rs`, `openai.rs`, `gemini.rs`, `vertex.rs`, `bedrock.rs`, `zai.rs`). Copy an existing adapter's shape. |
-| Add/fix a built-in tool (`read_file`, `verify_done`, the opt-in `bash`, …) | [`stella-tools`](stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
+| Add/fix a built-in tool (`read_file`, `verify_done`, `bash`, …) | [`stella-tools`](stella-tools/README.md) | Implement the `Tool` trait, register in `ToolRegistry`. |
 | Change CLI commands, flags, or agent wiring | [`stella-cli`](stella-cli/README.md) | This is the shipping binary. |
 | Change REPL rendering / panels / keybindings | [`stella-tui`](stella-tui/README.md) | Pure-fold ratatui REPL — the Command Deck, the default interactive shell on a TTY. |
 | Touch shared types crossing a crate boundary | [`stella-protocol`](stella-protocol/README.md) | **Zero logic, zero I/O — types only.** |

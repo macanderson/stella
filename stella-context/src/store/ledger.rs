@@ -10,7 +10,8 @@
 //!
 //! ## What "append-only" means here
 //!
-//! Not a convention. `context.db`'s v6 migration installs `BEFORE UPDATE` and
+//! Not a convention. `context.db`'s v8 migration (`migrate_v8`) installs
+//! `BEFORE UPDATE` and
 //! `BEFORE DELETE` triggers that abort, so the guarantee holds against every
 //! writer including a future one that has forgotten this module exists. The
 //! only way to change what a record says is to append a new revision naming the

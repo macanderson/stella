@@ -162,7 +162,7 @@ pub fn parse_triage_response(text: &str) -> Option<TaskAssessment> {
         Some(class) => class,
         // A pure `chat` answer carries no orchestration keyword. Park the class
         // at the cheapest tier — it is never consulted, since the
-        // conversational path skips plan/witness/execute/verify. Neither a
+        // conversational path skips plan/execute/witness/verify. Neither a
         // class nor a chat signal means the response is unparseable: fall
         // through to the deterministic floor exactly as before.
         None if conversational => TaskClass::SimpleLookup,
@@ -213,16 +213,31 @@ pub fn classify_conversational(text: &str) -> bool {
 ///    (`hi`, `hello`, `thanks`, an empty submit) routes to chat with no model
 ///    opinion needed. EXACT whole-message match only — never prefix/substring
 ///    — so `hey, fix the login bug` can never be swallowed.
-/// 2. **Model**: triage said `chat`, and the deterministic floor found no
+/// 2. **Model**: triage said `chat`, and neither deterministic veto found a
 ///    positive task signal to overrule it. Same asymmetry
 ///    [`resolve_task_class`] relies on: the deterministic layer can only ever
 ///    *add* work, so it may **veto** "this is just chat" (raising a real task
 ///    back onto the work path) but never manufacture it. An over-eager `chat`
 ///    on a goal carrying an enumeration, conjoined imperatives, or
-///    cross-cutting scope is overruled.
+///    cross-cutting scope is overruled ([`deterministic_floor`]), and so is one
+///    on a goal that plainly asks for something to be done to the workspace
+///    (`has_action_request` — private, like `is_bare_greeting` above).
+///
+/// The second veto exists because the floor alone reads only *code-change*
+/// vocabulary, and the observed failure carried none of it: `i want you to
+/// organize my documents folder ... so can you explore and help me develop a
+/// convention for my files` classified as `chat`, took the tool-less path, and
+/// answered "Let me first check what operating system you're on" — with no
+/// tools bound to check anything with. The turn then reported complete. Every
+/// class but `chat` used to be phrased in terms of *code*, so a real request
+/// about a folder of documents had nowhere else to land; the prompt now says
+/// otherwise ([`triage_prompt`]) and this veto backstops it, because routing to
+/// chat is terminal no-work and a false positive silently drops the task.
 pub fn resolve_conversational(model_says_chat: bool, goal: &str) -> bool {
     is_bare_greeting(goal)
-        || (model_says_chat && deterministic_floor(goal) == TaskClass::SimpleLookup)
+        || (model_says_chat
+            && deterministic_floor(goal) == TaskClass::SimpleLookup
+            && !has_action_request(goal))
 }
 
 /// Whether the whole message is nothing but a greeting / acknowledgement — the
@@ -608,12 +623,132 @@ fn conjoined_imperative(lower: &str) -> bool {
     false
 }
 
+/// Whether the message plainly asks for something to be *done* to the
+/// workspace — the second deterministic veto in [`resolve_conversational`].
+///
+/// [`conjoined_imperative`] cannot answer this: it requires the message's very
+/// first word to be a change verb, so every politely-framed request (`i want
+/// you to organize ...`, `can you explore ...`, `could you take a look at ...`)
+/// is invisible to it, as is every non-code verb. That is correct for its own
+/// job — floor a *class* — but far too narrow to decide whether a message is a
+/// task at all.
+///
+/// The test here is deliberately two-part: an action verb **and** a noun naming
+/// something in the workspace. Either alone is too loose — `nice, thanks for
+/// fixing the file` names a file, and plenty of small talk carries a stray
+/// verb. Requiring both keeps the false-positive rate near zero, which is what
+/// matters: this veto can only push a message onto the work path, and pushing a
+/// genuine `hi` there is the exact failure the conversational route was built
+/// to prevent (`hi` authoring a witness test).
+///
+/// Matching is whole-word and unstemmed, both on purpose. Whole-word so `dir`
+/// does not fire on `direct` and `code` does not fire on `encode`. Unstemmed so
+/// the bare imperative (`organize`, `explore`, `review`) fires while the past
+/// and progressive forms that characterize *acknowledgements* (`thanks for
+/// fixing the file`, `nice, you renamed the folder`) do not — those are chat,
+/// and the work they describe already happened.
+fn has_action_request(goal: &str) -> bool {
+    // Verbs that ask for work. A superset of `conjoined_imperative`'s
+    // CHANGE_VERBS, widened with the inspect/arrange verbs that describe real
+    // work over files that changes no code — the category the floor was blind
+    // to.
+    const ACTION_VERBS: &[&str] = &[
+        "add",
+        "audit",
+        "categorize",
+        "categorise",
+        "check",
+        "clean",
+        "create",
+        "delete",
+        "explore",
+        "extract",
+        "find",
+        "fix",
+        "group",
+        "implement",
+        "inspect",
+        "list",
+        "look",
+        "migrate",
+        "move",
+        "organize",
+        "organise",
+        "read",
+        "rearrange",
+        "refactor",
+        "remove",
+        "rename",
+        "replace",
+        "restructure",
+        "review",
+        "search",
+        "sort",
+        "summarize",
+        "summarise",
+        "tidy",
+        "update",
+        "wire",
+        "write",
+    ];
+    // Nouns naming something the agent could act on. Not code-specific: the
+    // workspace is whatever directory Stella was pointed at, and pointing it at
+    // a folder of documents is a supported thing to do.
+    const WORKSPACE_NOUNS: &[&str] = &[
+        "codebase",
+        "code",
+        "desktop",
+        "dir",
+        "directories",
+        "directory",
+        "docs",
+        "document",
+        "documents",
+        "downloads",
+        "file",
+        "files",
+        "folder",
+        "folders",
+        "notes",
+        "photos",
+        "pictures",
+        "project",
+        "repo",
+        "repository",
+        "screenshots",
+        "spreadsheet",
+        "spreadsheets",
+        "tree",
+        "workspace",
+    ];
+
+    let words: Vec<&str> = goal
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let has = |set: &[&str]| {
+        words
+            .iter()
+            .any(|w| set.contains(&w.to_ascii_lowercase().as_str()))
+    };
+    has(ACTION_VERBS) && has(WORKSPACE_NOUNS)
+}
+
 /// The prompt handed to the Role::Triage model to classify a user message. A
 /// tiny, fixed instruction for a cheap/fast tier: it asks for three labeled
 /// lines (`CLASS`/`WITNESS`/`JUDGE`), but the parser tolerates a bare class
 /// token too ([`parse_triage_response`]). The first line offers `chat` so a
 /// non-task (a greeting, small talk) has somewhere to land instead of being
 /// forced onto the work path.
+///
+/// The class descriptions are deliberately **not** phrased in terms of code.
+/// They were, and it misrouted real work: every alternative to `chat` said
+/// "code", so `organize my documents folder` had no bucket that fit and a cheap
+/// model reasonably picked the only one that admitted non-software input —
+/// `chat`, which is tool-less and terminal. The workspace is whatever directory
+/// Stella was pointed at, so the split that matters is *does this ask for
+/// anything to be done*, not *is this about source files*. See
+/// [`resolve_conversational`] for the deterministic backstop.
 pub fn triage_prompt(goal: &str) -> String {
     format!(
         "Classify the following user message, and decide what assurance its \
@@ -624,13 +759,19 @@ pub fn triage_prompt(goal: &str) -> String {
          WITNESS: yes|no\n\
          JUDGE: yes|no\n\n\
          CLASS is what the message needs:\n\
-         - `chat`    — NOT a software task: a greeting (`hi`), thanks, small \
-         talk, or a question about you. Reply conversationally; touch no files, \
-         write no plan, no test.\n\
-         - `lookup`  — a read/explain/search question about the code that \
-         changes no files\n\
-         - `single`  — one concrete code change\n\
+         - `chat`    — asks for NOTHING to be done: a greeting (`hi`), thanks, \
+         small talk, or a question about you. Reply conversationally; touch no \
+         files, write no plan, no test.\n\
+         - `lookup`  — a read/explain/search/explore question about the \
+         workspace that changes no files\n\
+         - `single`  — one concrete change\n\
          - `multi`   — genuinely multi-step work spanning several changes\n\n\
+         The workspace is not always code. Exploring, organizing, renaming, \
+         sorting, cleaning up or summarizing ANY files — documents, notes, \
+         data, photos — is real work: classify it `lookup`, `single` or `multi` \
+         like any other task. Use `chat` ONLY when the message asks you to do \
+         nothing at all. If it asks you to look at, decide about, or change \
+         anything, it is never `chat`.\n\n\
          WITNESS is whether a failing test should be written first to pin the \
          intended behavior. Say no when the change is mechanical, when \
          correctness is already obvious from the diff, or when the project \
@@ -899,6 +1040,93 @@ mod tests {
             "rename all callers of foo across the codebase"
         ));
         assert!(!resolve_conversational(true, "add a field and update it"));
+    }
+
+    #[test]
+    fn an_action_request_on_non_code_files_is_not_chat() {
+        // The observed failure, verbatim from the session journal. Triage
+        // answered `CLASS: chat`, the floor saw no code-change keyword, and the
+        // task took the tool-less conversational path: the model replied "Let
+        // me first check what operating system you're on" with no tools bound,
+        // and the turn reported complete. It must reach the work path.
+        assert!(!resolve_conversational(
+            true,
+            "i want you to organize my documents folder but I don't know whats \
+             inside so can you explore and help me develop a convention for my \
+             files and where they are saved and what i call them"
+        ));
+
+        // The shapes the floor is structurally blind to: a polite frame moves
+        // the verb off the front of the message, and none of these verbs are
+        // code-change verbs.
+        assert!(!resolve_conversational(
+            true,
+            "could you take a look at my documents directory"
+        ));
+        assert!(!resolve_conversational(
+            true,
+            "can you explore the downloads folder and tell me what is in there"
+        ));
+        assert!(!resolve_conversational(
+            true,
+            "sort out the files on my desktop"
+        ));
+        assert!(!resolve_conversational(true, "organize this project"));
+    }
+
+    #[test]
+    fn real_chat_survives_the_action_request_veto() {
+        // The negative half, and the one that actually constrains the design:
+        // this veto can only ever push a message ONTO the work path, so a false
+        // positive resurrects the bug the conversational route exists to fix
+        // (`hi` authoring a witness test). Every one of these must stay chat.
+        for goal in [
+            "what can you do?",
+            "who built you?",
+            "how are you today",
+            // Names a workspace noun but asks for nothing — a verb alone or a
+            // noun alone must never be enough.
+            "that's a cool project",
+            "i really like this codebase",
+            // Acknowledgements of work already done. The past/progressive forms
+            // are why matching is unstemmed: `fixing`/`renamed` must not read
+            // as `fix`/`rename`.
+            "nice, thanks for fixing the file",
+            "thanks, you renamed the folder correctly",
+        ] {
+            assert!(
+                resolve_conversational(true, goal),
+                "{goal:?} must stay conversational"
+            );
+        }
+    }
+
+    #[test]
+    fn action_request_matching_is_whole_word() {
+        // `encoder` contains "code" and `direct` contains "dir"; a substring
+        // test would call this a workspace request. It is not one.
+        assert!(!has_action_request("check that the encoder is direct"));
+        // Same verb, a real noun → now it is.
+        assert!(has_action_request("check that the directory is empty"));
+    }
+
+    #[test]
+    fn the_triage_prompt_does_not_frame_every_real_class_as_code() {
+        let p = triage_prompt("anything");
+        // The regression: `lookup`/`single`/`multi` each said "code", leaving a
+        // non-code task no bucket but `chat`.
+        assert!(
+            p.contains("The workspace is not always code"),
+            "the prompt must tell triage that non-code work is still work"
+        );
+        assert!(
+            !p.contains("one concrete code change"),
+            "`single` must not be scoped to code changes"
+        );
+        assert!(
+            !p.contains("question about the code"),
+            "`lookup` must not be scoped to questions about code"
+        );
     }
 
     #[test]

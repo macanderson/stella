@@ -954,10 +954,17 @@ fn detect_taskfile(dir: &Path, rel: &str, out: &mut Vec<ScriptEntry>) {
             continue;
         }
         let key = trimmed.trim_start();
-        let Some(colon) = key.find(':') else {
-            continue;
+        // The key/value separator is the first `": "` or a trailing `:` —
+        // NOT the first colon: a Taskfile task name may itself be namespaced
+        // (`ns:build`), and splitting at the first colon truncated it to
+        // `ns`, yielding a wrong id and a `task ns` command.
+        let task = match key.find(": ") {
+            Some(sep) => &key[..sep],
+            None => match key.strip_suffix(':') {
+                Some(name) => name,
+                None => continue,
+            },
         };
-        let task = &key[..colon];
         let valid = !task.is_empty()
             && !task.starts_with('-')
             && task
@@ -1653,6 +1660,31 @@ mod tests {
             !index.scripts.iter().any(|e| e.dir == "not-a-package"),
             "keys outside packages: must not enumerate"
         );
+    }
+
+    #[test]
+    fn taskfile_namespaced_task_names_survive_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "Taskfile.yml",
+            "version: '3'\ntasks:\n  build:\n    cmds:\n      - go build\n  ns:build:\n    cmds:\n      - go build ./ns\n",
+        );
+        let index = ScriptIndex::detect_blocking(dir.path());
+        let ns = index
+            .scripts
+            .iter()
+            .find(|e| e.id == "task:ns:build")
+            .unwrap_or_else(|| panic!("namespaced task indexed: {:?}", index.scripts));
+        assert_eq!(ns.name, "ns:build");
+        assert_eq!(ns.command, "task ns:build");
+        // The first-colon truncation produced a phantom `ns` task.
+        assert!(
+            !index.scripts.iter().any(|e| e.id == "task:ns"),
+            "{:?}",
+            index.scripts
+        );
+        assert!(index.scripts.iter().any(|e| e.id == "task:build"));
     }
 
     #[test]

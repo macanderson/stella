@@ -28,7 +28,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 16] = [
+pub(crate) const MIGRATIONS: [Migration; 17] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -91,6 +91,11 @@ pub(crate) const MIGRATIONS: [Migration; 16] = [
     // because every pre-v16 row predates it. Additive ADD COLUMNs,
     // column-guarded.
     migrate_v15_to_v16,
+    // v16 → v17: drop the schema nothing ever read or wrote — the reserved
+    // `graph_nodes`/`graph_edges` seam and the query-less
+    // `agent_uses_by_agent`/`reflections_by_kind` indexes. Pure removal; no
+    // surviving table changes shape.
+    migrate_v16_to_v17,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -104,9 +109,11 @@ pub(crate) const MIGRATIONS: [Migration; 16] = [
     // slots are reserved here in advance:
     //
     //   v15 → v16: adaptive-context Phase 2 (#713) — CLAIMED above.
-    //   v16 → v17: adaptive-context Phase 3 (#714)
+    //   v16 → v17: CLAIMED above (the schema-removal step landed first;
+    //              slots are positions, so the reservation moves down).
+    //   v17 → v18: adaptive-context Phase 3 (#714)
     //
-    // If you are neither of those, take v17 → v18 and add your own line
+    // If you are neither of those, take v18 → v19 and add your own line
     // here. If a reserved phase ships without needing its slot, delete its
     // line rather than leaving a hole — index order is the contract.
 ];
@@ -491,6 +498,25 @@ fn migrate_v15_to_v16(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     if !column_exists(tx, "step_receipt", "frame_hash")? {
         tx.execute_batch("ALTER TABLE step_receipt ADD COLUMN frame_hash TEXT;")?;
     }
+    Ok(())
+}
+
+/// v16 → v17: the first pure removal in the chain. `graph_nodes`/`graph_edges`
+/// were a v0-era seam reserved for a context plane that shipped its own stores
+/// instead (`stella-context`, `stella-graph`) — no shipping code ever wrote or
+/// read them, so every deployed pair is empty and dropping loses nothing.
+/// `agent_uses_by_agent` and `reflections_by_kind` indexed access paths no
+/// reader takes (both tables are only ever walked whole — the JSON export and
+/// the observatory), so each was pure write-amplification on its table's
+/// insert path. `IF EXISTS` mirrors the house `IF NOT EXISTS` tolerance:
+/// partial legacy files may hold any subset of these.
+fn migrate_v16_to_v17(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    tx.execute_batch(
+        "DROP TABLE IF EXISTS graph_nodes;
+         DROP TABLE IF EXISTS graph_edges;
+         DROP INDEX IF EXISTS agent_uses_by_agent;
+         DROP INDEX IF EXISTS reflections_by_kind;",
+    )?;
     Ok(())
 }
 
@@ -1048,6 +1074,57 @@ mod tests {
 
         // Idempotent on a file already at the v16 shape.
         apply_migration(&mut conn, migrate_v15_to_v16, 16).expect("idempotent");
+    }
+
+    #[test]
+    fn v17_migration_drops_the_unused_schema_and_keeps_the_tables_that_carry_data() {
+        // A v16 file holds the reserved graph pair and both dead indexes; the
+        // indexed tables carry real rows that must survive their index.
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE graph_nodes (id TEXT PRIMARY KEY, label TEXT NOT NULL,
+               properties TEXT NOT NULL DEFAULT '{}');
+             CREATE TABLE graph_edges (src TEXT NOT NULL, dst TEXT NOT NULL,
+               edge_type TEXT NOT NULL, properties TEXT NOT NULL DEFAULT '{}');
+             CREATE TABLE agent_uses (execution_id INTEGER NOT NULL, agent TEXT NOT NULL,
+               version INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '',
+               ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+             CREATE INDEX agent_uses_by_agent ON agent_uses(agent, version, execution_id);
+             CREATE TABLE reflections (id INTEGER PRIMARY KEY AUTOINCREMENT,
+               execution_id INTEGER, kind TEXT NOT NULL, content TEXT NOT NULL,
+               domains TEXT NOT NULL DEFAULT '[]', occurred_at INTEGER NOT NULL);
+             CREATE INDEX reflections_by_kind ON reflections(kind);
+             INSERT INTO agent_uses (execution_id, agent, version) VALUES (1, 'reviewer', 2);
+             INSERT INTO reflections (kind, content, occurred_at) VALUES ('lesson', 'x', 0);",
+        )
+        .expect("v16 schema");
+
+        apply_migration(&mut conn, migrate_v16_to_v17, 17).expect("migrate");
+
+        for table in ["graph_nodes", "graph_edges"] {
+            assert!(!table_exists(&conn, table).unwrap(), "{table} must be gone");
+        }
+        for index in ["agent_uses_by_agent", "reflections_by_kind"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+                    params![index],
+                    |r| r.get(0),
+                )
+                .expect("probe");
+            assert_eq!(n, 0, "{index} must be gone");
+        }
+        // The indexed tables keep their rows — only the access path is gone.
+        let uses: i64 = conn
+            .query_row("SELECT count(*) FROM agent_uses", [], |r| r.get(0))
+            .expect("agent_uses survives");
+        let lessons: i64 = conn
+            .query_row("SELECT count(*) FROM reflections", [], |r| r.get(0))
+            .expect("reflections survives");
+        assert_eq!((uses, lessons), (1, 1));
+
+        // Idempotent on a partial file already past the removal.
+        apply_migration(&mut conn, migrate_v16_to_v17, 17).expect("idempotent");
     }
 
     /// #617 item 8: losing the migration race is a no-op, not an error. The

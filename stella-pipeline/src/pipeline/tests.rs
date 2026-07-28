@@ -23,13 +23,26 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
 use crate::ports::{
-    AdoptedChange, ArtifactIdentity, ArtifactKind, AutoApproveGate, CmdOutcome, ContextRecallPort,
+    AdoptedChange, ArtifactIdentity, ArtifactKind, CmdOutcome, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoRepoStatus, NoRepoStructure, Recall,
     TestInvocation, TestRunner,
 };
 use stella_protocol::{ContextProviderUsage, ContextUsage};
 
 // test doubles
+
+/// An [`ApprovalGate`] that approves every proposal — the double most tests
+/// use so an interactive scope review never blocks a scripted run. Test-only
+/// on purpose: production has no auto-approving gate (the headless bypass
+/// skips the gate outright rather than consulting one).
+struct AutoApproveGate;
+
+#[async_trait]
+impl ApprovalGate for AutoApproveGate {
+    async fn review(&self, _proposal: &ScopeProposal) -> ScopeDecision {
+        ScopeDecision::Approve
+    }
+}
 
 /// A [`RepoStatusPort`] returning a fixed untracked `path -> fingerprint`
 /// map — the "after execute" snapshot `gather_diff` diffs against a
@@ -1372,6 +1385,40 @@ async fn triage_can_route_work_onto_a_cheaper_path_than_the_keyword_floor() {
         .filter(|e| matches!(e, AgentEvent::StepUsage { .. }))
         .count();
     assert_eq!(calls, 2, "ceremony triage declined is never bought: {s:?}");
+}
+
+/// The observed failure, end to end at the seam that actually decides it.
+///
+/// Triage answered `CLASS: chat` for a real request about a folder of
+/// documents. The conversational route is tool-less by construction
+/// (`run_conversational` calls `metered_raw_call`, which binds no tools), so
+/// the worker replied "Let me first check what operating system you're on",
+/// could not check anything, and the turn reported complete at 100%. Reaching
+/// `Execute` is the whole assertion: that is the tool-bound turn.
+#[tokio::test]
+async fn a_chat_classification_on_a_files_request_still_reaches_execute() {
+    let provider = ScriptedProvider::new(vec![
+        text_result("CLASS: chat\nWITNESS: no\nJUDGE: no"),
+        text_result("done"),
+    ]);
+    let (outcome, events, _) = run_unisolated_with_router(
+        &provider,
+        PipelineConfig::default(),
+        "i want you to organize my documents folder but I don't know whats \
+         inside so can you explore and help me develop a convention for my \
+         files and where they are saved and what i call them",
+        router(),
+    )
+    .await;
+    let outcome = outcome.expect("run succeeds");
+
+    let s = stages(&events);
+    assert!(
+        s.contains(&StageKind::Execute),
+        "a request to explore and organize files must reach the tool-bound \
+         execute turn, not the tool-less chat path: {s:?}"
+    );
+    assert_eq!(outcome.status, PipelineStatus::Completed);
 }
 
 /// Losing the independent witness author must cost the run its authored

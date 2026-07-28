@@ -28,6 +28,8 @@
 //! past — discovery failure must never fail a refresh of OTHER providers,
 //! and never a turn.
 
+use std::time::Duration;
+
 use crate::credential::ApiKey;
 use crate::http;
 
@@ -54,6 +56,21 @@ pub struct ProviderModel {
     pub supports_tools: Option<bool>,
 }
 
+/// Hard ceiling on one listing response body. The largest real listing
+/// (OpenRouter's, with per-model pricing and parameter arrays) is a few MB
+/// of JSON, so 16 MiB leaves generous headroom while keeping a misbehaving
+/// endpoint from growing the process until it is OOM-killed.
+const MAX_LISTING_BYTES: usize = 16 * 1024 * 1024;
+
+/// Wall-clock ceiling on one listing request, send through last byte.
+/// `http::client`'s bound is per-read, so a slow-but-never-silent body could
+/// otherwise stall the caller indefinitely — and one caller is the CLI's
+/// *blocking* startup auto-sync. With [`MAX_PAGES`] this also bounds a whole
+/// paginated fetch. A healthy listing answers in single-digit seconds; a
+/// provider that cannot produce its own model list inside this window is
+/// down for sync purposes, and discovery is best-effort by contract.
+const LISTING_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// GET `url` and hand back the body, with the provider's own error text on
 /// a non-success status. `headers` are (name, value) pairs — the auth
 /// vocabulary differs per provider and none of it may end up in the URL
@@ -64,41 +81,89 @@ pub struct ProviderModel {
 /// per request compiles a fresh TLS config and starts an empty pool, so a
 /// ten-page sync paid ten full TLS handshakes to the same host — the reuse
 /// `reqwest::Client` documents itself as existing for.
-///
-/// Known bound this does NOT have: the response body is buffered whole, with
-/// no maximum and no total-request deadline (`http::client`'s bound is
-/// per-read). A listing endpoint that answers with an enormous or
-/// slow-but-never-silent body therefore grows the process until it is
-/// OOM-killed, or stalls the caller indefinitely — and one caller is the
-/// CLI's *blocking* startup auto-sync. The endpoint is the user's own
-/// configured provider, so this is a robustness gap rather than an untrusted
-/// input, but the fix (a `Content-Length` pre-check plus chunked accumulation
-/// under a cap, the shape `stella-media`'s `download_bytes` already uses) is
-/// the same one.
 async fn get_json(
     client: &reqwest::Client,
     label: &str,
     url: &str,
     headers: &[(&str, &str)],
 ) -> Result<String, String> {
+    get_json_bounded(
+        client,
+        label,
+        url,
+        headers,
+        MAX_LISTING_BYTES,
+        LISTING_TIMEOUT,
+    )
+    .await
+}
+
+/// [`get_json`] with the bounds as parameters, so tests can exercise the cap
+/// and the deadline without a 16 MiB fixture or a 20-second wait.
+///
+/// The body is accumulated chunk by chunk under `max_bytes` — the same shape
+/// as `stella-media`'s `download_bytes`: an honest `Content-Length` over the
+/// cap costs zero bytes, and the chunk loop catches a missing or lying one.
+/// `deadline` covers the whole request; the per-read bound `http::client`
+/// carries cannot see total elapsed time.
+async fn get_json_bounded(
+    client: &reqwest::Client,
+    label: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    max_bytes: usize,
+    deadline: Duration,
+) -> Result<String, String> {
     let mut request = client.get(url).header("Accept", "application/json");
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|e| format!("could not reach {label}: {e}"))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("could not read the {label} response: {e}"))?;
-    if !status.is_success() {
-        let snippet: String = body.chars().take(200).collect();
-        return Err(format!("{label} answered HTTP {status}: {snippet}"));
-    }
-    Ok(body)
+    let fetch = async {
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("could not reach {label}: {e}"))?;
+        let status = response.status();
+        let oversized = || {
+            format!(
+                "{label} model list exceeds the {} MiB response cap — refusing to buffer it",
+                max_bytes / (1024 * 1024)
+            )
+        };
+        if response
+            .content_length()
+            .is_some_and(|len| len > max_bytes as u64)
+        {
+            return Err(oversized());
+        }
+        // Cap the pre-allocation by the declared length so a lying
+        // Content-Length cannot make us reserve max_bytes for a small body.
+        let reserve = response.content_length().unwrap_or(0).min(max_bytes as u64) as usize;
+        let mut bytes: Vec<u8> = Vec::with_capacity(reserve);
+        let mut response = response;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("could not read the {label} response: {e}"))?
+        {
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(oversized());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+        if !status.is_success() {
+            let snippet: String = body.chars().take(200).collect();
+            return Err(format!("{label} answered HTTP {status}: {snippet}"));
+        }
+        Ok(body)
+    };
+    tokio::time::timeout(deadline, fetch).await.map_err(|_| {
+        format!(
+            "{label} model list did not answer within {}s — skipping this sync",
+            deadline.as_secs()
+        )
+    })?
 }
 
 /// Hard cap on pagination rounds for the providers that page. Ten pages at
@@ -734,6 +799,66 @@ mod tests {
             .await
             .expect_err("a never-ending cursor is an error, not a partial success");
         assert!(err.contains("Anthropic") && err.contains("10"), "{err}");
+    }
+
+    /// The response cap: a body over `max_bytes` is refused by name instead
+    /// of buffered whole — the OOM shape the cap exists to prevent. Driven
+    /// through the bounded variant so the test doesn't need a 16 MiB fixture.
+    #[tokio::test]
+    async fn a_listing_body_over_the_cap_is_refused_not_buffered() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(4096)))
+            .mount(&server)
+            .await;
+        let err = get_json_bounded(
+            &http::client(),
+            "OpenAI",
+            &server.uri(),
+            &[],
+            1024,
+            Duration::from_secs(5),
+        )
+        .await
+        .expect_err("an oversized body must be refused");
+        assert!(err.contains("OpenAI") && err.contains("cap"), "{err}");
+    }
+
+    /// The wall-clock deadline: `http::client`'s per-read bound cannot see
+    /// total elapsed time, and one caller of these fetches is the CLI's
+    /// BLOCKING startup auto-sync — a stalled listing must fail within the
+    /// deadline, not hang the launch.
+    #[tokio::test]
+    async fn a_listing_that_stalls_past_the_deadline_errors_instead_of_hanging() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("{}")
+                    .set_delay(Duration::from_secs(5)),
+            )
+            .mount(&server)
+            .await;
+        let err = get_json_bounded(
+            &http::client(),
+            "Gemini",
+            &server.uri(),
+            &[],
+            MAX_LISTING_BYTES,
+            Duration::from_millis(100),
+        )
+        .await
+        .expect_err("a stalled listing must time out");
+        assert!(
+            err.contains("Gemini") && err.contains("did not answer"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

@@ -70,10 +70,10 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     // Raw JSON dumps — one per table, inside the timestamped folder.
     for (table, json) in &dumps {
         let pretty = pretty_json(json);
-        zip.add_file(&format!("{folder}/raw/{table}.json"), pretty.as_bytes());
+        zip.add_file(&format!("{folder}/raw/{table}.json"), pretty.as_bytes())?;
     }
     // The dashboard.
-    zip.add_file(&format!("{folder}/dashboard.html"), html.as_bytes());
+    zip.add_file(&format!("{folder}/dashboard.html"), html.as_bytes())?;
     // A manifest with the watermark and table list.
     let manifest = serde_json::json!({
         "exported_at": watermark,
@@ -89,9 +89,9 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
         serde_json::to_string_pretty(&manifest)
             .unwrap_or_default()
             .as_bytes(),
-    );
+    )?;
 
-    let bytes = zip.finish();
+    let bytes = zip.finish()?;
     std::fs::write(&zip_path, &bytes).map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
@@ -518,6 +518,11 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
 // matter is the signal to reach for a real zip crate — and to stream entries
 // instead of assembling the whole archive in memory, which this writer also
 // does not do.
+//
+// Sizes and offsets are classic-ZIP four-byte fields (entry counts two-byte).
+// An export that would overflow them — a 4 GiB entry or archive, 65,536
+// entries — is refused with an error rather than truncated into a silently
+// corrupt archive; ZIP64 is deliberately out of scope.
 
 /// CRC-32 lookup table (polynomial 0xEDB88320).
 fn crc32_table() -> [u32; 256] {
@@ -546,6 +551,18 @@ fn crc32(data: &[u8]) -> u32 {
     crc ^ 0xFFFFFFFF
 }
 
+/// Guard one classic-ZIP four-byte size/offset field. `what` names what
+/// overflowed for the error message; the mapped value is what the header
+/// stores. Testable with a plain length — no 4 GiB buffer required.
+fn zip32_field(len: usize, what: &str) -> Result<u32, String> {
+    u32::try_from(len).map_err(|_| {
+        format!(
+            "{what} is {len} bytes — past the 4 GiB classic-ZIP limit; refusing to write a \
+             corrupt archive (ZIP64 is unsupported)"
+        )
+    })
+}
+
 /// A minimal stored-entry ZIP writer.
 struct ZipWriter {
     entries: Vec<ZipEntry>,
@@ -567,10 +584,10 @@ impl ZipWriter {
         }
     }
 
-    fn add_file(&mut self, name: &str, content: &[u8]) {
+    fn add_file(&mut self, name: &str, content: &[u8]) -> Result<(), String> {
         let crc = crc32(content);
-        let offset = self.data.len() as u32;
-        let size = content.len() as u32;
+        let offset = zip32_field(self.data.len(), &format!("archive (at entry `{name}`)"))?;
+        let size = zip32_field(content.len(), &format!("entry `{name}`"))?;
 
         // Local file header (PK\x03\x04)
         self.data.extend_from_slice(&[
@@ -597,10 +614,20 @@ impl ZipWriter {
             crc32: crc,
             size,
         });
+        Ok(())
     }
 
-    fn finish(mut self) -> Vec<u8> {
-        let cd_offset = self.data.len() as u32;
+    fn finish(mut self) -> Result<Vec<u8>, String> {
+        // The EOCD stores the entry count in two bytes; past it lies ZIP64.
+        let count = u16::try_from(self.entries.len()).map_err(|_| {
+            format!(
+                "{} zip entries — past the 65,535 classic-ZIP limit; refusing to write a \
+                 corrupt archive (ZIP64 is unsupported)",
+                self.entries.len()
+            )
+        })?;
+        let cd_start = self.data.len();
+        let cd_offset = zip32_field(cd_start, "archive (at central directory)")?;
 
         // Central directory file headers (PK\x01\x02)
         for entry in &self.entries {
@@ -628,7 +655,7 @@ impl ZipWriter {
             self.data.extend_from_slice(name_bytes);
         }
 
-        let cd_size = (self.data.len() as u32) - cd_offset;
+        let cd_size = zip32_field(self.data.len() - cd_start, "central directory")?;
 
         // End of central directory (PK\x05\x06)
         self.data.extend_from_slice(&[
@@ -636,14 +663,13 @@ impl ZipWriter {
             0x00, 0x00, // disk number
             0x00, 0x00, // disk with CD
         ]);
-        let count = self.entries.len() as u16;
         self.data.extend_from_slice(&count.to_le_bytes()); // entries on this disk
         self.data.extend_from_slice(&count.to_le_bytes()); // total entries
         self.data.extend_from_slice(&cd_size.to_le_bytes());
         self.data.extend_from_slice(&cd_offset.to_le_bytes());
         self.data.extend_from_slice(&0u16.to_le_bytes()); // comment length
 
-        self.data
+        Ok(self.data)
     }
 }
 
@@ -654,9 +680,9 @@ mod tests {
     #[test]
     fn zip_writer_produces_a_valid_archive() {
         let mut zip = ZipWriter::new();
-        zip.add_file("a.txt", b"hello");
-        zip.add_file("b.txt", b"world!!!");
-        let bytes = zip.finish();
+        zip.add_file("a.txt", b"hello").unwrap();
+        zip.add_file("b.txt", b"world!!!").unwrap();
+        let bytes = zip.finish().unwrap();
 
         // Minimum valid ZIP with 2 entries: 2 local headers + 2 central + EOCD.
         // Each local header is 30 + name_len; central is 46 + name_len; EOCD is 22.
@@ -677,9 +703,38 @@ mod tests {
     #[test]
     fn zip_writer_handles_empty_files() {
         let mut zip = ZipWriter::new();
-        zip.add_file("empty.txt", b"");
-        let bytes = zip.finish();
+        zip.add_file("empty.txt", b"").unwrap();
+        let bytes = zip.finish().unwrap();
         assert_eq!(&bytes[..4], &[0x50, 0x4b, 0x03, 0x04]);
+    }
+
+    /// The four-byte size/offset guard, exercised with plain lengths — the
+    /// point is refusing loudly at the ZIP32 boundary, not allocating 4 GiB.
+    #[test]
+    fn zip32_field_refuses_lengths_the_headers_cannot_store() {
+        assert_eq!(zip32_field(0, "entry `x`"), Ok(0));
+        assert_eq!(
+            zip32_field(u32::MAX as usize, "entry `x`"),
+            Ok(u32::MAX),
+            "the last representable length still fits"
+        );
+        let err = zip32_field(u32::MAX as usize + 1, "entry `big.json`").unwrap_err();
+        assert!(err.contains("entry `big.json`"), "{err}");
+        assert!(err.contains("4 GiB"), "{err}");
+        assert!(err.contains("ZIP64"), "{err}");
+    }
+
+    /// Past 65,535 entries the EOCD's two-byte counts wrap — `finish` must
+    /// refuse rather than emit an archive most tools would misread.
+    #[test]
+    fn zip_writer_refuses_more_entries_than_the_eocd_can_count() {
+        let mut zip = ZipWriter::new();
+        for i in 0..=u16::MAX as u32 {
+            zip.add_file(&format!("{i}"), b"").unwrap();
+        }
+        let err = zip.finish().unwrap_err();
+        assert!(err.contains("65,535"), "{err}");
+        assert!(err.contains("ZIP64"), "{err}");
     }
 
     #[test]

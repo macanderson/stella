@@ -597,3 +597,90 @@ fn graph_picker_narrows_to_the_filter_query() {
         "non-matches hidden:\n{text}"
     );
 }
+
+#[test]
+fn inspect_overlay_scroll_saturates_past_u16_instead_of_wrapping() {
+    // A reconstructed context can exceed 65 535 rows; a plain `as u16` on
+    // the scroll offset would wrap and snap the view back near the top.
+    // Saturation pins it at the deepest reachable row instead.
+    let mut ui = DeckUi::default();
+    ui.inspect_open = true;
+    let content: String = (0..70_000).map(|i| format!("ctx-{i:05}\n")).collect();
+    ui.inspect_view = Some(Box::new(crate::envelope::InspectView {
+        call: crate::envelope::RecordedCallInfo {
+            turn_instance: 1,
+            step: 1,
+            call_seq: 0,
+            call_role: "worker".into(),
+            provider: "openrouter".into(),
+            model: "m".into(),
+            estimated_input_tokens: 0,
+        },
+        messages: vec![crate::envelope::InspectMessage {
+            role: "user".into(),
+            content,
+        }],
+        verified: false,
+        unresolved: 0,
+        digest_mismatches: 0,
+    }));
+    ui.inspect_scroll = 66_000;
+
+    let area = Rect::new(0, 0, 100, 30);
+    let mut buf = Buffer::empty(area);
+    render_inspect_overlay(&mut ui, area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(
+        text.contains("ctx-655"),
+        "the window pins at the u16 ceiling (rows ≈65 535), not at a wrapped offset:\n{text}"
+    );
+    assert!(
+        !text.contains("ctx-004"),
+        "66_000 as u16 would have wrapped to ~464:\n{text}"
+    );
+}
+
+#[test]
+fn sessions_overlay_repeats_the_heading_when_scrolled_into_a_group_midway() {
+    // Selection deep inside a long group: the group's first rows are above
+    // the window, but the heading must still render above the visible rows —
+    // without it the phase of what's on screen is unreadable.
+    fn session(i: usize, phase: crate::envelope::SessionPhase) -> crate::envelope::SessionInfo {
+        crate::envelope::SessionInfo {
+            id: format!("ses-{i}"),
+            title: format!("session {i:02}"),
+            summary: String::new(),
+            workspace: "/tmp/w".into(),
+            phase,
+            started_ms: 0,
+            updated_ms: 0,
+            mine: false,
+            resumable: false,
+        }
+    }
+    let model = WorkspaceModel::new();
+    let mut ui = DeckUi::default();
+    ui.sessions_open = true;
+    ui.sessions = (0..5)
+        .map(|i| session(i, crate::envelope::SessionPhase::InProgress))
+        .chain((5..30).map(|i| session(i, crate::envelope::SessionPhase::Complete)))
+        .collect();
+    ui.sessions_sel = 20; // mid-Complete: the group starts at flat index 5
+
+    let area = Rect::new(0, 0, 100, 30);
+    let mut buf = Buffer::empty(area);
+    render_sessions_overlay(&model, &ui, area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(
+        text.contains("COMPLETE (25)"),
+        "the heading repeats for a group entered mid-way:\n{text}"
+    );
+    assert!(
+        !text.contains("IN PROGRESS"),
+        "a group scrolled fully out keeps no stray heading:\n{text}"
+    );
+    assert!(
+        text.contains("session 20"),
+        "the selected row is in the window:\n{text}"
+    );
+}

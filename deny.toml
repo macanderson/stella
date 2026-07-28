@@ -53,8 +53,10 @@ allow = [
   "Unicode-DFS-2016",
   "CDLA-Permissive-2.0",
 ]
-# A crate whose license cannot be determined from metadata is a hard failure,
-# not a warning: no license means all rights reserved.
+# `unused-allowed-license` fires when an entry in `allow` above matches no
+# license actually used in the dependency graph. "allow" keeps that quiet:
+# the list is a curated licensing policy, and an entry may legitimately
+# outlive the dependency that motivated it.
 unused-allowed-license = "allow"
 confidence-threshold = 0.9
 

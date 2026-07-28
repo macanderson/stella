@@ -522,53 +522,59 @@ impl Tool for Explorations {
                     .into(),
             };
         }
-        let mut lines: Vec<String> = Vec::with_capacity(records.len());
-        for r in &records {
-            let line = match r.status {
-                ExplorationStatus::Draft => {
-                    let state = if r.pid.is_some_and(pid_alive) {
-                        format!("IN PROGRESS by pid {} (live)", r.pid.unwrap_or(0))
-                    } else {
-                        "abandoned draft — safe to take over".to_string()
-                    };
-                    format!(
-                        "- `{}` — {} ({state}, {}): {}",
-                        r.slice,
-                        r.title,
-                        age_human(r.created_at_ms),
-                        r.summary
-                    )
-                }
-                ExplorationStatus::Complete => {
-                    let freshness = staleness::freshness(
-                        root,
-                        &r.manifest,
-                        r.git_head.as_deref(),
-                        current_head.as_deref(),
-                    )
-                    .await;
-                    // Pre-manifest records keep the quiet v1 line — a loud
-                    // "unverified" on every legacy record is noise.
-                    let verdict = match &freshness {
-                        Freshness::Unknown { .. } => String::new(),
-                        other => format!("{}, ", other.label(r.manifest.len())),
-                    };
-                    format!(
-                        "- `{}` — {} ({verdict}{}, {} files): {}",
-                        r.slice,
-                        r.title,
-                        age_human(r.created_at_ms),
-                        if r.manifest.is_empty() {
-                            r.files.len()
+        // One future per record, joined: a completed record's freshness check
+        // may run a `git status` (head-match short-circuit) or re-hash a
+        // manifest of up to [`MAX_MANIFEST_FILES`] files, and awaiting them
+        // record-after-record made the listing pay the sum of every check's
+        // latency. `join_all` keeps record order; the single `git_head` above
+        // is already shared across all of them.
+        let mut lines: Vec<String> =
+            futures_util::future::join_all(records.iter().map(|r| async {
+                match r.status {
+                    ExplorationStatus::Draft => {
+                        let state = if r.pid.is_some_and(pid_alive) {
+                            format!("IN PROGRESS by pid {} (live)", r.pid.unwrap_or(0))
                         } else {
-                            r.manifest.len()
-                        },
-                        r.summary
-                    )
+                            "abandoned draft — safe to take over".to_string()
+                        };
+                        format!(
+                            "- `{}` — {} ({state}, {}): {}",
+                            r.slice,
+                            r.title,
+                            age_human(r.created_at_ms),
+                            r.summary
+                        )
+                    }
+                    ExplorationStatus::Complete => {
+                        let freshness = staleness::freshness(
+                            root,
+                            &r.manifest,
+                            r.git_head.as_deref(),
+                            current_head.as_deref(),
+                        )
+                        .await;
+                        // Pre-manifest records keep the quiet v1 line — a loud
+                        // "unverified" on every legacy record is noise.
+                        let verdict = match &freshness {
+                            Freshness::Unknown { .. } => String::new(),
+                            other => format!("{}, ", other.label(r.manifest.len())),
+                        };
+                        format!(
+                            "- `{}` — {} ({verdict}{}, {} files): {}",
+                            r.slice,
+                            r.title,
+                            age_human(r.created_at_ms),
+                            if r.manifest.is_empty() {
+                                r.files.len()
+                            } else {
+                                r.manifest.len()
+                            },
+                            r.summary
+                        )
+                    }
                 }
-            };
-            lines.push(line);
-        }
+            }))
+            .await;
         for path in corrupt {
             lines.push(format!("- (unreadable exploration record at {path})"));
         }

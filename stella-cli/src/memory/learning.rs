@@ -16,7 +16,8 @@ use stella_core::skills::{
 use stella_protocol::{CompletionMessage, Provider};
 
 use super::{
-    ReflectionLesson, ReflectionReport, SessionMemory, reflect_on_turn, skill_paths_on_disk,
+    LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, reflect_on_turn,
+    skill_paths_on_disk,
 };
 
 /// Spec §8 behavior-compatibility tests, written against the pre-migration
@@ -108,6 +109,13 @@ impl SessionMemory {
             lesson.task_id = self.task_id.clone();
         }
 
+        // One best-effort handle to `.stella/private/store.db` for this whole
+        // persistence pass: the tombstone read and the reflections-table
+        // mirror below share it rather than each opening the store again.
+        // `None` (a store that won't open) degrades exactly as before —
+        // lessons kept, mirror skipped, never a failed turn.
+        let turn_store = stella_store::Store::open(&self.workspace_root).ok();
+
         // Drop anything the user has already forgotten, BEFORE it reaches any
         // of the three places this function persists to. Matching is by
         // restatement, not equality: the loop re-learns paraphrases, so a
@@ -115,7 +123,7 @@ impl SessionMemory {
         // week wearing slightly different words. Suppressing here rather than
         // at recall is what makes forgetting durable — an unsuppressed lesson
         // would land in the log and stay re-mineable forever.
-        let lessons = self.retain_unforgotten(lessons);
+        let lessons = self.retain_unforgotten(turn_store.as_ref(), lessons);
 
         if lessons.is_empty() {
             return ReflectionReport {
@@ -160,7 +168,12 @@ impl SessionMemory {
         // 2. Append to the mining log and mine for auto-creatable skills.
         // Count how many lessons actually reached the log so the message below
         // reports partial persistence accurately (some serialize/append writes
-        // may fail while others succeed).
+        // may fail while others succeed). Each lesson is also mirrored into
+        // `store.db`'s durable `reflections` table — the surface the
+        // observatory's reflections panel, the JSON export, and the prune
+        // carve-out read; without the mirror those readers only ever saw an
+        // empty table. Best-effort like every store write here: a failed
+        // mirror never touches the jsonl path or the turn.
         let log_path =
             stella_store::workspace_private_state_path(&self.workspace_root, "reflections.jsonl")
                 .ok();
@@ -175,6 +188,23 @@ impl SessionMemory {
                 .is_ok()
             {
                 logged_count += 1;
+            }
+            if let Some(store) = &turn_store {
+                let _ = store.record_reflection(&stella_store::ReflectionRow {
+                    // No execution id at this seam: `SessionMemory` never
+                    // learns which execution row the turn ran under, and the
+                    // table's contract files id-less rows as cross-turn
+                    // lessons.
+                    execution_id: None,
+                    kind: match lesson.kind {
+                        LessonKind::Domain => "domain".to_string(),
+                        LessonKind::Process => "process".to_string(),
+                    },
+                    content: lesson.lesson.clone(),
+                    domains: serde_json::to_string(&lesson.domains)
+                        .unwrap_or_else(|_| "[]".to_string()),
+                    occurred_at: lesson.occurred_at as i64,
+                });
             }
         }
         if let Some(log_path) = &log_path {
@@ -225,11 +255,14 @@ impl SessionMemory {
     /// persist everything. Both choices fail toward the recoverable outcome:
     /// a memory that should have been suppressed can be forgotten again,
     /// whereas a lesson dropped on a transient read error is gone for good.
-    fn retain_unforgotten(&self, lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
-        let forgotten = match stella_store::Store::open(&self.workspace_root)
-            .and_then(|store| store.forgotten_texts(stella_store::ContextSurface::Memory))
+    fn retain_unforgotten(
+        &self,
+        store: Option<&stella_store::Store>,
+        lessons: Vec<ReflectionLesson>,
+    ) -> Vec<ReflectionLesson> {
+        let forgotten = match store.map(|s| s.forgotten_texts(stella_store::ContextSurface::Memory))
         {
-            Ok(texts) if !texts.is_empty() => texts,
+            Some(Ok(texts)) if !texts.is_empty() => texts,
             _ => return lessons,
         };
         lessons
