@@ -107,11 +107,24 @@ fn a_document_with_no_bullets_is_not_an_index() {
 // ── tiers ───────────────────────────────────────────────────────────────────
 
 #[test]
-fn instructional_by_name() {
-    for name in ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"] {
+fn the_two_primary_files_are_offered_unprompted() {
+    for name in ["CLAUDE.md", "AGENTS.md", "claude.md", "agents.md"] {
+        let c = classify(name, "# Title\n\nDo the thing.\n");
+        assert_eq!(c.tier, Tier::Primary, "{name}");
+        assert!(c.is_offered_by_default(), "{name}");
+    }
+}
+
+/// Everything else instructional is a suggestion, not an opener. A first-run
+/// dialog listing nine files is a chore, and the honest answer to a chore is
+/// "not now".
+#[test]
+fn other_instructional_files_are_suggestions_not_openers() {
+    for name in ["CONTRIBUTING.md", "GEMINI.md", "copilot-instructions.md"] {
         let c = classify(name, "# Title\n\nDo the thing.\n");
         assert_eq!(c.tier, Tier::Instructional, "{name}");
-        assert!(c.is_offered_by_default(), "{name}");
+        assert!(!c.is_offered_by_default(), "{name} opened the dialog");
+        assert!(c.is_suggestion(), "{name}");
     }
 }
 
@@ -188,10 +201,111 @@ fn an_index_inside_a_memory_directory_is_skipped_not_offered() {
 /// A retired `AGENTS.md` is more misleading than a retired design note, not
 /// less — its whole voice is imperative. Supersession outranks instruction.
 #[test]
-fn supersession_demotes_an_instructional_file() {
+fn supersession_demotes_even_a_primary_file() {
     let c = classify("AGENTS.md", "# Agents\n\n> Deprecated — see docs/new.md\n");
     assert_eq!(c.tier, Tier::Historical);
-    assert!(c.signals.contains(&Signal::InstructionalName));
+    assert!(c.signals.contains(&Signal::PrimaryInstructionFile));
+    assert!(
+        !c.is_offered_by_default(),
+        "retired AGENTS.md still offered"
+    );
+}
+
+// ── the first-run plan ──────────────────────────────────────────────────────
+
+#[test]
+fn plan_opens_with_the_primary_files_and_keeps_the_rest_for_step_two() {
+    let candidates = classify_all(vec![
+        ("AGENTS.md", "# A\n\nSteering.\n"),
+        ("CLAUDE.md", "# C\n\nSteering.\n"),
+        ("CONTRIBUTING.md", "# Contributing\n\nHow to help.\n"),
+        ("README.md", "# R\n\nDescribes the project.\n"),
+    ]);
+    let plan = plan(candidates);
+
+    let primary: Vec<&str> = plan.primary.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(primary, vec!["AGENTS.md", "CLAUDE.md"]);
+
+    let rest: Vec<&str> = plan.suggestions.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(rest, vec!["CONTRIBUTING.md", "README.md"]);
+}
+
+/// A changelog or a retired doc is dropped from the plan entirely. Showing it
+/// only to explain why it is a bad idea makes the first run longer for no gain.
+#[test]
+fn plan_drops_historical_and_skipped_documents() {
+    let plan = plan(classify_all(vec![
+        ("AGENTS.md", "# A\n\nSteering.\n"),
+        ("CHANGELOG.md", "# Changelog\n\n## 1.0\n"),
+        ("LICENSE.md", "MIT"),
+        ("docs/old.md", "# Old\n\n> Superseded by new.md\n"),
+    ]));
+    assert_eq!(plan.primary.len(), 1);
+    assert!(plan.suggestions.is_empty(), "{:?}", plan.suggestions);
+}
+
+#[test]
+fn a_workspace_with_nothing_to_import_yields_an_empty_plan() {
+    let plan = plan(classify_all(vec![
+        ("LICENSE.md", "MIT"),
+        ("CHANGELOG.md", "# Changelog\n"),
+    ]));
+    assert!(plan.is_empty());
+}
+
+#[test]
+fn a_workspace_with_only_suggestions_is_not_empty() {
+    let plan = plan(classify_all(vec![("README.md", "# R\n\nAbout.\n")]));
+    assert!(plan.primary.is_empty());
+    assert!(!plan.is_empty(), "step two alone still worth asking");
+}
+
+/// Running the scan on the stella repo produced 148 lines of suggestions. That
+/// is not a question anybody answers, it is a wall people dismiss.
+#[test]
+fn suggestions_are_capped_and_the_remainder_is_reported() {
+    let docs: Vec<(String, String)> = (0..25)
+        .map(|i| {
+            (
+                format!("docs/note-{i:02}.md"),
+                "# N\n\nProse.\n".to_string(),
+            )
+        })
+        .collect();
+    let plan = plan(classify_all(
+        docs.iter().map(|(p, c)| (p.as_str(), c.as_str())),
+    ));
+
+    assert_eq!(plan.suggestions.len(), MAX_SUGGESTIONS);
+    assert_eq!(plan.hidden_suggestions, 25 - MAX_SUGGESTIONS);
+}
+
+#[test]
+fn nothing_is_hidden_when_everything_fits() {
+    let plan = plan(classify_all(vec![("README.md", "# R\n\nAbout.\n")]));
+    assert_eq!(plan.hidden_suggestions, 0);
+}
+
+/// Depth is the cheap proxy for "is this about the project or about a corner of
+/// it", and instructional still outranks depth.
+#[test]
+fn suggestions_rank_instructional_first_then_shallowest() {
+    let plan = plan(classify_all(vec![
+        ("bench/adapter/docs/README.md", "# Deep\n\nCorner.\n"),
+        ("README.md", "# Root\n\nProject.\n"),
+        ("docs/guide.md", "# Guide\n\nMiddling.\n"),
+        ("CONTRIBUTING.md", "# Contributing\n\nHow to help.\n"),
+    ]));
+    let order: Vec<&str> = plan.suggestions.iter().map(|c| c.path.as_str()).collect();
+    assert_eq!(
+        order,
+        vec![
+            "CONTRIBUTING.md",
+            "README.md",
+            "docs/guide.md",
+            "bench/adapter/docs/README.md",
+        ]
+    );
 }
 
 #[test]

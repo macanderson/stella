@@ -54,9 +54,12 @@ pub const MIN_INDEX_BULLETS: usize = 3;
 /// What an ingestion candidate is worth, and therefore when to offer it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
-    /// The document exists in order to instruct an agent or a contributor:
-    /// `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, an agent tool's rules
-    /// directory, a memories folder. Offer these by default.
+    /// `AGENTS.md` or `CLAUDE.md` — steering the user already wrote, for an
+    /// agent, on purpose. The only tier named unprompted on first run.
+    Primary,
+    /// The document exists to instruct, but is not one of the two files
+    /// everybody recognises: `CONTRIBUTING.md`, an agent tool's rules
+    /// directory, a memories folder. Offered as a suggestion, never assumed.
     Instructional,
     /// The document describes the repository rather than instructing anyone —
     /// READMEs, design notes, architecture docs. Real knowledge, but written to
@@ -80,7 +83,15 @@ pub enum Tier {
 /// default — ordinary prose about the repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Signal {
-    /// Filename whose whole purpose is instruction (`CLAUDE.md`, `AGENTS.md`…).
+    /// `AGENTS.md` or `CLAUDE.md` — the two files people actually write
+    /// steering into, and the only ones offered unprompted on first run.
+    ///
+    /// Separate from [`Signal::InstructionalName`] because the first-run
+    /// conversation is much better when it names two familiar files than when
+    /// it presents a list of nine things the user has to triage.
+    PrimaryInstructionFile,
+    /// Filename whose whole purpose is instruction (`CONTRIBUTING.md`,
+    /// `GEMINI.md`, `copilot-instructions.md`…).
     InstructionalName,
     /// Lives under an agent tool's configuration directory (`.claude/rules/`,
     /// `.agents/`, `.cursor/rules/`…). The directory carries the meaning.
@@ -113,11 +124,90 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    /// `true` when this document should be offered for import without the user
-    /// having to go looking for it.
+    /// `true` when this document is named unprompted on first run.
+    ///
+    /// Deliberately only [`Tier::Primary`]. A first-run dialog that opens with
+    /// two familiar filenames is a question; one that opens with nine files and
+    /// a ranking is a chore, and the honest answer to a chore is "not now".
     pub fn is_offered_by_default(&self) -> bool {
-        self.tier == Tier::Instructional
+        self.tier == Tier::Primary
     }
+
+    /// `true` when this document is worth showing once the user asks for more.
+    pub fn is_suggestion(&self) -> bool {
+        matches!(self.tier, Tier::Instructional | Tier::Descriptive)
+    }
+}
+
+/// The two-step first-run conversation, as data.
+///
+/// Step one names what the user already wrote for an agent. Step two answers
+/// "anything else?" — and is only worth rendering if [`Plan::suggestions`] is
+/// non-empty.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Plan {
+    /// `AGENTS.md` / `CLAUDE.md`, in path order.
+    pub primary: Vec<Candidate>,
+    /// Everything else worth offering, best first, capped at
+    /// [`MAX_SUGGESTIONS`].
+    pub suggestions: Vec<Candidate>,
+    /// How many further suggestions were ranked but not shown.
+    ///
+    /// Reported rather than silently dropped — a truncated list that does not
+    /// say it is truncated reads as "this is everything", which is how a scan
+    /// quietly loses the file somebody was looking for.
+    pub hidden_suggestions: usize,
+}
+
+impl Plan {
+    /// `true` when there is nothing to open a conversation about.
+    pub fn is_empty(&self) -> bool {
+        self.primary.is_empty() && self.suggestions.is_empty()
+    }
+}
+
+/// Split classified candidates into the first-run conversation's two steps.
+///
+/// Anything [`Tier::Historical`] or [`Tier::Skip`] is dropped here rather than
+/// shown and demoted: a first-run dialog is not the place to explain why a
+/// changelog is a bad idea. Those remain reachable by naming the path
+/// explicitly, which is always allowed.
+/// How many suggestions are worth showing before the list stops being a
+/// question and becomes a chore.
+///
+/// Running the scan on this repository produced 148 lines of suggestions, which
+/// is not a prompt anybody reads — it is a wall people dismiss. The rest stay
+/// reachable by naming a path.
+pub const MAX_SUGGESTIONS: usize = 10;
+
+/// Directory depth, used to rank suggestions.
+///
+/// A root `README.md` is far more likely to describe the project than
+/// `bench/harbor_adapter/README.md`, and depth says so without reading either.
+fn depth_of(path: &str) -> usize {
+    path.matches('/').count()
+}
+
+pub fn plan(candidates: Vec<Candidate>) -> Plan {
+    let mut plan = Plan::default();
+    for candidate in candidates {
+        if candidate.is_offered_by_default() {
+            plan.primary.push(candidate);
+        } else if candidate.is_suggestion() {
+            plan.suggestions.push(candidate);
+        }
+    }
+    // Instructional before descriptive, then shallowest first: a root README
+    // describes the project, one four directories down describes a corner of it.
+    plan.suggestions.sort_by(|a, b| {
+        a.tier
+            .cmp(&b.tier)
+            .then_with(|| depth_of(&a.path).cmp(&depth_of(&b.path)))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    plan.hidden_suggestions = plan.suggestions.len().saturating_sub(MAX_SUGGESTIONS);
+    plan.suggestions.truncate(MAX_SUGGESTIONS);
+    plan
 }
 
 /// Directory names that are never worth descending into.
@@ -140,10 +230,15 @@ const EXCLUDED_SEGMENTS: &[&str] = &[
     "coverage",
 ];
 
-/// Filenames whose entire purpose is to instruct an agent or a contributor.
+/// The two files people actually write agent steering into.
+///
+/// `AGENTS.md` is the cross-tool convention; `CLAUDE.md` is Claude Code's. Both
+/// are written *as instructions to an agent*, which is what makes them the only
+/// ones worth surfacing without being asked.
+pub const PRIMARY_INSTRUCTION_NAMES: &[&str] = &["agents.md", "claude.md"];
+
+/// Other filenames whose purpose is to instruct, offered only as suggestions.
 const INSTRUCTIONAL_NAMES: &[&str] = &[
-    "claude.md",
-    "agents.md",
     "agent.md",
     "contributing.md",
     "gemini.md",
@@ -282,6 +377,9 @@ pub fn classify(path: &str, content: &str) -> Candidate {
     if let Some(phrase) = supersession_marker(content) {
         signals.push(Signal::SupersededMarker(phrase));
     }
+    if PRIMARY_INSTRUCTION_NAMES.contains(&name.as_str()) {
+        signals.push(Signal::PrimaryInstructionFile);
+    }
     if INSTRUCTIONAL_NAMES.contains(&name.as_str()) {
         signals.push(Signal::InstructionalName);
     }
@@ -321,6 +419,9 @@ fn tier_for(signals: &[Signal]) -> Tier {
     }
     if superseded || has(&Signal::HistoricalName) {
         return Tier::Historical;
+    }
+    if has(&Signal::PrimaryInstructionFile) {
+        return Tier::Primary;
     }
     if has(&Signal::InstructionalName)
         || has(&Signal::AgentToolDirectory)
