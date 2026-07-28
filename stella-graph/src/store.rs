@@ -227,6 +227,9 @@ pub(crate) fn index_tree(
     // to the implicit layer / no-op filter, never aborts the batch (L-L1).
     let manifest = StorageManifest::load(root).ok().flatten();
     let generated_filter = GeneratedFilter::load(root);
+    // The Rust crate layout is lazy per pass: the first Rust file pays the
+    // manifest scan, a pass with none never does (#443).
+    let rust_layout = std::cell::OnceCell::new();
     let tx = conn.transaction()?;
 
     let mut current: HashSet<String> = HashSet::with_capacity(files.len());
@@ -238,6 +241,7 @@ pub(crate) fn index_tree(
             grammars,
             manifest.as_ref(),
             &generated_filter,
+            &rust_layout,
             abs,
             &mut stats,
         )?;
@@ -260,6 +264,7 @@ pub(crate) fn apply_changes(
     let mut stats = IndexStats::default();
     let manifest = StorageManifest::load(root).ok().flatten();
     let generated_filter = GeneratedFilter::load(root);
+    let rust_layout = std::cell::OnceCell::new();
     let tx = conn.transaction()?;
     for abs in changed {
         if abs.is_file() {
@@ -272,6 +277,7 @@ pub(crate) fn apply_changes(
                 grammars,
                 manifest.as_ref(),
                 &generated_filter,
+                &rust_layout,
                 abs,
                 &mut stats,
             )?;
@@ -297,12 +303,14 @@ pub(crate) fn apply_changes(
 /// Index one file into an open transaction. Every failure mode here
 /// (unreadable, non-UTF-8, unparseable) is recorded in `stats` and skipped —
 /// never propagated — so one bad file cannot abort the batch (L-L1).
+#[allow(clippy::too_many_arguments)] // two call sites, both index passes
 fn index_one(
     tx: &Transaction,
     root: &Path,
     grammars: &Grammars,
     manifest: Option<&StorageManifest>,
     generated_filter: &GeneratedFilter,
+    rust_layout: &std::cell::OnceCell<crate::rust_resolve::RustLayout>,
     abs: &Path,
     stats: &mut IndexStats,
 ) -> Result<(), GraphError> {
@@ -373,7 +381,7 @@ fn index_one(
     };
     stats.files_parsed += 1;
 
-    let edges = import::resolve(parsed.imports, root, abs);
+    let edges = import::resolve(parsed.imports, root, abs, rust_layout);
     let file_id = upsert_file(tx, &rel, lang.tag(), &sha, mtime_ns(abs))?;
     tx.execute(
         "DELETE FROM code_graph_symbols WHERE file_id = ?1",

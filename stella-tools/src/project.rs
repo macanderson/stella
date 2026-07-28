@@ -166,7 +166,31 @@ impl Tool for RunTests {
                 }
                 ImpactSelection::FullSuite { note: n } => note = n,
                 ImpactSelection::Selected { tests, changed } => {
-                    if matches!(primary, "npm" | "pnpm" | "yarn" | "bun" | "uv" | "poetry") {
+                    if primary == "cargo" {
+                        // Rust selection is file→package (#443): unit tests
+                        // live inside the impacted sources, so the honest
+                        // narrowing is `-p` over their owning crates, never
+                        // a per-file filter.
+                        match crate::impact::cargo_packages(root, &tests) {
+                            Some(packages) if !packages.is_empty() => {
+                                let note = format!(
+                                    "scope:\"impacted\": selected {} package(s) for {changed} \
+                                     changed file(s)",
+                                    packages.len()
+                                );
+                                let command = cargo_impacted_command(kind, &packages);
+                                return with_note(
+                                    &note,
+                                    run_and_report(&command, root, timeout_secs).await,
+                                );
+                            }
+                            _ => {
+                                note = "impact selection could not map every impacted file \
+                                        to a cargo package — ran the full suite"
+                                    .into();
+                            }
+                        }
+                    } else if matches!(primary, "npm" | "pnpm" | "yarn" | "bun" | "uv" | "poetry") {
                         note = format!(
                             "scope:\"impacted\": selected {} test file(s) for {} changed \
                              file(s)",
@@ -276,6 +300,23 @@ impl SafeFilter {
 impl std::fmt::Display for SafeFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// The `scope:"impacted"` cargo command: `--workspace` narrowed to the
+/// impacted packages, mirroring [`test_command`]'s per-`kind` target
+/// selection. Package names come from the workspace's own manifests, but
+/// they are still shell-quoted — one escaper, no exceptions.
+fn cargo_impacted_command(kind: &str, packages: &[String]) -> String {
+    let flags = packages
+        .iter()
+        .map(|p| format!("-p {}", shell_quote(p)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    match kind {
+        "unit" => format!("cargo test {flags} --lib --bins"),
+        "e2e" => format!("cargo test {flags} --test '*'"),
+        _ => format!("cargo test {flags}"),
     }
 }
 
@@ -924,13 +965,13 @@ mod tests {
         );
     }
 
-    /// Rust has no resolved import edges yet (#335): a changed `.rs` file
-    /// stands selection down to the WHOLE suite with a one-line note —
-    /// loudly over-testing, never silently under-testing.
+    /// #443's exit criterion at the tool level: a one-file Rust change
+    /// selects its owning package and runs `cargo test -p <package>` — no
+    /// longer the pre-#443 full-suite stand-down.
     #[tokio::test]
-    async fn impacted_scope_falls_back_loudly_to_the_full_suite_for_rust() {
+    async fn impacted_scope_narrows_a_rust_change_to_its_package() {
         if !git_available().await {
-            eprintln!("skipping impacted-scope fallback test: `git` not available");
+            eprintln!("skipping impacted-scope test: `git` not available");
             return;
         }
         let dir = tempfile::tempdir().unwrap();
@@ -953,13 +994,16 @@ mod tests {
             ToolOutput::Error { message } => message.clone(),
         };
         assert!(
-            text.contains("impact selection unavailable for Rust"),
-            "{text}"
+            text.contains("selected 1 package(s)"),
+            "the selection provenance note rides the report: {text}"
         );
-        assert!(text.contains("#335"), "{text}");
         assert!(
-            text.contains("cargo test --workspace"),
-            "the full suite actually ran: {text}"
+            text.contains("cargo test -p 'impactfix'"),
+            "the narrowed command actually ran: {text}"
+        );
+        assert!(
+            !text.contains("--workspace"),
+            "the full suite must NOT run for a mapped change: {text}"
         );
     }
 

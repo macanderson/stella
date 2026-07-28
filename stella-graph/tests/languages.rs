@@ -84,6 +84,78 @@ fn rust_symbols_indexed() {
     assert!(has_label_starting(&fx.def_labels("new"), "fn new ("));
 }
 
+/// #443's exit criterion, end to end: Rust `use` paths and `mod`
+/// declarations resolve through the module tree, so `importers` on a Rust
+/// file returns the real dependent set — including a cross-crate importer —
+/// while external-crate paths stay unresolved.
+#[test]
+fn rust_use_paths_resolve_through_the_module_tree() {
+    let fx = Fixture::build(&[
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"alpha\", \"beta\"]\n",
+        ),
+        (
+            "alpha/Cargo.toml",
+            "[package]\nname = \"alpha\"\nversion = \"0.0.0\"\n",
+        ),
+        (
+            "alpha/src/lib.rs",
+            "pub mod util;\npub mod deep;\nuse crate::util::helper;\nuse std::collections::HashMap;\n\npub fn run() { helper(); }\n",
+        ),
+        ("alpha/src/util.rs", "pub fn helper() {}\n"),
+        ("alpha/src/deep/mod.rs", "pub mod inner;\n"),
+        (
+            "alpha/src/deep/inner.rs",
+            "use crate::util::{helper, self as u};\npub struct Inner;\n",
+        ),
+        (
+            "beta/Cargo.toml",
+            "[package]\nname = \"beta\"\nversion = \"0.0.0\"\n",
+        ),
+        (
+            "beta/src/lib.rs",
+            "use alpha::util::helper;\npub fn go() { helper(); }\n",
+        ),
+    ]);
+
+    // Forward edges: the module tree resolves; std stays unresolved.
+    let targets = fx.import_targets("alpha/src/lib.rs");
+    assert!(
+        targets.iter().any(|t| t == "alpha/src/util.rs"),
+        "`use crate::util::helper` should resolve; got {targets:?}"
+    );
+    assert!(
+        targets.iter().any(|t| t == "alpha/src/deep/mod.rs"),
+        "`mod deep;` should resolve to the dir-module file; got {targets:?}"
+    );
+    assert!(
+        targets.iter().any(|t| t == "std::collections::HashMap"),
+        "external paths stay recorded unresolved; got {targets:?}"
+    );
+
+    // The reverse edge — the whole point: importers of util.rs is the real
+    // dependent set, across module layouts AND across crates.
+    let importers: Vec<String> = fx
+        .graph
+        .importers_of(Path::new("alpha/src/util.rs"))
+        .unwrap()
+        .into_iter()
+        .flat_map(|f| f.relations)
+        .filter_map(|r| r.display_name)
+        .collect();
+    for expected in [
+        "alpha/src/lib.rs",
+        "alpha/src/deep/inner.rs",
+        "beta/src/lib.rs",
+    ] {
+        assert!(
+            importers.iter().any(|i| i == expected),
+            "importers of util.rs must include {expected}; got {importers:?}"
+        );
+    }
+}
+
 #[test]
 fn python_relative_imports_resolve_to_files() {
     // `from . import sibling` and `from ..pkg import y` must resolve to actual

@@ -6,15 +6,15 @@
 //! The selection is pure over (change set × importer edges): diff the
 //! working tree (`git status --porcelain -uall`), walk the graph's
 //! reverse-dependency relation transitively from each changed file, and
-//! keep every reachable file that looks like a test file — including
-//! changed test files themselves. Only languages whose import edges the
-//! graph actually resolves participate (relative TS/JS and Python imports,
-//! see `stella_graph`'s resolver); a change touching anything else makes
+//! keep every reachable test-bearing file — including changed test files
+//! themselves. Only languages whose import edges the graph actually
+//! resolves participate (relative TS/JS and Python imports, and Rust
+//! `use`/`mod` paths through the module tree since #443 — see
+//! `stella_graph`'s resolvers); a change touching anything else makes
 //! the selection untrustworthy, and the answer is then the WHOLE suite with
 //! a one-line note. The posture throughout: fail loudly to over-testing,
 //! never silently under-test — a skipped test that should have run is a
-//! correctness hole (Rust selection is gated on #335's resolved `use`
-//! edges).
+//! correctness hole.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::path::Path;
@@ -29,8 +29,11 @@ const GIT_STATUS_TIMEOUT_SECS: u64 = 60;
 /// selection is a named answer, never a silent no-op.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ImpactSelection {
-    /// Test files (root-relative, forward-slash, sorted) that transitively
-    /// import a changed file — including changed test files themselves.
+    /// Test-bearing files (root-relative, forward-slash, sorted) that
+    /// transitively import a changed file — named test files for TS/JS and
+    /// Python (including changed test files themselves), and every impacted
+    /// `.rs` file for Rust, whose unit tests live inside the source
+    /// ([`cargo_packages`] maps those to `-p` selections downstream).
     Selected { tests: Vec<String>, changed: usize },
     /// The walk completed over fully-resolved edges and no test file
     /// reaches the change (`changed == 0` means the tree itself is clean).
@@ -40,10 +43,11 @@ pub(crate) enum ImpactSelection {
 }
 
 /// Extensions whose import edges the graph resolves to real files (relative
-/// TS/JS specifiers and Python relative imports — `stella_graph::import`).
-/// A changed file outside this set may be depended on through edges the
-/// graph cannot see, so its presence stands the whole selection down.
-const RESOLVED_EXTS: [&str; 7] = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "py"];
+/// TS/JS specifiers, Python relative imports, and Rust `use`/`mod` paths —
+/// `stella_graph::import` + `rust_resolve`, #443). A changed file outside
+/// this set may be depended on through edges the graph cannot see, so its
+/// presence stands the whole selection down.
+const RESOLVED_EXTS: [&str; 8] = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rs"];
 
 fn extension(path: &str) -> &str {
     Path::new(path)
@@ -70,6 +74,16 @@ pub(crate) fn is_test_file(path: &str) -> bool {
     base.contains(".test.") || base.contains(".spec.") || in_dir("__tests__")
 }
 
+/// Whether a reachable file's tests must run when it is impacted. TS/JS and
+/// Python NAME their test files; Rust unit tests live inside ordinary source
+/// files (`#[cfg(test)]`), so every impacted `.rs` file is test-bearing —
+/// dropping non-test-named Rust files here would silently under-test, the
+/// one failure the module contract forbids. The cargo mapping downstream
+/// turns the file set into `-p` package selections.
+fn test_bearing(path: &str) -> bool {
+    extension(path) == "rs" || is_test_file(path)
+}
+
 /// Stella's own workspace state — never a test input, and always present as
 /// an untracked/dirty path once the graph index exists, so it must not
 /// poison the change set.
@@ -94,10 +108,6 @@ pub(crate) fn shell_safe(path: &str) -> bool {
 /// resolved import edges — named per ecosystem so the reader learns *why*.
 fn unresolved_note(path: &str) -> String {
     match extension(path) {
-        "rs" => format!(
-            "impact selection unavailable for Rust (`{path}`) until import resolution \
-             lands (#335) — ran the full suite"
-        ),
         "go" => format!(
             "impact selection unavailable for Go (`{path}`): bare imports are indexed \
              unresolved — ran the full suite"
@@ -150,7 +160,7 @@ fn walk(changed: &[String], importers: &mut dyn FnMut(&str) -> Vec<String>) -> I
             }
         }
     }
-    let tests: Vec<String> = visited.into_iter().filter(|p| is_test_file(p)).collect();
+    let tests: Vec<String> = visited.into_iter().filter(|p| test_bearing(p)).collect();
     if tests.is_empty() {
         return ImpactSelection::NothingImpacted {
             changed: changed.len(),
@@ -180,6 +190,54 @@ pub(crate) fn select(
         Err(early) => early,
         Ok(relevant) => walk(&relevant, importers),
     }
+}
+
+/// Map a selection's `.rs` files to their owning cargo package names (the
+/// nearest ancestor `Cargo.toml` carrying a `[package]`), deduped and
+/// sorted — what `run_tests` turns into `cargo test -p …` flags. `None`
+/// when any Rust file cannot be mapped: a packageless stray means the
+/// selection must widen loudly, never guess.
+pub(crate) fn cargo_packages(root: &Path, selected: &[String]) -> Option<Vec<String>> {
+    let mut packages: BTreeSet<String> = BTreeSet::new();
+    for rel in selected.iter().filter(|p| extension(p) == "rs") {
+        let file = root.join(rel);
+        let mut dir = file.parent();
+        let mut found = None;
+        while let Some(d) = dir {
+            if let Some(name) = package_name(&d.join("Cargo.toml")) {
+                found = Some(name);
+                break;
+            }
+            if d == root {
+                break;
+            }
+            dir = d.parent();
+        }
+        packages.insert(found?);
+    }
+    Some(packages.into_iter().collect())
+}
+
+/// The `name = "…"` under `[package]`, by line scan — a manifest broken
+/// enough to defeat this simply fails the mapping (→ full suite), and a
+/// workspace-only root manifest has no `[package]` and contributes nothing.
+fn package_name(manifest: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let mut in_package = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(section) = line.strip_prefix('[') {
+            in_package = section.trim_end_matches(']').trim() == "package";
+            continue;
+        }
+        if in_package
+            && let Some(rest) = line.strip_prefix("name")
+            && let Some(value) = rest.trim_start().strip_prefix('=')
+        {
+            return Some(value.trim().trim_matches('"').to_string());
+        }
+    }
+    None
 }
 
 /// Changed paths parsed from `git status --porcelain` output. Rename rows
@@ -404,14 +462,6 @@ mod tests {
 
     #[test]
     fn unresolved_languages_stand_down_to_the_full_suite_loudly() {
-        match run_select(&["src/lib.rs"], &[]) {
-            ImpactSelection::FullSuite { note } => {
-                assert!(note.contains("Rust"), "{note}");
-                assert!(note.contains("#335"), "{note}");
-                assert!(note.contains("full suite"), "{note}");
-            }
-            other => panic!("Rust must stand down loudly: {other:?}"),
-        }
         match run_select(&["pkg/main.go"], &[]) {
             ImpactSelection::FullSuite { note } => {
                 assert!(note.contains("Go"), "{note}");
@@ -426,6 +476,64 @@ mod tests {
             }
             other => panic!("mixed change must stand down: {other:?}"),
         }
+    }
+
+    /// #443: Rust participates in selection, and every impacted `.rs` file
+    /// is test-bearing — unit tests live inside the sources, so dropping a
+    /// non-test-named Rust file would silently under-test.
+    #[test]
+    fn rust_changes_select_impacted_source_files() {
+        let selection = run_select(
+            &["src/util.rs"],
+            &[("src/util.rs", &["src/lib.rs"]), ("src/lib.rs", &[])],
+        );
+        match selection {
+            ImpactSelection::Selected { tests, changed } => {
+                assert_eq!(changed, 1);
+                assert_eq!(tests, vec!["src/lib.rs", "src/util.rs"]);
+            }
+            other => panic!("Rust selection must keep impacted sources: {other:?}"),
+        }
+    }
+
+    /// The file→package mapping behind `cargo test -p …`: names come from
+    /// the nearest `[package]` manifest, deduped; an unmappable file fails
+    /// the whole mapping (widen, never guess).
+    #[test]
+    fn cargo_packages_map_files_to_their_owning_crates() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("alpha/src")).unwrap();
+        std::fs::create_dir_all(root.join("stray")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"alpha\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("alpha/Cargo.toml"),
+            "[package]\nname = \"alpha-core\"\nversion = \"0.0.0\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            cargo_packages(
+                root,
+                &["alpha/src/lib.rs".into(), "alpha/src/util.rs".into()]
+            ),
+            Some(vec!["alpha-core".to_string()]),
+            "two files in one crate dedup to its package name"
+        );
+        assert_eq!(
+            cargo_packages(root, &["stray/orphan.rs".into()]),
+            None,
+            "a packageless file fails the mapping — selection must widen"
+        );
+        assert_eq!(
+            cargo_packages(root, &["web/app.test.ts".into()]),
+            Some(Vec::new()),
+            "non-Rust selections contribute no packages"
+        );
     }
 
     #[test]
