@@ -560,13 +560,17 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             println!("commit .stella/workspace.json so every clone reports as this workspace");
             // History replicated before this registration landed in the hub
             // with NULL org and would otherwise stay invisible to org
-            // reporting and the cloud drain forever — re-stamp it now (#406).
-            // Best-effort: registration itself already succeeded, so an
-            // unopenable hub degrades to a note rather than failing.
+            // reporting and the cloud drain forever — re-stamp it now (#406),
+            // after first merging rows keyed by the pre-registration path
+            // hash under the workspace's stable id (#408). Best-effort:
+            // registration itself already succeeded, so an unopenable hub
+            // degrades to a note rather than failing.
+            let path_id = stella_store::usage::project_id_for(&cwd);
             let scope = identity::TelemetryScope::resolve(&cwd);
-            match UsageStore::open_default()
-                .and_then(|hub| hub.backfill_scope(&scope.project_id, &org, Some(&ws)))
-            {
+            match UsageStore::open_default().and_then(|hub| {
+                hub.adopt_project_identity(&path_id, &scope.project_id)?;
+                hub.backfill_scope(&scope.project_id, &org, Some(&ws))
+            }) {
                 Ok(0) => {}
                 Ok(n) => {
                     println!("backfilled {n} pre-registration telemetry row(s) into org scope")

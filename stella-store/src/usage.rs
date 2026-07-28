@@ -58,10 +58,10 @@ pub fn usage_db_path() -> PathBuf {
     data_dir().join("usage.db")
 }
 
-/// A stable, dependency-free project identity: FNV-1a/64 of the canonical
-/// workspace path, hex-encoded. Deterministic across runs and processes so the
-/// same repo always rolls up under one id. (Not cryptographic — it only needs
-/// to be stable and collision-resistant for a handful of local paths.)
+/// A dependency-free project identity: FNV-1a/64 of the canonical workspace
+/// path, hex-encoded. Deterministic across runs and processes — but NOT
+/// across a `mv` of the checkout, which is why a registered workspace
+/// replicates under `identity::replication_project_id` instead (#408).
 pub fn project_id_for(root: &Path) -> String {
     let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let s = canon.to_string_lossy();
@@ -1138,6 +1138,8 @@ pub struct QuarantinedRow {
 mod backfill;
 // Drain observability: last-attempt record + cursor/backlog readers (#464).
 pub mod drain_state;
+// Project re-key: merge a forked path-derived identity into the stable one (#408).
+mod rekey;
 
 #[cfg(test)]
 mod tests {
