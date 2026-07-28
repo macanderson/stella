@@ -132,13 +132,6 @@ the engine's backoff.
 - **Chunked request bodies are not decoded.** A chunked POST parses as an empty
   body and fails validation with a 400. That is safe rather than a smuggling hole
   only because this layer serves one request per connection and then closes.
-- **The request head and the body are each capped at 1 MiB (per part, not on
-  their sum), and going over either gets no response at all** — `read_request`
-  returns `None` and the connection closes ([`src/http.rs`](src/http.rs)). Two
-  consequences worth sizing for: a turn whose assembled conversation exceeds
-  1 MiB cannot be created, and a `tool-result` carrying an oversized tool
-  output is dropped silently, leaving the engine step it would have answered
-  parked until the turn is torn down.
 - **Requests are capped separately at the head (64 KiB) and the body (8 MiB),
   and going over either one is answered `413`** ([`src/http.rs`](src/http.rs)).
   The head and body caps are split because they are abused differently: no

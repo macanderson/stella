@@ -38,6 +38,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -174,8 +175,9 @@ const RETRY_AFTER_SECS: &str = "5";
 /// One registered turn. `pending` answers reverse requests (shared, always
 /// available); `session` is taken exactly once by the SSE stream.
 struct Entry {
-    /// Creation order (the counter value behind the turn id), so eviction can
-    /// name the oldest finished turn without parsing ids back apart.
+    /// Creation order, so eviction can name the oldest finished turn. Kept
+    /// beside the id rather than derived from it: ids are random (see
+    /// [`new_turn_id`]) and carry no ordering to parse back out.
     seq: u64,
     pending: Pending,
     session: Mutex<Option<Session>>,
@@ -200,6 +202,11 @@ const MAX_COMPLETED_UNSTREAMED_TURNS: usize = 64;
 struct ServerState {
     token: String,
     turns: Mutex<HashMap<String, Arc<Entry>>>,
+    /// Monotonic source of [`Entry::seq`]. Deliberately not the registry's
+    /// length: eviction and cancellation both shrink it, so length would hand
+    /// the same ordinal to two turns and eviction could then drop the newer of
+    /// the pair as if it were the older.
+    counter: AtomicU64,
     unauthorized: Mutex<TokenBucket>,
 }
 
@@ -212,20 +219,57 @@ impl ServerState {
         self.turns().get(id).cloned()
     }
 
-    /// Insert a freshly started turn and hand back its id. Registration is the
-    /// only way the registry grows, so this is also where the
-    /// `MAX_COMPLETED_UNSTREAMED_TURNS` cap is enforced.
-    fn register_turn(&self, session: Session) -> String {
+    /// Start a turn and hand back its id, or `None` when [`MAX_LIVE_TURNS`] is
+    /// already reached. Registration is the only way the registry grows, so
+    /// this is where both caps are enforced: admission against `MAX_LIVE_TURNS`
+    /// here, and `MAX_COMPLETED_UNSTREAMED_TURNS` by the eviction below.
+    ///
+    /// Admission and registration happen under one lock hold. Checking the
+    /// count, then starting the session, then inserting would let two concurrent
+    /// creates both observe room and both insert, so the cap could be exceeded by
+    /// exactly the number of racing callers. `Session::start` is synchronous (it
+    /// spawns a thread and returns), so holding the lock across it is sound —
+    /// there is no await inside this block.
+    fn register_turn(&self, spec: SessionSpec) -> Option<String> {
+        let mut turns = self.turns();
+        // Only *live* turns count against the admission cap: it exists to bound
+        // OS threads, and a finished turn holds none. Counting settled entries
+        // too would let a backlog of up to `MAX_COMPLETED_UNSTREAMED_TURNS`
+        // unstreamed turns refuse every new one.
+        let live = turns
+            .values()
+            .filter(|entry| {
+                entry
+                    .session
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .as_ref()
+                    .is_none_or(|session| !session.is_finished())
+            })
+            .count();
+        if live >= MAX_LIVE_TURNS {
+            return None;
+        }
+        let session = Session::start(spec);
+        Some(self.insert_started(&mut turns, session))
+    }
+
+    /// Insert an already-started session under a held registry lock, minting
+    /// its id and applying the eviction cap.
+    ///
+    /// Split out of [`register_turn`] so the eviction tests can register
+    /// sessions in a state `Session::start` cannot produce on demand (already
+    /// finished) while still going through the real insert-and-evict path.
+    fn insert_started(&self, turns: &mut HashMap<String, Arc<Entry>>, session: Session) -> String {
         let seq = self.counter.fetch_add(1, Ordering::Relaxed);
-        let id = format!("turn-{seq}");
+        let id = new_turn_id();
         let entry = Arc::new(Entry {
             seq,
             pending: session.pending(),
             session: Mutex::new(Some(session)),
         });
-        let mut turns = self.turns();
         turns.insert(id.clone(), entry);
-        evict_completed_unstreamed(&mut turns);
+        evict_completed_unstreamed(turns);
         id
     }
 
@@ -337,15 +381,27 @@ impl TokenBucket {
 /// This is a sidecar for one trusted host, not an internet-facing server, and
 /// the deployment must supply what it deliberately omits:
 ///
-/// - **No admission control.** Connections and live turns are both unbounded;
-///   a turn holds an OS thread from `POST /v1/turns` until its stream ends.
-///   (Only *finished* turns nobody streamed are bounded — past
+/// - **Turns are capped, connections are not.** At most 32 (`MAX_LIVE_TURNS`)
+///   may be live at once — past that, `POST /v1/turns` answers `429` with a
+///   `Retry-After` — because each one holds an OS thread until its stream ends.
+///   Accepted *connections* are still unbounded: a semaphore over them is not
+///   the right tool here, because a permit would be held for the whole lifetime
+///   of a long-lived SSE stream and would starve the `tool-result` and
+///   `provider-result` POSTs that the very same turn must deliver over separate
+///   connections — the reverse-RPC protocol would deadlock against itself.
+///   Bounding turns bounds the resource that actually accumulates.
+///
+///   *Finished* turns nobody streamed are bounded separately: past
 ///   `MAX_COMPLETED_UNSTREAMED_TURNS` the oldest is evicted, so a host that
-///   never streams cannot grow the registry and its buffered frames forever.)
-/// - **Turn ids are sequential**, so they are guessable by anyone holding the
-///   token — the token is the only tenancy boundary, one process per tenant.
-/// - **No read timeout**, so a peer that dribbles a request head holds a
-///   connection open. Front it with a proxy or a private network.
+///   never streams cannot grow the registry and its buffered frames forever.
+///   The two caps are independent — a settled backlog holds no thread, so it
+///   does not consume the live allowance.
+/// - **Turn ids are unguessable** (128 random bits), so learning one id does not
+///   hand over the namespace. The token remains the only tenancy boundary, one
+///   process per tenant.
+/// - **Reads are bounded** by a deadline and by separate head and body caps; a
+///   peer that dribbles a request head is dropped rather than parked forever.
+///   The response says which bound was hit (`408`, `413`, `400`).
 ///
 /// Reverse requests *are* bounded (see [`SessionSpec::reverse_request_timeout`]),
 /// and a turn can be ended early with `POST /v1/turns/{id}/cancel`.
@@ -355,6 +411,7 @@ pub async fn serve(config: ServeConfig, on_ready: impl FnOnce(SocketAddr)) -> st
     let state = Arc::new(ServerState {
         token: config.token,
         turns: Mutex::new(HashMap::new()),
+        counter: AtomicU64::new(0),
         unauthorized: Mutex::new(TokenBucket::new()),
     });
     let mut backoff = AcceptBackoff::new();
@@ -527,8 +584,15 @@ async fn handle_create(
         reverse_request_timeout,
     };
 
-    let session = Session::start(spec);
-    let id = state.register_turn(session);
+    let Some(id) = state.register_turn(spec) else {
+        return write_json_with_headers(
+            stream,
+            "429 Too Many Requests",
+            &[("Retry-After", RETRY_AFTER_SECS)],
+            &error_body("too many live turns; retry after in-flight turns finish"),
+        )
+        .await;
+    };
 
     let body = serde_json::to_vec(&TurnCreated { turn_id: &id }).unwrap_or_default();
     write_json(stream, "200 OK", &body).await
@@ -835,7 +899,8 @@ mod tests {
         let state = test_state();
         let mut ids = Vec::new();
         for _ in 0..=MAX_COMPLETED_UNSTREAMED_TURNS {
-            ids.push(state.register_turn(finished_session()));
+            let mut turns = state.turns();
+            ids.push(state.insert_started(&mut turns, finished_session()));
         }
         assert_eq!(
             state.turns().len(),
@@ -858,9 +923,12 @@ mod tests {
     #[test]
     fn a_live_turn_is_never_evicted() {
         let state = test_state();
-        let live = state.register_turn(Session::start(test_spec()));
+        let live = state
+            .register_turn(test_spec())
+            .expect("an empty registry admits a turn");
         for _ in 0..=MAX_COMPLETED_UNSTREAMED_TURNS {
-            state.register_turn(finished_session());
+            let mut turns = state.turns();
+            state.insert_started(&mut turns, finished_session());
         }
         assert!(
             state.lookup(&live).is_some(),
@@ -869,6 +937,41 @@ mod tests {
         assert_eq!(state.turns().len(), MAX_COMPLETED_UNSTREAMED_TURNS + 1);
         // Dropping the registry drops the live session, whose `Drop` cancels
         // the turn — the test leaves no thread parked on the 5-minute default.
+    }
+
+    /// The admission cap is the thread backstop: `MAX_LIVE_TURNS` turns are
+    /// admitted and the next one is refused, so the caller gets a 429 rather
+    /// than the process another thread.
+    #[test]
+    fn a_turn_past_the_live_cap_is_refused() {
+        let state = test_state();
+        for i in 0..MAX_LIVE_TURNS {
+            assert!(
+                state.register_turn(test_spec()).is_some(),
+                "turn {i} is within the cap and must be admitted"
+            );
+        }
+        assert!(
+            state.register_turn(test_spec()).is_none(),
+            "the turn past the cap is refused"
+        );
+        // Dropping the registry cancels the parked sessions.
+    }
+
+    /// The live cap counts live turns only. A finished-but-unstreamed backlog
+    /// is governed by its own eviction cap, so it must not consume admission:
+    /// counting the whole registry would let idle settled turns refuse all work.
+    #[test]
+    fn finished_turns_do_not_count_against_the_live_cap() {
+        let state = test_state();
+        for _ in 0..MAX_LIVE_TURNS {
+            let mut turns = state.turns();
+            state.insert_started(&mut turns, finished_session());
+        }
+        assert!(
+            state.register_turn(test_spec()).is_some(),
+            "a registry full of finished turns still admits new work"
+        );
     }
 
     #[test]
