@@ -20,7 +20,7 @@
 //!
 //! Storage-definition files ride the registry's schema gate like any other
 //! write (#442): the gate simulates the batch's composed edits per touched
-//! schema file — via [`simulate_batch`], the same in-order composition the
+//! schema file — via `simulate_batch`, the same in-order composition the
 //! validate phase performs — and judges each result before anything lands.
 //! The transactional path is not a way around the storage map.
 

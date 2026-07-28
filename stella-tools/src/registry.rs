@@ -803,9 +803,20 @@ impl ToolRegistry {
             // The write landed, so the objects it creates now exist: grow
             // the session overlay so a duplicate later this session
             // conflicts even before any re-index from the code graph. One
-            // pass per gated file — a batch records each (#442).
-            for pass in &pending_storage {
-                self.record_storage_objects(pass, declared_intent.as_deref());
+            // pass per gated file — a batch records each (#442). A `dry_run`
+            // batch returns Ok but writes NOTHING, so its passes must not
+            // touch the overlay (or the manifest via a declared intent) — a
+            // later real write of the same object would be falsely rejected
+            // as a duplicate of a phantom.
+            let dry_run = name == "apply_edits"
+                && input
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+            if !dry_run {
+                for pass in &pending_storage {
+                    self.record_storage_objects(pass, declared_intent.as_deref());
+                }
             }
             for (pending, pre_content) in pending_ops.into_iter().zip(pre_contents) {
                 self.record_touch(pending, pre_content, name, input, bus.as_ref());

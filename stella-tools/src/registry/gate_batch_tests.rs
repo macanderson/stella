@@ -82,6 +82,44 @@ async fn one_duplicate_in_a_batch_blocks_every_file_in_it() {
     );
 }
 
+/// A `dry_run` batch is judged by the gate but writes nothing — so it must
+/// not grow the session overlay either: the same edit applied FOR REAL
+/// afterwards has to pass, not be rejected as a duplicate of the phantom
+/// the dry run never created.
+#[tokio::test]
+async fn a_dry_run_batch_leaves_the_overlay_untouched() {
+    let (dir, reg) = fixture(&[(
+        "migrations/005.sql",
+        "CREATE TABLE ledger_draft (id INT);\n",
+    )]);
+    let edits = serde_json::json!({ "edits": [
+        { "path": "migrations/005.sql", "old_string": "ledger_draft", "new_string": "ledger" },
+    ]});
+
+    let dry = reg
+        .execute(
+            "apply_edits",
+            &serde_json::json!({ "edits": edits["edits"], "dry_run": true }),
+        )
+        .await;
+    assert!(!dry.is_error(), "the dry run validates cleanly: {dry:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("migrations/005.sql")).unwrap(),
+        "CREATE TABLE ledger_draft (id INT);\n",
+        "a dry run writes nothing"
+    );
+
+    let real = reg.execute("apply_edits", &edits).await;
+    assert!(
+        !real.is_error(),
+        "the real batch must not collide with the dry run's phantom: {real:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("migrations/005.sql")).unwrap(),
+        "CREATE TABLE ledger (id INT);\n"
+    );
+}
+
 /// The other direction, which the old refusal made impossible: a legitimate
 /// multi-file schema batch passes the gate, lands transactionally, and
 /// grows the session overlay — a later duplicate of what it created is
