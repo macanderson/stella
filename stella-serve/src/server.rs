@@ -37,9 +37,10 @@
 //! one.
 
 use std::collections::HashMap;
+use std::collections::hash_map;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::Duration;
 
 use rand::Rng as _;
@@ -233,16 +234,26 @@ impl ServerState {
         if turns.len() >= MAX_LIVE_TURNS {
             return None;
         }
-        let session = start();
         let id = new_turn_id();
-        turns.insert(
-            id.clone(),
-            Arc::new(Entry {
-                seq: self.counter.fetch_add(1, Ordering::Relaxed),
-                pending: session.pending(),
-                session: Mutex::new(Some(session)),
-            }),
-        );
+        // Insert through the vacant entry rather than `insert`, which would
+        // *replace* on a collision: the displaced turn's `Session` would drop
+        // (cancelling a turn its owner is still using) and two callers would
+        // hold the same id. 128 random bits make this unreachable in practice;
+        // going through the entry API makes it unreachable by construction, so
+        // the guarantee does not rest on the id width alone. Refusing is
+        // fail-closed — the caller renders it as the cap's 429, which is the
+        // wrong reason for the right answer, and is preferable to either
+        // silently cancelling a live turn or panicking a request thread.
+        let slot = match turns.entry(id.clone()) {
+            hash_map::Entry::Occupied(_) => return None,
+            hash_map::Entry::Vacant(slot) => slot,
+        };
+        let session = start();
+        slot.insert(Arc::new(Entry {
+            seq: self.counter.fetch_add(1, Ordering::Relaxed),
+            pending: session.pending(),
+            session: Mutex::new(Some(session)),
+        }));
         Some(id)
     }
 
@@ -282,29 +293,55 @@ impl ServerState {
 ///
 /// Lock order is registry → session, the same direction `handle_events` uses
 /// (its registry lookup releases the registry lock before it takes the session
-/// slot), so holding both here cannot deadlock.
+/// slot). This function is the one place that holds *both*, and it never blocks
+/// for the second: it takes each session slot with `try_lock` and treats a
+/// contended one as not-reclaimable. So the ordering is not merely observed by
+/// convention here — it cannot be violated, even if a future caller acquires
+/// these locks the other way around.
+///
+/// What this bounds, and what it does not: reclamation frees a settled turn's
+/// entry and the frames it buffered, but the frame channel itself is unbounded,
+/// so *one* abandoned turn can still buffer arbitrarily much before it settles.
+/// Bounding that is a backpressure change in `Session`, not a registry one.
+/// What is bounded here is the count — at most [`MAX_LIVE_TURNS`] turns' worth
+/// of buffered frames can be pinned at once, instead of one per create forever.
 fn reclaim_finished_unstreamed(turns: &mut HashMap<String, Arc<Entry>>, target: usize) {
+    // Below the target there is nothing to make room for, so the common path
+    // costs one length check and allocates nothing.
     if turns.len() < target {
         return;
     }
-    let mut finished: Vec<(u64, String)> = turns
+    let mut finished: Vec<(u64, &str)> = turns
         .iter()
         .filter(|(_, entry)| {
-            entry
-                .session
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .as_ref()
-                .is_some_and(Session::is_finished)
+            // `try_lock`, not `lock`: this runs while the registry lock is held,
+            // and blocking on a session lock here would invert the one ordering
+            // this module relies on (registry → session, see the doc above).
+            let session = match entry.session.try_lock() {
+                Ok(session) => session,
+                // Held. The only writer is `handle_events` taking the session
+                // out to stream it, so contention *means* a stream is opening —
+                // skipping is the right answer, not a compromise.
+                Err(TryLockError::WouldBlock) => return false,
+                // A panic while holding this mutex must not make the entry
+                // immortal, so poisoning is recovered rather than propagated —
+                // the same posture as every other lock in this file.
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            };
+            session.as_ref().is_some_and(Session::is_finished)
         })
-        .map(|(id, entry)| (entry.seq, id.clone()))
+        .map(|(id, entry)| (entry.seq, id.as_str()))
         .collect();
+    // Oldest first, so a late stream is most likely to still find its turn.
     finished.sort_unstable();
-    for (_, id) in &finished {
-        if turns.len() < target {
-            return;
-        }
-        turns.remove(id);
+    let excess = turns.len() - target + 1;
+    let doomed: Vec<String> = finished
+        .into_iter()
+        .take(excess)
+        .map(|(_, id)| id.to_string())
+        .collect();
+    for id in doomed {
+        turns.remove(&id);
     }
 }
 
