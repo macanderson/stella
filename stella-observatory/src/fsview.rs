@@ -412,7 +412,9 @@ fn redacted_url(url: &str) -> String {
     match base.split_once("://") {
         Some((scheme, rest)) => {
             let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
-            let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+            let host = authority
+                .rsplit_once('@')
+                .map_or(authority, |(_, host)| host);
             format!("{scheme}://{host}{path}")
         }
         None => base.to_string(),
@@ -608,7 +610,9 @@ mod tests {
         unsafe { std::env::set_var("STELLA_CONFIG_DIR", "/tmp/elsewhere") };
         let resolved = user_config_dir();
         unsafe { std::env::remove_var("STELLA_CONFIG_DIR") };
-        let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME set");
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME set");
         assert_eq!(resolved, Some(home.join(".stella")));
     }
 

@@ -1047,7 +1047,10 @@ mod tests {
             !body.contains("ghp_argsecret"),
             "argument values must never be served"
         );
-        assert!(body.contains("gh-mcp"), "the command name keeps the row legible");
+        assert!(
+            body.contains("gh-mcp"),
+            "the command name keeps the row legible"
+        );
         assert!(body.contains("2 args"), "…as does the argument count");
         assert!(
             !body.contains("sk-live-urlsecret"),

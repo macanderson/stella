@@ -1108,7 +1108,11 @@ fn scope_decision_latches_until_a_fresh_review_rearms() {
     // latch keeps a second press from re-sending — it types instead.
     assert!(model.agents[0].model.pending_scope_review.is_some());
     handle_deck_key(ch('a'), &model, &mut ui);
-    assert_eq!(ui.composer.buffer(), "a", "second press types, never re-sends");
+    assert_eq!(
+        ui.composer.buffer(),
+        "a",
+        "second press types, never re-sends"
+    );
 
     // A FRESH review re-arms the decision keys.
     handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
@@ -1151,7 +1155,11 @@ fn ask_user_answer_latches_until_a_fresh_question_rearms() {
     // must type into the composer, not answer the question again.
     assert!(model.agents[0].model.pending_ask_user.is_some());
     handle_deck_key(ch('2'), &model, &mut ui);
-    assert_eq!(ui.composer.buffer(), "2", "second press types, never re-sends");
+    assert_eq!(
+        ui.composer.buffer(),
+        "2",
+        "second press types, never re-sends"
+    );
 
     // A FRESH question re-arms the quick-pick.
     handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);

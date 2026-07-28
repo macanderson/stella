@@ -223,7 +223,13 @@ mod tests {
 
         pending.cancel();
 
-        assert!(pending.is_cancelled(), "the flag is latched before the clear");
-        assert!(rx.blocking_recv().is_err(), "the clear woke the parked step");
+        assert!(
+            pending.is_cancelled(),
+            "the flag is latched before the clear"
+        );
+        assert!(
+            rx.blocking_recv().is_err(),
+            "the clear woke the parked step"
+        );
     }
 }

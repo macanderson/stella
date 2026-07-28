@@ -605,9 +605,7 @@ fn inspect_overlay_scroll_saturates_past_u16_instead_of_wrapping() {
     // Saturation pins it at the deepest reachable row instead.
     let mut ui = DeckUi::default();
     ui.inspect_open = true;
-    let content: String = (0..70_000)
-        .map(|i| format!("ctx-{i:05}\n"))
-        .collect();
+    let content: String = (0..70_000).map(|i| format!("ctx-{i:05}\n")).collect();
     ui.inspect_view = Some(Box::new(crate::envelope::InspectView {
         call: crate::envelope::RecordedCallInfo {
             turn_instance: 1,
