@@ -58,6 +58,7 @@ mod memory_compact;
 mod memory_index;
 mod memory_retire_cmd;
 mod model_catalog;
+mod scoreboard_cmd;
 // Phase 3 (#714): the adaptive-context proposal review surface.
 mod proposals_cmd;
 mod rules;
@@ -608,6 +609,11 @@ enum Command {
     /// files only; needs no API key.
     Ingest(ingest_cmd::IngestArgs),
 
+    /// What the work cost, and whether anyone said it was good: calls, characters
+    /// typed, follow-ups, and the verdict a merged or closed pull request implies.
+    /// Reads local state only; needs no API key, and no model judges anything.
+    Scoreboard,
+
     /// Inspect the project's memories through the citation feedback loop —
     /// most-cited first, usefulness scores, truthfulness — and promote an
     /// eligible memory to a project rule (.stella/rules/). Reads local state
@@ -1081,6 +1087,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // Reads local markdown only — no store, no model, no API key.
             return ingest_cmd::run(args);
         }
+        Some(Command::Scoreboard) => {
+            // Reads .stella/private/store.db only.
+            return scoreboard_cmd::run();
+        }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
             // (promote) — works with zero API keys.
@@ -1361,6 +1371,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Cloud { .. }
         | Command::Telemetry { .. }
         | Command::Memory { .. }
+        | Command::Scoreboard
         | Command::Ingest(_)
         | Command::Mcp { .. }
         | Command::Connect { .. }

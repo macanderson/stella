@@ -159,6 +159,7 @@ pub mod integrity;
 pub mod journal;
 pub mod notify;
 pub mod prune;
+pub mod scoreboard;
 pub mod sessions;
 pub mod usage;
 
