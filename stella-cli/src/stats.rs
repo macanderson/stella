@@ -59,7 +59,8 @@ use stella_model::cache_economics::{
 use stella_model::catalog::Catalog;
 use stella_protocol::CompletionUsage;
 use stella_store::cache_trend::SessionCacheTrendRow;
-use stella_store::usage::{UsageStore, project_id_for};
+use stella_store::identity::replication_project_id;
+use stella_store::usage::UsageStore;
 use stella_store::{CacheCallGap, Store, StorePrunePolicy, StorePruneReport, UsageStatsRow};
 
 use crate::usage_cmd::parse_age_window;
@@ -312,7 +313,7 @@ pub fn run_stats_prune(args: &PruneArgs) -> Result<(), String> {
     let store =
         Store::open(&workspace_root).map_err(|e| format!("cannot open local store: {e}"))?;
 
-    let project_id = project_id_for(&workspace_root);
+    let project_id = replication_project_id(&workspace_root);
     let hub = UsageStore::open_default().ok();
     let telemetry_cursor = match &hub {
         Some(hub) => hub.telemetry_cursor(&project_id).unwrap_or(0),

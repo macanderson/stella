@@ -352,17 +352,43 @@ impl SessionMemory {
     /// remove. Refusals are printed too — a sweep that silently declines to act
     /// on protected records reads as "nothing was failing", a different claim.
     fn retire_failing_context(&self, quiet: bool) {
-        let policy = super::tuning::selection_health_policy(&self.workspace_root);
-        let health = super::uses::selection_health(&self.store, policy);
-        if health.is_empty() {
-            return;
-        }
         let now = stella_context::format_rfc3339(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0) as i64,
         );
+
+        // Deterministic validation first (#753): a memory whose path anchors
+        // have ALL left the tree is stale by a reproducible check, needing no
+        // model and no human. It writes the pruning-eligible verdict into the
+        // ledger and retires through the same protected, reversible event
+        // writer as the health sweep below.
+        let vanished = super::validation::vanished_memories(&self.store, &self.workspace_root);
+        if !vanished.is_empty() {
+            super::validation::record_vanished_verdicts(&self.store, &vanished, &now);
+            let sweep = super::retirement::sweep_vanished(&self.store, &vanished, &now);
+            if !quiet {
+                for record_id in &sweep.retired {
+                    eprintln!(
+                        "memory: retired {record_id} — every path it names is gone. \
+                         `stella memory reaffirm {record_id}` restores it."
+                    );
+                }
+                for (record_id, protection) in &sweep.refused {
+                    eprintln!(
+                        "memory: {record_id} names only vanished paths but is {} — left in place.",
+                        protection.as_str()
+                    );
+                }
+            }
+        }
+
+        let policy = super::tuning::selection_health_policy(&self.workspace_root);
+        let health = super::uses::selection_health(&self.store, policy);
+        if health.is_empty() {
+            return;
+        }
         let sweep = super::retirement::sweep(&self.store, &health, &now);
         if quiet {
             return;

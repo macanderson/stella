@@ -413,18 +413,25 @@ pub fn run_memory_validate(end_stale: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    let stale = rows.iter().filter(|r| r.status == "stale").count();
+    let missing = rows
+        .iter()
+        .filter(|r| r.status == "anchors-missing")
+        .count();
     let ok = rows.iter().filter(|r| r.status == "ok").count();
     let no_anchors = rows.iter().filter(|r| r.status == "no-anchors").count();
+    let all_gone = rows
+        .iter()
+        .filter(|r| r.anchors_found > 0 && r.anchors_missing == r.anchors_found)
+        .count();
 
     for row in &rows {
         let symbol = match row.status {
-            "stale" => "⚠".yellow(),
+            "anchors-missing" => "⚠".yellow(),
             "ok" => "✓".green(),
             _ => "·".dimmed(),
         };
         let detail = match row.status {
-            "stale" => format!(
+            "anchors-missing" => format!(
                 " — {} of {} anchor path(s) missing",
                 row.anchors_missing, row.anchors_found
             ),
@@ -439,13 +446,21 @@ pub fn run_memory_validate(end_stale: bool) -> Result<(), String> {
         );
     }
 
-    println!("\n  {ok} ok, {stale} stale, {no_anchors} no path anchors");
-    if stale > 0 {
+    println!("\n  {ok} ok, {missing} with missing anchors, {no_anchors} no path anchors");
+    if all_gone > 0 {
         println!(
-            "\n  {} {stale} stale memor{them} reference paths that no longer exist — \
+            "\n  {} {all_gone} memor{them} name only paths that no longer exist — \
+             the background loop retires these automatically (deterministic \
+             validation, #753); `stella memory reaffirm <id>` restores one.",
+            "⚠".yellow(),
+            them = if all_gone == 1 { "y" } else { "ies" },
+        );
+    } else if missing > 0 {
+        println!(
+            "\n  {} {missing} memor{them} reference paths that no longer exist — \
              cite them untruthful (or delete) to quarantine them from recall.",
             "⚠".yellow(),
-            them = if stale == 1 { "y" } else { "ies" },
+            them = if missing == 1 { "y" } else { "ies" },
         );
     }
     report_duplicate_lineages(&workspace_root)?;
@@ -828,7 +843,10 @@ fn validate_memories(workspace_root: &std::path::Path) -> Result<Vec<MemoryValid
                 }
             })
             .count();
-        let status = if missing > 0 { "stale" } else { "ok" };
+        // "anchors-missing", not "stale": the spec reserves *stale* for the
+        // derived selection-health value (§5.2), and this report is about a
+        // different, narrower fact — named paths that no longer exist (#753).
+        let status = if missing > 0 { "anchors-missing" } else { "ok" };
         rows.push(MemoryValidationRow {
             id: node.public_id.clone(),
             status,
@@ -1190,9 +1208,10 @@ mod tests {
         });
 
         let rows = validate_memories(root.path()).unwrap();
-        let stale = rows.iter().find(|r| r.status == "stale").expect(
-            "a memory naming a deleted file by bare name must be flagged stale, not no-anchors",
-        );
+        let stale = rows
+            .iter()
+            .find(|r| r.status == "anchors-missing")
+            .expect("a memory naming a deleted file by bare name must be flagged, not no-anchors");
         assert!(stale.memory.contains("deleted_witness.rs"));
         let ok = rows
             .iter()
@@ -1234,7 +1253,7 @@ mod tests {
 
         let rows = validate_memories(root.path()).unwrap();
         assert_eq!(rows.len(), 3);
-        let stale = rows.iter().find(|r| r.status == "stale");
+        let stale = rows.iter().find(|r| r.status == "anchors-missing");
         assert!(stale.is_some(), "must flag the deleted path");
         let ok = rows.iter().find(|r| r.status == "ok");
         assert!(ok.is_some(), "must verify the existing path");

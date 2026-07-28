@@ -1456,7 +1456,7 @@ impl Store {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "workspace".into());
         Ok(Some(usage::ExecutionRollupRow {
-            project_id: usage::project_id_for(workspace_root),
+            project_id: identity::replication_project_id(workspace_root),
             project_name,
             project_root,
             execution_id,
@@ -1514,6 +1514,14 @@ impl Store {
     ) -> Result<u64> {
         const BATCH: usize = 500;
         let scope = identity::TelemetryScope::resolve(workspace_root);
+        // A registered workspace replicates under its stable id; merge any
+        // rows an earlier build (or the pre-registration era) left under the
+        // path hash first, so the cursor continues instead of forking (#408).
+        // Idempotent and cheap once the hub is clean.
+        let path_id = usage::project_id_for(workspace_root);
+        if scope.workspace_id.is_some() && path_id != scope.project_id {
+            usage.adopt_project_identity(&path_id, &scope.project_id)?;
+        }
         let mut total: u64 = 0;
         loop {
             let cursor = usage.telemetry_cursor(&scope.project_id)?;

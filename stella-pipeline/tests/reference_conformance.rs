@@ -35,8 +35,11 @@
 //! trajectory and asserts nothing. That is why [`GoldenTrajectory`] gates on
 //! load instead of trusting a recording.
 
-use stella_pipeline::replay::event_signature;
-use stella_pipeline::replay::golden::{GoldenError, GoldenTrajectory};
+use stella_pipeline::replay::golden::{
+    GoldenError, GoldenManifest, GoldenTrajectory, RecordingSource,
+};
+use stella_pipeline::replay::reference_adapter::{REFERENCE_ADAPTER, adapt_reference_stream};
+use stella_pipeline::replay::{event_signature, validate_stream};
 use stella_protocol::AgentEvent;
 
 /// One line of the reference engine's `stream-json` output, with the reason it
@@ -196,6 +199,42 @@ fn a_reference_recording_is_rejected_as_a_golden_rather_than_half_imported() {
              silently accepting one is the failure mode this gate exists to prevent"
         ),
     }
+}
+
+/// The adapter (#462) discharges every obligation this file states: the same
+/// six-line reference stream that a raw import must refuse becomes, through
+/// [`adapt_reference_stream`], a structurally valid recording a `Reference`
+/// golden accepts — typed stage, synthesized-and-paired tool ids, terminal
+/// `Complete`.
+#[test]
+fn the_adapter_turns_the_reference_stream_into_a_valid_reference_golden() {
+    let recording: String = reference_stream()
+        .iter()
+        .map(|l| format!("{}\n", l.json))
+        .collect();
+    let events = adapt_reference_stream(&recording).expect("the pinned samples adapt");
+    assert!(
+        validate_stream(&events).is_empty(),
+        "the adapted stream must satisfy the structural invariants"
+    );
+    // The inversion is repaired: the adapted stream carries structural
+    // signatures where the raw one carried none.
+    let signatures: Vec<String> = events.iter().map(event_signature).collect();
+    assert!(signatures.iter().any(|s| s.starts_with("stage:")));
+    assert!(signatures.iter().any(|s| s.starts_with("tool_start:")));
+    assert!(signatures.iter().any(|s| s.starts_with("complete")));
+
+    let manifest = GoldenManifest::for_recording(
+        "reference_smoke",
+        "the pinned reference samples, adapted",
+        RecordingSource::Reference {
+            engine: "ts-engine".into(),
+            adapter: REFERENCE_ADAPTER.into(),
+        },
+        &events,
+    );
+    let golden = GoldenTrajectory::new(manifest, events).expect("a reference golden loads");
+    assert!(golden.manifest().source.is_reference());
 }
 
 #[test]

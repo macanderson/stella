@@ -14,7 +14,7 @@ use crate::embed::EmbedderFingerprint;
 use crate::error::ContextError;
 
 /// The current on-disk schema version, tracked in `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 9;
+pub(crate) const SCHEMA_VERSION: i64 = 10;
 
 /// The v1 schema. Applied once, inside the migration transaction. Bi-temporal
 /// columns (`valid_from`/`valid_to`/`recorded_at`/`superseded_at`) exist on both
@@ -455,6 +455,30 @@ fn migrate_v9(tx: &Connection) -> Result<(), ContextError> {
     Ok(())
 }
 
+/// V10 — **`edge.public_id` becomes collision-proof** (#617).
+///
+/// The id was minted from a process-local sequence with no `UNIQUE`
+/// constraint, so two processes writing one workspace db in the same clock
+/// second could mint identical `edg_…` ids that coexisted silently. The mint
+/// now folds a per-process nonce into the hash (`store::edge`), and this
+/// migration adds the constraint that makes uniqueness a schema fact.
+///
+/// **Backfill policy, on the record:** duplicates already on disk keep the id
+/// on the EARLIEST row (the one a hypothetical reader would have found
+/// first); every later collider is re-minted deterministically by suffixing
+/// its immutable rowid. Nothing reads an edge by public id today, so no
+/// stored reference can dangle. Statement-level idempotent: the re-mint
+/// touches only duplicate groups (none after the first run) and the index is
+/// `IF NOT EXISTS`.
+fn migrate_v10(tx: &Connection) -> Result<(), ContextError> {
+    tx.execute_batch(
+        "UPDATE edge SET public_id = public_id || '_r' || id \
+          WHERE id NOT IN (SELECT MIN(id) FROM edge GROUP BY public_id);
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_edge_public_id ON edge(public_id);",
+    )?;
+    Ok(())
+}
+
 /// Open a connection with the plane's fixed pragmas: WAL for concurrent
 /// reader/writer, `NORMAL` sync (durable enough with WAL, far cheaper than
 /// `FULL`), foreign keys on, and a busy timeout so a warm-task write never
@@ -573,6 +597,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     if version < 9 {
         migrate_v9(&tx)?;
     }
+    if version < 10 {
+        migrate_v10(&tx)?;
+    }
     // ── APPEND POINT — RESERVED SLOT ────────────────────────────────────
     // This is an ordered `if version < N` ladder and `SCHEMA_VERSION` is its
     // high-water mark. Two branches that each add "the next step" merge
@@ -589,7 +616,7 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     //       see `migrate_v8`. (The v6 slot originally reserved for it went
     //       to the compaction watermark, `MIGRATION_V6`.)
     //
-    // The next free step is v10: take it and add your own line here.
+    // The next free step is v11: take it and add your own line here.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())

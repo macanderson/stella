@@ -548,6 +548,14 @@ impl Tool for RunLint {
             Err(message) => ToolOutput::Error { message },
         }
     }
+
+    // The fence's rendered line for an argv spawn is the joined argv (#804).
+    async fn command_for_gate(&self, input: &Value, root: &std::path::Path) -> Option<String> {
+        let fix = input.get("fix").and_then(|v| v.as_bool()).unwrap_or(false);
+        lint_argv(&ScriptIndex::detect(root).await, fix)
+            .ok()
+            .map(|argv| argv.join(" "))
+    }
 }
 
 /// `format_code` — the project's own formatter, resolved and spawned like
@@ -585,6 +593,17 @@ impl Tool for FormatCode {
             Ok(argv) => run_argv_and_report(&argv, root, timeout_secs).await,
             Err(message) => ToolOutput::Error { message },
         }
+    }
+
+    // The fence's rendered line for an argv spawn is the joined argv (#804).
+    async fn command_for_gate(&self, input: &Value, root: &std::path::Path) -> Option<String> {
+        let check = input
+            .get("check")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        format_argv(&ScriptIndex::detect(root).await, check)
+            .ok()
+            .map(|argv| argv.join(" "))
     }
 }
 

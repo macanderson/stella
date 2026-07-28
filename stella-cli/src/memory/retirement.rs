@@ -220,6 +220,51 @@ pub(crate) fn sweep(
     sweep
 }
 
+/// Retire every unprotected memory whose path anchors have all vanished
+/// (#753) — the deterministic-validation twin of [`sweep`].
+///
+/// Same single protection predicate, same reversible `PromotionEvent`, same
+/// system actor; only the trigger differs. It deliberately does not wait for
+/// the health fold's `min_attributable_uses` floor: that floor guards against
+/// noisy per-turn judgements, and a file-existence check re-run N times is one
+/// fact, not N pieces of evidence. The reason names every missing path, so the
+/// retirement is legible without the ledger.
+pub(crate) fn sweep_vanished(
+    store: &ContextStore,
+    vanished: &[super::validation::VanishedMemory],
+    occurred_at: &str,
+) -> RetirementSweep {
+    let standings = standings(store);
+    let mut sweep = RetirementSweep::default();
+    for memory in vanished {
+        if let Some(protection) = protection_for(standings.get(&memory.public_id)) {
+            // `AlreadyRetired` is the steady state here — every later scan
+            // re-finds the same vanished memory. Only a *new* refusal is
+            // worth reporting.
+            if protection != RetirementProtection::AlreadyRetired {
+                sweep.refused.push((memory.public_id.clone(), protection));
+            }
+            continue;
+        }
+        let reason = format!(
+            "every path this memory names is gone ({}) — auto-retired by \
+             deterministic validation; reaffirm to restore",
+            memory.missing_paths.join(", ")
+        );
+        if record_decision(
+            store,
+            &memory.public_id,
+            PromotionAction::Retired,
+            PromotionActor::System,
+            &reason,
+            occurred_at,
+        ) {
+            sweep.retired.push(memory.public_id.clone());
+        }
+    }
+    sweep
+}
+
 /// Retire a record on a person's explicit judgement.
 ///
 /// The actor is [`PromotionActor::User`], which is what distinguishes this from

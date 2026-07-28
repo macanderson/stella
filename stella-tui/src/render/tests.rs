@@ -1015,6 +1015,7 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
         recent_diffs: [(1, diff_text)].into_iter().collect(),
         changes: 1,
         reads: 0,
+        touched_seq: 1,
     }];
     (entry, files)
 }

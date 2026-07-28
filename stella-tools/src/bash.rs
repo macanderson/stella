@@ -43,6 +43,12 @@ use tokio::process::Command;
 use crate::registry::Tool;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
+/// Deliberately 3.3x `exec::MAX_OUTPUT_BYTES` (30k), ratified as-is (#616):
+/// the shell is the agent's primary sensory channel — one `bash` call renders
+/// a whole build or test run whose first error and final summary can sit
+/// 100 KB apart — while the `exec` budget bounds each incremental
+/// `read_output` page of a *managed* process the agent polls repeatedly.
+/// Aligning them would either starve the shell or inflate every page read.
 const MAX_OUTPUT_BYTES: usize = 100_000;
 
 /// grep-family commands whose first positional arg is a search pattern.

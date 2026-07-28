@@ -82,21 +82,41 @@ pub(crate) fn definitions(
 /// Best-effort textual references: whole-word occurrences of `name` across
 /// indexed files — best-effort retrieval, not an index.
 ///
-/// [`MAX_REFERENCES`] bounds the frames *emitted*; [`REF_FILE_MAX_BYTES`]
-/// bounds what any one file may cost. What remains unbounded is the corpus:
-/// a name with fewer hits than the cap (a miss, most of all) still visits
-/// every indexed file, synchronously on the caller's thread — the reason the
-/// `graph_query` tool's `references` mode is the crate's slowest answer on a
-/// large tree. Unreadable and oversized files are skipped, never errors: this
-/// is best-effort retrieval, and one bad file must not blank the answer.
+/// Every axis is bounded (#616's reporting ruling; the corpus bound closed
+/// the last one, #803): [`MAX_REFERENCES`] bounds the frames *emitted*,
+/// [`REF_FILE_MAX_BYTES`] bounds what any one file may cost, and
+/// [`MAX_REFERENCE_FILES`] bounds how many files a scan may visit — so a
+/// rare or zero-match identifier (the miss, most of all) costs a bounded
+/// read, not a full synchronous sweep of a 10k-file corpus on the caller's
+/// thread. A symbol-row prefilter was considered and rejected: symbol rows
+/// hold *definitions*, and references live precisely in the files that
+/// don't define the name. Unreadable and oversized files are skipped, never
+/// errors: this is best-effort retrieval, and its doc already says so — a
+/// bounded best effort is the same contract, held to a budget.
 pub(crate) fn references(
     conn: &Connection,
     root: &Path,
     name: &str,
 ) -> Result<Vec<ContextFrame>, GraphError> {
+    references_bounded(conn, root, name, MAX_REFERENCE_FILES)
+}
+
+/// Files one `references` scan may visit. Generous for real workspaces
+/// (indexed source files, not the whole tree) while keeping the worst case —
+/// a miss over a huge corpus — bounded.
+const MAX_REFERENCE_FILES: usize = 2_000;
+
+/// [`references`] with the corpus bound injectable, so the witness can prove
+/// the bound without indexing two thousand files.
+pub(crate) fn references_bounded(
+    conn: &Connection,
+    root: &Path,
+    name: &str,
+    max_files: usize,
+) -> Result<Vec<ContextFrame>, GraphError> {
     let files = store::all_files(conn)?;
     let mut out = Vec::new();
-    'outer: for rel in files {
+    'outer: for rel in files.into_iter().take(max_files) {
         let abs = root.join(&rel);
         match std::fs::metadata(&abs) {
             Ok(meta) if meta.len() <= REF_FILE_MAX_BYTES => {}

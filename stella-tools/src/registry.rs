@@ -29,6 +29,20 @@ pub trait Tool: Send + Sync {
     /// Execute the tool. `root` is the workspace root for path resolution;
     /// tools must never read or write outside it without explicit opt-in.
     async fn execute(&self, input: &Value, root: &std::path::Path) -> ToolOutput;
+
+    /// The command line this call would run, for the registry's blocking
+    /// `command.started` policy chain (#804). `None` — the default — means
+    /// the tool runs no external command, or carries it in a plain input
+    /// field the registry reads itself (`ToolRegistry::command_line_for`'s
+    /// explicit arms: `bash`, `verify_done`, `start_process`, `send_stdin`).
+    ///
+    /// Best-effort mirror of execute-time composition: a tool that cannot
+    /// resolve up front (missing index, backend-resolved branch name)
+    /// returns `None` and stays ungated for that call, returning its own
+    /// named error at execute time — `run_script`'s shipped posture.
+    async fn command_for_gate(&self, _input: &Value, _root: &std::path::Path) -> Option<String> {
+        None
+    }
 }
 
 /// A file op classified before execution: the normalized path the ledger
@@ -323,36 +337,32 @@ impl ToolRegistry {
             read_file,
             span_reads.clone(),
         )));
-        if let Some(media) = media_backend {
-            entries.push(match &media_host_context {
-                Some((gate, ids, journal)) => {
-                    Arc::new(crate::media::GenerateImage::with_host_context(
-                        media.image,
-                        gate.clone(),
-                        ids.clone(),
-                        journal.clone(),
-                    )) as Arc<dyn Tool>
-                }
-                None => Arc::new(crate::media::GenerateImage::new(media.image)),
-            });
+        // The launch-posture ruling (#785): the PAID media tools surface only
+        // when an approving host context exists. Without one they would pair
+        // with the deny-by-default gate — registering, being offered to the
+        // model, consuming model calls, and refusing every time. Fail-closed
+        // stays the architecture; a tool that cannot ever succeed is simply
+        // not advertised, the same "no key, no dead schema" posture as
+        // `web_search`. (`GenerateSvg` above is client-side and free, so it
+        // registers regardless.)
+        if let (Some(media), Some((gate, ids, journal))) = (media_backend, &media_host_context) {
+            entries.push(Arc::new(crate::media::GenerateImage::with_host_context(
+                media.image,
+                gate.clone(),
+                ids.clone(),
+                journal.clone(),
+            )) as Arc<dyn Tool>);
             if let Some(video) = media.video {
-                entries.push(match &media_host_context {
-                    Some((gate, ids, journal)) => {
-                        Arc::new(crate::media::GenerateVideo::with_host_context(
-                            video.clone(),
-                            gate.clone(),
-                            ids.clone(),
-                            journal.clone(),
-                        )) as Arc<dyn Tool>
-                    }
-                    None => Arc::new(crate::media::GenerateVideo::new(video.clone())),
-                });
-                entries.push(match &media_host_context {
-                    Some((_, _, journal)) => Arc::new(
-                        crate::media::PollVideo::with_operation_journal(video, journal.clone()),
-                    ) as Arc<dyn Tool>,
-                    None => Arc::new(crate::media::PollVideo::new(video)),
-                });
+                entries.push(Arc::new(crate::media::GenerateVideo::with_host_context(
+                    video.clone(),
+                    gate.clone(),
+                    ids.clone(),
+                    journal.clone(),
+                )) as Arc<dyn Tool>);
+                entries.push(Arc::new(crate::media::PollVideo::with_operation_journal(
+                    video,
+                    journal.clone(),
+                )) as Arc<dyn Tool>);
             }
         }
         if let Some(backend) = issue_backend.filter(|_| !process_free) {
@@ -530,20 +540,47 @@ impl ToolRegistry {
             }
         }
         let input: &Value = ledger_augmented.as_ref().unwrap_or(input);
-        // `run_script`, `build_project`, and `run_tests` compose their
-        // command from the scripts index at execute time; resolve it up
-        // front (best-effort) so the `command.started` policy chain and the
-        // command.* observer events carry the real command line, exactly
-        // like `bash`. A failed resolution is not gated — the tool itself
-        // returns the named error. Gated on an attached bus so a bus-less
-        // registry never pays for index detection.
+
+        // Resolve the tool now rather than at dispatch below: the command
+        // fence asks IT for the line it would run. Clone the `Arc` out so
+        // the overlay's read lock is released before any `.await`.
+        let tool = self.tools.get(name).cloned().or_else(|| {
+            self.late_tools
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(name)
+                .cloned()
+        });
+
+        // `run_script` threads its gate resolution into execution through an
+        // internal input key, so the line the `command.started` chain
+        // approves is the line that runs — closing the gate/execute index
+        // TOCTOU (#804; see `scripts::gate`). Any model-authored key is
+        // stripped on the way.
+        let (gate_threaded, script_resolved) = if name == "run_script" {
+            crate::scripts::thread_gate_resolution(&self.root, input, bus.is_some()).await
+        } else {
+            (None, None)
+        };
+        let input: &Value = gate_threaded.as_ref().unwrap_or(input);
+
+        // The effective command line for the `command.started` policy chain
+        // and the command.* observer events: `run_script`'s threaded
+        // resolution, `build_project`/`run_tests`'s index composition (their
+        // explicit `command` override is read off the input by
+        // `command_line_for` instead), or whatever the tool itself reports
+        // it would run ([`Tool::command_for_gate`]). A failed resolution is
+        // not gated — the tool returns the named error. Gated on an attached
+        // bus so a bus-less registry never pays for index detection.
         let resolved_command: Option<String> = match (&bus, name) {
-            (Some(_), "run_script") => {
-                crate::scripts::resolve_command_for_gate(&self.root, input).await
-            }
+            (Some(_), "run_script") => script_resolved,
             (Some(_), "build_project" | "run_tests") => {
                 crate::project::resolve_command_for_gate(name, &self.root, input).await
             }
+            (Some(_), _) => match &tool {
+                Some(tool) => tool.command_for_gate(input, &self.root).await,
+                None => None,
+            },
             _ => None,
         };
 
@@ -671,16 +708,6 @@ impl ToolRegistry {
             );
         }
 
-        // Resolve from the primary map, falling back to the late-enabled
-        // overlay. Clone the `Arc` out so the overlay's read lock is released
-        // before the `.await` (a lock guard must not cross an await point).
-        let tool = self.tools.get(name).cloned().or_else(|| {
-            self.late_tools
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .get(name)
-                .cloned()
-        });
         let mut output = match tool {
             Some(tool) => tool.execute(input, &self.root).await,
             None => ToolOutput::Error {
@@ -887,9 +914,10 @@ impl ToolRegistry {
     /// even when a policy then denies it), then the `file.*` chain for a
     /// classified C/U/D op and the `command.started` chain for every tool
     /// that runs a command — `bash`, `build_project`, `run_tests`,
-    /// `verify_done`, `run_script`, and `start_process` (`resolved_command`
-    /// is the index-composed command line for the index-backed ones; see
-    /// [`Self::command_line_for`]).
+    /// `verify_done`, `run_script`, `start_process`, `send_stdin`, and every
+    /// [`Tool::command_for_gate`] implementor: `run_lint`, `format_code`,
+    /// `diagnostics`, `screenshot`, `ci_status`, `start_work_on_issue`, and
+    /// the `repo_*` family (#804; see [`Self::command_line_for`]).
     /// These chains gate — `modify` decisions are recorded but not honored
     /// here, because the input was already final after
     /// `tool.call.requested`. Reads are observable but never interceptable.
@@ -1086,12 +1114,13 @@ impl ToolRegistry {
     /// they stay in the surface when an operator sets `"bash": "off"` (and
     /// `start_process`'s argv[0] may itself be a shell, `["bash", "-c", …]`),
     /// so leaving any out hands ambient shell execution to the very posture
-    /// that turned `bash` off. **Known gap (#615):** `screenshot`, `ci_status`
-    /// and (via `checkout_branch`) `start_work_on_issue` compose `bash -c`
-    /// lines through [`crate::exec`] without reaching here, so a policy
-    /// denying command execution cannot see them; all three shell-quote, so it
-    /// is fence completeness, not an RCE. Closing it needs a
-    /// `resolve_command_for_gate` each and makes them newly deniable.
+    /// that turned `bash` off. The #615 known gap is closed (#804): the
+    /// `bash -c` composers (`screenshot`, `ci_status`, `start_work_on_issue`)
+    /// and the argv-exec default tools (`run_lint`, `format_code`,
+    /// `diagnostics`, the `repo_*` family) each report the line they would
+    /// run via [`Tool::command_for_gate`], which lands here as
+    /// `resolved_command` through the catch-all arm — so a policy denying
+    /// command execution sees every command the session runs.
     ///
     /// That covers tools which *compose* a command line. `send_stdin` does
     /// not — it writes into an interpreter someone already started — but the
@@ -1131,7 +1160,6 @@ impl ToolRegistry {
                 .get("test_cmd")
                 .and_then(|v| v.as_str())
                 .map(str::to_string),
-            "run_script" => resolved_command.map(str::to_string),
             "start_process" => Some(
                 input
                     .get("argv")
@@ -1152,7 +1180,11 @@ impl ToolRegistry {
                 .get("text")
                 .and_then(|v| v.as_str())
                 .map(str::to_string),
-            _ => None,
+            // Everything else rides on what it resolved for itself —
+            // `run_script`'s threaded index resolution and every
+            // [`Tool::command_for_gate`] implementor. `None` (no resolution,
+            // or a tool that runs no command) stays ungated.
+            _ => resolved_command.map(str::to_string),
         }
     }
 
@@ -1506,6 +1538,10 @@ impl ToolExecutor for ToolRegistry {
 #[cfg(all(test, unix))]
 #[path = "registry/private_state_tests.rs"]
 mod private_state_tests;
+
+#[cfg(test)]
+#[path = "registry/fence_tests.rs"]
+mod fence_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1877,19 +1913,48 @@ mod tests {
             }
         }
         let provider: Arc<dyn stella_media::MediaProvider> = Arc::new(NullMedia);
-        let names = |backend| {
+        struct FixedIds;
+        impl crate::media::MediaOperationIdSource for FixedIds {
+            fn operation_id(&self) -> crate::media::HostMediaOperation {
+                crate::media::HostMediaOperation {
+                    opaque_id: "op-registry-test".into(),
+                    expires_at: u64::MAX,
+                }
+            }
+        }
+        // A full approving host context: the paid tools register only under
+        // one (#785).
+        let host_options = || RegistryOptions {
+            media_spend_gate: Some(Arc::new(stella_media::DenyMediaSpendGate)),
+            media_operation_ids: Some(Arc::new(FixedIds)),
+            media_operation_journal: Some(Arc::new(
+                stella_media::SqliteMediaOperationJournal::open_in_memory(Default::default())
+                    .unwrap(),
+            )),
+            media_requires_host_approval: true,
+            media_host_data_isolation: Some(crate::media::HostDataIsolation::ProcessFree),
+        };
+        let names = |backend, options: RegistryOptions| {
             let root = tempfile::tempdir().unwrap();
-            ToolRegistry::with_backends(root.path().to_path_buf(), None, Some(backend))
-                .schemas()
-                .iter()
-                .map(|s| s.name.clone())
-                .collect::<Vec<_>>()
+            ToolRegistry::with_backends_and_options(
+                root.path().to_path_buf(),
+                None,
+                Some(backend),
+                options,
+            )
+            .schemas()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect::<Vec<_>>()
         };
 
-        let with_video = names(crate::media::MediaBackend {
-            image: provider.clone(),
-            video: Some(provider.clone()),
-        });
+        let with_video = names(
+            crate::media::MediaBackend {
+                image: provider.clone(),
+                video: Some(provider.clone()),
+            },
+            host_options(),
+        );
         for expected in ["generate_image", "generate_video", "poll_video"] {
             assert!(
                 with_video.contains(&expected.to_string()),
@@ -1897,10 +1962,13 @@ mod tests {
             );
         }
 
-        let image_only = names(crate::media::MediaBackend {
-            image: provider,
-            video: None,
-        });
+        let image_only = names(
+            crate::media::MediaBackend {
+                image: provider.clone(),
+                video: None,
+            },
+            host_options(),
+        );
         assert!(image_only.contains(&"generate_image".to_string()));
         for absent in ["generate_video", "poll_video"] {
             assert!(
@@ -1908,6 +1976,24 @@ mod tests {
                 "{absent} must be absent without a video adapter"
             );
         }
+
+        // The #785 ruling: with credentials but NO approving host context,
+        // the paid tools would deny every call — so none of them surface.
+        // The free, client-side generate_svg still does.
+        let deny_only = names(
+            crate::media::MediaBackend {
+                image: provider,
+                video: Some(Arc::new(NullMedia)),
+            },
+            RegistryOptions::default(),
+        );
+        for absent in ["generate_image", "generate_video", "poll_video"] {
+            assert!(
+                !deny_only.contains(&absent.to_string()),
+                "{absent} must not register without a host context"
+            );
+        }
+        assert!(deny_only.contains(&"generate_svg".to_string()));
     }
 
     #[tokio::test]
