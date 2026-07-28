@@ -19,6 +19,7 @@
 
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use stella_store::drain::{CloudIntake, DrainBatch, DrainOutcome, DrainRejection, drain_org};
 use stella_store::identity::CloudDrainConfig;
 use stella_store::usage::UsageStore;
@@ -68,14 +69,21 @@ impl HttpCloudIntake {
         if status.is_success() {
             return Ok(());
         }
-        // The body is the intake's diagnostic — data for the rejection, read
-        // bounded so a hostile or broken intake cannot balloon memory.
-        let detail = match response.bytes().await {
-            Ok(bytes) => {
-                String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_DETAIL_BYTES)]).into_owned()
+        // The body is the intake's diagnostic — data for the rejection. Read
+        // as a stream and stop at the cap, so a hostile or broken intake
+        // cannot balloon memory by answering with a huge body (`bytes()`
+        // would buffer it whole before any truncation).
+        let mut collected: Vec<u8> = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let Ok(chunk) = chunk else { break };
+            let room = MAX_DETAIL_BYTES - collected.len();
+            collected.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            if collected.len() >= MAX_DETAIL_BYTES {
+                break;
             }
-            Err(_) => String::new(),
-        };
+        }
+        let detail = String::from_utf8_lossy(&collected).into_owned();
         Err(DrainRejection::from_http_status(status.as_u16(), detail))
     }
 }
