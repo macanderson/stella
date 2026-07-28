@@ -716,7 +716,7 @@ mod tests {
                 kind: MediaKind::Video,
                 model: "ordered-video".into(),
                 estimated_cost_usd: self.video_price.unwrap_or_default() * 5.0,
-                submitted_at: 1_700_000_000,
+                submitted_at: unix_now(),
                 label: req.label,
             })
         }
@@ -935,9 +935,19 @@ mod tests {
         let missing_journal_out = missing_journal
             .execute("generate_image", &serde_json::json!({"prompt": "a star"}))
             .await;
+        // Since #785 an incomplete host context no longer registers a
+        // deny-only tool at all — the refusal surfaces as the tool's absence
+        // rather than a per-call denial naming the missing piece.
         assert!(
-            format!("{missing_journal_out:?}").contains("operation journal"),
+            format!("{missing_journal_out:?}").contains("unknown tool"),
             "{missing_journal_out:?}"
+        );
+        assert!(
+            !missing_journal
+                .schemas()
+                .iter()
+                .any(|s| s.name == "generate_image"),
+            "a config without an operation journal must not surface generate_image"
         );
         assert_eq!(gate.calls.load(Ordering::SeqCst), 0);
         assert_eq!(provider.submits.load(Ordering::SeqCst), 0);
@@ -1146,7 +1156,7 @@ mod tests {
                 kind: MediaKind::Video,
                 model: "fake-video-1".into(),
                 estimated_cost_usd,
-                submitted_at: 1_700_000_000,
+                submitted_at: unix_now(),
                 label: req.label,
             })
         }

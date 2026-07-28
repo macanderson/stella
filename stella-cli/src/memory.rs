@@ -75,6 +75,9 @@ pub(crate) mod tuning;
 // Phase 4 (#715): context-use extraction — what a finished turn's frame
 // carried, and what the turn then said about it.
 pub(crate) mod uses;
+// #753: deterministic validation — the first pruning-eligible evidence source,
+// so the retirement sweep fires without a human.
+pub(crate) mod validation;
 use private_state::resolve_context_db_path;
 #[cfg(test)]
 use projection::{is_suppressed_local_frame, project_recalled_frame};

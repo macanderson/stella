@@ -244,13 +244,50 @@ impl Drop for GroupKillGuard {
 /// the human-readable command line for error messages. Output is returned
 /// UNTRUNCATED; the wrappers apply [`truncate_middle`] except
 /// [`run_argv_untruncated`], whose callers parse the full stream.
+///
+/// Merges stderr into stdout, which is right for everything a human or a
+/// model reads (a failure's explanation lives on stderr and must not be
+/// dropped) and wrong for anything PARSED as a value — see [`drive_split`].
 async fn drive(
-    mut cmd: Command,
+    cmd: Command,
     command: &str,
     dir: &std::path::Path,
     timeout_secs: u64,
     preserved_sensitive_env: &[&str],
 ) -> Result<(i32, String), String> {
+    let (code, stdout, stderr) =
+        drive_split(cmd, command, dir, timeout_secs, preserved_sensitive_env).await?;
+    let mut combined = stdout;
+    if !stderr.is_empty() {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&stderr);
+    }
+    Ok((code, combined))
+}
+
+/// [`drive`] with the two streams kept APART.
+///
+/// Every guarantee of the merged path is preserved — credential scrubbing,
+/// null stdin, its own process group, the deadline, and the group kill on
+/// timeout or drop. The only difference is that the caller decides what to do
+/// with stderr.
+///
+/// This exists because a merged stream cannot be parsed as a value. git writes
+/// advice hints, warnings, and (when `GIT_TRACE` is set anywhere in the
+/// environment) trace lines to stderr; folded into stdout they become part of
+/// whatever the caller thinks it just read. A branch name is the sharp case:
+/// `rev-parse --abbrev-ref HEAD` plus one hint yields a "branch" that git then
+/// rejects as `fatal: invalid refspec`. `verify` already hit this and moved to
+/// a stdout-only read; `repo` had not.
+async fn drive_split(
+    mut cmd: Command,
+    command: &str,
+    dir: &std::path::Path,
+    timeout_secs: u64,
+    preserved_sensitive_env: &[&str],
+) -> Result<(i32, String, String), String> {
     cmd.current_dir(dir);
     crate::subprocess_env::scrub_spawn_env_except(&mut cmd, preserved_sensitive_env);
     // No stdin: everything driven through here is non-interactive, and an
@@ -294,15 +331,28 @@ async fn drive(
             }
         };
 
-    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.is_empty() {
-        if !combined.is_empty() {
-            combined.push('\n');
-        }
-        combined.push_str(&stderr);
-    }
-    Ok((output.status.code().unwrap_or(-1), combined))
+    Ok((
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+/// `run_argv` keeping stdout and stderr apart, untruncated — the argv-based
+/// entry point to [`drive_split`] for callers that PARSE stdout as a value.
+pub(crate) async fn run_argv_split(
+    program: &str,
+    args: &[String],
+    dir: &std::path::Path,
+    timeout_secs: u64,
+) -> Result<(i32, String, String), String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    let display = std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    drive_split(cmd, &display, dir, timeout_secs, &[]).await
 }
 
 /// `run` with the PASSED/FAILED framing shared by `build_project`,

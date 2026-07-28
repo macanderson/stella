@@ -587,6 +587,86 @@ const NATIVE_DRAIN_KEYS: &[&str] = &[
     "usage_complete",
 ];
 
+/// Encoder id of the OTLP (`format = "otel"`) cloud-drain payload (#427).
+pub const OTEL_DRAIN_ENCODER: &str = "drain:otel";
+
+/// The OTLP drain encoder: [`crate::drain::otel::otlp_logs_payload`] over the
+/// same native batch. Its attribute *names* are string values in the OTLP
+/// JSON, not object keys, so [`EncodedSample::from_json`]'s key walk would
+/// miss them — the guard folds them into the key set explicitly, keeping the
+/// "is this content?" review gate as strong as the native wire's.
+pub struct OtelDrainGuard;
+
+impl ContentFreeEncoder for OtelDrainGuard {
+    fn encoder_id(&self) -> &'static str {
+        OTEL_DRAIN_ENCODER
+    }
+
+    fn drain_format(&self) -> Option<&'static str> {
+        Some("otel")
+    }
+
+    fn allowed_keys(&self) -> &'static [&'static str] {
+        OTEL_DRAIN_KEYS
+    }
+
+    fn encode_poisoned_sample(&self) -> Result<EncodedSample> {
+        let batch = DrainBatch::from_events(&[poisoned_cloud_event()]);
+        let payload = crate::drain::otel::otlp_logs_payload(&batch);
+        let mut sample = EncodedSample::from_json(&payload)?;
+        sample
+            .keys
+            .extend(crate::drain::otel::attribute_names(&payload));
+        Ok(sample)
+    }
+}
+
+/// Every key the OTLP payload may emit: the OTLP structural envelope plus the
+/// `stella.*` attribute names mirroring the frozen v1 row contract.
+const OTEL_DRAIN_KEYS: &[&str] = &[
+    // OTLP structure
+    "resourceLogs",
+    "resource",
+    "scopeLogs",
+    "scope",
+    "name",
+    "version",
+    "logRecords",
+    "timeUnixNano",
+    "body",
+    "attributes",
+    "key",
+    "value",
+    "stringValue",
+    "intValue",
+    "doubleValue",
+    "boolValue",
+    // resource/scope attributes
+    "service.name",
+    "stella.schema_version",
+    // identity
+    "stella.org_id",
+    "stella.workspace_id",
+    "stella.repo_id",
+    "stella.project_id",
+    // addressing / idempotency
+    "stella.source_rowid",
+    "stella.recorded_at",
+    // content-free telemetry
+    "stella.provider",
+    "stella.model",
+    "stella.input_tokens",
+    "stella.output_tokens",
+    "stella.cache_read_tokens",
+    "stella.cache_miss_tokens",
+    "stella.cache_write_tokens",
+    "stella.cost_usd",
+    "stella.duration_ms",
+    "stella.retries",
+    "stella.tool_calls",
+    "stella.usage_complete",
+];
+
 /// The enterprise operational spool encoder: the *other* egress path in this
 /// crate, under the same invariant. It is the harness's strongest member —
 /// its source row (`ExecutionRollupRow`) genuinely carries a prompt preview
@@ -649,6 +729,7 @@ const ENTERPRISE_OPERATIONAL_KEYS: &[&str] = &[
 pub fn registered_encoders() -> Vec<Box<dyn ContentFreeEncoder>> {
     vec![
         Box::new(NativeDrainGuard),
+        Box::new(OtelDrainGuard),
         Box::new(EnterpriseOperationalGuard),
     ]
 }
@@ -677,9 +758,9 @@ pub const DRAIN_FORMATS: &[DrainFormatGuard] = &[
         format: "stella",
         encoder: NATIVE_DRAIN_ENCODER,
     },
-    DrainFormatGuard::NotYetBuilt {
+    DrainFormatGuard::Guarded {
         format: "otel",
-        issue: "#427",
+        encoder: OTEL_DRAIN_ENCODER,
     },
 ];
 

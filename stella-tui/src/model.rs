@@ -27,7 +27,7 @@ use std::collections::VecDeque;
 pub mod file_state;
 #[cfg(test)]
 pub use file_state::DIFF_HISTORY;
-pub use file_state::FileState;
+pub use file_state::{FileState, MAX_TRACKED_FILES};
 
 /// How many characters of a tool input / output summary we retain on a
 /// transcript line before eliding — the full payload is never needed on the
@@ -66,8 +66,14 @@ pub struct SessionModel {
     pub transcript: Vec<TranscriptEntry>,
     /// Files the agent touched, in first-touched order, each retaining the
     /// latest diff that rode its `FileChange` event (L-T5 — there is no
-    /// second data path for diffs).
+    /// second data path for diffs). Capped at [`MAX_TRACKED_FILES`]; the
+    /// least-recently-touched path is evicted to admit a new one.
     pub files: Vec<FileState>,
+    /// How many paths [`MAX_TRACKED_FILES`] eviction has dropped — surfaced
+    /// in the files panel title so a capped ledger never reads as complete.
+    pub files_evicted: u32,
+    /// Monotonic touch counter stamping [`FileState::touched_seq`].
+    file_touch_seq: u64,
     /// Live HUD numbers: spend/limit/mode, current stage, model.
     pub hud: Hud,
     /// A scope-review gate awaiting the user's decision (L-E5). Set by a
@@ -801,7 +807,10 @@ impl SessionModel {
     /// mutation kind, diff, and `changes` (the inline-diff freshness tag)
     /// stay exactly as the last mutation left them.
     fn touch_file(&mut self, path: &str, kind: FileChangeKind, diff: &Option<String>) {
+        self.file_touch_seq += 1;
+        let touched_seq = self.file_touch_seq;
         if let Some(existing) = self.files.iter_mut().find(|f| f.path == path) {
+            existing.touched_seq = touched_seq;
             if kind.is_mutation() {
                 existing.kind = kind;
                 existing.latest_diff = diff.clone();
@@ -811,6 +820,9 @@ impl SessionModel {
                 existing.reads += 1;
             }
         } else {
+            if self.files.len() >= MAX_TRACKED_FILES && file_state::evict_lru(&mut self.files) {
+                self.files_evicted += 1;
+            }
             let mutation = kind.is_mutation();
             let mut state = FileState {
                 path: path.to_string(),
@@ -819,6 +831,7 @@ impl SessionModel {
                 recent_diffs: VecDeque::new(),
                 changes: mutation as u32,
                 reads: !mutation as u32,
+                touched_seq,
             };
             if mutation {
                 state.remember_diff(diff);

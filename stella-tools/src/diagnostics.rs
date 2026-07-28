@@ -562,6 +562,16 @@ impl Tool for Diagnostics {
             Err(e) => ToolOutput::Error { message: e },
         }
     }
+
+    // The fence's rendered line for an argv spawn is the joined argv (#804).
+    async fn command_for_gate(&self, _input: &Value, root: &std::path::Path) -> Option<String> {
+        let root = root.to_path_buf();
+        tokio::task::spawn_blocking(move || resolve_plan(&root))
+            .await
+            .ok()?
+            .ok()
+            .map(|plan| plan.argv.join(" "))
+    }
 }
 
 #[cfg(test)]

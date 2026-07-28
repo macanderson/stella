@@ -622,8 +622,13 @@ impl<'a> Pipeline<'a> {
         };
         let (assessment, recalled) =
             tokio::join!(self.triage(goal, budget, &mut total_cost), recall_future);
-        self.emit_context_recall(&recalled.frames, recalled.usage.clone());
-        let frames = recalled.frames;
+        // Bounded at the source (#616), so every consumer — the user message,
+        // the planner prompt, the witness prompt — inherits one budget, and
+        // the ContextRecall event reports the frames the turn actually pays
+        // for. A mis-tuned recall port must not silently inflate every
+        // subsequent turn (N candidates × every revision) past the window.
+        let frames = bound_recalled_frames(recalled.frames);
+        self.emit_context_recall(&frames, recalled.usage.clone());
         let assessment = match assessment {
             Ok(assessment) => assessment,
             Err(abort) => {
@@ -2475,6 +2480,54 @@ struct EffectiveTestCommand<'c> {
 /// stable system prefix (L-E8 cache discipline). Keeping the system prefix
 /// untouched preserves prompt-cache hits on it across turns; the recall and
 /// goal — both volatile per turn — go here in one message.
+/// Per-frame content ceiling, in chars: one frame may not monopolize the
+/// recall budget (#616). Head-kept — a frame's contract is stated up front.
+const RECALL_FRAME_CHARS: usize = 4_000;
+/// Total recalled-content budget per turn, in chars (~5k tokens). Recall is
+/// advisory grounding; past this it displaces the work itself.
+const RECALL_PROMPT_BUDGET_CHARS: usize = 20_000;
+
+/// Clamp recalled frames to the prompt budget (#616): each frame's content is
+/// truncated to [`RECALL_FRAME_CHARS`] and frames past
+/// [`RECALL_PROMPT_BUDGET_CHARS`] of cumulative content are dropped. Both
+/// interventions are visible — truncation leaves an in-content marker, and a
+/// dropped tail is summarized in a final marker frame — so neither the model
+/// nor an operator reading the transcript can mistake a clamped recall for
+/// the full one.
+fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
+    let mut out: Vec<RecalledFrame> = Vec::with_capacity(frames.len());
+    let mut spent = 0usize;
+    let total = frames.len();
+    for mut frame in frames {
+        if spent >= RECALL_PROMPT_BUDGET_CHARS {
+            let dropped = total - out.len();
+            out.push(RecalledFrame {
+                citation_label: "recall-budget".into(),
+                provider: "pipeline".into(),
+                source: "pipeline".into(),
+                kind: "note".into(),
+                uri: None,
+                method: None,
+                content: format!(
+                    "[{dropped} recalled frame(s) dropped — recall exceeded the \
+                     {RECALL_PROMPT_BUDGET_CHARS}-char prompt budget]"
+                ),
+                token_cost: 0,
+                id: None,
+                content_digest: None,
+            });
+            break;
+        }
+        if frame.content.chars().count() > RECALL_FRAME_CHARS {
+            let kept: String = frame.content.chars().take(RECALL_FRAME_CHARS).collect();
+            frame.content = format!("{kept}\n[… frame truncated during recall budgeting …]");
+        }
+        spent += frame.content.len();
+        out.push(frame);
+    }
+    out
+}
+
 fn assemble_user_message(goal: &str, frames: &[RecalledFrame]) -> String {
     if frames.is_empty() {
         return goal.to_string();

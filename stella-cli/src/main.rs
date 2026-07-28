@@ -29,6 +29,7 @@ mod auth_cmd;
 mod cache_insight;
 mod candidate_ws;
 mod claims;
+mod cloud_drain;
 mod command_deck;
 mod config;
 mod connect_cmd;
@@ -46,6 +47,7 @@ mod env_files;
 mod export;
 mod extensions;
 mod fleet_cmd;
+mod ingest_cmd;
 mod init_fx;
 mod inspect;
 mod interactive;
@@ -600,6 +602,12 @@ enum Command {
         open: bool,
     },
 
+    /// Turn markdown you already wrote — `AGENTS.md`, `CLAUDE.md`, or any file
+    /// you name — into steering Stella can check, cite, and retire. With no
+    /// arguments, scans the workspace and shows what it found. Reads local
+    /// files only; needs no API key.
+    Ingest(ingest_cmd::IngestArgs),
+
     /// Inspect the project's memories through the citation feedback loop —
     /// most-cited first, usefulness scores, truthfulness — and promote an
     /// eligible memory to a project rule (.stella/rules/). Reads local state
@@ -1069,6 +1077,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
             // configuration. Community/default status constructs no client.
             return enterprise_telemetry::run_command(*cmd);
         }
+        Some(Command::Ingest(args)) => {
+            // Reads local markdown only — no store, no model, no API key.
+            return ingest_cmd::run(args);
+        }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file
             // (promote) — works with zero API keys.
@@ -1349,6 +1361,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Cloud { .. }
         | Command::Telemetry { .. }
         | Command::Memory { .. }
+        | Command::Ingest(_)
         | Command::Mcp { .. }
         | Command::Connect { .. }
         | Command::Auth { .. }
