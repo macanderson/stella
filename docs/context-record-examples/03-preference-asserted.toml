@@ -33,7 +33,6 @@ tags       = ["review", "writing"]
   [record.steering]
   force         = "should"
   precedence    = 40
-  inject        = "on-match"
   applies_to    = { tasks = ["open-pr", "write-pr-description"] }
 
   [record.enforcement]
@@ -71,7 +70,6 @@ statement     = "When reviewing a PR, read the test changes before the implement
   [record.steering]
   force      = "may"
   precedence = 10
-  inject     = "on-match"
   applies_to = { tasks = ["review-pr"] }
 
   [record.enforcement]

@@ -56,7 +56,6 @@ eligibility   = "explicit_instruction"
     [proposal.record.steering]
     force      = "must"
     precedence = 100
-    inject     = "always"
     applies_to = { paths = ["**"], tasks = ["install", "build", "ci"] }
 
     [proposal.record.enforcement]
@@ -95,7 +94,6 @@ eligibility   = "explicit_instruction"
     [proposal.record.steering]
     force      = "must"
     precedence = 90
-    inject     = "always"
     applies_to = { paths = ["**"] }
 
     [proposal.record.enforcement]
@@ -140,7 +138,6 @@ eligibility   = "explicit_instruction"
     [proposal.record.steering]
     force      = "should"
     precedence = 40
-    inject     = "on-match"
     applies_to = { tasks = ["open-pr"] }
 
     [proposal.record.enforcement]
@@ -182,7 +179,6 @@ dismissed_reason = "quarantined_executable"
     [proposal.record.steering]
     force      = "may"
     precedence = 15
-    inject     = "on-demand"
     applies_to = { tasks = ["fix-env"] }
 
     [proposal.record.enforcement]

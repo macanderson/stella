@@ -52,7 +52,6 @@ archived_at   = 2026-06-02T00:00:00Z
   [record.steering]
   force      = "must"
   precedence = 90
-  inject     = "never"      # archived records are cited, never injected
   applies_to = { paths = ["**"] }
 
   [record.enforcement]
@@ -84,7 +83,6 @@ supersedes = "rec_node_version_11a7ce30d482"
   [record.steering]
   force         = "must"
   precedence    = 90
-  inject        = "always"
   applies_to    = { paths = ["**"] }
 
   [record.enforcement]

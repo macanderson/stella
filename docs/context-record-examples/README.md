@@ -62,6 +62,25 @@ coupling — any record may override.
 call, never cause one. Truth probes use a closed, declarative vocabulary rather
 than arbitrary shell. See "Probe kinds" below.
 
+**Two channels, chosen by `force`.** `must` and `should` records are **always**
+injected and live in the byte-stable system prefix, so they ride the prompt cache
+(`stella-cli/src/agent.rs:698`). `may` and `info` records are selected by
+relevance and ride the volatile block alongside memories
+(`inject_recall_block`).
+
+A binding rule should always bind, so it cannot be relevance-gated without
+breaking the cache every turn. A fact is only worth tokens when it applies, and
+that is exactly how memories already behave — so facts belong in the memory
+channel.
+
+There is no `inject` field. The channel is derived from `force`, and an archived
+record is not loaded at all, so `status` covers the rest.
+
+This is why `applies_to` has one meaning and two consumers. It answers "when does
+this record apply." For a volatile record that drives **selection**; for a cached
+record it drives **scoring** — whether the record had a chance to matter this turn
+(see `09-effect-witness.toml`).
+
 **Memories live in the database. Context records live in files.** One place
 each, and no record is stored twice.
 
@@ -90,7 +109,7 @@ a superseding ADR.
 - `kind` — `memory`, `fact`, `rule`, `preference`, `constraint`, `procedure`
 - `sharing_scope` — `personal`, `repository`, `organization`
 - `steering.force` — `must`, `should`, `may`, `info`
-- `steering.inject` — `always`, `on-match`, `on-demand`
+- (there is no `steering.inject` — the channel follows from `force`, see below)
 - `enforcement.mode` — `hard` (block), `soft` (warn), `none` (advisory)
 - `truth.basis` — `decree`, `measured`, `derived`, `asserted`
 - `link.relation` — `derived_from`, `refines`, `requires`, `supports`, `contradicts`
@@ -180,10 +199,10 @@ compressing each one.
 
 1. Is `set_id` stable enough to appear in citations? It is a repo slug today,
    and forks or renames would invalidate every citation that embeds it.
-2. `applies_to.tasks` is an open vocabulary. An unknown or misspelled task name
-   means the record silently never matches — the failure mode this design
-   otherwise works hard to avoid. Ratify the task vocabulary, or warn loudly on
-   unrecognized names.
+2. `applies_to.tasks` is an open vocabulary. A misspelled task name no longer
+   hides a rule from the agent — `must`/`should` records inject regardless — but
+   it still skews scoring, because the record looks like it never had a chance to
+   matter. Ratify the vocabulary, or warn on unrecognized names.
 3. `review_every` (recurring) versus the existing `review_after` (one-shot).
    The recurring form is better, but it is a change to a shipped field.
 4. `tags` overlaps `applies_to`. It is cheap (8 bytes per record here) and aimed

@@ -16,6 +16,14 @@ Measured across the ten live records in this directory:
 
 ## The rendered block
 
+It arrives in **two blocks**, because `force` decides the channel.
+
+### Cached — every turn, byte-identical
+
+`must` and `should` records. This block sits in the system prefix, built once per
+session and reused verbatim (`stella-cli/src/agent.rs:698`). It does not depend on
+the prompt, so it never changes and never invalidates the cache.
+
 ```text
 ## Workspace rules
 
@@ -28,21 +36,33 @@ Measured across the ten live records in this directory:
 ### Should
 - A PR description's first paragraph states why the change exists and what breaks
   without it. ^pr-descriptions
+```
 
-### Context
+### Volatile — selected per turn, alongside memories
+
+`may` and `info` records, chosen by relevance and injected after the stable prefix
+(`inject_recall_block`). Facts are only worth tokens when they apply, which is how
+memories already behave — so they share the channel.
+
+```text
+## Relevant context
 - Capability contract files are stored in the capabilities/contracts/ directory.
   ^capability-contract-location
 - An agent capability's contract is written as a YAML file. ^capability-contract-format
 ```
 
-Six records, not seven. The selector also chose `^staging-endpoint`, which the
-token budget then dropped — so it never reached the model, and the block above is
-what *survived* selection rather than what was selected. That gap is invisible
-unless the ledger distinguishes the two stages; see "Why the handle exists" below.
+Two facts, not three. The selector also chose `^staging-endpoint`, which the token
+budget then dropped — so it never reached the model, and the volatile block is what
+*survived* selection rather than what was selected. That gap is invisible unless
+the ledger distinguishes the two stages; see "Why the handle exists" below.
 
-Of the ten live records in this directory, three others were never selected at
-all: two are `on-match` facts whose `applies_to` did not match an endpoint task,
-and one is `sharing_scope = "personal"` and scoped to PR review.
+Of the ten live records here, three others were never selected: two facts whose
+`applies_to` did not match an endpoint task, and one `personal` record scoped to
+PR review.
+
+Note what the split buys. A `must` record can never be silently dropped by a
+relevance miss — a mistyped task name costs you scoring accuracy, not enforcement.
+Only facts are ever selected, and a fact going missing is survivable.
 
 Everything else — `record_id`, `record_hash`, all of `[record.provenance]`,
 `[record.truth]`, `applies_to`, `precedence`, `status` — stays out.
@@ -75,14 +95,15 @@ of repeating it per line, and stops the renderer overstating what a record is.
 
 ### Byte-stability is a hard constraint
 
-Rules ride the **system prefix**, which is built once per session and reused
-verbatim under a prompt-cache contract (`stella-cli/src/agent.rs:698`). Memories
-ride the separate volatile recall block injected per turn
-(`inject_recall_block`).
+This is what forces the two-block split. The system prefix is built once per
+session and reused verbatim under a prompt-cache contract
+(`stella-cli/src/agent.rs:698`). Anything selected per turn cannot live there
+without rebuilding the cache every turn — which is why `must`/`should` are
+unconditional and only facts are relevance-gated.
 
-So this block must be byte-identical across turns. No timestamps, no "verified 3
-weeks ago", no confidence that drifts as citations accumulate — anything carrying
-a clock invalidates the cache every turn.
+So the cached block must be byte-identical across turns. No timestamps, no
+"verified 3 weeks ago", no confidence that drifts as citations accumulate —
+anything carrying a clock invalidates the cache every turn.
 
 Staleness is therefore resolved **before** rendering, never expressed in it. A
 record is fresh enough to inject at its stated force, demoted to a weaker force,

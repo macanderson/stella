@@ -53,7 +53,6 @@ tags        = ["capabilities", "contracts"]
   [record.steering]
   force         = "info"
   precedence    = 35
-  inject        = "on-match"
   applies_to    = { paths = ["capabilities/**"], tasks = ["add-capability"] }
 
   [record.enforcement]
@@ -81,7 +80,6 @@ tags        = ["capabilities", "contracts"]
   [record.steering]
   force         = "info"
   precedence    = 35
-  inject        = "on-match"
   applies_to    = { paths = ["capabilities/**"], tasks = ["add-capability"] }
 
   [record.enforcement]
@@ -109,7 +107,6 @@ tags        = ["capabilities", "contracts"]
   [record.steering]
   force         = "must"
   precedence    = 70
-  inject        = "on-match"
   applies_to    = { paths = ["capabilities/**"], tasks = ["add-capability"] }
 
   [record.enforcement]

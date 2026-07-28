@@ -44,7 +44,6 @@ tags        = ["build", "tooling"]
   [record.steering]
   force         = "must"
   precedence    = 100
-  inject        = "always"
   applies_to    = { paths = ["**"], tasks = ["install", "build", "ci"] }
 
   [record.enforcement]
@@ -87,7 +86,6 @@ tags        = ["build", "ci"]
   [record.steering]
   force         = "info"
   precedence    = 30
-  inject        = "on-match"
   applies_to    = { paths = ["**"], tasks = ["ci", "debug"] }
 
   [record.enforcement]

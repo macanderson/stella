@@ -41,7 +41,6 @@ tags        = ["environments"]
   [record.steering]
   force         = "info"
   precedence    = 20
-  inject        = "on-match"
   applies_to    = { tasks = ["debug", "integration-test"], keywords = ["staging", "env"] }
 
   [record.enforcement]
@@ -84,7 +83,6 @@ tags        = ["environments", "tooling"]
   [record.steering]
   force         = "info"
   precedence    = 20
-  inject        = "on-match"
   applies_to    = { tasks = ["debug", "integration-test"], keywords = ["staging", "docker"] }
 
   [record.enforcement]
