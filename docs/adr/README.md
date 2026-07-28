@@ -51,6 +51,7 @@ open; nothing before Phase 3 forces it.
 | [0005](0005-storage-authority.md) | Storage Authority | Accepted (Phase 0) |
 | [0006](0006-contextframe-vs-compiledcontextframe.md) | ContextFrame vs. CompiledContextFrame | Accepted (Phase 0) — amended 2026-07-26 (extends the step manifest) |
 | [0007](0007-immutable-promotion-history.md) | Immutable Promotion History | Accepted — ratified 2026-07-23 (enforcement 4→2); amended 2026-07-24 (`informational`→advisory) |
-| [0008](0008-markdown-canonical-rules.md) | Markdown Repository Rules Remain Canonical | Accepted (Phase 0) |
+| [0008](0008-markdown-canonical-rules.md) | Markdown Repository Rules Remain Canonical | Accepted (Phase 0) — surface superseded by [0011](0011-context-records-are-toml.md) |
 | [0009](0009-enum-freeze-resolutions.md) | Enum-Freeze Resolutions (issue #483) | Accepted — ratified 2026-07-24 |
 | [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | Accepted — ratified 2026-07-26 (index tables do not transfer) |
+| [0011](0011-context-records-are-toml.md) | Context Records Are TOML (supersedes 0008's surface) | **Proposed** — awaiting ratification |

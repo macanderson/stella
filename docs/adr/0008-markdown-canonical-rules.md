@@ -1,6 +1,9 @@
 # ADR 0008: Markdown Repository Rules Remain Canonical
 
-- Status: Accepted (Phase 0)
+- Status: Accepted (Phase 0) — the **surface** decision below is superseded by
+  [ADR 0011](0011-context-records-are-toml.md) (context records are TOML); the
+  thesis (Git canonical, database a derived read-only mirror) and the rejection
+  of a YAML rule surface both stand unchanged.
 - Date: 2026-07-23
 - Deciders: (Phase 0 baseline)
 
