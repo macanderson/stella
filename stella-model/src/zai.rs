@@ -1049,18 +1049,19 @@ struct ToolCallAccumulator {
     /// complete the moment a HIGHER index appears — that boundary announces
     /// it exactly once.
     ///
-    /// The stream's LAST call has no higher index behind it and is therefore
-    /// never announced at all. That is a real gap, not a free one: a turn
-    /// that makes exactly one tool call — the common shape for this agent —
-    /// gets no announcement, so `stella-core`'s speculative execution never
-    /// fires for any single-call turn on this dialect. The dialects with a
-    /// per-call terminator (`response.function_call_arguments.done` on
-    /// `openai.rs`, `content_block_stop` on `anthropic.rs`, whole
-    /// `functionCall` parts on `gemini.rs`) do not have it. Closing it here
-    /// means announcing on the chunk that carries
-    /// `finish_reason: "tool_calls"`, which arrives before the final usage
-    /// frame and `[DONE]` — a smaller window than the sibling dialects get,
-    /// but not an empty one.
+    /// The stream's LAST call has no higher index behind it, so its boundary
+    /// is the chunk that carries `finish_reason: "tool_calls"` instead —
+    /// which arrives before the final usage frame and `[DONE]`, with an
+    /// end-of-stream fallback for a server that jumps straight to `[DONE]`.
+    /// Without that boundary a turn that makes exactly one tool call — the
+    /// common shape for this agent — was never announced at all, and
+    /// `stella-core`'s speculative execution never fired for any single-call
+    /// turn on this dialect. The window is smaller than what the dialects
+    /// with a per-call terminator get (`response.function_call_arguments.done`
+    /// on `openai.rs`, `content_block_stop` on `anthropic.rs`, whole
+    /// `functionCall` parts on `gemini.rs`), but not empty. This flag is what
+    /// keeps every boundary exactly-once: a call announced at one boundary is
+    /// skipped at every later one.
     announced: bool,
 }
 
@@ -1222,6 +1223,18 @@ async fn aggregate_zai_stream(
                         }
                     }
                 }
+                // The chunk carrying `finish_reason: "tool_calls"` is this
+                // dialect's end-of-calls terminator: the LAST call has no
+                // higher index behind it, so this is its completion boundary.
+                // Announcing here — before the final usage frame and `[DONE]`
+                // — is what opens the speculative-execution window for a
+                // single-call turn; `announced` keeps calls already announced
+                // at an index boundary from repeating.
+                if choice.finish_reason.as_deref() == Some("tool_calls")
+                    && let Some(observer) = observer
+                {
+                    announce_completed_below(observer, &mut tool_calls, usize::MAX);
+                }
             }
         }
     }
@@ -1233,6 +1246,17 @@ async fn aggregate_zai_stream(
     // mid-stream error-frame path above.
     if !terminal_seen {
         return Err(http::stream_ended_before_terminal(label, "[DONE]"));
+    }
+
+    // Fallback terminator: a server that ends the stream without ever sending
+    // a `finish_reason: "tool_calls"` chunk still completed its last call —
+    // `[DONE]` proves the stream is whole, so announce whatever is still open
+    // before final assembly (`announced` makes this a no-op when the finish
+    // chunk already fired). Skipped when the token limit cut the stream: a
+    // truncated call must never reach speculative execution, and final
+    // assembly below turns it into a terminal error instead.
+    if !truncated_at_token_limit && let Some(observer) = observer {
+        announce_completed_below(observer, &mut tool_calls, usize::MAX);
     }
 
     usage.reported = usage_seen;

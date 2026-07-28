@@ -864,11 +864,12 @@ mod tests {
         assert!(notice.contains("DeepSeek"), "{notice}");
         assert!(notice.contains("high"), "{notice}");
         assert!(notice.contains("ignored"), "{notice}");
-        // local and bedrock are Unsupported too.
+        // local is Unsupported too; bedrock became Controllable when the
+        // Converse adapter gained the reasoning_config passthrough → silent.
         assert!(unsupported_effort_notice("local", "Local", Some(ReasoningEffort::Low)).is_some());
         assert!(
             unsupported_effort_notice("bedrock", "Bedrock", Some(ReasoningEffort::Medium))
-                .is_some()
+                .is_none()
         );
         // An unknown provider id has no posture row → no notice (the seeded
         // completeness test guarantees real ids always have one).

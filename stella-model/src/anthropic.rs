@@ -214,7 +214,11 @@ fn uses_adaptive_thinking(model: &str) -> bool {
 /// typical output caps. `None` defaults to Medium, the same middle-tier default
 /// posture as `openai.rs` ("effort":"medium"). Current models use
 /// [`map_effort`] instead.
-fn thinking_budget_tokens(effort: Option<stella_protocol::ReasoningEffort>) -> u32 {
+///
+/// `pub(crate)` because `bedrock.rs` sends the same `{type:"enabled",
+/// budget_tokens}` shape through Converse's `additionalModelRequestFields
+/// .reasoning_config` — one mapping, not two spellings that drift.
+pub(crate) fn thinking_budget_tokens(effort: Option<stella_protocol::ReasoningEffort>) -> u32 {
     use stella_protocol::ReasoningEffort::*;
     match effort {
         Some(Low) => 2_048,

@@ -208,11 +208,11 @@ pub static REASONING_POSTURE: &[(&str, ReasoningPosture)] = &[
     ),
     (
         "bedrock",
-        ReasoningPosture::Unsupported {
-            note: "Claude-on-Bedrock supports extended thinking via \
-                   additionalModelRequestFields.reasoning_config, but the Converse adapter has no \
-                   passthrough for it yet — a pinned effort is dropped (surfaced as a boot \
-                   notice), not sent",
+        ReasoningPosture::Controllable {
+            mechanism: "additionalModelRequestFields.reasoning_config ({type:\"enabled\", \
+                        budget_tokens}) — the Anthropic legacy thinking shape, effort tiers \
+                        mapped to budgets by the same anthropic.rs mapping",
+            witness: "reasoning_true_sends_reasoning_config_and_raises_max_tokens",
         },
     ),
     (

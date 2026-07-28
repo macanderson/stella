@@ -303,14 +303,18 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
      CREATE INDEX IF NOT EXISTS mcp_usage_by_server
        ON mcp_usage(server, tool);";
 
-/// `tool_calls` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — one queryable row per tool call
-/// (native, MCP, skill, or agent), normalized from the append-only `events`
-/// stream (`tool_start` + `tool_result`) so the dashboard can query call
-/// histograms without JSON-scanning the event log. Large outputs are NOT
-/// stored here — only shape, timing, and success (`bytes_out` records the
-/// result size, not the result). UNIQUE (execution_id, seq) is the house
-/// double-write guard. The by-name index is the access path for usage
-/// histograms (e.g. "grep called N times, graph_query zero").
+/// `tool_calls` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — one queryable row per tool call,
+/// normalized from the append-only `events` stream (`tool_start` +
+/// `tool_result`) so the dashboard can query call histograms without
+/// JSON-scanning the event log. `surface` is `'native'` or `'mcp'` (derived
+/// from the tool-name prefix — the only surfaces the producer emits; skills
+/// and agents have their own tables), and `reason` is currently always empty
+/// (the event stream carries none — the column waits for a producer). Large
+/// outputs are NOT stored here — only shape, timing, and success
+/// (`bytes_out` records the result size, not the result). UNIQUE
+/// (execution_id, seq) is the house double-write guard. The by-name index is
+/// the access path for usage histograms (e.g. "grep called N times,
+/// graph_query zero").
 pub(crate) const TOOL_CALLS_DDL: &str = "CREATE TABLE IF NOT EXISTS tool_calls (
        execution_id INTEGER NOT NULL,
        seq INTEGER NOT NULL,

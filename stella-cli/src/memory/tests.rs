@@ -755,6 +755,20 @@ async fn reflect_and_record_writes_lessons_to_log_and_store() {
         log.contains("withTenantDb"),
         "the lesson reached the mining log: {log}"
     );
+
+    // And the durable `reflections` table mirrors it — the surface the
+    // observatory panel, the JSON export, and the prune carve-out actually
+    // read (the jsonl is only the mining log).
+    let store = stella_store::Store::open(dir.path()).expect("open store.db");
+    let export = store.export_all_json().expect("export store tables");
+    let (_, reflections) = export
+        .iter()
+        .find(|(name, _)| *name == "reflections")
+        .expect("reflections table exported");
+    assert!(
+        reflections.contains("withTenantDb"),
+        "the lesson reached the store's reflections table: {reflections}"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

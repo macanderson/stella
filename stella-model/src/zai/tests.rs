@@ -268,15 +268,17 @@ async fn complete_observed_streams_content_deltas_in_order_never_reasoning() {
 }
 
 #[tokio::test]
-async fn complete_observed_announces_a_call_when_the_next_index_starts() {
+async fn complete_observed_announces_each_call_exactly_once_across_both_boundaries() {
     let server = MockServer::start().await;
     // Two sequential tool calls: index 0 is complete the moment index 1
-    // appears — the only mid-stream completion boundary the OpenAI
-    // dialect offers. Index 1 (the last call) has no boundary and is
-    // never announced.
+    // appears (the higher-index boundary); index 1 — the LAST call — is
+    // complete on the `finish_reason: "tool_calls"` chunk. Each boundary
+    // must announce exactly once: neither the finish chunk nor the
+    // end-of-stream fallback may re-announce index 0.
     let sse_body = concat!(
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_2\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"b.rs\\\"}\"}}]}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
         "data: [DONE]\n\n",
     );
     Mock::given(method("POST"))
@@ -307,9 +309,121 @@ async fn complete_observed_announces_a_call_when_the_next_index_starts() {
     assert_eq!(result.tool_calls.len(), 2);
     assert_eq!(
         announced.len(),
-        1,
-        "only index 0 has a completion boundary mid-stream"
+        2,
+        "every call announced exactly once — no repeat from the finish chunk \
+         or the [DONE] fallback"
     );
+    assert_eq!(
+        *announced, result.tool_calls,
+        "announced calls must be identical to their committed twins, in order"
+    );
+}
+
+/// Records the merged stream order of announcements and text deltas, to
+/// prove WHEN a call was announced, not merely that it was.
+struct SequenceObserver {
+    events: std::sync::Mutex<Vec<String>>,
+}
+
+impl ToolCallObserver for SequenceObserver {
+    fn tool_call_streamed(&self, call: &ToolCall) {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("call:{}", call.call_id));
+    }
+    fn text_delta(&self, delta: &str) {
+        self.events.lock().unwrap().push(format!("text:{delta}"));
+    }
+}
+
+/// The single-tool-call turn — the common shape for this agent — must be
+/// announced on the `finish_reason: "tool_calls"` chunk, BEFORE the stream
+/// ends: a trailing frame after the finish chunk observes the announcement
+/// already made, proving speculative execution gets a window ahead of
+/// `[DONE]`.
+#[tokio::test]
+async fn complete_observed_announces_a_single_call_on_the_finish_chunk_before_done() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"tail\"}}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider =
+        ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("read it")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+
+    let observer = SequenceObserver {
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+    let result = provider
+        .complete_observed(req, &observer)
+        .await
+        .expect("completion should succeed");
+
+    assert_eq!(result.tool_calls.len(), 1);
+    let events = observer.events.lock().unwrap();
+    assert_eq!(
+        *events,
+        vec!["call:call_1".to_string(), "text:tail".to_string()],
+        "the call announces at the finish chunk — before later frames, not \
+         at end-of-stream (and exactly once)"
+    );
+}
+
+/// A server that jumps straight to `[DONE]` without a `finish_reason:
+/// "tool_calls"` chunk still gets its last call announced — by the
+/// end-of-stream fallback, exactly once.
+#[tokio::test]
+async fn complete_observed_announces_the_last_call_by_done_without_a_finish_chunk() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}}]}}]}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider =
+        ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+    let req = CompletionRequest {
+        messages: vec![CompletionMessage::user("read it")],
+        max_output_tokens: None,
+        temperature: None,
+        effort: None,
+        tools: vec![],
+        reasoning: None,
+        params: None,
+    };
+
+    let observer = RecordingObserver::new();
+    let result = provider
+        .complete_observed(req, &observer)
+        .await
+        .expect("completion should succeed");
+
+    let announced = observer.calls.lock().unwrap();
+    assert_eq!(result.tool_calls.len(), 1);
+    assert_eq!(announced.len(), 1, "the fallback announces exactly once");
     assert_eq!(
         announced[0], result.tool_calls[0],
         "an announced call must be identical to its committed twin"

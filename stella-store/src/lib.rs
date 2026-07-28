@@ -17,9 +17,17 @@
 //!   of thought is replayable against its execution.
 //! - **tasks** — the latest task-board snapshot per session, mirrored from
 //!   `TaskUpdate` events: one row per (session, task id), upserted whole by
-//!   [`Store::record_task_board`] so the board is re-openable cross-process.
+//!   [`Store::record_task_board`] so each task's current state is queryable
+//!   per session. (Cross-process session RE-OPENING is not this table's job:
+//!   the deck rebuilds a resumed session — board included — by replaying the
+//!   append-only events journal, [`journal`]'s `journal.jsonl` sidecar.)
 //! - **pull_requests** — tracked pull requests keyed by URL: lifecycle
-//!   status, CI verdict, and the session that produced them.
+//!   status, CI verdict, and the session that produced them. Write-ahead
+//!   state: the deck's PR tracking writes rows
+//!   ([`Store::upsert_pull_request`]) and [`Store::list_pull_requests`] is
+//!   the read API reserved for a future PR panel — no shipped reader
+//!   consumes it yet (the same posture the pre-v17 graph seam held, minus
+//!   the writer that seam never got).
 //! - **telemetry** — one row per committed model call (from `StepUsage`):
 //!   provider, model, tokens in/out, the engine's pre-call input estimate
 //!   (the drift sample [`Store::drift_samples`] serves back to calibrate
@@ -415,10 +423,16 @@ pub struct SkillUsageRow {
 pub struct ToolCallRow {
     pub call_id: String,
     pub name: String,
-    /// `"native"` | `"mcp"` | `"skill"` | `"agent"`.
+    /// `"native"` | `"mcp"` — the only surfaces the one producer
+    /// ([`Store::materialize_tool_calls`]) derives (from the `mcp__` name
+    /// prefix). Skill and agent invocations are logged in their own tables
+    /// (`skill_usage`, `agent_uses`), not as surfaces here.
     pub surface: String,
     pub args_json: String,
     pub args_digest: String,
+    /// Free-text "why" for the call. Currently always empty — the event
+    /// stream the producer normalizes from carries no reason, so the column
+    /// waits for a producer that captures one.
     pub reason: String,
     pub ok: bool,
     pub error: String,
