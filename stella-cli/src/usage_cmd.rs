@@ -97,6 +97,31 @@ pub enum CloudCmd {
     /// ~/.stella/cloud.json's `drain` block. No-op when unregistered or
     /// unconfigured — nothing is ever sent without an org and an endpoint
     Sync,
+    /// Sign out: destroy the stored credentials and remove the drain config
+    /// (halting upload). Registration and local hub telemetry are retained
+    Logout,
+    /// Return this installation to unregistered: logout plus clearing the
+    /// org id. Hub rows keep the org they were captured under; un-synced
+    /// rows for the old org stop draining and stay local (destroy them
+    /// explicitly with `stella usage prune --force` if that is intended)
+    Deregister,
+}
+
+/// The org-change ruling (#465), pinned as one function so `register` cannot
+/// drift from it: an installation registered to one org must be explicitly
+/// deregistered before registering to a different one. Capture-time org
+/// stamps are never rewritten, a drain for the old org cannot be assumed
+/// deliverable, and orphaning its rows silently would be indistinguishable
+/// from data loss — so the switch is loud and two-step. Re-registering the
+/// same org is idempotent and allowed.
+fn register_transition(current: Option<&str>, requested: &str) -> Result<(), String> {
+    match current {
+        Some(existing) if existing != requested => Err(format!(
+            "already registered to org `{existing}` — run `stella cloud deregister` first; \
+             rows captured under `{existing}` keep that org and stop draining"
+        )),
+        _ => Ok(()),
+    }
 }
 
 pub fn run_usage(cmd: Option<UsageCmd>) -> Result<(), String> {
@@ -541,12 +566,58 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
                 )),
             }
         }
+        CloudCmd::Logout => {
+            let mut reg = identity::cloud_registration();
+            let had_token =
+                reg.oauth_token.is_some() || reg.drain.as_ref().is_some_and(|d| d.token.is_some());
+            let had_drain = reg.drain.is_some();
+            reg.oauth_token = None;
+            reg.drain = None;
+            identity::save_cloud_registration(&reg).map_err(|e| e.to_string())?;
+            if had_token {
+                println!(
+                    "credentials destroyed locally (server-side revocation arrives with \
+                     the login flow, #405)"
+                );
+            }
+            if had_drain {
+                println!("drain config removed — upload is halted");
+            }
+            match reg.org_id {
+                Some(org) => println!(
+                    "still registered to org {} — `stella cloud deregister` clears that too",
+                    org.bold()
+                ),
+                None => println!("logged out"),
+            }
+            Ok(())
+        }
+        CloudCmd::Deregister => {
+            let mut reg = identity::cloud_registration();
+            let was = reg.org_id.take();
+            reg.oauth_token = None;
+            reg.drain = None;
+            identity::save_cloud_registration(&reg).map_err(|e| e.to_string())?;
+            match was {
+                Some(org) => println!(
+                    "deregistered from org {} — new telemetry captures unscoped (NULL org). \
+                     Rows already stamped `{org}` keep it and stop draining; \
+                     `stella usage prune --force` destroys un-synced ones if that is intended.",
+                    org.bold()
+                ),
+                None => println!("already unregistered"),
+            }
+            Ok(())
+        }
         CloudCmd::Register { org, workspace_id } => {
             let org = org.trim().to_string();
             if org.is_empty() {
                 return Err("--org must not be empty".into());
             }
             let mut reg = identity::cloud_registration();
+            // The org-change ruling (#465): switching orgs is an explicit
+            // two-step, never an in-place overwrite.
+            register_transition(reg.org_id.as_deref(), &org)?;
             reg.org_id = Some(org.clone());
             identity::save_cloud_registration(&reg).map_err(|e| e.to_string())?;
             let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -584,7 +655,21 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{checkout_is_deleted, parse_age_window};
+    use super::{checkout_is_deleted, parse_age_window, register_transition};
+
+    /// The org-change ruling (#465): same org is idempotent, a different org
+    /// is refused until an explicit deregister, unregistered registers freely.
+    #[test]
+    fn switching_orgs_requires_an_explicit_deregister() {
+        assert!(register_transition(None, "acme").is_ok());
+        assert!(register_transition(Some("acme"), "acme").is_ok());
+        let err = register_transition(Some("acme"), "globex").unwrap_err();
+        assert!(err.contains("deregister"), "{err}");
+        assert!(
+            err.contains("acme"),
+            "the refusal names the current org: {err}"
+        );
+    }
 
     #[test]
     fn age_window_units_map_to_sqlite_modifiers() {
