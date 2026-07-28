@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Tests for setup-claude-env.sh and claude-rustfmt-hook.sh.
+# Tests for setup-dev-env.sh and fmt-file.sh.
 #
-#   ./scripts/test-claude-env.sh
+#   ./scripts/test-dev-env.sh
 #
 # Run it after touching either script. Not part of `make gate`: it shells out to
 # rustfmt and git a few dozen times and takes a couple of seconds, which is not
@@ -76,7 +76,7 @@ assert_cmd() { # assert_cmd <name> <command...>
 # ── Fixture: a minimal repo shaped enough like stella to satisfy the scripts ──
 REPO="$FIX/stella"
 mkdir -p "$REPO/stella-core/src" "$REPO/scripts" "$REPO/.githooks"
-cp "$repo_root/scripts/setup-claude-env.sh" "$repo_root/scripts/claude-rustfmt-hook.sh" \
+cp "$repo_root/scripts/setup-dev-env.sh" "$repo_root/scripts/fmt-file.sh" \
    "$REPO/scripts/"
 chmod +x "$REPO/scripts/"*.sh
 
@@ -97,8 +97,12 @@ printf 'target/\nscratch/\n' > "$REPO/.gitignore"
 git -C "$REPO" add -A >/dev/null 2>&1
 git -C "$REPO" commit -qm init >/dev/null 2>&1
 
-HOOK="$REPO/scripts/claude-rustfmt-hook.sh"
-SETUP="$REPO/scripts/setup-claude-env.sh"
+HOOK="$REPO/scripts/fmt-file.sh"
+SETUP="$REPO/scripts/setup-dev-env.sh"
+ENVFILE="$REPO/.dev-env"
+# Agent settings are opt-in and the path is supplied by the caller, so the
+# fixture picks its own rather than inheriting a vendor default.
+SETTINGS="$REPO/agent-settings.json"
 CACHE="$FIX/cache"
 export STELLA_ENV_CACHE="$CACHE"
 
@@ -114,6 +118,20 @@ out=$(payload "$FIX/outside.rs" | "$HOOK" 2>&1); check "H2  .rs outside the repo
 out=$(printf '' | "$HOOK" 2>&1); check "H3  empty stdin" 0 $? "" "$out"
 out=$(printf 'not json' | "$HOOK" 2>&1); check "H4  unparseable payload" 0 $? "" "$out"
 out=$(payload "$REPO/stella-core/src/nope.rs" | "$HOOK" 2>&1); check "H5  nonexistent file" 0 $? "" "$out"
+
+# The path-argument form is the entry point humans and editors use; the JSON
+# form is what agent harnesses pipe. Both must reach the same verdict.
+big_arg="$REPO/stella-core/src/big_arg.rs"
+pad 1600 > "$big_arg"
+out=$(cd "$REPO" && "$HOOK" "$big_arg" 2>&1); rc=$?
+check "H0  path argument blocks the same file" 2 $rc "over the 1500-line limit" "$out"
+rm -f "$big_arg"
+
+# Bare invocation must return promptly rather than block on stdin. (The tty
+# branch that prints usage cannot be exercised without a pty, so this covers
+# the case that actually occurs in CI and hook contexts: empty, non-tty stdin.)
+out=$(cd "$REPO" && "$HOOK" </dev/null 2>&1); rc=$?
+check "H0b bare invocation does not hang" 0 $rc "" "$out"
 
 echo
 echo "=== hook: formatting ==="
@@ -182,53 +200,70 @@ assert "S4b names the pinned channel" $?
 echo
 echo "=== setup: writes ==="
 out=$(cd "$REPO" && "$SETUP" --check 2>&1)
-assert_cmd "S5  --check writes nothing" test ! -f "$REPO/.claude/settings.json"
+assert_cmd "S5  --check writes no .dev-env" test ! -f "$ENVFILE"
+assert_cmd "S5b --check writes no agent settings" test ! -f "$SETTINGS"
 
-(cd "$REPO" && "$SETUP" >/dev/null 2>&1); rc1=$?
-(cd "$REPO" && "$SETUP" >/dev/null 2>&1); rc2=$?
+# .dev-env is the main output and the only one a plain run produces, so it gets
+# checked three ways: written, sourceable as real shell, and actually pointing
+# into this worktree's own cache rather than the shared ~/.stella.
+(cd "$REPO" && "$SETUP" >/dev/null 2>&1)
+assert_cmd "S5c a plain run writes .dev-env" test -f "$ENVFILE"
+assert_cmd "S5d a plain run writes NO agent settings" test ! -f "$SETTINGS"
+# shellcheck source=/dev/null  # generated at run time; nothing to follow
+sourced_home="$(unset STELLA_HOME; . "$ENVFILE" >/dev/null 2>&1 && printf '%s' "$STELLA_HOME")"
+# shellcheck source=/dev/null
+sourced_target="$(unset CARGO_TARGET_DIR; . "$ENVFILE" >/dev/null 2>&1 && printf '%s' "$CARGO_TARGET_DIR")"
+env_points_into_cache() {
+  case "$sourced_home:$sourced_target" in
+    "$CACHE"/*:"$CACHE"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+assert_cmd "S5e .dev-env sources and points into the cache" env_points_into_cache
+
+(cd "$REPO" && "$SETUP" --agent-settings "$SETTINGS" >/dev/null 2>&1); rc1=$?
+(cd "$REPO" && "$SETUP" --agent-settings "$SETTINGS" >/dev/null 2>&1); rc2=$?
 assert_cmd "S6  full run is idempotent" test "$rc1$rc2" = "00"
 if command -v jq >/dev/null 2>&1; then
   jq -e '(.env.STELLA_HOME|length > 0) and (.env.CARGO_TARGET_DIR|length > 0)' \
-    "$REPO/.claude/settings.json" >/dev/null 2>&1
-  assert "S6b settings.json is valid JSON with the isolation env" $?
+    "$SETTINGS" >/dev/null 2>&1
+  assert "S6b agent settings is valid JSON with the isolation env" $?
 fi
 
 # STELLA_HOME and CARGO_TARGET_DIR must differ per worktree — that is the whole
 # point of the script, so it gets an explicit case rather than being assumed.
-home_a="$(jq -r .env.STELLA_HOME "$REPO/.claude/settings.json" 2>/dev/null)"
+home_a="$(jq -r .env.STELLA_HOME "$SETTINGS" 2>/dev/null)"
 REPO2="$FIX/stella2"
 cp -R "$REPO" "$REPO2"
-rm -rf "$REPO2/.claude"
-(cd "$REPO2" && "$SETUP" >/dev/null 2>&1)
-home_b="$(jq -r .env.STELLA_HOME "$REPO2/.claude/settings.json" 2>/dev/null)"
+rm -f "$REPO2/agent-settings.json"
+(cd "$REPO2" && "$SETUP" --agent-settings "$REPO2/agent-settings.json" >/dev/null 2>&1)
+home_b="$(jq -r .env.STELLA_HOME "$REPO2/agent-settings.json" 2>/dev/null)"
 differing_homes() { [ -n "$home_a" ] && [ -n "$home_b" ] && [ "$home_a" != "$home_b" ]; }
 assert_cmd "S6c two checkouts get different STELLA_HOME" differing_homes
 
 echo
-echo "=== setup: existing settings.json ==="
-rm -f "$REPO/.claude/.stella-env-stamp"
-printf '{ "model": "claude-opus-5", "env": { "MY_OWN_VAR": "keepme" } }\n' > "$REPO/.claude/settings.json"
-(cd "$REPO" && "$SETUP" >/dev/null 2>&1)
+echo "=== setup: existing agent settings file ==="
+printf '{ "theme": "solarized", "env": { "MY_OWN_VAR": "keepme" } }\n' > "$SETTINGS"
+(cd "$REPO" && "$SETUP" --agent-settings "$SETTINGS" >/dev/null 2>&1)
 if command -v jq >/dev/null 2>&1; then
-  jq -e '.model == "claude-opus-5" and .env.MY_OWN_VAR == "keepme" and (.env.STELLA_HOME|length > 0)' \
-    "$REPO/.claude/settings.json" >/dev/null 2>&1
+  jq -e '.theme == "solarized" and .env.MY_OWN_VAR == "keepme" and (.env.STELLA_HOME|length > 0)' \
+    "$SETTINGS" >/dev/null 2>&1
   assert "S7  hand-written keys survive the merge" $?
 fi
-ls "$REPO/.claude/settings.json.bak."* >/dev/null 2>&1; assert "S7b a backup was written" $?
-rm -f "$REPO/.claude/settings.json.bak."*
+ls "$SETTINGS.bak."* >/dev/null 2>&1; assert "S7b a backup was written" $?
+rm -f "$SETTINGS.bak."*
 
-rm -f "$REPO/.claude/.stella-env-stamp"
-printf '{ this is not json\n' > "$REPO/.claude/settings.json"
-out=$(cd "$REPO" && "$SETUP" 2>&1)
+printf '{ this is not json\n' > "$SETTINGS"
+out=$(cd "$REPO" && "$SETUP" --agent-settings "$SETTINGS" 2>&1)
 if command -v jq >/dev/null 2>&1; then
-  jq -e . "$REPO/.claude/settings.json" >/dev/null 2>&1; assert "S8  invalid JSON is replaced" $?
+  jq -e . "$SETTINGS" >/dev/null 2>&1; assert "S8  invalid JSON is replaced" $?
 fi
 printf '%s' "$out" | grep -qF 'not valid JSON'; assert "S8b and the replacement is announced" $?
-rm -f "$REPO/.claude/settings.json.bak."*
+rm -f "$SETTINGS.bak."*
 
-(cd "$REPO" && "$SETUP" --no-hooks >/dev/null 2>&1)
+(cd "$REPO" && "$SETUP" --no-hooks --agent-settings "$SETTINGS" >/dev/null 2>&1)
 if command -v jq >/dev/null 2>&1; then
-  jq -e 'has("hooks") | not' "$REPO/.claude/settings.json" >/dev/null 2>&1
+  jq -e 'has("hooks") | not' "$SETTINGS" >/dev/null 2>&1
   assert "S9  --no-hooks omits the hook block" $?
 fi
 
