@@ -130,10 +130,14 @@ export PATH="$LOCAL_BIN:$HOME/.cargo/bin:$PATH"
 ensure_asciinema() {
   command -v asciinema > /dev/null 2>&1 && return
   info "asciinema not found; installing..."
+  # Pin to 2.x: asciinema 3.x records the new asciicast v3 format (relative
+  # delta timestamps) and reworks the `rec` CLI, both of which break this
+  # script — the exit-code smuggling and the absolute-timestamp duration
+  # read below all assume 2.x.
   if command -v pipx > /dev/null 2>&1; then
-    pipx install asciinema
+    pipx install 'asciinema<3'
   elif command -v python3 > /dev/null 2>&1; then
-    python3 -m pip install --user --quiet asciinema
+    python3 -m pip install --user --quiet 'asciinema<3'
   else
     die "asciinema is required; install it (https://asciinema.org) and re-run"
   fi
