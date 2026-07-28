@@ -191,7 +191,7 @@ impl ServerState {
 
     /// Insert a freshly started turn and hand back its id. Registration is the
     /// only way the registry grows, so this is also where the
-    /// [`MAX_COMPLETED_UNSTREAMED_TURNS`] cap is enforced.
+    /// `MAX_COMPLETED_UNSTREAMED_TURNS` cap is enforced.
     fn register_turn(&self, session: Session) -> String {
         let seq = self.counter.fetch_add(1, Ordering::Relaxed);
         let id = format!("turn-{seq}");
@@ -217,7 +217,7 @@ impl ServerState {
 }
 
 /// Drop the oldest finished-but-unstreamed turns beyond
-/// [`MAX_COMPLETED_UNSTREAMED_TURNS`]. A turn qualifies only when its session
+/// `MAX_COMPLETED_UNSTREAMED_TURNS`. A turn qualifies only when its session
 /// is still in the entry (nothing is streaming it — a stream takes the session
 /// out and removes the entry itself when it ends) *and* its thread has
 /// finished, so only buffered frames remain. Everything else is live and is
@@ -317,7 +317,7 @@ impl TokenBucket {
 /// - **No admission control.** Connections and live turns are both unbounded;
 ///   a turn holds an OS thread from `POST /v1/turns` until its stream ends.
 ///   (Only *finished* turns nobody streamed are bounded — past
-///   [`MAX_COMPLETED_UNSTREAMED_TURNS`] the oldest is evicted, so a host that
+///   `MAX_COMPLETED_UNSTREAMED_TURNS` the oldest is evicted, so a host that
 ///   never streams cannot grow the registry and its buffered frames forever.)
 /// - **Turn ids are sequential**, so they are guessable by anyone holding the
 ///   token — the token is the only tenancy boundary, one process per tenant.

@@ -30,7 +30,7 @@ pub const UNDATED: &str = "undated";
 pub(crate) const MAX_LISTED_EXECUTIONS: usize = 500;
 
 /// Newest rows returned by [`Observatory::reflection_ratings`]. Same 5 s-poll
-/// reasoning as [`MAX_LISTED_EXECUTIONS`], and the same horizon, so the
+/// reasoning as `MAX_LISTED_EXECUTIONS`, and the same horizon, so the
 /// self-improvement tab's ratings line up with the runs the tables list.
 pub(crate) const MAX_LISTED_REFLECTIONS: usize = 500;
 
@@ -175,7 +175,7 @@ impl Observatory {
     }
 
     /// The executions table: one row per run with its aggregates, newest
-    /// first, capped at [`MAX_LISTED_EXECUTIONS`].
+    /// first, capped at `MAX_LISTED_EXECUTIONS`.
     pub fn executions(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
@@ -393,7 +393,7 @@ impl Observatory {
         Ok(Value::Array(rows))
     }
 
-    /// Tool leaderboard over the newest [`TOOL_CALL_SCAN_WINDOW`] calls:
+    /// Tool leaderboard over the newest `TOOL_CALL_SCAN_WINDOW` calls:
     /// calls, failures, latency, bytes returned. The p50 is computed here
     /// (SQLite has no percentile function).
     ///
@@ -657,7 +657,7 @@ impl Observatory {
         Ok(Value::Array(days.into_values().collect()))
     }
 
-    /// The newest [`MAX_LISTED_REFLECTIONS`] post-turn self-reflections joined
+    /// The newest `MAX_LISTED_REFLECTIONS` post-turn self-reflections joined
     /// to their executions: the self-improvement tab's ratings feed.
     pub fn reflection_ratings(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
