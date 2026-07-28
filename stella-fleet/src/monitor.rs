@@ -94,7 +94,7 @@ const GH_INVOCATION_TIMEOUT_MS: u64 = 90_000;
 /// needs, and `kill_on_drop` so neither a cancelled watch nor an expired
 /// invocation timeout strands the child.
 ///
-/// Each invocation is bounded by [`GH_INVOCATION_TIMEOUT_MS`]; expiry
+/// Each invocation is bounded by `GH_INVOCATION_TIMEOUT_MS`; expiry
 /// surfaces as [`GhError::TimedOut`], which [`Monitor::watch_ci`]'s
 /// consecutive-poll-error tolerance rides out like any other failed poll.
 #[derive(Debug, Clone, Copy, Default)]
