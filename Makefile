@@ -132,21 +132,21 @@ hooks: ## Install the pre-push gate hook (runs `make gate` on every push)
 	@printf '  Actions is unavailable (an org billing hold has happened before).\n'
 	@printf '  Bypass in emergencies: \033[36mSKIP_GATE=1 git push\033[0m (or \033[36mgit push --no-verify\033[0m).\n'
 
-.PHONY: claude-env
-claude-env: ## Set this worktree up for agent work (per-worktree STELLA_HOME + target dir, tool check)
-	./scripts/setup-claude-env.sh
+.PHONY: dev-env
+dev-env: ## Set this worktree up for development (per-worktree STELLA_HOME + target dir, tool check)
+	./scripts/setup-dev-env.sh
 
-.PHONY: claude-env-check
-claude-env-check: ## Report the agent environment without writing anything
-	./scripts/setup-claude-env.sh --check
+.PHONY: dev-env-check
+dev-env-check: ## Report the development environment without writing anything
+	./scripts/setup-dev-env.sh --check
 
-.PHONY: claude-env-prune
-claude-env-prune: ## Reclaim per-worktree caches whose worktree is gone
-	./scripts/setup-claude-env.sh --prune
+.PHONY: dev-env-prune
+dev-env-prune: ## Reclaim per-worktree caches whose worktree is gone
+	./scripts/setup-dev-env.sh --prune
 
-.PHONY: claude-env-test
-claude-env-test: ## Test the two agent-env scripts (hermetic; not part of `gate`)
-	./scripts/test-claude-env.sh
+.PHONY: dev-env-test
+dev-env-test: ## Test the dev-env scripts (hermetic; not part of `gate`)
+	./scripts/test-dev-env.sh
 
 .PHONY: docs
 docs: ## Build rustdoc for the workspace (skip dep docs)

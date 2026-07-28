@@ -1,71 +1,84 @@
 #!/usr/bin/env bash
 #
-# Claude Code PostToolUse hook: keep agent-authored Rust inside the gate.
+# Format one Rust file and hold it to the file-size ratchet.
 #
-# Wired up by scripts/setup-claude-env.sh, which writes it into the worktree's
-# (gitignored) .claude/settings.json. It runs after every Edit/Write/MultiEdit
-# and does two things to a `.rs` file the agent just touched:
+#   ./scripts/fmt-file.sh path/to/file.rs     # by hand, or from an editor
+#   echo '{"tool_input":{"file_path":"..."}}' | ./scripts/fmt-file.sh
+#
+# Two entry points on purpose: a plain path, for humans and for editors with a
+# format-on-save command, and a JSON payload on stdin, for agent harnesses that
+# pipe an edit event to a hook command. scripts/setup-dev-env.sh
+# --agent-settings wires the second form.
+#
+# It does two things to the file it is given:
 #
 #   1. rustfmt it, in place. `cargo fmt --check` is a hard gate, so the tree's
-#      formatting is not negotiable — the only question is whether the agent
-#      finds out now or after a full `make gate` at push time. Formatting one
-#      file costs milliseconds; discovering it at the end costs a whole cycle.
+#      formatting is not negotiable — the only question is whether you find out
+#      now or after a full `make gate`. Formatting one file costs milliseconds;
+#      discovering it at the end costs a whole cycle.
 #
 #      Formatting as you go also closes a trap that is otherwise invisible:
 #      rustfmt's wrapping ADDS lines, so a file that sat under its
 #      file-size-baseline ceiling while unformatted can breach it the moment
 #      `cargo fmt` runs. Fixing the size gate first and formatting second means
 #      re-breaking the gate you just fixed. Formatting first makes the line
-#      count the agent sees the same one check-file-size.sh will see.
+#      count you see the same one check-file-size.sh will see.
 #
 #   2. Re-run the file-size ratchet for that one file. `make gate` runs
 #      check-file-size.sh over the whole tree; this is the same rule scoped to
-#      the file in hand, so an agent that grows a grandfathered file past its
-#      ceiling is told immediately, at the edit that did it, rather than at the
-#      end of a long session with no memory of which change was responsible.
+#      the file in hand, so growing a grandfathered file past its ceiling is
+#      reported at the edit that did it rather than at the end of a long session
+#      with no memory of which change was responsible.
 #
-# Exit codes are the hook contract, not a normal script's:
-#   0 → silent success. The tool call proceeds.
-#   2 → stderr is fed back to Claude as actionable feedback. Used ONLY for a
-#       real ratchet breach, i.e. something `make gate` would fail on.
-# The tool call has already run by the time a PostToolUse hook fires, so a
-# nonzero exit cannot undo the edit — it can only inform. Every other failure
-# mode here (no stdin, unparseable payload, missing rustfmt, a file that does
-# not parse mid-edit) exits 0 on purpose: a hook that nags about its own
-# breakage trains the reader to ignore it.
+# Exit codes:
+#   0 → nothing to say. (Also the answer for every input this script does not
+#       handle: a non-Rust file, a path outside the repo, an unreadable payload,
+#       a missing rustfmt, a file that does not parse mid-edit. A tool that nags
+#       about its own breakage trains the reader to ignore it.)
+#   2 → the file breaches the ratchet, with the reason on stderr. Chosen so an
+#       agent harness surfaces the message as feedback, and so a shell caller
+#       sees a distinct nonzero code.
 #
 # Deliberately NOT run: `cargo fmt`, `cargo check`, `cargo clippy`. Those are
 # workspace-scoped and take seconds to minutes; on a per-edit hook they would
 # make every edit feel broken. `make gate` remains the thing that must pass.
 #
-# bash 3.2 compatible (macOS ships 3.2, and this runs on the dev's machine).
+# bash 3.2 compatible.
 
-# No `set -e`: a hook must never abort a tool call by accident. Failures below
-# are handled explicitly.
+# No `set -e`: as a hook this must never abort the caller by accident. Failures
+# below are handled explicitly.
 set -uo pipefail
 
 LIMIT=1500
 
 # ── Locate the repo ──────────────────────────────────────────────────────────
-# The hook's cwd is the Claude Code project dir, but resolve it properly rather
-# than assuming: worktrees make $PWD-relative guesses wrong.
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$repo_root" ] || exit 0
 
-# ── Read the tool payload ────────────────────────────────────────────────────
-# Claude Code delivers a JSON object on stdin. We need exactly one field:
-# .tool_input.file_path. jq if it is available, a narrow sed otherwise — the
-# sed path is sufficient because file_path is a plain filesystem path, so it
-# contains no escaped quotes for a regex to get wrong.
-payload="$(cat 2>/dev/null || true)"
-[ -n "$payload" ] || exit 0
-
-if command -v jq >/dev/null 2>&1; then
-  file="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)"
+# ── Find the file ────────────────────────────────────────────────────────────
+# An argument wins. Otherwise read a JSON object from stdin and pull out
+# .tool_input.file_path — jq when available, a narrow sed otherwise. The sed
+# path is sufficient because file_path is a plain filesystem path, so it holds
+# no escaped quotes for the regex to get wrong.
+if [ $# -gt 0 ]; then
+  file="$1"
 else
-  file="$(printf '%s' "$payload" \
-    | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    | head -1)"
+  # No argument and stdin is a terminal means someone ran this bare, expecting
+  # usage — not that they intend to type a JSON payload. Without this, `cat`
+  # below blocks forever on the tty and the script looks hung.
+  if [ -t 0 ]; then
+    echo "usage: ${0##*/} <file.rs>   (or pipe a JSON edit payload on stdin)" >&2
+    exit 0
+  fi
+  payload="$(cat 2>/dev/null || true)"
+  [ -n "$payload" ] || exit 0
+  if command -v jq >/dev/null 2>&1; then
+    file="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)"
+  else
+    file="$(printf '%s' "$payload" \
+      | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      | head -1)"
+  fi
 fi
 
 [ -n "$file" ] || exit 0
@@ -75,8 +88,8 @@ case "$file" in
 esac
 [ -f "$file" ] || exit 0
 
-# Only touch files inside this repo. An agent editing a .rs file elsewhere on
-# the machine is none of this hook's business.
+# Only touch files inside this repo. A .rs file elsewhere on the machine is none
+# of this script's business.
 abs_file="$(cd "$(dirname "$file")" 2>/dev/null && pwd -P)/$(basename "$file")" || exit 0
 canon_root="$(cd "$repo_root" 2>/dev/null && pwd -P)" || exit 0
 case "$abs_file" in
@@ -102,8 +115,8 @@ if command -v rustfmt >/dev/null 2>&1; then
   edition="$(sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([0-9]*\)".*/\1/p' \
     "$canon_root/Cargo.toml" 2>/dev/null | head -1)"
   [ -n "$edition" ] || edition=2024
-  # A file caught mid-refactor may not parse. That is not an error worth
-  # reporting — clippy and the compiler will say so far more precisely.
+  # A file caught mid-refactor may not parse. That is not worth reporting —
+  # clippy and the compiler will say so far more precisely.
   rustfmt --edition "$edition" "$abs_file" >/dev/null 2>&1 || true
 fi
 
@@ -113,7 +126,7 @@ fi
 baseline="$canon_root/scripts/file-size-baseline.txt"
 # `wc -l`, not `awk END{print NR}` — check-file-size.sh uses wc, which counts
 # newlines. The two disagree by one on a file with no trailing newline, and a
-# hook that disagrees with the gate it is previewing is worse than no hook.
+# preview that disagrees with the gate it previews is worse than no preview.
 lines="$(wc -l <"$abs_file" 2>/dev/null | tr -d ' ' || echo 0)"
 [ -n "$lines" ] && [ "$lines" -gt 0 ] 2>/dev/null || exit 0
 
@@ -131,10 +144,10 @@ if [ "$lines" -le "$ceiling" ]; then
   exit 0
 fi
 
-# Over the line. Say which rule broke and what the fix is — an agent that is
-# told "too long" without being told which of the two rules applies will guess,
-# and guessing wrong here means editing the baseline when it should be
-# splitting the file.
+# Over the line. Say which of the two rules broke and what the fix is — being
+# told "too long" without being told which rule applies invites a guess, and
+# guessing wrong here means editing the baseline when it should mean splitting
+# the file.
 {
   if [ "$grandfathered" -eq 1 ]; then
     echo "check-file-size: $rel is now $lines lines, over its baseline ceiling of $ceiling."

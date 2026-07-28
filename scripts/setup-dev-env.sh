@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 #
-# Prepare this checkout (or worktree) for agent-driven work on stella.
+# Prepare this checkout (or worktree) for development.
 #
-#   ./scripts/setup-claude-env.sh              # set up + report
-#   ./scripts/setup-claude-env.sh --check      # report only, no writes
-#   ./scripts/setup-claude-env.sh --install    # also install what is missing
-#   ./scripts/setup-claude-env.sh --prune      # reclaim caches for dead worktrees
+#   ./scripts/setup-dev-env.sh              # set up + report
+#   ./scripts/setup-dev-env.sh --check      # report only, no writes
+#   ./scripts/setup-dev-env.sh --install    # also install what is missing
+#   ./scripts/setup-dev-env.sh --prune      # reclaim caches for dead worktrees
 #
-# Idempotent. Safe to re-run, and safe to run in every worktree — it is in fact
-# meant to be run in every worktree, because the isolation it sets up is
-# per-worktree.
+# Idempotent. Safe to re-run, and meant to be run in every worktree, because the
+# isolation it sets up is per-worktree.
 #
 # ── Why this exists ──────────────────────────────────────────────────────────
 #
-# Running several agents against several worktrees of this repo at once breaks
-# in three ways that all look like flaky tests, and none of which are:
+# Working in several worktrees of this repo at once breaks in three ways that
+# all look like flaky tests, and none of which are:
 #
 #   1. `~/.stella` is machine-global. stella_home() (stella-store/src/home.rs)
 #      resolves STELLA_HOME, else $HOME/.stella — and usage.db, catalog.db,
@@ -42,46 +41,56 @@
 #
 # ── What it writes ───────────────────────────────────────────────────────────
 #
-#   <worktree>/.claude/settings.json   env + the per-edit rustfmt hook
-#   <worktree>/.claude/.stella-env-stamp
+#   <worktree>/.dev-env                   sourceable env file (the main output)
 #   ~/.cache/stella-env/<slug>/{home,target}
 #   git config core.hooksPath=.githooks   (shared across worktrees, like `make hooks`)
 #
-# .claude/ is gitignored in this repo, so nothing here can reach the remote —
-# and nothing here is tracked, so it cannot trip check-no-scratch.sh.
+# `.dev-env` is a plain shell file, so it works everywhere an environment is
+# needed — `. ./.dev-env` in a terminal, `source_env` from a direnv .envrc, an
+# exported env in CI, or any editor/agent harness that reads a JSON settings
+# file (see --agent-settings). Nothing here is tracked, so none of it can reach
+# the remote or trip check-no-scratch.sh.
 #
 # bash 3.2 compatible (macOS ships 3.2), POSIX tools only. No associative
 # arrays, no mapfile.
 
 set -euo pipefail
 
-SETUP_VERSION=1
+SETUP_VERSION=2
 CACHE_ROOT="${STELLA_ENV_CACHE:-$HOME/.cache/stella-env}"
 
 MODE=setup       # setup | check | prune
 DO_INSTALL=0
 DO_HOOKS=1
+AGENT_SETTINGS="${DEV_ENV_AGENT_SETTINGS:-}"
 
 usage() {
   cat <<'EOF'
-setup-claude-env.sh — prepare this worktree for agent-driven work on stella.
+setup-dev-env.sh — prepare this worktree for development on stella.
 
 Gives the worktree its own STELLA_HOME and CARGO_TARGET_DIR (so parallel
 worktrees stop contending on ~/.stella and on cargo's build lock), verifies the
-tools the gate needs, wires the pre-push hook, and writes a Claude Code
-settings.json that carries all of it. Idempotent; run it in every worktree.
+tools the gate needs, wires the pre-push hook, and writes a sourceable .dev-env
+carrying all of it. Idempotent; run it in every worktree.
 
-Usage: ./scripts/setup-claude-env.sh [options]
+Usage: ./scripts/setup-dev-env.sh [options]
 
 Options:
-  --check        Report only. Writes nothing. Exits 1 if a required tool is missing.
-  --install      Install missing tools via brew / cargo install / rustup.
-  --prune        Delete per-worktree caches whose worktree no longer exists, then exit.
-  --no-hooks     Skip the per-edit rustfmt hook in the generated settings.json.
-  -h, --help     This text.
+  --check              Report only. Writes nothing. Exits 1 if a required tool is missing.
+  --install            Install missing tools via brew / cargo install / rustup.
+  --prune              Delete per-worktree caches whose worktree no longer exists, then exit.
+  --agent-settings F   Also write the same environment into JSON settings file F,
+                       plus a format-on-edit hook. For editors and agent harnesses
+                       that read a JSON settings file with an "env" map and
+                       "hooks.PostToolUse" command entries. Merged into F if it
+                       already exists; F is backed up first either way.
+  --no-hooks           With --agent-settings, write only the env, not the edit hook.
+  -h, --help           This text.
 
 Environment:
-  STELLA_ENV_CACHE   Where per-worktree caches live (default ~/.cache/stella-env).
+  STELLA_ENV_CACHE          Where per-worktree caches live (default ~/.cache/stella-env).
+  DEV_ENV_AGENT_SETTINGS    Default for --agent-settings, so you can set it once in
+                            your shell profile instead of passing it every time.
 EOF
 }
 
@@ -91,8 +100,13 @@ while [ $# -gt 0 ]; do
     --prune) MODE=prune ;;
     --install) DO_INSTALL=1 ;;
     --no-hooks) DO_HOOKS=0 ;;
+    --agent-settings)
+      shift
+      [ $# -gt 0 ] || { echo "setup-dev-env: --agent-settings needs a file path" >&2; exit 2; }
+      AGENT_SETTINGS="$1"
+      ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "setup-claude-env: unknown option '$1' (try --help)" >&2; exit 2 ;;
+    *) echo "setup-dev-env: unknown option '$1' (try --help)" >&2; exit 2 ;;
   esac
   shift
 done
@@ -113,13 +127,13 @@ note() { printf '        %s%s%s\n' "$C_DIM" "$1" "$C_RESET"; }
 
 # ── Locate the checkout ──────────────────────────────────────────────────────
 if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-  echo "setup-claude-env: not inside a git checkout of stella." >&2
+  echo "setup-dev-env: not inside a git checkout of stella." >&2
   exit 1
 fi
 repo_root="$(cd "$repo_root" && pwd -P)"
 
 if [ ! -f "$repo_root/rust-toolchain.toml" ] || [ ! -d "$repo_root/stella-core" ]; then
-  echo "setup-claude-env: $repo_root does not look like the stella workspace." >&2
+  echo "setup-dev-env: $repo_root does not look like the stella workspace." >&2
   exit 1
 fi
 
@@ -174,7 +188,7 @@ if [ "$MODE" = prune ]; then
   exit 0
 fi
 
-hdr "stella agent environment"
+hdr "stella development environment"
 note "$worktree_kind: $repo_root"
 note "branch:        $(git rev-parse --abbrev-ref HEAD)"
 note "cache slug:    $slug"
@@ -226,7 +240,7 @@ fi
 #
 # Tiers, in the order they will actually cost you:
 #   ci    — a REQUIRED GitHub check you cannot reproduce locally without it
-#   agent — assumed by the repo's agent workflow / this machine's conventions
+#   repo  — assumed by this repo's documented workflow
 #   opt   — one subsystem only; absence is fine until you touch that subsystem
 #
 # Format: name|tier|why|installer|package
@@ -234,10 +248,10 @@ tool_table() {
   cat <<'EOF'
 cargo-deny|ci|CI job "cargo deny + cargo audit" is a required check; make deny|cargo|cargo-deny
 cargo-audit|ci|same required check; make vuln-scan|cargo|cargo-audit
-gh|agent|PR + release flow (scripts/release.sh hard-requires it)|brew|gh
-rg|agent|repo convention: rg over grep, and it is gitignore-aware|brew|ripgrep
-fd|agent|repo convention: fd over find|brew|fd
-jq|agent|lets the Claude hook parse tool payloads exactly instead of by regex|brew|jq
+gh|repo|PR + release flow (scripts/release.sh hard-requires it)|brew|gh
+rg|repo|repo convention: rg over grep, and it is gitignore-aware|brew|ripgrep
+fd|repo|repo convention: fd over find|brew|fd
+jq|repo|lets --agent-settings merge into an existing file instead of replacing it|brew|jq
 cargo-watch|opt|make watch / watch-core / watch-lint (hard-errors without it)|cargo|cargo-watch
 docker|opt|make serve-image + scripts/smoke-serve-image.sh|manual|
 node|opt|make llms-txt and the website/ docs build|brew|node
@@ -327,18 +341,47 @@ else
 fi
 note "bypass for a WIP push: SKIP_GATE=1 git push"
 
-# ── Claude Code settings ─────────────────────────────────────────────────────
-hdr "Claude Code settings"
-claude_dir="$repo_root/.claude"
-settings="$claude_dir/settings.json"
-stamp="$claude_dir/.stella-env-stamp"
-mkdir -p "$claude_dir"
+# ── The environment file ─────────────────────────────────────────────────────
+hdr "Environment"
+env_file="$repo_root/.dev-env"
+cat > "$env_file" <<EOF
+# Generated by scripts/setup-dev-env.sh (v$SETUP_VERSION) — re-run it rather
+# than editing this file by hand.
+#
+# Per-worktree isolation for $repo_root:
+#   STELLA_HOME       keeps this worktree's usage.db / catalog.db /
+#                     media-operations.db / sessions/ out of the machine-global
+#                     ~/.stella that every other worktree also writes to.
+#   CARGO_TARGET_DIR  keeps cargo's build lock from serializing sibling worktrees.
+#
+# Use it:
+#   . ./.dev-env                       in a shell
+#   source_env .dev-env                from a direnv .envrc
+#
+export STELLA_HOME="$stella_home"
+export CARGO_TARGET_DIR="$target_dir"
+export RUST_BACKTRACE="\${RUST_BACKTRACE:-1}"
+EOF
+ok "wrote $env_file"
+note "source it:  . ./.dev-env"
 
-json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# ── Optional: the same environment as an editor/agent settings file ──────────
+# No default path, on purpose. Which settings file applies — if any — is a
+# property of the tool you happen to use, not of this repo, so it has to be
+# supplied via --agent-settings or DEV_ENV_AGENT_SETTINGS.
+if [ -n "$AGENT_SETTINGS" ]; then
+  hdr "Agent settings"
+  case "$AGENT_SETTINGS" in
+    /*) settings="$AGENT_SETTINGS" ;;
+    *)  settings="$repo_root/$AGENT_SETTINGS" ;;
+  esac
+  mkdir -p "$(dirname "$settings")"
 
-hook_block=""
-if [ "$DO_HOOKS" -eq 1 ] && [ -x "$repo_root/scripts/claude-rustfmt-hook.sh" ]; then
-  hook_block=",
+  json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+  hook_block=""
+  if [ "$DO_HOOKS" -eq 1 ] && [ -x "$repo_root/scripts/fmt-file.sh" ]; then
+    hook_block=",
   \"hooks\": {
     \"PostToolUse\": [
       {
@@ -346,68 +389,82 @@ if [ "$DO_HOOKS" -eq 1 ] && [ -x "$repo_root/scripts/claude-rustfmt-hook.sh" ]; 
         \"hooks\": [
           {
             \"type\": \"command\",
-            \"command\": \"$(json_escape "$repo_root/scripts/claude-rustfmt-hook.sh")\",
+            \"command\": \"$(json_escape "$repo_root/scripts/fmt-file.sh")\",
             \"timeout\": 30
           }
         ]
       }
     ]
   }"
-fi
+  fi
 
-generated="$(cat <<EOF
+  generated="$(cat <<EOF
 {
   "env": {
     "STELLA_HOME": "$(json_escape "$stella_home")",
     "CARGO_TARGET_DIR": "$(json_escape "$target_dir")",
-    "RUST_BACKTRACE": "1",
-    "CARGO_TERM_COLOR": "never"
+    "RUST_BACKTRACE": "1"
   }$hook_block
 }
 EOF
 )"
 
-write_fresh() { printf '%s\n' "$generated" > "$settings"; }
-
-if [ ! -f "$settings" ]; then
-  write_fresh
-  ok "wrote $settings"
-elif [ -f "$stamp" ]; then
-  write_fresh
-  ok "refreshed $settings (previously generated by this script)"
-else
-  # Somebody hand-wrote settings for this worktree. Never silently clobber it.
-  backup="$settings.bak.$$"
-  cp "$settings" "$backup"
-  if command -v jq >/dev/null 2>&1; then
-    # `*` merges objects recursively; our keys win. Arrays are replaced, not
-    # appended — so a pre-existing PostToolUse array is superseded, which is why
-    # the backup above is unconditional.
-    if printf '%s' "$generated" | jq --slurpfile cur "$settings" '$cur[0] * .' > "$settings.tmp" 2>/dev/null; then
+  if [ ! -f "$settings" ]; then
+    printf '%s\n' "$generated" > "$settings"
+    ok "wrote $settings"
+  else
+    # Never silently clobber a settings file somebody hand-wrote.
+    backup="$settings.bak.$$"
+    cp "$settings" "$backup"
+    if command -v jq >/dev/null 2>&1 \
+       && printf '%s' "$generated" | jq --slurpfile cur "$settings" '$cur[0] * .' \
+            > "$settings.tmp" 2>/dev/null; then
+      # `*` merges objects recursively; our keys win. Arrays are replaced, not
+      # appended — so a pre-existing PostToolUse array is superseded, which is
+      # why the backup above is unconditional.
       mv "$settings.tmp" "$settings"
-      ok "merged into your existing $settings"
-      note "backup: $backup"
+      ok "merged into existing $settings"
     else
       rm -f "$settings.tmp"
-      write_fresh
-      warn "existing settings.json was not valid JSON — replaced it"
-      note "backup: $backup"
+      printf '%s\n' "$generated" > "$settings"
+      warn "replaced $settings (not valid JSON, or jq unavailable to merge)"
     fi
-  else
-    write_fresh
-    warn "replaced a hand-written settings.json (no jq available to merge)"
     note "backup: $backup"
   fi
-fi
 
-printf 'setup-claude-env v%s slug=%s\n' "$SETUP_VERSION" "$slug" > "$stamp"
-
-if [ "$DO_HOOKS" -eq 1 ]; then
-  if [ -x "$repo_root/scripts/claude-rustfmt-hook.sh" ]; then
-    ok "per-edit hook: rustfmt + file-size ratchet on every .rs edit"
+  if [ "$DO_HOOKS" -eq 1 ]; then
+    if [ -x "$repo_root/scripts/fmt-file.sh" ]; then
+      ok "edit hook: rustfmt + file-size ratchet on every .rs edit"
+    else
+      warn "scripts/fmt-file.sh missing or not executable — hook not wired"
+    fi
   else
-    warn "scripts/claude-rustfmt-hook.sh missing or not executable — hook not wired"
+    # --no-hooks has to REMOVE our hook, not merely decline to add it. Merging
+    # leaves whatever the file already had, so on a re-run with --no-hooks the
+    # hook a previous run wrote would silently survive the flag that asked for
+    # its absence. Only entries pointing at our own script are dropped, so an
+    # unrelated PostToolUse hook in the same file is left intact.
+    if command -v jq >/dev/null 2>&1; then
+      if jq --arg cmd "$repo_root/scripts/fmt-file.sh" '
+            if (.hooks? | objects | has("PostToolUse")) then
+              .hooks.PostToolUse |= map(
+                select(((.hooks // []) | map(.command) | index($cmd)) | not))
+              | if (.hooks.PostToolUse | length) == 0 then del(.hooks.PostToolUse) else . end
+              | if (.hooks | length) == 0 then del(.hooks) else . end
+            else . end
+          ' "$settings" > "$settings.tmp" 2>/dev/null; then
+        mv "$settings.tmp" "$settings"
+        ok "edit hook removed (--no-hooks)"
+      else
+        rm -f "$settings.tmp"
+        warn "could not strip the edit hook from $settings"
+      fi
+    else
+      warn "--no-hooks needs jq to remove an already-written hook; left as-is"
+    fi
   fi
+else
+  note "no --agent-settings given; skipping editor/agent wiring"
 fi
 
 # ── The part that is easy to get wrong ───────────────────────────────────────
@@ -430,9 +487,10 @@ EOF
 
 hdr "Next"
 cat <<EOF
+  . ./.dev-env                       load the isolated environment
   make gate                          full local gate (what pre-push runs)
   make supply-chain                  the other required CI check
-  ./scripts/setup-claude-env.sh --prune   reclaim caches for deleted worktrees
+  ./scripts/setup-dev-env.sh --prune reclaim caches for deleted worktrees
 EOF
 
 if [ -d "$CACHE_ROOT" ]; then
