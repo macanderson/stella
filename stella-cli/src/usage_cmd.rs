@@ -511,16 +511,14 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
                 );
                 return Ok(());
             };
-            // The format discriminator fails closed (#404): a typo or a
-            // format this build cannot encode stops the drain with a clear
-            // error instead of guessing. The exhaustive match makes a new
-            // format variant a compile-time decision at this call site.
-            match drain.wire_format()? {
-                stella_store::identity::DrainFormat::Stella => {}
-            }
+            // The format discriminator fails closed (#404): a typo stops the
+            // drain with a clear error instead of guessing. Both formats ride
+            // the same pager → POST → ack loop (#427); only the encoding
+            // differs, inside the intake adapter.
+            let format = drain.wire_format()?;
             let hub = open_hub()?;
             let bearer = crate::cloud_drain::resolve_bearer(&registration, &drain);
-            let intake = crate::cloud_drain::HttpCloudIntake::new(&drain.url, bearer)?;
+            let intake = crate::cloud_drain::HttpCloudIntake::new(&drain.url, bearer, format)?;
             let outcome = crate::cloud_drain::drain_once(&hub, &org, &intake, drain.batch_size)?;
             println!(
                 "delivered {} row(s) in {} batch(es), {} quarantined",

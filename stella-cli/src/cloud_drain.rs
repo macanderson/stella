@@ -27,20 +27,32 @@ use stella_store::usage::UsageStore;
 /// Response-body bytes worth keeping as a rejection diagnostic.
 const MAX_DETAIL_BYTES: usize = 300;
 
-/// The HTTPS adapter over the drain's [`CloudIntake`] port.
+/// The HTTPS adapter over the drain's [`CloudIntake`] port. One adapter for
+/// both wire formats (#427): the pager → POST → ack loop, refusal
+/// classification, and cursor semantics are format-independent — only the
+/// request body differs.
 pub(crate) struct HttpCloudIntake {
     url: reqwest::Url,
     bearer: Option<String>,
+    format: stella_store::identity::DrainFormat,
 }
 
 impl HttpCloudIntake {
     /// Build the adapter, validating the endpoint. `bearer` is the intake
     /// credential: the OAuth token when the login (#405) has stored one,
     /// otherwise the drain config's static token.
-    pub(crate) fn new(url: &str, bearer: Option<String>) -> Result<Self, String> {
+    pub(crate) fn new(
+        url: &str,
+        bearer: Option<String>,
+        format: stella_store::identity::DrainFormat,
+    ) -> Result<Self, String> {
         let url =
             reqwest::Url::parse(url).map_err(|e| format!("invalid drain url `{url}`: {e}"))?;
-        Ok(Self { url, bearer })
+        Ok(Self {
+            url,
+            bearer,
+            format,
+        })
     }
 
     async fn post(&self, body: Vec<u8>) -> Result<(), DrainRejection> {
@@ -90,9 +102,13 @@ impl HttpCloudIntake {
 
 impl CloudIntake for HttpCloudIntake {
     fn deliver(&self, batch: &DrainBatch) -> Result<(), DrainRejection> {
-        let body = serde_json::to_vec(batch).map_err(|e| {
-            DrainRejection::terminal_batch(None, format!("cannot encode batch: {e}"))
-        })?;
+        let body = match self.format {
+            stella_store::identity::DrainFormat::Stella => serde_json::to_vec(batch),
+            stella_store::identity::DrainFormat::Otel => {
+                serde_json::to_vec(&stella_store::drain::otel::otlp_logs_payload(batch))
+            }
+        }
+        .map_err(|e| DrainRejection::terminal_batch(None, format!("cannot encode batch: {e}")))?;
         // `deliver` is a sync port and this may be called with or without an
         // ambient tokio runtime (CLI command vs a future background site), so
         // the request runs on its own thread with its own single-thread
@@ -334,7 +350,8 @@ mod tests {
 
     #[test]
     fn an_invalid_drain_url_is_refused_up_front() {
-        assert!(HttpCloudIntake::new("not a url", None).is_err());
-        assert!(HttpCloudIntake::new("https://intake.example/v1/batch", None).is_ok());
+        let format = stella_store::identity::DrainFormat::Stella;
+        assert!(HttpCloudIntake::new("not a url", None, format).is_err());
+        assert!(HttpCloudIntake::new("https://intake.example/v1/batch", None, format).is_ok());
     }
 }

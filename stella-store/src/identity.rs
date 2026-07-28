@@ -104,11 +104,16 @@ fn default_drain_batch_size() -> usize {
     200
 }
 
-/// The wire formats a drain can speak. `Otel` joins with #427.
+/// The wire formats a drain can speak.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainFormat {
     /// The native schema-versioned batch payload (`crate::drain::DrainBatch`).
     Stella,
+    /// OTLP/HTTP JSON `/v1/logs` — the same rows as attributes, for an
+    /// existing OpenTelemetry collector (#427). At-least-once: a generic
+    /// collector does not dedup on `(workspace_id, source_rowid)` the way
+    /// the Stella intake does, though both ride as attributes so it can.
+    Otel,
 }
 
 impl CloudDrainConfig {
@@ -118,11 +123,9 @@ impl CloudDrainConfig {
     pub fn wire_format(&self) -> std::result::Result<DrainFormat, String> {
         match self.format.as_str() {
             "stella" => Ok(DrainFormat::Stella),
-            "otel" => {
-                Err("drain format \"otel\" is not built yet (#427) — use \"stella\"".to_string())
-            }
+            "otel" => Ok(DrainFormat::Otel),
             other => Err(format!(
-                "unknown drain format `{other}` — supported: \"stella\" (\"otel\" lands with #427)"
+                "unknown drain format `{other}` — supported: \"stella\", \"otel\""
             )),
         }
     }
