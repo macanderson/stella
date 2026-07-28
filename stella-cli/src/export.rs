@@ -259,6 +259,11 @@ fn render_dashboard(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Page-level backstop (#615): the export is a standalone file built from
+     workspace-influenced text, so even with every interpolation escaped, the
+     page itself declares it loads nothing and talks to no one — inline
+     script/style only (its own), no frames, no forms, no external fetches. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'">
 <title>Stella Session Telemetry — {watermark}</title>
 <style>
   :root {{

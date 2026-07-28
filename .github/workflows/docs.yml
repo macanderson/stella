@@ -26,7 +26,10 @@ concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Typecheck + build only — there is no Pages deploy here, so read is enough.
+# Typecheck + build for every trigger; the deploy job below additionally
+# publishes to production on push-to-main / manual dispatch, holding only the
+# same read permission (Vercel auth rides the VERCEL_* secrets, not the
+# GITHUB_TOKEN).
 permissions:
   contents: read
 
@@ -74,3 +77,44 @@ jobs:
 
       - name: build
         run: pnpm build
+
+  # The production deploy (#561): how a merged docs change reaches
+  # stella.oxagen.sh, in version control instead of only a hosting dashboard.
+  # Gated on the GitHub `production` environment so each deployment is
+  # auditable and revocable, and on three repo secrets (VERCEL_TOKEN,
+  # VERCEL_ORG_ID, VERCEL_PROJECT_ID — a Vercel account token plus the ids
+  # `vercel link` prints). Skips gracefully when they are not set, so a fork
+  # or a repo mid-setup is never blocked on a deploy it cannot perform —
+  # the same posture as release.yml's Homebrew publish.
+  deploy:
+    name: deploy stella.oxagen.sh
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Deploy to Vercel production
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ]; then
+            echo "::warning::VERCEL_TOKEN is not set — skipping the production deploy." \
+                 "One-time setup (token + org/project ids) is documented in website/README.md."
+            exit 0
+          fi
+          # The Vercel project's Root Directory is `website`, so the CLI runs
+          # from the repo root and the project settings pulled below scope the
+          # build to that directory.
+          npx --yes vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx --yes vercel build --prod --token="$VERCEL_TOKEN"
+          npx --yes vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

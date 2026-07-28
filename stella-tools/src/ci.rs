@@ -61,27 +61,7 @@ impl Tool for CiStatus {
             };
         }
 
-        // PR ref gets `gh pr checks` (the richest view); branch/commit get
-        // `gh run list` filtered accordingly.
-        let list_cmd = if let Some(pr) = input.get("pr").and_then(|v| v.as_u64()) {
-            format!("gh pr checks {pr} 2>&1 || true")
-        } else if let Some(commit) = input.get("commit").and_then(|v| v.as_str()) {
-            format!(
-                "gh run list --commit {} --limit 15 \
-                 --json databaseId,name,status,conclusion,headBranch",
-                shell_quote(commit)
-            )
-        } else {
-            let branch = input
-                .get("branch")
-                .and_then(|v| v.as_str())
-                .unwrap_or("main");
-            format!(
-                "gh run list --branch {} --limit 15 \
-                 --json databaseId,name,status,conclusion,headBranch",
-                shell_quote(branch)
-            )
-        };
+        let list_cmd = primary_command(input);
 
         let (code, mut report) = match exec::run_github(&list_cmd, root, timeout_secs).await {
             Ok(pair) => pair,
@@ -139,6 +119,41 @@ impl Tool for CiStatus {
                 format!("{report}\n{failed_logs}")
             },
         }
+    }
+
+    // A `bash -c` composer joins the `command.started` fence (#804). The
+    // gate sees the primary query line; the wait-watch and failure-log
+    // sub-queries are same-target derivatives of the same input
+    // ([`gh_run_scope`]) riding the same approval, and the `command -v gh`
+    // probe is a constant.
+    async fn command_for_gate(&self, input: &Value, _root: &std::path::Path) -> Option<String> {
+        Some(primary_command(input))
+    }
+}
+
+/// The primary `gh` line one `ci_status` call runs — a PR ref gets
+/// `gh pr checks` (the richest view); branch/commit get `gh run list`
+/// filtered accordingly. Shared by execute and the `command.started` gate so
+/// the fence sees exactly the line that runs.
+fn primary_command(input: &Value) -> String {
+    if let Some(pr) = input.get("pr").and_then(|v| v.as_u64()) {
+        format!("gh pr checks {pr} 2>&1 || true")
+    } else if let Some(commit) = input.get("commit").and_then(|v| v.as_str()) {
+        format!(
+            "gh run list --commit {} --limit 15 \
+             --json databaseId,name,status,conclusion,headBranch",
+            shell_quote(commit)
+        )
+    } else {
+        let branch = input
+            .get("branch")
+            .and_then(|v| v.as_str())
+            .unwrap_or("main");
+        format!(
+            "gh run list --branch {} --limit 15 \
+             --json databaseId,name,status,conclusion,headBranch",
+            shell_quote(branch)
+        )
     }
 }
 

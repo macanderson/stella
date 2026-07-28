@@ -198,6 +198,71 @@ impl GitCli {
             }),
         }
     }
+
+    /// [`Self::git_ok`] for output that is PARSED rather than shown: on success
+    /// it yields **stdout alone**.
+    ///
+    /// git writes advice hints and warnings to stderr, and trace lines too when
+    /// `GIT_TRACE` is set anywhere in the environment. The shared runner folds
+    /// stderr into stdout, so any of that chatter lands inside the value the
+    /// caller is about to parse. A branch name is the sharp case: `rev-parse
+    /// --abbrev-ref HEAD` plus one hint becomes a "branch" that git rejects as
+    /// `fatal: invalid refspec` when [`RepoBackend::push`] builds a refspec
+    /// from it. `verify` already moved its own reads to stdout-only for exactly
+    /// this reason; these call sites had not.
+    ///
+    /// The failure arm deliberately keeps the MERGED output: on a nonzero exit
+    /// the explanation is the point, and it is almost always on stderr.
+    async fn git_ok_stdout(
+        root: &Path,
+        action: &'static str,
+        args: &[&str],
+    ) -> Result<String, RepoError> {
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let (code, stdout, stderr) = exec::run_argv_split("git", &owned, root, REPO_TIMEOUT_SECS)
+            .await
+            .map_err(|e| {
+                if e.contains("failed to spawn") {
+                    RepoError::Unavailable(e)
+                } else {
+                    RepoError::Failed { action, detail: e }
+                }
+            })?;
+        if code == 0 {
+            return Ok(stdout);
+        }
+        let mut detail = stdout;
+        if !stderr.is_empty() {
+            if !detail.is_empty() {
+                detail.push('\n');
+            }
+            detail.push_str(&stderr);
+        }
+        Err(RepoError::Failed {
+            action,
+            detail: format!("exit {code}: {}", detail.trim()),
+        })
+    }
+
+    /// [`Self::git_ok_stdout`] for callers that tolerate a nonzero exit and
+    /// branch on the code themselves (no upstream configured, no remote HEAD).
+    async fn git_stdout(
+        root: &Path,
+        action: &'static str,
+        args: &[&str],
+    ) -> Result<(i32, String), RepoError> {
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        exec::run_argv_split("git", &owned, root, REPO_TIMEOUT_SECS)
+            .await
+            .map(|(code, stdout, _stderr)| (code, stdout))
+            .map_err(|e| {
+                if e.contains("failed to spawn") {
+                    RepoError::Unavailable(e)
+                } else {
+                    RepoError::Failed { action, detail: e }
+                }
+            })
+    }
 }
 
 #[async_trait]
@@ -205,7 +270,7 @@ impl RepoBackend for GitCli {
     async fn status(&self, root: &Path) -> Result<RepoStatus, RepoError> {
         let branch = self.current_branch(root).await?;
         // No upstream configured is the common non-error case → None/None.
-        let (ahead, behind) = match Self::git(
+        let (ahead, behind) = match Self::git_stdout(
             root,
             "status",
             &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
@@ -220,7 +285,7 @@ impl RepoBackend for GitCli {
             }
             _ => (None, None),
         };
-        let porcelain = Self::git_ok(root, "status", &["status", "--porcelain"]).await?;
+        let porcelain = Self::git_ok_stdout(root, "status", &["status", "--porcelain"]).await?;
         let mut changed = Vec::new();
         let mut truncated = false;
         for line in porcelain.lines() {
@@ -265,7 +330,7 @@ impl RepoBackend for GitCli {
             stat_args.push("--");
             stat_args.extend(&path_refs);
         }
-        let numstat = Self::git_ok(root, "repo_diff", &stat_args).await?;
+        let numstat = Self::git_ok_stdout(root, "repo_diff", &stat_args).await?;
         // `added\tremoved\tpath` per line; binary changes report `-` in the
         // count columns, which parses to `None`.
         let files = numstat
@@ -292,14 +357,15 @@ impl RepoBackend for GitCli {
     }
 
     async fn current_branch(&self, root: &Path) -> Result<Option<String>, RepoError> {
-        let out = Self::git_ok(root, "status", &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
+        let out =
+            Self::git_ok_stdout(root, "status", &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
         let name = out.trim();
         Ok((name != "HEAD").then(|| name.to_string()))
     }
 
     async fn default_branch(&self, root: &Path) -> Result<Option<String>, RepoError> {
         // Cheap local resolution first (set by clone), then ask the remote.
-        if let (0, out) = Self::git(
+        if let (0, out) = Self::git_stdout(
             root,
             "push",
             &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -310,7 +376,7 @@ impl RepoBackend for GitCli {
             return Ok(Some(name.to_string()));
         }
         if let (0, out) =
-            Self::git(root, "push", &["ls-remote", "--symref", "origin", "HEAD"]).await?
+            Self::git_stdout(root, "push", &["ls-remote", "--symref", "origin", "HEAD"]).await?
         {
             for line in out.lines() {
                 if let Some(rest) = line.strip_prefix("ref: refs/heads/")
@@ -461,6 +527,13 @@ impl Tool for RepoStatusTool {
             },
         }
     }
+
+    // The repo family's git argv joins the `command.started` fence (#804):
+    // each tool reports the primary line of the sequence [`GitCli`] — the
+    // only shipped backend — runs, joined argv-style like `start_process`.
+    async fn command_for_gate(&self, _input: &Value, _root: &Path) -> Option<String> {
+        Some("git status --porcelain".into())
+    }
 }
 
 /// Render a [`RepoDiff`] as a compact per-file summary followed by the raw
@@ -569,6 +642,26 @@ impl Tool for RepoDiffTool {
             },
         }
     }
+
+    // See [`RepoStatusTool::command_for_gate`].
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        let mut line = String::from("git diff --no-color --no-ext-diff --no-textconv");
+        if input
+            .get("staged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            line.push_str(" --staged");
+        }
+        if let Some(paths) = input.get("paths").and_then(|v| v.as_array()) {
+            let named: Vec<&str> = paths.iter().filter_map(|v| v.as_str()).collect();
+            if !named.is_empty() {
+                line.push_str(" -- ");
+                line.push_str(&named.join(" "));
+            }
+        }
+        Some(line)
+    }
 }
 
 /// `repo_commit` — pathspec-explicit commit; see the module doc.
@@ -616,6 +709,18 @@ impl Tool for RepoCommit {
                 message: e.to_string(),
             },
         }
+    }
+
+    // See [`RepoStatusTool::command_for_gate`]. Both mutating steps of the
+    // sequence are shown; a structurally invalid input resolves `None` and
+    // returns the tool's own refusal at execute time, ungated.
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        let message = input.get("message").and_then(|v| v.as_str())?;
+        let paths = required_paths(input, "repo_commit", "commits").ok()?;
+        let joined = paths.join(" ");
+        Some(format!(
+            "git add -- {joined} && git commit -m {message} -- {joined}"
+        ))
     }
 }
 
@@ -705,6 +810,18 @@ impl Tool for RepoPush {
             },
         }
     }
+
+    // See [`RepoStatusTool::command_for_gate`]. Without a named branch the
+    // refspec resolves from the checkout mid-execute; the gate then sees the
+    // line minus the refspec — still enough for a policy denying pushes.
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        Some(match input.get("branch").and_then(|v| v.as_str()) {
+            Some(branch) => {
+                format!("git push --set-upstream origin refs/heads/{branch}:refs/heads/{branch}")
+            }
+            None => "git push --set-upstream origin".to_string(),
+        })
+    }
 }
 
 /// `repo_pull` — fast-forward only; see the module doc.
@@ -731,6 +848,11 @@ impl Tool for RepoPull {
                 message: e.to_string(),
             },
         }
+    }
+
+    // See [`RepoStatusTool::command_for_gate`].
+    async fn command_for_gate(&self, _input: &Value, _root: &Path) -> Option<String> {
+        Some("git pull --ff-only".into())
     }
 }
 
@@ -768,6 +890,12 @@ impl Tool for RepoRollback {
                 message: e.to_string(),
             },
         }
+    }
+
+    // See [`RepoStatusTool::command_for_gate`].
+    async fn command_for_gate(&self, input: &Value, _root: &Path) -> Option<String> {
+        let paths = required_paths(input, "repo_rollback", "restores").ok()?;
+        Some(format!("git checkout HEAD -- {}", paths.join(" ")))
     }
 }
 
@@ -1103,6 +1231,72 @@ mod tests {
             .await
             .unwrap();
         assert!(out.status.success(), "feature/x must exist on the remote");
+    }
+
+    /// git chatter on stderr must not corrupt any value parsed from stdout.
+    ///
+    /// The shared runner merges the two streams, so before `git_ok_stdout` the
+    /// branch read in `current_branch` returned the branch name *plus* whatever
+    /// git had written to stderr. `push` then built a refspec from that and git
+    /// rejected the whole thing:
+    ///
+    /// ```text
+    /// fatal: invalid refspec 'refs/heads/feature/x
+    ///        trace: built-in: git rev-parse --abbrev-ref HEAD'
+    /// ```
+    ///
+    /// `GIT_TRACE` is the reproducible stand-in here; in the wild the same
+    /// corruption comes from advice hints and warnings, which need no
+    /// environment variable at all. This also fixes a real flake — the env var
+    /// is process-global, so any test setting it leaked trace output into every
+    /// other test spawning git concurrently in the same binary.
+    #[tokio::test]
+    async fn git_stderr_chatter_does_not_corrupt_the_pushed_branch() {
+        if !git_available().await {
+            eprintln!("skipping repo_push trace test: `git` not available");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let ws = fixture(dir.path()).await;
+
+        sh_git(&ws, &["checkout", "-q", "-b", "feature/traced"]).await;
+        std::fs::write(ws.join("t.txt"), "t\n").unwrap();
+        RepoCommit(backend())
+            .execute(
+                &serde_json::json!({"message": "traced", "paths": ["t.txt"]}),
+                &ws,
+            )
+            .await;
+
+        let _trace = crate::subprocess_env::test_support::ScopedEnvVar::set("GIT_TRACE", "1");
+        let status = RepoStatusTool(backend()).execute(&Value::Null, &ws).await;
+        let ToolOutput::Ok { content } = status else {
+            panic!("status must survive stderr chatter: {status:?}");
+        };
+        assert!(
+            content.contains("feature/traced"),
+            "the branch name must be read from stdout alone: {content}"
+        );
+
+        let pushed = RepoPush(backend())
+            .execute(&serde_json::json!({}), &ws)
+            .await;
+        assert!(
+            !pushed.is_error(),
+            "a traced push must still resolve a clean refspec: {pushed:?}"
+        );
+
+        let origin = dir.path().join("origin.git");
+        let out = tokio::process::Command::new("git")
+            .args(["rev-parse", "--verify", "refs/heads/feature/traced"])
+            .current_dir(&origin)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "feature/traced must exist on the remote"
+        );
     }
 
     #[tokio::test]

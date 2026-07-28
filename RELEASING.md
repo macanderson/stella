@@ -15,12 +15,16 @@ pipeline today; the source of truth is `.github/workflows/release.yml`.
 [`auto-tag.yml`](.github/workflows/auto-tag.yml) runs after `ci` goes green on
 main and does everything — no manual steps:
 
-1. **Tags** the merge commit with the next version — `+1 patch` by default;
-   start the PR title with `release:minor` / `release:major` for bigger bumps,
-   or include `[skip release]` to land without releasing.
+1. **Tags a release commit**: one commit on top of the CI-validated merge
+   commit carrying the version stamp (`scripts/sync-versions.sh`), reachable
+   only through the tag — so the tagged tree reports its own version and any
+   from-tag source build is correct with no build-time rewriting (#786).
+   `+1 patch` by default; start the PR title with `release:minor` /
+   `release:major` for bigger bumps, or include `[skip release]` to land
+   without releasing.
 2. **Dispatches** `release.yml` at the tag (binaries, GitHub Release, tap
-   formula — the tag's version is stamped into the build, so
-   `stella --version` always matches the tag).
+   formula — the workflow verifies the tagged manifest matches the tag and
+   builds `--locked`).
 3. **Writes the version back to main** so the Cargo manifests stay in sync
    with the newest tag: a `bot/version-sync` PR bumps
    `[workspace.package].version` in `Cargo.toml` (every crate inherits it),

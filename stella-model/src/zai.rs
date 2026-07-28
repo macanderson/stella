@@ -724,16 +724,30 @@ struct ZaiStreamDelta {
     /// which endpoint served it.
     #[serde(default)]
     reasoning: Option<String>,
+    /// `Option` so an explicit `"tool_calls": null` is tolerated. Bare
+    /// `#[serde(default)]` covers a MISSING field only — an explicit null
+    /// fails the whole chunk, which is how a tool call turns into a silent
+    /// no-op (see [`ZaiStreamToolCallDelta`]).
     #[serde(default)]
-    tool_calls: Vec<ZaiStreamToolCallDelta>,
+    tool_calls: Option<Vec<ZaiStreamToolCallDelta>>,
 }
 
 /// GLM 5.2's streamed tool-call shape: fragments keyed by `index`, with
 /// `function.arguments` arriving as a partial JSON string across many
 /// chunks — the exact dialect quirk this adapter exists to prove out.
+///
+/// `index` is optional purely defensively. It was the ONE non-defaulted field
+/// in this whole tree, so a frame that omitted it — or sent it as a string —
+/// failed to deserialize, and the frame was then dropped whole. A dropped
+/// frame carrying tool calls is indistinguishable from a turn that simply had
+/// none, and the driver ends a turn on `tool_calls.is_empty()`: the run would
+/// report a clean, successful completion having executed nothing. Falling back
+/// to the fragment's position in the chunk keeps the sequential-index contract
+/// that `announce_completed_below` relies on.
 #[derive(Deserialize, Debug)]
 struct ZaiStreamToolCallDelta {
-    index: usize,
+    #[serde(default)]
+    index: Option<usize>,
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
@@ -1146,9 +1160,29 @@ async fn aggregate_zai_stream(
                 terminal_seen = true;
                 continue;
             }
-            let parsed: ZaiStreamChunk = match serde_json::from_str(data) {
+            // Two failure modes hide behind one `from_str`, and they must not
+            // share a branch. A frame that is not JSON at all is a keep-alive
+            // or a gateway comment: ignoring it is correct. A frame that IS
+            // valid JSON but does not fit the chunk shape is a dialect
+            // deviation, and swallowing it loses whatever it carried. Since
+            // every field in this tree defaults, an unknown or empty object
+            // still parses — so reaching the error arm means a real type
+            // mismatch on a field that matters, and the likeliest casualty is
+            // `tool_calls`. Dropping that produces a turn with no calls, which
+            // the driver reads as a clean completion: the run reports success
+            // having done nothing. The `error` field above documents this exact
+            // failure happening once already. Fail loudly instead.
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+                continue; // not JSON: keep-alive / ping / gateway comment
+            };
+            let parsed: ZaiStreamChunk = match serde_json::from_value(value) {
                 Ok(v) => v,
-                Err(_) => continue, // tolerate keep-alive/ping frames
+                Err(e) => {
+                    return Err(ProviderError::Malformed(format!(
+                        "{label}: unparseable stream frame ({e}); refusing to \
+                         treat a dropped frame as an empty turn"
+                    )));
+                }
             };
             // A mid-stream error frame aborts the turn with a typed error —
             // never a truncated Ok with the partial text seen so far.
@@ -1202,15 +1236,24 @@ async fn aggregate_zai_stream(
                     }
                     reasoning.push_str(&r);
                 }
-                for tc_delta in choice.delta.tool_calls {
+                for (position, tc_delta) in choice
+                    .delta
+                    .tool_calls
+                    .unwrap_or_default()
+                    .into_iter()
+                    .enumerate()
+                {
+                    // Absent `index` falls back to the fragment's position in
+                    // this chunk — see `ZaiStreamToolCallDelta`.
+                    let index = tc_delta.index.unwrap_or(position);
                     // A delta for index N proves every lower index finished
                     // streaming (the dialect emits calls sequentially) —
                     // the moment those calls can be announced for
                     // speculative execution.
                     if let Some(observer) = observer {
-                        announce_completed_below(observer, &mut tool_calls, tc_delta.index);
+                        announce_completed_below(observer, &mut tool_calls, index);
                     }
-                    let acc = tool_calls.entry(tc_delta.index).or_default();
+                    let acc = tool_calls.entry(index).or_default();
                     if let Some(id) = tc_delta.id {
                         acc.id = id;
                     }
