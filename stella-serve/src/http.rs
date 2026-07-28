@@ -12,12 +12,32 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-/// Cap applied to the request head and to the body, **each** — `read_request`
-/// enforces it per part, so one request may buffer up to twice this in total.
-/// A turn request carries an assembled conversation, so it is larger than the
-/// dashboard's 8 KiB GET cap, but still bounded — a host that needs more is
-/// misusing the endpoint.
-const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+/// Cap on the request head (request line + headers) we will buffer.
+///
+/// Split from [`MAX_BODY_BYTES`] deliberately: a head and a body are abused in
+/// different ways and deserve different ceilings. No legitimate client sends
+/// 64 KiB of headers, so anything past this is a peer trickling header bytes to
+/// hold the connection — the read deadline bounds how long that can last, and
+/// this bounds how much it can cost while it does.
+const MAX_HEAD_BYTES: usize = 64 * 1024;
+
+/// Cap on the request body we will buffer.
+///
+/// A turn request carries an assembled conversation, and a `tool-result` POST
+/// carries one tool's whole output — which `stella-tools` caps at 100 KB per
+/// call — so the old 1 MiB ceiling was roughly ten tool results, close enough
+/// to a real conversation to be reachable by accident. 8 MiB is far past any
+/// legitimate turn while still bounded.
+const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+/// How long a peer has to deliver a complete request head and body.
+///
+/// This bounds the read side only. It is deliberately **not** applied to the SSE
+/// response, which is long-lived by design: a turn streams frames for as long as
+/// the host takes to answer its reverse requests, and a deadline there would kill
+/// healthy turns. Without this, a connection that opens and then says nothing
+/// occupies a task forever, and `server.rs` spawns that task *before* auth.
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One parsed HTTP request.
 pub(crate) struct Request {
