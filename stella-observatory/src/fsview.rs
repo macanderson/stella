@@ -18,6 +18,44 @@ use std::time::UNIX_EPOCH;
 
 use serde_json::{Value, json};
 
+/// Entries read from any one directory before the scan stops.
+///
+/// These directories hold hand-written skills, memories and rule files, so a
+/// real one holds tens. The bound exists because a request from the page
+/// triggers the walk synchronously, and a directory that has grown pathological
+/// (or been pointed somewhere unexpected) should degrade the dashboard rather
+/// than stall it.
+const MAX_DIR_ENTRIES: usize = 512;
+
+/// Bytes read from any one file whose content is only used to build a snippet
+/// or read frontmatter.
+///
+/// Both uses look at the head of the file, so slurping a whole one to render
+/// 200 characters is pure waste — and unbounded waste, on the request path.
+/// The reported `bytes` is deliberately taken from the file's metadata rather
+/// than from what was read, so the number the dashboard shows stays the true
+/// file size.
+const MAX_SNIPPET_READ_BYTES: u64 = 64 * 1024;
+
+/// Read at most [`MAX_SNIPPET_READ_BYTES`] of a file as text.
+///
+/// Truncation can land mid-codepoint; `from_utf8_lossy` resolves that to a
+/// replacement character, which is correct here because every caller is
+/// building a preview rather than parsing.
+fn read_head(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(MAX_SNIPPET_READ_BYTES)
+        .read_to_end(&mut buf)
+        .ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// The file's real size, for display alongside a bounded read.
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
 /// The user-scope stella config dir (`~/.stella`) — `HOME` only, mirroring
 /// `stella_cli::settings::user_settings_path` (the source of truth, kept as a
 /// copy because the observatory deliberately links no `stella-*` crate), so

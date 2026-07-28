@@ -118,11 +118,12 @@ the engine's backoff.
   `GET /v1/turns/{id}/events` gets 409, and the registry entry is removed when a
   stream ends — or when the turn is cancelled. A *live* turn created and never
   streamed keeps its entry and its thread, so `cancel` is how a caller reclaims
-  one it decided not to stream; once such a turn finishes on its own (deadline,
-  budget, completion), it is retained for a late stream only up to a cap
-  (`MAX_COMPLETED_UNSTREAMED_TURNS` in [`src/server.rs`](src/server.rs), 64) —
-  past that the oldest finished-unstreamed turn is evicted and its id answers
-  404, so a host that never streams cannot grow the registry without bound.
+  one it decided not to stream. Once such a turn finishes on its own (deadline,
+  budget, completion) it is retained for a late stream, but it is no longer
+  protected: when the registry is full, finished-unstreamed turns are reclaimed
+  oldest-first to admit a new one, and a reclaimed id answers 404. That is what
+  keeps the 32-turn cap a queue rather than a one-way latch — a host that
+  abandons turns cannot wedge the server into refusing every later create.
 - **`max_steps` from the wire is validated, not trusted.** `0` is a 400 (it would
   produce a zero-iteration turn that aborts with the misleading "reached the step
   cap (0)"), and anything above `MAX_SERVED_STEPS` (10 000, fifty times
@@ -132,13 +133,6 @@ the engine's backoff.
 - **Chunked request bodies are not decoded.** A chunked POST parses as an empty
   body and fails validation with a 400. That is safe rather than a smuggling hole
   only because this layer serves one request per connection and then closes.
-- **The request head and the body are each capped at 1 MiB (per part, not on
-  their sum), and going over either gets no response at all** — `read_request`
-  returns `None` and the connection closes ([`src/http.rs`](src/http.rs)). Two
-  consequences worth sizing for: a turn whose assembled conversation exceeds
-  1 MiB cannot be created, and a `tool-result` carrying an oversized tool
-  output is dropped silently, leaving the engine step it would have answered
-  parked until the turn is torn down.
 - **Requests are capped separately at the head (64 KiB) and the body (8 MiB),
   and going over either one is answered `413`** ([`src/http.rs`](src/http.rs)).
   The head and body caps are split because they are abused differently: no
