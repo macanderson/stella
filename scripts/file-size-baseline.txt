@@ -30,6 +30,6 @@
 1829 stella-tools/src/scripts.rs
 1708 stella-tui/src/deck_render.rs
 4096 stella-tui/src/deck_ui.rs
-1651 stella-tui/src/model.rs
+1664 stella-tui/src/model.rs
 1652 stella-tui/src/views/engine.rs
 1510 stella-tui/src/views/session.rs

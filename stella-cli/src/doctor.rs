@@ -514,10 +514,6 @@ mod tests {
         );
     }
 
-    /// #617 item 5: an old ledger's orphan rows are surfaced, and `--repair`
-    /// leaves them alone — removing them would delete fleet history.
-    #[test]
-
     /// #617's last open sweep: an orphan sidecar is reported without
     /// `--repair` and reaped with it, while a damaged record's sidecar is
     /// never touched.
@@ -546,6 +542,9 @@ mod tests {
         );
     }
 
+    /// #617 item 5: an old ledger's orphan rows are surfaced, and `--repair`
+    /// leaves them alone — removing them would delete fleet history.
+    #[test]
     fn doctor_reports_fleet_ledger_orphans_without_repairing_them() {
         let dir = workspace_with_store();
         let db = dir.path().join(".stella/private/fleet.db");

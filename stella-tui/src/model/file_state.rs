@@ -39,7 +39,19 @@ pub struct FileState {
     pub changes: u32,
     /// How many times this path has been read.
     pub reads: u32,
+    /// The model-wide touch counter's value at this path's most recent touch
+    /// (read or mutation) — the recency key [`MAX_TRACKED_FILES`] eviction
+    /// orders by. Purely event-derived, so replay determinism (L-T1) holds.
+    pub touched_seq: u64,
 }
+
+/// How many distinct paths the model tracks before evicting the
+/// least-recently-touched one. A days-long session sweeping a large tree
+/// would otherwise keep up to nine unbounded diff strings per path forever
+/// (#803). Eviction is user-visible: the files panel title carries the
+/// evicted count, and an evicted path's transcript rows degrade to naming
+/// their change — the same shape `DIFF_HISTORY` eviction already has.
+pub const MAX_TRACKED_FILES: usize = 256;
 
 /// How many past diffs a path keeps so older tool results can still render
 /// the change they made. Deep enough to cover the common "edit the same file
@@ -48,6 +60,24 @@ pub struct FileState {
 /// the change rather than showing it — the pre-existing behaviour, now the
 /// exception instead of the rule.
 pub const DIFF_HISTORY: usize = 8;
+
+/// Remove the least-recently-touched entry — the [`MAX_TRACKED_FILES`]
+/// eviction policy. The victim's diffs go with it, so transcript rows that
+/// pointed at them degrade to naming their change, the same shape
+/// [`DIFF_HISTORY`] aging already has. Returns whether a row was removed
+/// (false only on an empty slice).
+pub(crate) fn evict_lru(files: &mut Vec<FileState>) -> bool {
+    let Some(oldest) = files
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, f)| f.touched_seq)
+        .map(|(i, _)| i)
+    else {
+        return false;
+    };
+    files.remove(oldest);
+    true
+}
 
 impl FileState {
     /// Record a mutation's diff against the `changes` value it produced.
@@ -68,5 +98,45 @@ impl FileState {
             .iter()
             .find(|(s, _)| *s == seq)
             .map(|(_, d)| d.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::SessionModel;
+    use stella_protocol::AgentEvent;
+
+    /// #803: the ledger holds at [`MAX_TRACKED_FILES`], evicting by recency
+    /// (not insertion order) and counting what it dropped so the files panel
+    /// can say so. Driven through the real fold, so replay determinism
+    /// (L-T1) covers the eviction path too.
+    #[test]
+    fn the_file_ledger_evicts_the_least_recently_touched_path_at_the_cap() {
+        let mut model = SessionModel::new();
+        let change = |path: String| AgentEvent::FileChange {
+            path,
+            kind: FileChangeKind::Modified,
+            diff: Some("@@\n+x".into()),
+        };
+        for i in 0..MAX_TRACKED_FILES {
+            model.apply(&change(format!("src/f{i}.rs")));
+        }
+        assert_eq!(model.files.len(), MAX_TRACKED_FILES);
+        assert_eq!(model.files_evicted, 0);
+
+        // Re-touch the oldest path, then admit a new one: the *second*-oldest
+        // is the LRU victim.
+        model.apply(&change("src/f0.rs".into()));
+        model.apply(&change("src/new.rs".into()));
+
+        assert_eq!(model.files.len(), MAX_TRACKED_FILES, "cap holds");
+        assert_eq!(model.files_evicted, 1);
+        assert!(model.files.iter().any(|f| f.path == "src/f0.rs"));
+        assert!(model.files.iter().any(|f| f.path == "src/new.rs"));
+        assert!(
+            !model.files.iter().any(|f| f.path == "src/f1.rs"),
+            "the least-recently-touched path was evicted"
+        );
     }
 }
