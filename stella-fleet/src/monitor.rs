@@ -76,18 +76,27 @@ impl GhOutput {
 pub enum GhError {
     #[error("failed to spawn `gh {command}`: {reason}")]
     Spawn { command: String, reason: String },
+
+    #[error("`gh {command}` did not finish within {timeout_ms}ms")]
+    TimedOut { command: String, timeout_ms: u64 },
 }
+
+/// Per-invocation bound on one `gh` call. Every cap in [`Monitor::watch_ci`]
+/// is measured *between* polls, so without this a `gh` that connects and then
+/// never answers (a proxy black-holing the request) would park the whole
+/// watch inside a single `output()` await where no cap can fire. Three
+/// default poll intervals — generous against real `gh` latency, small next to
+/// the watch caps.
+const GH_INVOCATION_TIMEOUT_MS: u64 = 90_000;
 
 /// The production [`GhCli`]: spawns the real `gh` binary, with the process
 /// environment scrubbed down to the GitHub auth variables `gh` genuinely
-/// needs, and `kill_on_drop` so a cancelled watch does not strand the child.
+/// needs, and `kill_on_drop` so neither a cancelled watch nor an expired
+/// invocation timeout strands the child.
 ///
-/// One gap worth knowing before trusting [`WatchConfig`]'s caps: there is no
-/// per-invocation timeout here. Every cap in [`Monitor::watch_ci`] is measured
-/// *between* polls, so a `gh` that connects and then never answers (a proxy
-/// black-holing the request) parks the whole watch inside a single `output()`
-/// await and no cap can fire. Bounding one invocation belongs here rather than
-/// in the loop, and needs a number chosen against real `gh` latency.
+/// Each invocation is bounded by [`GH_INVOCATION_TIMEOUT_MS`]; expiry
+/// surfaces as [`GhError::TimedOut`], which [`Monitor::watch_ci`]'s
+/// consecutive-poll-error tolerance rides out like any other failed poll.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemGhCli;
 
@@ -95,22 +104,40 @@ pub struct SystemGhCli;
 impl GhCli for SystemGhCli {
     async fn run(&self, args: &[&str]) -> Result<GhOutput, GhError> {
         let mut command = tokio::process::Command::new("gh");
-        command.args(args).kill_on_drop(true);
+        command.args(args);
         stella_tools::subprocess_env::scrub_sensitive_env_except(
             &mut command,
             stella_tools::subprocess_env::GITHUB_CLI_AUTH_ENV_VARS,
         );
-        let output = command.output().await.map_err(|e| GhError::Spawn {
-            command: args.join(" "),
+        run_with_timeout(command, args.join(" "), GH_INVOCATION_TIMEOUT_MS).await
+    }
+}
+
+/// Run a prepared child to completion under a per-invocation bound.
+/// `kill_on_drop` is set here because it is what reaps the child when the
+/// timeout wins the race and the `output()` future is dropped.
+async fn run_with_timeout(
+    mut command: tokio::process::Command,
+    rendered: String,
+    timeout_ms: u64,
+) -> Result<GhOutput, GhError> {
+    command.kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_millis(timeout_ms), command.output())
+        .await
+        .map_err(|_| GhError::TimedOut {
+            command: rendered.clone(),
+            timeout_ms,
+        })?
+        .map_err(|e| GhError::Spawn {
+            command: rendered,
             reason: e.to_string(),
         })?;
-        Ok(GhOutput {
-            success: output.status.success(),
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
-    }
+    Ok(GhOutput {
+        success: output.status.success(),
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
 }
 
 // Sleeper (deferred-wait pacing; injectable so caps are testable)
@@ -159,6 +186,19 @@ pub enum MonitorError {
     /// the `gh` call rather than spliced in.
     #[error("PR reference `{reference}` starts with `-`: gh would parse it as a flag")]
     InvalidPrReference { reference: String },
+}
+
+/// Reject a caller-supplied positional that `gh` would parse as a flag —
+/// shared by [`Monitor::pr_status`] and [`Monitor::poll_ci`], which splice
+/// their reference into the argv (see
+/// [`MonitorError::InvalidPrReference`]).
+fn ensure_positional(reference: &str) -> Result<(), MonitorError> {
+    if reference.starts_with('-') {
+        return Err(MonitorError::InvalidPrReference {
+            reference: reference.to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn ensure_ok(output: GhOutput, command: &str) -> Result<GhOutput, MonitorError> {
@@ -545,11 +585,7 @@ impl<H: GhCli> Monitor<H> {
     /// argv, where gh would parse it as a flag. No production behavior
     /// changes: the fleet's own caller passes a `fleet/`-prefixed branch.
     pub async fn pr_status(&self, pr: &str) -> Result<PrStatus, MonitorError> {
-        if pr.starts_with('-') {
-            return Err(MonitorError::InvalidPrReference {
-                reference: pr.to_string(),
-            });
-        }
+        ensure_positional(pr)?;
         let out = self
             .gh
             .run(&["pr", "view", pr, "--json", "state,isDraft"])
@@ -581,13 +617,12 @@ impl<H: GhCli> Monitor<H> {
     /// One poll of CI runs for a git ref (`gh run list --branch <ref>`),
     /// reconciled live. Reads at most [`WatchConfig::run_list_limit`] runs.
     ///
-    /// Unlike [`pr_status`](Self::pr_status), `git_ref` is **not** screened for
-    /// a leading `-` before it is spliced in after `--branch`, so a ref named
-    /// like a flag is handed to `gh` to parse. The fleet's own caller passes a
-    /// `fleet/`-prefixed branch it minted itself, so nothing in the product
-    /// reaches that; a caller forwarding an untrusted ref should screen it, or
-    /// this should grow the same guard `pr_status` has.
+    /// `git_ref` gets the same screening as [`pr_status`](Self::pr_status): a
+    /// ref starting with `-` is rejected with
+    /// [`MonitorError::InvalidPrReference`] instead of being spliced in after
+    /// `--branch`, where gh would parse it as a flag.
     pub async fn poll_ci(&self, git_ref: &str) -> Result<CiSnapshot, MonitorError> {
+        ensure_positional(git_ref)?;
         let limit = self.config.run_list_limit.to_string();
         let out = self
             .gh
@@ -923,6 +958,43 @@ mod tests {
         assert_eq!(mon.pr_status("fleet/t1-abc").await.unwrap(), PrStatus::Open);
     }
 
+    // per-invocation bound (SystemGhCli's real spawn path)
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_hung_child_is_bounded_by_the_invocation_timeout() {
+        // watch_ci's caps are measured between polls, so one hung child must
+        // not park the watch inside a single `output()` await. Exercises the
+        // real spawn path with `sleep` standing in for a black-holed `gh`.
+        let mut command = tokio::process::Command::new("sleep");
+        command.arg("5");
+        let started = std::time::Instant::now();
+        let err = run_with_timeout(command, "run list".to_string(), 50)
+            .await
+            .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        match err {
+            GhError::TimedOut {
+                command,
+                timeout_ms,
+            } => {
+                assert_eq!(command, "run list");
+                assert_eq!(timeout_ms, 50);
+            }
+            other => panic!("expected TimedOut, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_prompt_child_completes_under_the_invocation_timeout() {
+        let command = tokio::process::Command::new("true");
+        let out = run_with_timeout(command, "true".to_string(), GH_INVOCATION_TIMEOUT_MS)
+            .await
+            .unwrap();
+        assert!(out.success);
+    }
+
     // snapshot classification
 
     #[test]
@@ -1256,6 +1328,29 @@ mod tests {
             calls.lock().unwrap().len() <= 3,
             "the cap, not the error budget, ended the watch"
         );
+    }
+
+    #[tokio::test]
+    async fn poll_ci_rejects_a_ref_gh_would_read_as_a_flag() {
+        // The same screening pr_status has: `--jq` spliced after `--branch`
+        // would change the output shape out from under the JSON parse.
+        let gh = ScriptedGh::new(vec![GhOutput::ok("[]")]);
+        let calls = gh.calls.clone();
+        let mon = Monitor::new(gh, Box::new(ManualClock::new()));
+        for hostile in ["--jq", "-R", "-"] {
+            match mon.poll_ci(hostile).await {
+                Err(MonitorError::InvalidPrReference { reference }) => {
+                    assert_eq!(reference, hostile);
+                }
+                other => panic!("expected a rejected ref for {hostile}, got {other:?}"),
+            }
+        }
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "a hostile ref never reaches gh"
+        );
+        // The branch the fleet actually passes still polls.
+        assert!(mon.poll_ci("fleet/t1-abc").await.is_ok());
     }
 
     #[tokio::test]
