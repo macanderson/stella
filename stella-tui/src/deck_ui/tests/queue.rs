@@ -460,3 +460,28 @@ fn a_refreshed_graph_snapshot_updates_the_view_out_of_band() {
     );
     assert_eq!(ui.graph.as_ref(), Some(&snapshot));
 }
+
+#[test]
+fn a_bang_command_targets_the_lane_the_reader_is_looking_at() {
+    // `deck_shell` resolves a `!` command's output lane with `focused_id`, so
+    // the output lands in the transcript being rendered. With several agents
+    // that must follow the focus, not default to the first row.
+    let model = model_with(&["lead", "worker"]);
+    let mut ui = ready_ui();
+    assert_eq!(focused_id(&model, &ui).as_deref(), Some("lead"));
+    ui.focus_agent(1);
+    assert_eq!(
+        focused_id(&model, &ui).as_deref(),
+        Some("worker"),
+        "`! pwd` answers in the transcript the user is reading"
+    );
+}
+
+#[test]
+fn a_bang_command_has_no_lane_to_borrow_before_any_agent_registers() {
+    // The one case that still needs the synthetic shell lane — output must
+    // not be dropped just because the session has not registered yet.
+    let model = model_with(&[]);
+    let ui = ready_ui();
+    assert_eq!(focused_id(&model, &ui), None);
+}
