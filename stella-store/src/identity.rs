@@ -59,13 +59,73 @@ impl TelemetryScope {
 
 /// `~/.stella/cloud.json` — the stub cloud-account registration. The
 /// `oauth_token` slot is reserved: the future login flow stores its
-/// credential here so registration and auth stay one file.
+/// credential here so registration and auth stay one file. The `drain`
+/// block (#404) configures the hub→cloud syncer and lives here too —
+/// alongside the identity that scopes it, in a file already written 0600
+/// through the sensitive-file path, which is where an intake credential
+/// belongs.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudRegistration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drain: Option<CloudDrainConfig>,
+}
+
+/// Cloud drain (hub → org intake) configuration (#404). Its presence is the
+/// opt-in: no block, no network — an unregistered or unconfigured install
+/// never phones home.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloudDrainConfig {
+    /// The HTTPS org intake endpoint batches are POSTed to.
+    pub url: String,
+    /// Wire-format discriminator, shipped from day one so the OTLP encoder
+    /// (#427) slots in without a breaking config change. `"stella"` (the
+    /// native batch payload) is the default; unknown values fail closed via
+    /// [`Self::wire_format`].
+    #[serde(default = "default_drain_format")]
+    pub format: String,
+    /// Bearer credential for the intake, until the OAuth login (#405) fills
+    /// `oauth_token`. When both exist, `oauth_token` wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// Rows per POST batch.
+    #[serde(default = "default_drain_batch_size")]
+    pub batch_size: usize,
+}
+
+fn default_drain_format() -> String {
+    "stella".to_string()
+}
+
+fn default_drain_batch_size() -> usize {
+    200
+}
+
+/// The wire formats a drain can speak. `Otel` joins with #427.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainFormat {
+    /// The native schema-versioned batch payload (`crate::drain::DrainBatch`).
+    Stella,
+}
+
+impl CloudDrainConfig {
+    /// Resolve the `format` discriminator, failing closed on anything this
+    /// build cannot encode — a typo must stop the drain with a clear error,
+    /// never fall back to a format the operator did not choose.
+    pub fn wire_format(&self) -> std::result::Result<DrainFormat, String> {
+        match self.format.as_str() {
+            "stella" => Ok(DrainFormat::Stella),
+            "otel" => {
+                Err("drain format \"otel\" is not built yet (#427) — use \"stella\"".to_string())
+            }
+            other => Err(format!(
+                "unknown drain format `{other}` — supported: \"stella\" (\"otel\" lands with #427)"
+            )),
+        }
+    }
 }
 
 fn cloud_json_path() -> PathBuf {
@@ -376,6 +436,7 @@ mod tests {
         let reg = CloudRegistration {
             org_id: Some("org-abc".into()),
             oauth_token: Some("tok-secret".into()),
+            drain: None,
         };
         save_cloud_registration_at(&path, &reg).unwrap();
 
@@ -410,6 +471,7 @@ mod tests {
         let reg = CloudRegistration {
             org_id: Some("org-abc".into()),
             oauth_token: Some("tok-secret".into()),
+            drain: None,
         };
         save_cloud_registration_at(&path, &reg).unwrap();
         assert_eq!(

@@ -1136,6 +1136,8 @@ pub struct QuarantinedRow {
 
 // The registration-time scope backfill (#406), in its own module.
 mod backfill;
+// Drain observability: last-attempt record + cursor/backlog readers (#464).
+pub mod drain_state;
 
 #[cfg(test)]
 mod tests {

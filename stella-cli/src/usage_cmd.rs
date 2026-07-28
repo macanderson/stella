@@ -93,6 +93,10 @@ pub enum CloudCmd {
         #[arg(long)]
         workspace_id: Option<String>,
     },
+    /// Drain staged telemetry to the org intake configured in
+    /// ~/.stella/cloud.json's `drain` block. No-op when unregistered or
+    /// unconfigured — nothing is ever sent without an org and an endpoint
+    Sync,
 }
 
 pub fn run_usage(cmd: Option<UsageCmd>) -> Result<(), String> {
@@ -470,6 +474,18 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
             println!("{}   {}", "project:".bold(), scope.project_id);
             if let Some(org) = scope.org_id.as_deref() {
                 print_quarantine(org);
+                // Drain state (#464): is telemetry actually reaching the org?
+                // Best-effort like the quarantine report — status answers
+                // about identity first, an unopenable hub degrades to a note.
+                let registration = identity::cloud_registration();
+                match UsageStore::open_default() {
+                    Ok(hub) => crate::cloud_drain::print_drain_status(
+                        &hub,
+                        org,
+                        registration.drain.is_some(),
+                    ),
+                    Err(e) => println!("drain:       (hub unavailable: {e})"),
+                }
             }
             if scope.org_id.is_none() {
                 println!(
@@ -479,6 +495,53 @@ pub fn run_cloud(cmd: CloudCmd) -> Result<(), String> {
                 );
             }
             Ok(())
+        }
+        CloudCmd::Sync => {
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            let scope = identity::TelemetryScope::resolve(&cwd);
+            let Some(org) = scope.org_id else {
+                println!("(not registered) — `stella cloud register --org <org-id>` first");
+                return Ok(());
+            };
+            let registration = identity::cloud_registration();
+            let Some(drain) = registration.drain.clone() else {
+                println!(
+                    "no drain configured — add a `drain` block to ~/.stella/cloud.json, e.g.\n  \
+                     {{\"org_id\": \"{org}\", \"drain\": {{\"url\": \"https://intake.example/v1/telemetry\"}}}}"
+                );
+                return Ok(());
+            };
+            // The format discriminator fails closed (#404): a typo or a
+            // format this build cannot encode stops the drain with a clear
+            // error instead of guessing. The exhaustive match makes a new
+            // format variant a compile-time decision at this call site.
+            match drain.wire_format()? {
+                stella_store::identity::DrainFormat::Stella => {}
+            }
+            let hub = open_hub()?;
+            let bearer = crate::cloud_drain::resolve_bearer(&registration, &drain);
+            let intake = crate::cloud_drain::HttpCloudIntake::new(&drain.url, bearer)?;
+            let outcome = crate::cloud_drain::drain_once(&hub, &org, &intake, drain.batch_size)?;
+            println!(
+                "delivered {} row(s) in {} batch(es), {} quarantined",
+                outcome.delivered, outcome.batches, outcome.quarantined
+            );
+            match outcome.stopped_by {
+                None => Ok(()),
+                Some(rejection) => Err(format!(
+                    "drain stopped: {}{} — {}",
+                    rejection
+                        .http_status
+                        .map(|s| format!("HTTP {s}: "))
+                        .unwrap_or_default(),
+                    rejection.detail,
+                    if rejection.class.is_retryable() {
+                        "transient; re-run `stella cloud sync`"
+                    } else {
+                        "needs an operator (credentials/endpoint/version)"
+                    }
+                )),
+            }
         }
         CloudCmd::Register { org, workspace_id } => {
             let org = org.trim().to_string();
