@@ -915,14 +915,34 @@ mod tests {
             .unwrap_or(false)
     }
 
+    /// A `git` invocation scoped to `dir` and nothing else.
+    ///
+    /// `current_dir` alone is not enough: `GIT_DIR` overrides it, and git
+    /// *exports* `GIT_DIR` to every hook it runs. So these tests pass when run
+    /// directly and fail from inside the pre-push gate, where every fixture
+    /// command silently retargets the real repository instead of its tempdir.
+    /// That reads as a flaky test; it is a deterministic one being handed a
+    /// different repo.
+    fn git_in(dir: &Path) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new("git");
+        cmd.current_dir(dir);
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_PREFIX",
+        ] {
+            cmd.env_remove(var);
+        }
+        cmd
+    }
+
     /// Fixture plumbing: run git expecting success (unwrap is fine in tests).
     async fn sh_git(dir: &Path, args: &[&str]) {
-        let out = tokio::process::Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .await
-            .unwrap();
+        let out = git_in(dir).args(args).output().await.unwrap();
         assert!(
             out.status.success(),
             "git {:?} failed: {}",
@@ -1224,9 +1244,8 @@ mod tests {
             .await;
         assert!(!pushed.is_error(), "{pushed:?}");
         let origin = dir.path().join("origin.git");
-        let out = tokio::process::Command::new("git")
+        let out = git_in(&origin)
             .args(["rev-parse", "--verify", "refs/heads/feature/x"])
-            .current_dir(&origin)
             .output()
             .await
             .unwrap();
@@ -1287,9 +1306,8 @@ mod tests {
         );
 
         let origin = dir.path().join("origin.git");
-        let out = tokio::process::Command::new("git")
+        let out = git_in(&origin)
             .args(["rev-parse", "--verify", "refs/heads/feature/traced"])
-            .current_dir(&origin)
             .output()
             .await
             .unwrap();
