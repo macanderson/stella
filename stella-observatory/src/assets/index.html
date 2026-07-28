@@ -507,6 +507,19 @@ footer b{color:var(--text-2)}
 "use strict";
 /* ── helpers ─────────────────────────────────────────────────────────── */
 const $ = (id) => document.getElementById(id);
+/* The one HTML escaper, and the page's injection invariant (#804 audit):
+   every `${…}` interpolated into an innerHTML template must be either
+   (a) wrapped in esc() — REQUIRED for every string-typed API field, all of
+       which render workspace-influenced text (tool names, file paths,
+       prompts, error text, skill frontmatter, git identifiers);
+   (b) a numeric field — the API layer is typed Rust (serde), so a field
+       typed i64/f64 there cannot carry markup here;
+   (c) a server-authored constant (`&'static str` enums like the hub drill
+       level, palette colors, literal fragments); or
+   (d) a value already fenced by shape — day strings pass the ISO_DAY
+       regex before any chart renders them.
+   Audited over all innerHTML sites 2026-07; keep new sites in one of these
+   four classes or use textContent. */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
   (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtUsd = (v) => v >= 100 ? "$" + v.toFixed(0) : v >= 1 ? "$" + v.toFixed(2) : "$" + (v ?? 0).toFixed(4);
