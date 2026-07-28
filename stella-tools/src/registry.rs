@@ -323,36 +323,32 @@ impl ToolRegistry {
             read_file,
             span_reads.clone(),
         )));
-        if let Some(media) = media_backend {
-            entries.push(match &media_host_context {
-                Some((gate, ids, journal)) => {
-                    Arc::new(crate::media::GenerateImage::with_host_context(
-                        media.image,
-                        gate.clone(),
-                        ids.clone(),
-                        journal.clone(),
-                    )) as Arc<dyn Tool>
-                }
-                None => Arc::new(crate::media::GenerateImage::new(media.image)),
-            });
+        // The launch-posture ruling (#785): the PAID media tools surface only
+        // when an approving host context exists. Without one they would pair
+        // with the deny-by-default gate — registering, being offered to the
+        // model, consuming model calls, and refusing every time. Fail-closed
+        // stays the architecture; a tool that cannot ever succeed is simply
+        // not advertised, the same "no key, no dead schema" posture as
+        // `web_search`. (`GenerateSvg` above is client-side and free, so it
+        // registers regardless.)
+        if let (Some(media), Some((gate, ids, journal))) = (media_backend, &media_host_context) {
+            entries.push(Arc::new(crate::media::GenerateImage::with_host_context(
+                media.image,
+                gate.clone(),
+                ids.clone(),
+                journal.clone(),
+            )) as Arc<dyn Tool>);
             if let Some(video) = media.video {
-                entries.push(match &media_host_context {
-                    Some((gate, ids, journal)) => {
-                        Arc::new(crate::media::GenerateVideo::with_host_context(
-                            video.clone(),
-                            gate.clone(),
-                            ids.clone(),
-                            journal.clone(),
-                        )) as Arc<dyn Tool>
-                    }
-                    None => Arc::new(crate::media::GenerateVideo::new(video.clone())),
-                });
-                entries.push(match &media_host_context {
-                    Some((_, _, journal)) => Arc::new(
-                        crate::media::PollVideo::with_operation_journal(video, journal.clone()),
-                    ) as Arc<dyn Tool>,
-                    None => Arc::new(crate::media::PollVideo::new(video)),
-                });
+                entries.push(Arc::new(crate::media::GenerateVideo::with_host_context(
+                    video.clone(),
+                    gate.clone(),
+                    ids.clone(),
+                    journal.clone(),
+                )) as Arc<dyn Tool>);
+                entries.push(Arc::new(crate::media::PollVideo::with_operation_journal(
+                    video,
+                    journal.clone(),
+                )) as Arc<dyn Tool>);
             }
         }
         if let Some(backend) = issue_backend.filter(|_| !process_free) {
@@ -1877,19 +1873,49 @@ mod tests {
             }
         }
         let provider: Arc<dyn stella_media::MediaProvider> = Arc::new(NullMedia);
-        let names = |backend| {
+        struct FixedIds;
+        impl crate::media::MediaOperationIdSource for FixedIds {
+            fn operation_id(&self) -> crate::media::HostMediaOperation {
+                crate::media::HostMediaOperation {
+                    opaque_id: "op-registry-test".into(),
+                    expires_at: u64::MAX,
+                }
+            }
+        }
+        // A full approving host context: the paid tools register only under
+        // one (#785).
+        let host_options = || RegistryOptions {
+            media_spend_gate: Some(Arc::new(stella_media::DenyMediaSpendGate)),
+            media_operation_ids: Some(Arc::new(FixedIds)),
+            media_operation_journal: Some(Arc::new(
+                stella_media::SqliteMediaOperationJournal::open_in_memory(Default::default())
+                    .unwrap(),
+            )),
+            media_requires_host_approval: true,
+            media_host_data_isolation: Some(crate::media::HostDataIsolation::ProcessFree),
+            ..Default::default()
+        };
+        let names = |backend, options: RegistryOptions| {
             let root = tempfile::tempdir().unwrap();
-            ToolRegistry::with_backends(root.path().to_path_buf(), None, Some(backend))
-                .schemas()
-                .iter()
-                .map(|s| s.name.clone())
-                .collect::<Vec<_>>()
+            ToolRegistry::with_backends_and_options(
+                root.path().to_path_buf(),
+                None,
+                Some(backend),
+                options,
+            )
+            .schemas()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect::<Vec<_>>()
         };
 
-        let with_video = names(crate::media::MediaBackend {
-            image: provider.clone(),
-            video: Some(provider.clone()),
-        });
+        let with_video = names(
+            crate::media::MediaBackend {
+                image: provider.clone(),
+                video: Some(provider.clone()),
+            },
+            host_options(),
+        );
         for expected in ["generate_image", "generate_video", "poll_video"] {
             assert!(
                 with_video.contains(&expected.to_string()),
@@ -1897,10 +1923,13 @@ mod tests {
             );
         }
 
-        let image_only = names(crate::media::MediaBackend {
-            image: provider,
-            video: None,
-        });
+        let image_only = names(
+            crate::media::MediaBackend {
+                image: provider.clone(),
+                video: None,
+            },
+            host_options(),
+        );
         assert!(image_only.contains(&"generate_image".to_string()));
         for absent in ["generate_video", "poll_video"] {
             assert!(
@@ -1908,6 +1937,24 @@ mod tests {
                 "{absent} must be absent without a video adapter"
             );
         }
+
+        // The #785 ruling: with credentials but NO approving host context,
+        // the paid tools would deny every call — so none of them surface.
+        // The free, client-side generate_svg still does.
+        let deny_only = names(
+            crate::media::MediaBackend {
+                image: provider,
+                video: Some(Arc::new(NullMedia)),
+            },
+            RegistryOptions::default(),
+        );
+        for absent in ["generate_image", "generate_video", "poll_video"] {
+            assert!(
+                !deny_only.contains(&absent.to_string()),
+                "{absent} must not register without a host context"
+            );
+        }
+        assert!(deny_only.contains(&"generate_svg".to_string()));
     }
 
     #[tokio::test]
