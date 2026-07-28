@@ -8103,10 +8103,11 @@ files change, for exactly as long as the session runs.
 
 > **Note**
 >
->   One honest capability gap: `importers` edges resolve for relative
->   TypeScript/JavaScript and Python imports. Rust `use` paths are indexed
->   unresolved — an empty `importers` answer for a Rust file is a limitation,
->   not a stale index.
+>   `importers` edges resolve for relative TypeScript/JavaScript and Python
+>   imports, and for Rust `use`/`mod` paths through the workspace module tree
+>   (file-level edges; external crates stay unresolved). Remaining honest
+>   gaps: Go and Java package imports, and PHP namespace `use`, are indexed
+>   unresolved.
 
 ## Exploration maps: understanding that outlives the turn
 
