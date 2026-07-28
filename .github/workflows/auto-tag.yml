@@ -19,9 +19,14 @@ name: auto-tag
 # being tagged, so a release whose own merge never triggered this job is
 # picked up by the next one instead of being silently downgraded to a patch.
 #
-# The tag is cut on the exact commit CI validated — nothing is force-pushed to
-# main. release.yml injects the tag's version into the build so
-# `stella --version` is correct regardless of what Cargo.toml says at the tag.
+# The tag points at a RELEASE COMMIT: one commit on top of the exact commit
+# CI validated, containing only the version stamp (scripts/sync-versions.sh —
+# manifests, lockfile, formula, changelog roll). Nothing is pushed to main;
+# the commit is reachable only through the tag. This is what makes the tagged
+# tree carry its own version (#786): any from-tag source build — release.yml,
+# `cargo install --git … --tag`, Homebrew, a distro packager — reports the
+# right version with no build-time stamping, and release.yml merely verifies
+# the manifest matches the tag instead of rewriting it.
 #
 # AFTER tagging, the released version is written back to main so the Cargo
 # manifests always match the newest release: a `bot/version-sync` branch bumps
@@ -92,7 +97,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Compute next version and create the tag
+      - name: Compute next version
         id: ver
         env:
           GH_TOKEN: ${{ github.token }}
@@ -160,13 +165,38 @@ jobs:
             exit 1
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${tag}" -m "stella ${version}"
-          git push origin "${tag}"
-
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # Needed before the tag now: the release commit syncs Cargo.lock.
+      - name: Install Rust (Cargo.lock sync)
+        if: steps.ver.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - name: Create the release commit and tag it
+        if: steps.ver.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        # One commit on top of the CI-validated head_sha carrying the version
+        # stamp, so the tagged tree reports its own version (#786). It rides
+        # only on the tag — main's copy of the same stamp arrives via the
+        # bot/version-sync PR below.
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          NEW_VERSION="${version}" ./scripts/sync-versions.sh
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock packaging/homebrew/stella.rb
+          if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
+          # Commit even if empty-diff is impossible in practice (the tagged
+          # tree is always one version behind at this point); tolerate a
+          # no-op so a re-run cannot wedge the release.
+          git commit -m "stella ${version}" || echo "nothing to stamp; tagging HEAD as-is."
+          git tag -a "${TAG}" -m "stella ${version}"
+          git push origin "${TAG}"
 
       - name: Trigger the release build for the new tag
         if: steps.ver.outputs.skip != 'true'
@@ -178,10 +208,6 @@ jobs:
 
       # ── Write the released version back to main ──────────────────────────
 
-      - name: Install Rust (Cargo.lock sync)
-        if: steps.ver.outputs.skip != 'true'
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-
       - name: Open the version-sync PR
         if: steps.ver.outputs.skip != 'true'
         env:
@@ -191,7 +217,6 @@ jobs:
           set -euo pipefail
           version="${TAG#v}"
           branch="bot/version-sync"
-          export NEW_VERSION="${version}"
 
           # Base on the current tip of main, not head_sha: if another merge
           # already landed, the bump must apply cleanly on top of it. Rapid
@@ -200,36 +225,9 @@ jobs:
           git fetch origin main
           git checkout -B "${branch}" FETCH_HEAD
 
-          # The one `^version = ` line is [workspace.package].version; every
-          # crate inherits it. perl, not `sed -i "0,/re/"`, for the same
-          # BSD-sed reason as release.yml's stamp step.
-          perl -pi -e 's/^version = "[^"]*"/version = "$ENV{NEW_VERSION}"/' Cargo.toml
-          grep -m1 '^version = ' Cargo.toml | grep -q "\"${version}\"" \
-            || { echo "::error::workspace version bump did not take"; exit 1; }
-
-          # Sync the lockfile's workspace-member entries; registry and git
-          # pins are untouched (cargo only rewrites the member versions).
-          cargo update --workspace
-
-          # Keep the local build-from-source formula pointing at the release.
-          perl -pi -e 's/tag: "v[^"]*"/tag: "v$ENV{NEW_VERSION}"/; s/^  version "[^"]*"/  version "$ENV{NEW_VERSION}"/' packaging/homebrew/stella.rb
-
-          # Roll CHANGELOG.md: whatever contributors put under [Unreleased]
-          # becomes this version's section, and [Unreleased] is left empty for
-          # the next change. Inserting *after* the heading (rather than
-          # renaming it) is what carries the existing bullets down.
-          #
-          # Deliberately tolerant: a missing file or a missing [Unreleased]
-          # heading is skipped, not fatal. This job publishes releases, and a
-          # changelog bookkeeping slip must never be what stops one.
-          if [ -f CHANGELOG.md ] && grep -q '^## \[Unreleased\]' CHANGELOG.md; then
-            RELEASE_DATE="$(date -u +%F)" \
-              perl -pi -e 's/^## \[Unreleased\]$/## [Unreleased]\n\n## [$ENV{NEW_VERSION}] — $ENV{RELEASE_DATE}/' CHANGELOG.md
-            grep -q "^## \[${version}\] " CHANGELOG.md \
-              || echo "::warning::CHANGELOG.md roll did not take for ${version}"
-          else
-            echo "::warning::CHANGELOG.md missing or has no [Unreleased] heading; skipping the roll."
-          fi
+          # The same stamp the tagged release commit carries — one script,
+          # two call sites, no drift (#786).
+          NEW_VERSION="${version}" ./scripts/sync-versions.sh
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

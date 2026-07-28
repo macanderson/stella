@@ -23,22 +23,11 @@ class Stella < Formula
   depends_on "rust" => :build
 
   def install
-    # The tagged tree still carries the PREVIOUS release's version: auto-tag
-    # tags the merge commit first and lands the version-sync manifest bump
-    # afterwards (see RELEASING.md), so building the tag verbatim ships a
-    # binary whose `--version` is one release behind — and fails the test
-    # block below. Mirror release.yml's "Stamp release version" step: rewrite
-    # the single [workspace.package] version line before building. HEAD builds
-    # skip the stamp; main's manifest is already synced.
-    inreplace "Cargo.toml", /^version = ".*"$/, "version = \"#{version}\"" if build.stable?
-
-    # Builds the `stella` binary from the `stella-cli` package and installs it
-    # into the formula prefix. `--locked` (which std_cargo_args would add) is
-    # deliberately absent: the stamp makes the lockfile's workspace-member
-    # entries stale. Registry dependencies stay pinned by the existing
-    # Cargo.lock — cargo rewrites only the workspace entries, the same trade
-    # release.yml makes.
-    system "cargo", "install", "--root", prefix, "--path", "stella-cli"
+    # The tagged tree carries its own version since #786 (auto-tag stamps the
+    # manifests in the release commit the tag points at), so no version
+    # rewrite is needed before building — and `--locked` holds, because the
+    # tagged lockfile is synced to the same version.
+    system "cargo", "install", "--locked", "--root", prefix, "--path", "stella-cli"
   end
 
   test do
