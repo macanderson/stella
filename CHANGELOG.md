@@ -26,6 +26,8 @@ record of *changes*, curated by the person who made them.
 
 ## [Unreleased]
 
+## [0.5.67] — 2026-07-28
+
 ## [0.5.66] — 2026-07-28
 
 ## [0.5.65] — 2026-07-28
