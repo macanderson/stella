@@ -32,6 +32,7 @@ steering and cheaply checked, or weakly steering and hard-blocked.
 | `06-lineage-supersession.toml` | Revision identity without allocated version numbers                                               |
 | `07-agent-projection.md`       | What the model actually receives (~16% of the record), and how a handle closes the feedback loop   |
 | `08-witness.toml`              | Enforceable context ships with a test — bidirectional guard tables, and the mutation check         |
+| `09-effect-witness.toml`       | Did the record actually help? Scored from the diff and from the tool-call log                      |
 
 ## Rules encoded in these examples
 

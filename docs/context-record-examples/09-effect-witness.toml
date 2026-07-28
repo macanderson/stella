@@ -1,0 +1,171 @@
+# Did this record actually help?
+#
+# 08 tests whether a rule is CORRECT — does it block the right things.
+# This file tests whether a record is USEFUL — did it change what the agent did.
+#
+# Each record declares three things:
+#
+#   applies_when — did this record even get a chance to matter this turn?
+#   passes_when  — what does it look like when it worked?
+#   requires     — the change itself has to be good, or nobody gets credit
+#
+# The first one is the important one. Right now "did this record have a chance
+# to matter" is a guess someone has to make. Written as a check over the diff or
+# the call log, it is just a query — which means a narrow record stops losing
+# points on every turn that never touched its subject.
+#
+# Two things get checked, because an agent's turn produces two kinds of trace:
+#
+#   the diff       — what files changed  (files_touched, git)
+#   the call log   — what the agent did  (tool_calls: name + args_json + ok
+#                                         + duration_ms, one row per call)
+#
+# The call log is what makes it possible to score a record whose whole value is
+# stopping a wasted turn. Nothing shows up in the diff when the agent DOESN'T
+# waste 30 seconds on localhost, but there is a very visible missing row.
+
+schema = "context-effect/v0.1"
+set_id = "acme.web"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A. Scored from the diff
+#
+# "Contracts live in capabilities/contracts/" — if it worked, a contract file
+# shows up in the right place.
+# ─────────────────────────────────────────────────────────────────────────────
+[[record]]
+lineage_id = "ctx.acme.web.capability-contract-location"
+statement  = "Capability contract files are stored in the capabilities/contracts/ directory."
+
+  [record.effect]
+  source       = "diff"
+  applies_when = { diff_touches = ["capabilities/**"] }
+  passes_when  = { diff_adds = ["capabilities/contracts/*.yaml"] }
+  requires     = "pr_witness_passes"
+  note = "No credit if the PR's own test fails. Steering someone neatly into a broken change is not help."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B. Scored from the call log — the wasted turn that didn't happen
+#
+# This is the one I said couldn't be tested. It can. The evidence is a row that
+# is not in tool_calls.
+# ─────────────────────────────────────────────────────────────────────────────
+[[record]]
+lineage_id = "ctx.acme.web.staging-endpoint"
+statement  = "The staging API is served from https://api.staging.acme.dev."
+
+  [record.effect]
+  source       = "tool_calls"
+  applies_when = { prompt_mentions = ["staging"] }
+  requires     = "turn_succeeded"
+
+    # What a wasted turn looks like. If any of these ran, the record did not land.
+    [record.effect.must_not_call]
+    args_match = ["*localhost*", "*127.0.0.1*", "docker compose up*"]
+
+    # What success looks like: the agent went straight to the right place.
+    [record.effect.must_call]
+    args_match = ["*api.staging.acme.dev*"]
+
+  # Bonus signal, free from the same table: a wrong turn that errored has a
+  # duration and a byte count, so this record's value can be stated in seconds
+  # saved rather than as a vague "helpful".
+  [record.effect.value]
+  measure = "duration_ms of avoided failing calls"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. Looked helpful, wasn't
+#
+# The case worth seeing. The effect check passes — the contract landed in the
+# right directory. But the task itself said where to put it, so the agent would
+# have done that with or without the record.
+#
+# The only way to tell is to run the task again with the record removed. Do that
+# once, when deciding whether to promote it — not every turn.
+# ─────────────────────────────────────────────────────────────────────────────
+[[check]]
+lineage_id = "ctx.acme.web.capability-contract-format"
+kind       = "would_have_done_it_anyway"
+
+  [check.turn]
+  prompt          = "Add a refunds capability. Put its YAML contract in capabilities/contracts/."
+  applies_when    = "met"       # diff touched capabilities/**
+  passes_when     = "met"       # capabilities/contracts/refunds.yaml added
+  requires        = "met"       # PR witness passed
+  naive_verdict   = "helpful"
+
+  [check.without_record]
+  outcome         = "identical — contract still landed in capabilities/contracts/"
+  reason          = "the prompt named the directory; the record added nothing"
+  actual_verdict  = "neutral"
+
+  [check.rule]
+  text = "An effect check that still passes with the record removed proves nothing about that record."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. What the verdicts look like over four turns
+#
+# Note that only two of these needed anyone to judge anything.
+# ─────────────────────────────────────────────────────────────────────────────
+[[turn]]
+id             = "exec_4471"
+prompt         = "Add a refunds capability"
+record         = "ctx.acme.web.capability-contract-location"
+applies_when   = "met"
+passes_when    = "met"
+requires       = "met"
+without_record = "contract landed in src/contracts/ — wrong place"
+verdict        = "helpful"
+why            = "the record changed where the file went; removing it broke that"
+
+[[turn]]
+id             = "exec_4472"
+prompt         = "Fix the failing refund test"
+record         = "ctx.acme.web.capability-contract-location"
+applies_when   = "not met"
+verdict        = "neutral"
+why            = "task never touched capabilities/**; no chance to matter, so no score either way"
+
+[[turn]]
+id             = "exec_4473"
+prompt         = "Add a webhooks capability"
+record         = "ctx.acme.web.capability-contract-location"
+applies_when   = "met"
+passes_when    = "not met"
+verdict        = "not_helpful"
+why            = "contract went to src/webhooks/contract.yaml — the record had its chance and was ignored"
+note           = "This one is reliable on its own. No second run needed: the agent had the record, had the opportunity, and did it wrong."
+
+[[turn]]
+id             = "exec_4474"
+prompt         = "Debug the staging 502s"
+record         = "ctx.acme.web.staging-endpoint"
+applies_when   = "met"
+passes_when    = "met"
+requires       = "met"
+without_record = "agent ran `curl localhost:3000/healthz`, failed, then retried against staging"
+verdict        = "helpful"
+value          = "saved one failed call, 1840ms"
+why            = "the wasted turn is visible in tool_calls when the record is absent and missing when it is present"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. What still can't be scored this way
+#
+# Smaller than it first looked, but not empty.
+# ─────────────────────────────────────────────────────────────────────────────
+[[unscorable]]
+lineage_id = "ctx.acme.web.pr-descriptions"
+reason     = "Changes the wording of a PR description. No file moves, no call is avoided."
+fallback   = "model-graded fixture set, same as 08 section E — evidence, not proof"
+
+[[unscorable]]
+reason     = "Anything whose only effect is that the agent explained something more accurately."
+fallback   = "human review, or accept that it stays neutral forever"
+
+[limits]
+outputs_not_stored = "tool_calls records call arguments but deliberately not results, so a check can ask 'did the agent try this' and not 'what came back'."
