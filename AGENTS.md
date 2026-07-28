@@ -445,3 +445,18 @@ seconds; `cargo test --workspace` rebuilds everything.
   to share `.stella/private/context.db` — they now use separate files
   (`.stella/private/context.db` and `.stella/private/codegraph.db`
   respectively). Don't revert this.
+
+## Demo recordings — what a "demo" of Stella means
+
+A demo video shows **Stella itself working**: the TUI running a real agent
+task — planning turns, fanning out tools, editing files, passing tests on
+something it is building. It is sales/marketing material.
+
+- Footage of *this repo compiling* (`cargo build`, `cargo test`, clippy) is
+  **never** demo content. `scripts/demo-scenario.sh` (the build marathon) is a
+  recorder stress-test for `scripts/record-demo.sh`, nothing more.
+- Stella is BYOK: a real demo needs a provider API key. If none is configured,
+  **stop and ask for one** before recording — do not substitute footage of
+  something else that happens to run without credentials.
+- Before recording anything intended for an audience (demo, docs, social),
+  confirm what the video must *show*, not just what command to run.
