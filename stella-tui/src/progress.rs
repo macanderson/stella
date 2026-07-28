@@ -21,9 +21,11 @@
 //! - The fill rides the brand **sky** gradient (deep sky → sky)
 //!   — the deck's one deliberately warm run, so its sole activity indicator
 //!   is unmistakable against the cool aurora chrome everywhere else.
-//! - **tok/s** is the focused agent's real `tokens_out / elapsed`; it is omitted
-//!   (not guessed) whenever there's nothing real to divide. **ETA** is always
-//!   omitted — the planner exposes no estimate to substantiate one.
+//! - **tok/s** is the focused agent's *live turn* rate — output tokens since
+//!   the turn began over the turn's own elapsed; it is omitted (not guessed)
+//!   whenever there's nothing real to divide, including a running lane with
+//!   no turn clock. **ETA** is always omitted — the planner exposes no
+//!   estimate to substantiate one.
 //! - On **failure** the fill freezes at the stage the run reached and the head
 //!   turns crimson; on **completion** it reads a full success-green track.
 //!
@@ -94,8 +96,8 @@ pub struct ProgressState {
     pub fill: f64,
     /// The percent shown at the right, derived from `fill`.
     pub pct: u8,
-    /// Real tokens/sec of the focused agent, or `None` when there's nothing
-    /// honest to divide.
+    /// Real tokens/sec of the focused agent's live turn, or `None` when
+    /// there's nothing honest to divide.
     pub tok_per_s: Option<u64>,
     /// Whether the shimmer / head-pulse should move this frame.
     pub animate: bool,
@@ -187,10 +189,19 @@ impl ProgressState {
         });
 
         let running = agent.status == AgentStatus::Running;
+        // The LIVE turn's rate: tokens emitted since the turn began over the
+        // turn's own elapsed. Cumulative session tokens over agent lifetime
+        // would decay toward the session average and misreport the run on
+        // screen. A running lane without a turn clock (no `PromptStarted` —
+        // e.g. a worker lane) omits the figure rather than dressing that
+        // average up as a rate.
         let tok_per_s = if running {
-            let elapsed_ms = agent.elapsed_ms(now_ms);
-            (elapsed_ms > 0 && agent.tokens_out > 0)
-                .then(|| agent.tokens_out.saturating_mul(1000) / elapsed_ms)
+            agent.turn_started_ms.and_then(|start| {
+                let elapsed_ms = now_ms.saturating_sub(start);
+                let turn_tokens = agent.tokens_out.saturating_sub(agent.turn_start_tokens_out);
+                (elapsed_ms > 0 && turn_tokens > 0)
+                    .then(|| turn_tokens.saturating_mul(1000) / elapsed_ms)
+            })
         } else {
             None
         };
@@ -629,19 +640,43 @@ mod tests {
     }
 
     #[test]
-    fn tok_per_s_is_real_or_omitted() {
-        // Running with real tokens over real elapsed → a real rate.
+    fn tok_per_s_is_the_live_turns_rate_or_omitted() {
+        // A later turn in a long session: only tokens since ITS PromptStarted
+        // count, over ITS elapsed — dividing the session's cumulative output
+        // by the agent's lifetime would report the average, not the rate.
         let mut m = agent_running(StageKind::Execute);
         if let Some(a) = m.agents.first_mut() {
+            a.tokens_out = 9_000; // prior turns' output
+        }
+        m.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "go".into(),
+        });
+        if let Some(a) = m.agents.first_mut() {
+            a.tokens_out += 500; // this turn's output so far
+        }
+        m.now_ms += 10_000; // 10s into the turn
+        let s = ProgressState::derive(focused(&m), m.now_ms, false);
+        assert_eq!(s.tok_per_s, Some(50), "500 turn tokens over 10 turn secs");
+
+        // No tokens emitted this turn yet → omitted, never guessed.
+        let mut plain = agent_running(StageKind::Execute);
+        plain.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "go".into(),
+        });
+        let s = ProgressState::derive(focused(&plain), plain.now_ms + 1_000, false);
+        assert_eq!(s.tok_per_s, None);
+
+        // Running with tokens but NO turn clock (a lane that never saw
+        // `PromptStarted`) → omitted rather than a lifetime average.
+        let mut clockless = agent_running(StageKind::Execute);
+        if let Some(a) = clockless.agents.first_mut() {
             a.tokens_out = 500;
             a.meta.started_ms = 0;
         }
-        m.now_ms = 10_000; // 10s
-        let s = ProgressState::derive(focused(&m), m.now_ms, false);
-        assert_eq!(s.tok_per_s, Some(50)); // 500 tok / 10 s
-        // No tokens yet → omitted, never guessed.
-        let plain = agent_running(StageKind::Execute);
-        let s = ProgressState::derive(focused(&plain), plain.now_ms, false);
+        clockless.now_ms = 10_000;
+        let s = ProgressState::derive(focused(&clockless), clockless.now_ms, false);
         assert_eq!(s.tok_per_s, None);
     }
 

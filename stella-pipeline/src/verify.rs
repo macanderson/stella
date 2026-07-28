@@ -43,9 +43,14 @@ pub enum FlipState {
     Flipped,
 }
 
-/// What one [`FlipOracle::observe`] call did — surfaced so the pipeline can
-/// tell "this evidence advanced the oracle" from "this was a different
-/// command, ignored" from "a pass with nothing to prove".
+/// What one [`FlipOracle::observe`] call did — "advanced the oracle" vs "a
+/// pass with nothing to prove" vs "a different command, ignored".
+///
+/// The pipeline acts on the oracle's cumulative *state*
+/// ([`FlipOracle::is_flipped`]), never on this per-call value — within one
+/// candidate the observed command is stable, so the distinctions here carry
+/// no decision the state does not already carry. The return value exists so
+/// the transition table below is directly assertable in tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObserveOutcome {
     /// The observation changed or reinforced the tracked command's state.

@@ -169,18 +169,42 @@ struct AnthropicOutputConfig {
 /// which is precisely how this bug reached production.
 fn uses_adaptive_thinking(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
-    // Version markers unique to the ≤ 4.5 / 3.x / 2.x generations. `-4-5`
-    // cleanly separates 4.5 (opus/sonnet/haiku) from 4.6+/…-8; `-4-2025`
-    // catches dated 4.0 snapshots (`claude-*-4-20250514`), which `-4-0` misses.
+    // Compare whole version SEGMENTS, never substrings: a substring marker
+    // like `-4-1` also matches inside `-4-10`/`-4-11`, misreading a two-digit
+    // point release of the modern major as legacy — the failure direction
+    // that 400s (`budget_tokens` sent to a model that requires adaptive).
     //
-    // These are substring matches, not segment matches, so a two-digit point
-    // release inside the same major (`-4-10`, `-4-11`) would alias onto the
-    // `-4-1` marker and be misread as legacy — the failure direction that
-    // 400s (`budget_tokens` sent to a model that requires adaptive). Anthropic
-    // has never shipped one, so the cheap form stands; a segment-aware match
-    // is the fix if they ever do.
-    const LEGACY_MARKERS: &[&str] = &["-4-5", "-4-1", "-4-0", "-4-2025", "claude-3", "claude-2"];
-    !LEGACY_MARKERS.iter().any(|marker| m.contains(marker))
+    // Slug grammar: dash-separated segments where the first numeric segment
+    // is the major generation, the numeric segment after it (if any) the
+    // minor, and an 8-digit segment a dated snapshot, not a version
+    // (`claude-opus-4-20250514` is a 4.0 snapshot). `claude-2.1` spells its
+    // version with a dot, so a segment's major is the part before the first
+    // `.`. Legacy = major ≤ 3, or major 4 with minor ≤ 5 (a missing minor is
+    // 4.0). Anything without a version segment — including models released
+    // after this code was written — stays modern, per the denylist posture
+    // above.
+    let version = |segment: &str| {
+        segment
+            .split('.')
+            .next()
+            .and_then(|s| s.parse::<u64>().ok())
+    };
+    let segments: Vec<&str> = m.split('-').collect();
+    let Some(pos) = segments.iter().position(|s| version(s).is_some()) else {
+        return true;
+    };
+    let major = version(segments[pos]).unwrap_or(0);
+    let minor = segments
+        .get(pos + 1)
+        .and_then(|s| version(s))
+        // Two digits at most: anything longer is a dated snapshot segment.
+        .filter(|&n| n < 100)
+        .unwrap_or(0);
+    match major {
+        0..=3 => false,
+        4 => minor >= 6,
+        _ => true,
+    }
 }
 
 /// Map the engine's effort tiers onto thinking budgets, for the **legacy**
@@ -190,7 +214,11 @@ fn uses_adaptive_thinking(model: &str) -> bool {
 /// typical output caps. `None` defaults to Medium, the same middle-tier default
 /// posture as `openai.rs` ("effort":"medium"). Current models use
 /// [`map_effort`] instead.
-fn thinking_budget_tokens(effort: Option<stella_protocol::ReasoningEffort>) -> u32 {
+///
+/// `pub(crate)` because `bedrock.rs` sends the same `{type:"enabled",
+/// budget_tokens}` shape through Converse's `additionalModelRequestFields
+/// .reasoning_config` — one mapping, not two spellings that drift.
+pub(crate) fn thinking_budget_tokens(effort: Option<stella_protocol::ReasoningEffort>) -> u32 {
     use stella_protocol::ReasoningEffort::*;
     match effort {
         Some(Low) => 2_048,

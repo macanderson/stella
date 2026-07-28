@@ -572,6 +572,13 @@ fn uses_adaptive_thinking_classifies_current_vs_legacy_models() {
         "claude-fable-6",
         "claude-opus-5",
         "some-future-model",
+        // Two-digit point releases of the modern major. A substring marker
+        // (`-4-1`) aliased these onto the legacy 4.1 generation, sending
+        // `budget_tokens` to models that 400 on it — the classification must
+        // compare whole version segments.
+        "claude-opus-4-10",
+        "claude-sonnet-4-11",
+        "claude-opus-4-10-20270101",
     ] {
         assert!(
             uses_adaptive_thinking(model),
@@ -590,6 +597,7 @@ fn uses_adaptive_thinking_classifies_current_vs_legacy_models() {
         "claude-3-5-haiku-20241022",
         "claude-3-opus-20240229",
         "claude-2.1",
+        "claude-2.0",
     ] {
         assert!(
             !uses_adaptive_thinking(model),

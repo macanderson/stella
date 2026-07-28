@@ -1006,7 +1006,7 @@ function renderMcpTab(cfg) {
         <td>${(s.env_keys ?? []).concat(s.header_keys ?? []).map(k => `<span class="chip">${esc(k)}</span>`).join("") || "—"}</td>
       </tr>`).join("") + `</tbody></table>`
     : `<div class="empty">no MCP servers configured in this workspace —<br>
-       <code>stella mcp add &lt;name&gt;</code> installs one from the registry</div>`;
+       <code>stella mcp install &lt;name&gt;</code> installs one from the registry</div>`;
   const traffic = D.mcp ?? [];
   $("mcp-traffic").innerHTML = traffic.length
     ? hbars(traffic.slice(0, 14),

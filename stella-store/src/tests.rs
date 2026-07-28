@@ -354,9 +354,6 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
         )
         .unwrap();
     assert_eq!(store.count("tool_calls").unwrap(), 3);
-    // The histogram powers the "grep a lot, graph_query never" signal.
-    let counts = store.tool_call_name_counts().unwrap();
-    assert_eq!(counts[0], ("grep".to_string(), 2));
 
     store
         .record_execution_reflection(
@@ -501,6 +498,123 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
             .sum::<i64>(),
         2,
         "grep + read_file folded into the cross-project histogram"
+    );
+}
+
+#[test]
+fn materialize_folds_a_reemitted_tool_start_into_one_call() {
+    use stella_protocol::{ToolCall, ToolOutput};
+    let store = Store::in_memory().unwrap();
+    let id = store
+        .begin_execution("deck", "add a feature", "zai", "glm-5.2")
+        .unwrap();
+
+    // The same call_id announced twice: one call, however many times the
+    // stream said so — the result, keyed by call_id alone, must attach to
+    // exactly one row and the call count must not inflate.
+    store
+        .record_event(
+            id,
+            0,
+            &AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c1".into(),
+                    name: "grep".into(),
+                    input: serde_json::json!({"pattern": "first"}),
+                },
+            },
+        )
+        .unwrap();
+    store
+        .record_event(
+            id,
+            1,
+            &AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c1".into(),
+                    name: "grep".into(),
+                    input: serde_json::json!({"pattern": "final"}),
+                },
+            },
+        )
+        .unwrap();
+    store
+        .record_event(
+            id,
+            2,
+            &AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::Ok {
+                    content: "hit\n".into(),
+                },
+                duration_ms: 12,
+                speculated: false,
+            },
+        )
+        .unwrap();
+
+    let n = store.materialize_tool_calls(id).unwrap();
+    assert_eq!(n, 1, "one call_id is one call");
+    assert_eq!(store.count("tool_calls").unwrap(), 1);
+    let (args, ok): (String, i64) = store
+        .lock()
+        .query_row(
+            "SELECT args_json, ok FROM tool_calls WHERE execution_id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        args, r#"{"pattern":"final"}"#,
+        "the last announcement's payload wins (newest-record keep-rule)"
+    );
+    assert_eq!(
+        ok, 1,
+        "the result attached instead of minting a failed twin"
+    );
+}
+
+#[test]
+fn reflection_truncation_flag_requires_the_output_token_limit_marker() {
+    let store = Store::in_memory().unwrap();
+
+    let truncated_of = |message: &str| {
+        let id = store
+            .begin_execution("deck", "p", "zai", "glm-5.2")
+            .unwrap();
+        store
+            .record_event(
+                id,
+                0,
+                &AgentEvent::Error {
+                    message: message.into(),
+                    retryable: false,
+                },
+            )
+            .unwrap();
+        store.finalize_execution_reflection(id).unwrap();
+        store
+            .lock()
+            .query_row(
+                "SELECT truncated FROM execution_reflection WHERE execution_id = ?1",
+                params![id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+
+    // An unrelated failure that merely says "truncated" is not a cut-off turn.
+    assert_eq!(
+        truncated_of("golden `fix-panic` is truncated: the manifest declares 12 events"),
+        0
+    );
+    // The marker every real truncation emitter shares.
+    assert_eq!(
+        truncated_of(
+            "The model reached its output-token limit (900 tokens) before producing \
+             any visible response"
+        ),
+        1
     );
 }
 
@@ -874,7 +988,7 @@ fn v2_migration_rebuilds_files_touched_with_dedupe_and_backfill() {
 }
 
 #[test]
-fn rules_upsert_list_delete_roundtrip() {
+fn rules_upsert_and_list_roundtrip() {
     let store = Store::in_memory().unwrap();
     store
         .upsert_rule("no-force-push", "Never force-push.", "ext:policy")
@@ -896,13 +1010,7 @@ fn rules_upsert_list_delete_roundtrip() {
     assert_eq!(rules[0].rule_id, "a-first", "ordered by rule id");
     assert_eq!(rules[1].source, "ext:policy-v2");
     assert!(rules[1].contents.contains("guard-tool: Bash"));
-
-    assert!(store.delete_rule("a-first").unwrap());
-    assert!(
-        !store.delete_rule("a-first").unwrap(),
-        "a second delete reports no row"
-    );
-    assert_eq!(store.count("rules").unwrap(), 1);
+    assert_eq!(store.count("rules").unwrap(), 2);
 }
 
 #[test]
@@ -983,7 +1091,9 @@ fn skill_usage_records_per_execution_version_rows() {
     // id, so only the first minting call was ever recorded). v16 adds the
     // compiled frame's identity to the receipt header — two nullable columns,
     // not a table, because the frame IS the manifest (ADR 0006 as amended).
-    assert_eq!(SCHEMA_VERSION, 16);
+    // v17 drops the never-wired graph_nodes/graph_edges seam and the
+    // query-less agent_uses_by_agent/reflections_by_kind indexes.
+    assert_eq!(SCHEMA_VERSION, 17);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
@@ -1674,86 +1784,6 @@ fn stale_lock_sweep_releases_old_claims_only() {
         Some("live".to_string()),
         "fresh claims survive the sweep"
     );
-}
-
-#[test]
-fn graph_seam_upserts_nodes_and_edges() {
-    let store = Store::in_memory().unwrap();
-    store
-        .upsert_graph_node("doc:readme", "Document", r#"{"path":"README.md"}"#)
-        .unwrap();
-    store
-        .upsert_graph_node("doc:readme", "Document", r#"{"path":"README.md","v":2}"#)
-        .unwrap();
-    store
-        .insert_graph_edge("doc:readme", "sym:main", "mentions", "{}")
-        .unwrap();
-    assert_eq!(
-        store.count("graph_nodes").unwrap(),
-        1,
-        "upsert, not duplicate"
-    );
-    assert_eq!(store.count("graph_edges").unwrap(), 1);
-}
-
-#[test]
-fn graph_seam_rejects_non_json_properties_and_persists_valid_ones() {
-    let store = Store::in_memory().unwrap();
-
-    // Malformed JSON is refused at the seam by BOTH write methods — the
-    // invariant the JSON-typed DuckDB column used to enforce — so nothing
-    // unparseable lands in the plain SQLite TEXT column.
-    assert!(
-        store
-            .upsert_graph_node("doc:readme", "Document", "not json")
-            .is_err(),
-        "node upsert must reject non-JSON properties"
-    );
-    assert!(
-        store
-            .insert_graph_edge("doc:readme", "sym:main", "mentions", "{oops")
-            .is_err(),
-        "edge insert must reject non-JSON properties"
-    );
-    assert_eq!(
-        store.count("graph_nodes").unwrap(),
-        0,
-        "a rejected node must not be written"
-    );
-    assert_eq!(
-        store.count("graph_edges").unwrap(),
-        0,
-        "a rejected edge must not be written"
-    );
-
-    // Valid JSON — including the empty default and a caller-supplied
-    // object — is accepted and round-trips out of the column intact.
-    store
-        .upsert_graph_node("doc:readme", "Document", r#"{"path":"README.md"}"#)
-        .unwrap();
-    store
-        .insert_graph_edge("doc:readme", "sym:main", "mentions", "{}")
-        .unwrap();
-    assert_eq!(store.count("graph_nodes").unwrap(), 1);
-    assert_eq!(store.count("graph_edges").unwrap(), 1);
-
-    let conn = store.lock();
-    let node_props: String = conn
-        .query_row(
-            "SELECT properties FROM graph_nodes WHERE id = ?",
-            params!["doc:readme"],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(node_props, r#"{"path":"README.md"}"#);
-    let edge_props: String = conn
-        .query_row(
-            "SELECT properties FROM graph_edges WHERE src = ? AND dst = ?",
-            params!["doc:readme", "sym:main"],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(edge_props, "{}");
 }
 
 /// Test-only shorthand: a telemetry row with just the analytics-relevant

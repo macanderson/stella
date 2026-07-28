@@ -178,6 +178,38 @@ async fn injected_delete_prunes_file_and_symbols() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn injected_directory_delete_prunes_everything_under_it() {
+    // A directory removal delivers the DIRECTORY's path, which no language
+    // claims — on the extension-only filter it never entered the pipeline
+    // and every file under it stayed indexed forever. The filter now passes
+    // vanished paths through, and the prune matches by prefix.
+    let mut fx = Live::build(&[
+        ("keep.rs", "pub fn kept() {}\n"),
+        ("gone/a.rs", "pub struct DoomedA;\n"),
+        ("gone/nested/b.rs", "pub fn doomed_b() {}\n"),
+    ]);
+    assert_eq!(fx.graph.file_count().unwrap(), 3);
+
+    let dir = fx.abs("gone");
+    fs::remove_dir_all(&dir).unwrap();
+    assert!(
+        fx.injector.inject(&dir),
+        "a removed directory must pass the watch filter"
+    );
+
+    let (seq, stats) = fx.injector.applied_past(0).await.unwrap();
+    assert_eq!(seq, 1);
+    assert_eq!(stats.files_pruned, 2, "both files under the directory");
+
+    assert_eq!(fx.graph.file_count().unwrap(), 1);
+    assert!(!fx.has_def("DoomedA"));
+    assert!(!fx.has_def("doomed_b"));
+    assert!(fx.has_def("kept"), "siblings outside the directory survive");
+
+    fx.graph.shutdown();
+}
+
+#[tokio::test(start_paused = true)]
 async fn burst_applies_as_one_batch() {
     let mut fx = Live::build(&[("a.rs", "pub fn alpha() {}\n")]);
 

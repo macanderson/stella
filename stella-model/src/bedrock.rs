@@ -130,6 +130,30 @@ struct ConverseRequest {
     inference_config: Option<BedrockInferenceConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_config: Option<BedrockToolConfig>,
+    /// Converse's model-specific passthrough. The one field this adapter
+    /// sends is Claude's extended-thinking switch — see
+    /// [`BedrockAdditionalFields`]. Omitted entirely when reasoning is off,
+    /// so the no-reasoning request body is byte-identical to the
+    /// pre-passthrough shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_model_request_fields: Option<BedrockAdditionalFields>,
+}
+
+/// The `additionalModelRequestFields` payload. Its CONTENTS are the model
+/// vendor's vocabulary, not Converse's camelCase — Claude-on-Bedrock takes
+/// `reasoning_config` with the Anthropic legacy thinking shape
+/// (`{"type":"enabled","budget_tokens":N}`), so these two structs stay
+/// snake_case on the wire.
+#[derive(Serialize, Debug)]
+struct BedrockAdditionalFields {
+    reasoning_config: BedrockReasoningConfig,
+}
+
+#[derive(Serialize, Debug)]
+struct BedrockReasoningConfig {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    budget_tokens: u32,
 }
 
 #[derive(Serialize, Debug)]
@@ -371,9 +395,10 @@ struct BedrockInferenceConfig {
     /// Nucleus sampling from `CompletionRequest.params` — `topP` is the only
     /// sampling override Converse's model-agnostic `inferenceConfig` speaks.
     /// The rest of `GenerationParams` (top_k, penalties, seed, …) would need
-    /// `additionalModelRequestFields`, a model-specific passthrough this
-    /// adapter doesn't have yet; per the never-fail contract those are
-    /// silently dropped rather than guessed at.
+    /// per-model spellings under `additionalModelRequestFields` (which this
+    /// adapter uses only for the reasoning switch, whose Claude spelling is
+    /// documented); per the never-fail contract those are silently dropped
+    /// rather than guessed at.
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
 }
@@ -610,24 +635,55 @@ impl Provider for BedrockProvider {
         }
         // Only `top_p` has a Converse `inferenceConfig` slot — see the field
         // doc on [`BedrockInferenceConfig`] for why the rest of the params
-        // (and the `reasoning` switch, which would ride the same missing
-        // `additionalModelRequestFields` passthrough) are dropped here.
+        // are dropped here.
         let top_p = req.params.and_then(|p| p.top_p);
-        let inference_config =
-            if req.max_output_tokens.is_none() && req.temperature.is_none() && top_p.is_none() {
-                None
-            } else {
-                Some(BedrockInferenceConfig {
-                    max_tokens: req.max_output_tokens,
-                    temperature: req.temperature,
-                    top_p,
-                })
-            };
+        // The reasoning switch rides `additionalModelRequestFields
+        // .reasoning_config` — the Anthropic legacy `{type:"enabled",
+        // budget_tokens}` shape (Converse has no adaptive/effort dialect), so
+        // the effort→budget mapping and the budget↔max_tokens coupling mirror
+        // `anthropic.rs`'s legacy branch exactly: the API requires
+        // `budget < max_tokens`, so an uncapped thinking turn raises the
+        // ceiling to budget + 8192, a caller cap clamps the budget to
+        // `cap - 1024` (never below the 1024 floor), and a cap at or below
+        // the floor leaves NO legal budget — thinking is omitted rather than
+        // sent as a ValidationException. Temperature is likewise omitted
+        // whenever thinking is on (the API rejects it alongside thinking).
+        let reasoning_on = req.reasoning == Some(true);
+        let thinking_budget =
+            reasoning_on.then(|| crate::anthropic::thinking_budget_tokens(req.effort));
+        let max_tokens = match (req.max_output_tokens, thinking_budget) {
+            (Some(cap), _) => Some(cap),
+            (None, Some(budget)) => Some(budget + 8_192),
+            (None, None) => None,
+        };
+        let reasoning_config = thinking_budget.and_then(|budget| {
+            let ceiling = max_tokens.unwrap_or(0);
+            (ceiling > 1024).then(|| BedrockReasoningConfig {
+                kind: "enabled",
+                budget_tokens: budget.min(ceiling - 1024).max(1024),
+            })
+        });
+        let temperature = if reasoning_config.is_some() {
+            None
+        } else {
+            req.temperature
+        };
+        let inference_config = if max_tokens.is_none() && temperature.is_none() && top_p.is_none() {
+            None
+        } else {
+            Some(BedrockInferenceConfig {
+                max_tokens,
+                temperature,
+                top_p,
+            })
+        };
         let body = ConverseRequest {
             system,
             messages,
             inference_config,
             tool_config: to_bedrock_tool_config(&req.tools),
+            additional_model_request_fields: reasoning_config
+                .map(|reasoning_config| BedrockAdditionalFields { reasoning_config }),
         };
         let payload =
             serde_json::to_vec(&body).map_err(|e| ProviderError::Malformed(e.to_string()))?;
@@ -1634,5 +1690,91 @@ mod tests {
         let body = String::from_utf8_lossy(&requests[0].body);
         assert!(!body.contains("inferenceConfig"), "{body}");
         assert!(!body.contains("topP"), "{body}");
+        assert!(!body.contains("additionalModelRequestFields"), "{body}");
+    }
+
+    /// The reasoning switch reaches the wire as `additionalModelRequestFields
+    /// .reasoning_config` in the Anthropic legacy shape, with the same
+    /// effort→budget mapping and budget↔max_tokens coupling as
+    /// `anthropic.rs`'s legacy branch: an uncapped thinking turn raises the
+    /// ceiling to budget + 8192, and temperature is omitted (the API rejects
+    /// it alongside thinking).
+    #[tokio::test]
+    async fn reasoning_true_sends_reasoning_config_and_raises_max_tokens() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+                "usage": {"inputTokens": 1, "outputTokens": 1}
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = test_provider(&server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("think hard")],
+                max_output_tokens: None,
+                temperature: Some(0.3),
+                effort: Some(stella_protocol::ReasoningEffort::High),
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(
+            body.contains(
+                "\"additionalModelRequestFields\":{\"reasoning_config\":\
+                 {\"type\":\"enabled\",\"budget_tokens\":16384}}"
+            ),
+            "{body}"
+        );
+        assert!(
+            body.contains("\"inferenceConfig\":{\"maxTokens\":24576}"),
+            "budget + 8192 headroom, temperature omitted with thinking on: {body}"
+        );
+        assert!(!body.contains("temperature"), "{body}");
+    }
+
+    /// A caller cap at or below the 1024-token thinking floor leaves no legal
+    /// budget (`budget < max_tokens` is an API requirement) — thinking is
+    /// omitted rather than sent as a ValidationException, and the request
+    /// falls back to the plain no-thinking shape (temperature honored).
+    #[tokio::test]
+    async fn a_cap_at_the_thinking_floor_omits_reasoning_config_not_a_400() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+                "usage": {"inputTokens": 1, "outputTokens": 1}
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = test_provider(&server.uri());
+        provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("think hard")],
+                max_output_tokens: Some(1024),
+                temperature: Some(0.0),
+                effort: None,
+                tools: vec![],
+                reasoning: Some(true),
+                params: None,
+            })
+            .await
+            .expect("should succeed");
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(!body.contains("additionalModelRequestFields"), "{body}");
+        assert!(
+            body.contains("\"maxTokens\":1024") && body.contains("\"temperature\":0.0"),
+            "{body}"
+        );
     }
 }

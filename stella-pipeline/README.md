@@ -1,8 +1,9 @@
 # stella-pipeline
 
 The orchestration plane above `stella-core::Engine`. It drives one prompt through the
-staged turn flow — **evaluate → enhance → route → witness → execute → verify → judge →
-revise** — over injected ports, emitting an `AgentEvent` at every stage boundary. This is
+staged turn flow — **evaluate → enhance → route → execute → witness → verify → judge →
+revise** (the witness is authored on demand, after execution, once the warrant has read
+the diff) — over injected ports, emitting an `AgentEvent` at every stage boundary. This is
 the default `stella run` path.
 
 Two boundaries define the crate. First, **no I/O**: it never imports a provider SDK, a
@@ -28,7 +29,7 @@ which owns the port implementations and the `Router` itself. It builds no binary
 | [`src/pipeline.rs`](src/pipeline.rs) | `Pipeline::run` and the whole stage sequence, `PipelineConfig`, `PipelineOutcome`. Open it when you need the *order* things happen in. |
 | [`src/pipeline/witness_stage.rs`](src/pipeline/witness_stage.rs) | The one stage that runs against the candidate's `witness_tools()` rather than the worker's executor: author → one bounded repair → artifact/invocation/identity acceptance. |
 | [`src/pipeline/raw_usage.rs`](src/pipeline/raw_usage.rs), [`src/pipeline/run_error.rs`](src/pipeline/run_error.rs), [`src/pipeline/stage_budget.rs`](src/pipeline/stage_budget.rs) | The metered direct-completion path for roles that bypass the engine (triage, judge, guidance) so their spend still lands in accounting; `PipelineError`/`PipelineRunError`; the budget-abort translation. |
-| [`src/ports.rs`](src/ports.rs) | Every trait the pipeline orchestrates over, plus the no-op defaults (`NoContextRecall`, `NoRepoStructure`, `NoRepoStatus`, `AutoApproveGate`, `AlwaysAbortGate`). |
+| [`src/ports.rs`](src/ports.rs) | Every trait the pipeline orchestrates over, plus the no-op defaults (`NoContextRecall`, `NoRepoStructure`, `NoRepoStatus`, `AlwaysAbortGate`). |
 | [`src/triage.rs`](src/triage.rs) | `TaskClass`, `TaskAssessment`, the response parser, and the deterministic pattern floor. |
 | [`src/plan.rs`](src/plan.rs) | The planner's split context (`build_planner_prompt`) and the JSON-then-numbered-list `parse_plan`. |
 | [`src/scope.rs`](src/scope.rs) | `ScopeThresholds` and the pure `needs_scope_review` / `apply_trim` / `build_proposal`. |
@@ -58,7 +59,7 @@ that is why `SimpleLookup`'s judge-skip self-revokes through the zero-diff guard
 (the `files_touched` / `should_verify` pair in `Pipeline::run_candidate`: a lookup is
 verified after all if `file_changes > 0` or the diff is non-empty). `TaskAssessment` carries `conversational` on its own field rather than as a
 fourth class, because "is this even a task" is a different axis from "how big is it"; a bare
-`hi` takes one plain completion and skips plan → witness → execute → verify entirely.
+`hi` takes one plain completion and skips plan → execute → witness → verify entirely.
 
 **The witness stage** ([`src/witness.rs`](src/witness.rs),
 [`src/pipeline/witness_stage.rs`](src/pipeline/witness_stage.rs)). When the user armed no

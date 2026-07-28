@@ -634,8 +634,11 @@ mod tests {
         .unwrap();
         std::fs::write(
             dot.join("mcp.toml"),
-            "[servers.github]\ntransport = \"stdio\"\ncmd = \"gh-mcp\"\nargs = [\"--stdio\"]\n\
-             [servers.github.env]\nGITHUB_TOKEN = \"ghp_supersecret\"\n",
+            "[servers.github]\ntransport = \"stdio\"\ncmd = \"gh-mcp\"\n\
+             args = [\"--stdio\", \"--token=ghp_argsecret\"]\n\
+             [servers.github.env]\nGITHUB_TOKEN = \"ghp_supersecret\"\n\
+             [servers.search]\ntransport = \"http\"\n\
+             url = \"https://mcp.example/v1?api_key=sk-live-urlsecret\"\n",
         )
         .unwrap();
         std::fs::write(
@@ -806,6 +809,129 @@ mod tests {
         }
     }
 
+    /// The dashboard re-fetches these every 5 s; unbounded full-history
+    /// payloads made every poll cost the whole store. The row-returning
+    /// queries are windowed to the newest rows, while the headline aggregates
+    /// ("runs", spend) stay exact.
+    #[test]
+    fn execution_listing_and_timeline_are_bounded_to_the_newest_rows() {
+        use crate::db::MAX_LISTED_EXECUTIONS;
+        let ws = seeded_workspace();
+        let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+        let extra = MAX_LISTED_EXECUTIONS + 10;
+        conn.execute_batch("BEGIN").unwrap();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO executions
+                       (kind, prompt, provider, model, outcome, cost_usd)
+                     VALUES ('run', 'bulk', 'zai', 'glm-5.2', 'completed', 0.0)",
+                )
+                .unwrap();
+            for _ in 0..extra {
+                stmt.execute([]).unwrap();
+            }
+        }
+        conn.execute_batch("COMMIT").unwrap();
+        let seeded = 2; // seeded_workspace's own executions
+        let newest = (seeded + extra) as i64;
+        let oldest_kept = newest - MAX_LISTED_EXECUTIONS as i64 + 1;
+
+        let v: serde_json::Value =
+            serde_json::from_slice(&respond(ws.path(), "/api/executions").body).unwrap();
+        let rows = v.as_array().unwrap();
+        assert_eq!(rows.len(), MAX_LISTED_EXECUTIONS);
+        assert_eq!(rows[0]["id"], newest, "newest first");
+        assert_eq!(rows.last().unwrap()["id"], oldest_kept);
+
+        let v: serde_json::Value =
+            serde_json::from_slice(&respond(ws.path(), "/api/overview").body).unwrap();
+        let timeline = v["timeline"].as_array().unwrap();
+        assert_eq!(timeline.len(), MAX_LISTED_EXECUTIONS);
+        assert_eq!(timeline[0]["id"], oldest_kept, "chart stays ascending");
+        assert_eq!(timeline.last().unwrap()["id"], newest);
+        assert_eq!(
+            v["runs"], newest,
+            "the headline aggregate counts every run, not just the window"
+        );
+    }
+
+    /// Same bound for the ratings feed: newest first out of the store, served
+    /// ascending for the chart's left-to-right axis.
+    #[test]
+    fn reflection_ratings_are_bounded_to_the_newest_rows() {
+        use crate::db::MAX_LISTED_REFLECTIONS;
+        let ws = seeded_workspace();
+        let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+        let extra = MAX_LISTED_REFLECTIONS + 10;
+        conn.execute_batch("BEGIN").unwrap();
+        {
+            // Ids from 1000 so the seeded reflection (execution 1) is oldest.
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO execution_reflection (execution_id, self_rating)
+                     VALUES (?1, 5)",
+                )
+                .unwrap();
+            for i in 0..extra {
+                stmt.execute([1000 + i as i64]).unwrap();
+            }
+        }
+        conn.execute_batch("COMMIT").unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_slice(&respond(ws.path(), "/api/reflections").body).unwrap();
+        let ratings = v["ratings"].as_array().unwrap();
+        assert_eq!(ratings.len(), MAX_LISTED_REFLECTIONS);
+        let newest = 1000 + extra as i64 - 1;
+        assert_eq!(ratings.last().unwrap()["execution_id"], newest);
+        assert_eq!(
+            ratings[0]["execution_id"],
+            newest - MAX_LISTED_REFLECTIONS as i64 + 1,
+            "the seeded oldest reflection aged out of the window"
+        );
+    }
+
+    /// The tool leaderboard is the hottest query (every poll, highest-
+    /// cardinality table): it aggregates a bounded recent window, so calls
+    /// older than the window stop being rescanned every 5 s.
+    #[test]
+    fn tool_leaderboard_scans_a_bounded_recent_window() {
+        use crate::db::TOOL_CALL_SCAN_WINDOW;
+        let ws = seeded_workspace();
+        let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+        conn.execute_batch("BEGIN").unwrap();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO tool_calls
+                       (execution_id, seq, name, ok, error, bytes_out, duration_ms)
+                     VALUES (1, ?1, ?2, 1, '', 0, 1)",
+                )
+                .unwrap();
+            for i in 0..10_i64 {
+                stmt.execute(rusqlite::params![10 + i, "ancient"]).unwrap();
+            }
+            for i in 0..TOOL_CALL_SCAN_WINDOW as i64 {
+                stmt.execute(rusqlite::params![20 + i, "recent"]).unwrap();
+            }
+        }
+        conn.execute_batch("COMMIT").unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_slice(&respond(ws.path(), "/api/tools").body).unwrap();
+        let rows = v.as_array().unwrap();
+        let recent = rows
+            .iter()
+            .find(|r| r["name"] == "recent")
+            .expect("windowed calls are aggregated");
+        assert_eq!(recent["calls"], TOOL_CALL_SCAN_WINDOW as i64);
+        assert!(
+            rows.iter().all(|r| r["name"] != "ancient"),
+            "calls older than the window are not rescanned every poll"
+        );
+    }
+
     #[test]
     fn activity_rolls_up_runs_tokens_and_tool_calls_by_day() {
         let ws = seeded_workspace();
@@ -974,6 +1100,25 @@ mod tests {
         assert!(
             !body.contains("ghp_supersecret"),
             "env var values must never be served"
+        );
+        // The target field is served verbatim to the browser, so args and URL
+        // query strings — the two places a credential rides along — are out.
+        assert!(
+            !body.contains("ghp_argsecret"),
+            "argument values must never be served"
+        );
+        assert!(
+            body.contains("gh-mcp"),
+            "the command name keeps the row legible"
+        );
+        assert!(body.contains("2 args"), "…as does the argument count");
+        assert!(
+            !body.contains("sk-live-urlsecret"),
+            "URL query strings must never be served"
+        );
+        assert!(
+            body.contains("https://mcp.example/v1"),
+            "scheme://host/path survives for the http row"
         );
     }
 

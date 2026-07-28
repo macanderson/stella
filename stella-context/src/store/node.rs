@@ -269,15 +269,23 @@ pub(crate) fn upsert_node(
         // `recall_tier` updates on touch like the rest of the mutable columns:
         // a lesson rewritten under a corrected kind must land in the band its
         // new kind asks for, not keep the one its first write happened to pick.
+        //
+        // `superseded_at = NULL` on touch is what makes re-learning a
+        // forgotten memory mean something: `insert_memory` already revives the
+        // record row the same way, and a mirror node left tombstoned would
+        // keep the lineage invisible to every candidate reader — a write with
+        // no recallable effect. Writing a node IS the claim that it holds now,
+        // so the tombstone lifts exactly as [`restore_node`] would lift it.
         "INSERT INTO node (public_id, kind, display_name, content, content_hash, uri, properties, recorded_at, recall_tier)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(public_id) DO UPDATE SET
-             display_name = excluded.display_name,
-             content      = excluded.content,
-             content_hash = excluded.content_hash,
-             uri          = excluded.uri,
-             properties   = excluded.properties,
-             recall_tier  = excluded.recall_tier
+             display_name  = excluded.display_name,
+             content       = excluded.content,
+             content_hash  = excluded.content_hash,
+             uri           = excluded.uri,
+             properties    = excluded.properties,
+             recall_tier   = excluded.recall_tier,
+             superseded_at = NULL
          RETURNING id",
         params![
             node.public_id(),

@@ -105,8 +105,10 @@ pub(crate) struct EdgeView {
 /// db concurrently can still mint the same `edg_…` id; `edge.public_id` carries
 /// no UNIQUE constraint, so those rows coexist silently. Nothing reads an edge
 /// by public id today, which is why this is tolerable rather than a bug — a
-/// reader would need the id made collision-proof first (see the audit note on
-/// `insert_edge`).
+/// reader would first need the id made collision-proof: a mint that cannot
+/// collide across processes (random bytes, or a sequence persisted in the db
+/// rather than this static), enforced by a UNIQUE constraint on
+/// `edge.public_id`. Neither exists yet, deliberately.
 static EDGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Insert a fact edge. `supersedes` links to the edge this one replaced (the

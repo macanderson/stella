@@ -13,25 +13,16 @@
 use std::path::PathBuf;
 
 /// Anything that can go wrong opening, indexing, or querying the code graph.
+///
+/// Deliberately narrow: per-file I/O and parse faults are skipped-with-record
+/// inside the indexer (see the module doc), so there is no per-file I/O
+/// variant here — the only filesystem fault that aborts anything is the
+/// root canonicalization ([`GraphError::Root`]).
 #[derive(Debug, thiserror::Error)]
 pub enum GraphError {
     /// A SQLite operation failed (open, migrate, transaction, query).
     #[error("code-graph store error: {0}")]
     Sqlite(#[from] rusqlite::Error),
-
-    /// Filesystem I/O failed, with the path that faulted attached for
-    /// debugging (L-T8: a path turns "cannot reproduce" into a fix).
-    #[error("code-graph i/o error at {path}: {source}")]
-    Io {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    /// Loading a bundled tree-sitter grammar into a `Parser` failed — a
-    /// build/ABI fault, never user input.
-    #[error("failed to load the {lang} grammar: {message}")]
-    Grammar { lang: &'static str, message: String },
 
     /// One of the crate's own compile-time `.scm` queries (L-L2) failed to
     /// compile against its grammar.

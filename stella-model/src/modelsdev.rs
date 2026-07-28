@@ -17,6 +17,7 @@
 //! `stella-cli`, which owns both vocabularies.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -160,53 +161,114 @@ pub fn parse_catalog(body: &str) -> Result<BTreeMap<String, ProviderEntry>, Stri
     Ok(providers)
 }
 
+/// Hard ceiling on the master-list response body. The real document is a
+/// few MB of JSON, so 16 MiB leaves generous headroom — the same value as
+/// `provider_listing`'s `MAX_LISTING_BYTES`, and the same reason: models.dev
+/// is a THIRD party (the one endpoint here that is not the user's own
+/// provider), and a compromised or merely broken origin must not be able to
+/// grow this process until it is OOM-killed.
+const MAX_CATALOG_BYTES: usize = 16 * 1024 * 1024;
+
+/// Wall-clock ceiling on one master-list request, send through last byte.
+/// `http::client`'s bound is per-read, so a slow-but-never-silent body could
+/// otherwise stall `stella models refresh` indefinitely. Same value as
+/// `provider_listing`'s `LISTING_TIMEOUT`.
+const CATALOG_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Fetch the master list from `url` (callers pass [`MODELS_DEV_URL`]; tests
 /// pass a mock server). `etag` is the previously persisted validator —
 /// when the document is unchanged the server answers `304` and this
 /// returns [`FetchOutcome::NotModified`] without transferring the body.
-///
-/// The 200 path buffers the whole document with no size cap and no total
-/// deadline (`http::client`'s bound is per-read, and `parse_catalog` then
-/// builds a second full `serde_json::Value` tree over it). models.dev is a
-/// THIRD party — the one endpoint here that is not the user's own provider —
-/// so a compromised or merely broken origin can grow this process until it
-/// is OOM-killed. Worth a `Content-Length` pre-check and a byte cap before
-/// this is ever moved off an explicit, user-initiated refresh.
 pub async fn fetch_catalog(url: &str, etag: Option<&str>) -> Result<FetchOutcome, String> {
+    fetch_catalog_bounded(url, etag, MAX_CATALOG_BYTES, CATALOG_TIMEOUT).await
+}
+
+/// [`fetch_catalog`] with the bounds as parameters, so tests can exercise
+/// the cap and the deadline without a 16 MiB fixture or a 20-second wait.
+///
+/// The 200 body is accumulated chunk by chunk under `max_bytes` — the same
+/// shape as `provider_listing::get_json_bounded`: an honest `Content-Length`
+/// over the cap costs zero bytes, and the chunk loop catches a missing or
+/// lying one. `deadline` covers the whole request; the per-read bound
+/// `http::client` carries cannot see total elapsed time. Parsing (which
+/// builds a second full `serde_json::Value` tree) happens after the fetch,
+/// outside the deadline — the deadline is about a stalled origin, not CPU.
+async fn fetch_catalog_bounded(
+    url: &str,
+    etag: Option<&str>,
+    max_bytes: usize,
+    deadline: Duration,
+) -> Result<FetchOutcome, String> {
     let client = http::client();
     let mut request = client.get(url).header("Accept", "application/json");
     if let Some(etag) = etag.filter(|e| !e.is_empty()) {
         request = request.header("If-None-Match", etag);
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|e| format!("could not reach models.dev: {e}"))?;
-    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+    let fetch = async {
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("could not reach models.dev: {e}"))?;
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(format!(
+                "models.dev answered HTTP {} — try again later",
+                response.status()
+            ));
+        }
+        let etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let oversized = || {
+            format!(
+                "models.dev master list exceeds the {} MiB response cap — refusing to buffer it",
+                max_bytes / (1024 * 1024)
+            )
+        };
+        if response
+            .content_length()
+            .is_some_and(|len| len > max_bytes as u64)
+        {
+            return Err(oversized());
+        }
+        // Cap the pre-allocation by the declared length so a lying
+        // Content-Length cannot make us reserve max_bytes for a small body.
+        let reserve = response.content_length().unwrap_or(0).min(max_bytes as u64) as usize;
+        let mut bytes: Vec<u8> = Vec::with_capacity(reserve);
+        let mut response = response;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("could not read the models.dev response: {e}"))?
+        {
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(oversized());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(Some((etag, bytes)))
+    };
+    let fetched = tokio::time::timeout(deadline, fetch).await.map_err(|_| {
+        format!(
+            "models.dev did not answer within {}s — try again later",
+            deadline.as_secs()
+        )
+    })??;
+    let Some((etag, bytes)) = fetched else {
         return Ok(FetchOutcome::NotModified);
-    }
-    if !response.status().is_success() {
-        return Err(format!(
-            "models.dev answered HTTP {} — try again later",
-            response.status()
-        ));
-    }
-    let etag = response
-        .headers()
-        .get(reqwest::header::ETAG)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
-    let body = response
-        .text()
-        .await
-        .map_err(|e| format!("could not read the models.dev response: {e}"))?;
+    };
     let payload_hash = {
-        let digest = Sha256::digest(body.as_bytes());
+        let digest = Sha256::digest(&bytes);
         digest
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     };
+    let body = String::from_utf8_lossy(&bytes);
     let providers = parse_catalog(&body)?;
     Ok(FetchOutcome::Fetched(Box::new(FetchedCatalog {
         etag,
@@ -347,5 +409,55 @@ mod tests {
             .await;
         let err = fetch_catalog(&server.uri(), None).await.unwrap_err();
         assert!(err.contains("500"), "error names the status: {err}");
+    }
+
+    /// The byte cap: models.dev is a third party, so an oversized document
+    /// is refused instead of buffered until the process is OOM-killed —
+    /// the same bounded-read contract as `provider_listing`.
+    #[tokio::test]
+    async fn a_body_larger_than_the_cap_is_refused_not_buffered() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(4096)))
+            .mount(&server)
+            .await;
+        let err = fetch_catalog_bounded(&server.uri(), None, 1024, Duration::from_secs(5))
+            .await
+            .expect_err("an oversized body must be refused");
+        assert!(err.contains("models.dev") && err.contains("cap"), "{err}");
+    }
+
+    /// The wall-clock deadline: `http::client`'s per-read bound cannot see
+    /// total elapsed time, so a stalled origin must fail within the
+    /// deadline instead of hanging `stella models refresh`.
+    #[tokio::test]
+    async fn a_fetch_that_stalls_past_the_deadline_errors_instead_of_hanging() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(FIXTURE)
+                    .set_delay(Duration::from_secs(5)),
+            )
+            .mount(&server)
+            .await;
+        let err = fetch_catalog_bounded(
+            &server.uri(),
+            None,
+            MAX_CATALOG_BYTES,
+            Duration::from_millis(100),
+        )
+        .await
+        .expect_err("a stalled fetch must time out");
+        assert!(
+            err.contains("models.dev") && err.contains("did not answer"),
+            "{err}"
+        );
     }
 }

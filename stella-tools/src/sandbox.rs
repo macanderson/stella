@@ -57,7 +57,7 @@
 //! spawning anything; the actual spawn stays in `bash.rs`.
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Sandbox strength requested via `STELLA_BASH_SANDBOX`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +108,12 @@ pub enum SandboxError {
     BwrapMissing { mode: SandboxMode },
     /// Sandbox requested on a platform with no supported backend.
     UnsupportedPlatform { mode: SandboxMode, os: &'static str },
+    /// The workspace root is not valid UTF-8, so it cannot be embedded in a
+    /// `bwrap` argv or an SBPL profile faithfully: lossy conversion
+    /// substitutes U+FFFD, and the substituted path is a DIFFERENT path —
+    /// `bwrap` would fail on a nonexistent bind source, and a Seatbelt
+    /// profile would confine writes to the wrong subtree.
+    NonUtf8WorkspaceRoot { path: PathBuf },
 }
 
 impl fmt::Display for SandboxError {
@@ -132,6 +138,15 @@ impl fmt::Display for SandboxError {
                  ({os}) — supported: macos (sandbox-exec), linux (bwrap). Unset \
                  STELLA_BASH_SANDBOX to run unsandboxed. \
                  Refusing to run the command unsandboxed."
+            ),
+            // `to_string_lossy` is for DISPLAY only — the whole point of this
+            // variant is that the lossy form must never reach a profile.
+            SandboxError::NonUtf8WorkspaceRoot { path } => write!(
+                f,
+                "the workspace root \"{}\" is not valid UTF-8, so a sandbox profile \
+                 cannot name it faithfully (the substituted path would misconfine). \
+                 Refusing to run the command unsandboxed.",
+                path.to_string_lossy()
             ),
         }
     }
@@ -175,6 +190,15 @@ pub fn build_argv(
     bwrap_on_path: bool,
     command: &str,
 ) -> Result<(String, Vec<String>), SandboxError> {
+    if mode != SandboxMode::Off && workspace_root.to_str().is_none() {
+        // Fail closed BEFORE any path is embedded: a lossy conversion would
+        // substitute U+FFFD and both backends would then confine (or fail)
+        // against a path that does not exist. `Off` embeds no path and is
+        // unaffected.
+        return Err(SandboxError::NonUtf8WorkspaceRoot {
+            path: workspace_root.to_path_buf(),
+        });
+    }
     match (mode, os) {
         (SandboxMode::Off, _) => Ok((
             "bash".to_string(),
@@ -237,7 +261,10 @@ pub fn build_argv(
 /// override earlier ones. `Restricted` appends a blanket network denial.
 ///
 /// Only meaningful for `WorkspaceWrite`/`Restricted`; [`build_argv`] never
-/// consults it for `Off`.
+/// consults it for `Off`. `workspace_root` must be valid UTF-8 — [`build_argv`]
+/// rejects a non-UTF-8 root before reaching here
+/// ([`SandboxError::NonUtf8WorkspaceRoot`]), because the lossy embedding below
+/// would otherwise confine writes to a substituted path that does not exist.
 pub fn sbpl_profile(mode: SandboxMode, workspace_root: &Path) -> String {
     // Both symlink (/tmp, /var/…) and resolved (/private/…) forms: Seatbelt
     // matches resolved vnode paths, but keeping both is harmless and covers
@@ -487,6 +514,39 @@ mod tests {
             msg.contains("did NOT run") || msg.contains("Refusing"),
             "{msg}"
         );
+    }
+
+    // -- non-UTF-8 workspace root -------------------------------------------
+
+    /// A non-UTF-8 workspace root must fail closed on every sandboxing
+    /// backend: lossy conversion would substitute U+FFFD, and both backends
+    /// would then act on a path that does not exist (`bwrap` fails on the
+    /// bind source; Seatbelt would confine the wrong subtree).
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_workspace_root_fails_closed_before_any_path_is_embedded() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = PathBuf::from(std::ffi::OsStr::from_bytes(b"/work/sp\xffce"));
+
+        for os in [Os::MacOs, Os::Linux] {
+            let err = build_argv(SandboxMode::WorkspaceWrite, &root, os, true, "true")
+                .expect_err("a non-UTF-8 root must be refused");
+            assert_eq!(
+                err,
+                SandboxError::NonUtf8WorkspaceRoot { path: root.clone() },
+                "{os:?}"
+            );
+            let msg = err.to_string();
+            // The error must name the (lossy-displayed) path and hold the
+            // fail-closed line.
+            assert!(msg.contains("UTF-8"), "{msg}");
+            assert!(msg.contains("/work/sp"), "{msg}");
+            assert!(msg.contains("Refusing"), "{msg}");
+        }
+
+        // `Off` embeds no path at all and keeps working.
+        let (program, _) = build_argv(SandboxMode::Off, &root, Os::Linux, false, "true").unwrap();
+        assert_eq!(program, "bash");
     }
 
     // -- other platforms ----------------------------------------------------

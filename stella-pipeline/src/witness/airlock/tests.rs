@@ -6,8 +6,12 @@ use super::*;
 use crate::ports::TestInvocation;
 
 fn invocation(args: &[&str]) -> TestInvocation {
+    invocation_for("cargo", args)
+}
+
+fn invocation_for(program: &str, args: &[&str]) -> TestInvocation {
     TestInvocation {
-        program: "cargo".to_string(),
+        program: program.to_string(),
         args: args.iter().map(|a| (*a).to_string()).collect(),
     }
 }
@@ -109,6 +113,105 @@ fn a_command_naming_the_sealed_test_tightens_the_grain() {
     assert!(brief.grain < DisclosureGrain::Reproduction);
     assert_eq!(brief.reproduction, None);
     assert!(!brief.message().contains("witness_balance_stays_consistent"));
+}
+
+#[test]
+fn a_package_argument_does_not_seal_the_command() {
+    // `-p <crate>` names the suite, not the test: the command grain exists to
+    // disclose exactly this shape. Over-matching it degraded every ordinary
+    // `cargo test -p crate` failure to bare L0 — dropping even the symptom
+    // sentence, which is safe by construction.
+    let paths: Vec<String> = Vec::new();
+    let inv = invocation(&["test", "-p", "stella-pipeline"]);
+    let failure = sealed(
+        "cargo test -p stella-pipeline",
+        ASSERTION_TAIL,
+        Some(&inv),
+        &paths,
+    );
+
+    let brief = redact(&failure, DisclosureGrain::Reproduction);
+    assert_eq!(brief.grain, DisclosureGrain::Reproduction);
+    assert_eq!(
+        brief.command.as_deref(),
+        Some("cargo test -p stella-pipeline")
+    );
+    assert!(brief.symptom.is_some(), "the safe symptom survives");
+    assert!(brief.reproduction.is_some());
+}
+
+#[test]
+fn a_test_file_path_does_not_seal_the_command() {
+    // A pytest file (with or without a directory) collects a suite; only a
+    // `::node` part names the exact test.
+    let paths: Vec<String> = Vec::new();
+    for (command, args) in [
+        (
+            "pytest tests/test_payment.py -q",
+            ["tests/test_payment.py", "-q"],
+        ),
+        ("pytest test_payment.py -q", ["test_payment.py", "-q"]),
+    ] {
+        let inv = invocation_for("pytest", &args);
+        let failure = sealed(command, ASSERTION_TAIL, Some(&inv), &paths);
+        let brief = redact(&failure, DisclosureGrain::Reproduction);
+        assert_eq!(
+            brief.grain,
+            DisclosureGrain::Reproduction,
+            "a file argument must not seal `{command}`"
+        );
+        assert!(brief.symptom.is_some(), "the safe symptom survives");
+    }
+}
+
+#[test]
+fn a_go_package_path_does_not_seal_but_its_run_filter_does() {
+    let paths: Vec<String> = Vec::new();
+    // Package path only: the suite, disclosable.
+    let suite = invocation_for("go", &["test", "./pkg"]);
+    let failure = sealed("go test ./pkg", ASSERTION_TAIL, Some(&suite), &paths);
+    assert_eq!(
+        redact(&failure, DisclosureGrain::Reproduction).grain,
+        DisclosureGrain::Reproduction
+    );
+
+    // A `-run` filter names the exact test the detector runs — sealed, in
+    // both the space-separated and `=`-joined spellings.
+    for (command, args) in [
+        (
+            "go test ./pkg -run ^TestAuthority$",
+            vec!["test", "./pkg", "-run", "^TestAuthority$"],
+        ),
+        (
+            "go test ./pkg -run=^TestAuthority$",
+            vec!["test", "./pkg", "-run=^TestAuthority$"],
+        ),
+    ] {
+        let inv = invocation_for("go", &args);
+        let failure = sealed(command, ASSERTION_TAIL, Some(&inv), &paths);
+        let brief = redact(&failure, DisclosureGrain::Reproduction);
+        assert!(brief.grain < DisclosureGrain::Reproduction);
+        assert!(!brief.message().contains("TestAuthority"));
+    }
+}
+
+#[test]
+fn a_pytest_node_id_still_seals_the_command() {
+    let paths: Vec<String> = Vec::new();
+    let inv = invocation_for(
+        "pytest",
+        &["tests/test_payment.py::test_refund_rounds_down"],
+    );
+    let failure = sealed(
+        "pytest tests/test_payment.py::test_refund_rounds_down",
+        ASSERTION_TAIL,
+        Some(&inv),
+        &paths,
+    );
+
+    let brief = redact(&failure, DisclosureGrain::Reproduction);
+    assert!(brief.grain < DisclosureGrain::Reproduction);
+    assert!(!brief.message().contains("test_refund_rounds_down"));
 }
 
 #[test]
@@ -225,10 +328,15 @@ fn the_scrubber_catches_a_reflowed_quote() {
     let failure = sealed("cargo test", ASSERTION_TAIL, None, &paths);
     // Same words as the sealed output, rewrapped and recased.
     let reflowed = "ASSERTION `LEFT == RIGHT` FAILED   LEFT: 4200";
-    assert!(matches!(
-        scrub(reflowed, &failure),
-        Err(LeakKind::QuotedOutput(_))
-    ));
+    match scrub(reflowed, &failure) {
+        // The whole quoted run, collapsed: "assertion `left == right` failed
+        // left: 4200" — not the 24-character probe window that detected it.
+        Err(LeakKind::QuotedOutput(span)) => assert_eq!(
+            span, 43,
+            "the reported span is the real quoted run, not the minimum window"
+        ),
+        other => panic!("expected a QuotedOutput leak, got {other:?}"),
+    }
 }
 
 #[test]

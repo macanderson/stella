@@ -40,6 +40,34 @@ fn reflection_opt_out_uses_explicit_truthy_values() {
     }
 }
 
+/// Bare `/rename` and `/color` are reserved names `expand` never claims, so
+/// without a local usage answer they would fall through to a paid model
+/// turn. Regression: the REPL must answer them locally, and must NOT claim
+/// the argument-carrying forms the real handlers own.
+#[test]
+fn bare_rename_and_color_get_a_local_usage_line() {
+    assert_eq!(
+        bare_local_command_usage("/rename"),
+        Some("usage: /rename <name>")
+    );
+    assert_eq!(
+        bare_local_command_usage("/color"),
+        Some("usage: /color <name>")
+    );
+    // Whitespace-only arguments are the bare form too (defensive: the REPL
+    // trims input before dispatch, so these normally arrive pre-collapsed).
+    assert_eq!(
+        bare_local_command_usage("/rename \t "),
+        Some("usage: /rename <name>")
+    );
+    // Argument-carrying forms stay with the real handlers…
+    assert_eq!(bare_local_command_usage("/rename new-name"), None);
+    assert_eq!(bare_local_command_usage("/color amber"), None);
+    // …and everything else is not this seam's business.
+    assert_eq!(bare_local_command_usage("/goal"), None);
+    assert_eq!(bare_local_command_usage("hello"), None);
+}
+
 /// The store write path for `StepUsage`: every token field on the event
 /// — cache writes included — lands in the telemetry row verbatim.
 /// Regression for issue #97, where `cache_write_tokens` was hard-coded

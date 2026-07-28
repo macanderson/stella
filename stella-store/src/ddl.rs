@@ -19,7 +19,7 @@
 /// ([`crate::enterprise_telemetry`]) — they are deliberately absent here, since
 /// the fresh-file probe must answer "has the versioned schema ever been
 /// created?" and those tables are created after it runs.
-pub(crate) const TABLES: [&str; 21] = [
+pub(crate) const TABLES: [&str; 19] = [
     "executions",
     "forgotten",
     "events",
@@ -29,8 +29,6 @@ pub(crate) const TABLES: [&str; 21] = [
     "rules",
     "mcp_usage",
     "file_locks",
-    "graph_nodes",
-    "graph_edges",
     "agent_uses",
     "skill_usage",
     "tool_calls",
@@ -76,22 +74,14 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
 
 /// Tables whose shape has not changed since v0. `IF NOT EXISTS` keeps one
 /// batch usable both for fresh files and for filling gaps in partial legacy
-/// files (a v0 file only holds what its era's code created).
+/// files (a v0 file only holds what its era's code created). The v0-era
+/// `graph_nodes`/`graph_edges` pair left this batch when v17 dropped them
+/// (a seam reserved for a context plane that shipped its own stores
+/// instead — nothing ever wrote or read the tables).
 pub(crate) const UNCHANGED_TABLES: &str = "CREATE TABLE IF NOT EXISTS file_locks (
        path TEXT PRIMARY KEY,
        holder TEXT NOT NULL,
        acquired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-     );
-     CREATE TABLE IF NOT EXISTS graph_nodes (
-       id TEXT PRIMARY KEY,
-       label TEXT NOT NULL,
-       properties TEXT NOT NULL DEFAULT '{}'
-     );
-     CREATE TABLE IF NOT EXISTS graph_edges (
-       src TEXT NOT NULL,
-       dst TEXT NOT NULL,
-       edge_type TEXT NOT NULL,
-       properties TEXT NOT NULL DEFAULT '{}'
      );";
 
 /// `events` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION), parameterized over the table name
@@ -263,16 +253,17 @@ pub(crate) const FORGOTTEN_DDL: &str = "CREATE TABLE IF NOT EXISTS forgotten (
 /// UNIQUE on any key: invoking the same agent-version twice in one execution
 /// is two real events, and the drain-per-execution write path never
 /// double-writes a drained event. `IF NOT EXISTS` keeps the one DDL usable
-/// for both the fresh-file path and the additive v3 → v4 migration.
+/// for both the fresh-file path and the additive v3 → v4 migration. No
+/// secondary index: every reader (the JSON export, the observatory) walks
+/// the whole log; the v4-era `agent_uses_by_agent` index served no query
+/// and was dropped in v17.
 pub(crate) const AGENT_USES_DDL: &str = "CREATE TABLE IF NOT EXISTS agent_uses (
        execution_id INTEGER NOT NULL,
        agent TEXT NOT NULL,
        version INTEGER NOT NULL,
        reason TEXT NOT NULL DEFAULT '',
        ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-     );
-     CREATE INDEX IF NOT EXISTS agent_uses_by_agent
-       ON agent_uses(agent, version, execution_id);";
+     );";
 
 /// `skill_usage` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — per-execution skill-version
 /// invocation telemetry (SKILLS tab), the exact analogue of [`AGENT_USES_DDL`].
@@ -295,8 +286,11 @@ pub(crate) const SKILL_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS skill_usage
 /// house double-write guard (the `events` pattern) — `seq` is the row's index
 /// in an execution's drained batch, so re-persisting the same drained batch is
 /// an error, not a silent double-count. `called_at_ms` is the call time
-/// captured at the tool call (not the drain time). The by-server index is the
-/// access path of [`Store::mcp_usage_stats`](crate::Store::mcp_usage_stats).
+/// captured at the tool call (not the drain time). The by-server index is NOT
+/// [`Store::mcp_usage_stats`](crate::Store::mcp_usage_stats)'s access path (that reader scans the whole log
+/// in `called_at_ms` order and folds in Rust); it serves the observatory's
+/// per-(server, tool) aggregate (`stella-observatory`'s MCP panel, `GROUP BY
+/// server, tool`), which reads this file directly.
 pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
        execution_id INTEGER NOT NULL,
        seq INTEGER NOT NULL,
@@ -309,14 +303,18 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
      CREATE INDEX IF NOT EXISTS mcp_usage_by_server
        ON mcp_usage(server, tool);";
 
-/// `tool_calls` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — one queryable row per tool call
-/// (native, MCP, skill, or agent), normalized from the append-only `events`
-/// stream (`tool_start` + `tool_result`) so the dashboard can query call
-/// histograms without JSON-scanning the event log. Large outputs are NOT
-/// stored here — only shape, timing, and success (`bytes_out` records the
-/// result size, not the result). UNIQUE (execution_id, seq) is the house
-/// double-write guard. The by-name index is the access path for usage
-/// histograms (e.g. "grep called N times, graph_query zero").
+/// `tool_calls` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — one queryable row per tool call,
+/// normalized from the append-only `events` stream (`tool_start` +
+/// `tool_result`) so the dashboard can query call histograms without
+/// JSON-scanning the event log. `surface` is `'native'` or `'mcp'` (derived
+/// from the tool-name prefix — the only surfaces the producer emits; skills
+/// and agents have their own tables), and `reason` is currently always empty
+/// (the event stream carries none — the column waits for a producer). Large
+/// outputs are NOT stored here — only shape, timing, and success
+/// (`bytes_out` records the result size, not the result). UNIQUE
+/// (execution_id, seq) is the house double-write guard. The by-name index is
+/// the access path for usage histograms (e.g. "grep called N times,
+/// graph_query zero").
 pub(crate) const TOOL_CALLS_DDL: &str = "CREATE TABLE IF NOT EXISTS tool_calls (
        execution_id INTEGER NOT NULL,
        seq INTEGER NOT NULL,
@@ -361,7 +359,10 @@ pub(crate) const EXECUTION_REFLECTION_DDL: &str =
 /// `reflections` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the durable, unified home for
 /// lessons and self-critiques (superset of the loose `.stella/private/reflections.jsonl`
 /// and the context.db memory nodes). `execution_id` is NULL for cross-turn
-/// lessons; `domains` is a JSON array of domain tags.
+/// lessons; `domains` is a JSON array of domain tags. No secondary index:
+/// every reader (the JSON export, the observatory's recency feed) walks the
+/// whole table; the v7-era `reflections_by_kind` index served no query and
+/// was dropped in v17.
 pub(crate) const REFLECTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS reflections (
        id INTEGER PRIMARY KEY AUTOINCREMENT,
        execution_id INTEGER,
@@ -369,8 +370,7 @@ pub(crate) const REFLECTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS reflections
        content TEXT NOT NULL,
        domains TEXT NOT NULL DEFAULT '[]',
        occurred_at INTEGER NOT NULL
-     );
-     CREATE INDEX IF NOT EXISTS reflections_by_kind ON reflections(kind);";
+     );";
 
 /// `tasks` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the latest task-board snapshot per
 /// session, one row per (session, task id), mirrored from the protocol's

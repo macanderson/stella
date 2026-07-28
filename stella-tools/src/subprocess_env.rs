@@ -53,6 +53,33 @@ use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::sync::{OnceLock, RwLock};
 
+/// Environment variables that re-target git at a specific repository. Tool
+/// subprocesses always run against their explicit working dir; when Stella
+/// itself was spawned from inside a git hook (which exports `GIT_DIR` et
+/// al.), letting them leak through would silently aim every git invocation
+/// at the OUTER repo instead — `git init` in a scratch dir re-initing the
+/// host repo, `verify_done` diffing against the wrong HEAD. Scrub these from
+/// every subprocess that shells out with an explicit dir.
+pub const GIT_REPO_ENV_VARS: [&str; 8] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+];
+
+/// Environment variables that force CLIs to colorize even when piped.
+/// Everything spawned here writes to a captured pipe that is parsed
+/// (`gh … --json` into serde) or fed to the model — never a terminal — so
+/// an inherited `CLICOLOR_FORCE=1` from the user's shell wraps `gh`'s JSON
+/// in ANSI escapes and every parse dies with "expected value at line 1
+/// column 1". Scrubbing only the *force* overrides restores standard
+/// pipe detection; tools stay colorless on pipes, as they'd be anywhere.
+pub const FORCED_COLOR_ENV_VARS: [&str; 3] = ["CLICOLOR_FORCE", "FORCE_COLOR", "GH_FORCE_TTY"];
+
 /// Credential-bearing AWS variables whose names do not all use one of the
 /// generic secret suffixes below. Region variables are intentionally absent:
 /// `AWS_REGION` is task configuration, not a credential.
@@ -272,6 +299,31 @@ pub fn scrub_sensitive_std_env(command: &mut std::process::Command) {
     scrub_sensitive_std_env_except(command, &[]);
 }
 
+/// The COMPLETE environment policy for a spawned tool subprocess: the
+/// credential/ambient-authority scrub plus the two hygiene families every
+/// spawn path must also remove — [`GIT_REPO_ENV_VARS`] (a surrounding git
+/// hook must not re-aim the child's git at the outer repo) and
+/// [`FORCED_COLOR_ENV_VARS`] (output goes to a captured pipe, never a
+/// terminal). One helper so a new spawn path cannot pick up the credential
+/// scrub and silently miss the other two — `bash`, `start_process`, and the
+/// hook runner did exactly that.
+pub fn scrub_spawn_env(command: &mut tokio::process::Command) {
+    scrub_spawn_env_except(command, &[]);
+}
+
+/// [`scrub_spawn_env`] preserving an exact, integration-owned credential
+/// allowlist — same contract (and same restraint) as
+/// [`scrub_sensitive_env_except`].
+pub fn scrub_spawn_env_except(command: &mut tokio::process::Command, preserved_names: &[&str]) {
+    for var in GIT_REPO_ENV_VARS {
+        command.env_remove(var);
+    }
+    for var in FORCED_COLOR_ENV_VARS {
+        command.env_remove(var);
+    }
+    scrub_sensitive_env_except(command, preserved_names);
+}
+
 /// Synchronous counterpart of [`scrub_sensitive_env_except`].
 pub fn scrub_sensitive_std_env_except(
     command: &mut std::process::Command,
@@ -384,6 +436,61 @@ pub(crate) mod test_support {
                 }
             }
         }
+    }
+
+    /// Probe for the two spawn-hygiene families [`super::scrub_spawn_env`]
+    /// removes beyond credentials. `GIT_PREFIX` stands in for the git-repo
+    /// family because git itself only ever *exports* it (never reads it), so
+    /// setting it process-wide cannot break a concurrently running test that
+    /// spawns git without a scrub.
+    pub const SPAWN_HYGIENE_PROBE_COMMAND: &str =
+        "printf '%s|%s' \"${GIT_PREFIX-unset}\" \"${CLICOLOR_FORCE-unset}\"";
+
+    /// Sets one variable from each spawn-hygiene family under the same
+    /// `ENV_LOCK` as [`InheritedCredentialFixture`], restoring on drop.
+    pub struct SpawnHygieneFixture {
+        previous: Vec<(&'static str, Option<OsString>)>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl SpawnHygieneFixture {
+        pub fn install() -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+            let values = [("GIT_PREFIX", "sub/dir/"), ("CLICOLOR_FORCE", "1")];
+            let previous = values
+                .iter()
+                .map(|(name, _)| (*name, std::env::var_os(name)))
+                .collect();
+            for (name, value) in values {
+                // SAFETY: same ENV_LOCK contract as InheritedCredentialFixture.
+                unsafe { std::env::set_var(name, value) };
+            }
+            Self {
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for SpawnHygieneFixture {
+        fn drop(&mut self) {
+            for (name, value) in &self.previous {
+                // SAFETY: the fixture still owns ENV_LOCK during restoration.
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn assert_spawn_hygiene_scrubbed(output: &str) {
+        assert_eq!(
+            output, "unset|unset",
+            "a git-repo or forced-color variable reached the child: {output}"
+        );
     }
 
     /// Sets one process environment variable for the guard's lifetime,

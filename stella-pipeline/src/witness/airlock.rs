@@ -358,11 +358,6 @@ impl FailureBrief {
         lines.join("\n")
     }
 
-    /// Whether this brief disclosed anything beyond the bare fact of failure.
-    pub fn is_bare(&self) -> bool {
-        self.command.is_none() && self.symptom.is_none() && self.reproduction.is_none()
-    }
-
     /// Pointers a reader can follow to check this verdict rather than take it
     /// on faith — the `evidence_refs` that were empty at every construction
     /// site before the airlock existed.
@@ -442,20 +437,78 @@ pub fn scrub(text: &str, sealed: &SealedFailure<'_>) -> Result<(), LeakKind> {
     Ok(())
 }
 
-/// The arguments that name *which* test runs, as opposed to which crate or
-/// runner. These are the strings that make a brief reconstruction-useful.
+/// The arguments that name *which* test runs, as opposed to which crate,
+/// package, directory, or file. These are the strings that make a brief
+/// reconstruction-useful.
+///
+/// Suite-shaped arguments are deliberately NOT selectors: a package name
+/// after `-p`/`--package`, a Go `./pkg` path, a project file, or a pytest
+/// file without a `::node` part says where tests live — which is exactly what
+/// the command grain exists to disclose. Treating them as selectors made
+/// `scrub` reject almost every real command's own text (`cargo test -p
+/// crate`, `pytest tests/test_x.py`), cascading the brief to bare L0 and
+/// dropping the safe symptom sentence with it.
 fn test_selectors(invocation: &TestInvocation) -> Vec<String> {
-    invocation
-        .args
-        .iter()
-        .filter(|arg| {
-            // Flags and package selectors describe the suite; a bare token
-            // (or a pytest node id) names the test itself.
-            !arg.starts_with('-') && arg.len() >= 3
-        })
-        .filter(|arg| !matches!(arg.as_str(), "test" | "run" | "nextest" | "exec"))
-        .cloned()
-        .collect()
+    // Below this, `contains` collides with ordinary English and with the
+    // command's own vocabulary rather than identifying a test.
+    const MIN_SELECTOR_LEN: usize = 3;
+    let mut selectors = Vec::new();
+    let mut skip_package_value = false;
+    for arg in &invocation.args {
+        if skip_package_value {
+            skip_package_value = false;
+            continue;
+        }
+        if matches!(arg.as_str(), "-p" | "--package") {
+            skip_package_value = true;
+            continue;
+        }
+        // `--test=<target>` / `-run=<^Test$>` / `--filter=<FQN=...>`: the
+        // value names the exact test even though the token reads as a flag.
+        if let Some(value) = arg.split_once('=').and_then(|(flag, value)| {
+            matches!(flag, "--test" | "-run" | "--filter").then_some(value)
+        }) {
+            if value.len() >= MIN_SELECTOR_LEN {
+                selectors.push(value.to_string());
+            }
+            continue;
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+        // A pytest node id: the file part is suite-shaped, the `::node` part
+        // names the test.
+        if let Some((_, node)) = arg.split_once("::") {
+            if node.len() >= MIN_SELECTOR_LEN {
+                selectors.push(node.to_string());
+            }
+            continue;
+        }
+        // Path-shaped positionals (a Go package path, a pytest file, a
+        // project file) name the suite; runner subcommands name the runner.
+        if arg.contains('/') || arg.contains('\\') || names_test_file(arg) {
+            continue;
+        }
+        if matches!(arg.as_str(), "test" | "run" | "nextest" | "exec" | "vitest") {
+            continue;
+        }
+        if arg.len() >= MIN_SELECTOR_LEN {
+            selectors.push(arg.clone());
+        }
+    }
+    selectors
+}
+
+/// Whether a bare positional token is a test *file* (suite-shaped) rather
+/// than a test name — `pytest test_x.py` collects a file exactly like
+/// `pytest tests/test_x.py` does, just without the directory.
+fn names_test_file(arg: &str) -> bool {
+    arg.rsplit_once('.').is_some_and(|(_, extension)| {
+        matches!(
+            extension.to_ascii_lowercase().as_str(),
+            "rs" | "py" | "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "go" | "cs" | "csproj"
+        )
+    })
 }
 
 /// The length of a run of sealed output that `text` reproduces verbatim, if
@@ -467,16 +520,28 @@ fn quoted_span(text: &str, sealed_output: &str, minimum: usize) -> Option<usize>
     if haystack.is_empty() || sealed.len() < minimum {
         return None;
     }
-    // Every window of exactly `minimum` is enough to decide: any longer shared
+    // A window of exactly `minimum` is enough to *decide*: any longer shared
     // run necessarily contains one, so finding none rules all of them out.
-    (0..=sealed.len() - minimum)
-        .filter_map(|start| {
-            let end = start + minimum;
-            (sealed.is_char_boundary(start) && sealed.is_char_boundary(end))
-                .then(|| &sealed[start..end])
-        })
-        .find(|window| haystack.contains(window))
-        .map(str::len)
+    // The reported length is the whole shared run, not the probe window —
+    // otherwise every quote reads as exactly `minimum` characters and the
+    // leak's real size never reaches the log.
+    for start in 0..=sealed.len() - minimum {
+        let end = start + minimum;
+        if !sealed.is_char_boundary(start) || !sealed.is_char_boundary(end) {
+            continue;
+        }
+        let window = &sealed[start..end];
+        if let Some(found) = haystack.find(window) {
+            let extra: usize = sealed[end..]
+                .chars()
+                .zip(haystack[found + minimum..].chars())
+                .take_while(|(sealed_ch, quoted_ch)| sealed_ch == quoted_ch)
+                .map(|(sealed_ch, _)| sealed_ch.len_utf8())
+                .sum();
+            return Some(minimum + extra);
+        }
+    }
+    None
 }
 
 /// Collapse every run of whitespace to one space and lowercase, so quoting

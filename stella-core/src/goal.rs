@@ -141,7 +141,15 @@ impl Engine<'_> {
 
         for round in 1..=goal_config.max_rounds {
             budget.begin_turn();
-            match self.run_turn(messages, budget, events).await {
+            // Each round is its own turn for receipt purposes: worker rounds
+            // take even slots above the caller's base and each round's judge
+            // takes the odd slot beside it (see `assess`), so no two model
+            // calls in the goal arc share a `(turn_instance, step, call_seq)`
+            // receipt key within the execution.
+            let round_offset = u32::try_from(2 * round.saturating_sub(1)).unwrap_or(u32::MAX);
+            let round_engine =
+                self.with_turn_instance(self.config.turn_instance.saturating_add(round_offset));
+            match round_engine.run_turn(messages, budget, events).await {
                 TurnOutcome::Completed { .. } => {}
                 TurnOutcome::Aborted { reason, .. } => {
                     return GoalOutcome::Unmet {
@@ -155,7 +163,7 @@ impl Engine<'_> {
             let _ = events.send(AgentEvent::Stage {
                 name: StageKind::Judge,
             });
-            let (verdict, judge_cost) = match self
+            let (verdict, judge_cost) = match round_engine
                 .assess(judge, goal, messages, budget, events, goal_config)
                 .await
             {
@@ -248,6 +256,11 @@ impl Engine<'_> {
                 // A verdict needs a handful of evidence lookups, not a
                 // work session.
                 max_steps: 8,
+                // The odd slot beside this engine's turn: the judge's own
+                // step loop restarts at step 0 with call_seq 0, so without
+                // a turn of its own its manifests would overwrite the
+                // worker receipts they are meant to sit beside.
+                turn_instance: self.config.turn_instance.saturating_add(1),
                 ..self.config.clone()
             },
             self.sleeper,
@@ -463,6 +476,70 @@ mod tests {
             }
             events
         }
+    }
+
+    /// Receipts key on `(execution_id, turn_instance, step, call_seq)` and
+    /// every turn restarts `step` at 0 — so inside one goal execution, each
+    /// worker round and each judge assessment must claim its own
+    /// `turn_instance` (worker even, judge odd) or later manifests silently
+    /// overwrite earlier ones in the store. This pins the slot assignment.
+    #[tokio::test]
+    async fn goal_rounds_and_judges_never_share_a_receipt_key() {
+        let worker = ScriptedProvider::new(vec![
+            Ok(text_result("attempt one", 0.01)),
+            Ok(text_result("attempt two", 0.01)),
+        ]);
+        let judge = ScriptedProvider::new(vec![
+            Ok(text_result(
+                r#"{"met": false, "reasoning": "not yet", "feedback": "keep going"}"#,
+                0.001,
+            )),
+            Ok(text_result(
+                r#"{"met": true, "reasoning": "done", "feedback": ""}"#,
+                0.001,
+            )),
+        ]);
+        let tools = NoTools;
+        let engine = Engine::with_sleeper(&worker, &tools, EngineConfig::default(), &NoSleep);
+        let mut messages = vec![CompletionMessage::system("sys")];
+        let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+        let (tx, rx) = mpsc::unbounded_channel();
+        let drain = collect_events(rx);
+
+        let outcome = engine
+            .run_goal(
+                &judge,
+                "make the tests pass",
+                &mut messages,
+                &mut budget,
+                &tx,
+                &GoalConfig::default(),
+            )
+            .await;
+        drop(tx);
+        assert!(matches!(outcome, GoalOutcome::Met { rounds: 2, .. }));
+
+        let manifests: Vec<(u32, usize, u64)> = drain()
+            .into_iter()
+            .filter_map(|event| match event {
+                AgentEvent::StepManifest {
+                    turn_instance,
+                    step,
+                    call_seq,
+                    ..
+                } => Some((turn_instance, step, call_seq)),
+                _ => None,
+            })
+            .collect();
+        // Two worker rounds + two judge turns, one committed step each:
+        // worker r1 = 0, judge r1 = 1, worker r2 = 2, judge r2 = 3.
+        let turns: Vec<u32> = manifests.iter().map(|(turn, ..)| *turn).collect();
+        assert_eq!(turns, vec![0, 1, 2, 3], "manifests: {manifests:?}");
+        // And therefore no two manifests share a receipt key.
+        let mut keys = manifests.clone();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), manifests.len(), "colliding receipt keys");
     }
 
     #[tokio::test]

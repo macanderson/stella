@@ -6,12 +6,36 @@
 //! deliberately tiny — issues, comments, labels, assignees — not a general
 //! GitHub SDK.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
+
 use serde_json::Value;
 
 use crate::exec;
 
 const DEFAULT_API_BASE: &str = "https://api.github.com";
 const TIMEOUT_SECS: u64 = 60;
+
+/// The one HTTP client every REST-backed issue operation shares (same
+/// pattern as the web family's `shared_client`): a `reqwest::Client` owns a
+/// connection pool and a TLS configuration, and building one per request
+/// paid a fresh handshake for every call in a session that talks to one
+/// host. Nothing per-request is baked in — auth and accept headers ride
+/// each request. Also serves [`crate::issue_ops`]'s Linear GraphQL calls,
+/// which had the same per-request client.
+pub(crate) fn shared_client() -> Result<reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+                .build()
+                .map_err(|e| format!("http client: {e}"))
+        })
+        .clone()
+}
 
 /// A token-authenticated client pinned to one API base. Tests point
 /// `api_base` at a mock server; production uses [`GitHubRest::new`].
@@ -55,11 +79,7 @@ impl GitHubRest {
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value, String> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
-            .build()
-            .map_err(|e| format!("http client: {e}"))?;
+        let client = shared_client()?;
         let mut builder = client
             .request(method.clone(), format!("{}{path}", self.api_base))
             .header("Authorization", format!("Bearer {}", self.token))
@@ -103,7 +123,22 @@ impl GitHubRest {
 /// The `owner/repo` slug of the workspace's `origin` remote — how the
 /// OAuth-connected backend learns which repository's issues to operate on
 /// (the `gh` CLI resolves this the same way).
+///
+/// Memoized per workspace root: a root's origin remote does not change
+/// within a session, and every issue operation was paying a git subprocess
+/// to re-learn it. Failures are never cached — a remote added or repaired
+/// mid-session is picked up on the next call.
 pub async fn repo_slug(root: &std::path::Path) -> Result<String, String> {
+    static SLUGS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
+    let slugs = SLUGS.get_or_init(Mutex::default);
+    if let Some(slug) = slugs
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(root)
+        .cloned()
+    {
+        return Ok(slug);
+    }
     let (code, output) = exec::run("git remote get-url origin", root, 10).await?;
     if code != 0 {
         return Err(format!(
@@ -111,12 +146,17 @@ pub async fn repo_slug(root: &std::path::Path) -> Result<String, String> {
              failed (exit {code}): {output}"
         ));
     }
-    parse_remote_slug(output.trim()).ok_or_else(|| {
+    let slug = parse_remote_slug(output.trim()).ok_or_else(|| {
         format!(
             "cannot parse an owner/repo slug from remote `{}`",
             output.trim()
         )
-    })
+    })?;
+    slugs
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(root.to_path_buf(), slug.clone());
+    Ok(slug)
 }
 
 /// Extract `owner/repo` from the common remote URL shapes:
@@ -190,5 +230,39 @@ mod tests {
     fn trailing_slash_on_base_is_normalized() {
         let client = GitHubRest::with_base("t", "https://api.example.test///");
         assert_eq!(client.api_base, "https://api.example.test");
+    }
+
+    /// One git subprocess per root, not per operation: after the first
+    /// resolution the slug answers from the memo — proven by removing the
+    /// remote and asking again.
+    #[tokio::test]
+    async fn repo_slug_is_memoized_per_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for args in [
+            vec!["init", "-q"],
+            vec!["remote", "add", "origin", "git@github.com:memo/repo.git"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .args(&args)
+                .current_dir(dir.path())
+                .status()
+                .await
+                .expect("git runs");
+            assert!(status.success(), "git {args:?} failed");
+        }
+        assert_eq!(repo_slug(dir.path()).await.expect("resolves"), "memo/repo");
+
+        let status = tokio::process::Command::new("git")
+            .args(["remote", "remove", "origin"])
+            .current_dir(dir.path())
+            .status()
+            .await
+            .expect("git runs");
+        assert!(status.success());
+        assert_eq!(
+            repo_slug(dir.path()).await.expect("memoized"),
+            "memo/repo",
+            "second resolution must come from the memo, not git"
+        );
     }
 }

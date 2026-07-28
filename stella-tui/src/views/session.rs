@@ -75,6 +75,19 @@ impl FoldPlan {
     }
 }
 
+/// The memo key for the frame-to-frame [`FoldPlan`] cache
+/// (`DeckUi::session_plan`): focused agent, transcript length, cumulative
+/// front-eviction count, and the deck's fold revision.
+///
+/// Together these cover every input the plan reads, so the whole-transcript
+/// walk in [`FoldPlan::build`] runs once per change instead of once per
+/// frame. Appends and front-eviction are the only transcript mutations that
+/// move turn boundaries, finish a turn, or alter a digest — streaming deltas
+/// only coalesce into the tail entry's *text*, which no digest term reads —
+/// and every fold-state mutation bumps `fold_rev` (including the eviction
+/// pass dropping a stale fold set).
+pub type FoldPlanKey = (String, usize, usize, u64);
+
 /// The one line a folded turn renders as.
 ///
 /// It has to answer "can I skip this?" without being unfolded, so it carries
@@ -328,11 +341,17 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
 
     render_header(agent, model.now_ms, bands[0], buf);
     render_hud(&sm.hud, bands[1], buf);
+    // `answered` flips the card to its "sent — awaiting engine…" form: the
+    // pending gate clears only on the engine's follow-on event, and until
+    // then the card must not keep advertising decision keys that would
+    // double-submit (the latch in `handle_focused_gates`).
     if let Some(proposal) = &sm.pending_scope_review {
-        render_scope_review(proposal, false, bands[2], buf);
+        let answered = ui.scope_answered.contains(&agent.meta.id);
+        render_scope_review(proposal, answered, bands[2], buf);
     }
     if let Some(prompt) = &sm.pending_ask_user {
-        render_ask_user(prompt, false, bands[3], buf);
+        let answered = ui.ask_answered.contains(&agent.meta.id);
+        render_ask_user(prompt, answered, bands[3], buf);
     }
     if !task_rows.is_empty() {
         let block = Block::default()
@@ -348,9 +367,21 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let width = inner_width(bands[5]);
     let empty = HashSet::new();
     let expanded_set = ui.expanded.get(&agent.meta.id).unwrap_or(&empty);
-    let plan = FoldPlan::build(&sm.transcript, |turn| {
-        crate::deck_ui::is_folded(ui, &agent.meta.id, turn)
-    });
+    // The plan is memoized on [`FoldPlanKey`] (taken out of `ui` so the
+    // rebuild closure below can still read `ui`): the whole-transcript walk
+    // only reruns when something it reads actually changed.
+    let plan_key: FoldPlanKey = (
+        agent.meta.id.clone(),
+        sm.transcript.len(),
+        sm.evicted_entries(),
+        ui.fold_rev,
+    );
+    let plan = match ui.session_plan.take() {
+        Some((key, plan)) if key == plan_key => plan,
+        _ => FoldPlan::build(&sm.transcript, |turn| {
+            crate::deck_ui::is_folded(ui, &agent.meta.id, turn)
+        }),
+    };
     ui.session_fold.refresh(
         &agent.meta.id,
         &sm.transcript,
@@ -363,6 +394,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         width,
         &plan,
     );
+    ui.session_plan = Some((plan_key, plan));
     let height = inner_height(bands[5]);
     let total = ui.session_fold.total();
 
@@ -685,6 +717,119 @@ mod tests {
         assert!(
             text.contains("Which database should the cache use?"),
             "ask-user card visible alongside the scope review:\n{text}"
+        );
+    }
+
+    #[test]
+    fn answered_gate_cards_flip_to_their_sent_state() {
+        // The pending gates clear only on the engine's follow-on events; the
+        // per-agent answered latches must flip the cards to "sent" in the
+        // meantime, or they keep advertising keys that would double-submit.
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::ScopeReview {
+                proposal: ScopeProposal {
+                    summary: "widen the refactor".into(),
+                    steps: vec![],
+                    estimated_files: 3,
+                    estimated_cost_usd: None,
+                },
+            },
+        });
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::AskUser {
+                id: "q1".into(),
+                question: "Which database should the cache use?".into(),
+                options: vec!["sqlite".into(), "redis".into()],
+            },
+        });
+
+        let mut ui = DeckUi::default();
+        ui.scope_answered.insert("lead".into());
+        ui.ask_answered.insert("lead".into());
+        let area = Rect::new(0, 0, 90, 40);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+
+        let text = buffer_text(&buf);
+        assert!(
+            text.contains("decision sent — awaiting engine…"),
+            "scope card reads answered:\n{text}"
+        );
+        assert!(
+            !text.contains("[a]"),
+            "the decision legend is withdrawn once sent:\n{text}"
+        );
+        assert!(
+            text.contains("answer sent — awaiting engine…"),
+            "ask-user card reads answered:\n{text}"
+        );
+    }
+
+    #[test]
+    fn the_fold_plan_rebuilds_only_when_its_key_moves() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::PromptStarted {
+            agent: "lead".into(),
+            text: "one".into(),
+        });
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Complete {
+                model: "m".into(),
+                cost_usd: 0.0,
+            },
+        });
+
+        let mut ui = DeckUi::default();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let key = ui.session_plan.as_ref().expect("plan cached").0.clone();
+
+        // Mark the cached plan (an index that never renders); an unchanged
+        // frame must hand the SAME plan back rather than rebuild.
+        ui.session_plan
+            .as_mut()
+            .unwrap()
+            .1
+            .digests
+            .insert(usize::MAX, crate::transcript_nav::TurnDigest::default());
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let cached = ui.session_plan.as_ref().unwrap();
+        assert_eq!(cached.0, key);
+        assert!(
+            cached.1.digests.contains_key(&usize::MAX),
+            "an unchanged frame reuses the cached plan"
+        );
+
+        // A fold-state bump rebuilds it…
+        ui.fold_rev += 1;
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let rebuilt = ui.session_plan.as_ref().unwrap();
+        assert!(
+            !rebuilt.1.digests.contains_key(&usize::MAX),
+            "a fold toggle moves the key and rebuilds the plan"
+        );
+
+        // …and so does a transcript append.
+        let key_after = rebuilt.0.clone();
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Text { delta: "hi".into() },
+        });
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        assert_ne!(
+            ui.session_plan.as_ref().unwrap().0,
+            key_after,
+            "an append moves the key"
         );
     }
 

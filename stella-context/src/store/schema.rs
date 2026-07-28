@@ -582,12 +582,14 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), ContextError> {
     // mis-numbering only shows up as a corrupt context.db on a user's
     // machine.
     //
-    // Adaptive context is being built on two branches in parallel, so the
-    // slot is reserved here in advance:
+    // Adaptive context was built on two branches in parallel, so its slot
+    // was reserved here in advance:
     //
-    //   v6: adaptive-context Phase 3 (#714) — TAKEN, see `migrate_v6`
+    //   v8: adaptive-context Phase 3 (#714), the lifecycle ledger — TAKEN,
+    //       see `migrate_v8`. (The v6 slot originally reserved for it went
+    //       to the compaction watermark, `MIGRATION_V6`.)
     //
-    // If you are not that phase, take v7 and add your own line here.
+    // The next free step is v10: take it and add your own line here.
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())

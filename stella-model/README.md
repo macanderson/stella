@@ -109,8 +109,11 @@ is not, because retrying re-truncates identically.
   Anthropic, video on OpenAI, an unreadable payload file) degrades to a text note
   describing what was attached — the conversation replays every turn, so a hard
   error there would brick the session permanently.
-- **`ZAI_GLM_CODING_PLAN=1` silently swaps the Z.ai base URL** to the coding-plan
-  endpoint, read from the environment inside `ZaiProvider::new`.
+- **`ZAI_GLM_CODING_PLAN=1` swaps the Z.ai base URL** to the coding-plan
+  endpoint. Resolved by `stella-cli`'s `Config::effective_base_url` (the one
+  home of base-URL policy), never inside this crate — `ZaiProvider::new`
+  always starts at the standard endpoint and callers route via
+  `with_base_url`.
 
 ## Testing
 

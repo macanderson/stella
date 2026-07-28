@@ -20,6 +20,27 @@ use serde_json::{Value, json};
 /// keep the bucket off its date axis, so the two must not drift apart.
 pub const UNDATED: &str = "undated";
 
+/// Newest executions returned by [`Observatory::executions`] and drawn on
+/// [`Observatory::overview`]'s timeline. The dashboard re-fetches both every
+/// 5 s and filters client-side by timeframe, so an unbounded listing made
+/// every poll pay for the store's whole history. The cap loses nothing the
+/// page can show: the headline tiles for the "all" timeframe come from the
+/// aggregate queries (which stay exact), and 500 bars is already past
+/// sub-pixel in the 640-px-wide timeline chart.
+pub(crate) const MAX_LISTED_EXECUTIONS: usize = 500;
+
+/// Newest rows returned by [`Observatory::reflection_ratings`]. Same 5 s-poll
+/// reasoning as `MAX_LISTED_EXECUTIONS`, and the same horizon, so the
+/// self-improvement tab's ratings line up with the runs the tables list.
+pub(crate) const MAX_LISTED_REFLECTIONS: usize = 500;
+
+/// Newest tool calls the [`Observatory::tools`] leaderboard aggregates. This
+/// is the store's highest-cardinality table and the p50 needs every duration
+/// in the window materialized, so scanning all of history on every 5 s poll
+/// grew without bound; the window keeps the leaderboard reading as current
+/// behaviour instead.
+pub(crate) const TOOL_CALL_SCAN_WINDOW: usize = 10_000;
+
 /// Everything that can go wrong serving observatory data.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -112,20 +133,24 @@ impl Observatory {
                 }))
             },
         ))?;
-        let timeline = collect_rows(
+        // Newest first so the LIMIT keeps the recent end of history; reversed
+        // below because the chart draws left-to-right in id order.
+        let mut timeline = collect_rows(
             &conn,
-            "SELECT e.id, e.kind, e.provider, e.model, e.outcome, e.cost_usd,
-                    e.started_at, e.finished_at,
-                    coalesce(t.input_tokens, 0), coalesce(t.output_tokens, 0),
-                    coalesce(t.duration_ms, 0)
-             FROM executions e
-             LEFT JOIN (SELECT execution_id,
-                               sum(input_tokens)  AS input_tokens,
-                               sum(output_tokens) AS output_tokens,
-                               sum(duration_ms)   AS duration_ms
-                        FROM telemetry GROUP BY execution_id) t
-               ON t.execution_id = e.id
-             ORDER BY e.id ASC",
+            &format!(
+                "SELECT e.id, e.kind, e.provider, e.model, e.outcome, e.cost_usd,
+                        e.started_at, e.finished_at,
+                        coalesce(t.input_tokens, 0), coalesce(t.output_tokens, 0),
+                        coalesce(t.duration_ms, 0)
+                 FROM executions e
+                 LEFT JOIN (SELECT execution_id,
+                                   sum(input_tokens)  AS input_tokens,
+                                   sum(output_tokens) AS output_tokens,
+                                   sum(duration_ms)   AS duration_ms
+                            FROM telemetry GROUP BY execution_id) t
+                   ON t.execution_id = e.id
+                 ORDER BY e.id DESC LIMIT {MAX_LISTED_EXECUTIONS}"
+            ),
             |r| {
                 Ok(json!({
                     "id": r.get::<_, i64>(0)?,
@@ -142,38 +167,42 @@ impl Observatory {
                 }))
             },
         )?;
+        timeline.reverse();
         let mut out = head;
         merge(&mut out, tokens);
         out["timeline"] = Value::Array(timeline);
         Ok(out)
     }
 
-    /// The executions table: one row per run with its aggregates.
+    /// The executions table: one row per run with its aggregates, newest
+    /// first, capped at `MAX_LISTED_EXECUTIONS`.
     pub fn executions(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
         };
         let rows = collect_rows(
             &conn,
-            "SELECT e.id, e.kind, e.prompt, e.provider, e.model, e.outcome,
-                    e.cost_usd, e.started_at, e.finished_at,
-                    coalesce(t.steps, 0), coalesce(t.input_tokens, 0),
-                    coalesce(t.output_tokens, 0), coalesce(t.duration_ms, 0),
-                    coalesce(tc.calls, 0), coalesce(ft.files, 0)
-             FROM executions e
-             LEFT JOIN (SELECT execution_id, count(*) AS steps,
-                               sum(input_tokens)  AS input_tokens,
-                               sum(output_tokens) AS output_tokens,
-                               sum(duration_ms)   AS duration_ms
-                        FROM telemetry GROUP BY execution_id) t
-               ON t.execution_id = e.id
-             LEFT JOIN (SELECT execution_id, count(*) AS calls
-                        FROM tool_calls GROUP BY execution_id) tc
-               ON tc.execution_id = e.id
-             LEFT JOIN (SELECT execution_id, count(*) AS files
-                        FROM files_touched GROUP BY execution_id) ft
-               ON ft.execution_id = e.id
-             ORDER BY e.id DESC",
+            &format!(
+                "SELECT e.id, e.kind, e.prompt, e.provider, e.model, e.outcome,
+                        e.cost_usd, e.started_at, e.finished_at,
+                        coalesce(t.steps, 0), coalesce(t.input_tokens, 0),
+                        coalesce(t.output_tokens, 0), coalesce(t.duration_ms, 0),
+                        coalesce(tc.calls, 0), coalesce(ft.files, 0)
+                 FROM executions e
+                 LEFT JOIN (SELECT execution_id, count(*) AS steps,
+                                   sum(input_tokens)  AS input_tokens,
+                                   sum(output_tokens) AS output_tokens,
+                                   sum(duration_ms)   AS duration_ms
+                            FROM telemetry GROUP BY execution_id) t
+                   ON t.execution_id = e.id
+                 LEFT JOIN (SELECT execution_id, count(*) AS calls
+                            FROM tool_calls GROUP BY execution_id) tc
+                   ON tc.execution_id = e.id
+                 LEFT JOIN (SELECT execution_id, count(*) AS files
+                            FROM files_touched GROUP BY execution_id) ft
+                   ON ft.execution_id = e.id
+                 ORDER BY e.id DESC LIMIT {MAX_LISTED_EXECUTIONS}"
+            ),
             |r| {
                 Ok(json!({
                     "id": r.get::<_, i64>(0)?,
@@ -364,8 +393,9 @@ impl Observatory {
         Ok(Value::Array(rows))
     }
 
-    /// Tool leaderboard: calls, failures, latency, bytes returned. The p50
-    /// is computed here (SQLite has no percentile function).
+    /// Tool leaderboard over the newest `TOOL_CALL_SCAN_WINDOW` calls:
+    /// calls, failures, latency, bytes returned. The p50 is computed here
+    /// (SQLite has no percentile function).
     ///
     /// Accumulates into `ToolAgg` rather than a bare tuple so the fold and
     /// the row-building loop name the same four quantities.
@@ -374,10 +404,16 @@ impl Observatory {
             return Ok(json!([]));
         };
         // Folded row by row rather than through `collect_rows`: this is the
-        // highest-cardinality unbounded scan (every tool call ever, for an
-        // exact p50), so materializing it as JSON first allocates per call.
-        let sql = "SELECT name, ok, duration_ms, bytes_out FROM tool_calls";
-        let mut stmt = match conn.prepare(sql) {
+        // highest-cardinality scan (one row per tool call, for an exact p50),
+        // so materializing it as JSON first allocates per call. The scan is
+        // windowed to the newest calls by rowid — every poll re-paying for
+        // the whole history was unbounded, and calls old enough to age out of
+        // the window no longer describe how the tools behave today anyway.
+        let sql = format!(
+            "SELECT name, ok, duration_ms, bytes_out FROM tool_calls
+             ORDER BY rowid DESC LIMIT {TOOL_CALL_SCAN_WINDOW}"
+        );
+        let mut stmt = match conn.prepare(&sql) {
             Ok(stmt) => stmt,
             Err(e) if is_missing_table(&e) => return Ok(json!([])),
             Err(e) => return Err(e.into()),
@@ -621,22 +657,26 @@ impl Observatory {
         Ok(Value::Array(days.into_values().collect()))
     }
 
-    /// Every post-turn self-reflection joined to its execution: the
-    /// self-improvement tab's ratings feed.
+    /// The newest `MAX_LISTED_REFLECTIONS` post-turn self-reflections joined
+    /// to their executions: the self-improvement tab's ratings feed.
     pub fn reflection_ratings(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
         };
-        let rows = collect_rows(
+        // Newest first for the LIMIT, reversed below: the ratings chart plots
+        // ascending execution order left-to-right.
+        let mut rows = collect_rows(
             &conn,
-            "SELECT er.execution_id, e.kind, e.outcome, e.model,
-                    coalesce(nullif(er.prompt, ''), e.prompt),
-                    er.delivered, er.self_rating,
-                    er.what_went_well, er.what_to_improve, er.critique,
-                    er.recorded_at
-             FROM execution_reflection er
-             LEFT JOIN executions e ON e.id = er.execution_id
-             ORDER BY er.execution_id ASC",
+            &format!(
+                "SELECT er.execution_id, e.kind, e.outcome, e.model,
+                        coalesce(nullif(er.prompt, ''), e.prompt),
+                        er.delivered, er.self_rating,
+                        er.what_went_well, er.what_to_improve, er.critique,
+                        er.recorded_at
+                 FROM execution_reflection er
+                 LEFT JOIN executions e ON e.id = er.execution_id
+                 ORDER BY er.execution_id DESC LIMIT {MAX_LISTED_REFLECTIONS}"
+            ),
             |r| {
                 Ok(json!({
                     "execution_id": r.get::<_, i64>(0)?,
@@ -653,6 +693,7 @@ impl Observatory {
                 }))
             },
         )?;
+        rows.reverse();
         Ok(Value::Array(rows))
     }
 

@@ -293,7 +293,9 @@ impl SelectionReason {
     /// Whether budget packing may drop this candidate **by rank**.
     ///
     /// A required item can still be dropped, but only by an explicit decision
-    /// that is reported ([`DropReason::RequiredOverBudget`]) — never by
+    /// that is reported — [`DropReason::RequiredOverBudget`] when it exceeds
+    /// the whole token budget alone, [`DropReason::TokenBudget`] when earlier
+    /// required items already spent the budget it needed — never by
     /// falling off the bottom of a ranked list. That is the ADR 0006
     /// guarantee: "required items cannot be evicted by ranking; precedence is
     /// category-aware, and budget packing may drop only non-required items,
@@ -435,8 +437,15 @@ pub struct RecallResult {
     /// True when coverage fell below threshold and lexical fallback ran
     /// (`L-C6`). Individual fallback frames are also marked in their provenance.
     pub used_lexical_fallback: bool,
-    /// How many candidates the budget actually chose between —
-    /// `frames.len() + dropped.len()`, always.
+    /// How many candidates the budget actually chose between — the packed
+    /// survivors plus [`Self::dropped`].
+    ///
+    /// That is `frames.len() + dropped.len()` in every ordinary recall, but
+    /// not by invariant: frame construction runs after packing and skips a
+    /// row that vanished between the two reads (a frame's digest must
+    /// describe bytes that exist), so `frames` can come up short of the
+    /// packed count. The denominator deliberately counts what the budget
+    /// *decided over*, not what survived serving.
     ///
     /// This is the denominator [`Self::dropped`] is a numerator of, and it is
     /// the field that makes the drop report mean something. It used to be the
@@ -1020,8 +1029,11 @@ fn recall_blocking(
     //    on metadata, so a candidate the budget refuses never costs a body read
     //    or a frame.
     let (kept, dropped) = pack_to_budget(candidates, q.max_tokens, q.max_frames);
-    // The denominator: exactly the candidates the budget chose between, so
-    // `frames + dropped` partitions it by construction.
+    // The denominator: exactly the candidates the budget chose between —
+    // `kept + dropped` partitions them by construction. Counted here, before
+    // frame construction, because the vanished-body skip below can make
+    // `frames` fall short of `kept` and the budget's decision would then be
+    // under-reported.
     let considered = kept.len() + dropped.len();
 
     // 6. Build frames for the survivors — the only read on this path that

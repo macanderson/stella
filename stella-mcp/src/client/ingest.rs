@@ -15,6 +15,7 @@
 //! Split out of `client.rs` verbatim (#629's 1500-line ratchet).
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use serde_json::Value;
 use stella_protocol::ToolOutput;
@@ -111,11 +112,18 @@ pub struct McpToolInfo {
 /// Every tool is bounded *at ingest* — description and schema included — so
 /// each consumer (routing, `schemas()`, telemetry) sees the same already-safe
 /// values instead of each having to remember to cap them.
+///
+/// A name the server advertises twice is kept once, FIRST occurrence wins —
+/// mirroring the duplicate-server-name policy in [`crate::McpToolSet`]. A
+/// second entry under the same name could never be routed to (both map to one
+/// `mcp__server__tool` name), so keeping it would only duplicate its
+/// `ToolSchema` into every model request.
 pub(super) async fn fetch_all_tools(
     name: &str,
     transport: &dyn Transport,
 ) -> Result<(Vec<McpToolInfo>, usize), McpError> {
     let mut tools = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut cursor: Option<String> = None;
     for _ in 0..MAX_TOOL_PAGES {
         let params = ListToolsParams {
@@ -125,10 +133,20 @@ pub(super) async fn fetch_all_tools(
         let page: ListToolsResult = serde_json::from_value(raw)
             .map_err(|e| McpError::Protocol(format!("could not decode tools/list result: {e}")))?;
         let advertised = page.tools.len();
-        // `tools.len()` never exceeds the cap (we return the moment it would),
-        // so this cannot underflow.
-        let accepted = advertised.min(MAX_TOOLS_PER_SERVER - tools.len());
-        for tool in page.tools.into_iter().take(accepted) {
+        for (index, tool) in page.tools.into_iter().enumerate() {
+            // A re-advertised name is merged into its first occurrence, not
+            // counted against the cap — it costs the model nothing.
+            if seen.contains(&tool.name) {
+                continue;
+            }
+            if tools.len() == MAX_TOOLS_PER_SERVER {
+                // The cap bit mid-page. Stop paginating too — a server that
+                // advertises more tools than the model's context can hold is
+                // not one we want to keep fetching from, so the returned count
+                // is the remainder of THIS page, a floor rather than a total.
+                return Ok((tools, advertised - index));
+            }
+            seen.insert(tool.name.clone());
             let (input_schema, schema_replaced) = normalize_schema(tool.input_schema);
             let mut description = truncate(
                 tool.description.as_deref().unwrap_or_default(),
@@ -143,13 +161,6 @@ pub(super) async fn fetch_all_tools(
                 input_schema,
                 safe_to_retry: tool.annotations.read_only_hint || tool.annotations.idempotent_hint,
             });
-        }
-        if accepted < advertised {
-            // The cap bit mid-page. Stop paginating too — a server that
-            // advertises more tools than the model's context can hold is not
-            // one we want to keep fetching from, so the returned count is the
-            // remainder of THIS page, a floor rather than a total.
-            return Ok((tools, advertised - accepted));
         }
         match page.next_cursor {
             Some(next) if !next.is_empty() => cursor = Some(next),
@@ -232,7 +243,7 @@ fn normalize_schema(schema: Value) -> (Value, bool) {
 /// a tool that returns a large file reads back as one multi-megabyte text
 /// block, and the old shape copied it twice (once per part, once by `join`)
 /// on the hot path of every MCP call.
-pub fn render_content(blocks: &[ContentBlock]) -> String {
+pub(crate) fn render_content(blocks: &[ContentBlock]) -> String {
     let mut out = String::new();
     for block in blocks {
         let piece: Cow<'_, str> = match block.kind.as_str() {

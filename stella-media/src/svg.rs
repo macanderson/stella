@@ -60,6 +60,13 @@
 //!    URL-filtered: parsing CSS to decide is a second parser's worth of
 //!    attack surface, and an inline presentation style is never load-bearing
 //!    for an artifact whose presentation attributes survive.
+//! 8. **Drop foreign-namespace elements and attributes** — the serializer
+//!    emits local names, so an element or attribute in any other namespace
+//!    (editor metadata like `sodipodi:`/`inkscape:`) would be re-emitted
+//!    unprefixed and re-parse as an SVG-namespace name it never was. The
+//!    `xlink:` and `xml:` namespaces are the exceptions, re-emitted with
+//!    their prefix (`xlink:href`, `xml:space`): every conformant parser
+//!    binds `xml:`, and `xmlns:xlink` is re-declared on the root when used.
 //!
 //! # Optimization (light, step 4)
 //! Comments and processing instructions are dropped; `<metadata>` elements
@@ -96,6 +103,9 @@ const SVG_NS: &str = "http://www.w3.org/2000/svg";
 /// The XLink namespace URI — carries `xlink:href`; re-declared on the root
 /// only when the tree actually uses it.
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+/// The XML namespace URI — carries `xml:space`/`xml:lang`. Its `xml:` prefix
+/// is bound by every conformant parser and never needs declaring.
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// Recommended attempt budget for [`SvgPipeline::generate`]: one initial
 /// generation plus two repair rounds.
@@ -507,11 +517,17 @@ fn serialize_element(node: Node, removed: &mut Vec<String>, is_root: bool) -> St
     let mut width = None;
     let mut height = None;
     for attr in node.attributes() {
-        let is_xlink = attr.namespace() == Some(XLINK_NS);
-        let emit_name = if is_xlink {
-            format!("xlink:{}", attr.name())
-        } else {
-            attr.name().to_string()
+        // Rule 8: only the null, XLink, and XML namespaces re-emit — the
+        // latter two with the prefix their namespace guarantees. Any other
+        // namespace would come back unprefixed as a name it never was.
+        let emit_name = match attr.namespace() {
+            None => attr.name().to_string(),
+            Some(XLINK_NS) => format!("xlink:{}", attr.name()),
+            Some(XML_NS) => format!("xml:{}", attr.name()),
+            Some(_) => {
+                removed.push(format!("@{} on <{local}> (foreign namespace)", attr.name()));
+                continue;
+            }
         };
         let name_low = emit_name.to_ascii_lowercase();
 
@@ -559,6 +575,12 @@ fn serialize_element(node: Node, removed: &mut Vec<String>, is_root: bool) -> St
         }
         if child.is_element() {
             let child_local = child.tag_name().name();
+            // Rule 8: a foreign-namespace element would be re-emitted
+            // unprefixed and re-parse as SVG — dropped, subtree and all.
+            if child.tag_name().namespace().is_some_and(|ns| ns != SVG_NS) {
+                removed.push(format!("<{child_local}> element (foreign namespace)"));
+                continue;
+            }
             if is_dropped_element(child_local) {
                 removed.push(format!("<{child_local}> element"));
                 continue;
@@ -941,6 +963,51 @@ mod tests {
         // is why the resource-attribute restriction is the second half of the
         // guard rather than an optimization.
         assert!(starts_with_url_scheme("Foo: Bar"));
+    }
+
+    #[test]
+    fn xml_prefixed_attributes_are_reemitted_with_their_prefix() {
+        // `xml:` is bound by every conformant parser, so the prefix must
+        // survive re-serialization — a bare `space="preserve"` is not the
+        // same attribute and not valid SVG.
+        let out = process(
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><text xml:space="preserve" xml:lang="en">  a  b  </text></svg>"#,
+        );
+        assert!(out.svg.contains(r#"xml:space="preserve""#), "{}", out.svg);
+        assert!(out.svg.contains(r#"xml:lang="en""#), "{}", out.svg);
+        assert!(!out.svg.contains(" space="), "{}", out.svg);
+        assert!(out.removed.is_empty(), "{:?}", out.removed);
+        // The emitted prefix re-parses without a declaration, so the
+        // sanitizer stays a fixed point.
+        let twice = process(&out.svg);
+        assert_eq!(out.svg, twice.svg);
+    }
+
+    #[test]
+    fn foreign_namespace_elements_and_attributes_are_dropped_not_unprefixed() {
+        // Re-emitting a foreign name unprefixed would re-parse it as the SVG
+        // name it never was: an <e:image> must not come back as a live
+        // <image>, and a foreign attribute must not shadow an SVG one.
+        let out = process(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:e="http://evil.example/ns"><e:image href="#x"><rect/></e:image><rect e:mark="tracked" width="2"/></svg>"##,
+        );
+        assert!(!out.svg.contains("<image"), "{}", out.svg);
+        assert!(!out.svg.contains("mark"), "{}", out.svg);
+        assert!(out.svg.contains(r#"width="2""#), "{}", out.svg);
+        assert!(
+            out.removed
+                .iter()
+                .any(|r| r.contains("image") && r.contains("foreign namespace")),
+            "{:?}",
+            out.removed
+        );
+        assert!(
+            out.removed
+                .iter()
+                .any(|r| r.contains("mark") && r.contains("foreign namespace")),
+            "{:?}",
+            out.removed
+        );
     }
 
     #[test]

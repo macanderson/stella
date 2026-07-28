@@ -165,13 +165,19 @@ impl MediaProvider for ZaiVideoProvider {
     }
 
     async fn poll_video(&self, job: &MediaJob) -> Result<MediaJobStatus, MediaError> {
-        // Recorded, not fixed: `provider_job_id` is interpolated into the path
-        // verbatim. It originates in the vendor's submit response, but a
-        // resume reads it back from `jobs.json`, which lives in the
-        // model-writable workspace — so a crafted id is a path fragment on a
-        // request that carries the API key. `base_url` pins the host, so this
-        // cannot redirect the key off-vendor; percent-encoding the segment
-        // (or rejecting ids outside `[A-Za-z0-9._-]`) closes the rest.
+        // `provider_job_id` is interpolated into the path. It originates in
+        // the vendor's submit response, but a resume reads it back from
+        // `jobs.json`, which lives in the model-writable workspace — so a
+        // crafted id would be a path fragment on a request that carries the
+        // API key. `base_url` pins the host; screening the id to
+        // `[A-Za-z0-9._-]` keeps it a single path segment.
+        if !is_valid_job_id(&job.provider_job_id) {
+            return Err(MediaError::Malformed(format!(
+                "zai job id {:?} has characters outside [A-Za-z0-9._-]; \
+                 refusing to build a poll URL from it",
+                job.provider_job_id
+            )));
+        }
         let response = self
             .client
             .get(format!(
@@ -209,7 +215,18 @@ impl MediaProvider for ZaiVideoProvider {
             .await
             .map_err(|e| MediaError::Malformed(format!("zai video poll: {e}")))?;
 
-        let status_str = parsed.task_status.unwrap_or_default().to_ascii_uppercase();
+        // A 200 with no `task_status` at all is a shape this adapter does not
+        // recognize, not an in-flight job — mapping absence to Running would
+        // poll forever. Optimism is reserved for a *present* unknown status
+        // (the `_` arm below).
+        let status_str = match parsed.task_status {
+            Some(status) => status.to_ascii_uppercase(),
+            None => {
+                return Err(MediaError::Malformed(
+                    "zai video poll response carried no task_status".into(),
+                ));
+            }
+        };
         match status_str.as_str() {
             "SUCCESS" => {
                 let url = parsed
@@ -262,6 +279,17 @@ impl MediaProvider for ZaiVideoProvider {
             }),
         }
     }
+}
+
+/// Whether a persisted provider job id is safe to interpolate as one URL path
+/// segment: non-empty and `[A-Za-z0-9._-]` only. Anything else (`/`, `?`,
+/// `#`, `%`, whitespace, …) could splice extra segments or a query into an
+/// authenticated request and is rejected before the URL is built.
+fn is_valid_job_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// Deterministically derive our artifact id from the provider's job id, so a
@@ -430,6 +458,82 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(status.state, MediaJobState::Failed { .. }));
+    }
+
+    #[tokio::test]
+    async fn poll_rejects_a_job_id_that_is_not_a_single_path_segment() {
+        // A resume reads `provider_job_id` back from the model-writable
+        // `jobs.json`, so a crafted id must never become a path fragment on a
+        // request carrying the API key.
+        let server = MockServer::start().await;
+        let provider = provider(&server.uri());
+        for hostile in [
+            "../v4/files?path=",
+            "job/42",
+            "job?debug=1",
+            "job#frag",
+            "job%2e%2e",
+            "job 42",
+            "",
+        ] {
+            let err = provider
+                .poll_video(&running_job(hostile))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, MediaError::Malformed(_)), "{hostile}: {err}");
+        }
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("recorded requests")
+                .is_empty(),
+            "a rejected job id must never reach the wire"
+        );
+        // The vendor's real id shape (alphanumerics, dots, dashes,
+        // underscores) still polls.
+        assert!(is_valid_job_id("cogvideox-3_task.42"));
+    }
+
+    #[tokio::test]
+    async fn poll_200_without_task_status_is_malformed_not_running_forever() {
+        // Absence is not an in-flight job: mapping it to Running would keep
+        // the caller polling forever. Optimism is reserved for a present but
+        // unrecognized status string.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/async-result/job-42"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "video_result": [] })),
+            )
+            .mount(&server)
+            .await;
+        let err = provider(&server.uri())
+            .poll_video(&running_job("job-42"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MediaError::Malformed(_)), "{err}");
+        assert!(err.to_string().contains("task_status"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn poll_unrecognized_present_status_is_still_running() {
+        // The optimistic arm survives the absence fix: a status string we have
+        // not seen before keeps the job pollable.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/async-result/job-42"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "task_status": "TRANSCODING" })),
+            )
+            .mount(&server)
+            .await;
+        let status = provider(&server.uri())
+            .poll_video(&running_job("job-42"))
+            .await
+            .unwrap();
+        assert_eq!(status.state, MediaJobState::Running);
     }
 
     #[tokio::test]

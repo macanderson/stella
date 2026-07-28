@@ -248,7 +248,10 @@ impl Tool for Bash {
         let mut cmd = Command::new(program);
         cmd.args(args);
         cmd.current_dir(root);
-        crate::subprocess_env::scrub_sensitive_env(&mut cmd);
+        // Full spawn policy, not just the credential scrub: a hook-exported
+        // GIT_DIR or a forced-color override must not reach the shell either
+        // (same families `exec::drive` removes for every other runner).
+        crate::subprocess_env::scrub_spawn_env(&mut cmd);
         // No stdin. An inherited stdin is the TUI's terminal: a command that
         // reads it (`cat`, an interactive prompt, a confirmation `read`)
         // silently steals the user's keystrokes and then blocks until the
@@ -393,6 +396,29 @@ mod tests {
             ToolOutput::Ok { content } => {
                 let output = content.lines().next().unwrap_or_default();
                 crate::subprocess_env::test_support::assert_scrubbed(output);
+            }
+            ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
+        }
+    }
+
+    /// The bash tool used to apply only the credential scrub, letting a
+    /// hook-exported GIT_DIR retarget every git it ran and a forced-color
+    /// override wrap parsed output in ANSI escapes.
+    #[tokio::test]
+    async fn bash_tool_scrubs_git_repo_and_forced_color_env() {
+        let _fixture = crate::subprocess_env::test_support::SpawnHygieneFixture::install();
+        let result = Bash
+            .execute(
+                &serde_json::json!({
+                    "command": crate::subprocess_env::test_support::SPAWN_HYGIENE_PROBE_COMMAND
+                }),
+                &std::env::temp_dir(),
+            )
+            .await;
+        match result {
+            ToolOutput::Ok { content } => {
+                let output = content.lines().next().unwrap_or_default();
+                crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(output);
             }
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }

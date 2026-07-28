@@ -391,6 +391,27 @@ fn a_required_item_that_cannot_fit_at_all_is_dropped_by_an_explicit_named_decisi
 }
 
 #[test]
+fn a_required_item_crowded_out_by_an_earlier_one_reports_budget_pressure() {
+    // Two anchors that each fit alone but not together. The second one lost
+    // to budget pressure — a larger `max_tokens` admits it — so it must NOT
+    // read as `RequiredOverBudget`, whose claim is "no ordering could have
+    // admitted it". That label was reachable here because pass 1 accumulates
+    // `spent` across required items and used to derive the reason from the
+    // remainder rather than from the item's own cost.
+    let frames = vec![required("first_anchor", 60), required("second_anchor", 60)];
+    let (kept, dropped) = pack_to_budget(frames, 100, 10);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].meta.public_id, "first_anchor");
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].id, "second_anchor");
+    assert_eq!(
+        dropped[0].reason,
+        DropReason::TokenBudget,
+        "a drop a larger budget would fix must not claim it could never fit"
+    );
+}
+
+#[test]
 fn the_selection_reason_crosses_the_cgp_seam_on_the_frames_provenance() {
     // The RecallResult → ContextQueryResult conversion keeps frames and a
     // collapsed `truncated`/`dropped_estimate` and nothing else, so a reason

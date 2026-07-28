@@ -23,13 +23,26 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::mpsc;
 
 use crate::ports::{
-    AdoptedChange, ArtifactIdentity, ArtifactKind, AutoApproveGate, CmdOutcome, ContextRecallPort,
+    AdoptedChange, ArtifactIdentity, ArtifactKind, CmdOutcome, ContextRecallPort,
     DiagnosticInvocation, DiagnosticRunner, NoContextRecall, NoRepoStatus, NoRepoStructure, Recall,
     TestInvocation, TestRunner,
 };
 use stella_protocol::{ContextProviderUsage, ContextUsage};
 
 // test doubles
+
+/// An [`ApprovalGate`] that approves every proposal — the double most tests
+/// use so an interactive scope review never blocks a scripted run. Test-only
+/// on purpose: production has no auto-approving gate (the headless bypass
+/// skips the gate outright rather than consulting one).
+struct AutoApproveGate;
+
+#[async_trait]
+impl ApprovalGate for AutoApproveGate {
+    async fn review(&self, _proposal: &ScopeProposal) -> ScopeDecision {
+        ScopeDecision::Approve
+    }
+}
 
 /// A [`RepoStatusPort`] returning a fixed untracked `path -> fingerprint`
 /// map — the "after execute" snapshot `gather_diff` diffs against a

@@ -1,6 +1,7 @@
 //! Streamable-HTTP transport tests using `wiremock`. Covers both response
 //! shapes a server may return (`application/json` and `text/event-stream`),
-//! session-id capture + replay, and non-2xx mapping.
+//! session-id capture + replay, the post-initialize `MCP-Protocol-Version`
+//! header, and non-2xx mapping.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -33,20 +34,24 @@ async fn json_handshake_replays_the_session_id() {
         .mount(&server)
         .await;
 
-    // The `notifications/initialized` notification (202, no body).
+    // The `notifications/initialized` notification (202, no body). It follows
+    // the `initialize` response, so the 2025-06-18 spec's protocol-version
+    // header is already required on it.
     Mock::given(method("POST"))
         .and(body_partial_json(
             json!({ "method": "notifications/initialized" }),
         ))
+        .and(header("mcp-protocol-version", "2025-06-18"))
         .respond_with(ResponseTemplate::new(202))
         .mount(&server)
         .await;
 
-    // `tools/list` matches ONLY if the session id was replayed — proving
-    // capture + replay end-to-end.
+    // `tools/list` matches ONLY if the session id and the negotiated protocol
+    // version were replayed — proving capture + replay end-to-end.
     Mock::given(method("POST"))
         .and(body_partial_json(json!({ "method": "tools/list" })))
         .and(header("mcp-session-id", "sess-xyz"))
+        .and(header("mcp-protocol-version", "2025-06-18"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
@@ -58,10 +63,11 @@ async fn json_handshake_replays_the_session_id() {
         .mount(&server)
         .await;
 
-    // `tools/call` — likewise requires the session id.
+    // `tools/call` — likewise requires the session id and protocol version.
     Mock::given(method("POST"))
         .and(body_partial_json(json!({ "method": "tools/call" })))
         .and(header("mcp-session-id", "sess-xyz"))
+        .and(header("mcp-protocol-version", "2025-06-18"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
@@ -95,6 +101,68 @@ async fn json_handshake_replays_the_session_id() {
             content: "remote ok".into()
         }
     );
+}
+
+/// The 2025-06-18 streamable-HTTP spec requires every request after
+/// initialization to carry the *negotiated* revision in the
+/// `MCP-Protocol-Version` header — the one the server named back, not the one
+/// the client offered. The server here counter-offers an older revision and
+/// answers `notifications/initialized` / `tools/list` only when that revision
+/// comes back in the header, so a wrong (or missing) header fails the
+/// handshake outright.
+#[tokio::test]
+async fn the_negotiated_protocol_version_rides_every_request_after_initialize() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(body_partial_json(json!({ "method": "initialize" })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": { "protocolVersion": "2025-03-26" }
+                })),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(body_partial_json(
+            json!({ "method": "notifications/initialized" }),
+        ))
+        .and(header("mcp-protocol-version", "2025-03-26"))
+        .respond_with(ResponseTemplate::new(202))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(body_partial_json(json!({ "method": "tools/list" })))
+        .and(header("mcp-protocol-version", "2025-03-26"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({
+                    "jsonrpc": "2.0", "id": 2,
+                    "result": { "tools": [{ "name": "echo", "inputSchema": { "type": "object" } }] }
+                })),
+        )
+        .mount(&server)
+        .await;
+
+    let cfg = McpServerConfig {
+        name: "remote".into(),
+        transport: McpTransport::Http {
+            url: server.uri(),
+            headers: BTreeMap::new(),
+        },
+        candidate_safe: false,
+    };
+    let client = McpClient::connect(&cfg, Duration::from_secs(5))
+        .await
+        .expect("handshake succeeds only if the negotiated version was replayed");
+    assert_eq!(client.negotiated_version(), "2025-03-26");
+    assert_eq!(client.tools().len(), 1);
 }
 
 #[tokio::test]

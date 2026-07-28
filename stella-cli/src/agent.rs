@@ -645,6 +645,25 @@ const REPL_RESERVED: &[&str] = &[
     "/rename", "/color", "/goal",
 ];
 
+/// The usage line for an argument-requiring local command invoked bare (or
+/// with only whitespace). These are reserved names, so `expand` never claims
+/// them — without a local answer the bare form would fall through to a paid
+/// model turn. `/goal`'s handler owns its own bare form the same way.
+fn bare_local_command_usage(input: &str) -> Option<&'static str> {
+    let (head, rest) = match input.split_once(char::is_whitespace) {
+        Some((head, rest)) => (head, rest),
+        None => (input, ""),
+    };
+    if !rest.trim().is_empty() {
+        return None;
+    }
+    match head {
+        "/rename" => Some("usage: /rename <name>"),
+        "/color" => Some("usage: /color <name>"),
+        _ => None,
+    }
+}
+
 /// Run an interactive REPL session. `budget_limit` is per-session: the
 /// `BudgetGuard`'s session-scoped total accumulates across every turn in
 /// the conversation, while `BudgetGuard::begin_turn` resets only the
@@ -862,6 +881,10 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
                 Err(e) => println!("  {} init failed: {e}", "✗".red()),
             }
             println!();
+            continue;
+        }
+        if let Some(usage) = bare_local_command_usage(input) {
+            println!("  {}\n", usage.dimmed());
             continue;
         }
         if let Some(title) = input.strip_prefix("/rename ") {
@@ -1412,8 +1435,13 @@ pub async fn run_init(
     Ok(())
 }
 
-/// Cap on each MCP server's connect (and, until overridden, each later
-/// call) — the per-server bound `McpToolSet::connect` enforces.
+/// Cap on each MCP server's connect — the per-server bound
+/// `McpToolSet::connect` enforces. Deliberately short: a server that cannot
+/// even complete its handshake in 10s should not stall session start. Each
+/// later `tools/call` gets the much longer `stella_mcp::DEFAULT_CALL_TIMEOUT`
+/// instead (applied in [`connect_mcp_servers`]) — without that override the
+/// connect bound would double as the call bound and kill every long-running
+/// tool call at 10s.
 const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The parse of `.stella/mcp.toml`, split from the connect so a caller that
@@ -1482,6 +1510,10 @@ pub(crate) async fn connect_mcp_servers(
 ) -> McpToolSet {
     let mut set = McpToolSet::connect_with_auth(servers, MCP_CONNECT_TIMEOUT, auth)
         .await
+        // The connect bound would otherwise carry over as the per-call bound,
+        // killing any tool call slower than [`MCP_CONNECT_TIMEOUT`] — connects
+        // stay short, calls get the long default.
+        .with_call_timeout(stella_mcp::DEFAULT_CALL_TIMEOUT)
         .wrapping(native);
     // Record each successful MCP call into the session's usage ledger, and
     // honor the session's disabled-servers set (both may be absent for a

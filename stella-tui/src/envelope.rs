@@ -1207,10 +1207,14 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-/// The agent-control verbs surfaced by the dashboard. `Stop` maps to a clean
-/// `UserInput::Cancel` today; `Pause`/`Resume`/`Restart` are RESERVED for
-/// the fleet supervisor seam — the deck driver currently drops them, so no key is bound to
-/// them (a keypress that visibly does nothing is worse than no key).
+/// The agent-control verbs surfaced by the dashboard, each sent as a
+/// [`WorkspaceInput::Control`]. All four are live: the Agents tab binds `s`
+/// (Stop), `p` (Pause/Resume, toggled by the row's current status), and `r`
+/// (Restart), and Esc sends Stop for the focused agent. The driver honors
+/// Pause/Resume/Restart on worker lanes — pause parks the worker at its next
+/// step boundary (never mid-tool), restart respawns the lane from its
+/// retained spec — and treats them as no-ops on the lead, whose interrupt is
+/// Esc (Stop).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentControl {
     Pause,

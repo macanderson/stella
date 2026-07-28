@@ -47,13 +47,36 @@ impl Pending {
     /// Register a tool reply channel under `id`. Called by the engine thread
     /// before it emits the request frame, so the entry always exists by the
     /// time the host can answer.
-    pub(crate) fn register_tool(&self, id: String, reply: oneshot::Sender<ToolOutput>) {
-        self.lock().insert(id, PendingReply::Tool(reply));
+    ///
+    /// Returns `false` — registering nothing, dropping `reply` — when the turn
+    /// is already cancelled; the caller must not park. The cancel check shares
+    /// the insert's lock on purpose: [`Pending::cancel`] latches its flag
+    /// *before* it takes this lock to clear the map, so a cancel whose clear
+    /// has already run is guaranteed visible here, and one that has not yet
+    /// cleared will drop this entry (waking the parked step) when it does.
+    /// Checking outside the lock leaves a window — cancel landing between a
+    /// port's `is_cancelled` check and its registration — where the clear
+    /// misses the entry and the step re-parks until its full deadline.
+    #[must_use]
+    pub(crate) fn register_tool(&self, id: String, reply: oneshot::Sender<ToolOutput>) -> bool {
+        let mut map = self.lock();
+        if self.is_cancelled() {
+            return false;
+        }
+        map.insert(id, PendingReply::Tool(reply));
+        true
     }
 
-    /// Register a provider reply channel under `id`.
-    pub(crate) fn register_provider(&self, id: String, reply: ProviderReply) {
-        self.lock().insert(id, PendingReply::Provider(reply));
+    /// Register a provider reply channel under `id`. Same contract — and the
+    /// same locked cancellation check — as [`Pending::register_tool`].
+    #[must_use]
+    pub(crate) fn register_provider(&self, id: String, reply: ProviderReply) -> bool {
+        let mut map = self.lock();
+        if self.is_cancelled() {
+            return false;
+        }
+        map.insert(id, PendingReply::Provider(reply));
+        true
     }
 
     /// Resolve a tool request with the host-supplied output. Errors if `id` is
@@ -77,8 +100,10 @@ impl Pending {
     }
 
     /// Drop every in-flight request. Their receivers observe a channel close,
-    /// which each port impl maps to a clean error for the engine — used when a
-    /// session is torn down or its host disconnects.
+    /// which each port impl maps to a clean error for the engine — used by the
+    /// session thread once its turn has settled, so no reverse-RPC one-shot
+    /// outlives it. Teardown mid-turn goes through [`Pending::cancel`] instead:
+    /// a bare clear wakes a parked step with a *retryable* error.
     pub(crate) fn clear(&self) {
         self.lock().clear();
     }
@@ -158,5 +183,53 @@ impl Pending {
         // the lock, so poisoning can only follow a panic while mutating the map
         // itself; recover the guard rather than propagate the poison.
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cancel that has fully run before a port registers must refuse the
+    /// registration: its wake-everyone clear has already happened, so an entry
+    /// inserted now would park its step until the full reverse-request
+    /// deadline with nobody left to wake it.
+    #[test]
+    fn registration_is_refused_once_cancelled() {
+        let pending = Pending::default();
+        pending.cancel();
+
+        let (tx, rx) = oneshot::channel();
+        assert!(!pending.register_provider("prov-0".to_string(), tx));
+        // The refused sender is dropped, so a caller that parked anyway would
+        // still wake immediately rather than wait for a resolve that can
+        // never come.
+        assert!(rx.blocking_recv().is_err());
+
+        let (tx, rx) = oneshot::channel();
+        assert!(!pending.register_tool("tool-0".to_string(), tx));
+        assert!(rx.blocking_recv().is_err());
+    }
+
+    /// The other interleaving: a cancel landing *after* registration must
+    /// observe the entry and drop its sender — and the flag must already be
+    /// latched by then, so the woken step reads the wake as cancellation
+    /// (non-retryable), not as an ordinary transport failure.
+    #[test]
+    fn cancel_after_registration_wakes_the_parked_sender() {
+        let pending = Pending::default();
+        let (tx, rx) = oneshot::channel();
+        assert!(pending.register_provider("prov-0".to_string(), tx));
+
+        pending.cancel();
+
+        assert!(
+            pending.is_cancelled(),
+            "the flag is latched before the clear"
+        );
+        assert!(
+            rx.blocking_recv().is_err(),
+            "the clear woke the parked step"
+        );
     }
 }

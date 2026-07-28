@@ -5,7 +5,7 @@ with other agents, and standalone. Everything here is **BYOK** (bring your own
 key), makes **no phone-home**, and never hard-codes a secret. Claim runs use a
 secure launcher that consumes the selected credential before Harbor starts.
 
-Three entry points:
+Four entry points:
 
 | Path | What it does | Needs |
 |---|---|---|

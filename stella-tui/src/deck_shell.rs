@@ -17,7 +17,7 @@ use std::io;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -105,7 +105,13 @@ fn spawn_shell_command(
 ) {
     use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
 
-    let call_id = format!("shell-{started_ms}");
+    // `started_ms` is the deck's tick clock (~33ms granularity), so two
+    // overlapping `!` commands can share a timestamp — and the fold pairs
+    // ToolResult to ToolStart by `call_id`, so a shared id mispairs their
+    // rows. The process-wide counter makes the id unique regardless.
+    static SHELL_CALL_SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SHELL_CALL_SEQ.fetch_add(1, Ordering::Relaxed);
+    let call_id = format!("shell-{started_ms}-{seq}");
     active.fetch_add(1, Ordering::SeqCst);
     let _ = tx.send(Inbound::Register(
         AgentMeta::new(SHELL_AGENT, format!("! {cmd}"), started_ms).with_role("shell"),
@@ -326,6 +332,13 @@ pub async fn run_deck(
     // back here and are folded exactly like engine events. The sender lives
     // for the whole loop, so this arm never closes it.
     let (local_tx, mut local_rx) = tokio::sync::mpsc::unbounded_channel::<Inbound>();
+    // `⌃V` results return here: the OS clipboard round-trip (and the PNG
+    // encode + attachment write behind an image) is blocking I/O that can
+    // stall for hundreds of ms on some platforms, so it runs on the blocking
+    // pool instead of freezing the ~30fps draw loop. Same lifetime contract
+    // as `local_tx`.
+    let (clip_tx, mut clip_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<crate::clipboard::ClipboardPaste, String>>();
     // Shared in-flight count for overlapping `!` commands (see
     // `spawn_shell_command`) — persists across every dispatch this loop makes.
     let shell_active = Arc::new(AtomicUsize::new(0));
@@ -354,12 +367,13 @@ pub async fn run_deck(
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    // `local_tx` outlives the loop, so the shell lane should never close — but
-    // if it ever did, `select!` would see `Ready(None)` on every poll and spin
-    // the deck's draw loop at 100% CPU. Enforce the invariant instead of
-    // asserting it in prose: disable the branch the moment it closes, exactly
-    // as `fleet_dashboard`'s `keys_open` guard does for its key reader.
+    // `local_tx`/`clip_tx` outlive the loop, so those lanes should never close
+    // — but if one ever did, `select!` would see `Ready(None)` on every poll
+    // and spin the deck's draw loop at 100% CPU. Enforce the invariant instead
+    // of asserting it in prose: disable the branch the moment it closes,
+    // exactly as `fleet_dashboard`'s `keys_open` guard does for its key reader.
     let mut local_open = true;
+    let mut clip_open = true;
 
     'run: loop {
         // Requests queued by handlers/ingest beyond their single return value
@@ -392,26 +406,20 @@ pub async fn run_deck(
                     // text: the deck's prompt queue is text-shaped, and the
                     // driver extracts media paths into attachments at
                     // dispatch. Clipboard text falls back to a normal paste.
+                    // The capture itself is blocking OS I/O, so it runs on
+                    // the blocking pool and the result returns on `clip_rx` —
+                    // the draw loop never waits on the clipboard.
                     Some(Event::Key(key))
                         if key.kind != KeyEventKind::Release
                             && key.code == crossterm::event::KeyCode::Char('v')
                             && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
                     {
-                        match crate::clipboard::capture(
-                            &crate::clipboard::default_attachments_dir(),
-                        ) {
-                            Ok(crate::clipboard::ClipboardPaste::Image(att)) => {
-                                debug.note(&format!("clipboard image stored: {}", att.label()));
-                                if let stella_protocol::AttachmentSource::Path { path } =
-                                    &att.source
-                                {
-                                    ui.paste(&format!("{path} "));
-                                }
-                            }
-                            Ok(crate::clipboard::ClipboardPaste::Text(text)) => ui.paste(&text),
-                            Ok(crate::clipboard::ClipboardPaste::Empty) => {}
-                            Err(err) => debug.note(&err),
-                        }
+                        let tx = clip_tx.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let _ = tx.send(crate::clipboard::capture(
+                                &crate::clipboard::default_attachments_dir(),
+                            ));
+                        });
                     }
                     Some(Event::Key(key)) if key.kind != KeyEventKind::Release => {
                         match handle_deck_key(key, &model, &mut ui) {
@@ -482,6 +490,25 @@ pub async fn run_deck(
                     // Unreachable while `local_tx` is held above; stop
                     // selecting on it rather than spinning if it ever isn't.
                     None => local_open = false,
+                }
+            }
+            maybe_clip = clip_rx.recv(), if clip_open => {
+                // A finished `⌃V` capture — applied exactly as the old
+                // in-loop capture was, just a beat later. Repeated `⌃V`s
+                // apply in press order (the channel is FIFO).
+                match maybe_clip {
+                    Some(Ok(crate::clipboard::ClipboardPaste::Image(att))) => {
+                        debug.note(&format!("clipboard image stored: {}", att.label()));
+                        if let stella_protocol::AttachmentSource::Path { path } = &att.source {
+                            ui.paste(&format!("{path} "));
+                        }
+                    }
+                    Some(Ok(crate::clipboard::ClipboardPaste::Text(text))) => ui.paste(&text),
+                    Some(Ok(crate::clipboard::ClipboardPaste::Empty)) => {}
+                    Some(Err(err)) => debug.note(&err),
+                    // Unreachable while `clip_tx` is held above; stop
+                    // selecting on it rather than spinning if it ever isn't.
+                    None => clip_open = false,
                 }
             }
             _ = tick.tick() => {
@@ -585,6 +612,35 @@ mod tests {
         rt.block_on(async {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await;
         });
+    }
+
+    #[test]
+    fn overlapping_shell_commands_within_one_tick_get_distinct_call_ids() {
+        // Two `!` commands dispatched inside the same 33ms tick share
+        // `started_ms`; the fold pairs ToolResult to ToolStart by `call_id`,
+        // so the ids must differ anyway or the rows mispair.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let active = Arc::new(AtomicUsize::new(0));
+        spawn_shell_command("echo one".into(), tx.clone(), 42, active.clone());
+        spawn_shell_command("echo two".into(), tx, 42, active);
+
+        let mut call_ids = Vec::new();
+        while let Ok(inbound) = rx.try_recv() {
+            if let Inbound::Event {
+                event: stella_protocol::AgentEvent::ToolStart { call },
+                ..
+            } = inbound
+            {
+                call_ids.push(call.call_id);
+            }
+        }
+        assert_eq!(call_ids.len(), 2, "both ToolStarts land synchronously");
+        assert_ne!(
+            call_ids[0], call_ids[1],
+            "a shared timestamp must not produce a shared call_id"
+        );
     }
 
     #[test]
