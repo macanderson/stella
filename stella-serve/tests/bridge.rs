@@ -306,6 +306,34 @@ async fn cancelling_a_parked_turn_unwinds_it_promptly() {
     );
 }
 
+/// Tearing a session down (drop, not an explicit cancel) must *cancel* the
+/// turn, not merely drop its parked one-shots: a bare drop wakes the parked
+/// step with a retryable transport error, and the engine would burn its
+/// provider retries — and their backoff sleeps — against a registry nobody
+/// answers anymore. The detached thread cannot be joined, so the latched
+/// cancel flag is the observable contract: it is what the woken step reads as
+/// the non-retryable `Cancelled` instead of a retryable failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_a_session_cancels_the_turn_rather_than_letting_it_retry() {
+    let mut session = Session::start(spec_for("teardown mid-step"));
+    let pending = session.pending();
+
+    // Park the turn on a reverse request first, so the drop happens mid-step.
+    loop {
+        match session.next_frame().await {
+            Some(ServerFrame::ProviderRequest { .. }) => break,
+            Some(_) => continue,
+            None => panic!("the turn ended before it parked on the provider"),
+        }
+    }
+
+    drop(session);
+    assert!(
+        pending.is_cancelled(),
+        "teardown must latch the cancel flag so the woken step aborts instead of retrying"
+    );
+}
+
 /// A classified provider failure aborts the turn cleanly (no panic, a terminal
 /// frame). Uses a retryable transport error the engine will retry then give up
 /// on — the point is the bridge surfaces the error path, not the retry count.

@@ -97,8 +97,13 @@ impl Provider for RemoteProvider {
         let request_id = format!("prov-{}", self.counter.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = oneshot::channel();
         // Register before emitting so the entry always exists by the time the
-        // host can answer (register → send ordering closes the race).
-        self.pending.register_provider(request_id.clone(), tx);
+        // host can answer (register → send ordering closes the race). A refused
+        // registration means `cancel()` landed since the check above — its
+        // wake-everyone clear has already run, so parking now would wait out
+        // the full deadline with nobody left to wake this step.
+        if !self.pending.register_provider(request_id.clone(), tx) {
+            return Err(ProviderError::Cancelled);
+        }
         if self
             .frames
             .send(ServerFrame::ProviderRequest {
@@ -185,7 +190,14 @@ impl ToolExecutor for RemoteToolExecutor {
         }
         let request_id = format!("tool-{}", self.counter.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = oneshot::channel();
-        self.pending.register_tool(request_id.clone(), tx);
+        // Same refused-registration handling as the provider port: a cancel
+        // landing between the check above and this call must not park the step
+        // until its deadline.
+        if !self.pending.register_tool(request_id.clone(), tx) {
+            return ToolOutput::Error {
+                message: "turn cancelled before the tool call could be dispatched".to_string(),
+            };
+        }
         if self
             .frames
             .send(ServerFrame::ToolRequest {

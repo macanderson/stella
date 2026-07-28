@@ -116,9 +116,13 @@ the engine's backoff.
   treat them as global handles.
 - **A turn's event stream is exclusive and one-shot.** The second
   `GET /v1/turns/{id}/events` gets 409, and the registry entry is removed when a
-  stream ends — or when the turn is cancelled. A turn created and never streamed
-  keeps its entry and its thread until one of those happens, so `cancel` is how a
-  caller reclaims one it decided not to stream.
+  stream ends — or when the turn is cancelled. A *live* turn created and never
+  streamed keeps its entry and its thread, so `cancel` is how a caller reclaims
+  one it decided not to stream; once such a turn finishes on its own (deadline,
+  budget, completion), it is retained for a late stream only up to a cap
+  (`MAX_COMPLETED_UNSTREAMED_TURNS` in [`src/server.rs`](src/server.rs), 64) —
+  past that the oldest finished-unstreamed turn is evicted and its id answers
+  404, so a host that never streams cannot grow the registry without bound.
 - **`max_steps` from the wire is validated, not trusted.** `0` is a 400 (it would
   produce a zero-iteration turn that aborts with the misleading "reached the step
   cap (0)"), and anything above `MAX_SERVED_STEPS` (10 000, fifty times
@@ -128,12 +132,13 @@ the engine's backoff.
 - **Chunked request bodies are not decoded.** A chunked POST parses as an empty
   body and fails validation with a 400. That is safe rather than a smuggling hole
   only because this layer serves one request per connection and then closes.
-- **Every request is capped at 1 MiB, head and body together, and going over it
-  gets no response at all** — `read_request` returns `None` and the connection
-  closes ([`src/http.rs`](src/http.rs)). Two consequences worth sizing for: a
-  turn whose assembled conversation exceeds 1 MiB cannot be created, and a
-  `tool-result` carrying an oversized tool output is dropped silently, leaving
-  the engine step it would have answered parked until the turn is torn down.
+- **The request head and the body are each capped at 1 MiB (per part, not on
+  their sum), and going over either gets no response at all** — `read_request`
+  returns `None` and the connection closes ([`src/http.rs`](src/http.rs)). Two
+  consequences worth sizing for: a turn whose assembled conversation exceeds
+  1 MiB cannot be created, and a `tool-result` carrying an oversized tool
+  output is dropped silently, leaving the engine step it would have answered
+  parked until the turn is torn down.
 - **The SSE stream must not be buffered by anything in front of it.** The
   response carries `X-Accel-Buffering: no` for nginx-family proxies; a proxy that
   buffers anyway deadlocks the protocol rather than merely delaying it, because

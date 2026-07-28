@@ -10,9 +10,11 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-/// Cap on the request head + body we will buffer. A turn request carries an
-/// assembled conversation, so it is larger than the dashboard's 8 KiB GET cap,
-/// but still bounded — a host that needs more is misusing the endpoint.
+/// Cap applied to the request head and to the body, **each** — `read_request`
+/// enforces it per part, so one request may buffer up to twice this in total.
+/// A turn request carries an assembled conversation, so it is larger than the
+/// dashboard's 8 KiB GET cap, but still bounded — a host that needs more is
+/// misusing the endpoint.
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
 /// One parsed HTTP request.

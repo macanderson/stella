@@ -17,22 +17,18 @@ use std::time::UNIX_EPOCH;
 
 use serde_json::{Value, json};
 
-/// The user-scope stella config dir (`~/.stella`) — `HOME` only, matching
-/// `stella_cli::settings::user_settings_path`, so the config tab names the
-/// file the CLI actually loads.
+/// The user-scope stella config dir (`~/.stella`) — `HOME` only, mirroring
+/// `stella_cli::settings::user_settings_path` (the source of truth, kept as a
+/// copy because the observatory deliberately links no `stella-*` crate), so
+/// the config tab names the file the CLI actually loads and the skills tab the
+/// directory it actually scans.
 ///
-/// Two knowing divergences, both from resolving this here rather than linking
-/// the crate that owns it. `STELLA_CONFIG_DIR` is honoured (the workspace-wide
-/// override AGENTS.md documents) even though the settings loader itself does
-/// not read it, and `STELLA_HOME` — which moves the whole stella home, and
-/// which `global::data_dir` does honour — is ignored here because the
-/// loader ignores it too. Under either variable the two sides disagree about
-/// which `settings.json` is the user scope; whichever is wrong, it is the
-/// duplication that makes the disagreement possible.
+/// Deliberately `HOME` and nothing else: the CLI's settings loader reads
+/// neither `STELLA_CONFIG_DIR` nor `STELLA_HOME`, so honouring either here
+/// (as this once did for `STELLA_CONFIG_DIR`) made the tab claim a
+/// `settings.json` the CLI never opens. If the loader ever grows an override,
+/// mirror it here in the same order.
 pub fn user_config_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("STELLA_CONFIG_DIR") {
-        return Some(PathBuf::from(dir));
-    }
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".stella"))
 }
 
@@ -337,7 +333,11 @@ pub fn lessons(workspace_root: &Path) -> Value {
 }
 
 /// Configured MCP servers from the project's `.stella/mcp.toml`. Env var
-/// values and header values are never included — only their names.
+/// values and header values are never included — only their names — and the
+/// `target` field is likewise served without its value-bearing parts: a stdio
+/// server shows its command name and argument *count* (args routinely carry
+/// credentials — `--token=…`, an API key as a positional), an http server its
+/// URL through [`redacted_url`].
 pub fn mcp_servers(workspace_root: &Path) -> Value {
     let path = workspace_root.join(".stella/mcp.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -363,18 +363,26 @@ pub fn mcp_servers(workspace_root: &Path) -> Value {
             let target = match transport {
                 "stdio" => {
                     let cmd = def.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
-                    let args: Vec<&str> = def
+                    // The command name and the argument *count*, never the
+                    // argument values: the count keeps the row legible ("did
+                    // my args reach the config?") without serving what they
+                    // hold. Same fail-closed posture as [`redact`].
+                    let args = def
                         .get("args")
                         .and_then(|a| a.as_array())
-                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-                        .unwrap_or_default();
-                    format!("{cmd} {}", args.join(" ")).trim().to_string()
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    match args {
+                        0 => cmd.to_string(),
+                        1 => format!("{cmd} (1 arg)").trim().to_string(),
+                        n => format!("{cmd} ({n} args)").trim().to_string(),
+                    }
                 }
                 "http" => def
                     .get("url")
                     .and_then(|u| u.as_str())
-                    .unwrap_or("")
-                    .to_string(),
+                    .map(redacted_url)
+                    .unwrap_or_default(),
                 _ => String::new(),
             };
             let key_names = |field: &str| -> Vec<String> {
@@ -393,6 +401,22 @@ pub fn mcp_servers(workspace_root: &Path) -> Value {
         }
     }
     json!({ "path": path.display().to_string(), "servers": servers })
+}
+
+/// An `mcp.toml` URL with everything credential-shaped removed: the query and
+/// fragment (`?api_key=…`) and any userinfo (`user:secret@host`). Scheme, host
+/// and path are what the panel needs to tell servers apart; the rest is where
+/// a URL carries credentials, so it never reaches the browser.
+fn redacted_url(url: &str) -> String {
+    let base = url.split(['?', '#']).next().unwrap_or(url);
+    match base.split_once("://") {
+        Some((scheme, rest)) => {
+            let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+            let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+            format!("{scheme}://{host}{path}")
+        }
+        None => base.to_string(),
+    }
 }
 
 /// Does this (lowercased) key look like it holds a credential? Keys ending
@@ -552,6 +576,40 @@ mod tests {
         assert!(!is_workspace_relative("src/../../secrets"));
         // A leading `./` is how model-authored evidence paths often arrive.
         assert!(is_workspace_relative("./src/lib.rs"));
+    }
+
+    /// The `target` field is served to the browser, so the value-bearing
+    /// parts of a URL — query, fragment, userinfo — must never survive.
+    #[test]
+    fn redacted_url_strips_query_fragment_and_userinfo() {
+        assert_eq!(
+            redacted_url("https://mcp.example/v1?api_key=sk-live-123"),
+            "https://mcp.example/v1"
+        );
+        assert_eq!(
+            redacted_url("https://user:hunter2@mcp.example/v1#frag"),
+            "https://mcp.example/v1"
+        );
+        assert_eq!(redacted_url("https://mcp.example"), "https://mcp.example");
+        // No scheme at all: still nothing past a `?` is served.
+        assert_eq!(redacted_url("mcp.example/v1?t=s3cret"), "mcp.example/v1");
+    }
+
+    /// The config tab must name the settings file the CLI actually loads
+    /// (`stella_cli::settings::user_settings_path`, `$HOME/.stella`). The
+    /// loader reads neither `STELLA_CONFIG_DIR` nor `STELLA_HOME`, so this
+    /// resolver has to ignore both — honouring `STELLA_CONFIG_DIR` here once
+    /// pointed the tab at a `settings.json` the CLI never opens.
+    #[test]
+    fn user_config_dir_mirrors_the_cli_settings_loader() {
+        // SAFETY: env mutation in a test — nothing else in this crate (tests
+        // or production code) reads STELLA_CONFIG_DIR, so no parallel test
+        // can observe the transient value.
+        unsafe { std::env::set_var("STELLA_CONFIG_DIR", "/tmp/elsewhere") };
+        let resolved = user_config_dir();
+        unsafe { std::env::remove_var("STELLA_CONFIG_DIR") };
+        let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME set");
+        assert_eq!(resolved, Some(home.join(".stella")));
     }
 
     /// A secret one container below the key that names it used to survive:
