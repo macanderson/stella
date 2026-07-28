@@ -59,6 +59,7 @@ mod lang;
 pub mod manifest;
 mod parse;
 mod queries;
+mod rust_resolve;
 pub mod storage;
 mod store;
 mod symbol;

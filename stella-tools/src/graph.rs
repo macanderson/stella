@@ -264,18 +264,22 @@ pub(crate) fn run_query_with(
     };
 
     match result {
-        // Importer edges only exist where import resolution succeeds
-        // (relative TS/JS and Python paths). Rust `use` paths and bare
-        // package specifiers are indexed unresolved, so an empty importers
-        // answer for such a file is a capability gap, not a stale index —
-        // saying "re-index" would send the agent down a useless `stella
-        // init` retry.
-        Ok(frames) if frames.is_empty() && op == "importers" && !target.ends_with(".py") => {
+        // Importer edges only exist where import resolution succeeds:
+        // relative TS/JS and Python paths, and Rust `use`/`mod` paths
+        // through the module tree (#443). For everything else (Go, Java,
+        // bare package specifiers) an empty importers answer is a
+        // capability gap, not a stale index — saying "re-index" would send
+        // the agent down a useless `stella init` retry.
+        Ok(frames)
+            if frames.is_empty()
+                && op == "importers"
+                && !(target.ends_with(".py") || target.ends_with(".rs")) =>
+        {
             ToolOutput::Ok {
                 content: format!(
                     "no importers found for `{target}` — importer edges exist only where \
-                     import resolution succeeds (relative TS/JS/Python imports); Rust `use` \
-                     paths are indexed unresolved. Try `references` on the module name instead."
+                     import resolution succeeds (relative TS/JS/Python imports and Rust \
+                     `use`/`mod` paths). Try `references` on the module name instead."
                 ),
             }
         }

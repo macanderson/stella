@@ -18,10 +18,11 @@
 //! parallelized, so a five-file rename is five sequential steps today and
 //! one step through this tool.
 //!
-//! Storage-definition files (the schema gate's territory) are refused
-//! loudly: the gate judges one simulated post-edit file per call, and
-//! bypassing it through a batch would un-guard the storage map. `edit_file`
-//! remains the (gated) path for schema files.
+//! Storage-definition files ride the registry's schema gate like any other
+//! write (#442): the gate simulates the batch's composed edits per touched
+//! schema file — via `simulate_batch`, the same in-order composition the
+//! validate phase performs — and judges each result before anything lands.
+//! The transactional path is not a way around the storage map.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -111,6 +112,32 @@ fn parse_edits(input: &Value) -> Result<Vec<ParsedEdit>, String> {
             Ok(parsed)
         })
         .collect()
+}
+
+/// The batch's composed post-edit content for one `path` — the SAME
+/// in-order composition (and the same zero-match / ambiguous-match refusals)
+/// the validate phase applies, shared with the registry's storage gate
+/// (#442) so the gate judges exactly the bytes apply would write. `None`
+/// when the input doesn't parse, no edit targets `path`, or any edit to it
+/// fails to resolve — the tool itself then reports the failure, unwritten,
+/// and an ungated failing batch writes nothing.
+pub(crate) fn simulate_batch(input: &Value, path: &str, current: &str) -> Option<String> {
+    let edits = parse_edits(input).ok()?;
+    let mut content = current.to_string();
+    let mut touched = false;
+    for edit in edits.iter().filter(|e| e.path == path) {
+        touched = true;
+        let count = content.matches(&edit.old_string).count();
+        if count == 0 || (count > 1 && !edit.replace_all) {
+            return None;
+        }
+        content = if edit.replace_all {
+            content.replace(&edit.old_string, &edit.new_string)
+        } else {
+            content.replacen(&edit.old_string, &edit.new_string, 1)
+        };
+    }
+    touched.then_some(content)
 }
 
 #[async_trait]
@@ -268,38 +295,6 @@ impl Tool for ApplyEdits {
             };
         }
 
-        // Storage-gate territory check: the registry's schema gate judges ONE
-        // simulated post-edit file per `write_file`/`edit_file` call; a batch
-        // that lands storage definitions would slip past it. Mirror the
-        // gate's own firing condition (extraction of the proposed content is
-        // non-empty) and refuse loudly — `edit_file` remains the gated path.
-        // Plain code files extract empty (the adapters are marker-gated) and
-        // pass through untouched.
-        if let Some(extractor) = crate::schema_gate::extractor() {
-            let storage_hits: Vec<&str> = order
-                .iter()
-                .filter_map(|key| {
-                    let (path, _, _, simulated) = &files[key];
-                    (crate::schema_gate::is_schema_file(path)
-                        && !extractor.extract(path, simulated).is_empty())
-                    .then_some(path.as_str())
-                })
-                .collect();
-            if !storage_hits.is_empty() {
-                return ToolOutput::Error {
-                    message: format!(
-                        "batch touches storage definitions in {} — the storage gate judges \
-                         single edits only, so apply these through edit_file; NOTHING was \
-                         written",
-                        storage_hits
-                            .iter()
-                            .map(|p| format!("`{p}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                };
-            }
-        }
         if dry_run {
             return ToolOutput::Ok {
                 content: format!(
@@ -533,32 +528,26 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn refuses_storage_definitions_loudly() {
-        let dir = tempfile::tempdir().unwrap();
-        let rel = "migrations/001_init.sql";
-        std::fs::create_dir_all(dir.path().join("migrations")).unwrap();
-        std::fs::write(dir.path().join(rel), "CREATE TABLE t (id int);\n").unwrap();
-
-        let result = ApplyEdits::default()
-            .execute(
-                &serde_json::json!({ "edits": [edit(rel, "int", "bigint")] }),
-                dir.path(),
-            )
-            .await;
-        match result {
-            ToolOutput::Error { message } => {
-                assert!(
-                    message.contains("storage definitions"),
-                    "storage DDL must be refused toward edit_file: {message}"
-                );
-            }
-            ToolOutput::Ok { content } => panic!("expected refusal, got: {content}"),
-        }
+    #[test]
+    fn simulate_batch_composes_edits_exactly_like_validate() {
+        let input = serde_json::json!({ "edits": [
+            edit("a.sql", "one", "two"),
+            edit("a.sql", "two three", "four"),
+            edit("b.sql", "x", "y"),
+        ]});
+        // Edits to one file compose in order — the second targets the
+        // intermediate content the first produced.
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(rel)).unwrap(),
-            "CREATE TABLE t (id int);\n"
+            simulate_batch(&input, "a.sql", "one three").as_deref(),
+            Some("four")
         );
+        assert_eq!(simulate_batch(&input, "b.sql", "x").as_deref(), Some("y"));
+        // A path the batch never touches simulates to nothing.
+        assert_eq!(simulate_batch(&input, "c.sql", "zzz"), None);
+        // The validate phase's refusals mirror exactly: zero matches and
+        // ambiguous multi-matches both fail the simulation.
+        assert_eq!(simulate_batch(&input, "a.sql", "nope"), None);
+        assert_eq!(simulate_batch(&input, "b.sql", "x x"), None);
     }
 
     #[tokio::test]

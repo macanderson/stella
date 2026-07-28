@@ -33,12 +33,16 @@ pub const RUST_SYMBOLS: &str = r#"
 (impl_item body: (declaration_list (function_item name: (_) @name) @method))
 "#;
 
-/// `use` declarations. Rust module→file resolution (the `mod` tree, `lib.rs`
-/// vs `mod.rs`, re-exports) is genuinely non-trivial and out of scope for
-/// this cut, so the raw `use` path is recorded as an unresolved edge; see
+/// `use` declarations and declaration-only `mod` items (`!body` excludes
+/// inline `mod x { … }`, whose contents live in this same file). `use` paths
+/// resolve through the module tree (`crate::rust_resolve`, #443) at the file
+/// level; a `mod foo;` declaration is itself a dependency edge to `foo.rs` /
+/// `foo/mod.rs`. Item-level identity and re-export chasing stay out of
+/// scope; unresolvable paths keep the unresolved-edge shape, see
 /// `crate::import::resolve`.
 pub const RUST_IMPORTS: &str = r#"
 (use_declaration argument: (_) @use)
+(mod_item name: (_) @mod !body)
 "#;
 
 // Python
