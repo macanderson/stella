@@ -332,8 +332,13 @@ fn append_use(context: &ContextStore, record: &ContextUse) -> Option<(String, Ap
 }
 
 /// Append one feedback record, refusing any that violates the intra-record
-/// invariants. `None` on any failure.
-fn append_feedback(context: &ContextStore, record: &ContextUseFeedback) -> Option<AppendOutcome> {
+/// invariants. `None` on any failure. Shared with the deterministic-validation
+/// source ([`super::validation`], #753) so every verdict — whatever its method
+/// — derives its id and passes the validator identically.
+pub(crate) fn append_feedback(
+    context: &ContextStore,
+    record: &ContextUseFeedback,
+) -> Option<AppendOutcome> {
     // The validator is the enforcement point for deliverable 3, so it runs on
     // the write path rather than being trusted to have run at the caller. A
     // record that cannot justify its own verdict never reaches the ledger.

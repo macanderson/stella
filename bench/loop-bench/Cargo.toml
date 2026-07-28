@@ -13,6 +13,10 @@ repository.workspace = true
 description = "Inexpensive turn-loop + context-query correctness harness over Terminal-Bench"
 publish = false
 
+[lib]
+name = "loop_bench"
+path = "src/lib.rs"
+
 [[bin]]
 name = "loop-bench"
 path = "src/main.rs"
@@ -21,3 +25,6 @@ path = "src/main.rs"
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

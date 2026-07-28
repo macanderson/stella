@@ -47,6 +47,12 @@ pub fn capture(dir: &Path) -> Result<ClipboardPaste, String> {
     }
 }
 
+/// How many pasted images the store keeps. `⌃V` is append-only and nothing
+/// else ever deletes, so without a cap the workspace accretes every
+/// screenshot ever pasted. 100 is far more than any live session replays,
+/// so pruning only ever touches pastes from long-dead sessions.
+const MAX_STORED_PASTES: usize = 100;
+
 /// PNG-encode an RGBA clipboard bitmap and write it to the attachment store.
 fn store_image(dir: &Path, image: &arboard::ImageData<'_>) -> Result<Attachment, String> {
     let mut encoded = Vec::new();
@@ -72,13 +78,66 @@ fn store_image(dir: &Path, image: &arboard::ImageData<'_>) -> Result<Attachment,
         .unwrap_or(0);
     let name = format!("pasted-{millis}.png");
     let path = dir.join(&name);
-    std::fs::write(&path, &encoded).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    write_owner_only(&path, &encoded)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    prune_old_pastes(dir);
     Ok(Attachment::from_path(
         name,
         "image/png",
         encoded.len() as u64,
         path.to_string_lossy(),
     ))
+}
+
+/// Write `bytes` readable by the owner only. Pasted screenshots routinely
+/// contain secrets (tokens in terminal output, dashboards), and
+/// `.stella/attachments/` sits inside the workspace where any tool or other
+/// local user could otherwise read them under a default umask.
+fn write_owner_only(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(bytes)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, bytes)
+    }
+}
+
+/// Drop all but the newest [`MAX_STORED_PASTES`] pasted images. Only files
+/// this module minted (`pasted-<millis>.png`) are candidates — anything else
+/// in the directory is left alone. The millis names are fixed-width for the
+/// next few centuries, so name order is age order. Best-effort: a prune
+/// failure never fails the paste that triggered it.
+fn prune_old_pastes(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut pastes: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pasted-") && n.ends_with(".png"))
+        })
+        .collect();
+    if pastes.len() <= MAX_STORED_PASTES {
+        return;
+    }
+    pastes.sort();
+    let excess = pastes.len() - MAX_STORED_PASTES;
+    for stale in &pastes[..excess] {
+        let _ = std::fs::remove_file(stale);
+    }
 }
 
 #[cfg(test)]
@@ -104,5 +163,47 @@ mod tests {
         let bytes = std::fs::read(path).unwrap();
         assert_eq!(&bytes[1..4], b"PNG");
         assert_eq!(att.byte_len, bytes.len() as u64);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stored_paste_is_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let image = arboard::ImageData {
+            width: 1,
+            height: 1,
+            bytes: vec![0, 0, 0, 255].into(),
+        };
+        let att = store_image(dir.path(), &image).expect("stored");
+        let stella_protocol::AttachmentSource::Path { path } = &att.source else {
+            panic!("expected path source");
+        };
+        let mode = std::fs::metadata(path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "paste must not be world-readable");
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_pastes_and_leaves_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for millis in 0..MAX_STORED_PASTES + 5 {
+            let name = format!("pasted-{:013}.png", millis);
+            std::fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("notes.txt"), b"keep me").unwrap();
+
+        prune_old_pastes(dir.path());
+
+        let mut names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let pastes: Vec<&String> = names.iter().filter(|n| n.starts_with("pasted-")).collect();
+        assert_eq!(pastes.len(), MAX_STORED_PASTES);
+        // The five oldest are gone; the newest survives.
+        assert_eq!(*pastes[0], format!("pasted-{:013}.png", 5));
+        assert!(names.contains(&"notes.txt".to_string()));
     }
 }

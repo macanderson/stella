@@ -401,6 +401,43 @@ fn ceil_boundary(s: &str, mut i: usize) -> usize {
     i
 }
 
+/// Spawn `cmd`, retrying briefly while the kernel refuses with `ETXTBSY`.
+///
+/// `ETXTBSY` means the executable is still open for writing somewhere — for a
+/// custom tool that is almost always a freshly written script whose write
+/// descriptor another thread's `fork` momentarily duplicated (`O_CLOEXEC`
+/// closes at *exec*, not at fork, so the window between a concurrent fork and
+/// its exec keeps the file "busy"). The condition is transient by
+/// construction, so a short bounded backoff (~300ms total) resolves it; a
+/// script genuinely held open for writing still fails after the last attempt
+/// with the original error. (#749)
+async fn spawn_retrying_etxtbsy(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
+    let mut delay = Duration::from_millis(10);
+    for _ in 0..5 {
+        match cmd.spawn() {
+            Err(e) if is_etxtbsy(&e) => {
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+            other => return other,
+        }
+    }
+    cmd.spawn()
+}
+
+/// True when `e` is the unix `ETXTBSY` ("text file busy") condition.
+fn is_etxtbsy(e: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        e.raw_os_error() == Some(libc::ETXTBSY)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = e;
+        false
+    }
+}
+
 /// Run one custom tool against the model's `input`, from `workspace_root`.
 /// Never returns `Err` — every failure mode is a named [`ToolOutput::Error`],
 /// because tool failures are model-visible data, not engine faults.
@@ -443,7 +480,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         });
     }
 
-    let mut child = match cmd.spawn() {
+    let mut child = match spawn_retrying_etxtbsy(&mut cmd).await {
         Ok(c) => c,
         Err(e) => {
             return ToolOutput::Error {
@@ -914,6 +951,32 @@ command = []"#;
         match out {
             ToolOutput::Ok { content } => assert!(content.contains("custom_ran"), "{content}"),
             ToolOutput::Error { message } => panic!("expected ok: {message}"),
+        }
+    }
+
+    /// Witness for #749: a script that is transiently open for writing spawns
+    /// anyway once the writer goes away. Holding a write descriptor anywhere
+    /// in the system — here, in the test process itself — makes `exec` fail
+    /// with `ETXTBSY`, which is exactly the race the parallel test threads hit
+    /// on CI; without the bounded retry this returns the spawn error.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spawn_retries_while_script_is_open_for_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = script_tool(dir.path(), "busy.sh", "#!/bin/sh\necho recovered\n", 5000);
+        let writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.path().join("busy.sh"))
+            .unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(writer);
+        });
+        let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+        release.await.unwrap();
+        match out {
+            ToolOutput::Ok { content } => assert!(content.contains("recovered"), "{content}"),
+            ToolOutput::Error { message } => panic!("expected ok after retry: {message}"),
         }
     }
 

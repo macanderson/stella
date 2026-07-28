@@ -417,17 +417,10 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
-/// Resolve `run_script`'s command line for the registry's `command.started`
-/// policy chain — best-effort: `None` (no gating) when the input or index
-/// can't resolve, in which case the tool itself returns the named error.
-pub(crate) async fn resolve_command_for_gate(root: &Path, input: &Value) -> Option<String> {
-    let script = input.get("script")?.as_str()?;
-    let dir = input.get("dir").and_then(|v| v.as_str());
-    let args = string_args(input);
-    let index = ScriptIndex::detect(root).await;
-    let entry = index.resolve(script, dir).ok()?;
-    Some(compose_command(entry, &args))
-}
+/// The `command.started` gate resolution and TOCTOU-closing input thread
+/// (#804) — see the module.
+mod gate;
+pub(crate) use gate::{GATE_RESOLVED_KEY, thread_gate_resolution};
 
 /// Resolve and run one script — the single execution path shared by the
 /// `run_script` tool and `stella scripts run`.
@@ -1324,6 +1317,21 @@ impl Tool for RunScript {
         let dir = input.get("dir").and_then(|v| v.as_str());
         let args = string_args(input);
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
+        // The registry-threaded gate resolution ([`GATE_RESOLVED_KEY`]): run
+        // exactly what the `command.started` chain approved. Absent (a
+        // bus-less registry, a direct call, `stella scripts run`), resolve
+        // here as before.
+        if let Some(resolved) = input.get(GATE_RESOLVED_KEY)
+            && let Some(command) = resolved.get("command").and_then(|v| v.as_str())
+        {
+            let dir = resolved.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
+            let cwd = if dir == "." {
+                root.to_path_buf()
+            } else {
+                root.join(dir)
+            };
+            return exec::run_and_report(command, &cwd, timeout_secs).await;
+        }
         run_by_name(root, script, dir, &args, timeout_secs).await
     }
 }

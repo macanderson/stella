@@ -29,6 +29,7 @@ mod auth_cmd;
 mod cache_insight;
 mod candidate_ws;
 mod claims;
+mod cloud_drain;
 mod command_deck;
 mod config;
 mod connect_cmd;
