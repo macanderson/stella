@@ -29,6 +29,52 @@ set_id = "acme.web"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# The trigger, and the four verdicts
+# ─────────────────────────────────────────────────────────────────────────────
+[scoring]
+# Tests run when the record HAD A CHANCE to matter, not when the agent cited it.
+#
+# Citation is the wrong trigger. A record the agent ignored is never cited, so
+# citation-triggered scoring would never test the one case that needs no second
+# run and no model judgement — the record that was present, was relevant, and
+# was passed over. That is the most reliable signal in the system and citing
+# would hide it.
+#
+# Citation is still recorded. It is evidence, not the gate.
+trigger = "applies_when"
+
+# Two questions, four answers.
+#
+#                      | outcome good   | outcome bad
+#   ------------------ | -------------- | -----------
+#   record followed    | helpful*       | HARMFUL
+#   record ignored     | not_helpful    | not_helpful
+#
+#   * subject to the without-record check in section C — following a record and
+#     succeeding does not prove the record caused it.
+#
+#   No chance to matter at all → neutral. No signal, no penalty.
+
+  [scoring.verdict.helpful]
+  means  = "had a chance, was followed, and changed the outcome for the better"
+  action = "counts toward promotion"
+
+  [scoring.verdict.not_helpful]
+  means  = "had a chance and changed nothing — ignored, or redundant with what the agent would have done anyway"
+  action = "counts toward retirement, slowly"
+
+  [scoring.verdict.harmful]
+  means  = "had a chance, was followed, and the outcome was worse for it"
+  action = "retract now — this is not a slow cleanup"
+  note   = "A harmful record is worse than no record. Without it the agent would have looked the answer up; with it, it confidently did the wrong thing on every turn the record was injected."
+
+  [scoring.verdict.neutral]
+  means  = "no chance to matter this turn"
+  action = "none — do not count it either way"
+  note   = "This is what stops a narrow record from decaying toward retirement just because most turns never touch its subject."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # A. Scored from the diff
 #
 # "Contracts live in capabilities/contracts/" — if it worked, a contract file
@@ -100,7 +146,8 @@ kind       = "would_have_done_it_anyway"
   [check.without_record]
   outcome         = "identical — contract still landed in capabilities/contracts/"
   reason          = "the prompt named the directory; the record added nothing"
-  actual_verdict  = "neutral"
+  actual_verdict  = "not_helpful"
+  note = "not neutral. The record had its chance and changed nothing, which is the same value to the user as being ignored. One redundant turn does not retire a record — accumulated ones should."
 
   [check.rule]
   text = "An effect check that still passes with the record removed proves nothing about that record."
@@ -151,6 +198,20 @@ without_record = "agent ran `curl localhost:3000/healthz`, failed, then retried 
 verdict        = "helpful"
 value          = "saved one failed call, 1840ms"
 why            = "the wasted turn is visible in tool_calls when the record is absent and missing when it is present"
+
+
+[[turn]]
+id             = "exec_4475"
+prompt         = "Set up the toolchain for a fresh checkout"
+record         = "ctx.acme.web.node-version"
+applies_when   = "met"
+passes_when    = "met"
+requires       = "not met"
+without_record = "agent read .nvmrc and installed Node 22 — correct"
+verdict        = "harmful"
+why            = "the agent did exactly what the record said and installed Node 20; the build then failed on an engines check"
+note = "This is the Node 20 record that 05 catches and refuses at ingest. This turn is what publishing it would have looked like. Note the shape: the record was FOLLOWED and the outcome was WORSE, which is the only combination that produces harmful — and note that removing the record gives a better result, not merely a different one."
+action         = "retract, not retire"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
