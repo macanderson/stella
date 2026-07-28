@@ -141,8 +141,7 @@ pub(crate) fn record_vanished_verdicts(
         // the last matching row is the latest.
         let Some((use_id, use_record)) = uses
             .iter()
-            .filter(|(_, u)| u.context_record_id == memory.public_id)
-            .next_back()
+            .rfind(|(_, u)| u.context_record_id == memory.public_id)
         else {
             continue;
         };
