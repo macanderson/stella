@@ -5,6 +5,7 @@
 //! `!Send` bridge.
 
 use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use stella_protocol::{CompletionMessage, ToolSchema};
@@ -482,7 +483,9 @@ async fn the_live_turn_cap_refuses_further_turns_with_retry_after() {
     );
 
     // The cap admits again once a turn is reclaimed, so it is a queue and not a
-    // one-way latch — a latch would take the server down permanently.
+    // one-way latch — a latch would take the server down permanently. That the
+    // registry *can* drain is proven over the wire by
+    // `abandoned_finished_turns_do_not_wedge_the_cap` below.
     let (status, _) = post_json(
         addr,
         "/v1/turns/turn-does-not-exist/cancel",
@@ -491,6 +494,57 @@ async fn the_live_turn_cap_refuses_further_turns_with_retry_after() {
     )
     .await;
     assert!(status.contains("404"), "sanity: unknown turn is a 404");
+}
+
+/// The cap counts registry entries, and a turn that *finished* without ever
+/// being streamed still holds one. A stream ending and an explicit cancel are
+/// the only other reclaimers, and an abandoned turn reaches neither — so
+/// without `reclaim_finished_unstreamed` a host that creates turns and walks
+/// away drives the server into a permanent `429`, no matter how long anyone
+/// waits. The test above states that this cannot happen; this one proves it,
+/// end to end, over a socket.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn abandoned_finished_turns_do_not_wedge_the_cap() {
+    let addr = start_server().await;
+
+    // Nothing answers the reverse request these turns park on, so each aborts
+    // on its own 50 ms deadline — settled, and never streamed by anyone.
+    let abandoned = json!({
+        "provider_id": "mock",
+        "messages": [serde_json::to_value(CompletionMessage::user("hi")).unwrap()],
+        "reverse_request_timeout_ms": 50,
+    })
+    .to_string();
+
+    for i in 0..32 {
+        let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &abandoned).await;
+        assert!(
+            status.contains("200"),
+            "turn {i} should be admitted: {status} {body}"
+        );
+    }
+
+    // Poll rather than sleep a tuned interval: the turns settle on their own
+    // schedule, and the claim under test is "eventually admitted", not
+    // "admitted within N ms". The deadline is what makes a server that never
+    // reclaims fail here instead of hanging.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (status, body) = post_json(addr, "/v1/turns", Some(TOKEN), &abandoned).await;
+        if status.contains("200") {
+            break;
+        }
+        assert!(
+            status.contains("429"),
+            "the only legitimate refusal here is the cap: {status} {body}"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "a registry full of finished, unstreamed turns never admitted a new \
+             one — the live-turn cap is a one-way latch"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 /// Sequential ids (`turn-0`, `turn-1`, …) made every other live turn addressable
