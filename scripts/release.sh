@@ -111,11 +111,16 @@ grep -m1 '^version = ' Cargo.toml | grep -q "\"${VERSION}\"" || die "version sta
 ok "stamped workspace version ${VERSION}"
 
 # ── Build + package every target ────────────────────────────────────────────
+# CARGO_TARGET_DIR-aware: a sourced .dev-env (scripts/setup-dev-env.sh) moves
+# cargo's output out of ./target, and packaging must copy from wherever the
+# build above actually wrote — a hardcoded ./target would miss it, or worse,
+# pick up a stale binary from an earlier non-isolated build.
+TARGET_ROOT="${CARGO_TARGET_DIR:-target}"
 DIST="$(mktemp -d)/dist"; mkdir -p "$DIST"
 package() {  # <target-triple>
   local tgt="$1" stem="${BIN}-${VERSION}-$1"
   mkdir -p "$DIST/$stem"
-  cp "target/${tgt}/release/${BIN}" "$DIST/$stem/${BIN}"
+  cp "${TARGET_ROOT}/${tgt}/release/${BIN}" "$DIST/$stem/${BIN}"
   # AGPL §4/§5 require the license text to travel with every distributed copy.
   cp LICENSE NOTICE LICENSING.md README.md "$DIST/$stem/"
   tar -C "$DIST" -czf "$DIST/${stem}.tar.gz" "$stem"
@@ -136,7 +141,7 @@ ok "built + packaged 4 targets"
 
 # ── Checksums + version sanity check on the native binary ───────────────────
 ( cd "$DIST" && shasum -a 256 ${BIN}-${VERSION}-*.tar.gz > SHA256SUMS )
-native="target/$(rustc -vV | sed -n 's/host: //p')/release/${BIN}"
+native="${TARGET_ROOT}/$(rustc -vV | sed -n 's/host: //p')/release/${BIN}"
 if [ -x "$native" ]; then
   "$native" --version 2>/dev/null | grep -q "${VERSION}" || die "built binary reports the wrong version (expected ${VERSION}) — aborting before publish"
   ok "binary reports ${BIN} ${VERSION}"

@@ -659,6 +659,16 @@ pub struct FileLedger {
     pub records: Vec<FileRecord>,
 }
 
+/// Cap on distinct (agent, path) records the ledger keeps. Unlike
+/// [`RouteLog`]/[`TraceLog`], which are always capped, this one had no bound
+/// at all: a long multi-agent session that touches (or repeatedly re-reads)
+/// many thousands of files grew this vector — and the O(n) `find` scan
+/// [`FileLedger::record`] runs on every single `FileChange` event — without
+/// limit for the life of the deck. Oldest-first eviction on overflow, mirroring
+/// the other capped logs; the type stays `Vec` (not `VecDeque`) because
+/// `views::files` range-slices `ledger.records` directly.
+const MAX_LEDGER_RECORDS: usize = 4096;
+
 impl FileLedger {
     fn record(&mut self, agent: &str, path: &str, kind: FileChangeKind, diff: &Option<String>) {
         let (added, removed) = diff.as_deref().map(count_diff_lines).unwrap_or((0, 0));
@@ -676,6 +686,9 @@ impl FileLedger {
                 rec.reads += 1;
             }
         } else {
+            if self.records.len() >= MAX_LEDGER_RECORDS {
+                self.records.remove(0);
+            }
             let mutation = kind.is_mutation();
             self.records.push(FileRecord {
                 agent: agent.to_string(),

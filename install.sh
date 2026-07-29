@@ -287,7 +287,10 @@ main() {
   info "installing stella ${version} (${TARGET})"
 
   tmpdir="$(mktemp -d 2>/dev/null || mktemp -d -t stella)"
-  trap 'rm -rf "$tmpdir"' EXIT INT TERM
+  # tmp_bin lives in INSTALL_DIR, not tmpdir (the atomic-rename staging copy
+  # below), so it needs its own cleanup or an interrupted install leaks it.
+  tmp_bin=""
+  trap 'rm -rf "$tmpdir"; [ -z "$tmp_bin" ] || rm -f "$tmp_bin"' EXIT INT TERM
 
   info "downloading ${asset}"
   if ! curl -fsSL "$asset_url" -o "${tmpdir}/${asset}"; then

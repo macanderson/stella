@@ -42,8 +42,9 @@ pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// [`STREAM_IDLE_TIMEOUT`] window is never cut off. That is deliberate for
 /// streaming completions (a long generation is legitimate), so a
 /// non-completion caller must bring its own wall-clock ceiling —
-/// [`crate::provider_listing`] wraps every fetch in one; [`crate::modelsdev`]
-/// (also on the CLI's blocking startup auto-sync path) still has none.
+/// both [`crate::provider_listing`] and [`crate::modelsdev`] (the two
+/// third-party fetches, and both on the CLI's blocking startup auto-sync
+/// path) wrap every fetch in one.
 ///
 /// This bound fits streaming callers only. A non-streaming caller has no
 /// first token to reset the clock, so the whole generation must fit inside

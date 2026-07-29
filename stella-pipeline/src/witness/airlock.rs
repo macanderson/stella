@@ -600,7 +600,16 @@ pub fn redact(sealed: &SealedFailure<'_>, requested: DisclosureGrain) -> Failure
         symptom: (grain >= DisclosureGrain::Symptom)
             .then_some(symptom)
             .flatten(),
-        reproduction,
+        // Gated by the *final* grain like its siblings, not just the branch
+        // that built it. `reproduction` can only be `Some` when the command
+        // scrubbed clean (the reproduction candidate is a superset of the bare
+        // command, so it scrubs strictly harder), which means `grain` never
+        // fell below `Reproduction` here — the guard is a no-op today. It exists
+        // so a future change to the reproduction candidate can never leave a
+        // brief reporting a low grain while still carrying a reproduction.
+        reproduction: (grain >= DisclosureGrain::Reproduction)
+            .then_some(reproduction)
+            .flatten(),
     }
 }
 

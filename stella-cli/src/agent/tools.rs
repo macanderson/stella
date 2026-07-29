@@ -414,7 +414,12 @@ fn resolve_head(root: &std::path::Path) -> Option<String> {
         return None;
     }
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit())).then_some(sha)
+    // 40 hex chars for a SHA-1 repo, 64 for a `--object-format=sha256` one —
+    // rejecting the latter silently degraded the diff baseline to a bare
+    // working-tree diff on sha256 repos, reintroducing the "committed work
+    // reads as no changes" bug this baseline exists to prevent.
+    let valid_len = matches!(sha.len(), 40 | 64);
+    (valid_len && sha.chars().all(|c| c.is_ascii_hexdigit())).then_some(sha)
 }
 
 /// Workspace-rooted typed test runner. It passes an enumerable argv directly

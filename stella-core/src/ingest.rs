@@ -166,12 +166,6 @@ impl Plan {
     }
 }
 
-/// Split classified candidates into the first-run conversation's two steps.
-///
-/// Anything [`Tier::Historical`] or [`Tier::Skip`] is dropped here rather than
-/// shown and demoted: a first-run dialog is not the place to explain why a
-/// changelog is a bad idea. Those remain reachable by naming the path
-/// explicitly, which is always allowed.
 /// How many suggestions are worth showing before the list stops being a
 /// question and becomes a chore.
 ///
@@ -188,6 +182,12 @@ fn depth_of(path: &str) -> usize {
     path.matches('/').count()
 }
 
+/// Split classified candidates into the first-run conversation's two steps.
+///
+/// Anything [`Tier::Historical`] or [`Tier::Skip`] is dropped here rather than
+/// shown and demoted: a first-run dialog is not the place to explain why a
+/// changelog is a bad idea. Those remain reachable by naming the path
+/// explicitly, which is always allowed.
 pub fn plan(candidates: Vec<Candidate>) -> Plan {
     let mut plan = Plan::default();
     for candidate in candidates {

@@ -203,8 +203,8 @@ pub(crate) fn error_summary_json(format: OutputFormat, msg: &str) -> Option<Stri
         text: None,
         reason: msg,
     };
-    // A struct of two integers and two strings cannot fail to serialize; the
-    // fallback keeps the contract rather than proving the point.
+    // A struct of one integer and three string fields cannot fail to
+    // serialize; the fallback keeps the contract rather than proving the point.
     let fallback = || format!(r#"{{"schema_version":{SUMMARY_SCHEMA_VERSION},"status":"error"}}"#);
     match format {
         OutputFormat::Text => None,

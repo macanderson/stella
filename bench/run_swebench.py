@@ -416,11 +416,19 @@ def run_instance(
                 stella_error = True
                 reason = f"stella exited non-zero ({rc})"
                 log(f"  warning {iid}: {reason} (patch still collected)")
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             stella_error = True
             reason = f"stella timed out after {timeout}s"
             log(f"  warning {iid}: {reason} (partial patch still collected)")
+            # Salvage what stella printed before the timeout: run_cmd raised
+            # before its own log write, and the partial output is both the
+            # post-mortem and (when the run got far enough) the cost envelope.
+            partial = exc.output or ""
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", errors="replace")
+            cost_usd = extract_cost_usd(partial)
             with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(partial)
                 fh.write(f"\n[harness] TIMEOUT after {timeout}s\n")
 
         # 3) collect patch (even after timeout / non-zero exit: partial work counts)

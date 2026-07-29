@@ -3,8 +3,9 @@ import type { MetadataRoute } from "next";
 /**
  * PWA manifest for the Stella docs site. Next auto-links this at
  * `/manifest.webmanifest` and adds the corresponding <link rel="manifest">.
- * Icons live under public/icons and are generated from docs/brand/appicon.svg
- * by docs/brand/build.py — run `make brand` after changing the mark.
+ * Icons live under public/icons and are hand-maintained alongside the mark
+ * (the docs/brand/build.py generator no longer exists — see website/README.md);
+ * update them together when the mark changes.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -16,8 +17,8 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: "#080d1a", // --stella-ground
-    theme_color: "#080d1a", // --stella-ground
+    background_color: "#000000", // --stella-ground
+    theme_color: "#000000", // --stella-ground
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },

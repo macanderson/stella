@@ -24,12 +24,12 @@ pub(super) fn session_retrieval_settings(workspace_root: &std::path::Path) -> Re
 
 /// Whether `context.lifecycle.enabled` is on for this session (#713, #714).
 ///
-/// Degrades to `false` on an unreadable settings file. That is the setting's
-/// own default, and it is the opposite posture to the retrieval read above,
-/// deliberately: this flag moves both the recall plane and the learning loop
-/// off the paths users run today. Failing *open* would turn a typo elsewhere in
-/// the file into silently enabling a lifecycle nobody asked for, and the safe
-/// answer to "I could not tell" is "keep doing what already works".
+/// Degrades to `false` on an unreadable settings file — which is NOT the
+/// shipped default (the lifecycle ships on; see `LifecycleSettings::default`)
+/// but the deliberate fail-safe posture, opposite to the retrieval read above:
+/// an unparseable file may be the very file in which someone turned the
+/// lifecycle off, and silently overriding an opt-out we failed to read is
+/// worse than leaving a default unapplied.
 pub fn session_lifecycle_enabled(workspace_root: &std::path::Path) -> bool {
     let Ok(settings) = crate::settings::Settings::load(workspace_root) else {
         // Unreadable or malformed. This is the one case that does NOT take the
