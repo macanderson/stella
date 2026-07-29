@@ -785,3 +785,107 @@ fn activity_spark_pads_and_caps() {
     }
     assert_eq!(s.padded(), vec![1, 2, 3, 4]); // capped at width 4
 }
+
+fn shell_ev(agent: &str, event: AgentEvent) -> Inbound {
+    Inbound::ShellEvent {
+        agent: agent.into(),
+        event,
+    }
+}
+
+fn shell_start(call_id: &str, cmd: &str) -> AgentEvent {
+    AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: call_id.into(),
+            name: "shell".into(),
+            input: serde_json::json!({ "cmd": cmd }),
+        },
+    }
+}
+
+fn shell_result(call_id: &str, out: &str) -> AgentEvent {
+    AgentEvent::ToolResult {
+        call_id: call_id.into(),
+        output: ToolOutput::Ok {
+            content: out.into(),
+        },
+        duration_ms: 1,
+        speculated: false,
+    }
+}
+
+#[test]
+fn bang_shell_output_lands_in_the_focused_session_transcript() {
+    // The whole point of `ShellEvent`: `! pwd` answers where it was asked.
+    // `views::session::render` draws only `agents[ui.focused]`, so output
+    // routed to any other lane is output the user never sees.
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+
+    w.apply_inbound(&shell_ev("lead", shell_start("shell-0-0", "pwd")));
+    w.apply_inbound(&shell_ev(
+        "lead",
+        shell_result("shell-0-0", "/Users/macanderson"),
+    ));
+
+    assert_eq!(w.agents.len(), 1, "no second lane is spawned to hide it in");
+    let transcript = &w.agents[0].model.transcript;
+    assert_eq!(transcript.len(), 2, "the tool row lands in THIS transcript");
+    match &transcript[1] {
+        crate::model::TranscriptEntry::ToolResult { ok, full, .. } => {
+            assert!(ok, "a zero exit reads as success");
+            assert!(
+                full.contains("/Users/macanderson"),
+                "the command's stdout is what gets rendered, got {full:?}"
+            );
+        }
+        other => panic!("expected a ToolResult row, got {other:?}"),
+    }
+}
+
+#[test]
+fn bang_shell_output_never_disturbs_the_agent_it_borrows() {
+    // A `!` command is user-initiated local shell, not agent activity. The
+    // lane lends its transcript and nothing else: `status_from_event` maps
+    // ToolStart/ToolResult to `Running`, and an agent flipped Running by a
+    // shell command would spin forever — no engine turn exists to park it.
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    let status = w.agents[0].status;
+    let title = w.agents[0].meta.title.clone();
+    let tokens_in = w.agents[0].tokens_in;
+    let traces = w.trace.rows.len();
+
+    w.apply_inbound(&shell_ev("lead", shell_start("shell-0-0", "pwd")));
+    w.apply_inbound(&shell_ev(
+        "lead",
+        shell_result("shell-0-0", "/Users/macanderson"),
+    ));
+
+    assert_eq!(
+        w.agents[0].status, status,
+        "the agent never flips to Running"
+    );
+    assert_eq!(w.agents[0].meta.title, title, "the session keeps its title");
+    assert_eq!(
+        w.agents[0].tokens_in, tokens_in,
+        "local shell costs nothing"
+    );
+    assert_eq!(w.trace.rows.len(), traces, "not the agent's trace activity");
+}
+
+#[test]
+fn a_bang_shell_event_for_an_unknown_lane_is_dropped_not_auto_registered() {
+    // Unlike `Event`, `ShellEvent` never conjures a lane: the no-lane case is
+    // exactly what the synthetic fallback in `spawn_shell_command` covers, and
+    // auto-registering here would resurrect the off-screen lane this fixes.
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    w.apply_inbound(&shell_ev("ghost", shell_start("shell-0-0", "pwd")));
+
+    assert_eq!(w.agents.len(), 1, "no lane is created for an unknown id");
+    assert!(
+        w.agents[0].model.transcript.is_empty(),
+        "and none is misrouted"
+    );
+}

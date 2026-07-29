@@ -19,7 +19,8 @@ import {
  * card shows the real logo instead of whatever face the renderer falls back to.
  *
  * Colours are literals rather than CSS vars because Satori resolves no
- * cascade; they are the tokens from docs/brand/tokens.json, named inline.
+ * cascade; they are the tokens from src/app/tokens.css (which mirrors
+ * stella-tui/src/palette.rs), named inline — edit them together.
  * Measured on `night` #000000: wordmark 19.40:1, mark 12.60:1, tagline 8.50:1,
  * footer 4.71:1. Keep the markup inside Satori's supported subset — plain
  * <path> fills only, no gradients, masks, or filters.
@@ -50,7 +51,7 @@ export default function OpengraphImage() {
               display: "flex",
               alignItems: "center",
               gap: "14px",
-              border: "1px solid #22304c", // hairline
+              border: "1px solid #24313f", // hairline
               borderRadius: "9999px",
               padding: "12px 26px",
               fontSize: "28px",

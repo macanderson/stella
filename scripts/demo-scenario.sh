@@ -85,7 +85,9 @@ for ((cycle = 1; cycle <= LOOPS; cycle++)); do
   cargo build --release -p stella-cli
 
   turn "cycle $cycle/$LOOPS — smoke: run the freshly built binary"
-  ./target/release/stella models
+  # CARGO_TARGET_DIR-aware: a sourced .dev-env (scripts/setup-dev-env.sh)
+  # relocates build output out of ./target.
+  "${CARGO_TARGET_DIR:-target}/release/stella" models
 
   turn "cycle $cycle/$LOOPS — full test suite, every crate"
   cargo test --workspace

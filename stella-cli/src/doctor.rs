@@ -106,7 +106,12 @@ pub fn run_doctor(repair: bool) -> Result<(), String> {
 }
 
 /// The command with its workspace passed in, so tests can drive a scratch
-/// workspace instead of the process's cwd.
+/// workspace instead of the process's cwd. Note that only the
+/// workspace-scoped checks (store integrity, fleet ledger) honour
+/// `workspace_root`; the session-sidecar check operates on the machine-wide
+/// [`stella_store::SessionRegistry`] default location, which is global by
+/// design — so a `--repair` here can reap orphan sidecars regardless of
+/// `workspace_root`.
 pub(crate) fn run_doctor_at(workspace_root: &Path, repair: bool) -> Result<(), String> {
     let checks = checks(workspace_root, repair);
     render(&checks);

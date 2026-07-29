@@ -8,7 +8,7 @@ die without saying why? did `project_overview` / `graph_query` get used at all?
 
 It shells out to the `stella` binary and `harbor` with **no dependency on any
 stella crate** (`clap`, `serde`, `serde_json` only), so it compiles in seconds
-and never drags the workspace into a bench iteration. It is one file.
+and never drags the workspace into a bench iteration.
 
 > Wider benchmarking context — the Harbor adapter, the standalone SWE-bench
 > harness, the zero-cost smoke test, claim-run rules — lives in
@@ -90,12 +90,13 @@ Exit `2` means the task list resolved to nothing.
 cargo test -p loop-bench        # no make target; `make test` covers it via --workspace
 ```
 
-Eight pure unit tests at the bottom of [`src/main.rs`](src/main.rs) feed JSONL to
-`distill_events` and assert the verdict — no Docker, no harbor, no key. Each
-pins a real defect: batched `apply_edits` reporting zero writes, an ellipsis
-past the column budget that shifted a whole row, a retryable warning read as
-terminal, a 177-tool *solved* run called silent, a stream of non-JSON stella
-output passing for an unexplained silent death. A new signal means a
+Fourteen pure unit tests in [`src/tests.rs`](src/tests.rs) (pulled in by
+`src/lib.rs` as `#[cfg(test)] mod tests;`) feed JSONL to `distill_events` and
+assert the verdict — no Docker, no harbor, no key. Each pins a real defect:
+batched `apply_edits` reporting zero writes, an ellipsis past the column
+budget that shifted a whole row, a retryable warning read as terminal, a
+*solved* run with no `complete` event called silent, a stream of non-JSON
+stella output passing for an unexplained silent death. A new signal means a
 `TrialReport` field, an arm in `distill_events`, a `print_table` column
 (`TABLE_WIDTH`), and a test.
 

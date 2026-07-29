@@ -75,10 +75,18 @@ fn effort_values_for(state: &EngineConfigState, role: EngineRole) -> Vec<String>
         .get(model)
         .or_else(|| qualified.as_ref().and_then(|q| state.model_efforts.get(q)))
         .or_else(|| {
+            // `model_efforts` is a `HashMap`, whose iteration order is
+            // unspecified — if two providers happen to serve the same bare
+            // slug (e.g. `openrouter/gpt-4` and `azure/gpt-4`), picking the
+            // first match `.iter()` happens to yield would make the shown
+            // effort vocabulary flicker between runs for the exact same
+            // config. Sorting by spec first makes the choice a pure function
+            // of `model_efforts`' contents, not its hash layout.
             state
                 .model_efforts
                 .iter()
-                .find(|(spec, _)| spec.ends_with(&suffix))
+                .filter(|(spec, _)| spec.ends_with(&suffix))
+                .min_by_key(|(spec, _)| spec.as_str())
                 .map(|(_, levels)| levels)
         });
     match hit {

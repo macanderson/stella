@@ -125,6 +125,21 @@ pub enum Inbound {
     Deregister { agent: AgentId },
     /// An `AgentEvent` belonging to one agent.
     Event { agent: AgentId, event: AgentEvent },
+    /// A local `!` shell command's output, folded into an EXISTING lane's
+    /// transcript so it reads inline in the session the user is looking at.
+    ///
+    /// Deliberately not [`Inbound::Event`]: that path derives agent status
+    /// from the event, and `ToolStart`/`ToolResult` both mean
+    /// [`AgentStatus::Running`] — so routing a `!` command through it would
+    /// flip an idle agent to Running and leave it spinning forever (nothing
+    /// parks a lane the engine never started). This variant touches the
+    /// transcript ONLY: no status, no token/cost counters, no trace row. A
+    /// `!` command is user-initiated local shell, not agent activity.
+    ///
+    /// Folding an unknown id is a no-op — unlike `Event`, it never
+    /// auto-registers, because a lane that does not exist is precisely the
+    /// case the synthetic fallback lane already covers.
+    ShellEvent { agent: AgentId, event: AgentEvent },
     /// A supervisor lifecycle transition not carried by the event stream.
     Status { agent: AgentId, status: AgentStatus },
     /// The dispatcher took the oldest queued prompt and handed it to an

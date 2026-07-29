@@ -394,9 +394,9 @@ impl MemoryInput {
     ///
     /// Keyed by **lineage**, not by revision, which is what makes an edit
     /// update one node in place instead of minting a second. The old revision's
-    /// vector is orphaned rather than deleted — `vectors_for_fingerprint` joins
-    /// through `node.content_hash`, so a vector no live node points at is never
-    /// selected again.
+    /// vector is orphaned rather than deleted — the similarity scan
+    /// (`candidates::score_nodes_by_vector`) joins through `node.content_hash`,
+    /// so a vector no live node points at is never selected again.
     fn as_node(&self) -> NodeInput {
         let label = truncate_label(&self.content);
         NodeInput::new(NodeKind::Memory, label)

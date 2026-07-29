@@ -29,8 +29,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::composer::{Composer, SlashCommand};
 use crate::deck::WorkspaceModel;
 use crate::deck_render::render_deck;
-use crate::deck_ui::{DeckAction, DeckUi, handle_deck_key, ingest_inbound};
-use crate::envelope::{AgentMeta, AgentStatus, Inbound, WorkspaceInput};
+use crate::deck_ui::{DeckAction, DeckUi, focused_id, handle_deck_key, ingest_inbound};
+use crate::envelope::{AgentId, AgentMeta, AgentStatus, Inbound, WorkspaceInput};
 use crate::graph::GraphSnapshot;
 use crate::resource::ResourceMonitor;
 use crate::shell::DebugLog;
@@ -41,8 +41,11 @@ use crate::theme;
 /// gauge / elapsed timers live without busy-spinning.
 const TICK: Duration = Duration::from_millis(33);
 
-/// The synthetic agent id `!` shell commands run under — they get their own
-/// dashboard lane and transcript instead of polluting a real agent's fold.
+/// The synthetic agent id a `!` shell command falls back to when the deck has
+/// no agent registered yet. Normally a command borrows the focused agent's
+/// lane instead, so its output reads inline in the transcript the user is
+/// looking at — see [`spawn_shell_command`]. This lane exists so output is
+/// never dropped in the gap before the session registers.
 const SHELL_AGENT: &str = "shell";
 
 /// Cap on captured shell output fed back as an event. Head and tail are both
@@ -84,12 +87,24 @@ fn now_ms() -> u64 {
 
 /// Run one `!` shell command **immediately** on the local event lane.
 ///
-/// The command gets the synthetic [`SHELL_AGENT`] lane: a `Register` (idempotent
-/// — re-registering only refreshes the title to the latest command), a
-/// `ToolStart` so the invocation is visible the instant it launches, and a
-/// `ToolResult` + terminal `Status` when it finishes. stdout and stderr are
-/// both captured; a non-zero exit reports as a tool error. The TUI never
-/// blocks on the child — it runs on a spawned task and reports back over `tx`.
+/// `target` is the lane the output belongs to. `Some(agent)` — the normal
+/// case — is the lane the user is actually reading (the focused agent), so a
+/// `!` command reads inline in the session transcript exactly like Claude
+/// Code's bash mode. Those events go out as [`Inbound::ShellEvent`], which
+/// folds into the transcript and nothing else; the lane gets no `Register`
+/// (re-registering an existing agent overwrites its meta, renaming the
+/// session to `! cmd` and restyling it as a shell row) and no terminal
+/// `Status` (which would clobber the real agent's own lifecycle).
+///
+/// `None` — only when the deck has no agent registered yet — falls back to
+/// the synthetic [`SHELL_AGENT`] lane and its original shape: a `Register`
+/// (idempotent — re-registering only refreshes the title to the latest
+/// command), a `ToolStart`, and a `ToolResult` + terminal `Status`. Output is
+/// never dropped just because no session lane exists yet.
+///
+/// Either way stdout and stderr are both captured; a non-zero exit reports as
+/// a tool error. The TUI never blocks on the child — it runs on a spawned
+/// task and reports back over `tx`.
 ///
 /// `active` counts shell commands currently in flight on the shared
 /// [`SHELL_AGENT`] lane. Because immediate `!` commands can overlap (a second
@@ -102,8 +117,24 @@ fn spawn_shell_command(
     tx: UnboundedSender<Inbound>,
     started_ms: u64,
     active: Arc<AtomicUsize>,
+    target: Option<AgentId>,
 ) {
     use stella_protocol::{AgentEvent, ToolCall, ToolOutput};
+
+    // A synthetic lane owns its whole lifecycle (register + park); a real
+    // lane owns none of it and only lends its transcript.
+    let synthetic = target.is_none();
+    let agent_id: AgentId = target.unwrap_or_else(|| SHELL_AGENT.to_string());
+    // Route by lane kind: `ShellEvent` is transcript-only (safe for a live
+    // agent), `Event` carries the full fold the synthetic lane still wants so
+    // its row shows Running while the child is alive.
+    let envelope = move |agent: AgentId, event: AgentEvent| {
+        if synthetic {
+            Inbound::Event { agent, event }
+        } else {
+            Inbound::ShellEvent { agent, event }
+        }
+    };
 
     // `started_ms` is the deck's tick clock (~33ms granularity), so two
     // overlapping `!` commands can share a timestamp — and the fold pairs
@@ -113,19 +144,24 @@ fn spawn_shell_command(
     let seq = SHELL_CALL_SEQ.fetch_add(1, Ordering::Relaxed);
     let call_id = format!("shell-{started_ms}-{seq}");
     active.fetch_add(1, Ordering::SeqCst);
-    let _ = tx.send(Inbound::Register(
-        AgentMeta::new(SHELL_AGENT, format!("! {cmd}"), started_ms).with_role("shell"),
-    ));
-    let _ = tx.send(Inbound::Event {
-        agent: SHELL_AGENT.to_string(),
-        event: AgentEvent::ToolStart {
+    // Only the synthetic lane is registered. Sending this for a real agent
+    // would overwrite its meta — `WorkspaceModel::register` replaces `meta`
+    // wholesale on a known id — retitling the session `! cmd`.
+    if synthetic {
+        let _ = tx.send(Inbound::Register(
+            AgentMeta::new(SHELL_AGENT, format!("! {cmd}"), started_ms).with_role("shell"),
+        ));
+    }
+    let _ = tx.send(envelope(
+        agent_id.clone(),
+        AgentEvent::ToolStart {
             call: ToolCall {
                 call_id: call_id.clone(),
                 name: "shell".to_string(),
                 input: serde_json::json!({ "cmd": cmd }),
             },
         },
-    });
+    ));
 
     tokio::spawn(async move {
         let started = std::time::Instant::now();
@@ -184,22 +220,26 @@ fn spawn_shell_command(
         } else {
             ToolOutput::Error { message: content }
         };
-        let _ = tx.send(Inbound::Event {
-            agent: SHELL_AGENT.to_string(),
-            event: AgentEvent::ToolResult {
+        let _ = tx.send(envelope(
+            agent_id.clone(),
+            AgentEvent::ToolResult {
                 call_id,
                 output,
                 duration_ms: started.elapsed().as_millis() as u64,
                 speculated: false,
             },
-        });
+        ));
         // Park the lane so it never reads as still-working (a lingering
         // Running shell agent would keep the spinner alive forever) — but
         // only once this was the last command in flight; `fetch_sub` returns
         // the pre-decrement count, so `1` means we just brought it to zero.
-        if active.fetch_sub(1, Ordering::SeqCst) == 1 {
+        // Only the synthetic lane is ever parked: a real agent's status is
+        // the engine's to own, and stamping Done/Failed on it here would
+        // report the shell command's exit as the agent's own outcome.
+        let last = active.fetch_sub(1, Ordering::SeqCst) == 1;
+        if last && synthetic {
             let _ = tx.send(Inbound::Status {
-                agent: SHELL_AGENT.to_string(),
+                agent: agent_id,
                 status: if ok {
                     AgentStatus::Done
                 } else {
@@ -457,12 +497,21 @@ pub async fn run_deck(
                                 // `!` commands run NOW — never queued, never
                                 // waiting on the engine. Output returns on the
                                 // local lane as ordinary events.
+                                //
+                                // It lands in the transcript the user is
+                                // reading — the focused agent's — so `! pwd`
+                                // answers where they asked, like Claude Code.
+                                // Before any agent registers there is no such
+                                // lane, and only then does it fall back to the
+                                // synthetic one.
                                 debug.note(&format!("shell: {cmd}"));
+                                let target = focused_id(&model, &ui);
                                 spawn_shell_command(
                                     cmd,
                                     local_tx.clone(),
                                     model.now_ms,
                                     shell_active.clone(),
+                                    target,
                                 );
                             }
                             DeckAction::Handled | DeckAction::Ignored => {}
@@ -594,7 +643,7 @@ mod tests {
         let _guard = rt.enter();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let active = Arc::new(AtomicUsize::new(0));
-        spawn_shell_command("echo hi".into(), tx, 42, active);
+        spawn_shell_command("echo hi".into(), tx, 42, active, None);
         match rx.try_recv() {
             Ok(Inbound::Register(meta)) => {
                 assert_eq!(meta.id, SHELL_AGENT);
@@ -615,6 +664,39 @@ mod tests {
     }
 
     #[test]
+    fn a_targeted_shell_command_borrows_the_lane_without_registering_or_parking_it() {
+        // The real-lane shape: no `Register` (it would overwrite the agent's
+        // meta) and no terminal `Status` (it would report the command's exit
+        // as the agent's own outcome). Just transcript-only `ShellEvent`s.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let active = Arc::new(AtomicUsize::new(0));
+        spawn_shell_command("echo hi".into(), tx, 42, active, Some("lead".into()));
+
+        match rx.try_recv() {
+            Ok(Inbound::ShellEvent { agent, .. }) => assert_eq!(agent, "lead"),
+            other => panic!("expected a ShellEvent ToolStart first, got {other:?}"),
+        }
+        // Drain the async completion, then assert on everything that landed.
+        rt.block_on(async {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await;
+        });
+        let mut rest = Vec::new();
+        while let Ok(inbound) = rx.try_recv() {
+            rest.push(inbound);
+        }
+        assert!(
+            !rest.iter().any(|i| matches!(i, Inbound::Register(_))),
+            "a real lane is never re-registered: {rest:?}"
+        );
+        assert!(
+            !rest.iter().any(|i| matches!(i, Inbound::Status { .. })),
+            "a real lane is never parked by a `!` command: {rest:?}"
+        );
+    }
+
+    #[test]
     fn overlapping_shell_commands_within_one_tick_get_distinct_call_ids() {
         // Two `!` commands dispatched inside the same 33ms tick share
         // `started_ms`; the fold pairs ToolResult to ToolStart by `call_id`,
@@ -623,8 +705,8 @@ mod tests {
         let _guard = rt.enter();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let active = Arc::new(AtomicUsize::new(0));
-        spawn_shell_command("echo one".into(), tx.clone(), 42, active.clone());
-        spawn_shell_command("echo two".into(), tx, 42, active);
+        spawn_shell_command("echo one".into(), tx.clone(), 42, active.clone(), None);
+        spawn_shell_command("echo two".into(), tx, 42, active, None);
 
         let mut call_ids = Vec::new();
         while let Ok(inbound) = rx.try_recv() {
@@ -653,8 +735,8 @@ mod tests {
         let _guard = rt.enter();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let active = Arc::new(AtomicUsize::new(0));
-        spawn_shell_command("echo fast".into(), tx.clone(), 1, active.clone());
-        spawn_shell_command("sleep 0.2 && echo slow".into(), tx, 2, active);
+        spawn_shell_command("echo fast".into(), tx.clone(), 1, active.clone(), None);
+        spawn_shell_command("sleep 0.2 && echo slow".into(), tx, 2, active, None);
 
         rt.block_on(async {
             let mut statuses = Vec::new();

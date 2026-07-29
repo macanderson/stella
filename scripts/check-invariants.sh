@@ -100,9 +100,11 @@ fi
 # --- 2. Cited numbers resolve ----------------------------------------------
 # Every "AGENTS.md invariant #N" / "AGENTS.md #N" / "AGENTS.md invariant N"
 # citation, in Rust source or markdown, must name an entry that exists.
+# /dev/null pads the file list: an xargs batch of exactly one file would make
+# grep omit the "file:" prefix and the parse below would misread the hit.
 cited="$(git ls-files '*.rs' '*.md' \
   | grep -v '^docs/llms\.txt$' \
-  | xargs grep -noE 'AGENTS\.md[^0-9]{0,20}#?[0-9]+' 2>/dev/null \
+  | xargs grep -noE 'AGENTS\.md[^0-9]{0,20}#?[0-9]+' /dev/null 2>/dev/null \
   | grep -iE 'invariant|AGENTS\.md #' || true)"
 
 checked=0

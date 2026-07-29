@@ -17,7 +17,9 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ProviderError {
     /// The request never reached a usable response: DNS, TCP, TLS, a dropped
-    /// connection, or a client-side timeout. Retryable.
+    /// connection, or a client-side timeout — and, by adapter convention, a
+    /// provider `5xx` (a response arrived, but the server failed transiently
+    /// and the same request may yet succeed). Retryable.
     #[error("provider transport error: {0}")]
     Transport(String),
 

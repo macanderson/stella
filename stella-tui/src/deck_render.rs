@@ -12,6 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Widget};
+use unicode_width::UnicodeWidthChar;
 
 use stella_protocol::{CiStatus, PrStatus};
 
@@ -37,6 +38,10 @@ const PROMPT_PREFIX_W: usize = 4;
 const COMPOSER_GUTTER_W: usize = 1;
 /// Half-period of the caret blink, in deck-clock ms.
 const CARET_BLINK_MS: u64 = 530;
+/// Per-step period of the working-prompt chevron chase, in deck-clock ms —
+/// one `>` lights per step, so the sweep across all three completes every
+/// `3 × PROMPT_CHASE_MS`.
+const PROMPT_CHASE_MS: u64 = 130;
 
 pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let area = frame.area();
@@ -102,7 +107,14 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     render_trace_strip(model, bands[2], buf);
     crate::progress::render(model, ui, bands[3], buf);
-    render_composer(ui, &c_layout, model.now_ms, bands[4], buf);
+    // The prompt chevrons animate only while the focused agent's turn is in
+    // flight — the same `Running && !no_anim` liveness the progress bar uses.
+    let working = model
+        .agents
+        .get(ui.focused)
+        .is_some_and(|a| a.status == crate::envelope::AgentStatus::Running)
+        && !ui.no_anim;
+    render_composer(ui, &c_layout, model.now_ms, working, bands[4], buf);
     render_composer_footer(model, ui, &c_layout, bands[5], buf);
     render_status_bar(model, ui, bands[6], buf);
 
@@ -787,13 +799,35 @@ fn wrap_chars(s: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-/// Char-safe prefix truncation with an ellipsis.
-fn truncate_chars(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
+/// Display-width-safe prefix truncation with an ellipsis. `max_cols` is a
+/// terminal column budget, not a character count — a char-counting truncation
+/// would under-truncate double-width glyphs (CJK, emoji) by up to 2×,
+/// overflowing the caller's fixed-width row. Content here (session titles,
+/// notification bodies, skill descriptions) is agent- or user-authored text,
+/// not guaranteed ASCII.
+fn truncate_chars(s: &str, max_cols: usize) -> String {
+    if display_width(s) <= max_cols {
         return s.to_string();
     }
-    let head: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    // Leave one column for the ellipsis glyph itself.
+    let budget = max_cols.saturating_sub(1);
+    let mut head = String::new();
+    let mut w = 0usize;
+    for ch in s.chars() {
+        let cw = ch.width().unwrap_or(0);
+        if w + cw > budget {
+            break;
+        }
+        head.push(ch);
+        w += cw;
+    }
     format!("{head}…")
+}
+
+/// Terminal column width of `s` (unicode-width aware — CJK and most emoji are
+/// two columns wide, unlike a plain `chars().count()`).
+fn display_width(s: &str) -> usize {
+    s.chars().map(|c| c.width().unwrap_or(0)).sum()
 }
 
 /// A compact "3m ago"-style age from a millisecond delta.
@@ -949,6 +983,7 @@ fn render_composer(
     ui: &DeckUi,
     layout: &ComposerLayout,
     now_ms: u64,
+    working: bool,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -967,11 +1002,32 @@ fn render_composer(
     let cursor_style = theme::accent().add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
-        // The accent `>>> ` prefix rides every row and scrolls with it.
-        let mut spans = vec![Span::styled(
-            PROMPT_PREFIX,
-            Style::default().fg(theme::ACCENT),
-        )];
+        // The accent `>>> ` prefix rides every row and scrolls with it. While
+        // the focused agent is working it becomes a left-to-right chevron
+        // chase — one bright `>` marching over two dim ones — a pure function
+        // of the deck clock on the same tick as the caret blink. An idle agent
+        // or `--no-anim` pins it to the static accent prefix. Either way it is
+        // exactly the four columns `PROMPT_PREFIX_W` reserves.
+        let mut spans = if working {
+            let lit = ((now_ms / PROMPT_CHASE_MS) % 3) as usize;
+            let mut prefix: Vec<Span<'static>> = (0..3)
+                .map(|j| {
+                    let color = if j == lit {
+                        theme::ACCENT
+                    } else {
+                        theme::ACCENT_DEEP
+                    };
+                    Span::styled(">", Style::default().fg(color))
+                })
+                .collect();
+            prefix.push(Span::raw(" "));
+            prefix
+        } else {
+            vec![Span::styled(
+                PROMPT_PREFIX,
+                Style::default().fg(theme::ACCENT),
+            )]
+        };
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
             let under_ch = under.map(String::from).unwrap_or_else(|| " ".into());
@@ -1025,9 +1081,9 @@ fn render_scroll_gutter(first: usize, visible: usize, total: usize, area: Rect, 
     }
 }
 
-/// Total display width of a span run (chars ≈ terminal cells for our glyphs).
+/// Total display width of a span run, in terminal columns.
 fn span_width(spans: &[Span]) -> usize {
-    spans.iter().map(|s| s.content.chars().count()).sum()
+    spans.iter().map(|s| display_width(&s.content)).sum()
 }
 
 /// Render `spans` right-aligned at the end of `area` without clearing the rest

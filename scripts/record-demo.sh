@@ -195,10 +195,15 @@ else
   CMD_STR="$(printf '%q ' "${CMD[@]}")"
   CMD_STR="${CMD_STR% }"
   if [ "$LIMIT" -gt 0 ] 2> /dev/null; then
+    # `timeout` is GNU coreutils: absent from stock macOS, where brew installs
+    # it as `gtimeout`. Resolve it up front — otherwise the failure is a
+    # confusing "command not found" recorded *inside* the cast.
+    TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+    [ -n "$TIMEOUT_BIN" ] || die "--limit needs GNU timeout (macOS: brew install coreutils)"
     # No --foreground: timeout must signal the whole process group so the
     # actual worker (cargo, a test binary) sees the INT, not just the shell.
     # A hard kill follows 30s later if anything shrugs it off.
-    CMD_STR="timeout --signal=INT --kill-after=30 ${LIMIT}m $CMD_STR"
+    CMD_STR="$TIMEOUT_BIN --signal=INT --kill-after=30 ${LIMIT}m $CMD_STR"
     info "wall-clock limit: ${LIMIT} minute(s)"
   fi
   bold "Recording: $CMD_STR"

@@ -14,15 +14,16 @@
 //!   so the registry gates the joined argv through the same
 //!   `command.started` policy chain as `bash` before the spawn.
 //!
-//!   **The gate covers the spawn, not the session it opens.** Only the argv
-//!   is gated; `send_stdin` is not in the registry's `command_line_for` and
-//!   therefore rides no `command.started` chain of its own. A model that
-//!   starts an interpreter with a bland argv (`["python3"]`, `["node"]`,
-//!   `["sh"]`) and then writes source to its stdin executes whatever it
-//!   likes with one gate evaluation on the interpreter's *name*. A policy
-//!   that means to bound shell execution must therefore deny the
-//!   interpreter argv itself — matching on command text alone will not see
-//!   what the REPL is later asked to run.
+//!   **The session opened by that spawn is gated too.** `send_stdin`'s
+//!   `text` field is itself in the registry's `command_line_for` (#804), so
+//!   every write into a live interpreter's stdin rides its own
+//!   `command.started` evaluation before the bytes reach the pipe — a policy
+//!   that denies `rm -rf` sees it whether it arrives via `bash` or via text
+//!   typed into a `["sh"]` session opened by `start_process`. Only the
+//!   *spawn's own argv* — `["python3"]`, `["node"]` — is judged once, at
+//!   start time; a policy that means to bound what an interpreter is later
+//!   asked to run should still consult both events, since the spawn's argv
+//!   alone does not say what will be typed into it.
 //! - At most `MAX_LIVE_PROCESSES` processes may be LIVE at once; past
 //!   that `start_process` refuses with a named error rather than letting a
 //!   runaway loop spawn children without bound.

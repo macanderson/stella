@@ -9,7 +9,7 @@
 //! tool outputs. Prompts are reduced to a digest plus a short preview.
 //!
 //! Direction of flow is one-way: `store.db` → `usage.db`. Nothing here writes
-//! back to a project store, and a missing/again-openable `usage.db` never
+//! back to a project store, and a missing/un-openable `usage.db` never
 //! blocks a turn — sync is best-effort.
 //!
 //! Retention: the hub accumulates one telemetry row per model call across every
@@ -58,19 +58,14 @@ pub fn usage_db_path() -> PathBuf {
     data_dir().join("usage.db")
 }
 
-/// A dependency-free project identity: FNV-1a/64 of the canonical workspace
-/// path, hex-encoded. Deterministic across runs and processes — but NOT
-/// across a `mv` of the checkout, which is why a registered workspace
-/// replicates under `identity::replication_project_id` instead (#408).
+/// A dependency-free project identity: FNV-1a/64 (`crate::fnv_hex`) of the
+/// canonical workspace path, hex-encoded. Deterministic across runs and
+/// processes — but NOT across a `mv` of the checkout, which is why a
+/// registered workspace replicates under `identity::replication_project_id`
+/// instead (#408).
 pub fn project_id_for(root: &Path) -> String {
     let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let s = canon.to_string_lossy();
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in s.as_bytes() {
-        hash ^= *b as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
+    crate::fnv_hex(&canon.to_string_lossy())
 }
 
 /// One per-tool bucket for the usage histogram (the "you grep symbols a lot but
