@@ -51,7 +51,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let body = bands[1];
     match ui.agents_pane {
         AgentsPane::Executions => render_executions(model, ui, body, buf),
-        AgentsPane::Installed => crate::views::installed::render(ui, body, buf),
+        AgentsPane::Installed => crate::views::installed::render(ui, model.now_ms, body, buf),
     }
 }
 

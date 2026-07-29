@@ -94,6 +94,16 @@ pub enum InstalledMode {
     CreateDescribe,
     /// Create-from-prompt, step 2: pick the install scope (project / user).
     CreateScope,
+    /// Create-from-prompt, step 3: the LLM draft is in flight — the dialog
+    /// stays open with an animated spinner until an [`Inbound::AgentsList`]
+    /// with `creating: false` lands. Esc hides the dialog (creation
+    /// continues); every other key is swallowed.
+    Creating,
+    /// Create-from-prompt, step 4: the creation settled. The dialog shows
+    /// the just-created agent's full definition (the same markdown detail
+    /// view as the skills preview) — or the driver's error when it failed
+    /// ([`InstalledPanel::create_error`]). ↑/↓ scroll · esc / ⏎ / q close.
+    CreateDone,
     /// The version picker (`v` on a row): ⏎ re-pins the highlighted version
     /// WITHOUT creating a new one — pin changes never increment the version.
     PickVersion,
@@ -129,6 +139,14 @@ pub struct InstalledPanel {
     pub create_desc: String,
     /// Scope choice in the create flow: 0 = project, 1 = user.
     pub scope_sel: usize,
+    /// The just-created agent's name, shown by [`InstalledMode::CreateDone`]
+    /// (its entry is looked up fresh in `entries` at render time).
+    pub created_name: Option<String>,
+    /// The driver's error when the creation failed — the
+    /// [`InstalledMode::CreateDone`] dialog shows it instead of a detail view.
+    pub create_error: Option<String>,
+    /// Scroll offset of the [`InstalledMode::CreateDone`] detail view.
+    pub created_scroll: u16,
     /// Selected row in the version picker.
     pub version_sel: usize,
 }
@@ -146,6 +164,9 @@ impl Default for InstalledPanel {
             editing: None,
             create_desc: String::new(),
             scope_sel: 0,
+            created_name: None,
+            create_error: None,
+            created_scroll: 0,
             version_sel: 0,
         }
     }
@@ -190,6 +211,17 @@ pub enum SkillPrompt {
     /// Type a short description for LLM-assisted creation (then the scope
     /// picker follows).
     CreateDescription { buffer: String },
+    /// The LLM-assisted creation is running driver-side: the dialog stays
+    /// open with an animated spinner until the refreshed [`Inbound::Skills`]
+    /// snapshot lands. Esc hides the dialog (creation continues); every
+    /// other key is swallowed.
+    Creating {
+        description: String,
+        scope: SkillScope,
+    },
+    /// The LLM-assisted creation failed: the dialog stays open showing the
+    /// driver's error so the outcome can't be missed. Esc / ⏎ / q close it.
+    CreateFailed { error: String },
     /// Edit a skill's body; saving increments its version and pins the new one.
     Edit {
         scope: SkillScope,
@@ -836,9 +868,14 @@ impl DeckUi {
                 InstalledMode::CreateDescribe => {
                     push_single_line(&mut self.installed.create_desc, text);
                 }
-                // Scope / version pickers hold no text — swallow, never leak.
-                InstalledMode::CreateScope | InstalledMode::PickVersion | InstalledMode::Browse => {
-                }
+                // Scope / version pickers, the in-flight creation dialog,
+                // and the created-detail view hold no text — swallow, never
+                // leak.
+                InstalledMode::CreateScope
+                | InstalledMode::Creating
+                | InstalledMode::CreateDone
+                | InstalledMode::PickVersion
+                | InstalledMode::Browse => {}
             }
             return;
         }
@@ -901,8 +938,14 @@ impl DeckUi {
                 Some(SkillPrompt::CreateDescription { buffer }) => push_single_line(buffer, text),
                 // The edit buffer is a genuine multi-line surface: verbatim.
                 Some(SkillPrompt::Edit { buffer, .. }) => buffer.push_str(text),
-                // Scope / pin pickers hold no text.
-                Some(SkillPrompt::Scope { .. } | SkillPrompt::Pin { .. }) => {}
+                // Scope / pin pickers and the creation dialog's in-flight /
+                // failed states hold no text.
+                Some(
+                    SkillPrompt::Scope { .. }
+                    | SkillPrompt::Pin { .. }
+                    | SkillPrompt::Creating { .. }
+                    | SkillPrompt::CreateFailed { .. },
+                ) => {}
                 None if self.skills.focus == SkillsFocus::Search => {
                     push_single_line(&mut self.skills.query, text);
                 }
@@ -983,12 +1026,29 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
     // The installed-agents list is out-of-band view state too — the driver
     // owns the definitions on disk and pushes fresh snapshots here; the
     // model fold ignores them.
-    if let Inbound::AgentsList { entries, status } = inbound {
+    if let Inbound::AgentsList {
+        entries,
+        status,
+        creating,
+        created,
+    } = inbound
+    {
         ui.installed.entries = entries.clone();
         ui.installed.loaded = true;
         // A fresh list is the completion signal for a refresh / save / pin /
-        // create op — clear the working flag.
-        ui.installed.busy = false;
+        // create op — clear the working flag. The one exception: a create
+        // still in flight driver-side (`creating`, e.g. parked behind a
+        // running turn) keeps the working state and the dialog's spinner up.
+        ui.installed.busy = *creating;
+        create::settle_agents_snapshot(
+            ui,
+            create::AgentsSnapshot {
+                entries,
+                status: status.as_ref(),
+                creating: *creating,
+                created: created.as_ref(),
+            },
+        );
         ui.installed.sel = ui.installed.sel.min(entries.len().saturating_sub(1));
         // A driver-supplied status (op outcome, error) replaces the hint; a
         // plain refresh sends none, leaving any client-side line standing.
@@ -1005,6 +1065,10 @@ pub fn ingest_inbound(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut De
         // spinner and disarm any half-armed uninstall.
         ui.skills.searching = false;
         ui.skills.uninstall_armed = false;
+        // The LLM-assisted create keeps its dialog open while the draft runs;
+        // the refreshed snapshot is its completion signal (see
+        // [`create::settle_skills_snapshot`]).
+        create::settle_skills_snapshot(ui, view);
         if view.status.is_some() {
             ui.skills.status = view.status.clone();
         }
@@ -1333,6 +1397,7 @@ fn push_single_line(buf: &mut String, text: &str) {
 /// the global composer, so a stop must leave a typed draft untouched. A
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
+mod create;
 mod nav;
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
@@ -2185,8 +2250,10 @@ fn handle_inspect_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 fn handle_installed_modal_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     match ui.installed.mode {
         InstalledMode::Edit => handle_agent_editor_key(key, ui),
-        InstalledMode::CreateDescribe => handle_create_describe_key(key, ui),
-        InstalledMode::CreateScope => handle_create_scope_key(key, ui),
+        InstalledMode::CreateDescribe => create::handle_describe_key(key, ui),
+        InstalledMode::CreateScope => create::handle_scope_key(key, ui),
+        InstalledMode::Creating => create::handle_creating_key(key, ui),
+        InstalledMode::CreateDone => create::handle_done_key(key, ui),
         InstalledMode::PickVersion => handle_pick_version_key(key, ui),
         // Unreachable — the gate only fires for non-Browse modes.
         InstalledMode::Browse => DeckAction::Ignored,
@@ -2251,68 +2318,6 @@ fn handle_agent_editor_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             let _ = handle_edit_key(key, &mut ui.installed.editor);
             DeckAction::Handled
         }
-    }
-}
-
-/// Create-from-prompt, step 1: a one-line description buffer. ⏎ advances to
-/// the scope picker; Esc cancels the flow.
-fn handle_create_describe_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    match key.code {
-        KeyCode::Esc => {
-            ui.installed.mode = InstalledMode::Browse;
-            ui.installed.status = None;
-            DeckAction::Handled
-        }
-        KeyCode::Enter => {
-            if ui.installed.create_desc.trim().is_empty() {
-                ui.installed.status = Some("describe the agent first".into());
-            } else {
-                ui.installed.mode = InstalledMode::CreateScope;
-                ui.installed.status = None;
-            }
-            DeckAction::Handled
-        }
-        KeyCode::Backspace => {
-            ui.installed.create_desc.pop();
-            DeckAction::Handled
-        }
-        KeyCode::Char(c)
-            if !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META) =>
-        {
-            ui.installed.create_desc.push(c);
-            DeckAction::Handled
-        }
-        _ => DeckAction::Handled,
-    }
-}
-
-/// Create-from-prompt, step 2: the install-scope picker (project / user,
-/// mirroring the skills install flow's scope question). ⏎ dispatches the
-/// LLM-assisted creation; Esc steps back to the description.
-fn handle_create_scope_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    match key.code {
-        KeyCode::Esc => {
-            ui.installed.mode = InstalledMode::CreateDescribe;
-            DeckAction::Handled
-        }
-        KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
-            ui.installed.scope_sel = 1 - ui.installed.scope_sel.min(1);
-            DeckAction::Handled
-        }
-        KeyCode::Enter => {
-            let description = ui.installed.create_desc.trim().to_string();
-            let scope = ui.installed.create_scope();
-            ui.installed.mode = InstalledMode::Browse;
-            ui.installed.busy = true;
-            ui.installed.status = Some(format!(
-                "drafting the agent with the session model ({} scope)…",
-                scope.label()
-            ));
-            DeckAction::Send(WorkspaceInput::AgentCreate { description, scope })
-        }
-        _ => DeckAction::Handled,
     }
 }
 
@@ -3083,23 +3088,8 @@ fn handle_skills_prompt_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
                     } else {
                         SkillScope::Project
                     };
-                    ui.skills.prompt = None;
                     ui.skills.searching = true;
-                    match action {
-                        ScopeAction::Install { id } => {
-                            ui.skills.status =
-                                Some(format!("installing {id} for {}…", scope.label()));
-                            DeckAction::Send(WorkspaceInput::Skill(SkillOp::Install { scope, id }))
-                        }
-                        ScopeAction::Create { description } => {
-                            ui.skills.status =
-                                Some(format!("assembling a skill for {}…", scope.label()));
-                            DeckAction::Send(WorkspaceInput::Skill(SkillOp::Create {
-                                scope,
-                                description,
-                            }))
-                        }
-                    }
+                    create::dispatch_skills_scope(ui, action, scope)
                 }
                 // Modal: swallow everything else.
                 _ => DeckAction::Handled,
@@ -3140,6 +3130,9 @@ fn handle_skills_prompt_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
             }
             _ => DeckAction::Handled,
         },
+        // The create dialog's in-flight / failed states (see [`create`]).
+        Some(SkillPrompt::Creating { .. }) => create::handle_skills_creating_key(key, ui),
+        Some(SkillPrompt::CreateFailed { .. }) => create::handle_skills_failed_key(key, ui),
         // The edit buffer: a minimal textarea. ⏎ inserts a newline; ctrl+s saves
         // (a new pinned version); esc cancels.
         Some(SkillPrompt::Edit {

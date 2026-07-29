@@ -226,6 +226,8 @@ fn agents_list_ingest_updates_the_panel_out_of_band_and_clamps() {
         &Inbound::AgentsList {
             entries: vec![installed_entry("reviewer", 1)],
             status: Some("saved".into()),
+            creating: false,
+            created: None,
         },
         &mut model,
         &mut ui,
@@ -326,8 +328,147 @@ fn create_flow_describes_picks_scope_and_dispatches_the_llm_draft() {
             scope: AgentScope::Project,
         })
     );
-    assert_eq!(ui.installed.mode, InstalledMode::Browse);
+    assert_eq!(
+        ui.installed.mode,
+        InstalledMode::Creating,
+        "the dialog stays open with the in-flight spinner"
+    );
     assert!(ui.installed.busy);
+}
+
+#[test]
+fn agent_creating_dialog_survives_a_queued_snapshot_and_ends_in_the_detail_view() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = installed_ui(vec![]);
+    ui.installed.mode = InstalledMode::Creating;
+    ui.installed.busy = true;
+
+    // Fully modal: printable keys and ⏎ are swallowed.
+    for k in [ch('n'), key(KeyCode::Enter)] {
+        assert_eq!(handle_deck_key(k, &model, &mut ui), DeckAction::Handled);
+    }
+    assert_eq!(ui.installed.mode, InstalledMode::Creating);
+    assert_eq!(ui.composer.buffer(), "");
+
+    // A parked create's interim snapshot (`creating: true`) must NOT read as
+    // completion — the dialog and its spinner stay up.
+    ingest_inbound(
+        &Inbound::AgentsList {
+            entries: vec![],
+            status: Some("agent creation queued — it runs when the current turn finishes".into()),
+            creating: true,
+            created: None,
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert_eq!(
+        ui.installed.mode,
+        InstalledMode::Creating,
+        "a queued interim snapshot keeps the spinner up"
+    );
+    assert!(ui.installed.busy);
+
+    // The settled snapshot naming the created agent transitions the dialog
+    // into the detail view of exactly that entry (the ctrl+o treatment).
+    ingest_inbound(
+        &Inbound::AgentsList {
+            entries: vec![installed_entry("older", 1), installed_entry("drafted", 1)],
+            status: Some("created drafted (project scope) — v1 pinned".into()),
+            creating: false,
+            created: Some("drafted".into()),
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert_eq!(
+        ui.installed.mode,
+        InstalledMode::CreateDone,
+        "the dialog shows the created agent, not Browse"
+    );
+    assert_eq!(ui.installed.created_name.as_deref(), Some("drafted"));
+    assert!(ui.installed.create_error.is_none());
+    assert_eq!(ui.installed.sel, 1, "the list lands on the new agent");
+    assert!(!ui.installed.busy);
+
+    // ⏎ acknowledges and returns to Browse.
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(ui.installed.mode, InstalledMode::Browse);
+    assert!(ui.installed.created_name.is_none());
+}
+
+#[test]
+fn agent_create_done_view_scrolls_like_the_skills_preview() {
+    let model = model_with(&["lead"]);
+    let mut ui = installed_ui(vec![installed_entry("drafted", 1)]);
+    ui.installed.mode = InstalledMode::CreateDone;
+    ui.installed.created_name = Some("drafted".into());
+
+    // ↓ / PageDown advance the offset (render clamps it to content);
+    // ↑ / Home walk it back — the same verbs as the ctrl+o skill preview.
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    assert_eq!(ui.installed.created_scroll, 2);
+    handle_deck_key(key(KeyCode::PageDown), &model, &mut ui);
+    assert_eq!(ui.installed.created_scroll, 12);
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    assert_eq!(ui.installed.created_scroll, 11);
+    handle_deck_key(key(KeyCode::Home), &model, &mut ui);
+    assert_eq!(ui.installed.created_scroll, 0);
+    // The view is still up throughout — scrolling never closes it.
+    assert_eq!(ui.installed.mode, InstalledMode::CreateDone);
+    // `q` closes it and clears the transient state, like the preview.
+    handle_deck_key(ch('q'), &model, &mut ui);
+    assert_eq!(ui.installed.mode, InstalledMode::Browse);
+    assert!(ui.installed.created_name.is_none());
+    assert_eq!(ui.installed.created_scroll, 0);
+}
+
+#[test]
+fn agent_failed_create_shows_the_error_in_the_dialog() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = installed_ui(vec![]);
+    ui.installed.mode = InstalledMode::Creating;
+    ui.installed.busy = true;
+    // A settled snapshot WITHOUT a created name is a failure — the dialog
+    // shows the driver's status as the error instead of vanishing.
+    ingest_inbound(
+        &Inbound::AgentsList {
+            entries: vec![],
+            status: Some("agent creation failed: draft call failed: boom".into()),
+            creating: false,
+            created: None,
+        },
+        &mut model,
+        &mut ui,
+    );
+    assert_eq!(ui.installed.mode, InstalledMode::CreateDone);
+    assert!(
+        ui.installed
+            .create_error
+            .as_deref()
+            .is_some_and(|e| e.contains("draft call failed: boom")),
+        "the failure stays in the dialog: {:?}",
+        ui.installed.create_error
+    );
+    // Esc acknowledges and closes.
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert_eq!(ui.installed.mode, InstalledMode::Browse);
+    assert!(ui.installed.create_error.is_none());
+}
+
+#[test]
+fn agent_creating_dialog_esc_hides_but_the_op_stays_busy() {
+    let model = model_with(&["lead"]);
+    let mut ui = installed_ui(vec![]);
+    ui.installed.mode = InstalledMode::Creating;
+    ui.installed.busy = true;
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert_eq!(ui.installed.mode, InstalledMode::Browse);
+    assert!(
+        ui.installed.busy,
+        "hiding the dialog does not cancel the driver-side create"
+    );
 }
 
 #[test]

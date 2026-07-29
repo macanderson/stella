@@ -23,7 +23,7 @@ use crate::theme;
 /// Column headers for the browse list, matching `widths` in [`render_list`].
 const HEADERS: [&str; 5] = ["Agent", "Scope", "Ver", "Description", "Toolbelt"];
 
-pub fn render(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+pub fn render(ui: &mut DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -32,6 +32,8 @@ pub fn render(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         InstalledMode::Edit => render_editor(&ui.installed, area, buf),
         InstalledMode::CreateDescribe => render_create_describe(&ui.installed, area, buf),
         InstalledMode::CreateScope => render_create_scope(&ui.installed, area, buf),
+        InstalledMode::Creating => render_creating(&ui.installed, now_ms, ui.no_anim, area, buf),
+        InstalledMode::CreateDone => render_create_done(&mut ui.installed, area, buf),
         InstalledMode::PickVersion => render_version_picker(&ui.installed, area, buf),
     }
 }
@@ -241,6 +243,159 @@ fn render_create_scope(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
     }
 }
 
+/// Create-from-prompt, step 3: the in-flight creation dialog. Stays up —
+/// with an animated spinner driven by the deck clock — until the driver's
+/// completing [`crate::envelope::Inbound::AgentsList`] folds in. The status
+/// line carries the driver's progress notes (e.g. "queued behind the
+/// running turn").
+fn render_creating(
+    panel: &InstalledPanel,
+    now_ms: u64,
+    no_anim: bool,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" New Agent — creating… · esc hides (creation continues) ")
+        .border_style(Style::default().fg(theme::ACCENT));
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.height == 0 {
+        return;
+    }
+    let spinner = crate::views::spinner_glyph(now_ms, no_anim);
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!("{spinner} "),
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    "Drafting the agent with the session model ({} scope)…",
+                    panel.create_scope().label()
+                ),
+                theme::body(),
+            ),
+        ]),
+        Line::default(),
+        Line::from(Span::styled(
+            format!("“{}”", panel.create_desc.trim()),
+            theme::muted(),
+        )),
+        Line::default(),
+        Line::from(Span::styled(
+            "the new agent appears here the moment the draft installs",
+            theme::muted(),
+        )),
+    ];
+    if let Some(status) = &panel.status {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(status.clone(), theme::muted())));
+    }
+    Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .render(inner, buf);
+}
+
+/// Create-from-prompt, step 4: the settled creation dialog. On success the
+/// just-created agent's full definition renders through Stella's own
+/// markdown renderer — the SAME detail treatment as the skills tab's ctrl+o
+/// preview — scrollable and clamped to content here (the key handler only
+/// increments the offset). On failure the driver's error shows instead.
+fn render_create_done(panel: &mut InstalledPanel, area: Rect, buf: &mut Buffer) {
+    // Failure: the error dialog. The outcome must be impossible to miss.
+    if let Some(error) = panel.create_error.clone() {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" New Agent — creation failed · esc / ⏎ close ")
+            .border_style(Style::default().fg(theme::DANGER));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if inner.height == 0 {
+            return;
+        }
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    "✖ ",
+                    Style::default()
+                        .fg(theme::DANGER)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("The agent was not created", theme::body()),
+            ]),
+            Line::default(),
+            Line::from(Span::styled(error, Style::default().fg(theme::DANGER))),
+        ];
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(inner, buf);
+        return;
+    }
+
+    // Success: the created agent's detail view, looked up fresh in the
+    // driver's snapshot (never a stale copy).
+    let entry = panel
+        .created_name
+        .as_ref()
+        .and_then(|name| panel.entries.iter().find(|e| &e.name == name))
+        .cloned();
+    let Some(entry) = entry else {
+        // The name vanished between snapshots — degrade honestly.
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" New Agent — created · esc / ⏎ close ")
+            .border_style(Style::default().fg(theme::ACCENT));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        Paragraph::new("created — but the entry is not in the latest list (press r to reload)")
+            .style(theme::muted())
+            .render(inner, buf);
+        return;
+    };
+
+    let title = format!(" ✓ created {} — ↑/↓ scroll · esc / ⏎ close ", entry.name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(theme::ACCENT));
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+    // A dim subtitle line (scope · version · toolbelt), then the scrollable
+    // definition below — the skills preview's exact layout.
+    let bands = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(inner);
+    Paragraph::new(Line::from(Span::styled(
+        format!(
+            "{} · v{} · {}",
+            entry.scope.label(),
+            entry.version,
+            toolbelt_label(&entry.tools)
+        ),
+        theme::muted(),
+    )))
+    .render(bands[0], buf);
+    let body_area = bands[1];
+    // Render through Stella's own theme-obeying markdown renderer (the same
+    // one the transcript and the skills ctrl+o preview use), then clamp the
+    // scroll to content so the last page stays reachable.
+    let text = ratatui::text::Text::from(crate::markdown::render(&entry.content));
+    let content_h = text.height();
+    let max_scroll = content_h.saturating_sub(body_area.height as usize) as u16;
+    let scroll = panel.created_scroll.min(max_scroll);
+    panel.created_scroll = scroll;
+    Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0))
+        .render(body_area, buf);
+}
+
 /// The version picker: every version on disk, the pinned one marked. ⏎
 /// re-pins WITHOUT writing a new version.
 fn render_version_picker(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
@@ -367,7 +522,7 @@ mod tests {
         ]);
         let area = Rect::new(0, 0, 120, 10);
         let mut buf = Buffer::empty(area);
-        render(&mut ui, area, &mut buf);
+        render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("reviewer"), "name shown:\n{text}");
         assert!(
@@ -388,7 +543,7 @@ mod tests {
         let mut ui = ui_with(vec![]);
         let area = Rect::new(0, 0, 80, 8);
         let mut buf = Buffer::empty(area);
-        render(&mut ui, area, &mut buf);
+        render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(
             text.contains("press n to create one from a prompt"),
@@ -404,7 +559,7 @@ mod tests {
         ui.installed.editor.load("---\nname: reviewer\n---\nbody");
         let area = Rect::new(0, 0, 90, 10);
         let mut buf = Buffer::empty(area);
-        render(&mut ui, area, &mut buf);
+        render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("Edit reviewer"), "{text}");
         assert!(
@@ -424,7 +579,7 @@ mod tests {
             .load("---\nname: reviewer\n---\n# Reviewer\nplain prose");
         let area = Rect::new(0, 0, 90, 10);
         let mut buf = Buffer::empty(area);
-        render(&mut ui, area, &mut buf);
+        render(&mut ui, 0, area, &mut buf);
         assert_eq!(
             style_at(&buf, "---").fg,
             Some(theme::SYNTAX_COMMENT),
@@ -454,7 +609,7 @@ mod tests {
         ui.installed.version_sel = 0;
         let area = Rect::new(0, 0, 80, 8);
         let mut buf = Buffer::empty(area);
-        render(&mut ui, area, &mut buf);
+        render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("v1"), "{text}");
         assert!(text.contains("v2  2026-07-16  ● pinned"), "{text}");
@@ -471,16 +626,93 @@ mod tests {
         ui.installed.create_desc = "reviews diffs".into();
         let area = Rect::new(0, 0, 100, 8);
         let mut buf = Buffer::empty(area);
-        render(&mut ui, area, &mut buf);
+        render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains("reviews diffs"), "{text}");
         assert!(text.contains("describe what it should do"), "{text}");
 
         ui.installed.mode = InstalledMode::CreateScope;
         let mut buf = Buffer::empty(area);
-        render(&mut ui, area, &mut buf);
+        render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(text.contains(".stella/agents"), "{text}");
         assert!(text.contains("~/.stella/agents"), "{text}");
+    }
+
+    #[test]
+    fn creating_view_shows_an_animated_spinner_and_the_description() {
+        let mut ui = ui_with(vec![]);
+        ui.installed.mode = InstalledMode::Creating;
+        ui.installed.create_desc = "reviews diffs".into();
+        ui.installed.status =
+            Some("agent creation queued — it runs when the current turn finishes".into());
+        let area = Rect::new(0, 0, 100, 10);
+
+        let mut buf_a = Buffer::empty(area);
+        render(&mut ui, 0, area, &mut buf_a);
+        let text_a = buffer_text(&buf_a);
+        assert!(text_a.contains("Drafting the agent"), "{text_a}");
+        assert!(
+            text_a.contains("reviews diffs"),
+            "the description stays visible:\n{text_a}"
+        );
+        assert!(
+            text_a.contains("creation queued"),
+            "the driver's progress status shows:\n{text_a}"
+        );
+
+        // One spinner period later the frame differs — the spinner animates
+        // off the deck clock the shell tick advances.
+        let mut buf_b = Buffer::empty(area);
+        render(&mut ui, 80, area, &mut buf_b);
+        assert_ne!(
+            buffer_text(&buf_a),
+            buffer_text(&buf_b),
+            "the spinner must advance with the deck clock"
+        );
+
+        // `--no-anim` pins it.
+        ui.no_anim = true;
+        let mut buf_c = Buffer::empty(area);
+        render(&mut ui, 80, area, &mut buf_c);
+        let mut buf_d = Buffer::empty(area);
+        render(&mut ui, 160, area, &mut buf_d);
+        assert_eq!(buffer_text(&buf_c), buffer_text(&buf_d));
+    }
+
+    #[test]
+    fn create_done_view_renders_the_created_agents_definition() {
+        let mut ui = ui_with(vec![entry("reviewer", None), entry("drafted", None)]);
+        ui.installed.mode = InstalledMode::CreateDone;
+        ui.installed.created_name = Some("drafted".into());
+        let area = Rect::new(0, 0, 100, 12);
+        let mut buf = Buffer::empty(area);
+        render(&mut ui, 0, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("created drafted"), "title in border:\n{text}");
+        assert!(
+            text.contains("project · v2 · all tools"),
+            "scope/version/toolbelt subtitle:\n{text}"
+        );
+        assert!(
+            text.contains("name: drafted"),
+            "the definition body renders — the ctrl+o detail treatment:\n{text}"
+        );
+    }
+
+    #[test]
+    fn create_done_view_shows_the_error_on_failure() {
+        let mut ui = ui_with(vec![]);
+        ui.installed.mode = InstalledMode::CreateDone;
+        ui.installed.create_error = Some("agent creation failed: draft call failed: boom".into());
+        let area = Rect::new(0, 0, 100, 10);
+        let mut buf = Buffer::empty(area);
+        render(&mut ui, 0, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("creation failed"), "{text}");
+        assert!(
+            text.contains("draft call failed: boom"),
+            "the driver's error is on screen:\n{text}"
+        );
     }
 }
