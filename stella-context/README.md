@@ -38,7 +38,7 @@ link this crate** — it writes its own `.stella/private/codegraph.db`.
 | [`src/lib.rs`](src/lib.rs) | Crate docs, the module list, and the whole public re-export surface. `#![warn(missing_docs)]` — with `make lint` at `-D warnings`, an undocumented public item is a build failure. |
 | [`src/store.rs`](src/store.rs) | `ContextStore` itself — opening, warming, tuning, suppression — plus the re-export surface that keeps every moved name reachable as `crate::store::X`. |
 | [`src/store/schema.rs`](src/store/schema.rs) | The DDL, the migration ladder, the connection pragmas, and the fingerprint registry. Open this to change the schema. |
-| [`src/store/candidate.rs`](src/store/candidate.rs) | The bounded, `as_of`-aware readers `recall` ranks over: `NodeMeta` (no bodies), the shared `NODE_AS_OF` predicate, and `nodes_by_ids` — the one read on the recall path that moves content. |
+| [`src/candidates.rs`](src/candidates.rs) | The bounded, `as_of`-aware readers `recall` ranks over: `NodeMeta` (no bodies), the shared `NODE_AS_OF` predicate, and `nodes_by_ids` — the one read on the recall path that moves content. |
 | [`src/store/node.rs`](src/store/node.rs) | `NodeKind`/`NodeInput`/`NodeRow`, the upsert, and supersede/restore. |
 | [`src/store/edge.rs`](src/store/edge.rs) | Fact assertion, supersession, and the two point-in-time readers. |
 | [`src/store/embedding.rs`](src/store/embedding.rs) | The vector codec and the fingerprinted index reads. |
@@ -136,8 +136,10 @@ place.
   `max_frames`, ranking runs over metadata with no bodies, and node content is
   read for packed survivors only. The similarity scan is the honest exception:
   "most similar" is not something SQLite can `ORDER BY` without an ANN index. It
-  reads ids and vectors, never content, and an ANN accelerator is the tracked
-  follow-up.
+  reads ids and vectors, never content. An opt-in IVF accelerator
+  (`src/ann.rs`, `context.retrieval.ann_enabled`, built by `stella memory
+  index`) makes it `O(√n)`; every recall it serves says so on
+  `RecallResult::used_ann_index`.
 - **`dropped` counts the shortlist, not the store.** Its denominator is
   `RecallResult::considered` — the candidates the budget actually chose between
   — so "12 of 20 dropped" is a statement about this query. Candidates ranked
@@ -147,7 +149,7 @@ place.
   the durable id and `public_id` identifies a revision, so editing a memory
   supersedes rather than duplicates and the mirror node — keyed
   `memory://<lineage>` — updates in place. The old revision's vector is orphaned
-  rather than deleted: `vectors_for_fingerprint` joins through
+  rather than deleted: the similarity scan (`score_nodes_by_vector`) joins through
   `node.content_hash`, so a vector no live node points at is never selected.
   Orphaned is not permanent — `stella memory compact` is what reclaims it, and
   the stranded vectors are the mass that verb exists for.
@@ -171,11 +173,11 @@ place.
 - **The builders are `#[must_use]` for a reason.** `NodeInput::with_content` and
   friends consume and return `self`, so a dropped result is content or domain
   tags that never reach the store, with no error to notice.
-- **`edge.public_id` has no `UNIQUE` constraint** and its disambiguating
-  sequence (`EDGE_SEQ`) is process-local, so two stella processes writing the
-  same db in the same second can mint the same `edg_…`. Tolerable only because
-  nothing reads an edge by public id — make it collision-proof before anything
-  does.
+- **`edge.public_id` is collision-proof since schema v10** (#617): the mint
+  folds a per-process nonce into the hash and a `UNIQUE` index backs it, so two
+  stella processes writing the same db in the same second mint from different
+  keyspaces and a collision that somehow survived both is a loud constraint
+  error, never two silently coexisting rows.
 - **A newer schema is a hard error, not a best-effort open.** `migrate` rejects
   `user_version > SCHEMA_VERSION` with `ContextError::SchemaTooNew`: episodic
   memory and the fact graph are not rebuildable, so an older binary must not
@@ -192,7 +194,7 @@ an inline `#[cfg(test)] mod tests` at the bottom of its module, next to the code
 it pins. `tempfile` backs real on-disk stores (an in-memory one never warms, so
 warming tests must use a file), `proptest` covers the packer invariant
 (`packing_never_exceeds_budget_and_loses_nothing` in
-[`src/retrieval.rs`](src/retrieval.rs)), and async tests use `#[tokio::test]`.
+[`src/retrieval/tests.rs`](src/retrieval/tests.rs)), and async tests use `#[tokio::test]`.
 
 The tests worth reading before changing anything are the ones that encode a
 past defect: `kill_mid_index_rolls_back_to_a_consistent_store`,

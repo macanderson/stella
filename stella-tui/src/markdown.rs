@@ -20,23 +20,37 @@ use crate::theme;
 /// in a distinct style.
 pub fn render(text: &str) -> Vec<Line<'static>> {
     let mut out = Vec::new();
-    // `Some(lang)` while inside a fenced block: the opening fence's info
-    // string (```rust, ```toml, …) picks the language its lines highlight in.
-    let mut code_block: Option<Option<syntax::Lang>> = None;
+    // `Some((fence_len, lang))` while inside a fenced block: `fence_len` is
+    // the backtick run length that opened it and `lang` is the opening
+    // fence's info string (```rust, ```toml, …). Tracking the length (rather
+    // than just "are we in a fence") matches CommonMark: a fence only closes
+    // on a run of backticks *at least* as long as the one that opened it, and
+    // with no trailing info string — so a doc demonstrating markdown fences
+    // (a ```` ```` outer fence wrapping a ``` ``` example) renders its inner
+    // ``` as code content instead of prematurely closing the block.
+    let mut code_block: Option<(usize, Option<syntax::Lang>)> = None;
 
     for raw in text.lines() {
         // ── Fenced code block toggle ────────────────────────────────────────
-        if raw.trim_start().starts_with("```") {
-            code_block = match code_block {
-                Some(_) => None,
-                None => Some(syntax::lang_from_fence(
-                    raw.trim_start().trim_start_matches('`'),
-                )),
-            };
-            continue;
+        let lead = raw.trim_start();
+        if let Some(run) = backtick_run(lead) {
+            match code_block {
+                None => {
+                    code_block = Some((run, syntax::lang_from_fence(&lead[run..])));
+                    continue;
+                }
+                Some((open_len, _)) if run >= open_len && lead[run..].trim().is_empty() => {
+                    code_block = None;
+                    continue;
+                }
+                // A shorter (or info-string-carrying) backtick run inside the
+                // block is content, not a close — fall through to render it
+                // as a code line below.
+                _ => {}
+            }
         }
 
-        if let Some(lang) = code_block {
+        if let Some((_, lang)) = code_block {
             out.push(code_block_line(raw, lang));
             continue;
         }
@@ -66,7 +80,6 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
         }
 
         // ── Bullet list (- / * / +) ────────────────────────────────────────
-        let lead = raw.trim_start();
         let indent = raw.len() - lead.len();
         if let Some(rest) = lead
             .strip_prefix("- ")
@@ -264,6 +277,13 @@ fn parse_inline_spans_at(text: &str, depth: usize) -> Vec<Span<'static>> {
 }
 
 // ── Block helpers ──────────────────────────────────────────────────────────
+
+/// The length of a leading run of ≥3 backticks in an already-left-trimmed
+/// line, or `None` if it doesn't open/close a fence.
+fn backtick_run(lead: &str) -> Option<usize> {
+    let run = lead.chars().take_while(|&c| c == '`').count();
+    (run >= 3).then_some(run)
+}
 
 /// True if `line` is a horizontal rule (`---`, `***`, `___` with 3+ chars).
 fn is_hr(line: &str) -> bool {
@@ -530,6 +550,35 @@ mod tests {
         assert_eq!(collect_spans_text(&lines[0]), "1. first");
         assert_eq!(collect_spans_text(&lines[1]), "2. second");
         assert_eq!(collect_spans_text(&lines[2]), "10) tenth");
+    }
+
+    #[test]
+    fn nested_fence_of_fewer_backticks_stays_inside_the_outer_block() {
+        // A doc demonstrating markdown fences wraps its example in a longer
+        // outer fence (CommonMark convention). The inner ``` must render as
+        // code content, not prematurely close the outer block.
+        let lines = render("````\nExample:\n```\ncode\n```\nmore\n````\nafter");
+        // One line per source line inside the fence (7 total: the two ``` +
+        // the three intervening lines are all fence content), plus the
+        // trailing "after" paragraph line outside it.
+        assert_eq!(lines.len(), 6, "{lines:?}");
+        assert!(collect_spans_text(&lines[0]).contains("Example:"));
+        assert!(collect_spans_text(&lines[1]).contains("```"));
+        assert!(collect_spans_text(&lines[2]).contains("code"));
+        assert!(collect_spans_text(&lines[3]).contains("```"));
+        assert!(collect_spans_text(&lines[4]).contains("more"));
+        assert_eq!(collect_spans_text(&lines[5]), "after");
+    }
+
+    #[test]
+    fn closing_fence_with_trailing_text_is_not_a_close() {
+        // Per CommonMark, a closing fence line must contain only backticks
+        // (+ optional whitespace) — a ``` followed by anything else is
+        // fence content, not the close.
+        let lines = render("```\n``` still code\nreal close\n```\nafter");
+        assert!(collect_spans_text(&lines[0]).contains("still code"));
+        assert!(collect_spans_text(&lines[1]).contains("real close"));
+        assert_eq!(collect_spans_text(&lines[2]), "after");
     }
 
     #[test]

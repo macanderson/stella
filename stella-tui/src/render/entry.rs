@@ -320,10 +320,6 @@ fn entry_body(
                     push_detail_line(l, width, out);
                 }
             } else {
-                // A failure never collapses to a single line. The whole point
-                // of reading a transcript at the moment something breaks is to
-                // see *why*, and a one-line preview of a stack trace is a
-                // prompt to go hunting rather than an answer.
                 // With a diff below, a prose summary ("Applied edit to
                 // src/agent.rs") would restate the call row above it and the
                 // diff under it in the same breath. The row carries only its

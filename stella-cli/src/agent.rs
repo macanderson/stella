@@ -252,11 +252,7 @@ async fn run_pipeline_one_shot(
 
     if format == OutputFormat::Text {
         tui::section_header("Stella (pipeline)");
-        println!(
-            "  {}
-",
-            prompt.dimmed()
-        );
+        println!("  {}\n", prompt.dimmed());
     }
 
     let turn_start = Instant::now();
@@ -1598,13 +1594,6 @@ pub(crate) async fn discover_custom_tools(
     report.tools
 }
 
-/// `stella tools` — list the tools the agent would have this session:
-/// native built-ins (including the issue tools when a tracker is detected),
-/// the interactive/session tools layered on top (ask_user, search_skills,
-/// install_skill), developer custom tools (with their source manifests), and
-/// any discovery diagnostics for broken manifests. MCP-server tools
-/// (.stella/mcp.toml) are merged in at session build time and are not
-/// enumerated here — connecting to the servers is out of scope for a listing.
 /// Why a tool is off, phrased as the settings entry that did it — nothing is
 /// "disabled (default)" any more, so the only honest answer names a key.
 fn policy_reason(policy: &stella_tools::policy::ToolPolicy, name: &str) -> String {
@@ -1616,6 +1605,13 @@ fn policy_reason(policy: &stella_tools::policy::ToolPolicy, name: &str) -> Strin
     }
 }
 
+/// `stella tools` — list the tools the agent would have this session:
+/// native built-ins (including the issue tools when a tracker is detected),
+/// the interactive/session tools layered on top (ask_user, search_skills,
+/// install_skill), developer custom tools (with their source manifests), and
+/// any discovery diagnostics for broken manifests. MCP-server tools
+/// (.stella/mcp.toml) are merged in at session build time and are not
+/// enumerated here — connecting to the servers is out of scope for a listing.
 pub fn run_tools_listing() -> Result<(), String> {
     let workspace_root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;

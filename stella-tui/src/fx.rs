@@ -8,10 +8,11 @@
 //!
 //! Production consumers today: [`crate::deck_render`] drives [`fade_in`]
 //! (the deck revealing after the splash) and [`tab_switch`] (the sweep on a
-//! tab change); [`crate::splash`] drives [`dissolve_out`] for its dissolve
-//! phase. The splash's coalesce-in stays a hand-built effect there — it is
-//! splash-specific, not part of the deck's shared motion language — but it
-//! shares `FX_SEED` and the [`apply`] plumbing.
+//! tab change). [`crate::splash`] shares this module's `FX_SEED` and [`apply`]
+//! plumbing but builds its own coalesce-in and fade-out effects inline — they
+//! are splash-specific, not part of the deck's shared motion language.
+//! [`dissolve_out`] is a ready teardown building block with no caller wired to
+//! it yet.
 //!
 //! Effects here may be rebuilt fresh every frame and *scrubbed* to a point
 //! on an external timeline (see `deck_render`/`splash`): a

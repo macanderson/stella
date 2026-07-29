@@ -195,6 +195,10 @@ def _scan_archive_blob(
 ) -> list[Finding]:
     """Inspect supported compressed/archive bytes without extracting to disk."""
     findings: list[Finding] = []
+    if data.startswith(_UNSUPPORTED_ARCHIVE_MAGIC):
+        # A 7z/rar/zstd blob nested inside a supported archive cannot be
+        # inspected; fail closed exactly like a top-level unsupported archive.
+        return [Finding(display_path, "unsupported-archive:magic")]
     if not _looks_like_archive(data):
         return findings
     if depth >= _MAX_ARCHIVE_DEPTH:

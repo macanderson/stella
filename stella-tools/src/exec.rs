@@ -297,6 +297,14 @@ async fn drive_split(
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // Reap the direct child if this future is dropped mid-wait (Esc, a
+    // session timeout). On unix this only backs up `GroupKillGuard` below —
+    // that guard's group SIGKILL already reaches the direct child because a
+    // setsid'd child's pid IS its process-group id — but on non-unix, where
+    // no such guard exists, this is the ONLY thing that stops a cancelled
+    // `run`/`run_argv`/`verify_done` call from leaking its subprocess. Same
+    // reasoning as `crate::bash`, `crate::hook_runner`, and `crate::custom`.
+    cmd.kill_on_drop(true);
     #[cfg(unix)]
     unsafe {
         cmd.pre_exec(|| {

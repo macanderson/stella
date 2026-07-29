@@ -58,7 +58,10 @@ for arg in "$@"; do
   esac
 done
 
-BUILT_BIN="$ROOT/target/$PROFILE/stella"
+# Honor CARGO_TARGET_DIR: scripts/setup-dev-env.sh points it at a per-worktree
+# cache, so a sourced .dev-env moves the build output out of ./target — and a
+# link hardcoded to ./target would be dangling while claiming success.
+BUILT_BIN="${CARGO_TARGET_DIR:-$ROOT/target}/$PROFILE/stella"
 LINK="$INSTALL_DIR/$BIN_NAME"
 
 path_hint() {
@@ -85,13 +88,13 @@ build() {
   [ "$PROFILE" = "release" ] && flags+=(--release)
   info "building $CRATE ($PROFILE, $stamp)"
   STELLA_BUILD_GIT_SHA="$stamp" cargo build "${flags[@]+"${flags[@]}"}" -p "$CRATE"
-  ok "built target/$PROFILE/stella ($stamp)"
+  ok "built $BUILT_BIN ($stamp)"
 }
 
 link_bin() {
   mkdir -p "$INSTALL_DIR"
   ln -sfn "$BUILT_BIN" "$LINK"
-  ok "linked $LINK → target/$PROFILE/stella"
+  ok "linked $LINK → $BUILT_BIN"
   path_hint
   info "run \`$BIN_NAME\` from any workspace; \`$BIN_NAME version\` shows the dev stamp"
 }

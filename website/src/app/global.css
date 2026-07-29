@@ -162,6 +162,9 @@
   /* Cards sit in a prose column; MDX would otherwise inherit paragraph rhythm. */
   font-size: 0.875rem;
   line-height: 1.55;
+  /* Every card is a query container so the @container fallbacks below respond
+   * to the card's own width (its grid track), not the viewport. */
+  container-type: inline-size;
 }
 
 .sc-card-link {
@@ -300,13 +303,8 @@
  * read-only/mutating partition survives a squint. Color is never the sole
  * cue — the badge always spells it out. */
 
-.sc-option {
-  container-type: inline-size;
-}
-
 .sc-tool {
   border-left-width: 3px;
-  container-type: inline-size;
 }
 .sc-tool[data-access="read"] {
   border-left-color: var(--color-fd-border);
@@ -408,17 +406,7 @@
   background: var(--stella-cta-bg-hover);
 }
 
-.lp-terminal {
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
-    monospace;
-}
-
-/* The `>` prompt + caret in the terminal card, in the mode-aware foreground. */
-.lp-prompt {
-  color: var(--stella-accent);
-}
-
+/* The blinking caret in the terminal cards, in the mode-aware foreground. */
 .lp-caret {
   display: inline-block;
   width: 0.55ch;

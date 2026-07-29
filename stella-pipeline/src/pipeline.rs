@@ -184,9 +184,11 @@ pub struct PipelineConfig {
     /// triage/judge completion calls.
     pub role_overrides: PipelineRoleOverrides,
     /// Decision latency ceiling on the triage classification call (L-M4): if
-    /// it doesn't answer within this, its eventual response is ignored and
-    /// triage falls through to the full path. The paid call is still awaited
-    /// so usage cannot disappear from accounting through cancellation.
+    /// it doesn't answer within this, the in-flight call is dropped and
+    /// triage falls through to the full path. The expiry is not silent in
+    /// accounting: `run_accounted_call` records a content-free
+    /// `UsageIncomplete` envelope for the abandoned attempt (its provider-side
+    /// spend is unknowable once the response never lands).
     pub triage_latency_ceiling: Duration,
     /// Latency ceiling on the context-recall port. Recall runs concurrently
     /// with triage and is advisory (L-C6), never a gate — but nothing bounded
@@ -612,10 +614,11 @@ impl<'a> Pipeline<'a> {
                 name: StageKind::ContextRecall,
             });
             // The ceiling goes INSIDE the future, not around the join: the
-            // join must still poll triage to completion so its paid usage
-            // cannot disappear from accounting. Recall is unbilled and
-            // advisory, so cancelling it on expiry is safe — unlike triage,
-            // whose own ceiling deliberately still awaits the paid call.
+            // join must still poll triage to completion so its outcome —
+            // including the `UsageIncomplete` envelope its own ceiling emits
+            // on expiry (`run_accounted_call`) — cannot disappear from
+            // accounting. Recall is unbilled and advisory, so cancelling it
+            // on expiry needs no such envelope.
             tokio::time::timeout(self.config.recall_latency_ceiling, self.recall.recall(goal))
                 .await
                 .unwrap_or_default()
@@ -2522,7 +2525,10 @@ fn bound_recalled_frames(frames: Vec<RecalledFrame>) -> Vec<RecalledFrame> {
             let kept: String = frame.content.chars().take(RECALL_FRAME_CHARS).collect();
             frame.content = format!("{kept}\n[… frame truncated during recall budgeting …]");
         }
-        spent += frame.content.len();
+        // Chars, matching the budget's unit — `len()` (bytes) over-charged
+        // multi-byte content and shrank the effective budget below the
+        // documented one.
+        spent += frame.content.chars().count();
         out.push(frame);
     }
     out

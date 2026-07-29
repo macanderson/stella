@@ -64,8 +64,9 @@ fn a_stream_that_stops_with_no_terminal_event_is_a_silent_death() {
 
 #[test]
 fn a_solved_task_is_never_a_silent_death_even_without_a_complete_event() {
-    // 177-tool run that the verifier passed, but the stream ends without a
-    // clean `complete` (exited via budget/step-cap). Reward wins.
+    // A 50-tool run (abbreviated from a real 177-tool trial) that the
+    // verifier passed, but the stream ends without a clean `complete`
+    // (exited via budget/step-cap). Reward wins.
     let mut stream = String::from(r#"{"type":"stage","name":"execute"}"#);
     for _ in 0..50 {
         stream.push('\n');
