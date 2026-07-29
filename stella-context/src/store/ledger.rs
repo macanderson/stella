@@ -219,6 +219,55 @@ pub(crate) fn records_of_kind_in_append_order(
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// The **newest** `limit` records of one kind, returned oldest-first
+/// (`observed_at ASC`) — the recency-window counterpart of [`records_of_kind`].
+///
+/// A `limit`-bounded read of an append-only log that grows without bound: the
+/// plain [`records_of_kind`] returns the OLDEST `limit`, so a "current state"
+/// fold over it freezes at the first `limit` events once the log grows past the
+/// bound (new records become invisible forever). A recency fold must instead
+/// read the newest window. Selection is by `observed_at DESC` (tiebroken by
+/// `record_id`, the same documented resolution [`records_of_kind`] uses); the
+/// result is reversed so callers still fold in ascending order.
+pub(crate) fn records_of_kind_newest(
+    conn: &Connection,
+    record_kind: &str,
+    limit: usize,
+) -> Result<Vec<LedgerRecord>, ContextError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLUMNS} FROM context_records
+         WHERE record_kind = ?1
+         ORDER BY observed_at DESC, record_id DESC
+         LIMIT ?2"
+    ))?;
+    let rows = stmt.query_map(params![record_kind, limit as i64], row_to_record)?;
+    let mut out: Vec<LedgerRecord> = rows.collect::<rusqlite::Result<_>>()?;
+    out.reverse();
+    Ok(out)
+}
+
+/// The **newest** `limit` records of one kind in **append order** — the
+/// recency-window counterpart of [`records_of_kind_in_append_order`], carrying
+/// the same load-bearing `rowid` ordering (a last-write-wins fold needs append
+/// order, not `observed_at`). Selects by `rowid DESC LIMIT` then reverses, so
+/// the result is the newest `limit` records in ascending append order.
+pub(crate) fn records_of_kind_newest_in_append_order(
+    conn: &Connection,
+    record_kind: &str,
+    limit: usize,
+) -> Result<Vec<LedgerRecord>, ContextError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLUMNS} FROM context_records
+         WHERE record_kind = ?1
+         ORDER BY rowid DESC
+         LIMIT ?2"
+    ))?;
+    let rows = stmt.query_map(params![record_kind, limit as i64], row_to_record)?;
+    let mut out: Vec<LedgerRecord> = rows.collect::<rusqlite::Result<_>>()?;
+    out.reverse();
+    Ok(out)
+}
+
 /// Every revision in one lineage, oldest first — the audit trail for a single
 /// logical record.
 pub(crate) fn records_for_lineage(
@@ -323,6 +372,77 @@ mod tests {
         assert_eq!(read.lineage_id, "obs_1");
         assert!(read.supersedes.is_none());
         assert!(!read.recorded_at.is_empty(), "recorded_at is stamped");
+    }
+
+    #[test]
+    fn newest_in_append_order_returns_the_last_n_not_the_first() {
+        // #818: a "current state" fold must read the newest window, not the
+        // oldest — the oldest-N read froze such folds at the first N events once
+        // the append-only log grew past the bound. Append five, read the newest
+        // three: they must be the LAST three appended, in ascending append
+        // order. A revert to `records_of_kind_in_append_order` (oldest N) fails.
+        let (_dir, store) = store();
+        for i in 1..=5 {
+            let id = format!("obs_{i}");
+            let hash = format!("sha256:{i}");
+            store
+                .append_record(append(&id, r#"{"a":1}"#, &hash))
+                .expect("append");
+        }
+        let newest = store
+            .records_of_kind_newest_in_append_order("observation", 3)
+            .expect("read");
+        let ids: Vec<&str> = newest.iter().map(|r| r.lineage_id.as_str()).collect();
+        assert_eq!(ids, ["obs_3", "obs_4", "obs_5"]);
+    }
+
+    #[test]
+    fn newest_by_observed_at_selects_the_recent_window_not_the_oldest() {
+        // #818: `records_of_kind_newest` selects the most-recent `limit` by
+        // `observed_at` (returned oldest-first), where `records_of_kind`
+        // returns the oldest `limit`. With distinct timestamps the two reads
+        // pick opposite ends, so this pins the recency direction.
+        let (_dir, store) = store();
+        let ts = [
+            "2026-01-01T00:00:01Z",
+            "2026-01-01T00:00:02Z",
+            "2026-01-01T00:00:03Z",
+            "2026-01-01T00:00:04Z",
+        ];
+        for (i, t) in ts.iter().enumerate() {
+            let id = format!("obs_{}", i + 1);
+            let hash = format!("sha256:{}", i + 1);
+            store
+                .append_record(LedgerAppend {
+                    record_id: &id,
+                    lineage_id: &id,
+                    record_kind: "observation",
+                    record_hash: &hash,
+                    schema_version: "1.0-draft",
+                    body: r#"{"a":1}"#,
+                    observed_at: t,
+                    supersedes: None,
+                })
+                .expect("append");
+        }
+        let newest: Vec<String> = store
+            .records_of_kind_newest("observation", 2)
+            .expect("read")
+            .iter()
+            .map(|r| r.lineage_id.clone())
+            .collect();
+        assert_eq!(newest, ["obs_3", "obs_4"], "newest two, oldest-first");
+        let oldest: Vec<String> = store
+            .records_of_kind("observation", 2)
+            .expect("read")
+            .iter()
+            .map(|r| r.lineage_id.clone())
+            .collect();
+        assert_eq!(
+            oldest,
+            ["obs_1", "obs_2"],
+            "plain read still takes the oldest"
+        );
     }
 
     /// Replay-idempotence, at the storage layer. Extraction re-reads an

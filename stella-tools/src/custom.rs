@@ -468,7 +468,10 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             }
         }
     }
-    crate::subprocess_env::scrub_sensitive_env(&mut cmd);
+    // A custom tool spawns a model-invoked command, so it is a full command
+    // path like `bash`/`start_process`/the hook runner — it must also strip
+    // the surrounding git env and forced-color vars, not only credentials.
+    crate::subprocess_env::scrub_spawn_env(&mut cmd);
 
     // New process group so a timeout kills the whole child tree (mirrors
     // `crate::bash`).
@@ -1079,6 +1082,28 @@ command = []"#;
         match out {
             ToolOutput::Ok { content } => {
                 crate::subprocess_env::test_support::assert_scrubbed(&content)
+            }
+            ToolOutput::Error { message } => panic!("expected ok: {message}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_custom_tool_is_spawned_without_git_or_forced_color_env() {
+        // #820: a custom tool spawns a model-invoked command, so — like
+        // `bash`/`start_process`/the hook runner — it must strip the
+        // surrounding git-repo and forced-color env, not only credentials.
+        // Fails on the old `scrub_sensitive_env` call (which left both set).
+        let _hygiene = crate::subprocess_env::test_support::SpawnHygieneFixture::install();
+        let dir = tempfile::tempdir().unwrap();
+        let body = format!(
+            "#!/bin/sh\n{}\n",
+            crate::subprocess_env::test_support::SPAWN_HYGIENE_PROBE_COMMAND
+        );
+        let tool = script_tool(dir.path(), "spawn-hygiene.sh", &body, 5000);
+        let out = run_custom(&tool, &serde_json::json!({}), dir.path()).await;
+        match out {
+            ToolOutput::Ok { content } => {
+                crate::subprocess_env::test_support::assert_spawn_hygiene_scrubbed(&content)
             }
             ToolOutput::Error { message } => panic!("expected ok: {message}"),
         }
