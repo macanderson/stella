@@ -76,6 +76,7 @@ mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
 mod tui;
+mod tune_cmd;
 mod usage_cmd;
 
 /// Serializes tests that mutate process environment variables. `setenv` /
@@ -518,6 +519,17 @@ enum Command {
     Proposals {
         #[command(subcommand)]
         cmd: proposals_cmd::ProposalsCmd,
+    },
+
+    /// Eval-driven self-tuning of stella's own policy (#831): A/B one knob
+    /// (worker reasoning effort) over two loop-bench `--json` result files,
+    /// auto-select the winner, and — with `--promote` — write it to settings
+    /// with a reversible rollback record. `rollback` reverts the last
+    /// promotion; `status` shows the ledger. Offline: reads result files and
+    /// the local ledger, writes settings only on `--promote`. No API key.
+    Tune {
+        #[command(subcommand)]
+        cmd: tune_cmd::TuneCmd,
     },
 
     /// Show the exact context a past model call was sent — the reconstructed
@@ -1047,6 +1059,11 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         Some(Command::Proposals { cmd }) => {
             return proposals_cmd::run_proposals(cmd);
         }
+        // #831 first slice. Reads loop-bench result files + the local ledger;
+        // writes settings only on `--promote`. No provider, no API key.
+        Some(Command::Tune { cmd }) => {
+            return tune_cmd::run_tune(cmd);
+        }
         Some(Command::Inspect {
             execution_id,
             turn,
@@ -1367,6 +1384,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), String> {
         | Command::Inspect { .. }
         // Phase 3 (#714)
         | Command::Proposals { .. }
+        // #831 first slice
+        | Command::Tune { .. }
         | Command::Stats { .. }
         | Command::Usage { .. }
         | Command::Cloud { .. }
