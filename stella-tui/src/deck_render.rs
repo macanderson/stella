@@ -37,6 +37,10 @@ const PROMPT_PREFIX_W: usize = 4;
 const COMPOSER_GUTTER_W: usize = 1;
 /// Half-period of the caret blink, in deck-clock ms.
 const CARET_BLINK_MS: u64 = 530;
+/// Per-step period of the working-prompt chevron chase, in deck-clock ms —
+/// one `>` lights per step, so the sweep across all three completes every
+/// `3 × PROMPT_CHASE_MS`.
+const PROMPT_CHASE_MS: u64 = 130;
 
 pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let area = frame.area();
@@ -102,7 +106,14 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     render_trace_strip(model, bands[2], buf);
     crate::progress::render(model, ui, bands[3], buf);
-    render_composer(ui, &c_layout, model.now_ms, bands[4], buf);
+    // The prompt chevrons animate only while the focused agent's turn is in
+    // flight — the same `Running && !no_anim` liveness the progress bar uses.
+    let working = model
+        .agents
+        .get(ui.focused)
+        .is_some_and(|a| a.status == crate::envelope::AgentStatus::Running)
+        && !ui.no_anim;
+    render_composer(ui, &c_layout, model.now_ms, working, bands[4], buf);
     render_composer_footer(model, ui, &c_layout, bands[5], buf);
     render_status_bar(model, ui, bands[6], buf);
 
@@ -949,6 +960,7 @@ fn render_composer(
     ui: &DeckUi,
     layout: &ComposerLayout,
     now_ms: u64,
+    working: bool,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -967,11 +979,32 @@ fn render_composer(
     let cursor_style = theme::accent().add_modifier(Modifier::REVERSED);
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate().skip(first).take(visible) {
-        // The accent `>>> ` prefix rides every row and scrolls with it.
-        let mut spans = vec![Span::styled(
-            PROMPT_PREFIX,
-            Style::default().fg(theme::ACCENT),
-        )];
+        // The accent `>>> ` prefix rides every row and scrolls with it. While
+        // the focused agent is working it becomes a left-to-right chevron
+        // chase — one bright `>` marching over two dim ones — a pure function
+        // of the deck clock on the same tick as the caret blink. An idle agent
+        // or `--no-anim` pins it to the static accent prefix. Either way it is
+        // exactly the four columns `PROMPT_PREFIX_W` reserves.
+        let mut spans = if working {
+            let lit = ((now_ms / PROMPT_CHASE_MS) % 3) as usize;
+            let mut prefix: Vec<Span<'static>> = (0..3)
+                .map(|j| {
+                    let color = if j == lit {
+                        theme::ACCENT
+                    } else {
+                        theme::ACCENT_DEEP
+                    };
+                    Span::styled(">", Style::default().fg(color))
+                })
+                .collect();
+            prefix.push(Span::raw(" "));
+            prefix
+        } else {
+            vec![Span::styled(
+                PROMPT_PREFIX,
+                Style::default().fg(theme::ACCENT),
+            )]
+        };
         if i == layout.cursor_row {
             let (before, under, after) = split_row_at(row, layout.cursor_col);
             let under_ch = under.map(String::from).unwrap_or_else(|| " ".into());

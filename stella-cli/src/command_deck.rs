@@ -104,6 +104,7 @@ use crate::interactive::{AskUserIo, FREE_TEXT_LABEL, InteractiveToolSet, SkillRe
 
 mod authoring;
 mod forwarder;
+mod model_cmd;
 mod scope_gate;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
@@ -3432,6 +3433,10 @@ enum DeckCommand {
 const DECK_BUILTINS: &[(&str, &str)] = &[
     ("/help", "show commands"),
     ("/clear", "reset the conversation"),
+    (
+        "/model",
+        "set the default model (persists; no arg shows current + list)",
+    ),
     ("/models", "list providers & models (`refresh` re-syncs)"),
     ("/init", "index the workspace: domains + code graph"),
     (
@@ -3465,9 +3470,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
     ),
     ("/inbox", "notifications — messages persist until read"),
     ("/mcp-search", "search the MCP registry & install servers"),
-    // The engine-config editor (per-agent models included) lives on the
-    // SETTINGS tab, full-width — THE way to configure models; there are no
-    // per-agent slash commands.
+    // `/model` sets the DEFAULT model from the prompt (persisted, parity
+    // with the tab). The full engine-config editor — per-agent models,
+    // provider pins, effort, prompts — lives on the SETTINGS tab; there are
+    // no per-agent slash commands.
     (
         "/settings",
         "open the SETTINGS tab — the home of all config (models included)",
@@ -3889,6 +3895,9 @@ async fn run_deck_command(
                 agent: LEAD.to_string(),
             });
         }
+        "/model" => {
+            say(model_cmd::current_summary(cfg));
+        }
         "/models" => {
             say(Config::available_models_plain(None));
         }
@@ -3998,6 +4007,30 @@ async fn run_deck_command(
         "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search"
         | "/settings" | "/sessions" | "/context" | "/inspect" | "/inbox" => {}
         _ => {
+            // `/model <provider/slug>` — set the persistent default model.
+            // Validation + the settings write live in `model_cmd` (parity
+            // with the SETTINGS tab); handled before the whitespace check
+            // below, which would otherwise mistake `/model x` for a prompt.
+            if let Some(command) = model_cmd::parse_model_command(trimmed) {
+                match command {
+                    model_cmd::ModelCommand::Usage => say(
+                        "usage: `/model <provider/slug>` — e.g. `/model zai/glm-5.2`. \
+                         Run `/model` alone to see the current default and the list."
+                            .to_string(),
+                    ),
+                    model_cmd::ModelCommand::Set(id) => {
+                        match model_cmd::set_default_model(cfg, &id) {
+                            Ok(msg) => {
+                                say(msg);
+                                // Refresh an open SETTINGS tab with the merged view.
+                                let _ = in_tx.send(engine_config_inbound(cfg, None));
+                            }
+                            Err(msg) => say(msg),
+                        }
+                    }
+                }
+                return DeckCommand::Handled;
+            }
             // The `/models` argument forms first (see [`ModelsCommand`]):
             // handled model-free — a catalog refresh is part of digging out
             // of a broken model setting, so it can never be allowed to
