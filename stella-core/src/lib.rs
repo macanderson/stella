@@ -40,6 +40,7 @@ pub mod skills;
 pub(crate) mod speculation;
 mod summarize;
 pub mod tasks;
+pub mod tool_foundry;
 
 pub use budget::{BudgetGuard, BudgetOutcome};
 // `bus::HookEvent` (the extension-bus envelope) stays module-qualified: the
@@ -83,3 +84,6 @@ pub use skills::{
     mine_skill_candidates, render_skills_section, select_skills,
 };
 pub use tasks::{SpawnRequest, TaskBoard, TaskBoardError};
+pub use tool_foundry::{
+    GapDetectionConfig, ParamKind, ProposedTool, ShellInvocation, ToolParameter, detect_tool_gaps,
+};

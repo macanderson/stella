@@ -30,8 +30,8 @@
 2582 stella-pipeline/src/pipeline.rs
 2113 stella-pipeline/src/pipeline/tests.rs
 2399 stella-protocol/src/event.rs
-2255 stella-store/src/lib.rs
-2200 stella-store/src/tests.rs
+2292 stella-store/src/lib.rs
+2269 stella-store/src/tests.rs
 1892 stella-store/src/usage.rs
 1566 stella-tools/src/media.rs
 3204 stella-tools/src/registry.rs

@@ -178,6 +178,11 @@ pub(crate) fn record_execution_end(
         .finish_execution_accounted(execution_id, outcome_label, cost_usd, audit_complete)
         .is_ok();
     let _ = store.materialize_tool_calls(execution_id);
+    // Now that this turn's `bash` receipts are materialized, mine recent
+    // history for a repeated command shape and, if found, surface a *proposed*
+    // tool to `/inbox` (#830, first slice — proposes only, installs nothing).
+    // Best-effort: a mining failure must never fail the turn.
+    let _ = crate::tool_foundry::surface_tool_gaps(store);
     let _ = store.finalize_execution_reflection(execution_id);
     let _ = store.sync_to_usage_default(execution_id);
     let _ = crate::enterprise_telemetry::enqueue_finalized_execution(store, execution_id);
