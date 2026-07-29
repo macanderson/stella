@@ -3240,8 +3240,8 @@ fn handle_skills_prompt_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     }
 }
 
-/// The id of the focused agent, if any.
-fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId> {
+/// The id of the focused agent, if any — also the lane a `!` command borrows.
+pub(crate) fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId> {
     model.agents.get(ui.focused).map(|a| a.meta.id.clone())
 }
 

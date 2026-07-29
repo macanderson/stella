@@ -102,7 +102,7 @@ The full deck command set — including `/inspect` and `/context` — is on
 **⏎** inserts a line break; **⌘⏎ / ⌃⏎** submits. Prompts queue while a turn
 runs — you never wait for the agent to finish before typing the next thing
 (**Ctrl-T** opens the queue editor). A `!`-prefixed line runs a shell command
-immediately in its own lane, skipping the queue. A single **Esc** cancels the in-flight turn;
+immediately, inline in the session transcript, skipping the queue. A single **Esc** cancels the in-flight turn;
 **double-Esc** cancels *and holds* dispatch so what you type next runs first.
 Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
 
