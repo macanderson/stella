@@ -369,14 +369,21 @@ mod tests {
 
     #[tokio::test]
     async fn finds_matching_lines() {
-        let dir = std::env::temp_dir();
-        let path = format!("stella_grep_{}.txt", std::process::id());
-        tokio::fs::write(dir.join(&path), "hello world\nfoo bar\nhello again\n")
-            .await
-            .unwrap();
+        // Isolated dir (auto-removed on drop) rather than the shared system
+        // temp — the same reasoning as `no_matches_returns_ok_empty`.
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("notes.txt"),
+            "hello world\nfoo bar\nhello again\n",
+        )
+        .await
+        .unwrap();
 
         let result = Grep::default()
-            .execute(&serde_json::json!({"pattern": "hello", "path": path}), &dir)
+            .execute(
+                &serde_json::json!({"pattern": "hello", "path": "notes.txt"}),
+                dir.path(),
+            )
             .await;
         match result {
             ToolOutput::Ok { content } => {
@@ -384,17 +391,29 @@ mod tests {
             }
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
-        let _ = tokio::fs::remove_file(dir.join(&path)).await;
     }
 
     #[tokio::test]
     async fn no_matches_returns_ok_empty() {
-        let dir = std::env::temp_dir();
+        // An isolated, empty dir — NOT the shared `std::env::temp_dir()`. That
+        // directory collects files from every concurrent test and every other
+        // process on the machine; a leftover `stella_candidate_*` source copy
+        // there even contains this very pattern, so scanning it found spurious
+        // hits and the test failed nondeterministically.
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("clean.txt"), "nothing to see here\n")
+            .await
+            .unwrap();
         let result = Grep::default()
-            .execute(&serde_json::json!({"pattern": "zzz_not_found_xyz"}), &dir)
+            .execute(
+                &serde_json::json!({"pattern": "zzz_not_found_xyz"}),
+                dir.path(),
+            )
             .await;
         match result {
-            ToolOutput::Ok { content } => assert!(content.contains("no matches")),
+            ToolOutput::Ok { content } => {
+                assert!(content.contains("no matches"), "{content}")
+            }
             ToolOutput::Error { message } => panic!("expected ok, got: {message}"),
         }
     }
