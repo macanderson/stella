@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Guard: no NEW Rust file may exceed the 1500-line ratchet. See #629.
+# Guard: no NEW Rust or Python file may exceed the 1500-line ratchet.
+# See #629 (Rust) and #825 (Python — an 8,166-line analysis module had slipped
+# through because the guard only looked at *.rs).
 #
 # Three fleet plans asserted this limit as a standard the tree follows
 # (docs/design/serve-surface.fleet.toml, plus the since-deleted
@@ -59,9 +61,11 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 0
 fi
 
-# Emit "<lines> <path>" for every tracked Rust file, NUL-safe on the git side.
+# Emit "<lines> <path>" for every tracked Rust or Python file, NUL-safe on the
+# git side. Python counts too (#825): the analyzer under bench/ grew to 8,166
+# lines while the guard watched only *.rs.
 current_sizes() {
-  git ls-files -z '*.rs' | while IFS= read -r -d '' f; do
+  git ls-files -z '*.rs' '*.py' | while IFS= read -r -d '' f; do
     printf '%s %s\n' "$(wc -l <"$f" | tr -d ' ')" "$f"
   done
 }
@@ -132,5 +136,5 @@ if [ -n "$report" ]; then
   exit 1
 fi
 
-tracked=$(git ls-files '*.rs' | wc -l | tr -d ' ')
-echo "check-file-size: OK — $tracked Rust files, none over $LIMIT lines except $(grep -cv '^#' "$baseline") grandfathered (none grew)."
+tracked=$(git ls-files '*.rs' '*.py' | wc -l | tr -d ' ')
+echo "check-file-size: OK — $tracked Rust/Python files, none over $LIMIT lines except $(grep -cv '^#' "$baseline") grandfathered (none grew)."
