@@ -106,6 +106,7 @@ mod authoring;
 mod forwarder;
 mod model_cmd;
 mod scope_gate;
+mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::subsession::{self, SubSessions, SupervisorMsg};
@@ -558,6 +559,12 @@ pub async fn run_deck_session(
         .as_ref()
         .and_then(|rs| rs.pipeline)
         .unwrap_or(true);
+    // Honour the persisted colour theme (`ui.theme`) before the deck spawns its
+    // render task, so the very first frame — the launch cinematic — is already
+    // in the chosen theme. Best-effort: an unset/unknown value keeps the
+    // default (`stella-dark`).
+    theme_cmd::apply_persisted(cfg);
+
     let opts = DeckOptions {
         debug_log_path: debug_log_path(),
         slash_commands: deck_slash_commands(&custom),
@@ -3438,6 +3445,10 @@ const DECK_BUILTINS: &[(&str, &str)] = &[
         "set the default model (persists; no arg shows current + list)",
     ),
     ("/models", "list providers & models (`refresh` re-syncs)"),
+    (
+        "/theme",
+        "switch colour theme (stella-dark · stella-light; persists; no arg shows current)",
+    ),
     ("/init", "index the workspace: domains + code graph"),
     (
         "/agents",
@@ -3901,6 +3912,9 @@ async fn run_deck_command(
         "/models" => {
             say(Config::available_models_plain(None));
         }
+        "/theme" => {
+            say(theme_cmd::current_summary(cfg));
+        }
         "/pipeline" => {
             *pipeline_on = !*pipeline_on;
             // Flip the PIPELINE stat box live — the deck renders exclusively
@@ -4031,6 +4045,18 @@ async fn run_deck_command(
                 }
                 return DeckCommand::Handled;
             }
+            // `/theme <slug>` — switch + persist the colour theme (parity with
+            // `/model`). The live switch is a buffer remap in `stella_tui`, so
+            // it lands on the next frame; here we just flip it and save.
+            if let Some(command) = theme_cmd::parse_theme_command(trimmed) {
+                match command {
+                    theme_cmd::ThemeCommand::Set(name) => match theme_cmd::set_theme(name) {
+                        Ok(msg) | Err(msg) => say(msg),
+                    },
+                    theme_cmd::ThemeCommand::Usage(arg) => say(theme_cmd::usage(&arg)),
+                }
+                return DeckCommand::Handled;
+            }
             // The `/models` argument forms first (see [`ModelsCommand`]):
             // handled model-free — a catalog refresh is part of digging out
             // of a broken model setting, so it can never be allowed to
@@ -4071,7 +4097,7 @@ async fn run_deck_command(
                 return DeckCommand::Prompt;
             }
             say(format!(
-                "unknown command `{trimmed}` — try /help, /clear, /models, /init, /agents, /pipeline, /export, /donate, /files, /diff, /graph"
+                "unknown command `{trimmed}` — try /help, /clear, /models, /theme, /init, /agents, /pipeline, /export, /donate, /files, /diff, /graph"
             ));
         }
     }

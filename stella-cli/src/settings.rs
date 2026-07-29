@@ -138,6 +138,10 @@ pub struct Settings {
     /// changed, beside the file and cost panels. No model call. Default off.
     #[serde(default)]
     pub enable_recap: Option<Toggle>,
+    /// Appearance preferences — currently just the TUI colour theme
+    /// (`/theme`). Whole-block last-wins across scopes; carries no authority.
+    #[serde(default)]
+    pub ui: Option<UiSettings>,
     /// Adaptive-context lifecycle configuration (the `context` block).
     /// `context.lifecycle.enabled` defaults **`true`** — the lifecycle ships
     /// on, and setting it `false` restores every pre-adaptive behavior.
@@ -667,6 +671,49 @@ impl ToolsSettings {
     }
 }
 
+/// The `ui` section of settings.json — appearance preferences. All fields
+/// optional so an absent section behaves exactly as the defaults.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct UiSettings {
+    /// The TUI colour theme slug (`stella-dark` | `stella-light`). Unset — or
+    /// unrecognised — falls back to the default (`stella-dark`, terminal green).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+}
+
+impl UiSettings {
+    /// Persist THIS section as the `"ui"` key of the settings file at `path`,
+    /// preserving every other key byte-for-byte at the value level — the same
+    /// read-modify-write contract as [`ToolsSettings::save_to`] and
+    /// [`AgentEngineConfig::save_to`], so a theme write never drops
+    /// `providers`, `hooks`, or any forward-compat key. An empty section
+    /// removes the key rather than writing `{}`.
+    pub fn save_to(&self, path: &Path) -> Result<(), String> {
+        private::reject_symlink(path)?;
+        let mut root: serde_json::Value = match std::fs::read_to_string(path) {
+            Ok(contents) => serde_json::from_str(&contents)
+                .map_err(|e| format!("invalid settings file {}: {e}", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let object = root
+            .as_object_mut()
+            .ok_or_else(|| format!("settings file {} is not a JSON object", path.display()))?;
+        if self.theme.is_none() {
+            object.remove("ui");
+        } else {
+            let value =
+                serde_json::to_value(self).map_err(|e| format!("cannot serialize ui: {e}"))?;
+            object.insert("ui".to_string(), value);
+        }
+        let mut rendered = serde_json::to_string_pretty(&root)
+            .map_err(|e| format!("cannot render settings: {e}"))?;
+        rendered.push('\n');
+        let user_private = user_settings_path().as_deref() == Some(path);
+        private::write_settings(path, rendered.as_bytes(), user_private)
+    }
+}
+
 /// The `mcp` section of settings.json. All fields optional so an absent
 /// section behaves exactly as the defaults.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
@@ -694,6 +741,13 @@ impl Settings {
     /// it on (a later `"off"` turns it back off — project wins per field).
     pub fn recap_enabled(&self) -> bool {
         self.enable_recap.is_some_and(Toggle::is_on)
+    }
+
+    /// The persisted TUI colour-theme slug (`ui.theme`), if any. `None` means
+    /// no preference was saved — the caller applies the default. The value is
+    /// the raw slug; validation is the reader's job ([`stella_tui::theme`]).
+    pub fn ui_theme(&self) -> Option<&str> {
+        self.ui.as_ref().and_then(|u| u.theme.as_deref())
     }
 
     /// The configured MCP registry URL, or the official default. Applied at the

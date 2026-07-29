@@ -47,11 +47,18 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let area = frame.area();
     let buf = frame.buffer_mut();
 
-    // The navy-black ground is a real frame fill, not an assumption about
-    // the user's terminal background — the deck looks the same over a white
-    // terminal as over a black one. `degrade_buffer` narrows it per color
-    // depth, and NO_COLOR strips it entirely (structure survives).
-    buf.set_style(area, Style::default().bg(theme::GROUND));
+    // The ground is a real frame fill, not an assumption about the user's
+    // terminal background — the deck looks the same over a white terminal as
+    // over a black one. The base FOREGROUND is filled for the same reason:
+    // prose that sets no colour of its own must still be a real theme tone
+    // (INK/`TEXT_PRIMARY`), never the terminal default — otherwise the
+    // `stella-light` remap can't turn it to ink and body text would render
+    // white-on-white on paper. `degrade_buffer` narrows both per colour depth,
+    // and NO_COLOR strips them entirely (structure survives).
+    buf.set_style(
+        area,
+        Style::default().bg(theme::GROUND).fg(theme::TEXT_PRIMARY),
+    );
 
     // The splash owns the whole frame until it finishes / is skipped.
     if !ui.splash.is_done() {
@@ -943,21 +950,30 @@ fn render_trace_strip(model: &WorkspaceModel, area: Rect, buf: &mut Buffer) {
     if area.height < 2 {
         return;
     }
+    // A fixed left anchor so the live summary reads as a labeled "latest
+    // activity" status line rather than words floating loose under the
+    // transcript box — the churn of streaming trace rows is what made the
+    // strip look like a leak. The anchor stays put; only the value moves.
+    let anchor = Span::styled(" ▸ ", Style::default().fg(theme::TEXT_TERTIARY));
     let line = match model.trace.rows.back() {
         Some(row) => Line::from(vec![
+            anchor,
+            // The kind keeps its colour (scannable); the summary stays dim so
+            // the strip never competes with the transcript or the prompt.
             Span::styled(
-                format!(" {} ", row.kind.label()),
+                row.kind.label(),
                 Style::default().fg(theme::trace_kind_color(row.kind)),
             ),
+            Span::styled("  ", Style::default()),
             Span::styled(
-                truncate_chars(&row.summary, (area.width as usize).saturating_sub(10)),
+                truncate_chars(&row.summary, (area.width as usize).saturating_sub(12)),
                 Style::default().fg(theme::TEXT_TERTIARY),
             ),
         ]),
-        None => Line::from(Span::styled(
-            " · no activity yet",
-            Style::default().fg(theme::TEXT_TERTIARY),
-        )),
+        None => Line::from(vec![
+            anchor,
+            Span::styled("no activity yet", Style::default().fg(theme::TEXT_TERTIARY)),
+        ]),
     };
     Paragraph::new(line).render(
         Rect {
@@ -1232,7 +1248,10 @@ pub(crate) fn render_status_bar(model: &WorkspaceModel, ui: &DeckUi, area: Rect,
         .unwrap_or("idle");
     let dot_color = if ui.color_mode.is_truecolor() && !ui.no_anim {
         let t = (model.now_ms % 1200) as f64 / 1200.0;
-        theme::lighten(theme::ACCENT_DEEP, (0.5 - (t - 0.5).abs()) * 0.7)
+        // Lightened → interpolated, so read the active primary directly (the
+        // theme remap can't reach an interpolated cell). Flat `else` keeps
+        // ACCENT_DEEP, which the remap does recolour.
+        theme::lighten(theme::primary_deep(), (0.5 - (t - 0.5).abs()) * 0.7)
     } else {
         theme::ACCENT_DEEP
     };

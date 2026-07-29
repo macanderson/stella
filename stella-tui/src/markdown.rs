@@ -362,14 +362,16 @@ fn heading_line(content: &str, level: usize) -> Line<'static> {
     ])
 }
 
-/// Style for inline code spans and fenced code blocks.
+/// Style for inline code spans and fenced code blocks. A calm sage
+/// [`theme::CODE`] green — code is technical, not a warning, so it no longer
+/// borrows the alarm hue that used to shout from every backticked identifier.
 fn code_style() -> Style {
-    Style::new().fg(theme::WARN)
+    Style::new().fg(theme::CODE)
 }
 
 /// One line inside a fenced code block: indented two spaces, tokenized in the
 /// fence's language when it named one we highlight (keywords/strings/numbers/
-/// comments take their syntax colors; plain runs keep the code amber), or
+/// comments take their syntax colors; plain runs keep the code sage), or
 /// rendered verbatim in the code style otherwise.
 fn code_block_line(raw: &str, lang: Option<syntax::Lang>) -> Line<'static> {
     let mut spans = vec![Span::styled("  ", code_style())];
@@ -470,12 +472,14 @@ mod tests {
     }
 
     #[test]
-    fn code_span_has_yellow_fg() {
+    fn code_span_has_the_calm_code_fg() {
         let lines = render("inline `code` here");
         // Three spans: "inline ", code, " here"
         let code_span = &lines[0].spans[1];
         assert_eq!(code_span.content, "code");
-        assert_eq!(code_span.style.fg, Some(theme::WARN));
+        // Inline code is the sage `theme::CODE`, not the old warning-orange.
+        assert_eq!(code_span.style.fg, Some(theme::CODE));
+        assert_ne!(code_span.style.fg, Some(theme::WARN));
     }
 
     #[test]
@@ -673,8 +677,8 @@ mod tests {
             lines[0]
                 .spans
                 .iter()
-                .any(|s| s.style.fg == Some(theme::WARN)),
-            "plain runs keep the amber code style: {:?}",
+                .any(|s| s.style.fg == Some(theme::CODE)),
+            "plain runs keep the sage code style: {:?}",
             lines[0].spans
         );
     }
@@ -687,7 +691,7 @@ mod tests {
             lines[0]
                 .spans
                 .iter()
-                .all(|s| s.style.fg == Some(theme::WARN)),
+                .all(|s| s.style.fg == Some(theme::CODE)),
             "no tag, no tokenizing: {:?}",
             lines[0].spans
         );

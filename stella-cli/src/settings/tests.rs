@@ -270,6 +270,50 @@ fn agent_engine_config_save_preserves_other_keys_and_roundtrips() {
     assert_eq!(merged.agent_engine_config, Some(engine));
 }
 
+#[test]
+fn ui_theme_save_preserves_other_keys_and_roundtrips() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "settings.json",
+        r#"{"providers": {"zai": {"default_model": "glm-5.2"}},
+            "enable_recap": "on",
+            "future_key": {"anything": true}}"#,
+    );
+    let ui = UiSettings {
+        theme: Some("stella-light".to_string()),
+    };
+    ui.save_to(&path).unwrap();
+
+    // Sibling keys survive byte-for-byte at the value level…
+    let raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(raw["providers"]["zai"]["default_model"], "glm-5.2");
+    assert_eq!(raw["enable_recap"], "on");
+    assert_eq!(raw["future_key"]["anything"], true);
+    assert_eq!(raw["ui"]["theme"], "stella-light");
+
+    // …the accessor reads it back through the normal load path…
+    let merged = Settings::load_from(std::slice::from_ref(&path)).unwrap();
+    assert_eq!(merged.ui_theme(), Some("stella-light"));
+
+    // …a higher scope's `ui` wins whole-block (last-wins, like enable_recap)…
+    let project = write(
+        dir.path(),
+        "project.json",
+        r#"{"ui": {"theme": "stella-dark"}}"#,
+    );
+    let merged = Settings::load_from(&[path.clone(), project]).unwrap();
+    assert_eq!(merged.ui_theme(), Some("stella-dark"));
+
+    // …and clearing the theme removes the `ui` key rather than writing `{}`.
+    UiSettings::default().save_to(&path).unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(raw.as_object().unwrap().get("ui").is_none());
+    assert_eq!(raw["providers"]["zai"]["default_model"], "glm-5.2");
+}
+
 /// **Witness for the default flip.** With no settings at all — no file,
 /// no `tools` key, an empty `tools` object — every tool is on, `bash`
 /// included. This fails on the old code, where an absent key meant OFF.

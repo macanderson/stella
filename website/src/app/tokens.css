@@ -3,39 +3,52 @@
  * global.css maps these onto the light/dark semantic layer, the same way
  * stella-tui's theme.rs maps palette.rs.
  *
- * The identity is bright sky on black: a signal light in the dark.
+ * The identity is terminal green on black: a signal light in the dark. The
+ * light theme (`stella-light` in the app) is ember on paper.
  *
  * This file mirrors stella-tui/src/palette.rs, which is the normative source;
  * the two must be edited together. (The header used to claim generation from
  * docs/brand/tokens.json by docs/brand/build.py — neither exists.)
+ *
+ * Note: the Rust palette renamed the brand tokens `SKY`→`BRAND` (hue-neutral,
+ * to survive recolours). The CSS var names here keep `--stella-sky*` because
+ * global.css and components reference them widely; only the *values* changed
+ * (blue → terminal green). `--stella-brand*` are added as forward aliases.
  */
 
 :root {
-  /* Ground (dark) — True black, so the pale accent keeps its contrast. */
+  /* Ground (dark) — True black, so the accent keeps its contrast. */
   --stella-night: #000000;
   --stella-ground: #000000;
   --stella-surface: #0a0e14;
   --stella-raised: #141c26;
   --stella-hairline: #24313f;
 
-  /* Brand — Bright sky blue. */
-  --stella-sky: #7dd3fc;
-  --stella-sky-deep: #38bdf8;
+  /* Brand — Terminal green (default dark theme). */
+  --stella-sky: #00e676;
+  --stella-sky-deep: #00b25a;
   --stella-sky-ink: #0b4a6f;
+  /* Forward-compat hue-neutral aliases (match palette.rs BRAND / BRAND_DEEP). */
+  --stella-brand: #00e676;
+  --stella-brand-deep: #00b25a;
+
+  /* Brand (light) — Ember, sampled from the logo square (#ff3d1f). */
+  --stella-ember: #ff3d1f;
+  --stella-ember-deep: #d62e0e;
 
   /* Text (dark ground) — Cool neutrals for the dark canvas. */
   --stella-text-primary: #f3f6fa;
   --stella-text-secondary: #98a6ba;
   --stella-text-tertiary: #6c7b90;
 
-  /* Status — Always paired with a glyph. */
+  /* Status — Always paired with a glyph. Warning is amber-yellow (no longer orange). */
   --stella-success: #4ade80;
-  --stella-warning: #ff8a1f;
+  --stella-warning: #eab308;
   --stella-danger: #ff5c7a;
 
   /* Status (light ground) — The same three meanings, darkened along their own hue until they clear AA on paper. */
   --stella-success-ink: #16744f;
-  --stella-warning-ink: #b04a00;
+  --stella-warning-ink: #a16207;
   --stella-danger-ink: #c8102e;
 
   /* Ground (light) — The paper mode. */
