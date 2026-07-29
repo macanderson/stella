@@ -5345,7 +5345,7 @@ The full deck command set — including `/inspect` and `/context` — is on
 **⏎** inserts a line break; **⌘⏎ / ⌃⏎** submits. Prompts queue while a turn
 runs — you never wait for the agent to finish before typing the next thing
 (**Ctrl-T** opens the queue editor). A `!`-prefixed line runs a shell command
-immediately in its own lane, skipping the queue. A single **Esc** cancels the in-flight turn;
+immediately, inline in the session transcript, skipping the queue. A single **Esc** cancels the in-flight turn;
 **double-Esc** cancels *and holds* dispatch so what you type next runs first.
 Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
 
@@ -8352,7 +8352,7 @@ Running `stella` on a real terminal opens the **Command Deck** — the tabbed
 TUI over the engine. Each prompt becomes a lead-agent turn; `/pipeline`
 toggles between staged turns (the default) and the raw step loop. The deck
 is more than a chat surface: prompts queue while a turn runs, `!` lines run
-shell commands in their own lane, `>` steers the turn in flight, Esc
+shell commands inline in the transcript, `>` steers the turn in flight, Esc
 soft-stops (both below), and tabs expose the session's
 files, diff, code graph, skills, MCP servers, the AGENTS tab with live
 executions, and the SETTINGS tab's
