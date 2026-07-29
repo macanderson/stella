@@ -980,8 +980,15 @@ async fn aggregate_anthropic_stream(
                 }
                 Ok(_) => {}
                 Err(_) => {
-                    // Unrecognized event shape (e.g. ping/ack events with no
-                    // `type` we model) — tolerated, never fatal to the turn.
+                    // A data line that did not deserialize into
+                    // `AnthropicStreamEvent` at all — malformed or partial
+                    // JSON, or JSON lacking the string `type` this tagged enum
+                    // needs. An event carrying a `type` we simply don't model
+                    // (e.g. `ping`) is NOT here: it deserializes to `Other`
+                    // above via `#[serde(other)]` and lands in `Ok(_)`.
+                    // Tolerated, never fatal: one unparseable frame is dropped
+                    // and the stream continues; a genuinely truncated stream is
+                    // caught by the `message_stop` check below, not here.
                 }
             }
         }

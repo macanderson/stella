@@ -296,6 +296,29 @@ impl ContextStore {
         ledger::records_of_kind_in_append_order(&lock(&self.conn), record_kind, limit)
     }
 
+    /// The newest `limit` records of one kind, oldest-first — the recency
+    /// window a "current state" fold needs. Unlike [`Self::records_of_kind`]
+    /// (the oldest `limit`), this never freezes as the append-only log grows
+    /// past the bound.
+    pub fn records_of_kind_newest(
+        &self,
+        record_kind: &str,
+        limit: usize,
+    ) -> Result<Vec<ledger::LedgerRecord>, ContextError> {
+        ledger::records_of_kind_newest(&lock(&self.conn), record_kind, limit)
+    }
+
+    /// The newest `limit` records of one kind in append order — the recency
+    /// counterpart of [`Self::records_of_kind_in_append_order`], for a
+    /// last-write-wins fold that must not freeze at the oldest `limit`.
+    pub fn records_of_kind_newest_in_append_order(
+        &self,
+        record_kind: &str,
+        limit: usize,
+    ) -> Result<Vec<ledger::LedgerRecord>, ContextError> {
+        ledger::records_of_kind_newest_in_append_order(&lock(&self.conn), record_kind, limit)
+    }
+
     /// Every revision in one lineage, oldest first — a single record's audit
     /// trail.
     pub fn records_for_lineage(

@@ -161,7 +161,11 @@ fn append_observation(store: &ContextStore, lesson: &ReflectionLesson) -> Option
 /// propagated.
 pub(crate) fn all_observations(store: &ContextStore, limit: usize) -> Vec<ObservationRecord> {
     store
-        .records_of_kind(
+        // The NEWEST `limit` observations, not the oldest: mining and health
+        // want recent activity, and the oldest-`limit` read made every new
+        // observation invisible once the log grew past the bound (#818). Under
+        // the bound this returns the same set in the same order.
+        .records_of_kind_newest(
             stella_core::context_record::ContextRecordKind::Observation.as_str(),
             limit,
         )

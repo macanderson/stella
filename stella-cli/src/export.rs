@@ -28,6 +28,15 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     let dumps = store
         .export_all_json()
         .map_err(|e| format!("cannot read telemetry: {e}"))?;
+    // #817: the archive leaves the machine (emailed, committed to a PR as
+    // evidence), so mask any credential that reached the telemetry — a key
+    // pasted into a prompt, printed by a tool into `args_json`, or living in a
+    // touched file's events — before it is written to the raw dumps OR embedded
+    // in the dashboard. Applied once, here, so both sinks see redacted data.
+    let dumps: Vec<TableDump> = dumps
+        .into_iter()
+        .map(|(table, json)| (table, redact_dump(&json)))
+        .collect();
 
     if dumps.iter().all(|(_, json)| json == "[]") {
         return Err("no session telemetry recorded yet — run a few turns first.".into());
@@ -95,6 +104,38 @@ pub fn export_session(workspace_root: &Path) -> Result<PathBuf, String> {
     std::fs::write(&zip_path, &bytes).map_err(|e| format!("write archive: {e}"))?;
 
     Ok(zip_path)
+}
+
+/// Redact credentials from one table's JSON dump (#817). Parses the array and
+/// runs [`stella_core::redact::redact_secrets`] over **every string value**,
+/// then re-serializes — so the output is always valid JSON and a secret
+/// embedded anywhere (a prompt, a tool's `args_json`, a touched file's events)
+/// is masked. If the dump is not the JSON shape we expect, falls back to a
+/// whole-string redaction, which is still safe (it only ever removes content).
+fn redact_dump(json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(mut value) => {
+            redact_json_strings(&mut value);
+            serde_json::to_string(&value)
+                .unwrap_or_else(|_| stella_core::redact::redact_secrets(json).text)
+        }
+        Err(_) => stella_core::redact::redact_secrets(json).text,
+    }
+}
+
+/// Recursively replace every string value in `value` with its redacted form.
+fn redact_json_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => {
+            let redaction = stella_core::redact::redact_secrets(text);
+            if redaction.redacted {
+                *text = redaction.text;
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_json_strings),
+        serde_json::Value::Object(map) => map.values_mut().for_each(redact_json_strings),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
 }
 
 /// Format an integer with comma thousands separators (e.g. `1234567` →
@@ -868,6 +909,66 @@ mod tests {
             dumps.iter().all(|(_, j)| j == "[]"),
             "an empty store exports empty arrays"
         );
+    }
+
+    #[test]
+    fn redact_dump_masks_secrets_and_keeps_valid_json() {
+        // #817: a GitHub PAT in a prompt and an AWS key inside a nested
+        // `args_json` string. Both must be gone, the dump must stay valid JSON,
+        // and the non-secret content must survive.
+        let raw = r#"[{"prompt":"deploy with ghp_016C7e4a9b2d3f5081726354ABCDabcd1234","args_json":"{\"key\":\"AKIAIOSFODNN7EXAMPLE\"}"},{"n":42}]"#;
+        let out = redact_dump(raw);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&out).expect("a redacted dump is still valid JSON");
+        assert!(parsed.is_array(), "shape preserved");
+        assert!(
+            !out.contains("ghp_016C7e4a9b2d3f5081726354"),
+            "github token leaked: {out}"
+        );
+        assert!(
+            !out.contains("AKIAIOSFODNN7EXAMPLE"),
+            "aws key leaked: {out}"
+        );
+        assert!(out.contains("[redacted]"), "placeholder present: {out}");
+        assert!(out.contains("deploy with"), "non-secret prose survives");
+        assert!(out.contains("42"), "non-string values survive");
+    }
+
+    #[test]
+    fn export_dumps_redact_a_secret_that_reached_the_telemetry() {
+        // The end-to-end guarantee: a credential recorded in real telemetry is
+        // masked by the same redaction `export_session` applies before writing.
+        let store = Store::in_memory().unwrap();
+        use stella_store::FileTouchRow;
+        store
+            .record_files_touched(
+                1,
+                &[FileTouchRow {
+                    path: "deploy.env".into(),
+                    ops: "A".into(),
+                    lines_added: 1,
+                    lines_removed: 0,
+                    events_json: r#"[{"note":"leaked ghp_016C7e4a9b2d3f5081726354ABCDabcd1234"}]"#
+                        .into(),
+                }],
+            )
+            .unwrap();
+        let dumps: Vec<TableDump> = store
+            .export_all_json()
+            .unwrap()
+            .into_iter()
+            .map(|(t, j)| (t, redact_dump(&j)))
+            .collect();
+        let files = dumps
+            .iter()
+            .find(|(t, _)| *t == "files_touched")
+            .map(|(_, j)| j.as_str())
+            .expect("files_touched present");
+        assert!(
+            !files.contains("ghp_016C7e4a9b2d3f5081726354"),
+            "secret leaked into the export: {files}"
+        );
+        assert!(files.contains("[redacted]"), "secret was masked: {files}");
     }
 
     #[test]
