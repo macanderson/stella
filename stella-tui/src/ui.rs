@@ -62,6 +62,11 @@ pub struct ViewportMetrics {
 /// `Reasoning` entry (see [`crate::model::SessionModel`]): `len` catches every
 /// append and `trailing_stream_len` catches the growing tail. No earlier entry
 /// is ever mutated, so no earlier change can slip past this pair.
+///
+/// A trailing thought settling — which flips it from tail-follow to head
+/// preview (`render::reasoning_is_live`) — needs no term of its own: every way
+/// out of live either appends an entry (`len`) or fills the answer preview
+/// (`streaming_len`).
 #[derive(Debug, Clone)]
 struct TranscriptCache {
     len: usize,
@@ -109,8 +114,9 @@ pub struct UiState {
     /// Selected row in the slash popup while it is open (clamped to the
     /// filtered matches at use time).
     pub slash_selected: usize,
-    /// Whether reasoning entries render in full. Off by default — collapsed
-    /// thinking shows a one-line live tail; `ctrl+r` toggles.
+    /// Whether reasoning entries render in full. Off by default — a collapsed
+    /// thought follows its tail while it streams and shows its head once
+    /// settled (`render::entry_lines`); `ctrl+r` toggles.
     pub thinking_expanded: bool,
     /// Whether the terminal is a *legacy* one (no kitty keyboard protocol).
     /// Enter semantics are universal now — bare `⏎` submits, a modified `⏎`
