@@ -49,8 +49,9 @@ pub enum ContextError {
     #[error("context store integrity check failed: {0}")]
     Corruption(String),
 
-    /// A caller passed input the plane refuses (empty display name, a
-    /// timestamp that isn't RFC-3339, a zero-dimension embedding).
+    /// A caller passed input the plane refuses (an empty display name or
+    /// domain name, a no-op compact/index policy, two different ledger
+    /// records claiming one id).
     #[error("invalid context input: {0}")]
     InvalidInput(String),
 

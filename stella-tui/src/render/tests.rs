@@ -59,16 +59,6 @@ fn hud_and_transcript_render_the_event_content() {
     assert!(text.contains("complete"), "shows completion:\n{text}");
 }
 
-/// Every transcript entry opens on a rail, so the left margin stays a
-/// scannable index column rather than a ragged edge: a reader running their
-/// eye down column 0 sees the *shape* of the session — calls, outcomes,
-/// prompts, system notes — before reading a single word.
-///
-/// The invariant is about the margin carrying a glyph, not about the prefix's
-/// width. A system note's prefix (`↻ retry  `, `⇣ compacted  `) is far wider
-/// than [`BODY`] and that is correct: the label *is* the note's rail, opening
-/// with its own glyph in column 0. What must never happen is a row that
-/// begins with bare unstyled text at the left margin.
 /// One of every [`TranscriptEntry`] variant that renders as an entry, for the
 /// tests that must cover the whole enum. `Evicted` is deliberately absent —
 /// it is a note *about* the transcript rather than an entry in it.
@@ -180,6 +170,16 @@ fn sample_entries() -> Vec<TranscriptEntry> {
     ]
 }
 
+/// Every transcript entry opens on a rail, so the left margin stays a
+/// scannable index column rather than a ragged edge: a reader running their
+/// eye down column 0 sees the *shape* of the session — calls, outcomes,
+/// prompts, system notes — before reading a single word.
+///
+/// The invariant is about the margin carrying a glyph, not about the prefix's
+/// width. A system note's prefix (`↻ retry  `, `⇣ compacted  `) is far wider
+/// than [`BODY`] and that is correct: the label *is* the note's rail, opening
+/// with its own glyph in column 0. What must never happen is a row that
+/// begins with bare unstyled text at the left margin.
 #[test]
 fn every_transcript_entry_renders_on_a_rail() {
     let samples = sample_entries();
@@ -288,6 +288,65 @@ fn wrapped_continuation_starts_flush_at_the_content_column() {
              (indent {BODY}, no carried wrap space); got {leading}: {text:?}",
         );
     }
+}
+
+/// The collapsed-result anchor: the first failure-marked line wins over the
+/// first line, a mid-sentence "error" does not hijack the row, and the
+/// marker-with-colon form only counts near the start of the line.
+#[test]
+fn salient_line_anchors_on_failure_markers_not_prose() {
+    // A build log: the error is what the collapsed row must show.
+    assert_eq!(
+        salient_line("Checking foo v0.1.0\nerror[E0432]: unresolved import"),
+        1
+    );
+    assert_eq!(salient_line("warning: unused variable `x`"), 0);
+    // `path: error:` within the 12-column head window still counts…
+    assert_eq!(salient_line("ok\nsrc/a.rs:3: error: boom"), 1);
+    // …but prose that merely mentions error handling does not.
+    assert_eq!(salient_line("we improved error handling here\nfine"), 0);
+    // No marker: the first non-blank line is the anchor.
+    assert_eq!(salient_line("\n\n  hello"), 2);
+    assert_eq!(salient_line(""), 0);
+}
+
+/// The unit follows the magnitude: ms below a second, one decimal below ten
+/// seconds, whole seconds below a minute, m/s above it.
+#[test]
+fn human_duration_scales_its_unit_with_the_magnitude() {
+    assert_eq!(human_duration(999), "999ms");
+    assert_eq!(human_duration(1_000), "1.0s");
+    assert_eq!(human_duration(4_210), "4.2s");
+    assert_eq!(human_duration(12_000), "12s");
+    assert_eq!(human_duration(59_999), "59s");
+    assert_eq!(human_duration(60_000), "1m00s");
+    assert_eq!(human_duration(125_000), "2m05s");
+}
+
+#[test]
+fn thousands_groups_digits_and_plural_lines_reads_as_english() {
+    assert_eq!(thousands(999), "999");
+    assert_eq!(thousands(1_000), "1,000");
+    assert_eq!(thousands(1_234_567), "1,234,567");
+    assert_eq!(plural_lines(1), "1 line");
+    assert_eq!(plural_lines(1_584), "1,584 lines");
+}
+
+/// `left … right` layout: padded to the pane at ordinary widths, the left
+/// truncated (ellipsis) rather than wrapped when the two would collide.
+#[test]
+fn justify_pads_to_width_and_truncates_the_left_on_collision() {
+    let flat =
+        |spans: &[Span<'_>]| -> String { spans.iter().map(|s| s.content.as_ref()).collect() };
+    let row = justify(vec![Span::raw("ab")], vec![Span::raw("cd")], 20, 0);
+    let text = flat(&row);
+    assert_eq!(text.len(), 20, "metric flush to the pane edge: {text:?}");
+    assert!(text.starts_with("ab") && text.ends_with("cd"));
+
+    // Too narrow for both: the elastic left gives way, ending in `…`,
+    // and the fixed-width metric keeps its column.
+    let row = justify(vec![Span::raw("abcdef")], vec![Span::raw("xy")], 8, 0);
+    assert_eq!(flat(&row), "abcd… xy");
 }
 
 #[test]

@@ -939,8 +939,9 @@ impl ReceiptLedger {
         events: &EventSender,
     ) {
         let estimated_input_tokens = estimate_conversation_tokens(messages);
-        // A fresh ledger per call, so its digest memo is empty and the default
-        // revision is correct; the step loop sets its real one.
+        // Replay callers construct a fresh ledger per call, so the digest memo
+        // starts empty and the default revision is correct for them; the step
+        // loop instead sets its real revision via `set_transcript_revision`.
         self.emit_step_receipt(messages, estimated_input_tokens, step, served, events);
     }
 }

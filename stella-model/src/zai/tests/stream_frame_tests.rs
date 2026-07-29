@@ -153,3 +153,38 @@ async fn a_type_mismatched_frame_errors_instead_of_reporting_an_empty_turn() {
         "the error must name the dropped frame: {rendered}"
     );
 }
+
+/// The observer twin of
+/// `super::complete_falls_back_to_null_when_streamed_tool_arguments_never_parse`:
+/// a call whose accumulated arguments never parse must reach the
+/// end-of-stream repair path (the `Value::Null` sentinel) WITHOUT ever being
+/// announced for speculative execution — the same "never speculate on
+/// unparseable input" contract
+/// `anthropic::tests::complete_observed_never_announces_a_block_whose_json_is_broken`
+/// asserts for the sibling dialect. Nothing previously pinned this for the
+/// zai/GLM stream shape, even though `announce_completed_below` has the same
+/// `.ok()` short-circuit anthropic.rs guards with a dedicated witness.
+#[tokio::test]
+async fn complete_observed_never_announces_a_call_whose_json_never_parses() {
+    // The stream ends with no later index and no `finish_reason:
+    // "tool_calls"` chunk, so the end-of-stream fallback is what owns this
+    // call — the same boundary the anthropic sibling test exercises via
+    // `content_block_stop`.
+    let (_server, provider) = provider_streaming(concat!(
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{not valid json\"}}]}}]}\n\n",
+        "data: [DONE]\n\n",
+    ))
+    .await;
+
+    let observer = super::RecordingObserver::new();
+    let result = provider
+        .complete_observed(tool_req("read src/lib.rs"), &observer)
+        .await
+        .expect("broken JSON on an un-truncated call is the repair sentinel, not an error");
+    assert!(
+        observer.calls.lock().unwrap().is_empty(),
+        "unparseable input must never be announced to the observer"
+    );
+    assert_eq!(result.tool_calls.len(), 1);
+    assert_eq!(result.tool_calls[0].input, Value::Null);
+}

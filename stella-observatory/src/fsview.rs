@@ -287,7 +287,10 @@ pub fn explorations(workspace_root: &Path) -> Value {
         return json!([]);
     };
     let mut rows: Vec<Value> = Vec::new();
-    for entry in entries.flatten() {
+    // Bounded like every other directory walk in this module (`MAX_DIR_ENTRIES`):
+    // each record re-hashes its whole manifest against the working tree, so an
+    // unbounded scan here is the most expensive one in the file, not the cheapest.
+    for entry in entries.flatten().take(MAX_DIR_ENTRIES) {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;

@@ -314,9 +314,10 @@ impl SessionMemory {
         //
         // So the loop now runs, and `write_candidates` / `induce_rules` carry
         // the gate on the file writes themselves.
-        // Phase 3 (#714). While `context.lifecycle.enabled` is off — the
-        // shipped default — this is byte-for-byte the loop that ships today:
-        // no ledger write, no typed record, no behavior change of any kind.
+        // Phase 3 (#714). While `context.lifecycle.enabled` is off — now an
+        // explicit opt-out; the lifecycle ships on — this is byte-for-byte
+        // the pre-migration loop: no ledger write, no typed record, no
+        // behavior change of any kind.
         // The typed path is a migration with a behavior-compatibility
         // obligation (spec §8), and the only honest way to hold that
         // obligation is to keep the thing it must stay compatible WITH
@@ -638,7 +639,8 @@ impl SessionMemory {
     }
 
     /// The lexical path exactly as it shipped — reached whenever
-    /// `context.lifecycle.enabled` is off, which is the default.
+    /// `context.lifecycle.enabled` is off, the opt-out now that the
+    /// lifecycle ships on.
     fn auto_create_skills_lexical(&mut self, log_path: &Path, quiet: bool) {
         let Ok(log) = std::fs::read_to_string(log_path) else {
             return;

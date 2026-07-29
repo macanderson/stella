@@ -54,16 +54,6 @@ const MARK_SVG: &str = include_str!("assets/mark.svg");
 /// The Stella wordmark, served for the header lockup.
 const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
 
-/// Sent on every response, making the dashboard's zero-external-reference
-/// guarantee enforceable by the browser rather than only by a test: nothing
-/// may be fetched from, or connected to, any origin but this one.
-///
-/// `'unsafe-inline'` is unavoidable on both script and style — the embedded
-/// page is a single document with one inline `<script>`, one inline
-/// `<style>`, and ~54 inline `style="…"` attributes. Dropping it from
-/// `style-src` would silently strip the layout. `frame-ancestors 'none'`
-/// complements the existing Host check: a rebound page cannot frame the
-/// dashboard either.
 /// How long a peer has to deliver a complete request head.
 ///
 /// Without it, a connection that opens and then says nothing occupies a task
@@ -81,6 +71,16 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// opens while keeping the blocking-pool fan-out bounded.
 const MAX_LIVE_CONNECTIONS: usize = 64;
 
+/// Sent on every response, making the dashboard's zero-external-reference
+/// guarantee enforceable by the browser rather than only by a test: nothing
+/// may be fetched from, or connected to, any origin but this one.
+///
+/// `'unsafe-inline'` is unavoidable on both script and style — the embedded
+/// page is a single document with one inline `<script>`, one inline
+/// `<style>`, and ~54 inline `style="…"` attributes. Dropping it from
+/// `style-src` would silently strip the layout. `frame-ancestors 'none'`
+/// complements the existing Host check: a rebound page cannot frame the
+/// dashboard either.
 const CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; \
      style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; \
      base-uri 'none'; form-action 'none'; frame-ancestors 'none'";

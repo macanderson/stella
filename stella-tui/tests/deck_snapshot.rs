@@ -26,14 +26,9 @@ fn folded_model() -> WorkspaceModel {
     model
 }
 
-fn render_tab(model: &WorkspaceModel, tab: DeckTab, w: u16, h: u16) -> String {
-    let mut ui = DeckUi::default();
-    ui.splash.skip(); // past the splash so the tabs draw
-    ui.tab = tab;
-    ui.graph = Some(demo_graph());
-    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    terminal.draw(|f| render_deck(model, &mut ui, f)).unwrap();
-    let buf = terminal.backend().buffer();
+/// Flatten a rendered buffer to one string per row, styling stripped —
+/// this suite asserts on content, never on raw ANSI.
+fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
     let area = *buf.area();
     (0..area.height)
         .map(|y| {
@@ -43,6 +38,16 @@ fn render_tab(model: &WorkspaceModel, tab: DeckTab, w: u16, h: u16) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn render_tab(model: &WorkspaceModel, tab: DeckTab, w: u16, h: u16) -> String {
+    let mut ui = DeckUi::default();
+    ui.splash.skip(); // past the splash so the tabs draw
+    ui.tab = tab;
+    ui.graph = Some(demo_graph());
+    let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+    terminal.draw(|f| render_deck(model, &mut ui, f)).unwrap();
+    buffer_text(terminal.backend().buffer())
 }
 
 #[test]
@@ -172,16 +177,7 @@ fn settings_tab_lists_the_sessions_tools_grouped_with_mcp_and_custom_sections() 
 
     let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
     terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
-    let buf = terminal.backend().buffer();
-    let area = *buf.area();
-    let text: String = (0..area.height)
-        .map(|y| {
-            (0..area.width)
-                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = buffer_text(terminal.backend().buffer());
 
     // The frame goes to the same discoverable artifact the whole-deck snapshot
     // uses — the honest headless stand-in for a TTY capture of this panel.
@@ -232,16 +228,7 @@ fn help_overlay_shows_only_the_active_tabs_shortcuts() {
         ui.help_open = true;
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
-        let buf = terminal.backend().buffer();
-        let area = *buf.area();
-        (0..area.height)
-            .map(|y| {
-                (0..area.width)
-                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        buffer_text(terminal.backend().buffer())
     };
 
     let traces = render_help(DeckTab::Traces);
@@ -284,16 +271,7 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
     let render = |ui: &mut DeckUi| {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|f| render_deck(&model, ui, f)).unwrap();
-        let buf = terminal.backend().buffer();
-        let area = *buf.area();
-        (0..area.height)
-            .map(|y| {
-                (0..area.width)
-                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        buffer_text(terminal.backend().buffer())
     };
 
     // Mode 1: the call list. Both calls of step 3 must be distinguishable —
@@ -395,16 +373,7 @@ fn mcp_tab_renders_truncation_distinctly_from_an_unavailable_server() {
 
     let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
     terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
-    let buf = terminal.backend().buffer();
-    let area = *buf.area();
-    let screen: String = (0..area.height)
-        .map(|y| {
-            (0..area.width)
-                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let screen = buffer_text(terminal.backend().buffer());
 
     assert!(
         screen.contains("12 dropped past cap"),
@@ -447,16 +416,7 @@ fn mcp_tab_says_nothing_about_the_cap_when_no_server_truncated() {
 
     let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
     terminal.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
-    let buf = terminal.backend().buffer();
-    let area = *buf.area();
-    let screen: String = (0..area.height)
-        .map(|y| {
-            (0..area.width)
-                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let screen = buffer_text(terminal.backend().buffer());
 
     assert!(!screen.contains("dropped"), "no cap notice:\n{screen}");
     assert!(!screen.contains("truncated"), "no cap notice:\n{screen}");

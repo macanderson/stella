@@ -75,16 +75,11 @@ pub fn replication_project_id(workspace_root: &Path) -> String {
 }
 
 /// The project id a registered `workspace_id` maps to: FNV-1a/64 (the same
-/// algorithm as [`project_id_for`]) over a `workspace:`-prefixed keyspace, so
-/// a workspace-derived id can never collide with a path-derived one.
+/// `crate::fnv_hex` used by [`project_id_for`] and by this module's
+/// `repo_id`) over a `workspace:`-prefixed keyspace, so a workspace-derived
+/// id can never collide with a path-derived one.
 pub fn project_id_for_workspace(workspace_id: &str) -> String {
-    let keyed = format!("workspace:{workspace_id}");
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in keyed.as_bytes() {
-        hash ^= *b as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
+    crate::fnv_hex(&format!("workspace:{workspace_id}"))
 }
 
 /// `~/.stella/cloud.json` — the stub cloud-account registration. The

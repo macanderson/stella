@@ -264,8 +264,11 @@ export function CommandDeck() {
       timers.current.push(setTimeout(fn, ms));
     };
 
-    let t = 0;
     const cycle = () => {
+      // Delays are relative to *this* invocation of cycle(), so the clock
+      // restarts from zero each loop — carrying it over would prepend every
+      // iteration with a dead pause equal to the whole previous run.
+      let t = 0;
       // 1. Clear the roster and type the command.
       setFrameIdx(-1);
       setTyped(0);
@@ -418,8 +421,8 @@ export function HeroTerminal() {
 
     const at = (ms: number, fn: () => void) => timers.current.push(setTimeout(fn, ms));
 
-    let t = 0;
     const cycle = () => {
+      let t = 0; // per-cycle clock — see CommandDeck's cycle()
       setShowResult(false);
       setTyped(0);
       for (let i = 1; i <= HERO_COMMAND.length; i++) at((t += 42), () => setTyped(i));

@@ -529,21 +529,27 @@ barChart('token-chart', USAGE.map(r=>({{label:r.provider+'/'+r.model, value:r.in
 // entries — is refused with an error rather than truncated into a silently
 // corrupt archive; ZIP64 is deliberately out of scope.
 
-/// CRC-32 lookup table (polynomial 0xEDB88320).
-fn crc32_table() -> [u32; 256] {
-    let mut table = [0u32; 256];
-    for i in 0..256u32 {
-        let mut c = i;
-        for _ in 0..8 {
-            c = if c & 1 != 0 {
-                0xEDB88320 ^ (c >> 1)
-            } else {
-                c >> 1
-            };
+/// CRC-32 lookup table (polynomial 0xEDB88320), built once and shared by
+/// every `crc32` call — an export writes one entry per table dump plus the
+/// dashboard and manifest, and there is no reason to redo the 256-entry
+/// table for each.
+fn crc32_table() -> &'static [u32; 256] {
+    static TABLE: std::sync::LazyLock<[u32; 256]> = std::sync::LazyLock::new(|| {
+        let mut table = [0u32; 256];
+        for i in 0..256u32 {
+            let mut c = i;
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xEDB88320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+            table[i as usize] = c;
         }
-        table[i as usize] = c;
-    }
-    table
+        table
+    });
+    &TABLE
 }
 
 /// Compute CRC-32 for a byte slice.
