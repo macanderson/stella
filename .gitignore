@@ -54,6 +54,19 @@ Thumbs.db
 .oxagen/
 .memories/
 
+# The ultra-audit skill ships in source (#847, #832): re-include just the
+# skills subtree of the root .stella/, while the rest stays per-workspace
+# scratch. Audit reports still land in the ignored .ultra-audit/ (below).
+!/.stella/
+/.stella/*
+!/.stella/skills/
+!/.stella/skills/**
+
+# Audit output directory written by the ultra-audit skill — never committed.
+# (The legacy .ultraudit/ path is deliberately not ignored here: a report is
+# already tracked under it, and adding the rule would orphan that file.)
+.ultra-audit/
+
 # The paid-readiness fixture intentionally contains inert hostile values. Keep
 # these two canaries tracked so the public witness actually exercises project
 # env/settings isolation; neither value is a credential.

@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+/* Self-contained by requirement: no CDN, no web font, no remote asset, no fetch.
+   This file gets opened months later, offline, from a different machine, possibly as an
+   email attachment. Colours are the validated data-viz reference palette — the categorical
+   blue/red pair passes the lightness band, chroma floor, CVD separation (ΔE 21.6 protan
+   light / 19.2 dark), normal-vision floor and 3:1 contrast in BOTH modes. Deltas use
+   blue-up / red-down rather than green/red: red-green is exactly the pair CVD readers
+   cannot separate, and every delta also carries a sign and an arrow, so colour is never
+   the only channel. */
+:root{
+  color-scheme: light;
+  --paper:#f9f9f7; --surface:#fcfcfb;
+  --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;
+  --rule:#e1e0d9; --rule-2:#c3c2b7;
+  --up:#2a78d6; --down:#e34948; --neutral:#c3c2b7;
+  --seq:#2a78d6; --seq-soft:#cde2fb;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --crit:#d03b3b;
+  --ok-text:#006300;
+  --f: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --f-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --measure: 72ch;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme: dark;
+    --paper:#0d0d0d; --surface:#1a1a19;
+    --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#898781;
+    --rule:#2c2c2a; --rule-2:#383835;
+    --up:#3987e5; --down:#e66767; --neutral:#383835;
+    --seq:#3987e5; --seq-soft:#184f95;
+    --ok-text:#0ca30c;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --paper:#0d0d0d; --surface:#1a1a19;
+  --ink:#ffffff; --ink-2:#c3c2b7; --ink-3:#898781;
+  --rule:#2c2c2a; --rule-2:#383835;
+  --up:#3987e5; --down:#e66767; --neutral:#383835;
+  --seq:#3987e5; --seq-soft:#184f95;
+  --ok-text:#0ca30c;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--f);
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1140px;margin:0 auto;padding:32px 24px 96px}
+h1,h2,h3{line-height:1.2;margin:0}
+h2{font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:650;margin:0 0 14px}
+h3{font-size:16px;font-weight:640;margin:0 0 6px}
+p{margin:0 0 12px;max-width:var(--measure)}
+a{color:var(--up)}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+section{margin:0 0 44px}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:18px 20px}
+.muted{color:var(--ink-2)}
+.dim{color:var(--ink-3)}
+.small{font-size:13px}
+.tnum{font-variant-numeric:tabular-nums}
+hr{border:0;border-top:1px solid var(--rule);margin:32px 0}
+
+/* masthead */
+.mast{display:grid;grid-template-columns:minmax(260px,auto) 1fr;gap:36px;align-items:end;
+  border-bottom:1px solid var(--rule-2);padding-bottom:22px;margin-bottom:20px}
+.anchornote{font-size:13px;line-height:1.6;color:var(--ink-2);max-width:62ch;
+  border-left:2px solid var(--rule-2);padding-left:16px}
+@media (max-width:760px){.mast{grid-template-columns:1fr;gap:20px}}
+.eyebrow{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:650;margin-bottom:8px}
+.bigscore{font-size:82px;font-weight:680;line-height:.9;letter-spacing:-.03em}
+.bigscore .of{font-size:26px;font-weight:500;color:var(--ink-3);letter-spacing:0}
+.band{font-size:15px;font-weight:620;margin-top:6px}
+.deltachip{display:inline-flex;align-items:center;gap:5px;font-size:14px;font-weight:640;
+  padding:3px 9px;border-radius:999px;border:1px solid var(--rule-2);margin-top:8px}
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.stat{background:var(--surface);padding:12px 14px}
+.stat .k{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:640}
+.stat .v{font-size:21px;font-weight:650;margin-top:3px}
+.stat .s{font-size:12px;color:var(--ink-3)}
+
+/* scorecard rows */
+.dimrow{display:grid;grid-template-columns:190px 1fr 74px 96px;gap:14px;align-items:center;
+  padding:9px 0;border-bottom:1px solid var(--rule)}
+.dimrow:last-child{border-bottom:0}
+.dimname{font-weight:600;font-size:14px}
+.dimname .wt{color:var(--ink-3);font-weight:500;font-size:12px;margin-left:6px}
+.track{position:relative;height:22px;background:var(--seq-soft);border-radius:4px}
+.fill{position:absolute;left:0;top:0;bottom:0;background:var(--seq);border-radius:4px 4px 4px 4px}
+/* Panel votes as dots on the same axis as the bar: spread IS the confidence signal. */
+.vote{position:absolute;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;
+  background:var(--surface);border:2px solid var(--ink-2);box-shadow:0 0 0 2px var(--surface)}
+.vote.med{border-color:var(--ink);width:11px;height:11px;margin:-5.5px 0 0 -5.5px}
+.scorenum{font-size:18px;font-weight:660;text-align:right}
+.deltacell{text-align:right;font-size:13px;font-weight:620}
+.contested{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.06em;
+  padding:1px 5px;border-radius:3px;border:1px solid var(--serious);color:var(--serious);
+  margin-left:6px;vertical-align:1px}
+
+/* diverging "what moved" chart */
+.divrow{display:grid;grid-template-columns:190px 1fr 56px;gap:12px;align-items:center;
+  padding:5px 0}
+.divtrack{position:relative;height:18px}
+.divtrack .axis{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--rule-2)}
+.divbar{position:absolute;top:3px;height:12px;border-radius:3px}
+
+/* findings */
+.sev{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
+  letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:4px;
+  border:1px solid currentColor;white-space:nowrap}
+.sev.critical{color:var(--crit)} .sev.high{color:var(--serious)}
+.sev.medium{color:var(--warn)} .sev.low{color:var(--ink-3)}
+.finding{border:1px solid var(--rule);border-radius:9px;background:var(--surface);
+  padding:14px 16px;margin-bottom:10px}
+.finding .top{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:7px}
+.floc{font-family:var(--f-mono);font-size:12.5px;color:var(--ink-2)}
+.agree{font-size:11px;font-weight:640;padding:2px 7px;border-radius:999px;
+  border:1px solid var(--rule-2);color:var(--ink-2)}
+.votes{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.mv{font-size:11.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--rule-2)}
+.mv.real{border-color:var(--up);color:var(--up)}
+.mv.ref{border-color:var(--down);color:var(--down)}
+details{border:1px solid var(--rule);border-radius:9px;background:var(--surface);
+  padding:12px 16px;margin-bottom:10px}
+details>summary{cursor:pointer;font-weight:620;font-size:14px;list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸ ";color:var(--ink-3)}
+details[open]>summary::before{content:"▾ "}
+details>summary:focus-visible{outline:2px solid var(--up);outline-offset:2px}
+
+/* model matrix */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:650}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.scroller{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.horizons{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.hz h3{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.hz ul{margin:0;padding-left:18px}
+.hz li{margin-bottom:9px}
+.callout{border-left:3px solid var(--serious);background:var(--surface);padding:12px 16px;
+  border-radius:0 8px 8px 0;margin:0 0 14px}
+.callout.bad{border-left-color:var(--crit)}
+.callout.ok{border-left-color:var(--good)}
+.pill{display:inline-block;font-size:11.5px;font-weight:620;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--rule-2);color:var(--ink-2);margin:0 4px 4px 0}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink-2);margin-top:10px}
+.legend .li{display:flex;align-items:center;gap:6px}
+.sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+@media (max-width:760px){
+  .dimrow{grid-template-columns:130px 1fr 56px;row-gap:4px}
+  .dimrow .deltacell{grid-column:3;text-align:right}
+  .divrow{grid-template-columns:130px 1fr 48px}
+  .horizons,.cols2{grid-template-columns:1fr}
+  .bigscore{font-size:64px}
+}
+@media print{
+  body{background:#fff}
+  .wrap{max-width:none;padding:0}
+  details{break-inside:avoid} details[open] summary{display:none}
+  details:not([open]){display:none}
+  .finding,.card,.stat{break-inside:avoid}
+  section{break-inside:avoid-page}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="mast">
+    <div>
+      <div class="eyebrow" id="eyebrow"></div>
+      <div class="bigscore" id="ov"></div>
+      <div class="band" id="ovband"></div>
+      <div id="ovdelta"></div>
+    </div>
+    <div class="anchornote">
+      <strong>100 is reserved for the Rust project itself</strong> — RFC-gated change control,
+      ecosystem-wide regression proof before a change lands, editions keeping decade-old code
+      compiling, diagnostics pinned by tests. 90–95 is ripgrep / tokio / SQLite tier. The bar is
+      absolute and does not move between rounds, which is the only thing that makes two scores
+      comparable.
+    </div>
+  </div>
+  <div class="statgrid" id="stats"></div>
+  <div style="height:30px"></div>
+
+  <div id="alerts"></div>
+
+  <section id="sec-summary">
+    <h2>Executive summary</h2>
+    <div id="summary"></div>
+  </section>
+
+  <section id="sec-scorecard">
+    <h2>Scorecard — 17 dimensions, weighted</h2>
+    <div class="card">
+      <div id="dims"></div>
+      <div class="legend" id="dimlegend"></div>
+    </div>
+    <div id="dimdetails" style="margin-top:16px"></div>
+  </section>
+
+  <section id="sec-moved">
+    <h2>What moved</h2>
+    <div class="card"><div id="moved"></div><div class="legend" id="movedlegend"></div></div>
+  </section>
+
+  <section id="sec-panel">
+    <h2>The scoring panel</h2>
+    <div id="panelnote"></div>
+    <div id="panel"></div>
+  </section>
+
+  <section id="sec-secondop">
+    <h2>Second opinion</h2>
+    <div id="secondop"></div>
+  </section>
+
+  <section id="sec-risks">
+    <h2>Confirmed risks</h2>
+    <div id="risks"></div>
+  </section>
+
+  <section id="sec-excluded">
+    <h2>Excluded and unconfirmed</h2>
+    <div id="excluded"></div>
+  </section>
+
+  <section id="sec-prior">
+    <h2>Did the previous round's fixes land?</h2>
+    <div id="prior"></div>
+  </section>
+
+  <section id="sec-fixes">
+    <h2>Fixes applied, reviewed across models</h2>
+    <div id="fixes"></div>
+  </section>
+
+  <section id="sec-gate">
+    <h2>Verification gate</h2>
+    <div id="gate"></div>
+  </section>
+
+  <section id="sec-roadmap">
+    <h2>Roadmap</h2>
+    <div class="horizons" id="roadmap"></div>
+  </section>
+
+  <section id="sec-method">
+    <h2>Method, coverage and limits</h2>
+    <div id="method"></div>
+  </section>
+
+  <footer class="small dim" id="foot"></footer>
+</div>
+
+<script>
+const D = __DATA__;
+
+/* Every string from the audit is untrusted text: findings quote source code, which contains
+   angle brackets and ampersands. Escape on the way into the DOM. (The splice step separately
+   escapes `</` so a finding containing a closing tag cannot terminate this script block.) */
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const el = (id) => document.getElementById(id);
+const set = (id, html) => { const n = el(id); if (n) n.innerHTML = html; };
+const num = (n, d = 0) => (typeof n === "number" ? n.toFixed(d) : "—");
+const int = (n) => (typeof n === "number" ? n.toLocaleString() : "—");
+const pct = (v) => Math.max(0, Math.min(100, Number(v) || 0));
+const nl2p = (s) => String(s || "").split(/\n\s*\n/).filter(Boolean)
+  .map((p) => `<p>${esc(p.trim())}</p>`).join("");
+const arrow = (v) => (v > 0 ? "↑" : v < 0 ? "↓" : "→");
+const sgn = (v) => (v > 0 ? "+" : "") + num(v, 0);
+const hide = (id) => { const n = el(id); if (n) n.style.display = "none"; };
+
+const S = D.scoring || {};
+const R = D.run || {};
+const DIMS = Object.keys(S.weights || {}).sort((a, b) =>
+  (S.weights[b] - S.weights[a]) || a.localeCompare(b));
+
+/* ── masthead ─────────────────────────────────────────────────────────── */
+el("eyebrow").textContent =
+  `${R.root || "workspace"} · round ${S.round || R.round || 1} · ${R.depth || "?"} depth · `
+  + `commit ${(R.commit || "unrecorded").slice(0, 9)} · ${S.date || R.date || ""}`;
+set("ov", `${num(S.overall_rounded ?? S.overall, 0)}<span class="of"> / 100</span>`);
+el("ovband").textContent = S.band || "";
+if (typeof S.delta_precise === "number") {
+  const c = S.delta_precise > 0 ? "var(--up)" : S.delta_precise < 0 ? "var(--down)" : "var(--ink-3)";
+  set("ovdelta", `<span class="deltachip" style="color:${c};border-color:${c}">`
+    + `${arrow(S.delta_precise)} ${S.delta_precise > 0 ? "+" : ""}${num(S.delta_precise, 2)} `
+    + `<span class="dim" style="font-weight:500">vs round ${(S.round || 2) - 1} `
+    + `(${num(S.prior_overall, 2)})</span></span>`);
+} else {
+  set("ovdelta", `<span class="deltachip dim">first round — no prior score</span>`);
+}
+
+const cov = R.files_owned && R.total_files
+  ? (100 * R.files_owned / R.total_files) : null;
+const F = D.findings || {};
+const V = D.verify || {};
+const gateOK = V.skipped ? null : (V.fmt_clean && V.lint_clean && V.tests_pass);
+const stats = [
+  ["Agents", int(D.agents_total || R.agents || null), `${R.units || "?"} units · ${R.lens_jobs || "?"} lenses`],
+  ["Coverage", cov == null ? "—" : `${num(cov, 1)}%`,
+    `${int(R.files_owned)} / ${int(R.total_files)} files`],
+  ["Code", int(R.total_loc), (R.languages || []).slice(0, 2).map((l) => l.language).join(", ")],
+  ["Confirmed risks", int((F.confirmed || []).length),
+    `of ${int(F.severe)} severe · ${int((F.refuted || []).length)} refuted`],
+  ["Gate", gateOK === null ? "n/a" : gateOK ? "green" : "red",
+    V.test_summary || (V.skipped ? "read-only audit" : "")],
+  ["Panel", (S.panel_models || []).length || "—", (S.panel_models || []).join(" · ")],
+];
+set("stats", stats.map(([k, v, s]) => `<div class="stat"><div class="k">${esc(k)}</div>`
+  + `<div class="v tnum">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join(""));
+
+/* ── alerts: anything that qualifies the number goes ABOVE the fold ───── */
+const alerts = [];
+if ((S.problems || []).length) {
+  alerts.push(`<div class="callout bad"><h3>Reconciliation problems</h3>`
+    + `<ul>${S.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></div>`);
+}
+if (cov != null && cov < 99.5) {
+  alerts.push(`<div class="callout bad"><h3>Coverage is not complete</h3><p>`
+    + `${num(cov, 1)}% of source files were owned by an auditing agent. `
+    + `${esc(D.coverage_gap || "The unaudited remainder is listed under Method.")}</p></div>`);
+}
+if ((F.unverified || []).length) {
+  alerts.push(`<div class="callout"><h3>${(F.unverified || []).length} severe finding(s) `
+    + `unverified</h3><p>These exceeded the depth cap and were never put to cross-model `
+    + `refutation. They are <strong>unconfirmed</strong> — listed under Excluded and `
+    + `unconfirmed, and excluded from the risk register.</p></div>`);
+}
+if (D.provenance && D.provenance.ok === false) {
+  alerts.push(`<div class="callout bad"><h3>Model provenance did not verify</h3><p>`
+    + `${esc(D.provenance.detail || "")} Every cross-model guarantee below is therefore `
+    + `unproven and must not be relied on.</p></div>`);
+}
+if (gateOK === false) {
+  alerts.push(`<div class="callout"><h3>The gate is not green</h3><p>`
+    + `${esc(V.final_state || "")}</p></div>`);
+}
+set("alerts", alerts.join(""));
+
+/* ── executive summary ────────────────────────────────────────────────── */
+const SY = D.synthesis || {};
+set("summary", nl2p(SY.executive_summary)
+  + (SY.remediation_verdict ? `<div class="callout"><h3>Verdict on the work since last round`
+      + `</h3><p>${esc(SY.remediation_verdict)}</p></div>` : ""));
+
+/* ── scorecard ────────────────────────────────────────────────────────── */
+const med = S.panel_median || {}, spr = S.panel_spread || {}, votesBy = D.panel_votes || {};
+const dimRows = [], dimDetails = [];
+for (const d of DIMS) {
+  const sc = (S.scores || {})[d];
+  if (typeof sc !== "number") continue;
+  const dl = (S.deltas || {})[d];
+  const isContested = (S.contested || []).includes(d);
+  const vs = (votesBy[d] || []);
+  const dots = vs.map((v) => `<span class="vote${v.score === med[d] ? " med" : ""}" `
+    + `style="left:${pct(v.score)}%" title="${esc(v.model)}: ${esc(v.score)}"></span>`).join("");
+  const dcol = dl > 0 ? "var(--up)" : dl < 0 ? "var(--down)" : "var(--ink-3)";
+  dimRows.push(`<div class="dimrow">
+    <div class="dimname">${esc(d.replace(/_/g, " "))}<span class="wt">w${S.weights[d]}</span>
+      ${isContested ? '<span class="contested">contested</span>' : ""}</div>
+    <div class="track"><div class="fill" style="width:${pct(sc)}%"></div>${dots}</div>
+    <div class="scorenum tnum">${sc}</div>
+    <div class="deltacell tnum" style="color:${dcol}">${
+      typeof dl === "number" ? `${arrow(dl)} ${sgn(dl)}` : '<span class="dim">—</span>'}</div>
+  </div>`);
+  const rat = ((SY.dimension_scores || {})[d] || {});
+  if (rat.rationale) {
+    dimDetails.push(`<details><summary>${esc(d.replace(/_/g, " "))} — why ${sc}`
+      + `${typeof spr[d] === "number" ? ` (panel spread ${spr[d]})` : ""}`
+      + `${isContested ? " · contested" : ""}</summary>`
+      + `<p>${esc(rat.rationale)}</p>`
+      + (rat.delta_rationale ? `<p class="muted"><strong>Movement:</strong> `
+          + `${esc(rat.delta_rationale)}</p>` : "")
+      + (rat.panel_resolution ? `<p class="muted"><strong>Contested — how it was resolved:`
+          + `</strong> ${esc(rat.panel_resolution)}</p>` : "")
+      + ((rat.evidence || []).length ? `<p class="small mono dim">`
+          + rat.evidence.map(esc).join(" · ") + `</p>` : "")
+      + `</details>`);
+  }
+}
+set("dims", dimRows.join(""));
+set("dimdetails", dimDetails.length
+  ? `<h2 style="margin-bottom:10px">Why each score</h2>` + dimDetails.join("") : "");
+set("dimlegend", `<div class="li"><span class="sw" style="background:var(--seq)"></span>`
+  + `absolute score, 0-100</div>`
+  + `<div class="li"><span class="vote" style="position:static;margin:0"></span>`
+  + `one panelist's vote</div>`
+  + `<div class="li"><span class="vote med" style="position:static;margin:0"></span>`
+  + `the median (the reported score)</div>`
+  + `<div class="li">100 is reserved for the Rust project itself; 90-95 is `
+  + `ripgrep / tokio / SQLite tier</div>`);
+
+/* ── what moved: diverging off a centre axis ──────────────────────────── */
+const deltas = S.deltas || {};
+const maxAbs = Math.max(4, ...DIMS.map((d) => Math.abs(deltas[d] || 0)));
+if (Object.keys(deltas).length) {
+  const rows = DIMS.filter((d) => typeof deltas[d] === "number")
+    .sort((a, b) => deltas[b] - deltas[a]);
+  set("moved", rows.map((d) => {
+    const v = deltas[d], w = (Math.abs(v) / maxAbs) * 50;
+    const style = v >= 0
+      ? `left:50%;width:${w}%;background:var(--up)`
+      : `right:50%;width:${w}%;background:var(--down)`;
+    return `<div class="divrow"><div class="dimname">${esc(d.replace(/_/g, " "))}
+      <span class="wt">w${S.weights[d]}</span></div>
+      <div class="divtrack"><div class="axis"></div>
+        ${v === 0 ? "" : `<div class="divbar" style="${style}"></div>`}</div>
+      <div class="deltacell tnum" style="color:${v > 0 ? "var(--up)" : v < 0 ? "var(--down)" : "var(--ink-3)"}">${sgn(v)}</div>
+    </div>`;
+  }).join(""));
+  set("movedlegend", `<div class="li"><span class="sw" style="background:var(--up)"></span>`
+    + `improved since round ${(S.round || 2) - 1}</div>`
+    + `<div class="li"><span class="sw" style="background:var(--down)"></span>declined</div>`
+    + `<div class="li">The bar is scaled to the largest move (${maxAbs} points). `
+    + `Every value is also printed, so colour is never the only channel.</div>`);
+} else { hide("sec-moved"); }
+
+/* ── the panel ────────────────────────────────────────────────────────── */
+const pv = D.panel_raw || [];
+if (pv.length) {
+  set("panelnote", `<p>Three frontier models scored the same evidence bundle independently and `
+    + `blind — to each other, and to any previous score for this workspace. The reported figure `
+    + `is the <strong>median</strong>; the <strong>spread</strong> is published because it is a `
+    + `confidence signal. A 74 that three models independently agreed on means something `
+    + `different from a 74 that averages 65 and 83.</p>`
+    + `<p class="muted small">These models share training lineage, so agreement between them is `
+    + `weaker evidence than three independent human reviewers would be. What the panel reliably `
+    + `catches is the confident, plausible, wrong finding that a single model would otherwise `
+    + `defend all the way into this report.</p>`);
+  const contested = (S.contested || []);
+  set("panel", `<div class="scroller"><table><thead><tr><th>Dimension</th><th class="num">wt</th>`
+    + pv.map((v) => `<th class="num">${esc(v.model)}</th>`).join("")
+    + `<th class="num">median</th><th class="num">spread</th><th>Panel headline</th></tr></thead>`
+    + `<tbody>` + DIMS.map((d) => `<tr><td>${esc(d.replace(/_/g, " "))}`
+        + (contested.includes(d) ? ' <span class="contested">contested</span>' : "")
+        + `</td><td class="num">${S.weights[d]}</td>`
+        + pv.map((v) => `<td class="num">${esc((v.scores || {})[d] ?? "—")}</td>`).join("")
+        + `<td class="num"><strong>${esc(med[d] ?? "—")}</strong></td>`
+        + `<td class="num">${esc(spr[d] ?? "—")}</td>`
+        + `<td class="small muted">${esc(((SY.dimension_scores || {})[d] || {}).grade || "")}</td>`
+        + `</tr>`).join("")
+    + `</tbody></table></div>`
+    + `<div class="legend">` + pv.map((v) => `<div class="li"><strong>${esc(v.model)}</strong>: `
+        + `${esc(v.headline || "")}</div>`).join("") + `</div>`);
+} else { hide("sec-panel"); }
+
+/* ── second opinion ───────────────────────────────────────────────────── */
+const CR = D.critiques || [];
+if (CR.length) {
+  set("secondop", `<p class="muted">An independent reviewer on a different model was handed the `
+    + `finished scorecard and told to challenge it — in either direction — not to restate it.</p>`
+    + CR.map((c) => `<div class="card" style="margin-bottom:12px">
+      <h3>${esc(c.model)} — independent critique</h3>
+      <p>${esc(c.verdict || "")}</p>
+      ${(c.miscalibrated || []).length ? `<h3 class="small">Score challenges</h3>
+        <div class="scroller"><table><thead><tr><th>Dimension</th><th>Direction</th>
+        <th class="num">Argued</th><th>Why</th></tr></thead><tbody>`
+        + c.miscalibrated.map((m) => `<tr><td>${esc(m.dimension)}</td>`
+          + `<td>${esc((m.direction || "").replace("_", " "))}</td>`
+          + `<td class="num">${esc(m.argued_score)}</td><td>${esc(m.why)}</td></tr>`).join("")
+        + `</tbody></table></div>` : ""}
+      ${(c.missed || []).length ? `<h3 class="small">Not examined by this audit</h3>
+        <ul>${c.missed.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>` : ""}
+      ${(c.disputed || []).length ? `<h3 class="small">Disputed</h3>
+        <ul>${c.disputed.map((m) => `<li><strong>${esc(m.claim)}</strong> — ${esc(m.why)}</li>`)
+          .join("")}</ul>` : ""}
+      ${c.process_critique ? `<p class="muted small"><strong>On the method:</strong> `
+        + `${esc(c.process_critique)}</p>` : ""}
+    </div>`).join("")
+    + (SY.second_opinion_response ? `<div class="callout ok"><h3>How the lead partner responded`
+        + `</h3><p>${esc(SY.second_opinion_response)}</p></div>` : ""));
+} else { hide("sec-secondop"); }
+
+/* ── confirmed risks ──────────────────────────────────────────────────── */
+const risks = SY.top_risks || [];
+const conf = F.confirmed || [];
+const byFile = {};
+for (const c of conf) byFile[(c.file || "") + ":" + (c.line || "")] = c;
+if (risks.length || conf.length) {
+  const cards = (risks.length ? risks : conf).map((r) => {
+    const key = (r.file || "") + ":" + (r.line || "");
+    const det = byFile[key] || {};
+    const sev = String(r.severity || det.corrected_severity || det.severity || "medium")
+      .toLowerCase();
+    const vs = det.verdicts || r.verdicts || [];
+    return `<div class="finding">
+      <div class="top">
+        <span class="sev ${esc(sev)}">${sev === "critical" ? "◆" : sev === "high" ? "▲"
+          : sev === "medium" ? "●" : "○"} ${esc(sev)}</span>
+        <strong>${esc(r.title || r.issue || "")}</strong>
+        ${r.dimension ? `<span class="pill">${esc(String(r.dimension).replace(/_/g, " "))}</span>` : ""}
+        ${r.agreement || det.agreement ? `<span class="agree">${esc(String(r.agreement
+          || det.agreement).replace(/-/g, " "))}</span>` : ""}
+      </div>
+      ${r.file ? `<div class="floc">${esc(r.file)}${r.line ? ":" + esc(r.line) : ""}</div>` : ""}
+      <p>${esc(r.detail || r.issue || "")}</p>
+      ${r.remediation ? `<p class="muted"><strong>Remediation:</strong> ${esc(r.remediation)}</p>` : ""}
+      ${det.found_by_model ? `<div class="votes"><span class="mv">found by `
+        + `${esc(det.found_by_model)}</span>`
+        + vs.map((v) => `<span class="mv ${v.refuted ? "ref" : "real"}">${esc(v.model)}: `
+          + `${v.refuted ? "refuted" : "confirmed"}</span>`).join("") + `</div>` : ""}
+      ${vs.length ? `<details style="margin-top:9px;background:transparent;border:0;padding:0">
+        <summary class="small">Why the verifiers believed it</summary>
+        <ul class="small">${vs.map((v) => `<li><strong>${esc(v.model)}</strong>${
+          v.refuted ? " (dissenting)" : ""}: ${esc(v.reasoning)}</li>`).join("")}</ul>
+        </details>` : ""}
+    </div>`;
+  }).join("");
+  set("risks", `<p class="muted">Only findings that survived cross-model refutation appear here. `
+    + `A finding's own author model never judged it alone.</p>` + cards);
+} else {
+  set("risks", `<div class="callout ok"><p>No finding survived cross-model refutation at `
+    + `critical or high severity.</p></div>`);
+}
+
+/* ── excluded and unconfirmed ─────────────────────────────────────────── */
+const ref = F.refuted || [], unv = F.unverified || [];
+if (ref.length || unv.length) {
+  set("excluded", `<p class="muted">Publishing what was thrown out is part of the evidence: a `
+    + `wrong refutation hides a real defect, so the reasoning is here to be checked.</p>`
+    + (unv.length ? `<details open><summary>${unv.length} severe finding(s) never verified — `
+        + `treat as unconfirmed</summary><ul>` + unv.map((u) => `<li><span class="floc">`
+        + `${esc(u.file)}${u.line ? ":" + esc(u.line) : ""}</span> — ${esc(u.issue)}`
+        + `${u.found_by_model ? ` <span class="pill">found by ${esc(u.found_by_model)}</span>` : ""}`
+        + `</li>`).join("") + `</ul></details>` : "")
+    + (ref.length ? `<details><summary>${ref.length} finding(s) refuted and excluded`
+        + `</summary><ul>` + ref.map((u) => `<li><span class="floc">${esc(u.file)}`
+        + `${u.line ? ":" + esc(u.line) : ""}</span> — ${esc(u.issue)}<br>`
+        + (u.verdicts || []).map((v) => `<span class="small muted">${esc(v.model)}`
+          + `${v.already_fixed ? " (already fixed)" : ""}: ${esc(v.reasoning)}</span>`)
+          .join("<br>") + `</li>`).join("") + `</ul></details>` : ""));
+} else { hide("sec-excluded"); }
+
+/* ── did prior fixes land ─────────────────────────────────────────────── */
+const RG = D.regressionResults || [];
+if (RG.length) {
+  const tally = RG.reduce((a, r) => (a[r.status] = (a[r.status] || 0) + 1, a), {});
+  set("prior", `<div class="legend">` + Object.entries(tally).map(([k, v]) =>
+      `<div class="li"><span class="pill">${esc(k.replace(/_/g, " "))}: ${v}</span></div>`).join("")
+    + `</div><p class="muted small">A fix that closed the reported example but left the defect `
+    + `class open is <em>partially fixed</em>, and earns no root-cause credit. That distinction `
+    + `is the most useful output of this section.</p>`
+    + `<div class="scroller"><table><thead><tr><th>Prior finding</th><th>Status</th>`
+    + `<th>Fix quality</th><th>Test pins it</th><th>Judged by</th><th>Evidence</th></tr></thead>`
+    + `<tbody>` + RG.map((r) => `<tr><td>${esc(r.id)}<div class="small muted">`
+        + `${esc(r.reasoning || "")}</div></td>`
+        + `<td>${esc(String(r.status || "").replace(/_/g, " "))}</td>`
+        + `<td>${esc(r.quality || "—")}</td>`
+        + `<td>${r.test_pinned ? "yes" : `<span style="color:var(--down)">no</span>`}</td>`
+        + `<td>${esc(r.judged_by_model || "—")}</td>`
+        + `<td class="small mono">${(r.evidence || []).map(esc).join("<br>")}</td></tr>`).join("")
+    + `</tbody></table></div>`);
+} else { hide("sec-prior"); }
+
+/* ── fix review ───────────────────────────────────────────────────────── */
+const FR = D.fixReviews || [];
+if (FR.length) {
+  const bad = FR.filter((f) => (f.bad_fixes || []).length);
+  set("fixes", `<p class="muted">Every applied fix was re-read by a <strong>different model`
+    + `</strong> than the one that wrote it — a model is worst at seeing the bug it just `
+    + `wrote.</p>`
+    + `<div class="legend"><div class="li"><span class="pill">${FR.length} units reviewed`
+    + `</span></div><div class="li"><span class="pill">${FR.reduce((n, f) =>
+        n + (f.reviewed_count || 0), 0)} fixes re-read</span></div>`
+    + `<div class="li"><span class="pill">${bad.reduce((n, f) => n + f.bad_fixes.length, 0)} `
+    + `flagged</span></div></div>`
+    + (bad.length ? `<div class="scroller"><table><thead><tr><th>Unit</th><th>Author</th>`
+        + `<th>Reviewer</th><th>Action</th><th>Problem</th></tr></thead><tbody>`
+        + bad.flatMap((f) => f.bad_fixes.map((b) => `<tr><td class="mono small">`
+          + `${esc(f.unit)}</td><td>${esc(f.author_model)}</td><td>${esc(f.reviewer_model)}</td>`
+          + `<td><strong>${esc(b.action)}</strong>${b.breaks_build
+            ? ' <span class="sev critical">breaks build</span>' : ""}</td>`
+          + `<td>${esc(b.problem)}<div class="small mono dim">${esc(b.file)}</div></td></tr>`))
+          .join("") + `</tbody></table></div>`
+      : `<div class="callout ok"><p>No applied fix was flagged by its cross-model reviewer.</p></div>`));
+} else { hide("sec-fixes"); }
+
+/* ── gate ─────────────────────────────────────────────────────────────── */
+if (V && Object.keys(V).length) {
+  const row = (k, v) => `<tr><td>${esc(k)}</td><td>${v === true
+    ? `<span style="color:var(--ok-text);font-weight:640">pass</span>`
+    : v === false ? `<span style="color:var(--down);font-weight:640">fail</span>`
+    : `<span class="dim">—</span>`}</td></tr>`;
+  set("gate", `<div class="cols2">
+    <div class="card"><h3>Result</h3><table>
+      ${row("format", V.fmt_clean)}${row("lint", V.lint_clean)}
+      ${row("typecheck", V.typecheck_clean)}${row("tests", V.tests_pass)}
+      </table>
+      <p class="small muted" style="margin-top:10px">${esc(V.test_summary || "")}</p>
+      <p class="small">${esc(V.final_state || "")}</p></div>
+    <div class="card"><h3>Measured against a pristine baseline</h3>
+      <p class="small mono">${esc(D.baseline || "not measured")}</p>
+      <p class="small muted">The baseline was taken on a separate checkout of the same commit
+        <em>before</em> any agent ran, which is the only way to tell a regression introduced by
+        this audit from breakage that shipped.</p>
+      ${(V.reverted || []).length ? `<h3 class="small">Reverted</h3><ul class="small">`
+        + V.reverted.map((r) => `<li>${esc(r)}</li>`).join("") + `</ul>` : ""}
+      ${(V.preexisting || []).length ? `<h3 class="small">Pre-existing, not caused here</h3>`
+        + `<ul class="small">` + V.preexisting.map((r) => `<li>${esc(r)}</li>`).join("")
+        + `</ul>` : ""}
+      ${(V.commands_run || []).length ? `<h3 class="small">Commands actually run</h3>`
+        + `<p class="small mono">` + V.commands_run.map(esc).join("<br>") + `</p>` : ""}
+    </div></div>`);
+} else { hide("sec-gate"); }
+
+/* ── roadmap ──────────────────────────────────────────────────────────── */
+const RM = SY.roadmap || [];
+if (RM.length) {
+  set("roadmap", ["now", "next", "later"].map((h) => {
+    const items = RM.filter((r) => r.horizon === h);
+    return `<div class="card hz"><h3>${h}</h3>${items.length
+      ? `<ul>` + items.map((r) => `<li><strong>${esc(r.item)}</strong>`
+          + `${r.effort ? ` <span class="pill">${esc(r.effort)}</span>` : ""}`
+          + `${r.dimension ? ` <span class="pill">${esc(String(r.dimension)
+              .replace(/_/g, " "))}</span>` : ""}`
+          + `<div class="small muted">${esc(r.why || "")}</div></li>`).join("") + `</ul>`
+      : `<p class="small dim">nothing queued</p>`}</div>`;
+  }).join(""));
+} else { hide("sec-roadmap"); }
+
+/* ── method ───────────────────────────────────────────────────────────── */
+const P = D.provenance || {};
+set("method", `<div class="cols2">
+  <div class="card"><h3>How the number was produced</h3>
+    <p class="small">${esc(SY.scoring_methodology || "")}</p>
+    <p class="small muted">Overall is the weighted mean of the 17 dimensions
+      (weights shown in the scorecard, summing to 33), recomputed independently from the
+      published per-dimension scores rather than taken from any agent. Dimensions scored 0
+      are not applicable and are excluded from the mean. The delta is computed at full
+      precision before rounding${typeof S.delta_precise === "number"
+        ? `: ${num(S.prior_overall, 2)} → ${num(S.overall, 2)} is
+           ${S.delta_precise > 0 ? "+" : ""}${num(S.delta_precise, 2)}` : ""}.</p>
+    ${S.agent_claimed != null && S.agent_claimed !== S.overall_rounded
+      ? `<p class="small" style="color:var(--serious)">The synthesising agent claimed
+         ${esc(S.agent_claimed)}; the recomputed value is ${esc(S.overall_rounded)}. The
+         recomputed value is what is reported.</p>` : ""}
+  </div>
+  <div class="card"><h3>Model provenance</h3>
+    ${P.rows && P.rows.length ? `<div class="scroller"><table><thead><tr><th>Phase</th>
+      <th class="num">agents</th><th>models actually used</th></tr></thead><tbody>`
+      + P.rows.map((r) => `<tr><td>${esc(r.phase)}</td><td class="num">${esc(r.agents)}</td>`
+        + `<td class="small mono">${esc(r.models)}</td></tr>`).join("")
+      + `</tbody></table></div>` : `<p class="small dim">Not captured for this run.</p>`}
+    <p class="small ${P.ok === false ? "" : "muted"}" ${P.ok === false
+      ? 'style="color:var(--down)"' : ""}>${P.ok === true
+      ? "Verified: the model recorded in every agent transcript matches the slot it was "
+        + "assigned. The cross-model guarantees in this report hold."
+      : P.ok === false ? esc(P.detail || "Provenance check failed.")
+      : "Provenance was not verified for this run, so the cross-model claims are asserted "
+        + "rather than proven."}</p>
+  </div></div>
+  <div class="card" style="margin-top:16px"><h3>What this audit could not determine</h3>
+    <p>${esc(SY.audit_limitations || "Not stated.")}</p>
+    <p class="small muted">Coverage: ${int(R.files_owned)} of ${int(R.total_files)} source files
+      were owned by an auditing agent${cov != null ? ` (${num(cov, 1)}%)` : ""}. Fix authority
+      was <strong>${esc((R.fix_authority || {}).level || "unknown")}</strong> &mdash;
+      ${esc((R.fix_authority || {}).reason || "")}</p>
+  </div>`);
+
+el("foot").textContent = `ultra-audit · ${R.root || ""} · commit `
+  + `${R.commit || "unrecorded"} · generated ${D.generated_at || S.date || ""} · `
+  + `17-dimension rubric, absolute bar, 100 reserved for the Rust project itself.`;
+</script>
+</body>
+</html>
