@@ -1302,6 +1302,43 @@ impl Store {
         Ok(n)
     }
 
+    /// The most recent `tool_calls` rows for one tool, newest first, capped at
+    /// `limit`. Reads through the `tool_calls_by_name` index. The Tool Foundry
+    /// gap detector consumes this for `name = "bash"` to mine repeated command
+    /// shapes (`stella_core::detect_tool_gaps`); it is a general reader, not
+    /// bash-specific. `limit == 0` returns an empty vec.
+    pub fn recent_tool_calls(&self, name: &str, limit: usize) -> Result<Vec<ToolCallRow>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT call_id, name, surface, args_json, args_digest, reason, \
+                    ok, error, bytes_out, duration_ms \
+             FROM tool_calls WHERE name = ?1 \
+             ORDER BY execution_id DESC, seq DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![name, limit as i64], |r| {
+            Ok(ToolCallRow {
+                call_id: r.get(0)?,
+                name: r.get(1)?,
+                surface: r.get(2)?,
+                args_json: r.get(3)?,
+                args_digest: r.get(4)?,
+                reason: r.get(5)?,
+                ok: r.get::<_, i64>(6)? != 0,
+                error: r.get(7)?,
+                bytes_out: r.get(8)?,
+                duration_ms: r.get(9)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// Derive and record the objective half of this turn's
     /// `execution_reflection` — prompt, plus `produced_output` / `wrote_files`
     /// / `truncated` computed from the event and file-touch logs. The model's

@@ -72,6 +72,7 @@ mod skill_manager;
 mod stats;
 mod storage_cmd;
 mod subsession;
+mod tool_foundry;
 mod tool_policy;
 mod tool_switches;
 mod tui;
