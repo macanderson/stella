@@ -246,7 +246,7 @@ fn label_line(state: &ProgressState) -> (Vec<Span<'static>>, usize) {
         let (glyph, color, bold) = match state.segments[i] {
             SegState::Done => ("✓", theme::SUCCESS_BRIGHT, false),
             SegState::Active if state.phase == RunPhase::Error => ("✗", theme::DANGER, true),
-            SegState::Active => ("▸", theme::SKY, true),
+            SegState::Active => ("▸", theme::ACCENT, true),
             SegState::Pending => ("·", theme::TEXT_DIM, false),
         };
         let mut style = Style::default().fg(color);
@@ -409,7 +409,7 @@ fn render_track(
         if i < fill_cells {
             // The fill is a glyph (not a background), so the bar's *shape* reads
             // even under `NO_COLOR`, where every color drops to the terminal
-            // default; the ember gradient rides the glyph's foreground.
+            // default; the brand gradient rides the glyph's foreground.
             let t = if w > 1 {
                 i as f64 / (w - 1) as f64
             } else {
@@ -418,7 +418,7 @@ fn render_track(
             let mut fg = if truecolor {
                 theme::brand_gradient(t)
             } else {
-                theme::SKY
+                theme::ACCENT
             };
 
             // Shimmer: two light bands (a bright leader and a dimmer trailing
@@ -439,7 +439,7 @@ fn render_track(
                         fg = theme::lighten(fg, 0.2 * (1.0 - de / 1.5));
                     }
                 } else if i == center.round() as usize {
-                    fg = theme::SKY;
+                    fg = theme::ACCENT;
                 }
             }
 
@@ -451,7 +451,7 @@ fn render_track(
                 } else if truecolor {
                     fg = theme::lighten(fg, pulse);
                 } else {
-                    fg = theme::SKY;
+                    fg = theme::ACCENT;
                 }
             }
 
@@ -711,8 +711,8 @@ mod tests {
         // cleanly — an interpolated gradient RGB has no indexed fallback.
         render_track(&state, 1234, ColorMode::Ansi256, 0, 0, 40, &mut buf);
         let allowed = [
-            theme::SKY,
-            theme::SKY,
+            theme::ACCENT,
+            theme::ACCENT,
             theme::TEXT_DIM,
             theme::HAIRLINE,
             ratatui::style::Color::Reset,

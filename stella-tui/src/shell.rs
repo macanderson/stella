@@ -218,6 +218,7 @@ pub async fn run(
     loop {
         terminal.draw(|f| {
             render(&model, &mut ui, f);
+            theme::apply_theme(f.buffer_mut(), color_mode);
             theme::degrade_buffer(f.buffer_mut(), color_mode);
         })?;
 

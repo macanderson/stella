@@ -426,6 +426,7 @@ pub async fn run_deck(
 
         terminal.draw(|f| {
             render_deck(&model, &mut ui, f);
+            theme::apply_theme(f.buffer_mut(), color_mode);
             theme::degrade_buffer(f.buffer_mut(), color_mode);
         })?;
 

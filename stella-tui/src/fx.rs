@@ -57,21 +57,22 @@ pub fn dissolve_out(ms: u32) -> Effect {
     fx::dissolve(EffectTimer::from_ms(ms, Interpolation::QuadIn)).with_rng(SimpleRng::new(FX_SEED))
 }
 
-/// A brisk deep-sky sweep for tab / view switches in the deck shell: the new
+/// A brisk deep-accent sweep for tab / view switches in the deck shell: the new
 /// content sweeps in left-to-right out of the brand accent color and lands
-/// on its real style over `ms`.
+/// on its real style over `ms`. Reads the *active* theme's deep primary (green
+/// on `stella-dark`, ember on `stella-light`) at construction time.
 ///
 /// Every cell it emits mid-sweep is an interpolated `Color::Rgb` with no
-/// `crate::theme::FALLBACKS` entry, so `degrade_buffer` passes it through
-/// untouched: on a 256- or 16-color terminal the sweep still emits 24-bit SGR.
-/// Callers that must degrade cleanly should gate the effect on
-/// [`crate::theme::ColorMode::is_truecolor`].
+/// `crate::theme::FALLBACKS` entry, so `degrade_buffer` (and `apply_theme`)
+/// passes it through untouched: on a 256- or 16-color terminal the sweep still
+/// emits 24-bit SGR. Callers that must degrade cleanly should gate the effect
+/// on [`crate::theme::ColorMode::is_truecolor`].
 pub fn tab_switch(ms: u32) -> Effect {
     fx::sweep_in(
         Motion::LeftToRight,
         10,
         3,
-        theme::ACCENT_DEEP,
+        theme::primary_deep(),
         EffectTimer::from_ms(ms, Interpolation::CircOut),
     )
     .with_rng(SimpleRng::new(FX_SEED))

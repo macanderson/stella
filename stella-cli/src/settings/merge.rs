@@ -118,6 +118,14 @@ impl Settings {
         if let Some(recap) = scope.enable_recap {
             self.enable_recap = Some(recap);
         }
+        // Appearance (`ui.theme`): whole-block last-wins — a higher-precedence
+        // scope that declares `ui` replaces the lower one's. Personal
+        // preference, no credential/egress authority, so no trust restoration.
+        // (Like `enable_recap` above, this must be listed explicitly or the
+        // merge silently drops it.)
+        if let Some(ui) = &scope.ui {
+            self.ui = Some(ui.clone());
+        }
         // Adaptive-context config: whole-block last-wins (a higher-precedence
         // scope that declares `context` replaces a lower one's). Inert in
         // Phase 0 — nothing reads it — so no trust restoration is needed (it
