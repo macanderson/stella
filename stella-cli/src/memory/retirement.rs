@@ -89,8 +89,14 @@ impl RetirementProtection {
 /// deterministic wrong answer rather than a flake.
 pub(crate) fn standings(store: &ContextStore) -> HashMap<String, PromotionEventRecord> {
     let mut out = HashMap::new();
+    // The NEWEST window, not the oldest: `standings` is a last-write-wins fold
+    // of the current state, so reading the oldest `READ_LIMIT` froze it at the
+    // first events once the promotion log grew past the bound (#818).
     let rows = store
-        .records_of_kind_in_append_order(ContextRecordKind::PromotionEvent.as_str(), READ_LIMIT)
+        .records_of_kind_newest_in_append_order(
+            ContextRecordKind::PromotionEvent.as_str(),
+            READ_LIMIT,
+        )
         .unwrap_or_default();
     for row in rows {
         let Ok(event) = serde_json::from_str::<PromotionEventRecord>(&row.body) else {

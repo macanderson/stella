@@ -360,15 +360,29 @@ impl SvgPipeline {
 // serialization (deny-list walk)
 
 /// Elements dropped entirely, subtree and all: `<script>`, `<style>`,
-/// `<foreignObject>` (sanitization rules 1–3) and `<metadata>` (optimization).
-/// Case-insensitive so a `<SCRIPT>` variant can't slip through. `<style>` is
-/// dropped because its CSS can pull off-host resources via `@import`/`url(…)`
-/// — the same exfil vector [`references_external`] blocks in attribute values.
+/// `<foreignObject>` (sanitization rules 1–3) and `<metadata>` (optimization),
+/// plus the SMIL animation elements. Case-insensitive so a `<SCRIPT>` variant
+/// can't slip through. `<style>` is dropped because its CSS can pull off-host
+/// resources via `@import`/`url(…)` — the same exfil vector
+/// [`references_external`] blocks in attribute values.
+///
+/// The SMIL animation elements (`<animate>`, `<set>`, `<animateTransform>`,
+/// `<animateMotion>`, `<animateColor>`) are dropped because they *mutate*
+/// another attribute at runtime — e.g. `<animate attributeName="xlink:href"
+/// to="http://evil/…">` re-points an href to an external target after load.
+/// [`keep_attribute`] only vets an element's own initial attribute values, so
+/// it never sees the animated one; dropping the animators closes that bypass,
+/// and static sanitized SVGs (previews/artifacts) need no animation.
 fn is_dropped_element(local: &str) -> bool {
     local.eq_ignore_ascii_case("script")
         || local.eq_ignore_ascii_case("style")
         || local.eq_ignore_ascii_case("foreignObject")
         || local.eq_ignore_ascii_case("metadata")
+        || local.eq_ignore_ascii_case("animate")
+        || local.eq_ignore_ascii_case("set")
+        || local.eq_ignore_ascii_case("animateTransform")
+        || local.eq_ignore_ascii_case("animateMotion")
+        || local.eq_ignore_ascii_case("animateColor")
 }
 
 /// Decide whether an attribute (by lowercased emit-name and value) survives.
@@ -692,6 +706,23 @@ mod tests {
         assert!(!out.svg.contains("alert"), "{}", out.svg);
         assert!(out.svg.contains("<rect"));
         assert!(out.removed.iter().any(|r| r.contains("script")));
+    }
+
+    #[test]
+    fn smil_animation_elements_are_dropped_including_href_smuggling() {
+        // #821: `<animate>` (and its SMIL siblings) can re-point an href to an
+        // external target at runtime — `keep_attribute` only vets the initial
+        // value, so it never sees the animated one. All animators are dropped
+        // subtree-and-all, taking the smuggled URL / `javascript:` with them.
+        let out = process(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="#a"><animate attributeName="xlink:href" to="https://evil.example/leak"/></image><set attributeName="href" to="javascript:steal()"/><animateTransform attributeName="transform" type="rotate"/><animateMotion path="M0,0"/><rect width="1" height="1"/></svg>"##,
+        );
+        for banned in ["<animate", "<set", "evil.example", "javascript:", "steal"] {
+            assert!(!out.svg.contains(banned), "leaked {banned:?}:\n{}", out.svg);
+        }
+        // The benign geometry survives, and the drop is recorded.
+        assert!(out.svg.contains("<rect"), "{}", out.svg);
+        assert!(out.removed.iter().any(|r| r.contains("animate")));
     }
 
     #[test]

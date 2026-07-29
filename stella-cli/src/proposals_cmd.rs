@@ -207,7 +207,13 @@ pub(crate) fn current_proposals(store: &ContextStore) -> Vec<ProposalRecord> {
 /// answer, which a test only catches if it happens to pick colliding ids.
 pub(crate) fn promotion_events(store: &ContextStore) -> Vec<PromotionEventRecord> {
     store
-        .records_of_kind_in_append_order(ContextRecordKind::PromotionEvent.as_str(), READ_LIMIT)
+        // The newest window: `decisions` folds current standing last-write-wins,
+        // so the oldest-`READ_LIMIT` read froze it once the log grew past the
+        // bound (#818). Append order is still load-bearing for the fold.
+        .records_of_kind_newest_in_append_order(
+            ContextRecordKind::PromotionEvent.as_str(),
+            READ_LIMIT,
+        )
         .unwrap_or_default()
         .into_iter()
         .filter_map(|row| serde_json::from_str::<PromotionEventRecord>(&row.body).ok())
