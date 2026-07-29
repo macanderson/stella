@@ -218,6 +218,18 @@ pub enum Inbound {
     AgentsList {
         entries: Vec<InstalledAgentEntry>,
         status: Option<String>,
+        /// True while an LLM-assisted agent creation is still in flight
+        /// driver-side (e.g. parked behind a running turn). The create
+        /// dialog keeps its spinner up until a list arrives with this
+        /// `false` — a queued interim snapshot must not read as done.
+        creating: bool,
+        /// The name of the agent a just-completed
+        /// [`WorkspaceInput::AgentCreate`] installed, when this snapshot is
+        /// that op's completion. The create dialog transitions into the
+        /// detail preview of exactly this entry; `None` on a failed create
+        /// (the dialog shows `status` as the error) and on every other
+        /// snapshot.
+        created: Option<String>,
     },
     /// A refreshed snapshot of the installed skills for the SKILLS tab. The
     /// driver owns the skills on disk (both scopes), their enabled/version/pin
@@ -1080,6 +1092,12 @@ pub struct SkillsView {
     /// True while a driver op (npx search/install, LLM create) is in flight,
     /// so the tab can show a working state.
     pub busy: bool,
+    /// The name of the skill a just-completed [`SkillOp::Create`] wrote,
+    /// when this snapshot is that op's completion. The create dialog
+    /// transitions into the ctrl+o preview of exactly this row; `None` on a
+    /// failed create (the dialog shows `status` as the error) and on every
+    /// other snapshot.
+    pub created: Option<String>,
 }
 
 /// A SKILLS-tab operation routed to the driver, which owns the disk + npx +

@@ -183,6 +183,8 @@ async fn main() -> std::io::Result<()> {
                     let _ = react_tx.send(Inbound::AgentsList {
                         entries: vec![],
                         status: Some("the demo has no agents on disk".to_string()),
+                        creating: false,
+                        created: None,
                     });
                 }
                 // The demo has no skills engine — answer with an empty list so
@@ -192,6 +194,7 @@ async fn main() -> std::io::Result<()> {
                         rows: vec![],
                         status: Some("the demo has no skills on disk".to_string()),
                         busy: false,
+                        created: None,
                     }));
                 }
                 // The ISSUES tab talks to a real tracker through the CLI

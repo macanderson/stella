@@ -20,7 +20,7 @@ use crate::deck_ui::{DeckUi, SkillPrompt, SkillsFocus};
 use crate::syntax;
 use crate::theme;
 
-pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     // Two panes over a status line.
     let bands = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
     let panes = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -30,9 +30,10 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     render_search(ui, panes[1], buf);
     render_status(ui, bands[1], buf);
 
-    // Overlays (scope picker / create / edit / pin) float above the panes.
+    // Overlays (scope picker / create / creating spinner / edit / pin) float
+    // above the panes. The creating overlay animates off the deck clock.
     if ui.skills.prompt.is_some() {
-        render_overlay(ui, area, buf);
+        render_overlay(ui, model.now_ms, area, buf);
     }
     // The ctrl+o markdown preview is the topmost overlay (mutually exclusive
     // with the prompts at the key layer, but drawn last defensively).
@@ -263,8 +264,9 @@ fn render_status(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     Paragraph::new(line).render(area, buf);
 }
 
-/// Draw the active overlay centered over the panes.
-fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+/// Draw the active overlay centered over the panes. `now_ms` is the deck
+/// clock — the creating dialog's spinner is a pure function of it.
+fn render_overlay(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
     match &ui.skills.prompt {
         Some(SkillPrompt::Scope { action, user }) => {
             let verb = match action {
@@ -322,6 +324,64 @@ fn render_overlay(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 Line::from(Span::styled("⏎ continue · esc cancel", theme::muted())),
             ];
             popup(" new skill (LLM-assisted) ", lines, area, buf);
+        }
+        Some(SkillPrompt::Creating { description, scope }) => {
+            let spinner = crate::views::spinner_glyph(now_ms, ui.no_anim);
+            let lines = vec![
+                Line::from(vec![
+                    Span::styled(
+                        format!("{spinner} "),
+                        Style::default()
+                            .fg(theme::ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("Creating the skill ({} scope)…", scope.label()),
+                        theme::body(),
+                    ),
+                ]),
+                Line::default(),
+                Line::from(Span::styled(
+                    format!("“{}”", truncate(description, 70)),
+                    theme::muted(),
+                )),
+                Line::default(),
+                Line::from(Span::styled(
+                    "the agent searches the registry, ranks matches, and",
+                    theme::muted(),
+                )),
+                Line::from(Span::styled(
+                    "assembles one skill — it appears here when done",
+                    theme::muted(),
+                )),
+                Line::default(),
+                Line::from(Span::styled(
+                    "esc hides (creation continues)",
+                    theme::muted(),
+                )),
+            ];
+            popup(" creating skill… ", lines, area, buf);
+        }
+        Some(SkillPrompt::CreateFailed { error }) => {
+            let lines = vec![
+                Line::from(vec![
+                    Span::styled(
+                        "✖ ",
+                        Style::default()
+                            .fg(theme::DANGER)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("The skill was not created", theme::body()),
+                ]),
+                Line::default(),
+                Line::from(Span::styled(
+                    error.clone(),
+                    Style::default().fg(theme::DANGER),
+                )),
+                Line::default(),
+                Line::from(Span::styled("esc / ⏎ close", theme::muted())),
+            ];
+            popup(" skill creation failed ", lines, area, buf);
         }
         Some(SkillPrompt::Pin {
             name, latest, sel, ..
@@ -606,6 +666,7 @@ mod tests {
             ],
             status: None,
             busy: false,
+            created: None,
         };
         let area = Rect::new(0, 0, 120, 12);
         let mut buf = Buffer::empty(area);
@@ -728,6 +789,70 @@ mod tests {
             style_at(&buf, "plain prose").fg,
             theme::body().fg,
             "prose keeps the body style"
+        );
+    }
+
+    #[test]
+    fn creating_overlay_shows_an_animated_spinner_until_completion() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.prompt = Some(SkillPrompt::Creating {
+            description: "extract tables from pdfs".into(),
+            scope: SkillScope::Project,
+        });
+        let area = Rect::new(0, 0, 90, 16);
+
+        // Two deck-clock instants one spinner period apart render DIFFERENT
+        // glyphs — the spinner genuinely animates off the tick loop.
+        let mut model = WorkspaceModel::new();
+        model.now_ms = 0;
+        let mut buf_a = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf_a);
+        let text_a = buffer_text(&buf_a);
+        assert!(text_a.contains("Creating the skill"), "{text_a}");
+        assert!(
+            text_a.contains("extract tables from pdfs"),
+            "the description stays visible:\n{text_a}"
+        );
+
+        model.now_ms = 80; // one spinner frame later
+        let mut buf_b = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf_b);
+        assert_ne!(
+            buffer_text(&buf_a),
+            buffer_text(&buf_b),
+            "the spinner must advance with the deck clock"
+        );
+
+        // `--no-anim` pins the glyph: consecutive ticks render identically.
+        ui.no_anim = true;
+        let mut buf_c = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf_c);
+        model.now_ms = 160;
+        let mut buf_d = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf_d);
+        assert_eq!(buffer_text(&buf_c), buffer_text(&buf_d));
+    }
+
+    #[test]
+    fn create_failed_overlay_shows_the_error() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.prompt = Some(SkillPrompt::CreateFailed {
+            error: "the model did not return a valid SKILL.md — try again".into(),
+        });
+        let area = Rect::new(0, 0, 90, 16);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("skill creation failed"), "{text}");
+        assert!(
+            text.contains("did not return a valid SKILL.md"),
+            "the driver's error is on screen:\n{text}"
         );
     }
 

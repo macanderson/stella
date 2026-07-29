@@ -110,7 +110,7 @@ mod theme_cmd;
 use crate::memory::{SessionMemory, inject_recall_block};
 use crate::runtime::{SystemClock, TokioSleeper};
 use crate::subsession::{self, SubSessions, SupervisorMsg};
-use authoring::handle_agent_create;
+use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::spawn_forwarder;
 use scope_gate::DeckApprovalGate;
 
@@ -1521,7 +1521,9 @@ pub async fn run_deck_session(
                         // the turn settles (see `pending_create`).
                         Some(WorkspaceInput::AgentCreate { description, scope }) => {
                             pending_create = Some((description, scope));
-                            let _ = in_tx.send(agents_list_inbound(
+                            // `creating: true`: the deck's create dialog keeps
+                            // its spinner up through this interim snapshot.
+                            let _ = in_tx.send(agents_list_creating(
                                 &cfg.workspace_root,
                                 Some(
                                     "agent creation queued — it runs when the current turn \
@@ -3738,17 +3740,6 @@ fn handle_tools_input(
 }
 
 // ── Installed-agents manager (the AGENTS tab's INSTALLED AGENTS pane) ───────
-
-/// Build an [`Inbound::AgentsList`] from the definitions on disk at both
-/// scopes. `status`, when set, replaces the pane's hint line.
-fn agents_list_inbound(workspace_root: &std::path::Path, status: Option<String>) -> Inbound {
-    let project = crate::agents_installed::project_agents_dir(workspace_root);
-    let user = crate::agents_installed::user_agents_dir();
-    Inbound::AgentsList {
-        entries: crate::agents_installed::discover(user.as_deref(), &project),
-        status,
-    }
-}
 
 /// Handle one synchronous installed-agents op (refresh / save / pin) —
 /// pure filesystem work, answered with a fresh [`Inbound::AgentsList`].

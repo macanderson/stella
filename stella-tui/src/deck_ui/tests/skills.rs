@@ -95,6 +95,7 @@ fn skills_ctrl_o_on_installed_opens_preview_with_local_body() {
         rows: vec![r],
         status: None,
         busy: false,
+        created: None,
     };
     // ctrl+o must NOT toggle chain-of-thought on the SKILLS tab — it opens
     // the preview, with the body on hand (no driver round-trip).
@@ -203,6 +204,7 @@ fn skills_space_toggles_and_two_ctrl_x_uninstalls() {
         rows: vec![a_row("sql-style", SkillScope::Project, true)],
         status: None,
         busy: false,
+        created: None,
     };
     let a = handle_deck_key(ch(' '), &model, &mut ui);
     assert_eq!(
@@ -238,6 +240,7 @@ fn skills_e_opens_edit_overlay_and_ctrl_s_saves() {
         rows: vec![r],
         status: None,
         busy: false,
+        created: None,
     };
     handle_deck_key(ch('e'), &model, &mut ui);
     assert!(matches!(
@@ -272,6 +275,7 @@ fn skills_manage_hotkeys_yield_to_a_nonempty_composer() {
         rows: vec![r],
         status: None,
         busy: false,
+        created: None,
     };
 
     // 'r' is not a hotkey → it falls through to the composer, so the
@@ -312,6 +316,7 @@ fn skills_p_opens_pin_picker_and_enter_pins() {
         rows: vec![r],
         status: None,
         busy: false,
+        created: None,
     };
     handle_deck_key(ch('p'), &model, &mut ui);
     assert!(matches!(
@@ -364,6 +369,133 @@ fn skills_n_creates_via_description_then_scope() {
             description: "extract tables from pdfs".into(),
         }))
     );
+    // The dialog does NOT close on dispatch: the creating state keeps an
+    // animated spinner up until the refreshed skills snapshot folds in.
+    assert!(
+        matches!(ui.skills.prompt, Some(SkillPrompt::Creating { .. })),
+        "dispatch keeps the dialog open in the creating state: {:?}",
+        ui.skills.prompt
+    );
+}
+
+#[test]
+fn skills_creating_dialog_becomes_the_preview_of_the_created_skill() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.prompt = Some(SkillPrompt::Creating {
+        description: "extract tables from pdfs".into(),
+        scope: SkillScope::Project,
+    });
+    ui.skills.searching = true;
+
+    // Fully modal: printable keys and ⏎ are swallowed — nothing re-dispatches
+    // and nothing leaks into the composer.
+    for k in [ch('x'), key(KeyCode::Enter)] {
+        assert_eq!(handle_deck_key(k, &model, &mut ui), DeckAction::Handled);
+    }
+    assert!(matches!(
+        ui.skills.prompt,
+        Some(SkillPrompt::Creating { .. })
+    ));
+    assert_eq!(ui.composer.buffer(), "");
+
+    // The refreshed snapshot naming the created skill is the completion
+    // signal: the dialog becomes the ctrl+o preview of exactly that skill.
+    let mut created = a_row("pdf-tables", SkillScope::Project, true);
+    created.body = "# PDF Tables\nextract tables".into();
+    let view = SkillsView {
+        rows: vec![a_row("other", SkillScope::User, true), created],
+        status: Some("created pdf-tables (project) — v1".into()),
+        busy: false,
+        created: Some("pdf-tables".into()),
+    };
+    ingest_inbound(&Inbound::Skills(view), &mut model, &mut ui);
+    assert!(ui.skills.prompt.is_none(), "the create dialog is done");
+    assert!(!ui.skills.searching);
+    let preview = ui.skills.preview.as_ref().expect("the preview opened");
+    assert_eq!(preview.title, "pdf-tables");
+    assert_eq!(
+        preview.body.as_deref(),
+        Some("# PDF Tables\nextract tables"),
+        "the created skill's body shows — same as ctrl+o on the row"
+    );
+    assert_eq!(ui.skills.sel, 1, "the list lands on the new skill");
+}
+
+#[test]
+fn skills_failed_create_shows_the_error_in_the_dialog() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.prompt = Some(SkillPrompt::Creating {
+        description: "d".into(),
+        scope: SkillScope::Project,
+    });
+    ui.skills.searching = true;
+    // A completion snapshot WITHOUT a created name is a failure: the dialog
+    // shows the driver's status as the error instead of vanishing.
+    let view = SkillsView {
+        rows: vec![],
+        status: Some("the model did not return a valid SKILL.md — try again".into()),
+        busy: false,
+        created: None,
+    };
+    ingest_inbound(&Inbound::Skills(view), &mut model, &mut ui);
+    assert!(
+        matches!(
+            ui.skills.prompt,
+            Some(SkillPrompt::CreateFailed { ref error })
+                if error.contains("did not return a valid SKILL.md")
+        ),
+        "the failure stays in the dialog: {:?}",
+        ui.skills.prompt
+    );
+    assert!(ui.skills.preview.is_none(), "no preview on failure");
+    // Fully modal: other printable keys are swallowed, never re-dispatched
+    // and never leaked into the composer.
+    for k in [ch('x'), ch('n')] {
+        assert_eq!(handle_deck_key(k, &model, &mut ui), DeckAction::Handled);
+    }
+    assert!(matches!(
+        ui.skills.prompt,
+        Some(SkillPrompt::CreateFailed { .. })
+    ));
+    assert_eq!(ui.composer.buffer(), "");
+    // Esc acknowledges and closes.
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert!(ui.skills.prompt.is_none());
+}
+
+#[test]
+fn skills_creating_dialog_esc_hides_but_creation_still_folds_in() {
+    let mut model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.prompt = Some(SkillPrompt::Creating {
+        description: "d".into(),
+        scope: SkillScope::User,
+    });
+    ui.skills.searching = true;
+    // Esc hides the dialog — the driver-side creation keeps running.
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert!(ui.skills.prompt.is_none());
+    assert!(
+        ui.skills.searching,
+        "hiding the dialog does not stop the op"
+    );
+    // The snapshot still folds in normally — with the dialog gone, no
+    // preview pops (the user opted out of watching).
+    let view = SkillsView {
+        rows: vec![a_row("d-skill", SkillScope::User, true)],
+        status: Some("created d-skill (user) — v1".into()),
+        busy: false,
+        created: Some("d-skill".into()),
+    };
+    ingest_inbound(&Inbound::Skills(view), &mut model, &mut ui);
+    assert!(!ui.skills.searching);
+    assert!(ui.skills.preview.is_none(), "no surprise popup after esc");
+    assert_eq!(
+        ui.skills.status.as_deref(),
+        Some("created d-skill (user) — v1")
+    );
 }
 
 #[test]
@@ -375,6 +507,7 @@ fn skills_snapshot_ingest_updates_view_and_clears_searching() {
         rows: vec![a_row("a", SkillScope::Project, true)],
         status: Some("done".into()),
         busy: false,
+        created: None,
     };
     ingest_inbound(&Inbound::Skills(view), &mut model, &mut ui);
     assert_eq!(ui.skills.view.rows.len(), 1);
