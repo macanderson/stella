@@ -337,6 +337,18 @@ impl WorkspaceModel {
                 }
             }
             Inbound::Event { agent, event } => self.apply_event(agent, event),
+            // Local `!` output: transcript only. See `Inbound::ShellEvent` for
+            // why this must not go through `apply_event` — the status it would
+            // derive (`Running`) has nothing to park it. An unknown id is a
+            // no-op rather than an auto-register: the caller only ever names a
+            // lane it already resolved, and the no-lane case takes the
+            // synthetic fallback instead.
+            Inbound::ShellEvent { agent, event } => {
+                if let Some(idx) = self.index_of(agent) {
+                    self.agents[idx].model.apply(event);
+                    self.agents[idx].last_activity_ms = self.now_ms;
+                }
+            }
             Inbound::Status { agent, status } => {
                 // Auto-register an unknown id, exactly like `Event`:
                 // supervisor states (`Paused`, `Killed`, …) are not

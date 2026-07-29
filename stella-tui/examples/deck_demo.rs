@@ -10,8 +10,8 @@
 //! agent's status live. Agent pids are the demo process's own, so the CPU/MEM
 //! columns show real numbers. Ctrl-C quits.
 //!
-//! Also demoable here: `!ls` runs a real shell command immediately on its own
-//! `shell` lane; `/` opens the command popup; `ctrl+t` (or `↑` while prompts
+//! Also demoable here: `!ls` runs a real shell command immediately, inline in
+//! the focused agent's transcript; `/` opens the command popup; `ctrl+t` (or `↑` while prompts
 //! are queued) opens the queue editor; `ctrl+r` expands collapsed thinking.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
