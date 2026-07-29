@@ -68,6 +68,7 @@ mod recall;
 // Phase 4 (#715): reversible retirement of context that stops helping.
 pub(crate) mod retirement;
 pub(crate) mod rules_mining;
+pub(crate) mod self_tuning;
 #[path = "memory/skills.rs"]
 mod skill_files;
 mod suppression;

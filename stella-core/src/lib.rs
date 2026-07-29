@@ -36,6 +36,7 @@ pub mod retry;
 pub mod router;
 pub mod rules;
 pub mod scoreboard;
+pub mod self_tuning;
 pub mod skills;
 pub(crate) mod speculation;
 mod summarize;
