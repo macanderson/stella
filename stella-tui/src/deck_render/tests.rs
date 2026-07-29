@@ -202,7 +202,7 @@ fn empty_composer_is_a_single_accent_prompt_line_with_the_caret() {
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4);
     let mut buf = Buffer::empty(area);
-    render_composer(&ui, &layout, 0, area, &mut buf);
+    render_composer(&ui, &layout, 0, false, area, &mut buf);
     let text = buffer_text(&buf);
     let rows: Vec<&str> = text.lines().collect();
     assert!(
@@ -239,7 +239,7 @@ fn a_multiline_paste_prefixes_every_row_and_scrolls_instead_of_chipping() {
     let layout = crate::composer::layout(&ui.composer, 40);
     let area = Rect::new(0, 0, 40, 4); // capped at DECK_COMPOSER_MAX_ROWS
     let mut buf = Buffer::empty(area);
-    render_composer(&ui, &layout, 0, area, &mut buf);
+    render_composer(&ui, &layout, 0, false, area, &mut buf);
     let text = buffer_text(&buf);
     assert!(!text.contains("[pasted"), "not chipped:\n{text}");
     for (i, row) in text.lines().enumerate() {
@@ -251,6 +251,46 @@ fn a_multiline_paste_prefixes_every_row_and_scrolls_instead_of_chipping() {
             .cell((area.width - 1, yy))
             .is_some_and(|c| c.symbol() == "▐")),
         "scroll indicator present:\n{text}"
+    );
+}
+
+#[test]
+fn a_working_prompt_marches_the_bright_chevron_across_the_three() {
+    let ui = DeckUi::default();
+    let layout = crate::composer::layout(&ui.composer, 40);
+    let area = Rect::new(0, 0, 40, 4);
+    // Only the color marches — the glyphs and the 4-column width are the
+    // same `>>> ` as idle, so every layout assertion above still holds.
+    let chevron_colors = |now_ms: u64| {
+        let mut buf = Buffer::empty(area);
+        render_composer(&ui, &layout, now_ms, true, area, &mut buf);
+        assert!(
+            buffer_text(&buf)
+                .lines()
+                .next()
+                .unwrap()
+                .starts_with(">>> "),
+            "working prompt keeps the static glyphs/width"
+        );
+        (0..3u16)
+            .map(|x| buf.cell((x, 0)).unwrap().fg)
+            .collect::<Vec<_>>()
+    };
+    // now=0 → the first chevron is lit (bright ACCENT), the other two dim.
+    let at0 = chevron_colors(0);
+    assert_eq!(at0[0], crate::theme::ACCENT, "chevron 0 lit at t=0");
+    assert_eq!(at0[1], crate::theme::ACCENT_DEEP);
+    assert_eq!(at0[2], crate::theme::ACCENT_DEEP);
+    // One PROMPT_CHASE_MS step later the bright one has marched to chevron 1.
+    let at1 = chevron_colors(PROMPT_CHASE_MS);
+    assert_eq!(at1[1], crate::theme::ACCENT, "the lit chevron advances");
+    assert_eq!(at1[0], crate::theme::ACCENT_DEEP);
+    // An idle prompt is a single uniform-accent prefix — no dim chevrons.
+    let mut idle = Buffer::empty(area);
+    render_composer(&ui, &layout, 0, false, area, &mut idle);
+    assert!(
+        (0..3u16).all(|x| idle.cell((x, 0)).unwrap().fg == crate::theme::ACCENT),
+        "idle prompt is uniformly bright — animation is gated on `working`"
     );
 }
 
