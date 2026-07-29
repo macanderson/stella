@@ -41,28 +41,65 @@ pub(crate) fn transcript_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut out = Vec::new();
-    for entry in &model.transcript {
+    let live = reasoning_is_live(&model.transcript, &model.streaming_text);
+    let last = model.transcript.len().saturating_sub(1);
+    for (i, entry) in model.transcript.iter().enumerate() {
         entry_lines(
             entry,
             &model.files,
             expand_thinking,
             expand_thinking,
+            live && i == last,
             width,
             &mut out,
         );
     }
-    if !model.streaming_text.is_empty() {
-        let preview = TranscriptEntry::Text(model.streaming_text.clone());
-        entry_lines(
-            &preview,
-            &model.files,
-            expand_thinking,
-            expand_thinking,
-            width,
-            &mut out,
-        );
-    }
+    streaming_lines(
+        &model.streaming_text,
+        &model.files,
+        expand_thinking,
+        width,
+        &mut out,
+    );
     out
+}
+
+/// Fold the in-flight answer preview
+/// ([`SessionModel::streaming_text`](crate::model::SessionModel::streaming_text))
+/// as a trailing agent block, or nothing at all when there is none.
+///
+/// Both transcript renderers end on exactly this step, so it lives here rather
+/// than twice: neither of `entry_lines`' two view flags means anything for a
+/// preview (it cannot be selected, and tail-follow is a *thinking* affordance),
+/// and getting that pair wrong in one caller and not the other is the kind of
+/// drift that only shows up mid-stream.
+pub(crate) fn streaming_lines(
+    streaming: &str,
+    files: &[FileState],
+    expand_thinking: bool,
+    width: usize,
+    out: &mut Vec<Line<'static>>,
+) {
+    if streaming.is_empty() {
+        return;
+    }
+    let preview = TranscriptEntry::Text(streaming.to_string());
+    entry_lines(&preview, files, expand_thinking, false, false, width, out);
+}
+
+/// Whether the trailing transcript entry is a thought *still being written* —
+/// the one thing a collapsed thinking block needs in order to follow its tail
+/// instead of showing its head (see the `TranscriptEntry::Reasoning` arm of
+/// [`entry_body`]).
+///
+/// Positional, so it stays a pure function of the fold with no liveness flag to
+/// set and no timer to reset. A thought stops being live the instant anything
+/// lands after it, and *everything* that ends one appends its own entry: a tool
+/// call, the authoritative `Text`, `Complete`, `Error`. The streaming answer
+/// preview is the one end that has no entry yet — it is the earliest evidence
+/// the thought is over, arriving a beat before the `Text` that coalesces it.
+pub(crate) fn reasoning_is_live(transcript: &[TranscriptEntry], streaming: &str) -> bool {
+    matches!(transcript.last(), Some(TranscriptEntry::Reasoning(_))) && streaming.is_empty()
 }
 
 /// Whether an entry closes a readable block, and so is followed by a spacer.
@@ -82,15 +119,20 @@ fn closes_block(entry: &TranscriptEntry) -> bool {
     )
 }
 
+/// `live` marks the one entry that is still being written to — the trailing
+/// entry of an in-flight turn, per [`reasoning_is_live`]. Only a collapsed
+/// reasoning block reads it, and only to follow its tail instead of showing its
+/// head; every settled entry passes `false`.
 pub(crate) fn entry_lines(
     entry: &TranscriptEntry,
     files: &[FileState],
     expand_thinking: bool,
     expanded: bool,
+    live: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    entry_body(entry, files, expand_thinking, expanded, width, out);
+    entry_body(entry, files, expand_thinking, expanded, live, width, out);
     if closes_block(entry) {
         push_gap(out);
     }
@@ -135,11 +177,29 @@ fn plural(n: u64, one: &str, many: &str) -> String {
     }
 }
 
+/// Visual rows a collapsed reasoning block spends on content.
+///
+/// A *row* budget, not a line budget: a chain of thought is usually a handful
+/// of paragraph-long logical lines, so a five-*line* window on a wrapped
+/// thought is most of the pane, and how much of it you got would depend on how
+/// the model happened to punctuate. Counting rows is also what keeps the block
+/// the same height whether it is following a live thought or previewing a
+/// settled one — the stream stopping must not resize the block under the
+/// reader.
+const THINKING_ROWS: usize = 5;
+
+/// The fold marker on a collapsed reasoning block. Sits *below* a settled
+/// preview (there is more after what you can see) and *above* a live tail
+/// (there is more before it) — so the newest text is always the last row of a
+/// thought still being written.
+const THINKING_FOLD_HINT: &str = "⋯ ctrl+o expands this thought · ctrl+r all";
+
 fn entry_body(
     entry: &TranscriptEntry,
     files: &[FileState],
     expand_thinking: bool,
     expanded: bool,
+    live: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
@@ -201,22 +261,41 @@ fn entry_body(
                     block.push(Line::from(Span::styled(l.to_owned(), reasoning_style)));
                 }
             } else {
-                let preview_count = 3;
-                let mut shown = 0;
-                for l in text.lines() {
-                    if shown >= preview_count {
-                        break;
-                    }
-                    if !l.trim().is_empty() {
-                        block.push(Line::from(Span::styled(l.to_owned(), reasoning_style)));
-                        shown += 1;
-                    }
+                // Pre-wrap every non-blank line to the note's body column so
+                // the budget below is spent in visual rows. Blank lines are
+                // dropped rather than wrapped: in a window this small a
+                // paragraph break costs a row of thought and says nothing.
+                let mut rows: Vec<Line<'static>> = Vec::new();
+                for l in text.lines().filter(|l| !l.trim().is_empty()) {
+                    wrap_one_indent(
+                        Line::from(Span::styled(l.to_owned(), reasoning_style)),
+                        width.saturating_sub(LEAD),
+                        0,
+                        &mut rows,
+                    );
                 }
-                if total_lines > preview_count {
-                    block.push(Line::from(Span::styled(
-                        "⋯ ctrl+o expands this thought · ctrl+r all",
-                        Style::new().fg(theme::TEXT_TERTIARY),
-                    )));
+                let folded = rows.len().saturating_sub(THINKING_ROWS);
+                let hint = Line::from(Span::styled(
+                    THINKING_FOLD_HINT,
+                    Style::new().fg(theme::TEXT_TERTIARY),
+                ));
+                if live {
+                    // Follow the tail. A long turn is mostly spent inside one
+                    // thought, and a preview frozen on its opening lines reads
+                    // as a stalled session — the newest row is both the most
+                    // informative one and the only proof anything is moving.
+                    if folded > 0 {
+                        block.push(hint);
+                    }
+                    block.extend(rows.split_off(folded));
+                } else {
+                    // Settled: the head, which is where a thought states what
+                    // it is about. Scrollback is read top-down.
+                    rows.truncate(THINKING_ROWS);
+                    block.extend(rows);
+                    if folded > 0 {
+                        block.push(hint);
+                    }
                 }
             }
             push_note_block(

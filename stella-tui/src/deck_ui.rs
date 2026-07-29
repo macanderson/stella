@@ -578,7 +578,7 @@ pub struct DeckUi {
     /// Selected row in the slash popup (clamped to the matches at use time).
     pub slash_selected: usize,
     /// Whether reasoning renders in full on the Session tab. Off by default —
-    /// collapsed thinking shows a one-line live tail; `ctrl+r` toggles.
+    /// a collapsed thought follows its live tail; `ctrl+r` toggles.
     pub thinking_expanded: bool,
     /// Whether the queue editor popup is open (`ctrl+t`, or `↑` from an empty
     /// composer on the Session tab while prompts are queued).

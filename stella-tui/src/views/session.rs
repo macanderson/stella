@@ -20,8 +20,8 @@ use crate::deck::{AgentEntry, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::model::{FileState, TranscriptEntry};
 use crate::render::{
-    entry_lines, inner_height, inner_width, render_ask_user, render_hud, render_scope_review,
-    render_transcript_window,
+    entry_lines, inner_height, inner_width, reasoning_is_live, render_ask_user, render_hud,
+    render_scope_review, render_transcript_window, streaming_lines,
 };
 use crate::theme;
 use crate::transcript_nav::TurnDigest;
@@ -239,6 +239,7 @@ impl SessionFold {
                     files,
                     thinking,
                     expand_all || expanded.contains(&i),
+                    false,
                     width,
                     &mut self.prefix,
                 );
@@ -258,15 +259,13 @@ impl SessionFold {
                     files,
                     thinking,
                     expand_all || expanded.contains(&target),
+                    reasoning_is_live(transcript, streaming),
                     width,
                     &mut self.tail,
                 );
             }
         }
-        if !streaming.is_empty() {
-            let preview = TranscriptEntry::Text(streaming.to_string());
-            entry_lines(&preview, files, thinking, false, width, &mut self.tail);
-        }
+        streaming_lines(streaming, files, thinking, width, &mut self.tail);
     }
 
     /// Total visual rows (settled prefix + live tail).
