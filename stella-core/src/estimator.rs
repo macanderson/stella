@@ -287,16 +287,6 @@ impl CalibrationMap {
         }
     }
 
-    /// [`estimate_conversation_tokens`] corrected by `model`'s factor (same
-    /// `None` fallback as [`CalibrationMap::factor`]).
-    pub fn calibrated_conversation_tokens(
-        &self,
-        model: Option<&str>,
-        messages: &[CompletionMessage],
-    ) -> u64 {
-        (estimate_conversation_tokens(messages) as f64 * self.factor(model)).ceil() as u64
-    }
-
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Calibration>> {
         // Poisoning means a panic mid-record; the state is a plain f64+u32
         // pair that cannot be left torn — keep calibrating.

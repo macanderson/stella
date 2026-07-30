@@ -86,40 +86,53 @@ pub async fn reflect_on_turn(
     // Ask first for facts about the CODEBASE, and only then for notes about
     // the agent. The order is the point.
     //
-    // The previous framing asked, on failure, "what should change next time to
-    // avoid repeating this failure?" — a question about the agent. It reliably
-    // got an answer about the agent. Measured over ten mined lessons from a
-    // real run: eight were process self-critique, and *zero* recorded the
-    // repository conventions that decided whether the work actually passed.
-    // The lesson corpus was full of "the agent should be more proactive" and
-    // empty of "money is integer minor units in this repo".
+    // This prompt has now been wrong twice, in opposite directions, and both
+    // times the lifecycle downstream was blameless — retrieval cannot surface
+    // a fact that was never written down, and cannot decline one that was.
     //
-    // Nothing downstream could fix that. Retrieval cannot surface a fact that
-    // was never written down, so the whole lifecycle was faithfully
-    // accumulating, ranking and recalling commentary about itself.
+    // FIRST ERROR (#768): it asked "what should change next time to avoid
+    // repeating this failure?" — a question about the agent, which reliably got
+    // an answer about the agent. Eight of ten mined lessons were process
+    // self-critique; zero recorded a repository convention. Fixed by asking for
+    // facts about the codebase instead.
+    //
+    // SECOND ERROR (this change): the fix over-corrected into recording facts
+    // that are free to look up. Measured on a live store: 23 memories encoding
+    // six facts, every one of them a single file-read away — "commands are
+    // registered in registry.py" held seven times. The proving ground then
+    // measured what those memories are worth, and the answer was *negative*:
+    // hand-delivering exactly those conventions, perfectly worded, did not
+    // improve the pass rate and cost steps, because the agent could already
+    // read them faster than it could be told.
+    //
+    // The old prompt caused this directly. It asked for "where things live",
+    // and offered "amounts are stored as integer minor units; use
+    // money.parse_amount" as its model of a good lesson — which is exactly the
+    // class of fact that is cheaper to grep than to carry. It was teaching the
+    // wrong thing by example.
+    //
+    // The governing principle, now stated in the prompt as a test the model
+    // applies before writing anything down: a memory is worth its slot in a
+    // future prompt only in proportion to what it costs to rediscover. Surprise
+    // is the operational signal — if inspection would have told you, inspection
+    // will tell you again next time, for free.
     let task_frame = if succeeded {
         "This turn SUCCEEDED.\n\
-         FIRST, and most importantly: what did you learn about THIS CODEBASE \
-         that will still be true next week, on a completely different task? \
-         Conventions it enforces, invariants it relies on, where things live, \
-         steps that are required for a change to take effect, types or helpers \
-         you are expected to use. Succeeding by following a convention is the \
-         clearest evidence that the convention exists — record it as a flat \
-         statement of fact about the code, not as a description of what you \
-         did.\n\
-         SECOND, only if something is genuinely worth it: a note about how you \
-         worked. Most successful turns have nothing of this kind worth keeping."
+         What SURPRISED you? Record only what you could NOT have predicted by \
+         reading the code — something that contradicted a reasonable \
+         assumption, cost you a wrong attempt, or that you only know because \
+         you ran it and watched what happened. If nothing surprised you, \
+         return an empty list. Most successful turns teach nothing worth \
+         keeping, and saying so is the correct answer."
     } else {
         "This turn FAILED.\n\
-         FIRST, and most importantly: what did you learn about THIS CODEBASE \
-         that will still be true next week, on a completely different task? A \
-         failure usually means the code expected something you did not know — \
-         a required registration step, a type it insists on, a helper you were \
-         supposed to call, a place a thing has to be declared. Record that \
-         expectation as a flat statement of fact about the code.\n\
-         SECOND: the root cause in terms of your own approach — a wrong \
-         assumption, a missed file, a bad plan. If the failure was clearly \
-         external (network, timeout), return an empty list."
+         What did the code expect that reading it did not tell you? A failure \
+         is the cheapest evidence there is that something was not discoverable \
+         by inspection — a helper that looks usable and is not, an ordering \
+         that matters and is not stated, a check that fires from somewhere \
+         unobvious. Record that, as a flat statement of fact.\n\
+         If the failure was your own carelessness on something the code stated \
+         plainly, there is no lesson: return an empty list."
     };
     // `self_review` rides along in this same call rather than costing a second
     // one — the model has the transcript in front of it either way.

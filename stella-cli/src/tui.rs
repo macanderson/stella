@@ -45,18 +45,24 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// Selectable accent palette — `/color` switches the session's accent so
 /// multiple terminal windows running stella are visually distinct at a
 /// glance (see [`set_accent`], and [`rename_tab`] for the `/rename` sibling).
-// Sky first: it is the brand, and so the default. The rest are
-// personalisation only — `/color` exists so several terminal windows running
-// stella can be told apart at a glance, which needs hues that are *distinct*
-// rather than on-brand. `colored`'s named ANSI colors are the portable
-// stand-ins: sky≈bright-cyan, cyan≈bright-cyan, azure≈bright-blue,
-// violet≈bright-magenta, magenta≈magenta, mint≈green. `sky` and `cyan` land on
-// the same ANSI code — the brand hue is a light blue and the named set holds no
-// nearer distinct entry — so they are two names for one appearance here; only
-// `sky` is the brand, and `cyan` is kept so an existing `/color cyan` still
-// resolves.
+// The brand entry is first, and so the default. The rest are personalisation
+// only — `/color` exists so several terminal windows running stella can be told
+// apart at a glance, which needs hues that are *distinct* rather than on-brand.
+// `colored`'s named ANSI colors are the portable stand-ins, and the nearest one
+// to the brand's electric blue (`theme::ACCENT`, `#5AA0FF`) is bright-blue.
+//
+// It used to be bright-CYAN, from back when the identity was the pale "sky"
+// blue: the default accent stayed a cyan through two recolours while every
+// other surface moved to electric blue. The slug is deliberately NOT renamed —
+// `sky` is a name a user types at `/color`, not a brand token, and retiring it
+// would break muscle memory and any saved habit for no benefit. What was wrong
+// was the hue behind it, and that is what changed.
+//
+// `sky` and `azure` therefore land on the same ANSI code, exactly as `sky` and
+// `cyan` used to: the named set holds no second distinct blue. Both are kept so
+// an existing `/color azure` still resolves.
 const PALETTE: [(&str, Color); 6] = [
-    ("sky", Color::BrightCyan),
+    ("sky", Color::BrightBlue),
     ("cyan", Color::BrightCyan),
     ("azure", Color::BrightBlue),
     ("violet", Color::BrightMagenta),
@@ -485,15 +491,34 @@ fn compose_wordmark(text: &str) -> Vec<String> {
         .collect()
 }
 
-// Stellar gradient — a single restrained sky sweep, deep sky → sky, left to
-// right across the wordmark. These are the brand tokens `sky-deep` and `sky`
-// from stella-tui/src/palette.rs (the same pair `stella-tui`'s theme::ACCENT_DEEP
-// → ACCENT resolve to), duplicated rather than imported because that crate
-// speaks in ratatui `Color`s and this banner writes raw truecolor. Keep the two
-// in step: `stellar_stops_match_the_brand_tokens` below fails if they drift.
+/// The `(r, g, b)` behind a theme token, for the two banners in this crate
+/// that write raw truecolor escapes rather than ratatui cells.
+///
+/// The fallback is unreachable for a brand token — every one of them is a
+/// `Color::Rgb` — and exists only because `Color` is an open enum. It is
+/// deliberately a neutral grey rather than a guessed brand hue: a token that
+/// somehow stopped being truecolor should look obviously wrong, not
+/// plausibly on-brand.
+pub(crate) const fn token_rgb(color: ratatui::style::Color) -> (u8, u8, u8) {
+    match color {
+        ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+        _ => (0x80, 0x80, 0x80),
+    }
+}
+
+/// Stellar gradient — one restrained brand sweep, deep → bright, left to right
+/// across the wordmark.
+///
+/// Read out of [`stella_tui::theme`] rather than written here. The literals
+/// this replaced were two recolours stale: they still held the pale "sky" pair
+/// (`#38BDF8`/`#7DD3FC`) from an identity that had since gone to terminal green
+/// and then to electric blue. Nothing caught it because the only guard was a
+/// test asserting the same literals back — a copy checking itself. The banner
+/// writes raw truecolor and so cannot use ratatui `Color`s directly, but it can
+/// read them, which is the difference between a copy and a reference.
 const STELLAR_STOPS: [(u8, u8, u8); 2] = [
-    (0x38, 0xBD, 0xF8), // sky-deep
-    (0x7D, 0xD3, 0xFC), // sky
+    token_rgb(stella_tui::theme::ACCENT_DEEP),
+    token_rgb(stella_tui::theme::ACCENT),
 ];
 
 /// Color at horizontal position `t` ∈ `[0,1]` along the stellar gradient.
@@ -595,14 +620,35 @@ mod tests {
         assert_eq!(compose_wordmark("S?T"), compose_wordmark("ST"));
     }
 
-    /// The banner writes raw truecolor, so it cannot import stella-tui's
-    /// ratatui `Color`s and instead duplicates the two brand stops. This is the
-    /// guard that keeps the copy honest: the values must stay exactly the
-    /// `SKY_DEEP` and `SKY` tokens in stella-tui/src/palette.rs.
+    /// The banner writes raw truecolor, so it converts rather than renders —
+    /// but it must convert the LIVE brand tokens, never a copy of their values.
+    ///
+    /// This assertion used to read `(0x38, 0xBD, 0xF8)` / `(0x7D, 0xD3, 0xFC)`
+    /// on both sides: the constant checked against itself, which is no check at
+    /// all. It passed happily through two whole recolours while the banner kept
+    /// painting a retired palette. Comparing against `theme::` is what makes it
+    /// a guard.
     #[test]
-    fn stellar_stops_match_the_brand_tokens() {
-        assert_eq!(STELLAR_STOPS[0], (0x38, 0xBD, 0xF8), "sky-deep");
-        assert_eq!(STELLAR_STOPS[1], (0x7D, 0xD3, 0xFC), "sky");
+    fn stellar_stops_are_the_live_brand_tokens_not_a_copy_of_them() {
+        assert_eq!(
+            STELLAR_STOPS[0],
+            token_rgb(stella_tui::theme::ACCENT_DEEP),
+            "the gradient's deep stop must BE theme::ACCENT_DEEP"
+        );
+        assert_eq!(
+            STELLAR_STOPS[1],
+            token_rgb(stella_tui::theme::ACCENT),
+            "the gradient's bright stop must BE theme::ACCENT"
+        );
+        // And the conversion has to actually convert — a token silently
+        // falling through to the neutral grey would satisfy the equalities
+        // above while painting the wordmark grey.
+        assert_ne!(STELLAR_STOPS[0], (0x80, 0x80, 0x80));
+        assert_ne!(STELLAR_STOPS[1], (0x80, 0x80, 0x80));
+        assert_ne!(
+            STELLAR_STOPS[0], STELLAR_STOPS[1],
+            "a gradient needs two distinct stops"
+        );
     }
 
     /// Sky is the brand, so it is the default accent -- `/color` with no
@@ -613,6 +659,13 @@ mod tests {
         assert_eq!(ACCENT.load(Ordering::Relaxed) % PALETTE.len(), 0);
         assert!(set_accent("sky"));
         assert_eq!(PALETTE[ACCENT.load(Ordering::Relaxed)].0, "sky");
+        // …and it must be the BRAND hue, not merely first in the list. The
+        // default sat on bright-cyan through two recolours because nothing
+        // asserted which colour the default slug actually resolves to — only
+        // that it was called `sky`. Bright-blue is the nearest named ANSI
+        // stand-in for `theme::ACCENT` (`#5AA0FF`).
+        assert_eq!(PALETTE[0].1, Color::BrightBlue);
+        assert_eq!(accent(), Color::BrightBlue);
     }
 
     #[test]

@@ -21,6 +21,10 @@
 # origin/main, and it never leaves your working tree modified (the version
 # stamp is reverted on exit).
 #
+# ⚠ THIS IS THE DEGRADED RELEASE PATH — see the ALLOW_UNATTESTED gate below.
+# A release cut here is NOT byte-equivalent to one cut by release.yml and
+# carries NO build-provenance attestation. Use it only when Actions cannot run.
+#
 set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────────────────────────
@@ -43,6 +47,48 @@ ok()   { printf '\033[32m✔ %s\033[0m\n' "$*"; }
 die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 case "$BUMP" in patch|minor|major) ;; *) die "bump must be patch|minor|major (got: $BUMP)";; esac
+
+# ── Refuse to silently ship an unattested release ───────────────────────────
+# release.yml attests every tarball AND the SHA256SUMS file with
+# actions/attest-build-provenance: a Sigstore bundle bound to that workflow at
+# that commit, which nobody holding the release can reissue. This script cannot
+# produce one — attestation needs the OIDC token only a GitHub Actions job can
+# mint — so everything it publishes is checksum-only.
+#
+# That degradation is invisible at the other end. install.sh deliberately
+# distinguishes "no verifier available" from "verifier said no", and a release
+# with no attestation at all lands in the first bucket: `gh attestation verify`
+# reports "no attestation", install.sh logs one info line and installs anyway.
+# So cutting a release from here silently downgrades the supply-chain guarantee
+# for every user of that version, and the only one who can notice is the person
+# running this script.
+#
+# The artifacts also differ from CI's: the Linux targets below are zig
+# cross-compiles against the old glibc pinned in GLIBC above, where release.yml
+# builds them natively. Same tag, different bytes, depending on who cut it.
+#
+# None of that makes this path wrong — it exists because the org's Actions has
+# been billing-locked before and a release still had to ship. It makes it a
+# decision, so require it to be made out loud.
+if [ "${ALLOW_UNATTESTED:-}" != "1" ]; then
+  die "this local release path publishes NO build-provenance attestation.
+
+     Every user who installs the resulting version gets checksum-only
+     verification, and install.sh will not warn them loudly — it treats a
+     missing attestation as 'no verifier available', not as a failure.
+
+     Prefer the attested path: push the tag and let .github/workflows/release.yml
+     build, attest and publish it (see RELEASING.md).
+
+     If Actions genuinely cannot run and you accept shipping unattested
+     artifacts, re-run with:
+
+         ALLOW_UNATTESTED=1 scripts/release.sh ${BUMP}
+
+     and say so in the release notes so users know why STELLA_REQUIRE_PROVENANCE=1
+     will reject this version."
+fi
+info "ALLOW_UNATTESTED=1 — publishing checksum-only artifacts with no provenance."
 
 # ── Locate repo root (script lives in scripts/) ─────────────────────────────
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -35,15 +35,25 @@ fn host_header_gates_dns_rebinding() {
 /// Build a workspace with a seeded `.stella/private/store.db` shaped like the
 /// real schema (the subset the observatory reads).
 ///
-/// A hand-written *subset*, not a copy, and already a divergent one:
+/// A hand-written *subset*, not a copy, and deliberately a divergent one:
 /// `stella-store`'s shipped DDL also carries `executions.session_id`,
 /// `usage_complete` and `usage_status`, and `telemetry.call_role` and
-/// `usage_complete` — columns no query in this crate selects. Nothing
-/// checks the two schemas against each other, so a column this crate *does*
-/// read, renamed in `stella-store`, keeps this suite green and 500s the
-/// dashboard at runtime. Every INSERT below therefore names its columns:
-/// the fixture must survive the store growing another one, not silently
-/// depend on the column order of the day.
+/// `usage_complete` — columns no query in this crate selects. The point of
+/// the subset is speed and focus: these are routing and rendering tests, and
+/// they should not pay for a migration run to assert that a query string
+/// parses.
+///
+/// What used to be wrong with that is now covered elsewhere. Nothing checked
+/// the two schemas against each other, so a column this crate *does* read,
+/// renamed in `stella-store`, kept this suite green and 500'd the dashboard
+/// at runtime (#827). `tests/schema_conformance.rs` closes that: it builds a
+/// database through the real `Store::open` migration path and drives every
+/// route against it, so drift fails there. This fixture is free to stay a
+/// subset precisely because that gate exists.
+///
+/// Every INSERT below still names its columns: the fixture must survive the
+/// store growing another one, not silently depend on the column order of the
+/// day.
 fn seeded_workspace() -> TempDir {
     let dir = TempDir::new().unwrap();
     let dot = dir.path().join(".stella");
@@ -1014,7 +1024,32 @@ fn csp_admits_everything_the_embedded_dashboard_actually_uses() {
     // A header value may not carry a newline — it would split the head.
     assert!(!CSP.contains('\r') && !CSP.contains('\n'));
     assert!(INDEX_HTML.contains("<style>") && INDEX_HTML.contains("<script>"));
-    assert!(INDEX_HTML.contains("src=\"/assets/mark.svg\""));
+    // Every asset the page names must be same-origin *and* actually routed.
+    // Asserted over whichever attribute carries it rather than a fixed
+    // `src="…"`: the mark moved from an `<img src>` to a `<link rel=icon
+    // href>`, which is the same same-origin fetch and the same CSP question,
+    // but silently failed a literal-string check. What matters is that no
+    // reference points off-origin and none points at a 404.
+    let root = tempfile::tempdir().expect("temp workspace");
+    for attr in ["src=\"", "href=\""] {
+        for (_, rest) in INDEX_HTML
+            .match_indices(attr)
+            .map(|(i, m)| (i, &INDEX_HTML[i + m.len()..]))
+        {
+            let target = rest.split('"').next().unwrap_or_default();
+            assert!(
+                target.starts_with('/') || target.starts_with('#'),
+                "the page must reference nothing off-origin, found {target:?}"
+            );
+            if target.starts_with('/') {
+                assert_ne!(
+                    respond(root.path(), target).status,
+                    "404 Not Found",
+                    "the page references {target:?}, which no route serves"
+                );
+            }
+        }
+    }
 }
 
 /// Padding the request line to the 8 KiB head cap used to be served: the

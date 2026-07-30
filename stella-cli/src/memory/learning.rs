@@ -27,6 +27,12 @@ use super::{
 #[cfg(test)]
 mod guarantees;
 
+/// What [`SessionMemory::retain_unknown`] drops and keeps. A child module for
+/// the same reason as [`guarantees`]: the filter is private, and it is the
+/// filter itself that needs pinning, not the turn that happens to call it.
+#[cfg(test)]
+mod dedupe;
+
 impl SessionMemory {
     /// Post-turn self-reflection: one cheap model call producing 0-3
     /// durable lessons, stored as domain-tagged reflection memories AND
@@ -143,6 +149,18 @@ impl SessionMemory {
         // at recall is what makes forgetting durable — an unsuppressed lesson
         // would land in the log and stay re-mineable forever.
         let lessons = self.retain_unforgotten(turn_store.as_ref(), lessons);
+        // Then drop what we already know. The loop re-learns the same facts in
+        // slightly different words every turn, and only byte-identical content
+        // collapses on its own (a memory's lineage is seeded from its content
+        // hash), so paraphrases accumulate unchecked.
+        //
+        // Measured on a live treatment store: 23 stored memories encoding
+        // **six** distinct facts, with "commands are registered in registry.py"
+        // held seven separate times — 61% of the store was restatement. That is
+        // not merely untidy. Recall has a budget, so three slots spent on three
+        // phrasings of one fact are three slots not spent on the other five,
+        // and the store gets worse at covering the codebase the longer it runs.
+        let lessons = self.retain_unknown(lessons);
 
         if lessons.is_empty() {
             return ReflectionReport {
@@ -291,6 +309,54 @@ impl SessionMemory {
                 !stella_store::is_suppressed(&l.lesson, forgotten.iter().map(String::as_str))
             })
             .collect()
+    }
+
+    /// Drop lessons that restate something the store already holds.
+    ///
+    /// The same predicate [`Self::retain_unforgotten`] uses, pointed at live
+    /// memories instead of tombstones. The machinery for "is this the same
+    /// lesson in different words" already existed; it had simply never been
+    /// asked the question *do we know this already*, only *did the user delete
+    /// this*.
+    ///
+    /// Deliberately silent about *re-*learning: a fact mined twice is weak
+    /// evidence it matters, and a future change could raise salience on the
+    /// existing memory instead of discarding the restatement. Discarding is the
+    /// conservative half — it cannot make the store worse, and it is what stops
+    /// one fact crowding out five at recall time.
+    ///
+    /// Restatement matching is fuzzy by construction (`SIMILARITY_THRESHOLD`
+    /// over token sets, the same predicate [`stella_store::is_suppressed`]
+    /// applies), so this can drop a genuinely new lesson that happens to share
+    /// most of its vocabulary with an old one. That trade is the same one
+    /// forgetting already makes,
+    /// and it errs the right way here: a missed new memory costs one fact,
+    /// while an unchecked duplicate costs a recall slot on every future turn.
+    fn retain_unknown(&self, lessons: Vec<ReflectionLesson>) -> Vec<ReflectionLesson> {
+        let known: Vec<String> = match self.store.memory_nodes() {
+            // Compare against the memory's own text, which is what a later
+            // recall would inject — the display label is truncated.
+            Ok(nodes) => nodes.into_iter().map(|n| n.content).collect(),
+            // A store we cannot read is not evidence that nothing is stored, so
+            // keep the lessons rather than risk dropping the first ones a fresh
+            // workspace ever learns.
+            Err(_) => return lessons,
+        };
+        let mut kept: Vec<ReflectionLesson> = Vec::with_capacity(lessons.len());
+        for lesson in lessons {
+            // Check against this batch too: one reflection call returns up to
+            // three lessons and routinely says the same thing twice.
+            let already =
+                stella_store::is_suppressed(&lesson.lesson, known.iter().map(String::as_str))
+                    || stella_store::is_suppressed(
+                        &lesson.lesson,
+                        kept.iter().map(|l: &ReflectionLesson| l.lesson.as_str()),
+                    );
+            if !already {
+                kept.push(lesson);
+            }
+        }
+        kept
     }
 
     /// Mine the whole reflection log for recurring lessons and auto-create

@@ -56,14 +56,10 @@ fi
 
 # --- 1. Single home ---------------------------------------------------------
 # Any OTHER tracked markdown file restating an invariant in normative form is a
-# second copy. docs/llms.txt is generated from the website (`make llms-txt`),
-# so a hit there is an artifact of its source, not an editable duplicate.
+# second copy.
 while IFS= read -r file; do
   [ -n "$file" ] || continue
   [ "$file" = "$home" ] && continue
-  case "$file" in
-    docs/llms.txt) continue ;;
-  esac
 
   dupes="$(grep -nE "$invariant_re" "$file" || true)"
   [ -n "$dupes" ] || continue
@@ -103,7 +99,6 @@ fi
 # /dev/null pads the file list: an xargs batch of exactly one file would make
 # grep omit the "file:" prefix and the parse below would misread the hit.
 cited="$(git ls-files '*.rs' '*.md' \
-  | grep -v '^docs/llms\.txt$' \
   | xargs grep -noE 'AGENTS\.md[^0-9]{0,20}#?[0-9]+' /dev/null 2>/dev/null \
   | grep -iE 'invariant|AGENTS\.md #' || true)"
 

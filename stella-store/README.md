@@ -132,6 +132,39 @@ belong to `stella-context`, `stella-graph`, and `stella-fleet` — but they reac
 their files through this crate's `workspace_private_sqlite_path`, so the
 `.stella/private/` hardening applies to them too.
 
+## Durability — what survives what
+
+`STELLA_STORE_DURABILITY` selects one of three levels. They are three
+different failure models, not three speeds. The per-event costs are measured
+on this crate's own write path (one transaction per event, 2 KiB payload,
+APFS on SSD) — not estimated:
+
+| level | ms/event | process kill | kernel panic | power loss |
+|---|---|---|---|---|
+| `normal` | 0.022 | ✅ | ❌ | ❌ |
+| `full` *(default)* | 0.037 | ✅ | ✅ | ❌ |
+| `paranoid` | 3.99 | ✅ | ✅ | ✅ |
+
+`full` is the default because it closes the kernel-panic and forced-reboot
+window for **15 microseconds an event** — roughly 75 ms across a whole turn,
+which nobody can perceive.
+
+`paranoid` adds `PRAGMA fullfsync`, which on macOS is the only thing that
+forces the **drive's own write cache** to disk; a plain `fsync()` there
+returns once data reaches the drive, not once the drive has persisted it. It
+is the only level that genuinely survives losing power, and it costs **180×**
+per event — about twenty seconds of pure fsync across a turn that makes a few
+thousand events. That is a work stoppage, not a trade-off, which is why the
+complete answer is opt-in.
+
+What none of this decides is whether *derived* data survives, because that no
+longer depends on fsync at all. `events` is the source of truth and every
+projection folds from it, so `reconcile_interrupted_executions` rebuilds them
+from whatever log survived — see [Key concepts](#key-concepts). Before v18 the
+`tool_calls` projection was built once at turn end and a killed turn lost its
+calls permanently, with the events sitting right there. That was the real
+durability bug; the fsync window is the tail risk that remains.
+
 ## Gotchas
 
 - Accounting is **fail-closed**: `executions.usage_complete`/`usage_status`

@@ -1,20 +1,23 @@
 ---
 title: stella cloud
-description: Show or set the org and workspace identity that scopes replicated telemetry — a deliberate stub today, with the OAuth login landing on the same file later.
+description: Read and set the org and workspace identity that scopes replicated telemetry, and drain that telemetry to an org intake you configure.
 ---
 
-Every row [`stella usage`](/docs/commands/usage) replicates into the hub carries an identity: which organization it reports into, which workspace it came from, and which repository that workspace maps to. `stella cloud` is where you read that identity and set it.
+Every row [`stella usage`](/docs/commands/usage) replicates into the hub carries an identity: which organization it reports into, which workspace it came from, and which repository that workspace maps to. `stella cloud` is where you read that identity, set it, and — if you configure an endpoint — upload under it.
 
-It is a deliberate **stub**. `register` persists ids locally and mints a durable workspace id; the OAuth login that will attach a token lands later, on the same file. Nothing is uploaded today, and registering does not change what telemetry is collected — only which ids it is stamped with.
+The OAuth login is still a **stub**: `register` persists ids locally and mints a durable workspace id, and the login that will attach a token lands later on the same file. Registration alone uploads nothing and does not change what telemetry is collected, only which ids it is stamped with.
 
 ## Synopsis
 
 ```bash
 stella cloud status
 stella cloud register --org <ORG_ID> [--workspace-id <ID>]
+stella cloud sync
+stella cloud logout
+stella cloud deregister
 ```
 
-A subcommand is required. Neither one needs a provider or an API key.
+A subcommand is required. None of them needs a provider or an API key.
 
 ## What it does
 
@@ -127,9 +130,66 @@ The written file is small and readable:
 {"workspace_id": "6f1d8a20-4c3e-4a71-9a55-2d0be1c7f5aa"}
 ```
 
-## What registration does not do
+### `stella cloud sync`
 
-- **It does not upload anything.** There is no cloud sync today; `register` writes two local files. Telemetry replicates into `~/.stella/usage.db` whether you register or not.
+Drain staged hub telemetry to the org intake configured in `~/.stella/cloud.json`'s
+`drain` block. This is the one command in this group that performs network I/O.
+
+```bash
+stella cloud sync
+```
+
+It is a no-op unless **both** an `org_id` (from `register`) and a `drain` block are
+present — no block, no network. The block also carries the intake credential, which is
+why `cloud.json` is written owner-only:
+
+```json title="~/.stella/cloud.json"
+{
+  "org_id": "acme",
+  "drain": {
+    "url": "https://intake.example.com/v1/telemetry",
+    "format": "stella",
+    "token": "…",
+    "batch_size": 200
+  }
+}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `url` | required | The HTTPS org intake batches are POSTed to |
+| `format` | `stella` | Wire format: `stella` (native schema-versioned batch) or `otel` (OTLP). An unknown value fails closed |
+| `token` | none | Bearer credential for the intake. `oauth_token` wins when both exist |
+| `batch_size` | `200` | Rows per POST |
+
+Rows the intake rejects *permanently* are dead-lettered and the cursor steps over them so
+newer rows keep flowing; they surface under [`status`](#quarantined-rows). A transient
+failure is reported as retryable — re-run the command.
+
+<Callout type="warn">
+  This is a **second, separate egress path** from the
+  [Oxagen Enterprise managed export](/docs/telemetry#oxagen-enterprise-managed-export).
+  It has its own wire contract, its own endpoint, and its own opt-in — a `drain` block in
+  a file you write yourself, pointed at an intake you operate. Enterprise enrollment does
+  not enable it and it does not enable enterprise enrollment.
+</Callout>
+
+### `stella cloud logout`
+
+Destroy the stored credentials and remove the `drain` block, halting upload. Registration
+and local hub telemetry are retained.
+
+### `stella cloud deregister`
+
+`logout` plus clearing the org id, returning the installation to unregistered. Hub rows
+keep the org they were captured under; un-synced rows for the old org stop draining and
+stay local. Destroy them explicitly with `stella usage prune --force` if that is intended.
+
+## What registration alone does not do
+
+- **It does not upload anything by itself.** `register` writes two local files. Upload
+  needs a `drain` block *and* an explicit `stella cloud sync`. Telemetry replicates into
+  `~/.stella/usage.db` whether you register or not.
 - **It does not change what is collected.** Only the ids stamped onto each row change — from `NULL` org and workspace to yours.
 - **It does not re-stamp history.** Rows written before registration keep their `NULL` org, which is why `stella usage report --org <id>` excludes them.
 

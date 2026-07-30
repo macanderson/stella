@@ -56,9 +56,9 @@
 //!
 //! # Malformed-call repair
 //!
-//! Every existing adapter's stream aggregator falls back to
+//! Every adapter's stream aggregator in `stella-model` falls back to
 //! `serde_json::Value::Null` when a tool call's streamed argument JSON
-//! doesn't parse (`stella-model/src/{zai,anthropic}.rs`). `run_turn`
+//! doesn't parse. `run_turn`
 //! recognizes that sentinel structurally: rather than handing `Null` to a
 //! tool that expects an object, it short-circuits to a named
 //! `ToolOutput::Error` telling the model its own JSON was malformed, so the
@@ -1018,17 +1018,14 @@ impl<'a> Engine<'a> {
     ) -> Option<TurnOutcome> {
         let records = recent_call_records(messages, result_identities);
         let verdict = detect_loop(&records, self.config.loop_detection);
-        if !verdict.is_loop() {
-            return None;
-        }
-        let reason = verdict
-            .evidence()
-            .unwrap_or_else(|| "loop detected".to_string());
         // The typed twin of the prose steer/abort (receipts spec §6.3): a
         // receipt parses this instead of string-matching "stuck-loop
         // detected:" prefixes. Emitted for both outcomes — `aborted` says
-        // whether this detection steered or killed the turn.
+        // whether this detection steered or killed the turn. Matching the
+        // verdict is also the healthy-turn early return, so there is exactly
+        // one place that decides "is this a loop".
         let (kind, pattern, repeats) = match &verdict {
+            LoopVerdict::NoLoop => return None,
             LoopVerdict::ExactRepeat { tool, count, .. } => {
                 ("exact_repeat", vec![tool.clone()], *count)
             }
@@ -1037,8 +1034,10 @@ impl<'a> Engine<'a> {
                 pattern.iter().map(|c| c.name.clone()).collect(),
                 *repeats,
             ),
-            LoopVerdict::NoLoop => return None,
         };
+        let reason = verdict
+            .evidence()
+            .unwrap_or_else(|| "loop detected".to_string());
         let _ = events.send(AgentEvent::LoopDetected {
             turn_instance: self.config.turn_instance,
             kind: kind.to_string(),
@@ -1367,8 +1366,9 @@ impl<'a> Engine<'a> {
             armed: true,
         };
         while let Some((call, output, duration_ms)) = in_flight.next().await {
-            guard.pool.insert(
-                call.call_id.clone(),
+            let call_id = call.call_id.clone();
+            let displaced = guard.pool.insert(
+                call_id.clone(),
                 SpeculativeResult {
                     name: call.name,
                     input: call.input,
@@ -1376,6 +1376,19 @@ impl<'a> Engine<'a> {
                     duration_ms,
                 },
             );
+            // The pool is keyed by `call_id`, and a call_id is only unique
+            // within ONE response — `loop_evidence::CallIdentityKey` names the
+            // adapters that recycle them. A second announcement under the same
+            // id evicts the first, whose tool already ran real I/O and can
+            // never be harvested or discarded at dispatch. Account for it here
+            // rather than dropping it silently (#370).
+            if let Some(displaced) = displaced {
+                let _ = guard.events.send(AgentEvent::SpeculationDiscarded {
+                    call_id,
+                    name: displaced.name,
+                    reason: SPECULATION_DISCARD_HARVEST_MISMATCH.to_string(),
+                });
+            }
         }
         guard.harvest()
     }

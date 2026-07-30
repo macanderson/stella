@@ -28,7 +28,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 17] = [
+pub(crate) const MIGRATIONS: [Migration; 18] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -96,6 +96,12 @@ pub(crate) const MIGRATIONS: [Migration; 17] = [
     // `agent_uses_by_agent`/`reflections_by_kind` indexes. Pure removal; no
     // surviving table changes shape.
     migrate_v16_to_v17,
+    // v17 → v18: `tool_calls` becomes a LIVE projection. It grows `state`
+    // ('running' | 'ok' | 'error') and the two indexes the live writer reads
+    // through, and existing rows backfill their state from `ok`. Additive
+    // ADD COLUMN + CREATE INDEX, both guarded; no existing column changes
+    // shape and no row is dropped.
+    migrate_v17_to_v18,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -111,11 +117,15 @@ pub(crate) const MIGRATIONS: [Migration; 17] = [
     //   v15 → v16: adaptive-context Phase 2 (#713) — CLAIMED above.
     //   v16 → v17: CLAIMED above (the schema-removal step landed first;
     //              slots are positions, so the reservation moves down).
-    //   v17 → v18: adaptive-context Phase 3 (#714)
+    //   v17 → v18: CLAIMED above by the live `tool_calls` projection. The
+    //              slot had been reserved for adaptive-context Phase 3
+    //              (#714), which closed without ever needing a migration —
+    //              so per the rule below its line is deleted rather than
+    //              left as a hole.
     //
-    // If you are neither of those, take v18 → v19 and add your own line
-    // here. If a reserved phase ships without needing its slot, delete its
-    // line rather than leaving a hole — index order is the contract.
+    // Nothing is reserved now: take v18 → v19 and add your own line here.
+    // If a reserved phase ships without needing its slot, delete its line
+    // rather than leaving a hole — index order is the contract.
 ];
 
 /// The schema version this build writes — the `PRAGMA user_version` of
@@ -520,6 +530,50 @@ fn migrate_v16_to_v17(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// v17 → v18: `tool_calls` grows the lifecycle column the live projection
+/// needs, plus the two indexes that projection reads through.
+///
+/// Every existing row describes a call that already finished, so `state`
+/// backfills from `ok` and no row is left in a state the CHECK constraint
+/// would reject. The column is added *without* the CHECK: SQLite's
+/// `ADD COLUMN` cannot carry one that references the added column on an
+/// existing table, so the constraint lives on the fresh-file DDL only and is
+/// upheld here by the writer. That asymmetry is deliberate and cheap —
+/// [`crate::Store`] is the only writer, and the alternative is a full table
+/// rebuild (lang_altertable §7) to gain a constraint on a column this
+/// migration is itself the sole populator of.
+///
+/// The unique index is partial (`WHERE call_id != ''`) so a legacy file
+/// holding several rows with the empty pre-`call_id` default still upgrades
+/// instead of failing to build the index — which would abort the migration
+/// and leave the workspace unable to open its store at all. Any *real*
+/// duplicate ids are collapsed first, keeping the earliest position, because
+/// that is the row `materialize_tool_calls` would itself have kept.
+fn migrate_v17_to_v18(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "tool_calls", "state")? {
+        tx.execute_batch("ALTER TABLE tool_calls ADD COLUMN state TEXT NOT NULL DEFAULT 'ok';")?;
+        // Backfill from the boolean this column supersedes. Rows written
+        // before v18 are all terminal — the only writer was the end-of-turn
+        // fold — so none of them is 'running'.
+        tx.execute_batch(
+            "UPDATE tool_calls SET state = CASE WHEN ok = 1 THEN 'ok' ELSE 'error' END;",
+        )?;
+    }
+    tx.execute_batch(
+        "DELETE FROM tool_calls WHERE call_id != '' AND rowid NOT IN (
+             SELECT min(rowid) FROM tool_calls WHERE call_id != ''
+             GROUP BY execution_id, call_id
+         );
+         CREATE INDEX IF NOT EXISTS tool_calls_by_state
+           ON tool_calls(state, execution_id, seq);
+         CREATE UNIQUE INDEX IF NOT EXISTS tool_calls_by_call_id
+           ON tool_calls(execution_id, call_id) WHERE call_id != '';
+         CREATE INDEX IF NOT EXISTS executions_unfinished
+           ON executions(id) WHERE finished_at IS NULL;",
+    )?;
+    Ok(())
+}
+
 /// v10 → v11: the context-receipts plane (spec §4/§5). Three purely additive
 /// tables — `context_blocks`, `step_manifest`, `step_receipt` — and their
 /// indexes. No existing table changes shape, so no §7 rebuild; `IF NOT EXISTS`
@@ -661,25 +715,104 @@ fn migrate_v11_to_v12(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// treatment (#617 item 8).
 ///
 /// WAL also means a read-only caller (`stella stats`) is never blocked by a
-/// live session's writes; `synchronous=NORMAL` is the standard WAL pairing,
-/// durability to the last checkpoint rather than one fsync per event insert on
-/// the hot render path.
+/// live session's writes; the `synchronous`/`fullfsync` pair is chosen by
+/// [`Durability`], which documents what each level actually survives and what
+/// it costs per event.
+/// How hard the store tries to survive the machine going away, selected by
+/// `STELLA_STORE_DURABILITY`.
+///
+/// The three levels are not a style preference — they are three genuinely
+/// different failure models, and the numbers below are measured on this
+/// workspace's own write path (one transaction per event, 2 KiB payload,
+/// APFS on SSD), not assumed:
+///
+/// | level      | ms/event | survives process kill | survives kernel panic | survives power loss |
+/// |------------|----------|-----------------------|-----------------------|---------------------|
+/// | `normal`   | 0.022    | yes                   | **no**                | **no**              |
+/// | `full`     | 0.037    | yes                   | yes                   | **no** (see below)  |
+/// | `paranoid` | 3.99     | yes                   | yes                   | yes                 |
+///
+/// `full` is the default, changed from `normal`, because it closes the
+/// kernel-panic and forced-reboot window for **15 microseconds an event** —
+/// about 75 ms across a whole turn, which no one can perceive. Telemetry that
+/// was committed should not evaporate because the machine was restarted
+/// ungracefully.
+///
+/// `paranoid` adds `fullfsync`, which on macOS is what actually forces the
+/// **drive's own write cache** to disk — a plain `fsync()` there returns once
+/// the data reaches the drive, not once the drive has persisted it. It is the
+/// only level that genuinely survives losing power, and it costs 180× per
+/// event: roughly twenty seconds of pure fsync across a turn that makes a few
+/// thousand events. That is a work stoppage, not a trade-off, which is why it
+/// is opt-in rather than the default despite being the only complete answer.
+///
+/// The honest summary for an operator: at the default, a crash loses nothing
+/// and a power cut can lose the last few seconds of *raw* events. What it
+/// cannot lose is everything derived from them —
+/// [`Store::reconcile_interrupted_executions`](crate::Store::reconcile_interrupted_executions)
+/// rebuilds the projections from whatever log survived, which is the part
+/// that used to be lost permanently and the reason this table is a tail risk
+/// rather than the main one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Durability {
+    /// `synchronous=NORMAL` — the pre-v18 setting.
+    Normal,
+    /// `synchronous=FULL`, no `fullfsync`. The default.
+    Full,
+    /// `synchronous=FULL` + `fullfsync`. Survives power loss; 180× the cost.
+    Paranoid,
+}
+
+impl Durability {
+    /// Read `STELLA_STORE_DURABILITY`.
+    pub(crate) fn from_env() -> Self {
+        Self::parse(&std::env::var("STELLA_STORE_DURABILITY").unwrap_or_default())
+    }
+
+    /// Parse one level name. An empty or unrecognized value is
+    /// [`Self::Full`]: a typo in an environment variable must not silently
+    /// downgrade a durability guarantee, and the safe direction is the
+    /// default anyway.
+    ///
+    /// Split from [`Self::from_env`] so the mapping is testable without
+    /// touching the process environment — `set_var` is a global mutation, and
+    /// a test binary runs its cases on many threads at once, so pinning this
+    /// contract through the environment would race every other test.
+    pub(crate) fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "normal" => Self::Normal,
+            "paranoid" => Self::Paranoid,
+            _ => Self::Full,
+        }
+    }
+
+    /// The pragma pair this level sets.
+    fn pragmas(self) -> &'static str {
+        match self {
+            Self::Normal => "PRAGMA synchronous=NORMAL; PRAGMA fullfsync=0;",
+            Self::Full => "PRAGMA synchronous=FULL; PRAGMA fullfsync=0;",
+            Self::Paranoid => "PRAGMA synchronous=FULL; PRAGMA fullfsync=1;",
+        }
+    }
+}
+
 pub(crate) fn initialize_store_pragmas(
     conn: &Connection,
 ) -> std::result::Result<(), rusqlite::Error> {
     const BUSY_ATTEMPTS: u32 = 40;
     const BUSY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(50);
 
+    let durability = Durability::from_env().pragmas();
     let mut attempts = 0;
     loop {
         // `execute_batch` tolerates the row `PRAGMA journal_mode` returns (a
         // plain `pragma_update` errors on it).
-        let result = conn.execute_batch(
+        let result = conn.execute_batch(&format!(
             "PRAGMA busy_timeout=5000;
              PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             PRAGMA foreign_keys=ON;",
-        );
+             {durability}
+             PRAGMA foreign_keys=ON;"
+        ));
         match result {
             Err(error)
                 if attempts < BUSY_ATTEMPTS

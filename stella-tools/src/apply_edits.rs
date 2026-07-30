@@ -127,14 +127,21 @@ pub(crate) fn simulate_batch(input: &Value, path: &str, current: &str) -> Option
     let mut touched = false;
     for edit in edits.iter().filter(|e| e.path == path) {
         touched = true;
-        let count = content.matches(&edit.old_string).count();
+        // Same CRLF reconciliation the validate phase applies, so the gate
+        // keeps judging exactly the bytes apply would write.
+        let promoted = crate::edit::crlf_promoted(&content, &edit.old_string, &edit.new_string);
+        let (old, new) = match &promoted {
+            Some((old, new)) => (old.as_str(), new.as_str()),
+            None => (edit.old_string.as_str(), edit.new_string.as_str()),
+        };
+        let count = content.matches(old).count();
         if count == 0 || (count > 1 && !edit.replace_all) {
             return None;
         }
         content = if edit.replace_all {
-            content.replace(&edit.old_string, &edit.new_string)
+            content.replace(old, new)
         } else {
-            content.replacen(&edit.old_string, &edit.new_string, 1)
+            content.replacen(old, new, 1)
         };
     }
     touched.then_some(content)
@@ -218,7 +225,16 @@ impl Tool for ApplyEdits {
                     }
                 }
                 let (_, _, original, simulated) = files.get_mut(&key).expect("inserted above");
-                let count = simulated.matches(&edit.old_string).count();
+                // A needle copied out of `read_file`'s render carries LF
+                // newlines even for a CRLF file — see
+                // [`crate::edit::crlf_promoted`].
+                let promoted =
+                    crate::edit::crlf_promoted(simulated, &edit.old_string, &edit.new_string);
+                let (old_string, new_string) = match &promoted {
+                    Some((old, new)) => (old.as_str(), new.as_str()),
+                    None => (edit.old_string.as_str(), edit.new_string.as_str()),
+                };
+                let count = simulated.matches(old_string).count();
                 if count == 0 {
                     // A prior edit in this batch consuming the match is a
                     // composition mistake, not drift — say which it is.
@@ -257,9 +273,9 @@ impl Tool for ApplyEdits {
                     };
                 }
                 *simulated = if edit.replace_all {
-                    simulated.replace(&edit.old_string, &edit.new_string)
+                    simulated.replace(old_string, new_string)
                 } else {
-                    simulated.replacen(&edit.old_string, &edit.new_string, 1)
+                    simulated.replacen(old_string, new_string, 1)
                 };
                 EditVerdict::Ok { occurrences: count }
             };
@@ -638,6 +654,41 @@ mod tests {
             ToolOutput::Error { message } => assert!(message.contains("ceiling"), "{message}"),
             ToolOutput::Ok { content } => panic!("expected error, got: {content}"),
         }
+    }
+
+    /// The batch path carries the same CRLF reconciliation `edit_file` does —
+    /// see [`crate::edit::crlf_promoted`]. Without it a five-file rename in a
+    /// Windows-line-ending repo failed validation on every multi-line edit and
+    /// wrote nothing.
+    #[tokio::test]
+    async fn a_multi_line_batch_edit_of_a_crlf_file_lands_and_keeps_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("win.rs"), "fn a() {\r\n    one();\r\n}\r\n").unwrap();
+
+        let result = ApplyEdits::default()
+            .execute(
+                &serde_json::json!({ "edits": [
+                    edit("win.rs", "fn a() {\n    one();", "fn a() {\n    two();"),
+                ]}),
+                dir.path(),
+            )
+            .await;
+        assert!(!result.is_error(), "{result:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("win.rs")).unwrap(),
+            "fn a() {\r\n    two();\r\n}\r\n"
+        );
+    }
+
+    #[test]
+    fn simulate_batch_reconciles_crlf_like_the_validate_phase() {
+        let input = serde_json::json!({ "edits": [
+            edit("a.sql", "one\ntwo", "one\nTWO"),
+        ]});
+        assert_eq!(
+            simulate_batch(&input, "a.sql", "one\r\ntwo\r\n").as_deref(),
+            Some("one\r\nTWO\r\n")
+        );
     }
 
     #[tokio::test]

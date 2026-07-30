@@ -57,7 +57,7 @@ impl HookRunner for ShellHookRunner {
             command: action.command.clone(),
             message: e.to_string(),
         })?;
-        // Capture the pid before `wait_with_output` takes ownership.
+        // Capture the pid before the capped wait takes ownership.
         #[cfg(unix)]
         let pid = child.id().unwrap_or(0) as i32;
         // Cancellation backstop: a dropped future (the session ending mid-hook)
@@ -66,7 +66,7 @@ impl HookRunner for ShellHookRunner {
         let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         // Feed the payload on a DETACHED task and let the timeout-bounded
-        // `wait_with_output` below drain stdout concurrently. Writing inline
+        // capped wait below drain stdout concurrently. Writing inline
         // before the wait was a hang: a hook that never reads stdin blocks the
         // write once the payload exceeds the OS pipe buffer (~64 KiB), so the
         // session hung forever, before the timeout window even opened. Writing
@@ -83,14 +83,17 @@ impl HookRunner for ShellHookRunner {
         }
 
         let timeout_ms = action.effective_timeout_ms();
+        // Capped capture: a hook is repository- or operator-authored shell, so
+        // the volume it prints is not Stella's to trust — `wait_with_output`
+        // would hold all of it (see `crate::exec::MAX_CAPTURE_BYTES`).
         let waited = tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
-            child.wait_with_output(),
+            crate::exec::wait_with_capped_output(child, crate::exec::MAX_CAPTURE_BYTES),
         )
         .await;
         match waited {
             // Timeout elapsed: kill the whole group, then let dropping the
-            // in-flight `wait_with_output` future reap the direct child via
+            // in-flight wait future reap the direct child via
             // `kill_on_drop`.
             Err(_) => {
                 #[cfg(unix)]

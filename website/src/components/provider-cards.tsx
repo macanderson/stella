@@ -11,6 +11,11 @@ import { ProviderLogo } from "@/components/provider-logos";
  * ever found by a reader who tries it and fails. One typed record, two call
  * sites.
  *
+ * The card shows the provider's name as text beside its logomark rather than
+ * as a wordmark lockup. The name is then selectable, searchable, and indexed;
+ * a wordmark is none of those, and ten of them side by side turned the grid
+ * into a logo wall.
+ *
  * The wire `dialect` is worth carrying per provider: it is what "vendor-
  * agnostic" actually cashes out to. Stella speaks each vendor's own protocol
  * rather than normalizing everything through one OpenAI-shaped adapter, so the
@@ -22,6 +27,13 @@ export interface ProviderSpec {
   /** Registry id — the `provider` half of `--model provider/model`. */
   id: string;
   name: string;
+  /**
+   * Deep link into the single API Providers page. These were ten separate
+   * pages until the provider docs were consolidated; the anchors are the
+   * heading ids that page actually emits, so a reworded heading breaks a link
+   * here and must be re-checked against the rendered HTML, not guessed from
+   * the heading text.
+   */
   href: string;
   /** One line on when you would pick this provider over the others. */
   blurb: string;
@@ -35,7 +47,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "anthropic",
     name: "Anthropic",
-    href: "/docs/api-providers/anthropic",
+    href: "/docs/api-providers#anthropic",
     blurb: "The strongest coding and agentic models in the catalog, with first-class prompt caching.",
     env: "ANTHROPIC_API_KEY",
     defaultModel: "claude-fable-5",
@@ -44,7 +56,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "openai",
     name: "OpenAI",
-    href: "/docs/api-providers/openai",
+    href: "/docs/api-providers#openai",
     blurb: "A strong worker and the usual second family for cross-family judging.",
     env: "OPENAI_API_KEY",
     defaultModel: "gpt-5.5",
@@ -53,7 +65,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "gemini",
     name: "Google Gemini",
-    href: "/docs/api-providers/gemini",
+    href: "/docs/api-providers#google-gemini",
     blurb: "Very large context windows at a low price — the long-document worker.",
     env: "GEMINI_API_KEY (GOOGLE_API_KEY)",
     defaultModel: "gemini-3-pro",
@@ -62,7 +74,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "vertex",
     name: "Google Vertex AI",
-    href: "/docs/api-providers/vertex",
+    href: "/docs/api-providers#google-vertex-ai",
     blurb: "The same Gemini models billed through your GCP project, for enterprises that require it.",
     env: "VERTEX_ACCESS_TOKEN",
     defaultModel: "gemini-3-pro",
@@ -71,7 +83,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "bedrock",
     name: "Amazon Bedrock",
-    href: "/docs/api-providers/bedrock",
+    href: "/docs/api-providers#amazon-bedrock",
     blurb: "Claude and friends inside your AWS account, on your existing IAM and billing.",
     env: "AWS_ACCESS_KEY_ID",
     defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -80,7 +92,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "xai",
     name: "xAI",
-    href: "/docs/api-providers/xai",
+    href: "/docs/api-providers#xai",
     blurb: "Grok, over the OpenAI-compatible dialect.",
     env: "XAI_API_KEY",
     defaultModel: "grok-4",
@@ -89,7 +101,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "deepseek",
     name: "DeepSeek",
-    href: "/docs/api-providers/deepseek",
+    href: "/docs/api-providers#deepseek",
     blurb: "Very cheap per token — the reference budget worker.",
     env: "DEEPSEEK_API_KEY",
     defaultModel: "deepseek-chat",
@@ -98,7 +110,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "zai",
     name: "Z.ai",
-    href: "/docs/api-providers/zai",
+    href: "/docs/api-providers#zai",
     blurb: "GLM models, and a flat-rate coding plan that decouples cost from token count.",
     env: "ZAI_API_KEY",
     defaultModel: "glm-5.2",
@@ -107,7 +119,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "openrouter",
     name: "OpenRouter",
-    href: "/docs/api-providers/openrouter",
+    href: "/docs/api-providers#openrouter",
     blurb: "One key, hundreds of models — the gateway when you would rather not manage keys.",
     env: "OPENROUTER_API_KEY",
     defaultModel: "openrouter/auto",
@@ -116,7 +128,7 @@ export const PROVIDER_CATALOG: ProviderSpec[] = [
   {
     id: "local",
     name: "Local server",
-    href: "/docs/api-providers/local",
+    href: "/docs/api-providers#local-servers",
     blurb: "Ollama, llama.cpp, vLLM, LM Studio — anything that serves the OpenAI shape. No key, no egress.",
     env: "none (optional LOCAL_API_KEY)",
     defaultModel: "you choose",
@@ -142,7 +154,7 @@ export function ProviderGrid({ only }: { only?: string[] }) {
         <SpecCard
           key={p.id}
           href={p.href}
-          logo={<ProviderLogo id={p.id} size={24} />}
+          title={<ProviderLogo id={p.id} size={20} />}
           meta={[
             { label: "id", value: p.id },
             { label: "Env var", value: p.env },

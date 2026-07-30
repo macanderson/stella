@@ -152,10 +152,6 @@ dev-env-test: ## Test the dev-env scripts (hermetic; not part of `gate`)
 docs: ## Build rustdoc for the workspace (skip dep docs)
 	cargo doc --workspace --no-deps
 
-.PHONY: llms-txt
-llms-txt: ## Regenerate docs/llms.txt from the documentation site content
-	node website/scripts/build-llms-txt.mjs
-
 .PHONY: deny
 deny: ## cargo deny: advisories, dependency bans, source provenance, licenses
 	cargo deny check advisories bans sources licenses
@@ -201,20 +197,27 @@ else
 	cargo watch -x 'clippy --fix --allow-dirty --workspace --all-targets -- -D warnings' -x 'fmt'
 endif
 
+# The normal way to release is to push a tag and let .github/workflows/release.yml
+# build, ATTEST and publish it. These targets drive scripts/release.sh, which is
+# the degraded local path: it cannot mint a build-provenance attestation (that
+# needs an Actions OIDC token), so everything it publishes is checksum-only, and
+# its Linux tarballs are zig cross-builds rather than CI's native ones. The
+# script refuses without ALLOW_UNATTESTED=1; these targets deliberately do NOT
+# set it for you. See RELEASING.md.
 .PHONY: release
-release: ## Cut a release (default: patch). Use BUMP=minor or BUMP=major
+release: ## Cut a release LOCALLY, unattested (default: patch; BUMP=minor|major). Prefer pushing a tag
 	scripts/release.sh $(BUMP)
 
 .PHONY: release-patch
-release-patch: ## Cut a patch release (0.1.0 -> 0.1.1)
+release-patch: ## Cut a patch release locally, unattested (0.1.0 -> 0.1.1)
 	scripts/release.sh patch
 
 .PHONY: release-minor
-release-minor: ## Cut a minor release (0.1.0 -> 0.2.0)
+release-minor: ## Cut a minor release locally, unattested (0.1.0 -> 0.2.0)
 	scripts/release.sh minor
 
 .PHONY: release-major
-release-major: ## Cut a major release (0.1.0 -> 1.0.0)
+release-major: ## Cut a major release locally, unattested (0.1.0 -> 1.0.0)
 	scripts/release.sh major
 
 .PHONY: clean
@@ -251,5 +254,19 @@ audit: ## Run full codebase audit (clippy, tests, supply-chain, dead-code scan)
 		printf '  \033[33mcargo-audit not installed — skipping (cargo install cargo-audit)\033[0m\n'; \
 	fi
 	@printf '\n\033[1m=== Unused dependencies ===\033[0m\n'
-	cargo udeps --workspace 2>/dev/null || printf '  \033[33mcargo-udeps not installed — run: cargo install cargo-udeps\033[0m\n'
+	@# Same shape as the two steps above, and for the same reason: gate on the
+	@# TOOL being present, not on its exit code. The old
+	@# `cargo udeps … 2>/dev/null || printf "not installed"` form reported
+	@# "not installed" for every outcome — a genuinely unused dependency, a
+	@# compile error, and a missing binary were indistinguishable, and the
+	@# `2>/dev/null` threw away the one message that could tell them apart.
+	@# cargo-udeps needs a nightly toolchain (it reads unstable rustc output),
+	@# so the invocation is explicit rather than relying on the pinned default.
+	@if ! command -v cargo-udeps >/dev/null 2>&1; then \
+		printf '  \033[33mcargo-udeps not installed — run: cargo install cargo-udeps\033[0m\n'; \
+	elif ! rustup toolchain list 2>/dev/null | grep -q '^nightly'; then \
+		printf '  \033[33mcargo-udeps needs nightly — run: rustup toolchain install nightly\033[0m\n'; \
+	else \
+		cargo +nightly udeps --workspace --all-targets; \
+	fi
 	@printf '\n\033[32m✔ Audit complete.\033[0m\n'

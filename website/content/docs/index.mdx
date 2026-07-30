@@ -3,49 +3,30 @@ title: Introduction
 description: Stella is a fast, bring-your-own-key, model-agnostic terminal coding agent. Point it at any provider, give it a goal, and let a verifier decide when the work is done.
 ---
 
-> **A note from the author.** Stella took an enormous amount of work — nights,
-> weekends, real API bills, and more shadow-worktree debugging sessions than I
-> care to count. I'm genuinely proud of what it became: a coding agent that
-> proves its work, respects your machine, and answers to nobody's server but
-> your provider's. It is free and open source under the AGPL — I hope you have
-> as much fun using it as I had building it.
->
-> — [Mac Anderson](https://github.com/macanderson)
-
-**Stella** is a fast, model-agnostic coding agent that lives in your terminal. It is
-**bring-your-own-key (BYOK)**: Community/default use has no account and no sign-up —
-Stella runs on the provider credentials you already have, records locally, and has zero
-telemetry egress.
+Stella is a model-agnostic coding agent that runs in your terminal. It is
+bring-your-own-key: Community/default use has no account and no sign-up, runs on provider
+credentials you already have, records locally, and has zero telemetry egress.
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here
 stella run "add a --json flag to the export command and update the tests"
 ```
 
-## What makes Stella different
+## What it does differently
 
-- **BYOK, no lock-in.** Stella auto-detects the provider from whichever API keys you have
-  set. Bring Anthropic, OpenAI, Gemini, Vertex, Bedrock, xAI, DeepSeek, Z.ai, OpenRouter,
-  or any OpenAI-compatible local server.
-- **Verified outcomes.** [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) doesn't stop on a hunch — a separate
-  judge model verifies the definition of done from evidence before the loop ends.
-- **Real tools with a permission model.** Read, edit, glob, grep, shell, CI, screenshots,
-  issue tracking, and developer-defined script tools — each gated by a per-tool permission
-  model and optional [lifecycle hooks](/docs/agent-tools/hooks).
-- **Configuration that scales to a team.** Override any provider's base URL, key, or model
-  in [`settings.json`](/docs/configuration/settings), merged across a project →
-  org-managed → user hierarchy.
-- **Local-first telemetry.** Token usage, cost, and per-step metering land in a local
-  SQLite store (`.stella/private/store.db`) on your disk. Community/default sends none
-  of it anywhere. Explicitly enrolled Oxagen Enterprise managed mode may export only a
-  minimal content-free operational rollup from a process-free eligible path.
+| | |
+| --- | --- |
+| **BYOK, no lock-in** | Auto-detects the provider from whichever keys you have set. Anthropic, OpenAI, Gemini, Vertex, Bedrock, xAI, DeepSeek, Z.ai, OpenRouter, or any OpenAI-compatible local server. |
+| **Verified outcomes** | [Goal mode](/docs/agent-modes#outcome-driven-goal-mode) does not stop on a hunch — a separate judge model verifies the definition of done from evidence before the loop ends. |
+| **Tools behind a permission model** | Read, edit, glob, grep, shell, CI, screenshots, issue tracking, and developer-defined script tools, each gated per tool with optional [lifecycle hooks](/docs/agent-tools/hooks). |
+| **Config that scales to a team** | Override any provider's base URL, key, or model in [`settings.json`](/docs/configuration/settings), merged across a user → org-managed → project hierarchy. |
+| **Local-first telemetry** | Usage, cost, and per-step metering land in `.stella/private/store.db` on your disk. |
 
 ## Bring your own provider
 
-Ten providers, one flag. Stella speaks each one's native wire dialect rather than
-funnelling everything through a single OpenAI-shaped adapter, so provider features —
-Anthropic's thinking blocks, Gemini's thinking levels, Bedrock's Converse shape — are
-native rather than emulated.
+Stella speaks each provider's native wire dialect rather than funnelling everything
+through one OpenAI-shaped adapter, so provider features — Anthropic's thinking blocks,
+Gemini's thinking levels, Bedrock's Converse shape — are native rather than emulated.
 
 <ProviderGrid />
 
@@ -53,70 +34,25 @@ native rather than emulated.
 
 <HeroFlowDiagram />
 
-Inside the stella box: the tool registry (read · edit · bash · grep · ci ·
-verify · …), MCP servers from `.stella/mcp.toml`, the memory and code-graph
-context engine — and, in goal mode, an independent judge asking "is the goal
-*actually* met?".
-
 Stella sends your prompt to the model you selected, lets the model call tools to read and
-change your workspace, feeds the results back, and repeats until the task is done. In
-[goal mode](/docs/agent-modes#outcome-driven-goal-mode) a second model judges the result from evidence, so the loop
-ends on a verified outcome rather than the worker's own say-so.
+change your workspace, feeds the results back, and repeats until the task is done. Inside
+the box: the tool registry, MCP servers from `.stella/mcp.toml`, and the memory and
+code-graph context engine. In [goal mode](/docs/agent-modes#outcome-driven-goal-mode) a
+second model judges the result from evidence, so the loop ends on a verified outcome
+rather than the worker's own say-so.
 
-## The documentation
+## Where to go
 
-**Start here**
-
-- **[Getting Started](/docs/getting-started)** — install, initialize a repo, configure
-  provider keys.
-
-**Providers &amp; configuration**
-
-- **[API Providers](/docs/api-providers)** — per-provider setup, the model catalog, and
-  cross-provider pricing.
-- **[Configuration &amp; Settings](/docs/configuration)** — `settings.json`, per-agent
-  engine config, credentials, and the scope hierarchy.
-- **[Examples &amp; Recipes](/docs/examples)** — complete config files organized by use
-  case: coding-plan subscriptions, single-key setups, gateways, local/air-gapped,
-  enterprise cloud, team-shared settings, and the three cost-tier profiles.
-
-**Using the agent**
-
-- **[Agent Modes](/docs/agent-modes)** — Command Deck chat, one-shot runs, judged goal
-  mode, CI monitoring.
-- **[Agent Fleets](/docs/agent-fleets)** — many workers over one task list: a shared
-  tree with cooperative claims, or per-task worktree isolation on demand.
-- **[Agent Tools](/docs/agent-tools)** — the built-in toolbelt, skills, MCP servers,
-  custom commands, hooks, and permissions.
-- **[Telemetry &amp; Usage Analytics](/docs/telemetry)** — local metering, the
-  dashboard, budgets, files touched, and the governed Enterprise export boundary.
-
-**How it works**
-
-- **[Inference Pipeline](/docs/inference-pipeline)** — triage → recall → plan → scope
-  review → witness → execute → verify → judge: how work gets *proven*, not just done.
-- **[Context Engine](/docs/context-engine)** — memories, the tree-sitter code graph,
-  reflections, and the prompt-cache-native recall that makes them cheap.
-- **[Agent Engine Paths](/docs/agent-engine-paths)** — every entry point into the
-  engine, mapped.
-- **[Principles](/docs/principles)** — the convictions the codebase is built around.
-
-**Reference**
-
-- **[Commands](/docs/commands)** — the full command and flag reference.
-- **[Extensions](/docs/extensions)** &amp; **[Scripting](/docs/scripting)** — the event
-  bus for embedders, and headless/CI usage.
-- **[Release notes](/docs/release-notes)** — what landed in each release.
-
-**Community**
-
-- **[Showcase](/docs/showcase)** — teams shipping real software with Stella, starting
-  with [Oxagen](https://oxagen.sh).
-- **[Donate](/docs/donate)** — keep independent, local-first tooling alive.
+| Section | Read it for |
+| --- | --- |
+| **[Get started](/docs/getting-started)** | Install, configure a provider key, initialize a repo, make a first verified change. |
+| **Concepts** | How the [pipeline](/docs/inference-pipeline) proves work, how the [context engine](/docs/context-engine) makes recall cheap, and the [modes](/docs/agent-modes) and [fleets](/docs/agent-fleets) you drive it with. |
+| **Configure** | [`settings.json`](/docs/configuration), [providers](/docs/api-providers), [tools and permissions](/docs/agent-tools), [telemetry](/docs/telemetry), and ready-made [recipes](/docs/examples). |
+| **Reference** | Every [command and flag](/docs/commands), [headless scripting](/docs/scripting), the [event bus](/docs/extensions), and [release notes](/docs/release-notes). |
 
 <Callout type="info">
-  Stella is BYOK — it never proxies model traffic through a hosted service. Your keys
-  call your provider directly. Community/default telemetry stays local; only an
-  explicitly enrolled Oxagen Enterprise seat can send the documented minimal
-  operational envelope to its exact allowlisted HTTPS sink.
+  Stella never proxies model traffic through a hosted service — your keys call your
+  provider directly. Community/default telemetry stays local; only an explicitly enrolled
+  Oxagen Enterprise seat can send the documented minimal operational envelope to its exact
+  allowlisted HTTPS sink. See [Telemetry](/docs/telemetry).
 </Callout>

@@ -130,11 +130,8 @@ fi
 # prose document has neither property.
 md_files="$(git ls-files '*.md' || true)"
 if [ -n "$md_files" ]; then
-  # `docs/llms.txt` is generated from the website MDX (`make llms-txt`), so a
-  # hit there is an artifact of the source, not an editable citation.
   # shellcheck disable=SC2086
-  linerefs="$(grep -nE '[A-Za-z0-9._/-]+\.md:[0-9]+' $md_files 2>/dev/null \
-    | grep -v '^docs/llms\.txt:' || true)"
+  linerefs="$(grep -nE '[A-Za-z0-9._/-]+\.md:[0-9]+' $md_files 2>/dev/null || true)"
 
   if [ -n "$linerefs" ]; then
     echo "" >&2

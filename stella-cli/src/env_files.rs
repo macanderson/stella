@@ -149,11 +149,19 @@ fn plan_from(
 /// dotenv file. Never returns the home directory (or above), and never crosses
 /// above the enclosing git repository root — env stays scoped to one project.
 fn find_base(start: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    // `start` comes from `current_dir()`, which is `getcwd` — already free of
+    // symlinks. `$HOME` is not: `/home` symlinked onto another volume is a
+    // routine layout, and there the raw string compare below never matched, so
+    // the "`~/.env` never leaks into every session" guarantee silently did not
+    // hold for those users. Resolve it once so the two are comparable; an
+    // unresolvable `$HOME` (deleted, or a bare name) falls back to the literal,
+    // which is exactly the previous behaviour.
+    let home = home.map(|home| std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf()));
     let mut dir = start;
     loop {
         // The home directory (and anything above it) is never a project scope:
         // we don't want a stray `~/.env` to leak into every session.
-        if Some(dir) == home {
+        if home.as_deref() == Some(dir) {
             return None;
         }
         if dir_has_env_file(dir) {
@@ -630,6 +638,31 @@ mod tests {
         write(home, ".env", "HOME_LEVEL=nope\n");
         // Running *in* $HOME must not load `~/.env`.
         assert_eq!(find_base(home, Some(home)), None);
+    }
+
+    /// `$HOME` reached through a symlink — `/home` mounted elsewhere is a
+    /// routine layout. `start` is `getcwd`, which is already resolved, so the
+    /// raw string compare never matched and `~/.env` leaked into every session
+    /// for exactly those users.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_home_is_still_never_a_project_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        // The real home, and a symlink standing in for it in `$HOME`.
+        let real = std::fs::canonicalize(tmp.path()).unwrap().join("real-home");
+        fs::create_dir_all(&real).unwrap();
+        write(&real, ".env", "HOME_LEVEL=nope\n");
+        let link = std::fs::canonicalize(tmp.path()).unwrap().join("home-link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // `start` is the resolved path (what `current_dir` hands back); `$HOME`
+        // is the symlink. These are the same directory and must be treated so.
+        assert_eq!(find_base(&real, Some(&link)), None);
+        // A subdirectory of home is still a perfectly good project scope.
+        let project = real.join("proj");
+        fs::create_dir_all(&project).unwrap();
+        write(&project, ".env.local", "K=1\n");
+        assert_eq!(find_base(&project, Some(&link)), Some(project));
     }
 
     // Loaded::file_for (stella config's "which file, which name")

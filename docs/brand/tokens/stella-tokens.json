@@ -5,18 +5,18 @@
   },
   "color": {
     "light": {
-      "ink": "#0B0B0C",
-      "sub": "#9AA0A6",
-      "chev": "#C9CDD2",
-      "cur": "#FF3D1F",
+      "ink": "#0A0F1A",
+      "sub": "#525C6E",
+      "chev": "#1550C8",
+      "cur": "#B5831F",
       "paper": "#FFFFFF"
     },
     "dark": {
-      "ink": "#F5F6F7",
-      "sub": "#7D838A",
-      "chev": "#45494F",
-      "cur": "#FF4B2A",
-      "paper": "#0B0B0C"
+      "ink": "#F2F5FA",
+      "sub": "#8E97A8",
+      "chev": "#5AA0FF",
+      "cur": "#F5C145",
+      "paper": "#05070C"
     }
   },
   "cursor": {

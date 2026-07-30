@@ -6,10 +6,17 @@
 //! Deliberately minimal: one request per connection, `Connection: close`, an
 //! SSE writer that streams frames until the turn ends and then closes. Enough
 //! for a governed sidecar behind the host, not a general-purpose server.
+//!
+//! Reading a request is **two steps, not one** — [`read_head`], then
+//! [`read_body`] or [`discard_body`]. `server.rs` authenticates in between, so
+//! an unauthenticated peer can never make this process buffer [`MAX_BODY_BYTES`]
+//! on its behalf; a refused request costs one [`DISCARD_CHUNK_BYTES`] scratch
+//! buffer instead. Both steps share one deadline, so splitting the read does not
+//! double how long a peer may hold a connection.
 
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// Cap on the request head (request line + headers) we will buffer.
@@ -37,15 +44,39 @@ const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 /// the host takes to answer its reverse requests, and a deadline there would kill
 /// healthy turns. Without this, a connection that opens and then says nothing
 /// occupies a task forever, and `server.rs` spawns that task *before* auth.
+///
+/// The deadline covers head **and** body as one budget: [`read_head`] stamps
+/// [`Request::deadline`] when it starts, and [`read_body`] / [`discard_body`]
+/// finish against that same instant. Splitting the read in two (so auth can run
+/// on the head alone) must not double how long a peer may hold a connection.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// One parsed HTTP request.
+/// Scratch buffer for a body that is being thrown away rather than parsed.
+///
+/// The whole point of [`discard_body`] is that refusing a request costs
+/// constant memory, so the drain reuses one small buffer instead of growing a
+/// `Vec` to `Content-Length`.
+const DISCARD_CHUNK_BYTES: usize = 8192;
+
+/// One parsed HTTP request head, plus whatever is needed to finish its body.
+///
+/// The head and the body are read in two steps on purpose: `server.rs`
+/// authenticates on the head, so an unauthenticated peer never gets the server
+/// to buffer [`MAX_BODY_BYTES`] on its behalf. Until [`read_body`] runs, `body`
+/// is empty and `content_length` is what the peer *declared*.
 pub(crate) struct Request {
     pub method: String,
     pub path: String,
     /// Header names lowercased for case-insensitive lookup; values trimmed.
     headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// The validated `Content-Length`. Already checked against
+    /// [`MAX_BODY_BYTES`] by [`read_head`].
+    content_length: usize,
+    /// Body bytes that arrived in the same read as the tail of the head.
+    prefetched: Vec<u8>,
+    /// When the whole read (head + body) must be finished by.
+    deadline: tokio::time::Instant,
 }
 
 impl Request {
@@ -86,24 +117,113 @@ pub(crate) enum ReadOutcome {
     Hangup,
     /// Head or body exceeded its cap — answer 413.
     TooLarge,
-    /// Bytes arrived but do not form a request line — answer 400.
+    /// Bytes arrived but do not form a request line, or its framing headers
+    /// contradict each other — answer 400.
     Malformed,
+    /// The peer framed its body with `Transfer-Encoding` — answer 501.
+    UnsupportedTransferEncoding,
     /// The peer did not finish within [`READ_TIMEOUT`] — answer 408.
     Timeout,
 }
 
-/// Read and parse one request (head + `Content-Length` body), bounded by
-/// [`READ_TIMEOUT`], [`MAX_HEAD_BYTES`] and [`MAX_BODY_BYTES`].
-pub(crate) async fn read_request<S: AsyncRead + Unpin>(
+/// Read and parse one request **head**, bounded by [`READ_TIMEOUT`] and
+/// [`MAX_HEAD_BYTES`]; the declared body length is validated against
+/// [`MAX_BODY_BYTES`] but not yet consumed.
+///
+/// Stopping at the head is what lets `server.rs` check the bearer token before
+/// a single body byte is buffered. Finish with [`read_body`] once the request
+/// is authorized, or [`discard_body`] once it is refused.
+pub(crate) async fn read_head<S: AsyncRead + Unpin>(
     stream: &mut S,
 ) -> std::io::Result<ReadOutcome> {
-    match tokio::time::timeout(READ_TIMEOUT, read_request_inner(stream)).await {
+    let deadline = tokio::time::Instant::now() + READ_TIMEOUT;
+    match tokio::time::timeout_at(deadline, read_head_inner(stream, deadline)).await {
         Ok(result) => result,
         Err(_elapsed) => Ok(ReadOutcome::Timeout),
     }
 }
 
-async fn read_request_inner<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<ReadOutcome> {
+/// Consume the declared body into [`Request::body`], bounded by the deadline
+/// [`read_head`] stamped.
+///
+/// A short body (the peer hung up mid-send) is not an error here: the request
+/// then simply fails its own validation, which is a clearer answer than a
+/// dropped connection.
+pub(crate) async fn read_body<S: AsyncRead + Unpin>(
+    stream: &mut S,
+    req: &mut Request,
+) -> std::io::Result<BodyOutcome> {
+    if req.content_length == 0 {
+        req.prefetched = Vec::new();
+        return Ok(BodyOutcome::Complete);
+    }
+    let read = async {
+        let mut body = std::mem::take(&mut req.prefetched);
+        body.reserve(req.content_length.saturating_sub(body.len()));
+        let mut chunk = [0_u8; DISCARD_CHUNK_BYTES];
+        while body.len() < req.content_length {
+            let n = stream.read(&mut chunk).await?;
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&chunk[..n]);
+        }
+        body.truncate(req.content_length);
+        req.body = body;
+        Ok::<_, std::io::Error>(())
+    };
+    match tokio::time::timeout_at(req.deadline, read).await {
+        Ok(result) => result.map(|()| BodyOutcome::Complete),
+        Err(_elapsed) => Ok(BodyOutcome::Timeout),
+    }
+}
+
+/// What [`read_body`] produced. Separate from [`ReadOutcome`] because the head
+/// is already parsed by then: the only remaining question is whether the body
+/// arrived inside the deadline.
+pub(crate) enum BodyOutcome {
+    /// The declared body (or as much of it as the peer sent) is in
+    /// [`Request::body`].
+    Complete,
+    /// The peer did not finish the body within [`READ_TIMEOUT`] — answer 408.
+    Timeout,
+}
+
+/// Read the declared body off the socket and throw it away, in constant memory.
+///
+/// Used on the paths that answer without looking at the body — a 401, a 413, a
+/// 405. Draining first is what makes the response actually arrive: closing a
+/// connection with unread bytes still in flight makes the kernel send an RST,
+/// and a peer that gets an RST mid-send never reads the status we wrote. The
+/// drain is bounded by the same deadline as the read it replaces, and by
+/// `Content-Length` (already capped at [`MAX_BODY_BYTES`]), so a refused
+/// request costs one 8 KiB buffer instead of a body-sized allocation.
+pub(crate) async fn discard_body<S: AsyncRead + Unpin>(stream: &mut S, req: &mut Request) {
+    let remaining = req.content_length.saturating_sub(req.prefetched.len());
+    req.prefetched = Vec::new();
+    if remaining == 0 {
+        return;
+    }
+    let drain = async {
+        let mut left = remaining;
+        let mut chunk = [0_u8; DISCARD_CHUNK_BYTES];
+        while left > 0 {
+            let want = left.min(chunk.len());
+            match stream.read(&mut chunk[..want]).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => left -= n,
+            }
+        }
+    };
+    // A peer that stops mid-drain is not owed anything more than the response
+    // we are about to write, so a lapsed deadline just ends the drain.
+    let _ = tokio::time::timeout_at(req.deadline, drain).await;
+}
+
+async fn read_head_inner<S: AsyncRead + Unpin>(
+    stream: &mut S,
+    deadline: tokio::time::Instant,
+) -> std::io::Result<ReadOutcome> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0_u8; 8192];
     // Rescanning the whole buffer after every read would be quadratic in the
@@ -147,36 +267,48 @@ async fn read_request_inner<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Re
         }
     }
 
-    // `Content-Length` only: chunked bodies are not decoded, so a chunked POST
-    // parses as an empty body and fails validation with a 400. That is safe
-    // rather than a smuggling hole precisely because this layer serves one
-    // request per connection and then closes — leftover bytes are never
-    // reinterpreted as a second request.
-    let content_length = headers
-        .iter()
-        .find(|(k, _)| k == "content-length")
-        .and_then(|(_, v)| v.parse::<usize>().ok())
-        .unwrap_or(0);
+    // `Content-Length` only: chunked bodies are not decoded. That used to make
+    // a chunked POST parse as an *empty* body, so the host got a 400 blaming
+    // its JSON for a framing feature the server does not implement; it is now
+    // refused by name (501) instead. Either way it is not a smuggling hole,
+    // because this layer serves one request per connection and then closes —
+    // leftover bytes are never reinterpreted as a second request.
+    if headers.iter().any(|(k, _)| k == "transfer-encoding") {
+        return Ok(ReadOutcome::UnsupportedTransferEncoding);
+    }
+    // Every `Content-Length` must parse, and repeats must agree (RFC 9112
+    // §6.3). Taking the first and ignoring the rest — or silently reading an
+    // unparseable one as 0 — is how a body gets framed differently here than at
+    // any proxy in front, and a request whose length is ambiguous is one this
+    // server must refuse rather than guess at.
+    let mut content_length = 0_usize;
+    let mut declared = false;
+    for (_, value) in headers.iter().filter(|(k, _)| k == "content-length") {
+        let Ok(parsed) = value.trim().parse::<usize>() else {
+            return Ok(ReadOutcome::Malformed);
+        };
+        if declared && parsed != content_length {
+            return Ok(ReadOutcome::Malformed);
+        }
+        content_length = parsed;
+        declared = true;
+    }
     if content_length > MAX_BODY_BYTES {
         return Ok(ReadOutcome::TooLarge);
     }
 
     let body_start = head_end + 4;
-    let mut body = buf[body_start..].to_vec();
-    while body.len() < content_length {
-        let n = stream.read(&mut chunk).await?;
-        if n == 0 {
-            break;
-        }
-        body.extend_from_slice(&chunk[..n]);
-    }
-    body.truncate(content_length);
+    let mut prefetched = buf[body_start..].to_vec();
+    prefetched.truncate(content_length);
 
     Ok(ReadOutcome::Request(Box::new(Request {
         method: method.to_string(),
         path: path.to_string(),
         headers,
-        body,
+        body: Vec::new(),
+        content_length,
+        prefetched,
+        deadline,
     })))
 }
 
@@ -194,7 +326,8 @@ pub(crate) async fn write_json(
 }
 
 /// [`write_json`] plus caller-supplied headers, for the responses that carry one
-/// (`Retry-After` on a 429). Each pair is emitted verbatim as `name: value`.
+/// (`Retry-After` on a 429, `Allow` on a 405). Each pair is emitted verbatim as
+/// `name: value`.
 pub(crate) async fn write_json_with_headers(
     stream: &mut TcpStream,
     status: &str,
@@ -226,7 +359,7 @@ pub(crate) async fn write_json_with_headers(
 /// `provider_request` it has not received, so the engine parks forever and the
 /// buffered stream never reaches the size that would flush it. The header is the
 /// standard opt-out and is ignored by proxies that do not honour it.
-pub(crate) async fn write_sse_head(stream: &mut TcpStream) -> std::io::Result<()> {
+pub(crate) async fn write_sse_head<W: AsyncWrite + Unpin>(stream: &mut W) -> std::io::Result<()> {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n";
     stream.write_all(head.as_bytes()).await
 }
@@ -236,7 +369,10 @@ pub(crate) async fn write_sse_head(stream: &mut TcpStream) -> std::io::Result<()
 /// Single-line framing is sound because the payload is always `serde_json`
 /// output, which escapes newlines inside strings — a raw `\n` would otherwise
 /// split one frame into two and desynchronize the host's parser.
-pub(crate) async fn write_sse_frame(stream: &mut TcpStream, json: &str) -> std::io::Result<()> {
+pub(crate) async fn write_sse_frame<W: AsyncWrite + Unpin>(
+    stream: &mut W,
+    json: &str,
+) -> std::io::Result<()> {
     stream.write_all(b"data: ").await?;
     stream.write_all(json.as_bytes()).await?;
     stream.write_all(b"\n\n").await
@@ -252,6 +388,9 @@ mod tests {
             path: "/".to_string(),
             headers: vec![("authorization".to_string(), value.to_string())],
             body: Vec::new(),
+            content_length: 0,
+            prefetched: Vec::new(),
+            deadline: tokio::time::Instant::now() + READ_TIMEOUT,
         }
     }
 
@@ -294,7 +433,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_peer_that_never_finishes_its_head_is_timed_out() {
         let mut silent = NeverReady;
-        let outcome = read_request(&mut silent).await.expect("read");
+        let outcome = read_head(&mut silent).await.expect("read");
         assert!(
             matches!(outcome, ReadOutcome::Timeout),
             "a silent peer must hit the read deadline, not park forever",
@@ -305,7 +444,7 @@ mod tests {
     async fn a_clean_hangup_is_owed_no_response() {
         let mut nothing = &b""[..];
         assert!(matches!(
-            read_request(&mut nothing).await.expect("read"),
+            read_head(&mut nothing).await.expect("read"),
             ReadOutcome::Hangup
         ));
     }
@@ -317,7 +456,7 @@ mod tests {
     async fn a_truncated_head_is_malformed_rather_than_a_hangup() {
         let mut truncated = &b"POST /v1/turns HTTP/1.1\r\nHost: engine"[..];
         assert!(matches!(
-            read_request(&mut truncated).await.expect("read"),
+            read_head(&mut truncated).await.expect("read"),
             ReadOutcome::Malformed
         ));
     }
@@ -326,7 +465,7 @@ mod tests {
     async fn a_request_line_without_a_path_is_malformed() {
         let mut garbage = &b"NOTHTTP\r\n\r\n"[..];
         assert!(matches!(
-            read_request(&mut garbage).await.expect("read"),
+            read_head(&mut garbage).await.expect("read"),
             ReadOutcome::Malformed
         ));
     }
@@ -341,7 +480,7 @@ mod tests {
         );
         let mut stream = head.as_bytes();
         assert!(matches!(
-            read_request(&mut stream).await.expect("read"),
+            read_head(&mut stream).await.expect("read"),
             ReadOutcome::TooLarge
         ));
     }
@@ -354,7 +493,7 @@ mod tests {
         }
         let mut stream = head.as_bytes();
         assert!(matches!(
-            read_request(&mut stream).await.expect("read"),
+            read_head(&mut stream).await.expect("read"),
             ReadOutcome::TooLarge
         ));
     }
@@ -367,12 +506,126 @@ mod tests {
             body.len(),
         );
         let mut stream = raw.as_bytes();
-        let ReadOutcome::Request(req) = read_request(&mut stream).await.expect("read") else {
+        let ReadOutcome::Request(mut req) = read_head(&mut stream).await.expect("read") else {
             panic!("a well-formed request must parse");
         };
         assert_eq!(req.method, "POST");
         assert_eq!(req.path, "/v1/turns");
         assert_eq!(req.bearer(), Some("tok"));
+        assert!(
+            req.body.is_empty(),
+            "the head read must not buffer the body — auth runs first"
+        );
+        assert!(matches!(
+            read_body(&mut stream, &mut req).await.expect("body"),
+            BodyOutcome::Complete
+        ));
         assert_eq!(req.body, body.as_bytes());
+    }
+
+    /// A body that arrives in a *later* packet than the head still has to be
+    /// assembled by the second phase — the prefetched tail is only ever part
+    /// of it.
+    #[tokio::test]
+    async fn a_body_split_across_reads_is_reassembled_after_auth() {
+        let body = r#"{"provider_id":"mock","messages":[]}"#;
+        let raw = format!(
+            "POST /v1/turns HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            &body[..4],
+        );
+        // `chain` makes the split explicit: the head read can only see the
+        // first four body bytes, the rest arrives afterwards.
+        let mut stream = std::io::Cursor::new(raw.into_bytes()).chain(&body.as_bytes()[4..]);
+        let ReadOutcome::Request(mut req) = read_head(&mut stream).await.expect("read") else {
+            panic!("a well-formed request must parse");
+        };
+        read_body(&mut stream, &mut req).await.expect("body");
+        assert_eq!(req.body, body.as_bytes());
+    }
+
+    /// The refusal paths (401, 413, 405) answer without parsing the body, but
+    /// they must still take it off the socket: closing with unread bytes in
+    /// flight makes the kernel RST, and a peer that gets an RST mid-send never
+    /// reads the status we wrote. Constant memory — the drain never grows a
+    /// buffer to `Content-Length`.
+    #[tokio::test]
+    async fn a_discarded_body_is_consumed_off_the_socket_without_being_buffered() {
+        let body = "x".repeat(64 * 1024);
+        let raw = format!(
+            "POST /v1/turns HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}TRAILING",
+            body.len(),
+        );
+        let mut stream = raw.as_bytes();
+        let ReadOutcome::Request(mut req) = read_head(&mut stream).await.expect("read") else {
+            panic!("a well-formed request must parse");
+        };
+        discard_body(&mut stream, &mut req).await;
+        assert!(
+            req.body.is_empty(),
+            "a discarded body is never materialized"
+        );
+        // Exactly `Content-Length` bytes were consumed: what follows is
+        // untouched, which is what proves the drain is bounded by the declared
+        // length rather than reading to EOF.
+        assert_eq!(stream, b"TRAILING".as_slice());
+    }
+
+    /// An unparseable or self-contradicting `Content-Length` frames the body
+    /// differently here than at any proxy in front. Refuse rather than guess.
+    #[tokio::test]
+    async fn ambiguous_content_length_is_refused() {
+        for framing in [
+            "Content-Length: 12abc\r\n",
+            "Content-Length: -1\r\n",
+            "Content-Length: 5\r\nContent-Length: 9\r\n",
+        ] {
+            let raw = format!("POST /v1/turns HTTP/1.1\r\n{framing}\r\nhello");
+            let mut stream = raw.as_bytes();
+            assert!(
+                matches!(
+                    read_head(&mut stream).await.expect("read"),
+                    ReadOutcome::Malformed
+                ),
+                "ambiguous framing must be refused: {framing:?}"
+            );
+        }
+        // Repeated but *agreeing* values are unambiguous, so they still parse.
+        let raw = "POST /v1/turns HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello";
+        let mut stream = raw.as_bytes();
+        let ReadOutcome::Request(mut req) = read_head(&mut stream).await.expect("read") else {
+            panic!("agreeing lengths are unambiguous");
+        };
+        read_body(&mut stream, &mut req).await.expect("body");
+        assert_eq!(req.body, b"hello");
+    }
+
+    /// A chunked POST used to parse as an empty body and come back as a 400
+    /// blaming the host's JSON. The server does not decode chunked framing, so
+    /// it says so.
+    #[tokio::test]
+    async fn a_chunked_body_is_named_rather_than_mis_reported_as_bad_json() {
+        let raw = "POST /v1/turns HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+        let mut stream = raw.as_bytes();
+        assert!(matches!(
+            read_head(&mut stream).await.expect("read"),
+            ReadOutcome::UnsupportedTransferEncoding
+        ));
+    }
+
+    /// The deadline covers head *and* body as one budget: splitting the read
+    /// in two so auth can run early must not double how long a peer may hold a
+    /// connection.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_that_stalls_mid_body_hits_the_same_deadline() {
+        let head = "POST /v1/turns HTTP/1.1\r\nContent-Length: 16\r\n\r\n";
+        let mut stream = std::io::Cursor::new(head.as_bytes().to_vec()).chain(NeverReady);
+        let ReadOutcome::Request(mut req) = read_head(&mut stream).await.expect("read") else {
+            panic!("the head is complete");
+        };
+        assert!(matches!(
+            read_body(&mut stream, &mut req).await.expect("body"),
+            BodyOutcome::Timeout
+        ));
     }
 }

@@ -14,6 +14,7 @@
 
 use colored::Colorize as _;
 use stella_model::credential::{ApiKey, CredentialsFile};
+use zeroize::Zeroizing;
 
 use crate::credential_status;
 use crate::settings::Settings;
@@ -72,8 +73,12 @@ fn read_key_value(provider: &str, key: Option<&str>, use_stdin: bool) -> Result<
         }
         return Ok(k.to_string());
     }
+    // Both remaining paths build a buffer the caller never sees — only the
+    // trimmed value below escapes — so the original is wiped on drop rather
+    // than left legible in freed heap for the life of the process. Same
+    // treatment `stella_model::credential::prompt_for_key` gives its own.
     if use_stdin {
-        let mut buf = String::new();
+        let mut buf = Zeroizing::new(String::new());
         std::io::stdin()
             .read_line(&mut buf)
             .map_err(|e| format!("could not read key from stdin: {e}"))?;
@@ -83,8 +88,10 @@ fn read_key_value(provider: &str, key: Option<&str>, use_stdin: bool) -> Result<
         }
         return Ok(trimmed);
     }
-    let value = rpassword::prompt_password(format!("  API key for `{provider}`: "))
-        .map_err(|e| format!("cannot read secret from terminal: {e}"))?;
+    let value = Zeroizing::new(
+        rpassword::prompt_password(format!("  API key for `{provider}`: "))
+            .map_err(|e| format!("cannot read secret from terminal: {e}"))?,
+    );
     let trimmed = value.trim().to_string();
     if trimmed.is_empty() {
         return Err("empty input — no credential entered".to_string());
