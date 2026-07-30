@@ -76,6 +76,10 @@ pub struct SessionModel {
     file_touch_seq: u64,
     /// Live HUD numbers: spend/limit/mode, current stage, model.
     pub hud: Hud,
+    /// What this turn has established about its own work — the proof rail
+    /// ([`crate::proof`]). Per-turn: cleared when the next turn starts, not
+    /// when this one ends, so a finished proof stays readable.
+    pub proof: crate::proof::ProofState,
     /// A scope-review gate awaiting the user's decision (L-E5). Set by a
     /// `ScopeReview` event and cleared by the engine's follow-on event
     /// (a non-scope-review `Stage`, `Complete`, or `Error`) — so the pending
@@ -349,6 +353,17 @@ impl SessionModel {
                 // fresh (otherwise the bar stays frozen at full-green and
                 // `final_cost_usd` is stale). Within a single turn, complete
                 // is never set until the very end, so this is a no-op there.
+                //
+                // That same transition is the only honest reset point for the
+                // proof rail. Proof is per-turn — last turn's flip says nothing
+                // about this turn's work — but it must survive to be READ after
+                // the verdict lands, so it cannot clear on `Complete`. Clearing
+                // on the first stage of the NEXT turn keeps the finished rail on
+                // screen for as long as the turn it describes is the current
+                // one, and reconstructs identically on replay.
+                if self.hud.complete {
+                    self.proof = crate::proof::ProofState::default();
+                }
                 self.hud.complete = false;
                 self.hud.final_cost_usd = None;
                 self.hud.stage = Some(*name);
@@ -551,7 +566,12 @@ impl SessionModel {
                     kind: artifact.kind,
                 });
             }
+            // Folded into the rail as well as the transcript: the rail is the
+            // live view and scrolls away with nothing, the transcript is the
+            // record. Same event, two jobs.
+            AgentEvent::Proof { step } => self.proof.apply(step),
             AgentEvent::JudgeVerdict { passed, evidence } => {
+                self.proof.apply_verdict(*passed, evidence);
                 self.transcript.push(TranscriptEntry::JudgeVerdict {
                     passed: *passed,
                     summary: evidence.summary.clone(),
@@ -729,6 +749,9 @@ impl SessionModel {
     pub fn push_user_prompt(&mut self, text: &str) {
         self.hud.complete = false;
         self.hud.final_cost_usd = None;
+        // The rail belongs to one turn; a new prompt is the earliest moment the
+        // previous turn's proof stops describing anything on screen.
+        self.proof = crate::proof::ProofState::default();
         // Rebase the live turn-cost readout. `spent_usd` is cumulative for the
         // session, so without this the composer's cost cell would open every
         // turn already showing the session total.

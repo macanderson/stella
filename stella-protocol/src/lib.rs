@@ -69,8 +69,8 @@ pub use event::{
     AgentEvent, BlockKind, BlockOrigin, BudgetMode, BudgetScope, CacheZone, CiStatus,
     ContextFrameRef, ContextProviderUsage, ContextUsage, FileChangeKind, JudgeEvidence,
     KNOWN_TYPE_TAGS, ManifestEntry, MediaArtifactRef, MediaJobState, MediaKind, ModelCallRole,
-    PolicyKind, PrStatus, ProviderShare, ScopeProposal, StageKind, TaskItem, TaskStatus,
-    UsageIncompleteReason,
+    PolicyKind, PrStatus, ProofStep, ProofTree, ProviderShare, ScopeProposal, StageKind, TaskItem,
+    TaskStatus, UsageIncompleteReason,
 };
 pub use provider::{Provider, ToolCallObserver};
 pub use role::{ModelRef, Role};

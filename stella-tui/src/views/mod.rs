@@ -36,6 +36,7 @@ pub mod graph;
 pub mod installed;
 pub mod issues;
 pub mod mcp;
+pub mod proof;
 pub mod session;
 pub mod settings;
 pub mod skills;

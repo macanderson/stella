@@ -6,6 +6,10 @@
 //! inline syntax (**bold**, *italic*, `code`, \[links\](url)) is parsed within
 //! each line. The output is a vector of styled [`Line`]s that the transcript
 //! renderer and word-wrapper consume unchanged.
+//!
+//! Underscores are treated as identifier characters unless they sit on a word
+//! boundary — see `parse_inline_spans` for why `snake_case` outranks
+//! `_emphasis_` here.
 
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -135,11 +139,6 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
 /// bounds both.
 const MAX_EMPHASIS_DEPTH: usize = 8;
 
-/// Parse inline markdown within a single line into styled spans.
-///
-/// Supports `**bold**`, `*italic*`, `_italic_`, `__bold__`, `` `code` ``,
-/// `[text](url)`, and `~~strike~~`. Unmatched delimiters pass through as
-/// literal text.
 /// The style plain prose renders in: an explicit white, never the terminal's
 /// default foreground.
 ///
@@ -152,6 +151,30 @@ fn body() -> Style {
     Style::new().fg(theme::INK)
 }
 
+/// Parse inline markdown within a single line into styled spans.
+///
+/// Supports `**bold**`, `*italic*`, `_italic_`, `` `code` ``, `[text](url)`,
+/// and `~~strike~~`. Unmatched delimiters pass through as literal text.
+///
+/// # Underscores are identifiers first
+///
+/// A coding agent's transcript is dense with `snake_case` fields, `stop_reason`
+/// API properties and `__dunder__` names, and every one of them used to be
+/// swallowed: `_` was accepted as an emphasis delimiter anywhere, so
+/// `tool_use_id` rendered as "tooluseid" with *use* in italics — the
+/// underscores gone and a false emphasis in their place. Two rules keep them:
+///
+/// * **Intraword `_` never delimits.** This is CommonMark's own rule (2 and 4)
+///   and exists for exactly this reason: `*` may open emphasis mid-word, `_`
+///   may not. See [`underscore_opens`] / [`underscore_closes`]. Prose italics
+///   (`_emphasis_`, `_hello_.`) are unaffected because their delimiters sit on
+///   word boundaries.
+/// * **`__` is always literal.** Here we *diverge* from CommonMark, which
+///   would render `__init__` as bold "init". Both readings are grammatical, so
+///   the tie breaks on frequency: in this transcript `__all__`, `__name__` and
+///   `__WRAPPED__` are common and `__bold__` is vanishingly rare — models
+///   reach for `**bold**`. Emphasis loses the ambiguous spelling; identifiers
+///   keep their characters.
 fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
     parse_inline_spans_at(text, 0)
 }
@@ -175,10 +198,23 @@ fn parse_inline_spans_at(text: &str, depth: usize) -> Vec<Span<'static>> {
     };
 
     while i < chars.len() {
-        // **bold** or __bold__
-        if (chars[i] == '*' || chars[i] == '_') && i + 1 < chars.len() && chars[i + 1] == chars[i] {
-            let delim: String = std::iter::repeat_n(chars[i], 2).collect();
-            let Some(end) = find_str(&chars, i + 2, &delim) else {
+        // A run of two or more `_` is literal — never bold. See
+        // `parse_inline_spans`: `__dunder__` and `__SCREAMING__` identifiers
+        // are ordinary transcript vocabulary and `__bold__` is not, so the
+        // whole run is consumed as text (consuming the *run*, not one char,
+        // is what stops its tail being re-read as a lone italic opener).
+        if chars[i] == '_' && i + 1 < chars.len() && chars[i + 1] == '_' {
+            let run = run_len(&chars, i, '_');
+            for _ in 0..run {
+                buf.push('_');
+            }
+            i += run;
+            continue;
+        }
+
+        // **bold**
+        if chars[i] == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            let Some(end) = find_str(&chars, i + 2, "**") else {
                 buf.push(chars[i]);
                 i += 1;
                 continue;
@@ -198,7 +234,14 @@ fn parse_inline_spans_at(text: &str, depth: usize) -> Vec<Span<'static>> {
             && (i + 1 >= chars.len() || chars[i + 1] != chars[i])
         {
             let close = chars[i];
-            let Some(end) = find_single_delim(&chars, i + 1, close) else {
+            // The intraword restriction: a `_` that follows a word character
+            // is part of an identifier, not an opening delimiter.
+            if close == '_' && !underscore_opens(&chars, i) {
+                buf.push(chars[i]);
+                i += 1;
+                continue;
+            }
+            let Some(end) = find_close_single(&chars, i + 1, close) else {
                 buf.push(chars[i]);
                 i += 1;
                 continue;
@@ -412,6 +455,61 @@ fn find_char(chars: &[char], start: usize, target: char) -> Option<usize> {
         .iter()
         .position(|&c| c == target)
         .map(|p| start + p)
+}
+
+/// The length of the run of `c` beginning at `i`.
+fn run_len(chars: &[char], i: usize, c: char) -> usize {
+    chars[i..].iter().take_while(|&&x| x == c).count()
+}
+
+/// Whether `c` is a word character for the intraword-underscore rule.
+///
+/// CommonMark phrases the flanking rules in terms of whitespace and
+/// punctuation; "neither" is what matters here, and `is_alphanumeric` is that
+/// set (Unicode-aware, so `código_fuente` behaves like `snake_case`).
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric()
+}
+
+/// True if the lone `_` at `i` may *open* emphasis.
+///
+/// Two conditions, both from CommonMark's rule 2. The run must be
+/// left-flanking — something must follow it, and not whitespace, so a trailing
+/// `foo_` cannot open. And the intraword restriction: a `_` preceded by a word
+/// character is inside an identifier and never opens, which is the whole
+/// reason `tool_use_id` survives.
+fn underscore_opens(chars: &[char], i: usize) -> bool {
+    let before = i.checked_sub(1).map(|p| chars[p]);
+    let after = chars.get(i + 1).copied();
+    after.is_some_and(|c| !c.is_whitespace()) && !before.is_some_and(is_word)
+}
+
+/// True if the lone `_` at `i` may *close* emphasis.
+///
+/// The mirror of [`underscore_opens`] (CommonMark rule 4): right-flanking, so
+/// `_ foo` cannot close, and not followed by a word character, so the interior
+/// `_` of `_foo_bar_` is skipped rather than ending the span early.
+fn underscore_closes(chars: &[char], i: usize) -> bool {
+    let before = i.checked_sub(1).map(|p| chars[p]);
+    let after = chars.get(i + 1).copied();
+    before.is_some_and(|c| !c.is_whitespace()) && !after.is_some_and(is_word)
+}
+
+/// Find the delimiter that closes a single-delimiter emphasis span.
+///
+/// For `*` this is [`find_single_delim`] unchanged. For `_` the candidate must
+/// also pass [`underscore_closes`]; a `_` wedged between word characters is
+/// skipped and the search continues, so `_note_on_ids_` emphasises the whole
+/// identifier instead of stopping at its first interior underscore.
+fn find_close_single(chars: &[char], start: usize, target: char) -> Option<usize> {
+    let mut from = start;
+    loop {
+        let at = find_single_delim(chars, from, target)?;
+        if target != '_' || underscore_closes(chars, at) {
+            return Some(at);
+        }
+        from = at + 1;
+    }
 }
 
 /// Find a single delimiter (e.g. `*`) while skipping doubled pairs (`**`).
@@ -628,6 +726,97 @@ mod tests {
         assert_eq!(lines.len(), 1);
         let text = collect_spans_text(&lines[0]);
         assert_eq!(text, "this *is not closed");
+    }
+
+    /// True if any span on `line` carries bold or italic.
+    fn has_emphasis(line: &Line) -> bool {
+        line.spans.iter().any(|s| {
+            s.style
+                .add_modifier
+                .intersects(Modifier::BOLD | Modifier::ITALIC)
+        })
+    }
+
+    #[test]
+    fn snake_case_identifiers_keep_their_underscores() {
+        // The reported bug: an underscore between two word characters is part
+        // of an identifier. It used to open emphasis, so `tool_use_id` printed
+        // as "tooluseid" with a spurious italic "use" — the transcript quietly
+        // lying about an API field name.
+        for line in [
+            "the tool_use_id field",
+            "set stop_reason to end_turn",
+            "MAX_EMPHASIS_DEPTH is 8",
+            "read cache_creation_input_tokens from the usage block",
+        ] {
+            let lines = render(line);
+            assert_eq!(collect_spans_text(&lines[0]), line, "text preserved");
+            assert!(!has_emphasis(&lines[0]), "no emphasis in {line:?}");
+        }
+    }
+
+    #[test]
+    fn dunder_and_leading_underscore_names_are_literal() {
+        // A deliberate divergence from CommonMark, which would bold `init`
+        // here. In a coding transcript `__` is a name, not a typeface.
+        for line in [
+            "__init__ and __all__",
+            "override __str__",
+            "_private and _id are distinct",
+            "a trailing sep_",
+            "MY__CONST__NAME",
+        ] {
+            let lines = render(line);
+            assert_eq!(collect_spans_text(&lines[0]), line, "text preserved");
+            assert!(!has_emphasis(&lines[0]), "no emphasis in {line:?}");
+        }
+    }
+
+    #[test]
+    fn word_boundary_underscore_emphasis_still_works() {
+        // The intraword rule must not cost us prose italics: delimiters that
+        // sit on a word boundary (start/end of line, whitespace, punctuation)
+        // still emphasise.
+        for (line, want) in [
+            ("_emphasis_", "emphasis"),
+            ("he said _hello_.", "hello"),
+            ("a (_parenthesised_) aside", "parenthesised"),
+        ] {
+            let lines = render(line);
+            let span = lines[0]
+                .spans
+                .iter()
+                .find(|s| s.content == want)
+                .unwrap_or_else(|| panic!("{want:?} is its own span in {line:?}: {:?}", lines[0]));
+            assert!(
+                span.style.add_modifier.contains(Modifier::ITALIC),
+                "{want:?} italic in {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn underscore_emphasis_spans_interior_underscores() {
+        // CommonMark's own reading of `_foo_bar_baz_`: the interior `_`s can't
+        // close (a word character follows), so the span runs to the final one
+        // and the identifier inside it stays intact.
+        let lines = render("_note_on_ids_");
+        let span = &lines[0].spans[0];
+        assert_eq!(span.content, "note_on_ids");
+        assert!(span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn asterisk_emphasis_stays_valid_intraword() {
+        // The asymmetry is intentional and is CommonMark's: `*` may open
+        // emphasis mid-word, `_` may not. Only `_` collides with identifiers.
+        let lines = render("un*frigging*believable");
+        let span = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content == "frigging")
+            .expect("mid-word asterisk emphasis still parses");
+        assert!(span.style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]
