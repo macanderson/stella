@@ -1,9 +1,13 @@
 # ADR 0012: The context-record field schema, and records-live-in-files
 
-- Status: **Proposed** — every substantive question below is resolved and
-  implemented; what remains is repository-owner sign-off on the surface.
-- Date: 2026-07-29
-- Deciders: (pending)
+- Status: **Accepted** — ratified by repository owner 2026-07-30 (was: Proposed).
+  Every substantive question below was resolved and implemented before
+  ratification; the signature is on the surface those answers already assume.
+  Ratified together with [ADR 0011](0011-context-records-are-toml.md), which
+  deferred this schema and named ratifying one without the other as the state to
+  avoid.
+- Date: 2026-07-29 (ratified 2026-07-30)
+- Deciders: repository owner (ratified 2026-07-30)
 - Follows: [ADR 0011](0011-context-records-are-toml.md), which settled the
   *format* and explicitly deferred "which fields a context record carries, and
   what their vocabularies are" to a separate decision.

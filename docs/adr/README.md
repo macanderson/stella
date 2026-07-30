@@ -54,5 +54,5 @@ open; nothing before Phase 3 forces it.
 | [0008](0008-markdown-canonical-rules.md) | Markdown Repository Rules Remain Canonical | Accepted (Phase 0) — surface superseded by [0011](0011-context-records-are-toml.md) |
 | [0009](0009-enum-freeze-resolutions.md) | Enum-Freeze Resolutions (issue #483) | Accepted — ratified 2026-07-24 |
 | [0010](0010-incremental-authority-transfer.md) | Incremental Authority Transfer (amends 0005) | Accepted — ratified 2026-07-26 (index tables do not transfer) |
-| [0011](0011-context-records-are-toml.md) | Context Records Are TOML (supersedes 0008's surface) | **Proposed** — awaiting ratification |
-| [0012](0012-context-record-field-schema.md) | The Context-Record Field Schema, and Records-Live-in-Files | **Proposed** — resolves 0011's open question and the record-surface open questions; awaiting ratification |
+| [0011](0011-context-records-are-toml.md) | Context Records Are TOML (supersedes 0008's surface) | Accepted — ratified 2026-07-30 (hash-neutral; legacy `.md` rules keep loading) |
+| [0012](0012-context-record-field-schema.md) | The Context-Record Field Schema, and Records-Live-in-Files | Accepted — ratified 2026-07-30 (memories in the database, context records in files; `personal` → `user`) |
