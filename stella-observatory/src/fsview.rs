@@ -94,13 +94,14 @@ fn mtime_unix(path: &Path) -> Option<i64> {
 /// Pull `name:` and `description:` out of a `---` YAML frontmatter block
 /// without a YAML dependency — stella's skill frontmatter is flat
 /// `key: value` lines, which is all this reads.
-fn frontmatter_fields(text: &str) -> (Option<String>, Option<String>) {
+fn frontmatter_fields(text: &str) -> (Option<String>, Option<String>, Option<String>) {
     let mut lines = text.lines();
     if lines.next().map(str::trim) != Some("---") {
-        return (None, None);
+        return (None, None, None);
     }
     let mut name = None;
     let mut description = None;
+    let mut origin = None;
     for line in lines {
         if line.trim() == "---" {
             break;
@@ -110,19 +111,32 @@ fn frontmatter_fields(text: &str) -> (Option<String>, Option<String>) {
             match key.trim() {
                 "name" if !value.is_empty() => name = Some(value.to_string()),
                 "description" if !value.is_empty() => description = Some(value.to_string()),
+                "origin" if !value.is_empty() => origin = Some(value.to_string()),
                 _ => {}
             }
         }
     }
-    (name, description)
+    (name, description, origin)
 }
 
 /// One skill entry from a markdown file.
-fn skill_entry(path: &Path, scope: &str, learned: bool) -> Option<Value> {
+///
+/// `in_learned_dir` is position-derived provenance — true for a file under a
+/// `learned/` subdirectory. It is an OR, not the whole answer: the miner names
+/// its output `{skills_dir}/{slug}-{hash8}.md`, flat, and has never written a
+/// `learned/` path segment (`stella_core::skills::decide_auto_creation` builds
+/// `{target_dir}/{name}.md`). Reading provenance from position alone therefore
+/// reported every auto-created skill as hand-authored and pinned the
+/// dashboard's "learned skills" count to 0 no matter how many the loop
+/// promoted. `origin: auto` is the marker the writer itself stamps into the
+/// frontmatter (`render_skill_markdown`), so it is the authority here — and it
+/// keeps traveling with the file if the user moves or renames it.
+fn skill_entry(path: &Path, scope: &str, in_learned_dir: bool) -> Option<Value> {
     // Only the frontmatter block is read out of this, so a bounded head read is
     // equivalent for any file whose frontmatter is not itself 64 KiB.
     let text = read_head(path)?;
-    let (name, description) = frontmatter_fields(&text);
+    let (name, description, origin) = frontmatter_fields(&text);
+    let learned = in_learned_dir || origin.as_deref() == Some("auto");
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -147,7 +161,10 @@ fn skill_entry(path: &Path, scope: &str, learned: bool) -> Option<Value> {
 }
 
 /// Scan one skills root: directories holding `SKILL.md`, flat `*.md` files,
-/// and the `learned/` subdirectory of self-extracted skills.
+/// and the `learned/` subdirectory. Note that a self-extracted skill is
+/// recognized by its `origin: auto` frontmatter rather than by landing in
+/// `learned/` — see [`skill_entry`] — so the flat-file branch below yields
+/// learned skills too, which is where the miner actually writes them.
 fn scan_skills_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -644,10 +661,41 @@ mod tests {
     #[test]
     fn frontmatter_extracts_name_and_description() {
         let text = "---\nname: my-skill\ndescription: \"Does a thing\"\n---\n# Body";
-        let (name, desc) = frontmatter_fields(text);
+        let (name, desc, origin) = frontmatter_fields(text);
         assert_eq!(name.as_deref(), Some("my-skill"));
         assert_eq!(desc.as_deref(), Some("Does a thing"));
-        assert_eq!(frontmatter_fields("no frontmatter"), (None, None));
+        assert_eq!(origin, None);
+        assert_eq!(frontmatter_fields("no frontmatter"), (None, None, None));
+    }
+
+    /// A mined skill is flagged `learned` from the `origin: auto` its own
+    /// writer stamped, wherever the file happens to sit. The miner writes flat
+    /// into `.stella/skills/`, so requiring a `learned/` parent directory —
+    /// which nothing in the codebase ever creates — reported every promoted
+    /// skill as hand-authored.
+    #[test]
+    fn mined_skill_is_learned_from_origin_not_directory_position() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("money-is-minor-units-a1b2c3d4.md"),
+            "---\nname: money-is-minor-units\ndescription: d\norigin: auto\n---\nbody",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("hand-written.md"),
+            "---\nname: hand-written\ndescription: d\n---\nbody",
+        )
+        .unwrap();
+        let mut rows = Vec::new();
+        scan_skills_dir(dir.path(), "project", &mut rows);
+        let find = |name: &str| {
+            rows.iter()
+                .find(|r| r["name"] == name)
+                .unwrap_or_else(|| panic!("{name} listed"))
+                .clone()
+        };
+        assert_eq!(find("money-is-minor-units")["learned"], true);
+        assert_eq!(find("hand-written")["learned"], false);
     }
 
     #[test]

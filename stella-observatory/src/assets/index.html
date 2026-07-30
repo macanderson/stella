@@ -990,7 +990,7 @@ function renderSkills(rows) {
   if (!rows.length) {
     $("skills-table").innerHTML =
       `<div class="empty">no skills installed — <code>stella skills find</code> searches the registry,
-       and stella promotes its own lessons into <code>skills/learned/</code></div>`;
+       and stella promotes its own lessons into <code>.stella/skills/</code></div>`;
     return;
   }
   $("skills-table").innerHTML = `<table><thead><tr>
@@ -1150,8 +1150,8 @@ function renderImprove(skills) {
         <span class="badge accent">◆ learned</span> <span class="name">${esc(s.name)}</span>
         <span class="when" style="font:10px var(--mono);color:var(--text-3)"> · ${agoUnix(s.modified_unix)}</span>
         <div class="snip">${esc(s.description || "")}</div></div>`).join("")
-    : `<div class="empty">none yet — when a lesson generalizes, stella writes it into
-       <code>skills/learned/</code> and starts using it in future runs</div>`;
+    : `<div class="empty">none yet — when a lesson recurs across turns, stella writes it into
+       <code>.stella/skills/</code> and starts using it in future runs</div>`;
 }
 function renderRatingsChart(ratings) {
   const el = $("ch-ratings");
